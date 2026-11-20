@@ -37,8 +37,8 @@ function checkCommon(out) {
   return c;
 }
 
-// main: temp worktree, package, install, launch.
-let out = dry('main');
+// HEAD (CI checkouts have no local main): temp worktree, package, install, launch.
+let out = dry('HEAD');
 let c = checkCommon(out);
 assert(c.some((x) => /worktree add --detach/.test(x)), 'temp worktree');
 assert(c.some((x) => /vsce package -o ".*vpe-[0-9a-f]{7}\.vsix"/.test(x)), 'vsce package');
@@ -54,7 +54,7 @@ try {
   c = checkCommon(out);
   assert(!c.some((x) => /worktree add|vsce/.test(x)), 'no build for a vsix');
   assert(c.some((x) => x.includes('--install-extension "' + vsix + '"')), 'installs the given vsix');
-  c = cmds(dry('main', '-Dev'));
+  c = cmds(dry('HEAD', '-Dev'));
   assert(c.some((x) => /--extensionDevelopmentPath=/.test(x)) && !c.some((x) => /--install-extension|vsce/.test(x)), '-Dev');
 } finally { fs.rmSync(vsix, { force: true }); }
 
