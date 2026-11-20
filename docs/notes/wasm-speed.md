@@ -7,7 +7,7 @@ timed the same calls. Warm HEVC 4K was 8.6 fps in VS Code and 8.6–8.7 fps in N
 AV1 1080p were also within 5% in either direction across the paired passes. The historical
 comparison paired Node's uncapped `wasm dec` throughput with VS Code's paced `shownFps`.
 Those measurements answer different questions and should be tracked separately.
-[Node benchmark](../../test/bench/run_bench.js) · [VS Code runner](../../test/vscode/run.js)
+[Node benchmark](../../test/bench/run_bench.js) · [test runner](../../test/run.js)
 
 Measured 2026-11-19 on Windows 10, i7-9700K (8 logical cores), RTX 4070, portable VS Code
 1.147.0 (Electron 43.8.9, Chromium 150.0.7871.250), and Node 24.22.1 (V8 13.6.233.17).
