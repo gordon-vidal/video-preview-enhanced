@@ -772,6 +772,11 @@ function createEngine(env) {
         }
         this.meta.width = v.width;
         this.meta.height = v.height;
+        // The container may state the rate (MP4/MOV, MXF: avg_frame_rate) or the frame count (MP4 sample table):
+        // the count is known at once, End works before 24 timestamps were seen. trackTs refines it afterwards.
+        const dur = this.meta.duration || 0;
+        const stated = v.fps > 0 ? v.fps : v.frames > 0 && dur > 0 ? v.frames / dur : 0;
+        if (stated > 0 && dur > 0 && !this.fps) this.setFrameRate(stated);
       }
       if (a) {
         const r = await this.audioConfig(a);
@@ -1102,6 +1107,8 @@ function createEngine(env) {
           // A track switch rewound the demuxer while this end was flushed: read on instead.
           if (rw !== (this.rewinds || 0)) { this.pump(); return; }
           this.eof = true;
+          // A short file with no rate in its container: the timestamps seen are all there are.
+          if (!this.fps && this.tsSeen.length >= 3 && this.tsSeen.length < 24) this.measureRate();
           // A seek past the last frame (End): show the last one.
           if (this.seekTarget !== null) {
             if (this.hold) { this.insert(this.hold); this.hold = null; }
@@ -1213,28 +1220,35 @@ function createEngine(env) {
     trackTs(t) {
       if (t === null || this.tsSeen.length >= 40) return;
       this.tsSeen.push(t);
-      if (this.tsSeen.length >= 24) {
-        const s = [...this.tsSeen].sort((x, y) => x - y);
-        // Median spacing finds the frame duration even with gaps (B-frames still in flight);
-        // counting frames over the whole span then removes millisecond rounding (WebM 33/33/34 ms).
-        const d = [];
-        for (let i = 1; i < s.length; i++) if (s[i] - s[i - 1] > 1e-4) d.push(s[i] - s[i - 1]);
-        d.sort((x, y) => x - y);
-        const med = d[Math.floor(d.length / 2)];
-        const span = s[s.length - 1] - s[0];
-        if (med > 0 && span > 0) {
-          // Frame periods per neighbour (1, more across a gap), summed: round(span / med) miscounts over 40
-          // frames when ms rounding puts the median 2% off (60 fps MKV: 16/17/17 ms gave 58.46 fps).
-          const fps = d.reduce((k, x) => k + Math.max(1, Math.round(x / med)), 0) / span;
-          const common = [24000 / 1001, 24, 25, 30000 / 1001, 30, 48, 50, 60000 / 1001, 60, 120];
-          const near = common.reduce((best, c) => (Math.abs(c - fps) < Math.abs(best - fps) ? c : best), common[0]);
-          this.fps = Math.abs(near - fps) / near < 0.005 ? near : Math.round(fps * 1000) / 1000;
-          this.n = Math.max(1, Math.round((this.meta.duration || 0) * this.fps));
-          this.meta.fps = this.fps;
-          this.meta.frames = this.n;
-          env.onMeta(this);
-        }
+      if (this.tsSeen.length >= 24) this.measureRate();
+    }
+
+    /** Rate from the timestamps seen; at the end of a short file (under 24 frames) from what there is. */
+    measureRate() {
+      const s = [...this.tsSeen].sort((x, y) => x - y);
+      // Median spacing finds the frame duration even with gaps (B-frames still in flight);
+      // counting frames over the whole span then removes millisecond rounding (WebM 33/33/34 ms).
+      const d = [];
+      for (let i = 1; i < s.length; i++) if (s[i] - s[i - 1] > 1e-4) d.push(s[i] - s[i - 1]);
+      d.sort((x, y) => x - y);
+      const med = d[Math.floor(d.length / 2)];
+      const span = s[s.length - 1] - s[0];
+      if (med > 0 && span > 0) {
+        // Frame periods per neighbour (1, more across a gap), summed: round(span / med) miscounts over 40
+        // frames when ms rounding puts the median 2% off (60 fps MKV: 16/17/17 ms gave 58.46 fps).
+        this.setFrameRate(d.reduce((k, x) => k + Math.max(1, Math.round(x / med)), 0) / span);
       }
+    }
+
+    /** Takes a measured or stated rate (snapped to a common one when close) and derives the frame count. */
+    setFrameRate(fps) {
+      const common = [24000 / 1001, 24, 25, 30000 / 1001, 30, 48, 50, 60000 / 1001, 60, 120];
+      const near = common.reduce((best, c) => (Math.abs(c - fps) < Math.abs(best - fps) ? c : best), common[0]);
+      this.fps = Math.abs(near - fps) / near < 0.005 ? near : Math.round(fps * 1000) / 1000;
+      this.n = Math.max(1, Math.round((this.meta.duration || 0) * this.fps));
+      this.meta.fps = this.fps;
+      this.meta.frames = this.n;
+      env.onMeta(this);
     }
 
     addFrame(fr) {
