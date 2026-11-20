@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const ff = require('./ffmpeg');
 const hw = require('./hwaccel');
 const frameserver = require('./frameserver');
+const Grid = require('../media/compare-grid');
 
 const MAX_QUEUED_FRAMES = 12; // on a 32 GB machine; less on smaller ones (opts.maxQueued, media/membudget.js)
 const AUDIO_RATE = 48000;
@@ -48,11 +49,14 @@ class NativeDecoder {
    * maxHeight: the frame size cap; messageMaxHeight: a lower cap when frames go by postMessage
    * (decided when the transport settles or changes).
    */
-  constructor({ tools, file, input, post, postRaw, log, maxHeight, messageMaxHeight, method, methodGuessed, onFail, probed, stats, transport, origin, maxQueued, onMessages, fitView, view }) {
+  constructor({ tools, file, input, post, postRaw, log, maxHeight, messageMaxHeight, method, methodGuessed, onFail, probed, stats, transport, origin, maxQueued, onMessages, fitView, view, largeGrid = false }) {
     this.transport = transport || 'message';
     this.onMessages = onMessages; // told once frames fall back to messages mid-play (compare re-sizes every tile)
     this.origin = origin;
     this.maxQueued = maxQueued > 0 ? maxQueued : MAX_QUEUED_FRAMES;
+    // A tile of compare's large grid (5-16 videos, media/compare-grid.js): fewer frames in flight, no loop standby.
+    this.largeGrid = !!largeGrid;
+    this.credit = Grid.nativeCredits(this.largeGrid);
     this.messageMaxHeight = messageMaxHeight || maxHeight || 1080;
     this.link = 'message'; // 'pending' (waiting for the webview to connect), 'stream', 'message'
     this.tools = tools;
@@ -311,7 +315,8 @@ class NativeDecoder {
     this.link = 'message';
     this.log(`native transport: message (${why})`);
     this.settled();
-    if (this.onMessages && restart) setTimeout(() => { if (!this.disposed && this.onMessages) this.onMessages(); }, 0);
+    // A large grid re-sizes all its tiles together for the message budget, also before ffmpeg starts.
+    if (this.onMessages && (restart || this.largeGrid)) setTimeout(() => { if (!this.disposed && this.onMessages) this.onMessages(); }, 0);
     // open() will choose the message size before starting ffmpeg; after a hidden tab stopped it, the next seek does.
     if (!restart) { if (this.fps && this.w) this.resizePending = true; return; }
 
@@ -430,7 +435,8 @@ class NativeDecoder {
       }
       this.ended = true;
       this.flushWaiting();
-      if (!failed && proc === this.proc) this.prepareLoop();
+      // 16 waiting ffmpegs (one per tile) cost more than a loop's start-up saves.
+      if (!failed && proc === this.proc && !this.largeGrid) this.prepareLoop();
     };
     proc.on('error', (error) => finish(null, null, error));
     proc.on('close', (code, signal) => finish(code, signal));
@@ -509,7 +515,7 @@ class NativeDecoder {
   /** Each 'more' grants credits; frames are pushed as they arrive, up to the credits. */
   more(m) {
     if (this.recovering || m.gen !== this.gen) return;
-    this.credits = Math.min(16, (this.credits || 0) + 8);
+    this.credits = Math.min(this.credit.cap, (this.credits || 0) + this.credit.batch);
     this.flushWaiting();
   }
 
@@ -631,6 +637,8 @@ class NativeDecoder {
     this.settled();
     this.kill();
     this.takeStandby(NaN);
+    this.frames = [];
+    this.audioChunks = [];
   }
 }
 
