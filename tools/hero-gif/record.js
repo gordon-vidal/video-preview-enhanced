@@ -19,7 +19,7 @@
 // with ffmpeg (palettegen / paletteuse for the GIF, x264 for the MP4).
 //
 // What it sets up (once; kept for the next run):
-//   - WSL: /home/demo (made with `wsl -u root`, owned by your WSL user) holding the clips: a neutral
+//   - WSL: /home/demo (made with `wsl -u root`, owned by your WSL user) holding the clips: a neutral // personal-data-ok (demo placeholder)
 //     workspace path. ~/vpe-demo/sshd (host key, authorized_keys, sshd_config with
 //     SetEnv VPE_LOG=~/vpe-demo/vpe.log for the extension's test hook) and ~/vpe-demo/server (the
 //     VS Code server, remote.SSH.serverInstallPath; the extension's VSIX is installed into it).
@@ -49,13 +49,13 @@ const WIDTH = Number(opt('--width', 1280));
 const FPS = Number(opt('--fps', 15));
 const HOST = 'demo-server';
 const PORT = 2244;
-const WORKSPACE = '/home/demo';
+const WORKSPACE = '/home/demo'; // personal-data-ok (demo placeholder)
 const WIN = { w: 1280, h: 800 };
 // Effective 100 % on any display scale: window.zoomLevel is log1.2(1 / scale).
 const DPI = (() => { try { return Number(execFileSync('python', ['-c', 'import ctypes;ctypes.windll.user32.SetProcessDPIAware();print(ctypes.windll.user32.GetDpiForSystem())'], { encoding: 'utf8' }).trim()) || 96; } catch { return 96; } })();
 const ZOOM = Math.log(96 / DPI) / Math.log(1.2);
 
-// The workspace: [name in /home/demo, source in test/media, low-bitrate re-encode?]
+// The workspace: [name in /home/demo, source in test/media, low-bitrate re-encode?] // personal-data-ok
 const FILES = [
   ['big_buck_bunny_1080p.mp4', 'h264_aac_anim_1080p.mp4'],
   ['tears_of_steel_1080p.mp4', 'h264_8_1080p.mp4'],
