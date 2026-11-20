@@ -10,6 +10,9 @@ node_modules/**
 .vscode/**
 .github/**
 .claude/**
+.private-context/**
+AGENTS.md
+CLAUDE.md
 .gitignore
 .gitattributes
 package-lock.json

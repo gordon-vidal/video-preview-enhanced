@@ -81,6 +81,24 @@ jobs:
           node test/timestretch/run.js
           node test/inspect/inspect_test.js
 
+  # Seconds-long repository hygiene checks (no dependencies): no personal data in tracked files,
+  # no broken relative Markdown links. Also runnable locally: node tools/check-personal-data.js
+  hygiene:
+    name: Hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Personal data in tracked files
+        run: node tools/check-personal-data.js
+      - name: Markdown links
+        run: node tools/check-links.js
+
   package:
     name: Package (${{ matrix.os }})
     strategy:
