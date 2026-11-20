@@ -311,7 +311,12 @@ async function withFfmpeg(tools) {
     const n = st.rs.spawns - s0;
     assert.ok(n <= 5, `${n} ffmpeg starts for 25 seeks`);
     assert.strictEqual(st.seeked.length, 25, 'every seek answered');
-    assert.ok(Math.abs(st.video[0].t - target) < 1e-9, `the last target: ${st.video[0].t} vs ${target}`);
+    // The stream for the last target either starts there or, when an earlier seek's ffmpeg had already read past it
+    // (a busy machine runs the 25 ms sleeps late), comes from memory from the keyframe before it (2 s GOP, or a
+    // scene-cut keyframe). Either way the webview gets the target frame.
+    assert.ok(st.video[0].key && st.video[0].t <= target + 1e-9 && target - st.video[0].t <= 2 + 1e-9,
+      `the last target: from ${st.video[0].t} for ${target}`);
+    await until(() => st.video.some((p) => Math.abs(p.t - target) < 1e-9), `the frame at the last target ${target}`);
     out.scrub = { seeks: 25, starts: n, lastFrameMs: Date.now() - t0 };
     // 4. Nothing after dispose: no seek, more or start runs ffmpeg again.
     st.rs.dispose();
