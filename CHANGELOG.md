@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- New: start a compare faster. Press **D** in the player for a quick pick of other videos (same folder first, then the workspace, recently compared first, **Browse…** for the open dialog), or hold **Shift** and drop a video from the Explorer onto the player.
+
 ## 0.7.1 (2026-11-20)
 
 First release on the VS Code Marketplace (publisher `gordon-vidal`).

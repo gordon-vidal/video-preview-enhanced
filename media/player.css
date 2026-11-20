@@ -52,6 +52,9 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 #message { font-size: 1.15em; }
 /* Over the (black) picture, the theme's text colour can be dark: white with the shadow reads on any picture. */
 #stage:has(> canvas:not([hidden])) #overlay { color: #fff; }
+/* A video is dragged over the player: compare with it (media/player.js, key D's twin). */
+#dropHint { position: absolute; inset: 12px; display: flex; align-items: center; justify-content: center; border: 2px dashed var(--vscode-focusBorder); border-radius: 8px; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 1.3em; pointer-events: none; z-index: 5; }
+#dropHint[hidden] { display: none; }
 #hint { opacity: 0.8; max-width: 46em; }
 #action {
   pointer-events: auto;

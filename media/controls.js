@@ -188,7 +188,7 @@ const VpeControls = (() => {
       { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M'], ['Next audio track', 'Shift+A']] },
       { title: 'View', rows: [['Fullscreen', 'F'], ['Picture in picture', 'P'], ['Subtitles on / off', 'C'], ['About this video', 'I'], ['Zoom: fit / actual size', 'Z']] },
       { title: 'Tools', rows: [['Scopes', 'W'], ['Pixel inspector', 'X'], ['Codec X-ray', 'Shift+X'], ['Stats', 'Shift+I'], ['Previous / next keyframe', '{', '}']] },
-      { title: 'Files and help', rows: [['Next / previous video in folder', 'Shift+N', 'Shift+P'], ['This list', '?'], ['Close menus', 'Esc']] },
+      { title: 'Files and help', rows: [['Next / previous video in folder', 'Shift+N', 'Shift+P'], ['Compare with another video', 'D'], ['Compare by dropping a video here', 'Shift+drag'], ['This list', '?'], ['Close menus', 'Esc']] },
     ];
   }
 
