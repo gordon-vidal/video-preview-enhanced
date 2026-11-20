@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: stale texts in settings (`whenSlow`, `advancedMode`) and the FAQ.
+
 ## 0.7.2 (2026-11-20)
 
 Picture size and zoom, a faster way to start a compare, and frame-count fixes.

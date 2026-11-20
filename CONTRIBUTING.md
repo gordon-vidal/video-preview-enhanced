@@ -42,7 +42,8 @@ decoder itself changes: see [build/libav/README.md](build/libav/README.md) (Linu
 The strategy (four layers, what runs when) is in [docs/TESTING.md](docs/TESTING.md). In short:
 
 ```
-npm test                                  # layer 1-2: host and engine tests in Node (Windows, macOS, Linux)
+npm run test:unit && npm run test:engine      # layers 1-2: host and engine tests in Node (Windows, macOS, Linux)
+npm test                                  # layers 1-3: adds the real-VS-Code tests (Windows only, a pinned VS Code, GPU)
 node test/subtitles/run.js                # more Node unit tests that CI runs too
 node test/timestretch/run.js
 node test/inspect/inspect_test.js
