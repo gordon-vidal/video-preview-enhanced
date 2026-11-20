@@ -8,8 +8,7 @@
 /* exported VpeInspect */
 // eslint-disable-next-line no-unused-vars
 const VpeInspect = (() => {
-  const ZOOM_MIN = 0.05;
-  const ZOOM_MAX = 64;
+  const Pic = typeof VpePicture !== 'undefined' ? VpePicture : require('./picture');
   const NEAREST_AT = 2; // nearest-neighbour from 200 %
   const GRID_AT = 8; // pixel grid from 800 %
   const LOUPE_PX = 15; // loupe source size (odd: the centre pixel is the cursor)
@@ -150,103 +149,120 @@ const VpeInspect = (() => {
     const { vscode, stage, canvas, toast, getPlayer, fmtTime } = env;
     const el = (tag, id, parent) => { const e = document.createElement(tag); e.id = id; e.hidden = true; parent.appendChild(e); return e; };
 
-    // ---- zoom and pan ---------------------------------------------------------
-    // 'fit' keeps the CSS layout (shrink to fit, never enlarge). 'zoom' places the
-    // canvas with a transform: s CSS px per video pixel, top-left at (tx, ty) in the
-    // stage. The canvas holds the picture at its own size (rotation included), so
-    // a CSS transform with image-rendering is exact and costs no extra GPU pass.
-    let mode = 'fit';
-    let s = 1;
-    let tx = 0;
-    let ty = 0;
+    // ---- picture size, zoom and pan -------------------------------------------
+    // The picture's size and place come from media/picture.js (a mode: Fit, Fill, Stretch or 100 %, plus a zoom and
+    // a pan). The plain Fit keeps the CSS layout (shrink to fit, never enlarge); everything else places the canvas
+    // with a transform in the stage ('zoom' class). The canvas holds the picture at its own size (rotation
+    // included), so a CSS transform with image-rendering is exact and costs no extra GPU pass.
+    let pic = Pic.fresh(env.picture);
     let forceNearest = false;
     const grid = el('div', 'pxgrid', stage);
 
-    const view = () => [stage.clientWidth, stage.clientHeight];
-    const fitScale = () => {
-      const [vw, vh] = view();
-      return canvas.width && canvas.height ? Math.min(1, vw / canvas.width, vh / canvas.height) : 1;
-    };
-    /** CSS px per video pixel as shown now. */
+    const area = () => ({ w: stage.clientWidth, h: stage.clientHeight });
+    const natural = () => ({ w: canvas.width, h: canvas.height });
+    const dprOf = () => globalThis.devicePixelRatio || 1;
+    function source() {
+      const p = getPlayer();
+      const m = p && p.meta;
+      return Pic.sourceSize(natural(), m && { w: m.width, h: m.height });
+    }
+    const opts = () => ({ dpr: dprOf() });
+    const rectNow = () => Pic.rectOf(pic, natural(), source(), area(), opts());
+    const isPlain = () => pic.mode === 'fit' && Pic.plain(pic);
+    /** CSS px per canvas pixel as shown now. */
     function scale() {
-      if (mode === 'zoom') return s;
+      if (!isPlain()) return canvas.width ? rectNow().w / canvas.width : 1;
       const r = canvas.getBoundingClientRect();
       return canvas.width ? r.width / canvas.width : 1;
     }
 
     let lastLayout = '';
     let lastZoom = 'fit|1';
-    let lastCanvasW = 0;
+    let lastPicture = '';
+    let started = false; // the callbacks wait until create() has returned (the player's `insp` does not exist before)
     function apply() {
-      const [vw, vh] = view();
-      // New frame size while zoomed (native ffmpeg sizes its frames to the picture, a zoom included):
-      // keep the picture's size on screen. The top-left corner stays, so the pan does too.
-      if (mode === 'zoom' && lastCanvasW && canvas.width && canvas.width !== lastCanvasW) s *= lastCanvasW / canvas.width;
-      if (canvas.width) lastCanvasW = canvas.width;
-      if (mode === 'zoom') {
-        [tx, ty] = clampPan(tx, ty, canvas.width * s, canvas.height * s, vw, vh);
-        canvas.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
-      } else canvas.style.transform = '';
-      stage.classList.toggle('fit', mode === 'fit');
-      stage.classList.toggle('zoom', mode === 'zoom');
+      const v = area();
+      if (canvas.width && canvas.height) pic = Pic.clamp(pic, natural(), source(), v, opts());
+      let r = null;
+      if (isPlain() || !canvas.width) canvas.style.transform = '';
+      else {
+        r = rectNow();
+        // On whole device pixels: at 100 % every video pixel must land on one screen pixel (a half pixel blurs the picture).
+        const d = dprOf();
+        r = { ...r, x: Math.round(r.x * d) / d, y: Math.round(r.y * d) / d };
+        canvas.style.transform = `translate(${r.x}px, ${r.y}px) scale(${r.w / canvas.width}, ${r.h / canvas.height})`;
+      }
+      stage.classList.toggle('fit', !r);
+      stage.classList.toggle('zoom', !!r);
+      stage.classList.toggle('pannable', !!r && (r.w > v.w + 0.5 || r.h > v.h + 0.5));
+      stage.dataset.picture = pic.mode;
       const k = scale();
       canvas.style.imageRendering = forceNearest || k >= NEAREST_AT ? 'pixelated' : '';
       // Pixel grid: lines every video pixel, drawn over the visible part of the picture.
-      grid.hidden = !(mode === 'zoom' && k >= GRID_AT);
-      if (!grid.hidden) {
-        const x0 = Math.max(0, tx);
-        const y0 = Math.max(0, ty);
-        const x1 = Math.min(vw, tx + canvas.width * s);
-        const y1 = Math.min(vh, ty + canvas.height * s);
+      grid.hidden = !(r && k >= GRID_AT);
+      if (!grid.hidden && r) {
+        const x0 = Math.max(0, r.x);
+        const y0 = Math.max(0, r.y);
+        const x1 = Math.min(v.w, r.x + r.w);
+        const y1 = Math.min(v.h, r.y + r.h);
         Object.assign(grid.style, {
           left: `${x0}px`, top: `${y0}px`, width: `${Math.max(0, x1 - x0)}px`, height: `${Math.max(0, y1 - y0)}px`,
-          backgroundSize: `${s}px ${s}px`, backgroundPosition: `${tx - x0}px ${ty - y0}px`,
+          backgroundSize: `${r.w / canvas.width}px ${r.h / canvas.height}px`, backgroundPosition: `${r.x - x0}px ${r.y - y0}px`,
         });
       }
-      lastLayout = `${mode}|${s}|${canvas.width}x${canvas.height}|${vw}x${vh}`;
-      const z = `${mode}|${s}`;
-      if (z !== lastZoom) { lastZoom = z; if (env.onZoom) env.onZoom(); }
+      lastLayout = layoutKey();
+      const z = `${pic.mode}|${pic.zoom}`;
+      if (z !== lastZoom) { lastZoom = z; if (started && env.onZoom) env.onZoom(); }
+      if (z !== lastPicture) { lastPicture = z; if (started && env.onPicture) env.onPicture(); }
     }
+    const layoutKey = () => `${pic.mode}|${pic.zoom}|${pic.cx}|${pic.cy}|${canvas.width}x${canvas.height}|${stage.clientWidth}x${stage.clientHeight}`;
 
-    /** The zoomed picture's size in CSS px ({ w, h }), or null when it fits the stage. */
+    /** The picture's size in CSS px ({ w, h }) native frames should have, or null while the plain Fit lets the stage decide. */
     function zoomedSize() {
-      return mode === 'zoom' && canvas.width && canvas.height ? { w: canvas.width * s, h: canvas.height * s } : null;
+      return canvas.width && canvas.height ? Pic.frameNeed(pic, rectNow(), natural()) : null;
     }
 
-    function setZoom(s1, px, py) {
-      const [vw, vh] = view();
-      if (px === undefined) { px = vw / 2; py = vh / 2; }
-      if (mode === 'fit') {
-        // Start from where the fitted picture is now.
-        const r = canvas.getBoundingClientRect();
-        const sr = stage.getBoundingClientRect();
-        s = canvas.width ? r.width / canvas.width : 1;
-        tx = r.left - sr.left;
-        ty = r.top - sr.top;
-      }
-      s1 = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, s1));
-      [tx, ty] = zoomAround(s, tx, ty, s1, px, py);
-      s = s1;
-      mode = 'zoom';
+    /** Sets the mode (zoom and pan start over). */
+    function setMode(m, quiet) {
+      pic = Pic.fresh(m);
+      apply();
+      if (!quiet) toast(Pic.name(pic.mode));
+    }
+    /** Z: the next mode; zoomed in, back to Fit first. */
+    function cycleMode() {
+      pic = Pic.cycle(pic);
+      apply();
+      toast(Pic.name(pic.mode));
+    }
+    function resetZoom() {
+      pic = Pic.fresh(pic.mode);
       apply();
     }
+    const zoomPercent = () => Pic.percent(rectNow(), source(), dprOf());
 
-    function toggleZoom() {
-      if (mode === 'zoom') { mode = 'fit'; apply(); } else setZoom(1);
-      toast(mode === 'fit' ? 'Fit' : 'Actual size (100%)');
+    function zoomTo(z1, px, py) {
+      const v = area();
+      if (px === undefined) { px = v.w / 2; py = v.h / 2; }
+      pic = Pic.zoomAt(pic, z1, px, py, natural(), source(), v, opts());
+      apply();
+    }
+    /** + / - keys: one step around the middle of the picture area. */
+    function zoomStep(dir) {
+      if (!canvas.width) return;
+      zoomTo(pic.zoom * (dir > 0 ? Pic.STEP : 1 / Pic.STEP));
+      toast(`Zoom ${zoomPercent()}%`);
     }
 
     /** Ctrl+wheel (and trackpad pinch) zooms around the cursor. */
     function onWheel(e) {
       if (!e.ctrlKey || !canvas.width) return false;
       const sr = stage.getBoundingClientRect();
-      const k = scale();
-      let s1 = k * Math.exp(-Math.max(-300, Math.min(300, e.deltaY)) * 0.002);
-      // Snap through 100 % and back to fit when zooming out past it.
-      if ((k < 1 && s1 > 1) || (k > 1 && s1 < 1)) s1 = 1;
-      if (e.deltaY > 0 && s1 <= fitScale() + 1e-6) { mode = 'fit'; apply(); toast('Fit'); return true; }
-      setZoom(s1, e.clientX - sr.left, e.clientY - sr.top);
-      toast(`Zoom ${Math.round(s * 100)}%`);
+      let f = Math.exp(-Math.max(-300, Math.min(300, e.deltaY)) * 0.002);
+      // Snap through 100 % (one video pixel per screen pixel) when the zoom crosses it.
+      const k = zoomPercent() / 100;
+      if ((k < 1 && k * f > 1) || (k > 1 && k * f < 1)) f = 1 / k;
+      zoomTo(pic.zoom * f, e.clientX - sr.left, e.clientY - sr.top);
+      toast(`Zoom ${zoomPercent()}%`);
       return true;
     }
 
@@ -256,15 +272,15 @@ const VpeInspect = (() => {
       toast(forceNearest ? 'Nearest-neighbour on' : `Nearest-neighbour from ${NEAREST_AT * 100}%`);
     }
 
-    // Drag to pan; a drag (or an inspector click) is not a play/pause click.
+    // Drag to pan (when the picture is larger than the area); a drag (or an inspector click) is not a play/pause click.
     let drag = null;
     // The click right after a pan's pointerup is swallowed. Only that one: a pan that
     // ends with no click (released outside, cancelled) must not eat a later click.
     let swallowUntil = 0;
     stage.addEventListener('pointerdown', (e) => {
       swallowUntil = 0;
-      if (e.button !== 0 || mode !== 'zoom' || e.target !== canvas && e.target !== stage && e.target !== grid) return;
-      drag = { x: e.clientX, y: e.clientY, tx, ty, moved: false, id: e.pointerId };
+      if (e.button !== 0 || !stage.classList.contains('pannable') || e.target !== canvas && e.target !== stage && e.target !== grid) return;
+      drag = { x: e.clientX, y: e.clientY, pic, moved: false, id: e.pointerId };
     });
     stage.addEventListener('pointermove', (e) => {
       if (!drag || e.pointerId !== drag.id) return;
@@ -272,8 +288,7 @@ const VpeInspect = (() => {
       const dy = e.clientY - drag.y;
       if (!drag.moved && Math.hypot(dx, dy) < 4) return;
       if (!drag.moved) { drag.moved = true; stage.setPointerCapture(e.pointerId); stage.classList.add('panning'); }
-      tx = drag.tx + dx;
-      ty = drag.ty + dy;
+      pic = Pic.panBy(drag.pic, dx, dy, natural(), source(), area(), opts());
       apply();
     });
     const endDrag = (e) => {
@@ -566,7 +581,7 @@ const VpeInspect = (() => {
     function tick(now) {
       const p = getPlayer();
       if (pendingGoto && p) goTo(pendingGoto);
-      if (`${mode}|${s}|${canvas.width}x${canvas.height}|${stage.clientWidth}x${stage.clientHeight}` !== lastLayout) apply();
+      if (layoutKey() !== lastLayout) apply();
       if (!stats.hidden && p && now - statsAt >= 250) {
         statsAt = now;
         try { stats.textContent = statsText(p, now); } catch (e) { stats.textContent = `stats: ${e && e.message}`; }
@@ -609,10 +624,12 @@ const VpeInspect = (() => {
     }
 
     apply();
+    started = true;
     /** Nothing here needs the player's frame loop: no stats overlay, no pending go-to, no pick queued. */
     const idle = () => stats.hidden && !pendingGoto && !pickQueued;
     return {
-      onKey, onWheel, tick, idle, toggleZoom, zoomedSize, decorateInfo, goToLink, copyLink,
+      onKey, onWheel, tick, idle, cycleMode, setMode, resetZoom, zoomStep, zoomTo, zoomPercent, zoomedSize,
+      picture: () => ({ ...pic }), decorateInfo, goToLink, copyLink,
     };
   }
 

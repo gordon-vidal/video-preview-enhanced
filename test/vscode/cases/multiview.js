@@ -93,32 +93,34 @@ module.exports = [{
 
     const loops = [];
     let prev = 0;
-    const end = Date.now() + 25000;
+    const end = Date.now() + 60000; // generous: ends after 3 loops
     while (Date.now() < end) {
       const r = await report(20);
       const [clock, follower] = nums(r.frames);
       if (prev - clock > 45) loops.push([]);
       prev = clock;
-      if (loops.length > 3) break;
-      if (loops.length && clock >= 12 && clock <= 66) {
-        loops[loops.length - 1].push({ clock, follower });
-        if (loops.length === 3 && clock >= 54) break;
-      }
+      if (loops.length && clock >= 12 && clock <= 66) loops[loops.length - 1].push({ clock, follower });
+      // Three passes sampled early and later (a busy machine answers reports slowly and can miss a pass's window).
+      const full = loops.filter((p) => { const e = p.find(({ clock: c }) => c <= 39); return e && p.some(({ clock: c }) => c >= e.clock + 15); });
+      if (full.length >= 3 && clock >= 54) break;
     }
     const problems = [];
     if (loops.length < 3) problems.push(`expected three clock wraps, saw ${loops.length}`);
     if (!vs.lines.slice(from).some((l) => /webview: \[A\] loop: replaying \d+ cached frames/.test(l))) {
       problems.push('the clock did not replay cached frames');
     }
-    // A seek may still be settling right at the wrap. Check sync twice during each new pass.
-    loops.slice(0, 3).forEach((samples, i) => {
+    // A seek may still be settling right at the wrap. Check sync twice during each new pass that was sampled twice.
+    let checked = 0;
+    loops.forEach((samples, i) => {
       const early = samples.find(({ clock }) => clock <= 39);
       const later = samples.find(({ clock }) => early && clock >= early.clock + 15);
-      if (!early || !later) { problems.push(`wrap ${i + 1}: missing post-wrap samples`); return; }
+      if (!early || !later) return;
+      checked++;
       if (later.follower <= early.follower || [early, later].some(({ clock, follower }) => !(Math.abs(clock - follower) <= 4))) {
         problems.push(`wrap ${i + 1}: follower did not advance in sync (${early.clock}/${early.follower} then ${later.clock}/${later.follower})`);
       }
     });
+    if (checked < 3) problems.push(`only ${checked} of ${loops.length} passes were sampled early and later (want 3)`);
     return [{ name: 'follower', ok: !problems.length, problems, loops }];
   },
 }, {
@@ -169,11 +171,16 @@ module.exports = [{
     await until((x) => x.synced === 'true', 15000);
     const s0 = nums((await report()).shown);
     act({ action: 'play' });
-    await h.sleep(1300); // C and D are 2 s long: all four are inside their clips
-    r = await report();
-    const s1 = nums(r.shown);
+    // Every tile draws while playing (a few frames: how many per second is speed, layer 4). Ends as soon as they do.
+    let s1 = s0;
+    for (const w0 = Date.now(); Date.now() - w0 < 20000;) {
+      await h.sleep(200);
+      r = await report();
+      s1 = nums(r.shown);
+      if ([0, 1, 2, 3].every((i) => s1[i] - s0[i] >= 3)) break;
+    }
     ok(list(r.playing).every((x) => x === '1'), `playing=${r.playing}, expected all 1`);
-    for (let i = 0; i < 4; i++) ok(s1[i] - s0[i] >= 10, `tile ${'ABCD'[i]} drew ${s1[i] - s0[i]} frames in 1.3 s of play`);
+    for (let i = 0; i < 4; i++) ok(s1[i] - s0[i] >= 3, `tile ${'ABCD'[i]} drew ${s1[i] - s0[i]} frames while playing`);
     act({ action: 'pause' });
 
     // ---- lockstep, then offsets in frames and in ms ----
@@ -345,11 +352,16 @@ module.exports = [{
     await until((x) => x.synced === 'true', 20000);
     const s0 = nums((await report()).shown);
     act({ action: 'play' });
-    await h.sleep(1300);
-    r = await report();
-    const s1 = nums(r.shown);
+    // Every tile draws while playing (a few frames: how many per second is speed, layer 4). Ends as soon as they do.
+    let s1 = s0;
+    for (const w0 = Date.now(); Date.now() - w0 < 20000;) {
+      await h.sleep(200);
+      r = await report();
+      s1 = nums(r.shown);
+      if ([0, 1, 2, 3].every((i) => s1[i] - s0[i] >= 3)) break;
+    }
     ok(list(r.playing).every((x) => x === '1'), `playing=${r.playing}`);
-    for (let i = 0; i < 4; i++) ok(s1[i] - s0[i] >= 10, `tile ${'ABCD'[i]} drew ${s1[i] - s0[i]} frames in 1.3 s of play`);
+    for (let i = 0; i < 4; i++) ok(s1[i] - s0[i] >= 3, `tile ${'ABCD'[i]} drew ${s1[i] - s0[i]} frames while playing`);
     act({ action: 'pause' });
 
     ok = t('native/lockstep');

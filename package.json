@@ -2,7 +2,7 @@
   "name": "video-preview-enhanced",
   "displayName": "Video Preview Enhanced",
   "description": "Play MP4, MKV, MOV, AVI and WebM with sound in VS Code. Remote-SSH, WSL, video URLs, frame-accurate stepping, synchronized comparison and PNG export.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "publisher": "gordon-vidal",
   "license": "MIT",
   "repository": {
@@ -497,6 +497,28 @@
           "default": "frame",
           "markdownDescription": "What the two buttons beside Play do in the player. `\"frame\"` (default): step one frame back / forward. `\"jump\"`: jump back / forward by the **Ctrl+Left** / **Ctrl+Right** size (`jump.ctrl`, 1 frame or 1-30 s). **,** and **.** always step one frame. Also set in the player's settings panel (cog › Jump sizes)."
         },
+        "videoPreviewEnhanced.pictureSize": {
+          "enum": [
+            "fit",
+            "fill",
+            "stretch",
+            "actual"
+          ],
+          "enumItemLabels": [
+            "Fit",
+            "Fill",
+            "Stretch",
+            "100 %"
+          ],
+          "enumDescriptions": [
+            "The whole picture is visible; bars where its shape differs from the player's.",
+            "No bars: the picture covers the player and its edges are cropped, centred.",
+            "The picture fills the player and is distorted to do it.",
+            "One video pixel is one screen pixel; drag to move a picture larger than the player."
+          ],
+          "default": "fit",
+          "markdownDescription": "How the picture sits in the player for **new** tabs, in the player and in compare: `\"fit\"`, `\"fill\"`, `\"stretch\"` or `\"actual\"` (100 %). The button beside the keyboard shortcuts and the **Z** key change the current tab only."
+        },
         "videoPreviewEnhanced.loop": {
           "type": "boolean",
           "default": true,
@@ -606,10 +628,12 @@
     "theme": "dark"
   },
   "scripts": {
-    "test": "node test/host/run_all.js",
-    "package": "npx --yes @vscode/vsce@4.1.1 package",
-    "test:vscode": "node test/vscode/run.js --quick",
-    "perf:vscode": "node test/benchq.js node test/vscode/run.js"
+    "test": "node test/run.js unit engine vscode",
+    "test:unit": "node test/run.js unit",
+    "test:engine": "node test/run.js engine",
+    "test:vscode": "node test/run.js vscode",
+    "test:perf": "node test/run.js perf",
+    "package": "npx --yes @vscode/vsce@4.1.1 package"
   },
   "icon": "media/icon.png",
   "qna": false,

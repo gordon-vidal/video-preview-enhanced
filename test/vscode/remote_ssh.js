@@ -27,7 +27,8 @@
 // back (test/vscode/cases/remote_stream.js).
 const fs = require('fs');
 const path = require('path');
-const { HiddenCode, findCode, playClip, closeClip } = require('./run');
+const { HiddenCode, findCode, closeClip } = require('./hidden');
+const { playClip } = require('./suite');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const MEDIA = path.join(ROOT, 'test', 'media');

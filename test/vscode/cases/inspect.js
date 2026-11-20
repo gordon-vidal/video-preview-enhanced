@@ -88,7 +88,7 @@ module.exports = [{
       try {
         await P.waitFirstFrame();
         P.goto('45'); await P.expectFrame(44, 'go to 45');
-        P.key('z'); // actual size: whole mouse positions hit every pixel
+        P.key('z'); P.key('z'); P.key('z'); // Fit, Fill, Stretch, 100 %: at 100 % whole mouse positions hit every pixel
         P.key('x');
         await lib.sleep(600);
         // A pixel whose neighbourhood is flat (away from chroma edges) in ffmpeg's frame 44.
@@ -105,7 +105,9 @@ module.exports = [{
         if (!pt) return;
         const st = await P.state();
         const rc = st.canvasRect;
-        P.dom('mousemove', rc[0] + pt[0] + 0.5, rc[1] + pt[1] + 0.5);
+        // At 100 % a video pixel is a device pixel: 1 / devicePixelRatio CSS pixels (the rectangle's own size says it).
+        const cx = (v) => rc[0] + ((v[0] + 0.5) * rc[2]) / W; const cy = (v) => rc[1] + ((v[1] + 0.5) * rc[3]) / H;
+        P.dom('mousemove', cx(pt), cy(pt));
         const s = await P.waitState((x) => /RGB/.test(x.pxread), { timeout: 8000, what: 'the pixel read-out' });
         const m = /x (\d+)\s+y (\d+)[\s\S]*?RGB (\d+) (\d+) (\d+)[\s\S]*?YUV (\d+) (\d+) (\d+)/.exec(s.pxread);
         ok(m && Number(m[1]) === pt[0] && Number(m[2]) === pt[1], `position: ${s.pxread}`);
@@ -114,7 +116,7 @@ module.exports = [{
         const yuv = m ? [m[6], m[7], m[8]].map(Number) : [];
         ok(ref && rgb.every((v, i) => Math.abs(v - ref.rgb[i]) <= 3), `RGB ${rgb} vs ffmpeg ${ref && ref.rgb}`);
         ok(ref && yuv.every((v, i) => Math.abs(v - ref.yuv[i]) <= 1), `YUV ${yuv} vs ffmpeg ${ref && ref.yuv}`);
-        P.dom('click', rc[0] + pt[0] + 0.5, rc[1] + pt[1] + 0.5);
+        P.dom('click', cx(pt), cy(pt));
         await lib.sleep(500);
         ok(!(await P.state()).playing, 'a click on the inspector started playing');
       } finally { await P.close(); }
@@ -197,7 +199,7 @@ module.exports = [{
       await act.close();
       const from = vs.mark();
       // What the OS does for a vscode:// link: Code.exe itself with --open-url (the second instance hands it to the running one).
-      const runMod = require('../run');
+      const runMod = require('../hidden');
       await runMod.run('python', ['-I', require('path').join(__dirname, '..', 'hidden_launch.py'), '--wait', vs.desktop, vs.envMain, vs.code.exe,
         '--user-data-dir', vs.user, '--extensions-dir', vs.ext, '--open-url', url]).catch((e) => { r.cliError = e.message.slice(0, 200); });
       const P = new lib.Player(vs, h, file);

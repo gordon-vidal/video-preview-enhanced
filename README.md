@@ -4,7 +4,7 @@
 
 Double-click an **MP4, MKV, MOV, AVI, WebM, WMV or MXF** in Explorer. Play 1080p footage in major formats, including **HEVC, AV1 and ProRes**, without installing FFmpeg separately. Add optional FFmpeg from VS Code for GPU decoding of heavier footage.
 
-<!-- Hero GIF: open a video in a Remote-SSH workspace, step back one frame, then compare two encodes in split view. -->
+![Playing a video from a Remote-SSH workspace, stepping a frame and comparing two encodes](media/marketing/hero-remote.gif)
 
 ## Remote‑SSH, WSL and video URLs
 

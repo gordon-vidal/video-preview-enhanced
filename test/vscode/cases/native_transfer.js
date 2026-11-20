@@ -71,10 +71,9 @@ const functional = [
       vs.send({ action: 'stageSize', name: file, w: 3840, h: 2160 }); // CSS pixels: at least 2160 device pixels
       // A template literal drops a lone backslash (`\d` is `d`): the patterns below spell `\\d`.
       const t0 = Date.now();
-      const grown = await vs.waitLog(new RegExp(`${h.esc(tag)} native decode from [\\d.]+ s: 3840x2160`), { from: m0, timeout: 10000 }).catch(() => null);
-      const growMs = grown ? Date.now() - t0 : null;
+      const grown = await vs.waitLog(new RegExp(`${h.esc(tag)} native decode from [\\d.]+ s: 3840x2160`), { from: m0, timeout: 30000 }).catch(() => null);
+      const growMs = grown ? Date.now() - t0 : null; // how fast: a number for layer 4, not judged here
       if (!grown) p.push(`frames did not grow to 3840x2160 (sizes ${JSON.stringify(sizes())})`);
-      else if (growMs > 4000) p.push(`frames grew to 3840x2160 only after ${growMs} ms`);
       await h.sleep(4500);
       const fps = vs.lines.slice(m0).filter((l) => l.includes(`${tag} webview: status`)).map((l) => Number((/shownFps=([\d.]+)/.exec(l) || [])[1])).filter(Number.isFinite);
       if (!fps.slice(1).some((x) => x > 0)) p.push(`not playing after the resize (${JSON.stringify(fps)})`);
@@ -90,10 +89,9 @@ const functional = [
       const m2 = vs.mark();
       for (let i = 0; i < 3; i++) { vs.send({ action: 'wheel', name: file, deltaY: -300, ctrl: true }); await h.sleep(150); }
       const t2 = Date.now();
-      const zoomed = await vs.waitLog(new RegExp(`${h.esc(tag)} native decode from [\\d.]+ s: 3840x2160`), { from: m2, timeout: 10000 }).catch(() => null);
+      const zoomed = await vs.waitLog(new RegExp(`${h.esc(tag)} native decode from [\\d.]+ s: 3840x2160`), { from: m2, timeout: 30000 }).catch(() => null);
       const zoomMs = zoomed ? Date.now() - t2 : null;
       if (!zoomed) p.push(`zooming in did not grow the frames to 3840x2160 (sizes ${JSON.stringify(sizes())})`);
-      else if (zoomMs > 4000) p.push(`zooming in grew the frames only after ${zoomMs} ms`);
       // Back to fit (Z): smaller frames wait for the next seek, as for a smaller window.
       await h.sleep(1000);
       const m3 = vs.mark();

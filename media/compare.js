@@ -40,7 +40,7 @@
   const stage = $('stage'), canvas = $('canvas'), cellsEl = $('cells');
   const ui = {
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), tip: $('tip'), time: $('time'), now: $('now'), dur: $('dur'),
-    mute: $('mute'), volume: $('volume'), rate: $('rate'), cog: $('cog'), infoBtn: $('infoBtn'), keysBtn: $('keysBtn'), cmpBtn: $('cmpBtn'), full: $('full'),
+    mute: $('mute'), volume: $('volume'), rate: $('rate'), cog: $('cog'), infoBtn: $('infoBtn'), keysBtn: $('keysBtn'), picBtn: $('picBtn'), cmpBtn: $('cmpBtn'), full: $('full'),
     panel: $('panel'), sheet: $('sheet'), menu: $('menu'), toast: $('toast'), live: $('live'),
     overlay: $('overlay'), message: $('message'), hint: $('hint'),
   };
@@ -59,7 +59,10 @@
   const saved = vscode.getState() || {};
   const tileOr0 = (i) => (Number.isInteger(i) && i >= 0 && i < N ? i : 0);
   const prefs = { jump: { arrow: 5, shift: 1, ctrl: 'frame', ...((cfg.prefs && cfg.prefs.jump) || {}) }, stepButtons: (cfg.prefs && cfg.prefs.stepButtons) || 'frame' };
+  const Pic = VpePicture;
   const st = {
+    // The picture size, zoom and pan, one for every tile (media/picture.js): this tab starts as the setting and keeps its own choice.
+    pic: Pic.fresh(Pic.parse(saved.pic || (cfg.prefs && cfg.prefs.pictureSize))),
     // 2 videos: side by side or split (an older 'wipe' is the split, 'toggle' is gone); 3-4: the grid.
     mode: N > 2 ? 'grid' : saved.mode === 'split' || saved.mode === 'wipe' ? 'split' : 'side',
     split: typeof saved.split === 'number' ? saved.split : 0.5,
@@ -496,8 +499,8 @@
   const SLOTS = MAX_TILES;
   const DRAW_FS = `#version 300 es
     precision highp float;
-    in vec2 uv; out vec4 o; uniform sampler2D t;
-    void main() { o = vec4(texture(t, uv).rgb, 1.0); }`;
+    in vec2 uv; out vec4 o; uniform sampler2D t; uniform vec4 win;
+    void main() { o = vec4(texture(t, win.xy + uv * win.zw).rgb, 1.0); }`;
 
   class Compositor {
     constructor(cv) {
@@ -508,6 +511,7 @@
       const { u } = glProgram(gl, DRAW_FS);
       gl.uniform1i(u('t'), 0);
       gl.uniform1f(u('flip'), 1);
+      this.uwin = u('win'); // the part of the picture a rectangle shows (zoomed in, only a crop of it is on screen)
       this.tex = [];
       this.size = [];
       for (let i = 0; i < SLOTS; i++) {
@@ -531,7 +535,7 @@
     /**
      * @param {number} w canvas width (device pixels)
      * @param {number} h canvas height
-     * @param {{slot: number, x: number, y: number, w: number, h: number, clipX?: number}[]} rects device pixels from the top left
+     * @param {{slot: number, x: number, y: number, w: number, h: number, clipX?: number, win?: number[], nearest?: boolean}[]} rects device pixels from the top left
      */
     draw(w, h, rects) {
       const gl = this.gl;
@@ -545,6 +549,10 @@
         if (!this.size[r.slot][0] || r.w < 1 || r.h < 1) continue;
         const y = h - r.y - r.h;
         gl.bindTexture(gl.TEXTURE_2D, this.tex[r.slot]);
+        // Enlarged to twice or more: single pixels, as the player's nearest-neighbour zoom.
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, r.nearest ? gl.NEAREST : gl.LINEAR);
+        const w4 = r.win || [0, 0, 1, 1];
+        gl.uniform4f(this.uwin, w4[0], w4[1], w4[2], w4[3]);
         gl.viewport(Math.round(r.x), Math.round(y), Math.round(r.w), Math.round(r.h));
         if (r.clipX !== undefined) {
           gl.enable(gl.SCISSOR_TEST);
@@ -755,6 +763,22 @@
     return { x: x + (w - fw) / 2, y: y + (h - fh) / 2, w: fw, h: fh };
   };
   const GAP = 2;
+  /** Tile i's drawn size (its canvas, else the file's) and the video's own size (what 100 % shows). */
+  function tileNat(i) {
+    const p = tiles[i];
+    if (p && p.cv && p.cv.width && p.cv.height) return { w: p.cv.width, h: p.cv.height };
+    if (p && p.meta && p.meta.width && p.meta.height) return { w: p.meta.width, h: p.meta.height };
+    return { w: 1600, h: 900 };
+  }
+  const tileSrc = (i) => { const p = tiles[i]; return Pic.sourceSize(tileNat(i), p && p.meta && p.meta.width ? { w: p.meta.width, h: p.meta.height } : null); };
+  const picOpts = () => ({ enlarge: true, dpr: window.devicePixelRatio || 1 });
+  /** Tile i in a cell (x, y, w, h): `full` is the whole picture with the shared view applied, `pic` the part of it inside the cell. */
+  function placed(i, x, y, w, h) {
+    const r = Pic.rectOf(st.pic, tileNat(i), tileSrc(i), { w, h }, picOpts());
+    const full = { x: x + r.x, y: y + r.y, w: r.w, h: r.h };
+    const x0 = Math.max(x, full.x), y0 = Math.max(y, full.y), x1 = Math.min(x + w, full.x + full.w), y1 = Math.min(y + h, full.y + full.h);
+    return { full, pic: { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) } };
+  }
   /**
    * The cells in CSS pixels of the stage: {x, y, w, h, tiles: [i] or [left, right] (split) or [] (the add cell), pic}.
    */
@@ -762,18 +786,18 @@
     const W = stage.clientWidth, H = stage.clientHeight;
     if (st.mode === 'split') {
       const [l, r] = pairOrder();
-      return [{ x: 0, y: 0, w: W, h: H, tiles: [l, r], split: true, pic: fitRect(0, 0, W, H, aspectOf(l)) }];
+      return [{ x: 0, y: 0, w: W, h: H, tiles: [l, r], split: true, ...placed(l, 0, 0, W, H) }];
     }
     if (st.mode === 'side') {
       const w = (W - GAP) / 2;
-      return pairOrder().map((i, k) => ({ x: k * (w + GAP), y: 0, w, h: H, tiles: [i], pic: fitRect(k * (w + GAP), 0, w, H, aspectOf(i)) }));
+      return pairOrder().map((i, k) => ({ x: k * (w + GAP), y: 0, w, h: H, tiles: [i], ...placed(i, k * (w + GAP), 0, w, H) }));
     }
     const w = (W - GAP) / 2, h = (H - GAP) / 2;
     const out = [];
     for (let k = 0; k < MAX_TILES; k++) {
       const x = (k % 2) * (w + GAP), y = Math.floor(k / 2) * (h + GAP);
-      if (k < N) out.push({ x, y, w, h, tiles: [k], pic: fitRect(x, y, w, h, aspectOf(k)) });
-      else if (k === N) out.push({ x, y, w, h, tiles: [], add: true, pic: { x, y, w, h } });
+      if (k < N) out.push({ x, y, w, h, tiles: [k], ...placed(k, x, y, w, h) });
+      else if (k === N) out.push({ x, y, w, h, tiles: [], add: true, pic: { x, y, w, h }, full: { x, y, w, h } });
     }
     return out;
   }
@@ -842,15 +866,19 @@
       }
       if (c.split) placeDivider(d, c);
     });
+    stage.classList.toggle('pannable', cells.some(overflows));
     updateOverlays();
   }
 
+  /** True when the picture is larger than its cell on some side (it can be dragged). */
+  const overflows = (c) => !c.add && (c.full.w > c.w + 0.5 || c.full.h > c.h + 0.5);
   let overlaysKey = '';
   /** Pill and nudge content of every tile (letter, name, clock / sound, offset). */
   function updateOverlays() {
     const key = `${cellsKey}|${st.clock}|${st.sound}|${st.muted}|${st.offsets.map((o) => `${o.v}${o.unit}`).join(',')}`;
     if (key === overlaysKey) return;
     overlaysKey = key;
+    infoDirty = true;  // the new pills start empty: refill the frame numbers on the next tick even when paused
     const html = (i, side) => {
       const clockI = i === st.clock ? `<span class="ico" title="Clock">${ICONS.clock(14)}</span>` : '';
       const soundI = i === st.sound ? `<span class="ico${st.muted ? ' dim' : ''}" title="${st.muted ? 'Sound (muted)' : 'Sound'}">${ICONS.sound(14)}</span>` : '';
@@ -1006,15 +1034,22 @@
     const dpr = window.devicePixelRatio || 1;
     const W = Math.max(1, Math.round(stage.clientWidth * dpr)), H = Math.max(1, Math.round(stage.clientHeight * dpr));
     const rects = [];
-    const px = (p) => ({ x: p.x * dpr, y: p.y * dpr, w: p.w * dpr, h: p.h * dpr });
+    // The visible part of the picture, and which part of the texture that is (zoomed in, the picture is larger than its cell).
+    const px = (c, slot) => {
+      const p = c.pic, f = c.full;
+      const src = tileSrc(slot);
+      return {
+        x: p.x * dpr, y: p.y * dpr, w: p.w * dpr, h: p.h * dpr,
+        win: [(p.x - f.x) / f.w, (p.y - f.y) / f.h, p.w / f.w, p.h / f.h], nearest: src.w > 0 && (f.w * dpr) / src.w >= 2,
+      };
+    };
     for (const c of cells) {
       if (c.add) continue;
       if (c.split) {
         const [l, r] = c.tiles;
-        const p = px(c.pic);
-        if (!outs[l]) rects.push({ slot: l, ...p });
-        if (!outs[r]) rects.push({ slot: r, ...p, clipX: p.x + p.w * st.split });
-      } else if (!outs[c.tiles[0]]) rects.push({ slot: c.tiles[0], ...px(c.pic) });
+        if (!outs[l]) rects.push({ slot: l, ...px(c, l) });
+        if (!outs[r]) { const q = px(c, r); rects.push({ slot: r, ...q, clipX: q.x + q.w * st.split }); }
+      } else if (!outs[c.tiles[0]]) rects.push({ slot: c.tiles[0], ...px(c, c.tiles[0]) });
     }
     comp.draw(W, H, rects);
   }
@@ -1042,8 +1077,23 @@
       w: Math.floor(stage.clientWidth * dpr), h: Math.floor(stage.clientHeight * dpr),
       cols: st.mode === 'grid' || st.mode === 'side' ? 2 : 1,
       rows: st.mode === 'grid' ? 2 : 1,
-      rate: st.rate,
+      rate: st.rate, factor: frameFactor(),
     };
+  }
+  /**
+   * How much larger than the plain Fit a tile's picture is now (Fill, Stretch, 100 %, zoom): native frames are sized
+   * by it, so a zoomed or cropped picture still gets enough pixels (the host's tileHeights multiplies the view by it).
+   */
+  function frameFactor() {
+    if (st.pic.mode === 'fit' && Pic.plain(st.pic)) return 1;
+    let f = 0;
+    for (const c of computeCells()) {
+      if (c.add) continue;
+      const i = c.tiles[0];
+      const fit = Pic.rectOf(Pic.fresh('fit'), tileNat(i), tileSrc(i), { w: c.w, h: c.h }, picOpts());
+      if (fit.w > 0 && fit.h > 0) f = Math.max(f, c.full.w / fit.w, c.full.h / fit.h);
+    }
+    return Math.round(Math.max(0.1, Math.min(64, f || 1)) * 100) / 100;
   }
   let lastTileSize, sizeTimer;
   function requestTileSize() {
@@ -1074,6 +1124,50 @@
     refreshPanel();
     save();
   }
+  /** The picture size / zoom / pan for every tile at once. */
+  function setPic(v) {
+    st.pic = v;
+    layoutDirty = true;
+    viewDirty = true;
+    if (!clock) layoutCells();
+    updatePicBtn();
+    requestTileSize();
+    refreshPanel();
+    save();
+  }
+  function updatePicBtn() {
+    const m = st.pic.mode;
+    const nx = Pic.next(m);
+    ui.picBtn.dataset.mode = m;
+    ui.picBtn.title = `Picture size: ${Pic.name(m)} (${Pic.WORDS[m]}), all videos. Click for ${Pic.name(nx)}  Z`;
+    ui.picBtn.setAttribute('aria-label', `Picture size: ${Pic.name(m)}. Next: ${Pic.name(nx)}`);
+  }
+  /** Z and the button: the next size for all tiles; zoomed in, back to Fit. */
+  function cyclePic() {
+    setPic(Pic.cycle(st.pic));
+    toast(Pic.name(st.pic.mode));
+  }
+  /** The cell under a point (client px) and the point inside it, or null. */
+  function cellAt(clientX, clientY) {
+    const r = stage.getBoundingClientRect();
+    const x = clientX - r.left, y = clientY - r.top;
+    const c = cells.find((k) => !k.add && x >= k.x && x < k.x + k.w && y >= k.y && y < k.y + k.h);
+    return c ? { c, i: c.tiles[0], px: x - c.x, py: y - c.y } : null;
+  }
+  const cellView = (c) => ({ w: c.w, h: c.h });
+  const cellPercent = (c) => Pic.percent(c.full, tileSrc(c.tiles[0]), window.devicePixelRatio || 1);
+  const clockCell = () => cells.find((k) => !k.add && k.tiles.includes(st.clock)) || cells.find((k) => !k.add);
+  /** Zoom every tile to `zoom` of its own size, around a point of one cell (keys and the panel: the middle of the clock's cell). */
+  function zoomPic(zoom, hit) {
+    const c0 = clockCell();
+    const h = hit || (c0 ? { c: c0, i: c0.tiles[0], px: c0.w / 2, py: c0.h / 2 } : null);
+    if (!h) return;
+    setPic(Pic.zoomAt(st.pic, zoom, h.px, h.py, tileNat(h.i), tileSrc(h.i), cellView(h.c), picOpts()));
+  }
+  const picState = () => {
+    const c = clockCell();
+    return { mode: st.pic.mode, pct: c ? cellPercent(c) : null, zoomed: st.pic.zoom !== 1 };
+  };
   /** Tile i's offset: v in `unit` (default: its current unit). */
   function setOffset(i, v, unit) {
     if (!(i >= 0 && i < N) || !isFinite(v)) return;
@@ -1211,7 +1305,7 @@
   function saveNow(t) {
     clearTimeout(saveTimer);
     vscode.setState({
-      mode: st.mode, split: st.split, swap: st.swap, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
+      pic: st.pic.mode, mode: st.mode, split: st.split, swap: st.swap, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
       rate: st.rate, volume: st.volume, muted: st.muted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode,
       t: t ?? (clock ? clock.currentTime() : saved.t || 0),
     });
@@ -1350,7 +1444,7 @@
     panel: ui.panel, sheet: ui.sheet, bar: ui.bar,
     buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, keys: ui.keysBtn, cmp: ui.cmpBtn, tracks: null },
     get: () => ({
-      rate: st.rate, loop: st.loop, jump: prefs.jump, stepButtons: prefs.stepButtons, compare: { soundLabel: `from ${KEYS[st.sound]}` },
+      rate: st.rate, loop: st.loop, jump: prefs.jump, stepButtons: prefs.stepButtons, picture: picState(), compare: { soundLabel: `from ${KEYS[st.sound]}` },
       tools: [{ label: 'Compare', note: `${N} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', ui.cmpBtn) }],
       facts: factsOf(Math.min(st.infoSel, N - 1)),
       infoTabs: { keys: names.map((_, i) => KEYS[i]), sel: Math.min(st.infoSel, N - 1), pick: (i) => { st.infoSel = i; } },
@@ -1359,6 +1453,9 @@
     act: {
       loop: () => { setLoop(!st.loop); toast(st.loop ? 'Loop on' : 'Loop off'); },
       copyFrame: () => copyView(),
+      setPicture: (m) => { setPic(Pic.fresh(m)); toast(Pic.name(m)); },
+      zoomPicture: (d) => zoomPic(st.pic.zoom * (d > 0 ? Pic.STEP : 1 / Pic.STEP)),
+      resetPicture: () => setPic(Pic.fresh(st.pic.mode)),
       setRate: (r) => changeRate(r),
       stepRate: (d) => bumpRate(d),
       setJump: (key, v) => { setJump(key, v); updateStepTips(); },
@@ -1491,7 +1588,40 @@
     if (/** @type {any} */ (e.target).closest('#divider')) return;
     togglePlay();
   });
-  stage.addEventListener('wheel', (e) => { if (clock && !clock.playing) { e.preventDefault(); step(e.deltaY > 0 ? 1 : -1); } }, { passive: false });
+  // Ctrl+wheel (pinch) zooms every tile around the pointer; a drag moves them all (the same part of each picture).
+  stage.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey || !clock) return;
+    const hit = cellAt(e.clientX, e.clientY);
+    if (!hit) return;
+    e.preventDefault();
+    zoomPic(st.pic.zoom * Math.exp(-Math.max(-300, Math.min(300, e.deltaY)) * 0.002), hit);
+    const c = clockCell();
+    if (c) toast(`Zoom ${cellPercent(hit.c)}%`);
+  }, { passive: false });
+  let panDrag = null;
+  stage.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !clock || /** @type {any} */ (e.target).closest('button, #divider, .pill, .nudge, #menu')) return;
+    const hit = cellAt(e.clientX, e.clientY);
+    if (!hit || !overflows(hit.c)) return;
+    panDrag = { x: e.clientX, y: e.clientY, pic: st.pic, hit, moved: false, id: e.pointerId };
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!panDrag || e.pointerId !== panDrag.id) return;
+    const dx = e.clientX - panDrag.x, dy = e.clientY - panDrag.y;
+    if (!panDrag.moved && Math.hypot(dx, dy) < 4) return;
+    if (!panDrag.moved) { panDrag.moved = true; stage.setPointerCapture(e.pointerId); stage.classList.add('panning'); }
+    const h = panDrag.hit;
+    setPic(Pic.panBy(panDrag.pic, dx, dy, tileNat(h.i), tileSrc(h.i), cellView(h.c), picOpts()));
+  });
+  const endPan = (e) => {
+    if (!panDrag || e.pointerId !== panDrag.id) return;
+    if (panDrag.moved && e.type === 'pointerup') dragEnded = performance.now(); // not a click: no play / pause
+    panDrag = null;
+    stage.classList.remove('panning');
+  };
+  stage.addEventListener('pointerup', endPan);
+  stage.addEventListener('pointercancel', endPan);
+  stage.addEventListener('wheel', (e) => { if (e.ctrlKey) return; if (clock && !clock.playing) { e.preventDefault(); step(e.deltaY > 0 ? 1 : -1); } }, { passive: false });
 
   // ---- the bar ------------------------------------------------------------------------------------
 
@@ -1555,6 +1685,8 @@
   ui.infoBtn.title = 'About these videos  I';
   ui.infoBtn.setAttribute('aria-label', 'About these videos');
   ui.keysBtn.onclick = () => controls.toggleSheet(ui.keysBtn);
+  ui.picBtn.onclick = (e) => { e.stopPropagation(); cyclePic(); };
+  updatePicBtn();
   ui.cmpBtn.onclick = () => controls.toggle('cmp', ui.cmpBtn);
   ui.full.onclick = toggleFullscreen;
   ui.seek.addEventListener('input', () => { scrubbing = true; if (clock) { clock.seekFrame(Number(ui.seek.value)); if (clock.playing) syncPlaying(true); } });
@@ -1630,6 +1762,7 @@
       case 'f': case 'F': toggleFullscreen(); break;
       case 'i': case 'I': controls.toggle('info', ui.infoBtn); break;
       case 'x': case 'X': if (pair) swapSides(); else handled = false; break;
+      case 'z': case 'Z': if (e.shiftKey) handled = false; else cyclePic(); break;
       case '-': case '_': nudge(target(), -1); break;
       case '+': case '=': nudge(target(), 1); break;
       case 'Escape': if (INTERNAL && scanner.running) scanner.stop('Stopped'); else handled = false; break;
@@ -1892,7 +2025,7 @@
       + ` transport=${per((p) => p.frameStream ? 'stream' : p.cfg.native ? 'message' : '-')}`
       + ` gains=${per((p) => (p.gain ? p.gain.gain.value.toFixed(2) : 'x'))} audio=${per((p) => (p.info && p.info.audio ? 1 : 0))}`
       + ` offsets=${st.offsets.map((o) => `${o.v}${o.unit === 'ms' ? 'ms' : 'f'}`).join(',')} seekMax=${ui.seek.max}`
-      + ` cells=${cells.filter((c) => !c.add).length} add=${cells.some((c) => c.add)} divider=${!!cellsEl.querySelector('#divider')} panel=${controls.view() || '-'} menu=${!ui.menu.hidden}`
+      + ` picture=${st.pic.mode} zoom=${st.pic.zoom.toFixed(3)} cx=${st.pic.cx.toFixed(3)} cy=${st.pic.cy.toFixed(3)} factor=${frameFactor()} fulls=${cells.filter((c) => !c.add).map((c) => [c.full.x, c.full.y, c.full.w, c.full.h].map(Math.round).join('/')).join(';')} cells=${cells.filter((c) => !c.add).length} add=${cells.some((c) => c.add)} divider=${!!cellsEl.querySelector('#divider')} panel=${controls.view() || '-'} menu=${!ui.menu.hidden}`
       + ` rate=${st.rate} loop=${st.loop} scan=${scanner.running ? 'running' : scanner.found ? `found:${scanner.found.frame + 1}` : '-'}`);
   }
   /** What the page shows, as JSON (test hook): the bar, the open panel, the menu, the tiles' overlays. */
@@ -1919,6 +2052,10 @@
       })),
       divider: (() => { const dv = cellsEl.querySelector('#divider'); return dv ? { rect: rect(dv), value: dv.getAttribute('aria-valuenow') } : null; })(),
       stage: rect(stage), toast: ui.toast.hidden ? '' : ui.toast.textContent, live: ui.live.textContent, hover,
+      picture: {
+        ...st.pic, factor: frameFactor(), pct: picState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), pannable: stage.classList.contains('pannable'),
+        tiles: cells.filter((c) => !c.add).map((c) => ({ tiles: c.tiles, box: [c.x, c.y, c.w, c.h], full: [c.full.x, c.full.y, c.full.w, c.full.h], pic: [c.pic.x, c.pic.y, c.pic.w, c.pic.h] })),
+      },
     };
   }
   if (cfg.debug) {
@@ -1972,6 +2109,13 @@
           ev('pointerdown', from.left + from.width / 2);
           for (let k = 1; k <= 4; k++) ev('pointermove', r.left + c.pic.x + c.pic.w * (st.split + (m.x - st.split) * k / 4));
           ev('pointerup', r.left + c.pic.x + c.pic.w * m.x);
+          break;
+        }
+        case 'dom': { // a mouse / pointer / wheel event at client (x, y)
+          const target = document.elementFromPoint(m.x, m.y);
+          if (!target) { log(`dom: nothing at ${m.x},${m.y}`); break; }
+          const init = { bubbles: true, cancelable: true, clientX: m.x, clientY: m.y, button: m.button || 0, ctrlKey: !!m.ctrl, deltaY: m.deltaY || 0, pointerId: 1, isPrimary: true };
+          target.dispatchEvent(new (/^wheel/.test(m.ev) ? WheelEvent : /^pointer/.test(m.ev) ? PointerEvent : MouseEvent)(m.ev, init));
           break;
         }
         case 'scan': if (m.thresh) st.thresh = Number(m.thresh); scanner.start(); break;

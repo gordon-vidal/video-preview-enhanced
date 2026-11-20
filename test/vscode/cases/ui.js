@@ -53,9 +53,9 @@ module.exports = [{
       const want = { play: 'Play', prev: 'Previous frame', next: 'Next frame', full: 'Fullscreen', infoBtn: 'About this video', cog: 'Settings', keysBtn: 'Keyboard shortcuts', seek: 'Position', volume: 'Volume', canvas: 'Video' };
       for (const [k, v] of Object.entries(want)) ok(c[k] && c[k]['aria-label'] === v, `#${k}: aria-label ${JSON.stringify(c[k] && c[k]['aria-label'])}, expected ${v}`);
       ok(/^(Mute|Unmute)$/.test(c.mute['aria-label']) && /^Speed \d/.test(c.rate['aria-label']) && /^Subtitles/.test(c.tracks['aria-label']) && /^Position .*frame \d+/.test(c.time['aria-label']), `mute / rate / tracks / time: ${JSON.stringify([c.mute, c.rate, c.tracks, c.time])}`);
-      for (const k of ['mute', 'pip']) ok(c[k] && /^(true|false)$/.test(c[k]['aria-pressed']), `#${k}: no aria-pressed (${JSON.stringify(c[k])})`);
+      ok(c.mute && /^(true|false)$/.test(c.mute['aria-pressed']), `#mute: no aria-pressed (${JSON.stringify(c.mute)})`);
       for (const k of ['tracks', 'infoBtn', 'rate', 'cog', 'keysBtn']) ok(c[k]['aria-expanded'] === 'false', `#${k}: ${JSON.stringify(c[k])}`);
-      for (const k of ['modeBtn', 'toolsBtn', 'loop']) ok(!c[k], `#${k} is still on the page`);
+      for (const k of ['modeBtn', 'toolsBtn', 'loop', 'pip']) ok(!c[k], `#${k} is still on the page`);
       ok(/^\d+:\d\d\.\d{3} of \d+:\d\d\.\d{3}, frame \d+$/.test(c.seek['aria-valuetext'] || ''), `seek aria-valuetext ${JSON.stringify(c.seek['aria-valuetext'])}`);
       ok(s.live && s.live.role === 'status' && s.live.polite === 'polite', `live region ${JSON.stringify(s.live)}`);
       const st = await P.state();

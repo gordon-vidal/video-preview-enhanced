@@ -8,7 +8,7 @@ Find diff button are gone from the UI.
 
 | Part | File |
 |---|---|
-| The bar's markup, shared by the player and compare (`barHtml({ compare })`: no CC, no PiP, plus `#cmpBtn`) | `src/bar.js` |
+| The bar's markup, shared by the player and compare (`barHtml({ compare })`: no CC, plus `#cmpBtn`) | `src/bar.js` |
 | The compare page (stage, cells layer, bar, panel, sheet, tile menu) and the host side (files, leave, replace, prefs) | `src/compare.js` |
 | Engines, lockstep, compositor, cells / pills / nudges / divider, the Compare panel pages, tile menu, keys, test hook | `media/compare.js` |
 | Panels: compare's ⚙ page variant (`s.compare`), extra pages (`env.views`), About tabs (`s.infoTabs`), compare key groups | `media/controls.js` |
@@ -45,12 +45,36 @@ Find diff button are gone from the UI.
 - **About (ⓘ / I):** "About these videos" with a tab per video (the player's facts for that tile).
 - **Keys:** the player's (Space/K, , ., arrows with the jump sizes, J/L, Home/End, Shift+< >, ↑↓, M, R, F, I, ?,
   Esc, Ctrl+C copies the view) plus − / + (the video under the pointer, else the last chosen) and X (swap, 2
-  videos). Gone: S (sync panel), 1–3 and T (views), N (find), I as metrics, Z (actual size).
+  videos). Gone: S (sync panel), 1–3 and T (views), N (find), I as metrics. Z is back as the picture size for all videos (docs/notes/ui-simple.md "Picture size").
 - **Hidden for now (2026-11-20):** the "A vs B" section (PSNR / SSIM switch, Find first difference), the
   seek-bar amber band, the paused metrics readout and the 3–4 video note. The code stays: `pairMetrics`,
   `computeMetrics`, `ssim`, the scanner (hidden engine pair). Debug builds (`VPE_LOG`) still compute and log the
   paused pair's metrics (`metrics frameA=… psnrY=…`, used by `case/compare_metrics`); the scanner runs only from
   `window.vpeCompare.scanner` or the test hook (`scan`).
+
+## Starting a compare (2026-11-20)
+
+Added without changing the player's look except a drop hint (a dashed frame with "Drop to compare").
+
+- **Key D** in the player (not in compare) posts `comparePick`; the host (`src/compare.js` `comparePick`, rows in
+  `src/comparepick.js`) shows a quick pick: "Same folder" (`workspace.fs.readDirectory`), "Workspace"
+  (`workspace.findFiles`, 300 at most), then **Browse…** which runs Compare With… (the open dialog, several files).
+  Recently compared videos (globalState `videoPreviewEnhanced.compareRecent`, 20) come first in each part, then natural
+  name order. Picking one opens compare in the player's tab, at its position. Why D: a free plain letter, like the
+  player's other keys; Ctrl+Alt+C is AltGr on many layouts and the player ignores Ctrl/Alt chords on purpose
+  (`docs/keys.md`, `case/keyconflicts`). No default `keybindings` entry: the page already gets the key, and VS Code
+  forwards every webview key to the workbench, so a second binding would fire twice. Users can still bind
+  `videoPreviewEnhanced.compareWith` themselves.
+- **Drop:** `dragenter` / `dragover` / `drop` on the player page read `text/uri-list`, `application/vnd.code.uri-list`
+  and `resourceurls`; the host keeps video files (`droppedVideos`), at most 3, and opens compare. VS Code shows its own
+  "open in editor" drop overlay over webviews and passes a drop to the page only with Shift held (docs say nothing about
+  it; this is observed VS Code behaviour). So the hint only appears when the page does get the drag, which is when Shift
+  is down. Not verified with a real Explorer drag (the hidden-desktop runner can't drag): the layer-3 case sends a
+  synthetic drop with the same data types. If a VS Code version omits the URI lists, the player toasts "Drag a video
+  from the Explorer".
+- **Left out:** Explorer "Select for Compare" / "Compare with Selected" (a stateful two-step; multi-select
+  Compare / Play Together and "Compare With…" already cover it); `DocumentDropEditProvider` (text editors only);
+  dropping onto the compare page to add a video (Add video… exists).
 
 ## Deviations from the mock-up
 
@@ -61,9 +85,9 @@ Find diff button are gone from the UI.
 
 ## Tests
 
-- Host: `test/host/a11y_test.js` (compare markup: the player's bar without CC / PiP, `#cmpBtn`, scripts),
+- Host: `test/host/a11y_test.js` (compare markup: the player's bar without CC, `#cmpBtn`, scripts),
   `ctxmenu_test.js` (Compare With… in the menu, `vpeFile`), `compare_test.js` (session lifecycle).
-- Real VS Code: `case/compare_ui` (enter in place from the player at its position, tabs; the bar; the Compare
+- Real VS Code: `comparepick_test.js` (quick pick rows, recent list, drop parsing, commands), `case/compare_ui` (key D and a drop start compare; enter in place from the player at its position, tabs; the bar; the Compare
   panel and ⚙ › Tools › Compare; a video's page: offset frames / ms / Reset, clock and sound switches; pills,
   nudges, − / + under the pointer; split, divider drag, X; tile menu; 3 videos with the Add cell; Remove; Leave
   compare back to the player at the kept moment), `case/multiview` (grid, lockstep, offsets, clock, sound, remove,

@@ -10,6 +10,9 @@
 let vscode = null;
 /** Open panels, for the test hook and setting changes (set by registerCompare). */
 let compareSessions = null;
+/** Tests: answers the next quick pick (items) without showing it; set through setPickHook. */
+let testPick = null;
+const setPickHook = (fn) => { testPick = fn; };
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -18,6 +21,7 @@ const { NativeDecoder } = require('./native');
 const { budgets } = require('../media/membudget');
 const frameserver = require('./frameserver');
 const { barHtml } = require('./bar');
+const { pickRows, pushRecent, droppedVideos } = require('./comparepick');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
 
 const MAX_BLOCK = 8 * 1024 * 1024;
@@ -70,6 +74,7 @@ ${barHtml({ compare: true })}
 <script nonce="${nonce}" src="${uri('framestream.js')}"></script>
 <script nonce="${nonce}" src="${uri('hdr.js')}"></script>
 <script nonce="${nonce}" src="${uri('engine.js')}"></script>
+<script nonce="${nonce}" src="${uri('picture.js')}"></script>
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
 <script nonce="${nonce}" src="${uri('compare.js')}"></script>
@@ -254,8 +259,10 @@ class CompareSession {
   /** Fit the composited view to the stage, then scale all native outputs together to fit the link. */
   tileHeights() {
     const { w, h, cols, rows, rate, actual } = this.tile || {};
-    let tw = !actual && w > 0 ? w / (cols === 2 ? 2 : 1) : Infinity;
-    let th = !actual && h > 0 ? h / (rows === 2 ? 2 : 1) : Infinity;
+    // Fill, Stretch, 100 % and zoom show a picture larger (or smaller) than the plain Fit: the page says by how much (media/compare.js frameFactor).
+    const factor = Number(this.tile && this.tile.factor) > 0 ? Math.max(0.1, Math.min(64, Number(this.tile.factor))) : 1;
+    let tw = !actual && w > 0 ? (w / (cols === 2 ? 2 : 1)) * factor : Infinity;
+    let th = !actual && h > 0 ? (h / (rows === 2 ? 2 : 1)) * factor : Infinity;
     const rotated = (i) => this.rotation[i] % 180 !== 0;
     const first = this.decisions[0]?.probed?.video;
     if (first && first.width && first.height) {
@@ -328,7 +335,7 @@ class CompareSession {
   /** "Replace video…": tile i shows another file (picked in VS Code's open dialog). */
   async replaceVideo(i) {
     if (!Number.isInteger(i) || i < 0 || i >= this.uris.length || !this.pick) return;
-    const picked = await this.pick(`Replace ${TILE_KEYS[i]} (${this.names[i]})`, vscode.Uri.joinPath(this.uris[i], '..'), false);
+    const picked = await this.pick(`Replace ${TILE_KEYS[i]}`, vscode.Uri.joinPath(this.uris[i], '..'), false);
     if (!picked || !picked.length || this.disposed) return;
     this.replaceUri(i, picked[0]);
   }
@@ -404,6 +411,7 @@ function registerCompare(context, deps) {
       }
     }
     deps.log(`compare: ${list.map((u) => u.fsPath).join(' <-> ')}`);
+    if (deps.recent) for (const u of [...list].reverse()) deps.recent.set(pushRecent(deps.recent.get(), u.toString()));
     let transport = deps.nativeTransport ? deps.nativeTransport() : 'message';
     let frameSource;
     if (transport !== 'message') {
@@ -439,7 +447,49 @@ function registerCompare(context, deps) {
     const all = [...deps.sessions].filter((s) => s.panel && !s.sequence && !s.url && s.uri && s.uri.toString() === key);
     return all.find((s) => s.panel.active) || all.find((s) => s.panel.visible) || null;
   };
+  /** The quick pick's rows for video `a`: its folder, the workspace, Browse… (src/comparepick.js). */
+  const pickItems = async (a) => {
+    const folderUri = vscode.Uri.joinPath(a, '..');
+    let folder = [];
+    try { folder = (await vscode.workspace.fs.readDirectory(folderUri)).filter(([, ty]) => ty !== 2).map(([n]) => vscode.Uri.joinPath(folderUri, n).toString()); } catch { /* unreadable folder: workspace only */ }
+    let workspace = [];
+    try {
+      const found = vscode.workspace.findFiles ? await vscode.workspace.findFiles('**/*.{avi,mkv,mov,wmv,flv,mpg,mpeg,m2ts,mts,3gp,ogv,m4v,vob,divx,asf,mxf,y4m,mp4,webm}', '**/node_modules/**', 300) : [];
+      workspace = found.map((u) => u.toString());
+    } catch { /* no workspace */ }
+    return pickRows({ current: a.toString(), folder, workspace, recent: deps.recent ? deps.recent.get() : [] }).map((r) => (
+      r.kind === 'sep' ? { kind: vscode.QuickPickItemKind ? vscode.QuickPickItemKind.Separator : -1, label: r.label }
+        : { label: r.kind === 'browse' ? '$(folder-opened) Browse…' : r.label, browse: r.kind === 'browse', uri: r.uri,
+          description: r.uri && !folder.includes(r.uri) ? vscode.workspace.asRelativePath ? vscode.workspace.asRelativePath(vscode.Uri.parse(r.uri), false) : '' : '' }));
+  };
+  /** Key D in the player: quick pick of other videos (same folder first), then compare in this tab's place. */
+  const comparePick = async (uri, opts) => {
+    const a = (uri instanceof vscode.Uri ? uri : null) || activePlayerUri();
+    if (!a) return undefined;
+    const items = await pickItems(a);
+    const chosen = await (testPick ? testPick(items) : vscode.window.showQuickPick(items, { placeHolder: `Compare ${path.basename(a.fsPath)} with…`, matchOnDescription: true }));
+    if (!chosen) return undefined;
+    if (chosen.browse) return vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', a, opts);
+    const b = vscode.Uri.parse(chosen.uri);
+    const from = playerOf(a);
+    const t = opts && Number.isFinite(opts.t) ? opts.t : from && from.pos ? from.pos.t : 0;
+    return open([a, b], { from, t });
+  };
+  /** Videos dropped on the player (uri strings from the page): compare takes the player's place. */
+  const compareDrop = async (uri, dropped, opts) => {
+    const a = uri instanceof vscode.Uri ? uri : null;
+    if (!a) return undefined;
+    const files = droppedVideos(dropped).map((s) => { try { return vscode.Uri.parse(s); } catch { return null; } })
+      .filter((u) => u && FS_SCHEMES.has(u.scheme) && u.toString() !== a.toString());
+    if (!files.length) return undefined;
+    if (files.length > MAX_TILES - 1) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${MAX_TILES} videos; showing the first ${MAX_TILES}.`);
+    const from = playerOf(a);
+    const t = opts && Number.isFinite(opts.t) ? opts.t : from && from.pos ? from.pos.t : 0;
+    return open([a, ...files.slice(0, MAX_TILES - 1)], { from, t });
+  };
   context.subscriptions.push(
+    vscode.commands.registerCommand('videoPreviewEnhanced.comparePick', comparePick),
+    vscode.commands.registerCommand('videoPreviewEnhanced.compareDrop', compareDrop),
     vscode.commands.registerCommand('videoPreviewEnhanced.compare', async (uri, uris, opts) => {
       let list = Array.isArray(uris) && uris.length ? uris : uri ? [uri] : [];
       list = list.filter((u) => VIDEO_EXT.test(u.path));
@@ -467,4 +517,4 @@ function registerCompare(context, deps) {
   );
 }
 
-module.exports = { registerCompare, compareHtml, CompareSession, fileOfKey, MAX_TILES };
+module.exports = { registerCompare, setPickHook, compareHtml, CompareSession, fileOfKey, MAX_TILES };

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- New: **picture size.** A button beside the keyboard shortcuts (and the **Z** key) cycles Fit, Fill (no bars, edges cropped), Stretch and 100 % (one video pixel per screen pixel, drag to move); ⚙ › Picture size picks one and zooms; Ctrl+wheel zoom works in every size. In compare every video follows together, with zoom and pan in lockstep. Setting `videoPreviewEnhanced.pictureSize` for new tabs. Z used to jump straight to 100 %: it now cycles, and goes back to Fit first when zoomed in.
+- New: start a compare faster. Press **D** in the player for a quick pick of other videos (same folder first, then the workspace, recently compared first, **Browse…** for the open dialog), or hold **Shift** and drop a video from the Explorer onto the player.
+- Fixed: the frame count is known right after opening an MP4/MOV (from the container), so End works at once; short files without a frame rate in the container (10-frame MXF) now get one from their timestamps, so the frame counter and stepping work.
+- Removed picture-in-picture for now (it was not working): the bar button and the `P` key are gone. `Shift+P` still opens the previous video in the folder.
+
+## 0.7.1 (2026-11-20)
+
+First release on the VS Code Marketplace (publisher `gordon-vidal`).
+
+- Fixed: in Compare, the tile labels show each video's frame number while paused.
+- Fixed (Linux): ffmpeg processes stop reliably when a video pauses, its tab is hidden or a loop restarts; no leftover ffmpeg keeps running.
+- New Marketplace and GitHub page with a short tour GIF; the full reference (keys, settings, formats, remote, ffmpeg, FAQ) moved to the `docs/` folder on GitHub.
+
 ## 0.7.0 (2026-11-20)
 
 The UI overhaul release: a new player, panels for everything, previews on the seek bar, less CPU on 4K, and a smoother first start.

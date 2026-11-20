@@ -24,7 +24,7 @@ const remoteff = require('./remoteff'); // ffmpeg downloaded on the remote host,
 const proxy = require('./proxy');
 const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
-const { registerCompare } = require('./compare'); // compare mode (src/compare.js)
+const { registerCompare, setPickHook } = require('./compare'); // compare mode (src/compare.js)
 const { barHtml } = require('./bar'); // the bar's markup, shared with compare
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
@@ -71,7 +71,7 @@ const debugPool = (() => { try { return logFile && process.env.VPE_POOL ? JSON.p
 const DEBUG_COMMANDS = new Set([
   'videoPreviewEnhanced.openWith', 'videoPreviewEnhanced.playSequence', 'videoPreviewEnhanced.compareWith',
   'videoPreviewEnhanced.showLog', 'workbench.action.closeActiveEditor', 'workbench.action.closeAllEditors', 'workbench.action.reloadWindow',
-  'notifications.clearAll', 'videoPreviewEnhanced.exportRange',
+  'notifications.clearAll', 'videoPreviewEnhanced.exportRange', 'workbench.files.action.refreshFilesExplorer',
 ]);
 const sessions = new Set();
 const compareSessions = new Set(); // open compare panels (src/compare.js)
@@ -103,7 +103,7 @@ const PREFS = {
 };
 function prefsOf(c) {
   const v = (k) => (PREFS[k].values.includes(c.jumps[k]) ? c.jumps[k] : PREFS[k].dflt);
-  return { jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl') }, stepButtons: v('stepButtons') };
+  return { jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl') }, stepButtons: v('stepButtons'), pictureSize: c.pictureSize };
 }
 
 const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
@@ -160,6 +160,7 @@ function config() {
     gpuDecoding: c.get('gpuDecoding', true),
     remoteStream: c.get('remoteStream', 'auto'),
     hdrOutput: c.get('hdrOutput', 'auto') === 'off' ? 'off' : 'auto',
+    pictureSize: ['fit', 'fill', 'stretch', 'actual'].includes(c.get('pictureSize')) ? c.get('pictureSize') : 'fit',
   };
 }
 
@@ -1124,6 +1125,8 @@ function activate(context) {
   // ---- compare mode (src/compare.js): Explorer "Compare Videos", "Compare With…" ----
   registerCompare(context, {
     vscode, log, sessions, compareSessions, nativeTransport, nativeQueue,
+    // Videos compared lately (uri strings): the quick pick on key D lists them first.
+    recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
     // Compare's bar and panels are the player's: the same jump sizes, written the same way.
     prefs: () => prefsOf(config()),
     setPref: (key, value) => (PREFS[key] && PREFS[key].values.includes(value) ? setSetting(key, value, prefTarget(key)) : undefined),
@@ -1193,7 +1196,36 @@ function activate(context) {
               vscode.commands.executeCommand('videoPreviewEnhanced.compare', list[0], list);
               continue;
             }
+            if (c.pickCompare) { // tests: the next compare quick pick logs its rows and picks one (label part, or Browse…)
+              setPickHook(async (items) => {
+                setPickHook(null);
+                log(`debug comparepick ${JSON.stringify(items.map((i) => i.label))}`);
+                return items.find((i) => i.uri && i.label.includes(c.pickCompare)) || undefined;
+              });
+              continue;
+            }
             if (c.compareAdd) { for (const s of compareSessions) s.addUris(c.compareAdd.map((f) => vscode.Uri.file(f))); continue; }
+            // Scenario tests (test/vscode/scenarios.js) run many checks in one VS Code: between them they change
+            // user settings, the extension host's environment (the VPE_* test switches, PATH) and clear the stored
+            // state, as a fresh profile would have. Each answers "debug done <id>" once applied.
+            if (c.settings) {
+              const cfg = vscode.workspace.getConfiguration();
+              Promise.all(Object.entries(c.settings).map(([k, v]) => cfg.update(k, v === null ? undefined : v, vscode.ConfigurationTarget.Global)))
+                .then(() => log(`debug done ${c.id} settings`), (e) => log(`debug done ${c.id} settings failed: ${e && e.message || e}`));
+              continue;
+            }
+            if (c.env) {
+              for (const [k, v] of Object.entries(c.env)) { if (v === null) delete process.env[k]; else process.env[k] = String(v); }
+              toolsPromise = null; // PATH may have gained or lost ffmpeg
+              log(`debug done ${c.id} env`);
+              continue;
+            }
+            if (c.resetState) {
+              const keys = context.globalState.keys();
+              Promise.all(keys.map((k) => context.globalState.update(k, undefined)))
+                .then(() => log(`debug done ${c.id} resetState ${keys.length}`), (e) => log(`debug done ${c.id} resetState failed: ${e && e.message || e}`));
+              continue;
+            }
             if (c.tabs) { // the editor tabs, for tests (compare takes a player's place)
               const tabs = vscode.window.tabGroups.all.map((g) => g.tabs.map((t) => ({ label: t.label, active: t.isActive, viewType: t.input && t.input.viewType ? String(t.input.viewType) : '' })));
               log(`tabs ${JSON.stringify(tabs)}`);
@@ -1650,6 +1682,7 @@ ${barHtml()}
 <script nonce="${nonce}" src="${uri('framestream.js')}"></script>
 <script nonce="${nonce}" src="${uri('hdr.js')}"></script>
 <script nonce="${nonce}" src="${uri('engine.js')}"></script>
+<script nonce="${nonce}" src="${uri('picture.js')}"></script>
 <script nonce="${nonce}" src="${uri('inspect.js')}"></script>
 <script nonce="${nonce}" src="${uri('scopes.js')}"></script>
 <script nonce="${nonce}" src="${uri('subtitles.js')}"></script>
@@ -1657,6 +1690,8 @@ ${barHtml()}
 <script nonce="${nonce}" src="${uri('xray.js')}"></script>
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
+<script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
+<script nonce="${nonce}" src="${uri('abloop.js')}"></script>
 <script nonce="${nonce}" src="${uri('player.js')}"></script>
 </body></html>`;
   }
@@ -1702,6 +1737,12 @@ ${barHtml()}
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         // Compare takes this tab's place and starts where the player is (src/compare.js).
         return vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', this.uri, { t: Number(m.t) || 0 });
+      case 'comparePick': // key D: a quick pick of other videos
+        if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
+        return vscode.commands.executeCommand('videoPreviewEnhanced.comparePick', this.uri, { t: Number(m.t) || 0 });
+      case 'compareDrop': // videos dropped on the player (docs/notes/compare-ui.md "Starting a compare")
+        if (this.url || this.sequence || !Array.isArray(m.uris)) return undefined;
+        return vscode.commands.executeCommand('videoPreviewEnhanced.compareDrop', this.uri, m.uris.filter((x) => typeof x === 'string').slice(0, 20), { t: Number(m.t) || 0 });
       // The ⚙ panel's Quality page (HLS): 'auto' or a variant index of this stream (checked in setQuality).
       case 'quality': return this.url ? this.setQuality(m.pick === 'auto' ? 'auto' : Number(m.pick)) : undefined;
       case 'openUrl': { // the ⚙ panel's "Open video URL…": only opens the input box; the URL comes from there

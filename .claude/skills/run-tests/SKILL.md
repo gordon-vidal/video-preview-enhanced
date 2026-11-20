@@ -12,21 +12,23 @@ Read them if a command below fails; if they disagree with this file, they win an
 
 | Changed | Run |
 |---|---|
-| `src/*.js` pure logic (decide, probe, sequence, urlsource ...) | the matching `node test/host/<name>_test.js`, then `npm test` |
-| `media/*.js` logic (engine, subtitles, timestretch, inspect, hdr ...) | `npm test`; `node test/subtitles/run.js`, `node test/timestretch/run.js`, `node test/inspect/inspect_test.js` as touched |
-| Decoder behaviour, seeking, formats | `npm test` (includes `test/engine/unit.js`) plus scenario `seeking` / `playback` |
+| `src/*.js` pure logic (decide, probe, sequence, urlsource ...) | the matching `node test/host/<name>_test.js`, then `node test/run.js unit engine` |
+| `media/*.js` logic (engine, subtitles, timestretch, inspect, hdr ...) | `node test/run.js unit engine --changed` |
+| Decoder behaviour, seeking, formats | `node test/run.js engine` plus scenario `seeking` / `playback` |
 | Player UI, panels, compare, scopes | the scenario(s) that cover the file, see the table in `test/vscode/README.md` |
 | Anything user-visible before a merge | layers 1-3 (about 10 minutes) |
 
 ## 2. Commands
 
 ```
-npm test                                         # layers 1-2, all cores, runs test/host/run_all.js
+node test/run.js unit engine                     # layers 1-2 (what CI runs), all cores
+node test/run.js unit engine --changed           # only what the changed files need
 node test/host/<name>_test.js                    # one failing host test
 node test/vscode/get_code.js                     # once: pinned portable VS Code into test/vscode/.code
-node test/vscode/run.js --quick                  # layer 3 functional check, about 1 minute
-node test/vscode/run.js --grep '^case/seeking'   # one scenario; --sub '<result>' narrows further
-node test/benchq.js node test/vscode/run.js      # layer 4 only: performance, holds the lock, run alone
+node test/run.js vscode --changed                # layer 3 scenarios for the changed files
+node test/run.js vscode --grep seeking           # one scenario; see test/vscode/README.md
+npm test                                         # layers 1-3, before a merge
+node test/run.js perf                            # layer 4 only: holds the lock, run alone
 ```
 
 ## 3. Workflow

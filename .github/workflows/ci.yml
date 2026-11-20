@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: git lfs ls-files --long | cut -d' ' -f1 | sort > .lfs-ids
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .git/lfs
           key: lfs-${{ runner.os }}-${{ hashFiles('.lfs-ids') }}
@@ -55,13 +55,24 @@ jobs:
 
       # The host tests compare against ffmpeg / ffprobe; on Windows run_all.js uses Python 3
       # (preinstalled on the runner) for a job object per test.
+      # The version goes into the log: the runner images move to newer ffmpeg versions by themselves.
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -hide_banner -version | head -n 1
 
+      # Chocolatey's server sometimes answers 504; choco then installs nothing and still exits 0, and the
+      # tests fail later in confusing ways ("ffmpeg on PATH"). So: retry, and fail here if ffmpeg is missing.
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 4 -and -not (Get-Command ffmpeg -ErrorAction SilentlyContinue); $i++) {
+            if ($i -gt 1) { Write-Host "ffmpeg not installed, try $i of 4"; Start-Sleep -Seconds (20 * $i) }
+            choco install ffmpeg -y --no-progress
+          }
+          ffmpeg -hide_banner -version | Select-Object -First 1
 
       - name: Install
         run: npm ci
@@ -72,14 +83,8 @@ jobs:
           git ls-files 'src/*.js' 'media/*.js' 'test/**/*.js' 'build/**/*.js' \
             | xargs -n 1 node --check
 
-      - name: Host and engine tests
-        run: node test/host/run_all.js
-
-      - name: Other Node unit tests
-        run: |
-          node test/subtitles/run.js
-          node test/timestretch/run.js
-          node test/inspect/inspect_test.js
+      - name: Layers 1-2 (unit and engine)
+        run: node test/run.js unit engine
 
   # Seconds-long repository hygiene checks (no dependencies): no personal data in tracked files,
   # no broken relative Markdown links. Also runnable locally: node tools/check-personal-data.js
@@ -98,6 +103,29 @@ jobs:
         run: node tools/check-personal-data.js
       - name: Markdown links
         run: node tools/check-links.js
+
+  # Secret scan of the full history with the gitleaks CLI at a pinned version and SHA-256 (from the
+  # release's checksums file). Not gitleaks-action: it needs a licence key for organisation repos.
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: false
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/gl" && tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP/gl" gitleaks
+      - name: Scan
+        run: '"$RUNNER_TEMP/gl/gitleaks" detect --source . --redact --no-banner --verbose'
 
   package:
     name: Package (${{ matrix.os }})

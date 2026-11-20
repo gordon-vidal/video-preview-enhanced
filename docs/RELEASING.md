@@ -2,18 +2,22 @@
 
 Two kinds of release. Only maintainers make them; a public release is the project owner's decision.
 
+- **Public release (automatic):** bumping `version` in `package.json` on `main` releases it. The
+  **Publish** workflow (`.github/workflows/publish.yml`) runs on every push to `main` that changes
+  `package.json`; if tag `v<version>` does not exist yet, it tests, packages, publishes to the VS
+  Marketplace through Trusted Publishing, optionally to Open VSX, then creates the tag and the
+  GitHub Release (CHANGELOG section as notes, VSIX attached). Merging a version bump **is** the
+  decision to publish. A push that leaves the version unchanged finds the tag and does nothing.
 - **Internal release:** a tagged commit and a **draft** GitHub Release with the VSIX attached, for
-  testing. Nothing goes to a marketplace.
-- **Public release:** the **Publish** workflow (`.github/workflows/publish.yml`), started by hand.
-  It publishes to the VS Marketplace through Trusted Publishing, optionally to Open VSX, and
-  attaches the VSIX to the GitHub Release. It never runs on tags, so tagging an internal release
-  publishes nothing.
+  testing. Nothing goes to a marketplace. Never bump `version` on `main` for it.
 
 ## Prepare (both kinds)
 
 1. On `main`, everything merged and CI green. Bump `version` in `package.json` (and the two
    `version` fields of `package-lock.json`) and move the CHANGELOG **Unreleased** entries under a
-   `## <version> (<date>)` heading. The publish workflow refuses a version without that heading.
+   `## <version> (<date>)` heading. The publish workflow fails on a new version without that section.
+   Do the bump and the CHANGELOG section in **one commit / pull request**: merging it to `main` is
+   the release.
 2. Tests: layers 1-3 of [TESTING.md](TESTING.md) locally, and layer 4 (performance) against the
    last release's numbers. Only real VS Code counts for the user-facing claims: re-check the numbers
    in the README and `docs/performance.md` against the run.
@@ -62,18 +66,30 @@ Push the tag only when you want it on GitHub (a draft release can also create it
 
 ### Steps
 
-1. Prepare as above, push `main`.
-2. GitHub > **Actions** > **Publish** > **Run workflow** on `main`. Inputs: the version (must equal
-   `package.json`), `publish` as confirmation, pre-release yes/no, Open VSX yes/no.
-3. The workflow: checks the inputs, runs the Node tests, packages the VSIX once, publishes that VSIX
-   to the Marketplace (`vsce publish --oidc --packagePath`), then to Open VSX (`ovsx publish`, if
-   `OVSX_PAT` is set) and attaches it to the GitHub Release `v<version>` (an existing draft release is
-   updated and published; otherwise one is created with the CHANGELOG section as notes).
+1. Prepare as above (tests, package, clean-profile check) on a branch; bump `version` and add the
+   CHANGELOG section in the same commit; open a PR.
+2. Merge to `main`. The Publish workflow starts by itself (Actions > Publish).
+3. The workflow: **check** reads `version` and looks for tag `v<version>` (exists: stops with a
+   notice; missing: continues, and fails if CHANGELOG has no section for it); **package** runs the
+   same checks as CI (syntax, hygiene, host and Node tests; LFS test videos fetched) and builds the
+   VSIX once; **marketplace** publishes that VSIX (`vsce publish --oidc --packagePath`); **open-vsx**
+   publishes it too if `OVSX_PAT` is set; **github-release** then creates the tag `v<version>` on the
+   merged commit and the release `v<version>` with the CHANGELOG section as notes and the VSIX attached
+   (an existing draft release for the tag is updated and published instead). If the Marketplace
+   publish fails, no tag or release is created; fix the cause and re-run the failed jobs, or run the
+   workflow by hand. Runs are serialised (`concurrency: publish`) and only run from `main`.
 4. Install from the Marketplace in a clean profile and check the page: icon, banner, images, links.
    Verification of a new publisher by Microsoft can take a day.
 
+**Manual fallback:** Actions > **Publish** > **Run workflow** on `main` runs the same flow for the
+current `package.json` version (inputs: pre-release yes/no, Open VSX yes/no, `dry_run`). A dry run
+checks, tests and packages only: nothing is published, no tag or release is made. Pre-releases are
+only made this way; an automatic run is always a normal release.
+
 If the Marketplace step fails after the VSIX was built, re-run the failed jobs; the OIDC token
 exchange is single use and the credential lasts 15 minutes, which is why packaging is a separate job.
+An Open VSX failure does not block the tag and release; publish to Open VSX by hand
+(`npx ovsx publish <vsix> -p <token>`) in that case.
 
 ## Screenshots
 

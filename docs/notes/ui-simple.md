@@ -49,6 +49,39 @@ streamlined right-click menu). This branch builds it. Simple mode is the player 
 - **Extension settings** (last row of ⚙): the page posts `openSettings`; the host runs
   `workbench.action.openSettings` with `@ext:gordon-vidal.video-preview-enhanced`.
 
+## Picture size (2026-11-20)
+
+Approved by the maintainer. Pure maths in `media/picture.js` (`VpePicture`, tested by `test/host/picture_test.js`): a view is
+`{ mode, zoom, cx, cy }`, the mode being Fit, Fill, Stretch or 100 %, the zoom a factor on the mode's own size and the pan
+the picture point (0..1) at the middle of the area. A point of the picture (not pixels) is what lets compare apply one view
+to every tile.
+
+| Part | Where |
+|---|---|
+| Bar button `#picBtn` (four icons, `data-mode` picks one; label "Picture size: Fit. Next: Fill", `aria-keyshortcuts` Z) | `src/bar.js`, `media/player.css` |
+| Placement (CSS transform on whole device pixels), drag-to-pan, Ctrl+wheel, +/-, native frame size | `media/inspect.js` |
+| ⚙ page "Picture size" (radio rows, zoom row − value + Reset), sheet rows | `media/controls.js` |
+| Compare: one view for every tile, texture window in the compositor, `tileSize.factor` to the host | `media/compare.js`, `src/compare.js` `tileHeights` |
+| Setting `videoPreviewEnhanced.pictureSize` (new tabs; sent in `prefs`) | `package.json`, `src/extension.js` |
+
+- **Keys:** **Z** cycles Fit → Fill → Stretch → 100 % → Fit. Zoomed in or panned, Z goes back to Fit first (what Z did before:
+  "back to fit"). Before, Z jumped straight to 100 %: that is now three presses, or the button / the ⚙ page. `+` / `-`
+  zoom in the player only (compare uses them for offset nudges). Shift+Z (nearest-neighbour) is unchanged. VS Code binds none
+  of Z, +, - or = while a video has focus (`case/keyconflicts`).
+- **100 %** means one video pixel per *device* pixel (`1 / devicePixelRatio` CSS px), from the file's own size, also when
+  native ffmpeg sends smaller frames. Fit keeps its old rule in the player (shrink to fit, never enlarge); compare's Fit
+  enlarges as before.
+- **Zoom limits:** not below the mode's own size (100 % may go down to a sixteenth), at most 64 device pixels per video pixel.
+- **Pan:** drag when the picture is larger than the area (cursor "grab"); a drag of 4 px or more pans and swallows the click,
+  a click without movement still plays or pauses; seek bar, inspector clicks and the compare pills are untouched.
+- **Native frames:** the player asks for the size that covers the picture at the video's shape (`VpePicture.frameNeed`), so
+  Fill, Stretch, 100 % and zoom grow the frames like a bigger window does (`scheduleView`); in compare the page sends the
+  factor of the pictures over the plain Fit (`tileSize.factor`) and the host multiplies the stage-sized tile by it.
+- **Compare:** the compositor draws only the visible part of each picture (a texture window), switches to nearest-neighbour
+  from 200 %; split uses the left tile's rectangle for both sides, the divider divides the visible part.
+- Tests: `test/host/picture_test.js`, `compare_factor_test.js`, `a11y_test.js`; real VS Code: `case/picture_size`
+  (button, Z cycle, ⚙ page, drag vs click, compare lockstep) and `picture_size_native` (frames in Fill and 100 %).
+
 ## Keys and VS Code
 
 VS Code's webview host (`out/vs/workbench/contrib/webview/browser/pre/index.html`, `handleInnerKeydown`) listens

@@ -21,8 +21,8 @@ them all, with the jump sizes you chose.
 | R | Loop on or off |
 | A / B | Set the A-B loop start / end (press again to clear) |
 | F | Fill the editor and switch to zen mode |
-| P | Picture-in-picture |
 | Shift+N / Shift+P | Next / previous video in the folder |
+| D | Compare with another video: a quick pick of the videos in this folder, then the workspace (**Browse…** opens the file dialog) |
 | S / Ctrl+C | Save the frame as PNG / copy it |
 | ? | Keyboard shortcuts |
 | Esc | Close a panel or the shortcuts |
@@ -39,7 +39,8 @@ leaves them alone (`docs/notes/ui-simple.md`).
 | I | About this video (the ⓘ panel); its **Full technical details** shows the codec, pixel format and decoder overlay |
 | Shift+I | Stats overlay |
 | W | Scopes: luma waveform, RGB parade, vectorscope, histogram, off |
-| Z | Fit or actual size |
+| Z | Picture size: Fit, Fill, Stretch, 100 %, then Fit again. Zoomed in (Ctrl+wheel, `+`), Z goes back to Fit first |
+| + / - | Zoom in / out around the middle of the picture (not in compare: there they nudge offsets) |
 | Shift+Z | Nearest-neighbour pixels |
 | X | Pixel inspector: with loupe, without loupe, off |
 | Shift+X | Codec X-ray strip on or off |
@@ -61,9 +62,10 @@ leaves them alone (`docs/notes/ui-simple.md`).
 | Mouse | Action |
 |---|---|
 | Click the picture | Play or pause (or close an open panel) |
+| Shift+drag a video from the Explorer onto the picture | Compare with it (VS Code only hands drops to the player while Shift is held) |
 | Double-click the picture | Fill the editor |
 | Wheel, while paused | Step frames |
-| Ctrl+wheel (or pinch) | Zoom around the cursor; drag to pan |
+| Ctrl+wheel (or pinch) | Zoom around the cursor, in any picture size; drag to pan when the picture is larger than the player (a click without moving still plays or pauses) |
 | Hover the seek bar | Thumbnail and time |
 | Click the time | Time → timecode → frame number |
 | Wheel over the speed button | Speed ±0.05 |
@@ -89,6 +91,8 @@ The player's keys, for all videos at once, plus:
 | - / + | Offset of the video under the pointer, one frame (10 ms when its offset is in ms) |
 | X | Swap sides (2 videos) |
 | ← / → on the focused split divider | Move it by 1 % (Shift: 10 %); Home / End |
+| Z | Picture size for all videos: Fit, Fill, Stretch, 100 %, then Fit; zoomed in, back to Fit first |
+| Ctrl+wheel, drag | Zoom and pan all videos together (the same part of every picture) |
 | Ctrl+C | Copy the view (all videos) |
 | I | About these videos (a tab per video) |
 | Shift+< / >, ↑ / ↓, M, R, F, ?, Esc | Speed, volume, mute, loop, fullscreen, shortcuts, close (as in the player) |

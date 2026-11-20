@@ -17,7 +17,7 @@ build dependencies, no build step. Works locally, in WSL and over Remote-SSH.
 |---|---|
 | `src/` | Extension host (Node, CommonJS): activation, custom editor, ffmpeg setup, remote streaming, settings |
 | `media/` | Webview player (browser scripts, workers): `player.js`, `engine.js`, `compare.js`, scopes, thumbs; `media/libav-vpe/` is the prebuilt WebAssembly decoder (do not hand-edit) |
-| `test/host/`, `test/engine/` | Layers 1-2: Node tests. `test/host/run_all.js` is the runner |
+| `test/host/`, `test/engine/` | Layers 1-2: Node tests. `node test/run.js unit engine` runs them |
 | `test/vscode/` | Layers 3-4: real VS Code on a hidden desktop (Windows). `cases/` are the scenarios |
 | `test/subtitles`, `test/timestretch`, `test/inspect` | More Node unit tests that CI runs |
 | `test/media/` | Test clips (Git LFS) and generators; licences in `test/media/LICENSES.md` |
@@ -38,16 +38,24 @@ live there and in [test/vscode/README.md](test/vscode/README.md), not here. If t
 the docs. Quick reference:
 
 ```
-npm test                                # layers 1-2 (node test/host/run_all.js)
-node test/subtitles/run.js              # plus the other CI Node tests
-node test/timestretch/run.js
-node test/inspect/inspect_test.js
-node test/vscode/run.js --quick         # layer 3, Windows only, hidden desktop
-node test/vscode/run.js --grep '^case/<name>'   # one scenario
+node test/run.js unit engine            # layers 1-2 (what CI runs), all cores
+node test/run.js vscode                 # layer 3, Windows only, hidden desktop
+node test/run.js vscode --grep <re>     # only matching scenarios / cases
+node test/run.js unit engine vscode --changed   # what the changed files need
+npm test                                # layers 1-3 (before a merge)
 ```
 
-Layer 4 (performance) runs only through `node test/benchq.js <cmd>` (it holds the lock) and only
+Layer 4 (performance) runs only through `node test/run.js perf` (it holds the lock) and only
 before releases or in performance work.
+
+## Guard rails
+
+- `.claude/settings.json` (shared Claude Code settings) denies `git add` of `.private-context` and
+  `git add -f`, and runs the hook `tools/hooks/block-visible-launch.js`, which blocks shell commands that
+  open a visible VS Code or a browser (`code`, `Code.exe`, `msedge`, `chrome`, `start`/`Start-Process` on
+  URLs or HTML ...). `node test/vscode/...` (hidden desktop) is unaffected. Other agents: obey the same rule.
+- CI runs gitleaks (secret scan of the full history) and the personal-data check. Optional local hook:
+  `git config core.hooksPath .githooks` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Rules
 
@@ -77,7 +85,9 @@ before releases or in performance work.
   file set with its build definition (`media/libav-vpe/vpe-fragments.json`, `THIRD_PARTY_NOTICES.md`,
   [docs/licences.md](docs/licences.md)). Changing the decoder build needs the notices updated.
 - Releases and publishing are the maintainers' decision ([docs/RELEASING.md](docs/RELEASING.md));
-  never run the Publish workflow or tag a release.
+  merging a version bump in `package.json` to `main` publishes automatically (Publish workflow), so
+  **version bumps happen only when the maintainer explicitly says so**: never change `version` in
+  `package.json` / `package-lock.json` on your own, not even on a branch, and never run the workflow or tag.
 
 ## Commits and PRs
 

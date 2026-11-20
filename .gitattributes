@@ -22,6 +22,9 @@ test/media/**/*.vob filter=lfs diff=lfs merge=lfs -text
 test/media/**/*.webm filter=lfs diff=lfs merge=lfs -text
 test/media/**/*.wmv filter=lfs diff=lfs merge=lfs -text
 
-# Other binaries (small, plain git)
+# Other binaries (small, plain git). media/marketing/ (the README's GIF) must stay out of LFS:
+# the Marketplace shows README images from raw GitHub URLs, which serve LFS pointers, not the file.
+*.gif binary
+media/marketing/*.mp4 binary
 *.tif binary
 media/probe/*.mkv binary

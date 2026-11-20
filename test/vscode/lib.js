@@ -18,6 +18,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const kv = (line) => Object.fromEntries([...line.matchAll(/(\w+)=(\S+)/g)].map((m) => [m[1], m[2]]));
 
+/** Results a scenario keeps (test/vscode/scenarios.js); the others are not run. */
+let FILTER = null;
+const setFilter = (fn) => { FILTER = fn; };
 const SUB = (() => { const i = process.argv.indexOf('--sub'); return i >= 0 && process.argv[i + 1] ? new RegExp(process.argv[i + 1]) : null; })();
 
 // ---- results ------------------------------------------------------------------------------
@@ -37,6 +40,7 @@ function recorder() {
   };
   const run = async (name, fn) => {
     if (SUB && !SUB.test(name)) return null; // --sub <re>: only the results whose name matches
+    if (FILTER && !FILTER(name)) return null; // moved to another layer
     const ok = t(name);
     try { await fn(ok, ok.r); } catch (e) { ok(false, e && e.message ? e.message : String(e)); }
     return ok.r;
@@ -54,67 +58,11 @@ function clip(name) {
   return f;
 }
 
-// ---- reference frames (ffmpeg) ------------------------------------------------------------
+// ---- reference frames (ffmpeg): test/lib/frames.js ---------------------------------------
 
-const THUMB_W = 64;
-const THUMB_H = 36;
-const refCache = new Map();
-
-function ffTool(h, tool) {
-  const ff = h.ffmpeg || 'ffmpeg';
-  return tool === 'ffmpeg' ? ff : ff.replace(/ffmpeg(\.exe)?$/i, `${tool}$1`);
-}
-
-function collect(cmd, args) {
-  return new Promise((resolve) => {
-    let child;
-    try { child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }); } catch { resolve(null); return; }
-    const chunks = [];
-    child.stdout.on('data', (c) => chunks.push(c));
-    child.on('error', () => resolve(null));
-    child.on('close', (code) => resolve(code === 0 ? Buffer.concat(chunks) : null));
-  });
-}
-
-/** Presentation times of the first video stream's frames in output order (ffprobe), or null. */
-async function frameTimes(h, file) {
-  const b = await collect(ffTool(h, 'ffprobe'), ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'frame=best_effort_timestamp_time', '-of', 'csv=p=0', file]);
-  return b ? b.toString().split(/\r?\n/).filter((l) => l.trim()).map((l) => { const v = parseFloat(l); return Number.isFinite(v) ? v : null; }) : null;
-}
-
-/** All frames of a file as 64x36 luma (area-averaged), decoded by ffmpeg; each has .t (its time) when known. Null without ffmpeg. */
-function refFrames(h, file) {
-  if (refCache.has(file)) return refCache.get(file);
-  const p = (async () => {
-    const buf = await collect(ffTool(h, 'ffmpeg'), ['-v', 'error', '-i', file, '-map', '0:v:0', '-fps_mode', 'passthrough', '-vf', `scale=${THUMB_W}:${THUMB_H}:flags=area,format=gray`, '-f', 'rawvideo', '-']);
-    if (!buf) return null;
-    const sz = THUMB_W * THUMB_H;
-    const frames = [];
-    for (let i = 0; i + sz <= buf.length; i += sz) frames.push(buf.subarray(i, i + sz));
-    const ts = await frameTimes(h, file);
-    frames.forEach((f, i) => { f.t = ts && ts.length === frames.length ? ts[i] : null; });
-    return frames;
-  })();
-  refCache.set(file, p);
-  return p;
-}
-
-/** Frame slot of each reference picture at `fps` (picture i sits at slot i unless the file leaves slots empty). */
-function refSlots(refs, fps) {
-  const t0 = refs.length ? refs[0].t : null;
-  return refs.map((f, i) => (fps > 0 && t0 !== null && t0 !== undefined && f.t !== null && f.t !== undefined ? Math.round((f.t - t0) * fps) : i));
-}
-
-/** Normalised cross-correlation of two luma thumbnails. */
-function ncc(a, b) {
-  const n = a.length;
-  let ma = 0; let mb = 0;
-  for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
-  ma /= n; mb /= n;
-  let num = 0; let da = 0; let db = 0;
-  for (let i = 0; i < n; i++) { const x = a[i] - ma; const y = b[i] - mb; num += x * y; da += x * x; db += y * y; }
-  return da && db ? num / Math.sqrt(da * db) : 0;
-}
+const frames = require('../lib/frames');
+const refFrames = (h, file) => frames.refFrames(file, h.ffmpeg);
+const { refSlots, ncc } = frames;
 
 // ---- the player handle --------------------------------------------------------------------
 
@@ -163,12 +111,14 @@ class Player {
   }
 
   /** Polls state() until pred(state) is truthy; returns that state, or throws with the last one. */
-  async waitState(pred, { timeout = 15000, what = 'condition', interval = 200 } = {}) {
+  async waitState(pred, { timeout = 15000, what = 'condition', interval = 200, allowErrors = false } = {}) {
     const t0 = Date.now();
+    const from = this.vs.mark();
     let s;
     for (;;) {
       s = await this.state();
       if (await pred(s)) return s;
+      if (!allowErrors) { const e = pageError(this.vs, from, this.name); if (e) throw new Error(`${this.name}: page error while waiting for ${what}: ${e}`); }
       if (Date.now() - t0 > timeout) throw new Error(`${this.name}: timeout (${timeout / 1000} s) waiting for ${what}; last: ${JSON.stringify(brief(s))}`);
       await sleep(interval);
     }
@@ -202,8 +152,11 @@ class Player {
   async expectFrame(k, what, timeout = 12000) {
     const refs = this.h.ffmpeg ? await refFrames(this.h, this.file) : null;
     const t0 = Date.now();
+    const from = this.vs.mark();
     let last = '';
     for (;;) {
+      const pe = pageError(this.vs, from, this.name);
+      if (pe) throw new Error(`${what}: expected frame ${k}; page error: ${pe}`);
       const th = await this.thumb();
       let slot = null; let score = 0;
       if (refs && refs.length) {
@@ -254,6 +207,17 @@ class Player {
   close() { return this.h.closeClip(this.vs); }
 }
 
+/**
+ * A page error (uncaught error, unhandled rejection, no WebGL2) logged since line `from` by this file's page (or any
+ * page without a name): waits end at once on one instead of running into their timeout (docs/TESTING.md rules).
+ */
+function pageError(vs, from, name) {
+  vs.mark();
+  const tag = name ? `[${name}] ` : '';
+  const hit = vs.lines.slice(from).find((l) => (!tag || l.includes(tag)) && /webview: (error:|unhandled rejection)|WebGL2 is not available/.test(l));
+  return hit ? hit.replace(/^.*?webview: /, '').slice(0, 300) : null;
+}
+
 const brief = (s) => { const o = {}; for (const k of ['message', 'hint', 'frame', 't', 'playing', 'firstShown', 'vmode', 'amode', 'toast', 'status', 'notice', 'eof', 'stageClass', 'video', 'canvas']) if (s && s[k] !== undefined && s[k] !== '') o[k] = s[k]; return o; };
 
 const ERR = /could not|failed|damaged|incomplete|not include|cannot|unsupported/i;
@@ -284,4 +248,4 @@ async function open(vs, h, file, { until = pictureOrError, timeout = 40000 } = {
 /** The log lines of this instance from `from` on that match re. */
 const lines = (vs, re, from = 0) => { vs.mark(); return vs.lines.slice(from).filter((l) => re.test(l)); };
 
-module.exports = { pictureOrError, ERR, sleep, esc, kv, recorder, clip, media, refFrames, refSlots, ncc, Player, open, lines, brief };
+module.exports = { setFilter, pageError, frames, pictureOrError, ERR, sleep, esc, kv, recorder, clip, media, refFrames, refSlots, ncc, Player, open, lines, brief };

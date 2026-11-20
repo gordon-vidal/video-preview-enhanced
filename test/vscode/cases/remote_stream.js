@@ -182,12 +182,13 @@ module.exports = [{
       const from = await h.openClip(vs, file);
       await vs.waitLog(new RegExp(`\\[${h.esc(name)}\\] webview: first frame shown`), { from, timeout: 45000 });
       const dec = vs.lines.slice(from).find((l) => l.includes(`[${name}] decoder: `));
-      const r = await longChecks(vs, h, name, h.quick ? 60 : 150);
+      // Layer 3 (h.scenario): the decision and the seeks; the 150 s soak (lag, sound lead) is layer 4 (test/perf).
+      const r = h.scenario ? { ok: true, problems: [] } : await longChecks(vs, h, name, h.quick ? 60 : 150);
       r.decision = dec && dec.replace(/^.*?decoder: /, '');
       if (!/^remote stream/.test(r.decision || '')) { r.ok = false; r.problems.push(`decision: ${r.decision || 'none logged'}`); }
       // The test hook delivers commands in bunches (~300 ms apart): a start per bunch at most, plus the leading one.
       const s = await seekChecks(vs, h, name, 25, LONG_TARGETS, 8, 1);
-      return [{ name, ...r }, { name: 'seeks', ...s }];
+      return [{ name: h.scenario ? 'decision' : name, ...r }, { name: 'seeks', ...s }];
     } catch (e) { return [{ name, ok: false, problems: [e.message] }]; } finally { try { await h.closeClip(vs); } catch { /* gone */ } }
   },
 }, {
@@ -216,7 +217,8 @@ module.exports = [{
         await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown);
         const from = vs.mark();
         p.act({ action: 'remoteStreamKill' });
-        await vs.waitLog(/remote stream failed \(signal SIGTERM\b.*\); using the built-in decoder/, { from });
+        // The hook kills ffmpeg with SIGKILL since fb6d612 (as the extension does: SIGTERM doesn't stop one blocked on a pipe on Linux).
+        await vs.waitLog(/remote stream failed \(signal SIG(KILL|TERM)\b.*\); using the built-in decoder/, { from });
         const s = await p.waitState((s) => s.vmode === 'soft' && s.firstShown && s.playing);
         ok(s.canvas[1] === 360, `built-in decoder canvas: ${s.canvas}`);
         ok(starts(vs, p.name, from) === 0, 'stream was retried after the failure');
@@ -233,7 +235,8 @@ module.exports = [{
         // The capped profile fits this link. Leave the throttle in place long enough to catch oscillation.
         await h.sleep(4500);
         const steady = await p.state();
-        ok(steady.playing && steady.canvas[1] === 720 && steady.frame - reduced.frame >= 3.5 * steady.fps, '720p did not keep time on the throttled link');
+        // Stays at 720p and keeps playing (no oscillation, no stall); keeping exact time is a number for layer 4.
+        ok(steady.playing && steady.canvas[1] === 720 && steady.frame - reduced.frame >= 1 * steady.fps, `720p did not keep playing on the throttled link: ${steady.frame - reduced.frame} frames in 4.5 s at ${steady.canvas[1]}p`);
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
         const restored = await p.waitState((s) => s.playing && s.canvas[1] === 1080, { timeout: 35000, what: 'full quality after link recovery' });
         ok(restored.gen === first.gen && restored.t > reduced.t, 'quality recovery interrupted the playback timeline');
@@ -263,7 +266,7 @@ module.exports = [{
         ok(reduced.gen === first.gen && reduced.t > first.t, 'quality drop interrupted the playback timeline');
         await h.sleep(5000);
         const steady = await p.state();
-        ok(steady.playing && steady.vmode === 'webcodecs' && steady.frame - reduced.frame >= 4 * steady.fps, `480p with sound did not keep time: ${steady.frame - reduced.frame} frames in 5 s`);
+        ok(steady.playing && steady.vmode === 'webcodecs' && steady.frame - reduced.frame >= 1 * steady.fps, `480p with sound did not keep playing: ${steady.frame - reduced.frame} frames in 5 s`);
         // Slower than the PCM alone: the floor, a notice, no failover.
         const from = vs.mark();
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 250000 });

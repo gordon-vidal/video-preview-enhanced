@@ -84,8 +84,12 @@ function variant(tag, theme, colour, zoom) {
         const f = path.join(vs.user, 'User', 'settings.json');
         for (let i = 0; i < 40 && !/\*\.m2ts/.test(fs.readFileSync(f, 'utf8')); i++) await h.sleep(500);
         await h.sleep(5000);
+        // The files were created after the window opened and the Explorer's file watcher does not always report them
+        // (a hidden desktop, a busy machine): an empty Explorer shows only the folder. Ask for a refresh, once more per retry.
+        vs.send({ command: 'workbench.files.action.refreshFilesExplorer' });
+        await h.sleep(2000);
         let img = capture(vs), cl0 = findIcons(img, colour);
-        for (let t = 0; t < 15 && cl0.length !== 5; t++) { await h.sleep(3000); img = capture(vs); cl0 = findIcons(img, colour); }
+        for (let t = 0; t < 15 && cl0.length !== 5; t++) { vs.send({ command: 'workbench.files.action.refreshFilesExplorer' }); await h.sleep(3000); img = capture(vs); cl0 = findIcons(img, colour); }
         fs.mkdirSync(OUT, { recursive: true });
         writePng(path.join(OUT, `${tag}-window.png`), img.px, img.w, img.h, 1);
         const cl = cl0;

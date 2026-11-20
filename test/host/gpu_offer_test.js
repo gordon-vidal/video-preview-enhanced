@@ -47,7 +47,9 @@ const isOffer = (a) => a[0] === decide.PROBE_OFFER_TEXT;
     const s = h.open(clip);
     return { h, s, shown, probes, offers: () => shown.filter(isOffer) };
   }
-  const until = async (pred, ms = 3000) => { for (let t0 = Date.now(); !pred() && Date.now() - t0 < ms;) await wait(10); };
+  // Waits for the condition, not for a time: the deadline is only a safety net. Before offering, the extension runs
+  // ffmpeg -version and the GPU detection, which take seconds on a busy CI machine (3 s here flaked on Windows).
+  const until = async (pred, ms = 30000) => { for (let t0 = Date.now(); !pred() && Date.now() - t0 < ms;) await wait(10); };
   const logOf = (h) => h.context.subscriptions.find((x) => x && Array.isArray(x.lines)).lines.join('\n');
 
   // Built-in decoder behind with ffmpeg installed, no test record: one offer, its buttons; "Not now" runs nothing.

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // ThumbService (media/thumbs.js) with the real thumbnail worker under
 // worker_threads: a fast sweep over the bar must end on the last position
-// (stale requests cancelled, few decodes), repeats come from the cache, and
-// after the pointer leaves, idle prefetching fills evenly spaced slots but
-// pauses while busy() says playback needs the CPU.
+// (stale requests cancelled, few decodes), the neighbours of a resting pointer
+// are filled (not while busy() says playback needs the CPU, not for remote
+// files), repeats come from the cache, and nothing decodes after the pointer left.
 //
 //   node test/thumbs/service.js <video file>
 'use strict';
@@ -76,39 +76,52 @@ async function main() {
   const lastRel = (duration * 59) / 60;
   for (let i = 0; i < 400 && !got.some((g) => g.rel === lastRel); i++) await sleep(10);
   const final = got.filter((g) => g.rel === lastRel);
-  check('sweep ends on the last position', final.length === 1, `${Math.round(final[0] ? final[0].at : -1)} ms after the sweep began`);
-  const thumbsAsked = sent.filter((m) => m.type === 'thumb').length;
+  check('sweep ends on the last position', final.length >= 1, `${Math.round(final[0] ? final[0].at : -1)} ms after the sweep began`);
+  const finalAt = final.length ? t0 + final[0].at : performance.now();
+  const sweepAsked = sent.filter((m) => m.type === 'thumb' && m.at <= finalAt).length;
   if (process.env.THUMBS_LOG) console.log(JSON.stringify(sent.map((m) => ({ ty: m.type, id: m.id, t: m.t, at: m.at }))));
-  check('sweep: fewer requests than pointer moves', thumbsAsked <= 30, `${thumbsAsked} requests, ${sent.filter((m) => m.type === 'cancel').length} cancels, ${svc.stats.decoded} decoded for 60 positions`);
+  // Each move while a request runs sends a newer one that supersedes it (latest hover wins), so requests can
+  // outnumber the moves; what costs is decoding: far fewer decodes than positions.
+  check('sweep: few decodes (stale requests dropped)', svc.stats.decoded <= 20, `${svc.stats.decoded} decoded, ${sweepAsked} requests, ${sent.filter((m) => m.type === 'cancel').length} cancels for 60 positions`);
   check('picture size', final[0] && final[0].p.w === 160 && final[0].p.h > 0, final[0] ? `${final[0].p.w}x${final[0].p.h}` : '');
 
-  // 2. Same slot again: from the cache, synchronously.
+  // 2. The pointer stays: the neighbouring places (radius 4) are filled, then the worker rests.
+  for (let i = 0; i < 1000 && (svc.nextNear() !== null || svc.inflight); i++) await sleep(10);
+  check('neighbours filled while the pointer stays', svc.nextNear() === null, `${svc.cache.size} pictures cached`);
+
+  // 3. Same slot again: from the cache, synchronously, and no new request (picture and neighbours there).
   got = [];
   const before = sent.length;
   svc.hover(lastRel, (p) => got.push(p));
-  check('cached hover is immediate', got.length === 1 && sent.length === before);
+  check('cached hover is immediate', got.length === 1 && sent.length === before, `${got.length} callbacks, ${sent.length - before} requests`);
 
-  // 3. Leave while busy: no prefetching.
+  // 4. Busy (playback needs the CPU): the hovered place still comes, but no neighbour filling.
   busy = true;
-  svc.leave();
-  await sleep(2500);
-  const afterBusy = sent.filter((m) => m.type === 'thumb').length;
-  check('no prefetch while busy', afterBusy === thumbsAsked, `${afterBusy - thumbsAsked} requests`);
-
-  // 4. Not busy: prefetch the evenly spaced set.
+  const mid = duration / 3;
+  const b0 = sent.filter((m) => m.type === 'thumb').length;
+  got = [];
+  svc.hover(mid, (p) => got.push(p));
+  for (let i = 0; i < 400 && !(got.length && !svc.inflight); i++) await sleep(10);
+  await sleep(1200);
+  const busyAsked = sent.filter((m) => m.type === 'thumb').length - b0;
+  check('busy: only the hovered place is decoded', busyAsked <= 1 && got.length >= 1, `${busyAsked} requests`);
   busy = false;
-  const tp = performance.now();
-  for (let i = 0; i < 1500 && !(svc.prefetchQ && svc.prefetchQ.length === 0 && !svc.inflight); i++) await sleep(20);
-  const pre = sent.filter((m) => m.type === 'thumb').length - afterBusy;
-  check('idle prefetch ran', svc.prefetchQ && svc.prefetchQ.length === 0 && pre > 0, `${pre} requests in ${Math.round(performance.now() - tp)} ms, ${svc.cache.size} pictures, ${(svc.bytes / 1e6).toFixed(2)} MB cached, ${reads.length} block reads`);
-  const ms = svc.stats.ms.slice().sort((a, b) => a - b);
-  console.log(`decode latency (decoded requests): median ${ms[Math.floor(ms.length / 2)]} ms, max ${ms[ms.length - 1]} ms over ${ms.length}`);
 
-  // 5. Cache cap: 30 MB worth of pictures at most.
+  // 5. The pointer leaves: nothing more is decoded (no idle prefetch since bff54bc: docs/PRODUCT.md).
+  svc.leave();
+  for (let i = 0; i < 200 && svc.inflight; i++) await sleep(10);
+  const l0 = sent.filter((m) => m.type === 'thumb').length;
+  await sleep(2500);
+  check('no decoding after the pointer left', sent.filter((m) => m.type === 'thumb').length === l0, `${sent.filter((m) => m.type === 'thumb').length - l0} requests`);
+  const ms = svc.stats.ms.slice().sort((x, y) => x - y);
+  if (ms.length) console.log(`decode latency (decoded requests): median ${ms[Math.floor(ms.length / 2)]} ms, max ${ms[ms.length - 1]} ms over ${ms.length}`);
+
+  // 6. Cache cap: 30 MB worth of pictures at most.
   check('cache under cap', svc.bytes <= svc.cap);
-  // 6. Remote file: every thumbnail costs a 4 MB block over the connection, so no prefetching.
+  // 7. Remote file: every thumbnail costs a 4 MB block over the connection, so no neighbour filling.
   const rsvc = new globalThis.ThumbService({ workerSrcUrl: 'thumbs-worker.js', libav: {}, size, duration, startT: 0, fps: 30, remote: true, onRead: () => {}, busy: () => false });
-  check('no prefetch when remote', rsvc.nextPrefetch() === null && rsvc.prefetchQ.length === 0);
+  rsvc.want = 3;
+  check('no neighbour filling when remote', rsvc.nextNear() === null);
   svc.dispose();
   fs.closeSync(fd);
   if (process.env.THUMBS_LOG) console.log(logs.join('\n'));

@@ -32,7 +32,8 @@ class FakeAudioContext {
     return { numberOfChannels: ch, length: n, sampleRate: sr, duration: n / sr, copyToChannel: (p, c) => planes[c].set(p), getChannelData: (c) => planes[c] };
   }
   createBufferSource() { return { connect() {}, start() {}, stop() {}, set onended(f) { this.f = f; } }; }
-  resume() { return Promise.resolve(); }
+  resume() { this.state = 'running'; return Promise.resolve(); }
+  suspend() { this.state = 'suspended'; return Promise.resolve(); } // engine.js restAudio (the AudioContext rests while paused)
   close() { return Promise.resolve(); }
 }
 globalThis.AudioContext = FakeAudioContext;
