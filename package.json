@@ -2,7 +2,7 @@
   "name": "video-preview-enhanced",
   "displayName": "Video Preview Enhanced",
   "description": "Play MP4, MKV, MOV, AVI and WebM with sound in VS Code. Remote-SSH, WSL, video URLs, frame-accurate stepping, synchronized comparison and PNG export.",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "publisher": "gordon-vidal",
   "license": "MIT",
   "repository": {

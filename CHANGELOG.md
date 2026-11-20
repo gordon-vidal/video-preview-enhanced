@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.7.2 (2026-11-20)
+
+Picture size and zoom, a faster way to start a compare, and frame-count fixes.
 
 - New: **picture size.** A button beside the keyboard shortcuts (and the **Z** key) cycles Fit, Fill (no bars, edges cropped), Stretch and 100 % (one video pixel per screen pixel, drag to move); ⚙ › Picture size picks one and zooms; Ctrl+wheel zoom works in every size. In compare every video follows together, with zoom and pan in lockstep. Setting `videoPreviewEnhanced.pictureSize` for new tabs. Z used to jump straight to 100 %: it now cycles, and goes back to Fit first when zoomed in.
 - New: start a compare faster. Press **D** in the player for a quick pick of other videos (same folder first, then the workspace, recently compared first, **Browse…** for the open dialog), or hold **Shift** and drop a video from the Explorer onto the player.
