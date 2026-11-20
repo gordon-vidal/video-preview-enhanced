@@ -1,10 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- Fixed: scopes and the pixel inspector use the tagged colour matrix for SD BT.709 video, with a size guess for untagged video.
-- Fixed: exporting frames A-B keeps every frame when the player is hidden behind another tab and shown again.
-
 ## 0.7.2 (2026-11-20)
 
 Picture size and zoom, a faster way to start a compare, and frame-count fixes.
