@@ -977,6 +977,8 @@ function createEngine(env) {
     ensureAudio() {
       if (!this.info.audio || this.ac) return;
       this.ac = new AudioContext({ latencyHint: 'playback' });
+      // Native ffmpeg resamples to the context's own rate (from its next start) instead of 48 kHz.
+      if (this.cfg.native && !this.remoteStream) this.worker.postMessage({ type: 'audioRate', rate: this.ac.sampleRate });
       this.gain = this.ac.createGain();
       this.gain.connect(this.ac.destination);
       this.applyVolume();
@@ -1213,7 +1215,13 @@ function createEngine(env) {
     onNativeAudio(m) {
       if (m.gen !== this.gen) return;
       this.requesting = false;
-      this.addAudio(m.t, 48000, [m.l, m.r]);
+      // Interleaved stereo f32 from the host (src/native.js sendAudio), at the rate the page asked for.
+      const raw = m.data.byteOffset % 4 ? m.data.slice() : m.data;
+      const f = new Float32Array(raw.buffer, raw.byteOffset, m.n * 2);
+      const l = new Float32Array(m.n);
+      const r = new Float32Array(m.n);
+      for (let i = 0, j = 0; i < m.n; i++, j += 2) { l[i] = f[j]; r[i] = f[j + 1]; }
+      this.addAudio(m.t, m.rate || 48000, [l, r]);
     }
 
     /** Frame rate from the spacing of the first presentation times. */

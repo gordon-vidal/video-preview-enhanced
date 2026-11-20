@@ -203,10 +203,27 @@ function audioWithoutPicture() {
   audio.emit('data', Buffer.alloc(2e6));
   assert.deepStrictEqual(messages, [], 'the filter trial holds audio at the cap');
   audio.emit('data', Buffer.alloc(8));
-  assert.deepStrictEqual(messages.map((m) => [m.type, m.l.length]), [['nda', 250001]], 'release held audio before exit');
+  assert.deepStrictEqual(messages.map((m) => [m.type, m.n]), [['nda', 250001]], 'release held audio before exit');
   audio.emit('data', Buffer.alloc(8));
-  assert.strictEqual(messages[1].l.length, 1, 'keep delivering audio after the trial ends');
+  assert.strictEqual(messages[1].n, 1, 'keep delivering audio after the trial ends');
   assert.strictEqual(nd.audioBytes, 0);
+  nd.dispose();
+}
+
+function audioRate() {
+  const { nd, messages } = fakeDecoder('none', { ...probed, audio: { index: 1 } });
+  const rateArg = (p) => p.args[p.args.indexOf('-ar') + 1];
+  nd.handle({ type: 'audioRate', rate: 44100 });
+  assert.strictEqual(rateArg(nd.proc), '48000', 'the running ffmpeg keeps its rate');
+  nd.startAt(0);
+  assert.strictEqual(rateArg(nd.proc), '44100', 'the next start asks for the context rate');
+  nd.more({ gen: 0 });
+  nd.proc.stdio[3].emit('data', Buffer.alloc(16));
+  assert.deepStrictEqual([messages[0].rate, messages[0].n, messages[0].data.length], [44100, 2, 16], 'interleaved, with its rate');
+  nd.handle({ type: 'audioRate', rate: 1 });
+  nd.startAt(0);
+  assert.strictEqual(rateArg(nd.proc), '44100', 'an implausible rate is ignored');
+  nd.handle({ type: 'audioRate', rate: 48000 });
   nd.dispose();
 }
 
@@ -230,6 +247,7 @@ function play(tools, file, method, probed) {
   guessedMethodError();
   fitView();
   audioWithoutPicture();
+  audioRate();
   const tools = await ff.locateTools('', '');
   if (!tools) { console.log('native fallback: skipped (no ffmpeg on PATH)'); return; }
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe_nfb_'));
