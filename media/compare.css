@@ -5,6 +5,9 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 
 /* One cell per tile (2x2, side by side, or the split's single picture); its overlay covers the tile's picture. */
 .cell { position: absolute; box-sizing: border-box; }
+/* A picture larger than its cell (Fill, 100 %, zoom) is dragged, all tiles together. */
+#stage.pannable .cell:not(.add) { cursor: grab; }
+#stage.pannable.panning .cell:not(.add) { cursor: grabbing; }
 .ov { position: absolute; pointer-events: none; opacity: 0; transition: opacity 120ms; }
 .cell:hover .ov, .cell:focus-within .ov { opacity: 1; }
 .ov > * { pointer-events: auto; }

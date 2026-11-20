@@ -24,7 +24,7 @@ const remoteff = require('./remoteff'); // ffmpeg downloaded on the remote host,
 const proxy = require('./proxy');
 const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
-const { registerCompare } = require('./compare'); // compare mode (src/compare.js)
+const { registerCompare, setPickHook } = require('./compare'); // compare mode (src/compare.js)
 const { barHtml } = require('./bar'); // the bar's markup, shared with compare
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
@@ -103,7 +103,7 @@ const PREFS = {
 };
 function prefsOf(c) {
   const v = (k) => (PREFS[k].values.includes(c.jumps[k]) ? c.jumps[k] : PREFS[k].dflt);
-  return { jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl') }, stepButtons: v('stepButtons') };
+  return { jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl') }, stepButtons: v('stepButtons'), pictureSize: c.pictureSize };
 }
 
 const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
@@ -160,6 +160,7 @@ function config() {
     gpuDecoding: c.get('gpuDecoding', true),
     remoteStream: c.get('remoteStream', 'auto'),
     hdrOutput: c.get('hdrOutput', 'auto') === 'off' ? 'off' : 'auto',
+    pictureSize: ['fit', 'fill', 'stretch', 'actual'].includes(c.get('pictureSize')) ? c.get('pictureSize') : 'fit',
   };
 }
 
@@ -1124,6 +1125,8 @@ function activate(context) {
   // ---- compare mode (src/compare.js): Explorer "Compare Videos", "Compare With…" ----
   registerCompare(context, {
     vscode, log, sessions, compareSessions, nativeTransport, nativeQueue,
+    // Videos compared lately (uri strings): the quick pick on key D lists them first.
+    recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
     // Compare's bar and panels are the player's: the same jump sizes, written the same way.
     prefs: () => prefsOf(config()),
     setPref: (key, value) => (PREFS[key] && PREFS[key].values.includes(value) ? setSetting(key, value, prefTarget(key)) : undefined),
@@ -1191,6 +1194,14 @@ function activate(context) {
             if (c.compareFiles) { // 2-4 files into compare: the command takes the selection form (uri, uris)
               const list = c.compareFiles.map((f) => vscode.Uri.file(f));
               vscode.commands.executeCommand('videoPreviewEnhanced.compare', list[0], list);
+              continue;
+            }
+            if (c.pickCompare) { // tests: the next compare quick pick logs its rows and picks one (label part, or Browse…)
+              setPickHook(async (items) => {
+                setPickHook(null);
+                log(`debug comparepick ${JSON.stringify(items.map((i) => i.label))}`);
+                return items.find((i) => i.uri && i.label.includes(c.pickCompare)) || undefined;
+              });
               continue;
             }
             if (c.compareAdd) { for (const s of compareSessions) s.addUris(c.compareAdd.map((f) => vscode.Uri.file(f))); continue; }
@@ -1671,6 +1682,7 @@ ${barHtml()}
 <script nonce="${nonce}" src="${uri('framestream.js')}"></script>
 <script nonce="${nonce}" src="${uri('hdr.js')}"></script>
 <script nonce="${nonce}" src="${uri('engine.js')}"></script>
+<script nonce="${nonce}" src="${uri('picture.js')}"></script>
 <script nonce="${nonce}" src="${uri('inspect.js')}"></script>
 <script nonce="${nonce}" src="${uri('scopes.js')}"></script>
 <script nonce="${nonce}" src="${uri('subtitles.js')}"></script>
@@ -1725,6 +1737,12 @@ ${barHtml()}
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         // Compare takes this tab's place and starts where the player is (src/compare.js).
         return vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', this.uri, { t: Number(m.t) || 0 });
+      case 'comparePick': // key D: a quick pick of other videos
+        if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
+        return vscode.commands.executeCommand('videoPreviewEnhanced.comparePick', this.uri, { t: Number(m.t) || 0 });
+      case 'compareDrop': // videos dropped on the player (docs/notes/compare-ui.md "Starting a compare")
+        if (this.url || this.sequence || !Array.isArray(m.uris)) return undefined;
+        return vscode.commands.executeCommand('videoPreviewEnhanced.compareDrop', this.uri, m.uris.filter((x) => typeof x === 'string').slice(0, 20), { t: Number(m.t) || 0 });
       // The ⚙ panel's Quality page (HLS): 'auto' or a variant index of this stream (checked in setQuality).
       case 'quality': return this.url ? this.setQuality(m.pick === 'auto' ? 'auto' : Number(m.pick)) : undefined;
       case 'openUrl': { // the ⚙ panel's "Open video URL…": only opens the input box; the URL comes from there

@@ -34,7 +34,7 @@ numbers of 14 cases left for layer 4.
 | `test/avi_test.js` | 1 | the AVI index and the standard DHT table, MJPEG frames against ffmpeg | needs an MJPEG AVI: gets `s_mjpeg.avi` |
 | `test/unit/abloop_test.js`, `timefmt_test.js` | 1 | new: `media/abloop.js` (A-B loop) and `media/timefmt.js` (time labels, frame counter), moved out of `media/player.js` unchanged | before: only the VS Code cases `seeking/abloop`, `ui/time/formats`, `seeking/step-ms-rounded` (counter) |
 | `test/engine/frames_hevc_vp9.js`, `frames_mpeg2_prores.js`, `frames_mpeg4_h264.js`, `frames_edges.js` | 2 | new: step, seek (also while playing), ms-rounded 60 fps and NTSC, End with longer sound, edges, end of file, A-B loop, open-GOP: the engine says frame k and the picture is ffmpeg's frame k | `test/engine/harness.js` runs `media/engine.js` with the real decoder worker / pool and a stub WebGL that keeps the luma plane |
-| `test/engine/formats_cases.js`, `formats_media.js`, `formats_4k.js` | 2 | new: every clip of the open-and-play set (`test/media/cases/fmt`), the start-at-3600 / multichannel / rotated / gapped clips, the 1080p clips and the container set of `test/media`: first picture = ffmpeg's, a seek = ffmpeg's frame, sound decodes; 4K: first picture | one quarantined check (see Known issues) |
+| `test/engine/formats_cases.js`, `formats_media.js`, `formats_4k.js` | 2 | new: every clip of the open-and-play set (`test/media/cases/fmt`), the start-at-3600 / multichannel / rotated / gapped clips, the 1080p clips and the container set of `test/media`: first picture = ffmpeg's, a seek = ffmpeg's frame, sound decodes; 4K: first picture | |
 | `test/tracks/run.js` | 2 | track lists, stream discard, audio switching, embedded subtitles, open-GOP seeks in the decoder worker | ~60 s, the longest file of the layer |
 | `test/tracks/engine_smoke.js` | 2 | the engine switching sound and subtitle tracks; open-GOP fallback with a WebCodecs stand-in | fixed: its fake AudioContext had no `suspend()` (the engine rests the AudioContext while paused since f97fd39), so it crashed after 11 checks |
 | `test/bitmapsubs/run.js` | 2 | PGS / DVD / DVB picture subtitles: cue index and palette | |
@@ -70,13 +70,9 @@ tables, not JSON): `test/perf/frame_path.js`, `test/perf/browser_path.js` (needs
 
 ## Known issues found while porting
 
-- **Short files without a container frame rate** (`fmt/dnxhr_pcm.mxf`, 10 frames): the engine learns the rate from
-  24-40 timestamps (`engine.js` `trackTs`); with fewer, `fps` and `n` stay 0 after the end, the counter stays at
-  frame 0 and steps assume 30 fps. Quarantined in `test/engine/formats_cases.js` (reported as KNOWN, a pass says
-  it is fixed). VS Code only checked that the file opens and plays.
-- **End right after opening** (MP4 H.264 without a stated rate): until 24 timestamps are seen `n` is 0, so End goes
-  to frame 0. The VS Code case passed only because its polling gave the engine time; the engine harness waits for
-  the rate like a user would. Not quarantined (no test presses End that early), worth a fix.
+Both fixed (branch `fix/engine-frame-count`): the engine takes the frame rate / count the container states
+(`avg_frame_rate`, MP4 sample table) at open, and a short file without a rate gets it from its timestamps at the
+end of the file. Checks: `test/engine/frames_edges.js` `end-at-open/` and `short-no-rate/`.
 
 ## Every VS Code result
 
@@ -409,7 +405,7 @@ All results: no time/fps thresholds (only `until` poll timeouts 5-30 s). Needs: 
 | Result | Proves | Assertions |
 |---|---|---|
 | `case/compare_ui/enter/in-place` | Compare from the player replaces its tab and starts at player's position | A frame within 1 of #31 (player at 1.0 s); exactly 1 tab, viewType matches /compare/ |
-| `case/compare_ui/bar` | Compare's bar = player's bar minus CC/PiP plus Compare | bar has ids prev,play,next,mute,volume,time,cmpBtn,infoBtn,rate,cog,keysBtn,full; no tracks/pip; time starts with "A"; mute title "sound from A"; Shift+> -> rate 1.05; "." steps both to #32 |
+| `case/compare_ui/bar` | Compare's bar = player's bar minus CC plus Compare | bar has ids prev,play,next,mute,volume,time,cmpBtn,infoBtn,rate,cog,keysBtn,full; no tracks; time starts with "A"; mute title "sound from A"; Shift+> -> rate 1.05; "." steps both to #32 |
 | `case/compare_ui/panel/compare` | Compare panel content and toggling; cog panel rows; Tools > Compare | panel view cmp & cmpExpanded; text includes Videos, both clip names, "Add video…", "2 of 4", View, Side by side, Split, Swap sides, Leave compare, keep A; excludes PSNR, SSIM, Find first difference, A vs B; A row label regex; button closes panel; cog panel main with Sound/from A/Copy view/Compare, without Subtitles/Audio track/A-B loop; Tools Compare opens cmp |
 | `case/compare_ui/panel/video-page` | B's page: offset in frames/ms, Reset, clock, sound | view cmpVid; text has Offset, In step, Frames, Time (ms), Clock, Sound from this video, Replace video…, Remove (back to one video); "B later" -> offsets 0f,1f; B shows A+1; frames->ms gives 0f,33.33Xms; +10 ms -> 43.33Xms; page shows "+43.3 ms"; Reset+Frames -> 0f,0f; clock=1 sound=1; bar time "B…" & "sound from B"; seekMax 89; Back -> cmp |
 | `case/compare_ui/tiles/pills-and-nudge` | Hover pills, ‹ › nudges, − / + under pointer | 2 cells each 1 pill 1 nudge; A pill "A…<clip>…#n"; B nudge "‹0›"; A's picture aspect 16:9 ±0.05; › nudge -> 0f,1f; − on B -> 0f,0f; + on A -> 1f,0f |
@@ -1071,7 +1067,7 @@ Source: media/subtitles.js, media/tracks-menu.js, media/controls.js (panels), me
 
 | Result | Proves | Assertions | Thresholds | Needs | Layer |
 |---|---|---|---|---|---|
-| `case/ui/a11y/names` | Every bar control has an accessible name/role/state; seek valuetext; polite live region; status pill gone | no unnamed buttons; aria-labels for play, prev, next, full, infoBtn, cog, keysBtn, seek, volume, canvas; mute/rate/tracks/time label patterns; mute/pip aria-pressed; tracks/infoBtn/rate/cog/keysBtn aria-expanded false; modeBtn/toolsBtn/loop absent; seek valuetext `m:ss.mmm of …, frame N`; live role=status polite; no `pill` in state | none | WebCodecs | 3 (DOM-only; could be 1 with jsdom over src/bar.js html) |
+| `case/ui/a11y/names` | Every bar control has an accessible name/role/state; seek valuetext; polite live region; status pill gone | no unnamed buttons; aria-labels for play, prev, next, full, infoBtn, cog, keysBtn, seek, volume, canvas; mute/rate/tracks/time label patterns; mute aria-pressed; tracks/infoBtn/rate/cog/keysBtn aria-expanded false; modeBtn/toolsBtn/loop absent; seek valuetext `m:ss.mmm of …, frame N`; live role=status polite; no `pill` in state | none | WebCodecs | 3 (DOM-only; could be 1 with jsdom over src/bar.js html) |
 | `case/ui/a11y/states-and-live` | R toggles loop + live text; M toggles mute with aria; play/pause label | as described | settle sleeps 400-600 ms | — | 3 |
 | `case/ui/keys/focused-controls` | Focus-visible outline on #mute; Space on focused button doesn't play; Space on page plays | active=mute & focusVisible; outline not none/0px; Space on #mute → not playing; Space → playing | sleeps | — | 3 |
 | `case/ui/picture/click` | Click on picture plays/pauses; with panel open only closes panel | click → playing ≤4 s; click → paused; cog → panel main; click → no panel, not playing | — | — | 3 |

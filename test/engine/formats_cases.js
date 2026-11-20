@@ -5,16 +5,10 @@ const path = require('path');
 const { formats, MEDIA } = require('./formats_lib');
 
 const f = (n) => path.join(MEDIA, 'cases', n);
-// Quarantined (docs/TESTING.md, Known issues).
-const KNOWN = {
-  // 10 frames, no rate in the MXF: the engine learns the rate only from 24 timestamps (engine.js trackTs), so
-  // after the end fps and n stay 0, the counter stays at frame 0 and steps assume 30 fps.
-  'dnxhr_pcm.mxf': 'short file without a container frame rate: the engine never learns its rate',
-};
 formats('engine formats: the open-and-play set', [
   ...['h264_high10.mp4', 'h264_444.mp4', 'hevc10.mp4', 'hevc10_opus.mkv', 'vp8_vorbis.webm', 'av1_opus.mkv', 'h264_ac3.mts', 'mpeg2_ac3.vob',
     'mpeg2_interlaced.mpg', 'wmv2_wma.wmv', 'wmv2_wma.asf', 'dnxhr_pcm.mxf', 'theora_vorbis.ogv', 'flv1_mp3.flv', 'odd_853x479.mkv', 'h264_ac3_51.mkv']
-    .map((n) => [f(`fmt/${n}`), { sound: true, known: KNOWN[n] }]),
+    .map((n) => [f(`fmt/${n}`), { sound: true }]),
   [f('fmt/h264_noaudio.mp4')],
   [f('fmt/h264_vfr.mkv')],
   [f('start3600.mts'), { sound: true }],

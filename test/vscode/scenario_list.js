@@ -67,6 +67,18 @@ module.exports = [
     steps: [{ case: 'ui' }, { case: 'ui_jumps' }, { case: 'ui_jumps_settings' }, { case: 'ui_info' }, { case: 'ctxmenu' }],
   },
   {
+    name: 'picture-size',
+    journey: 'Picture size: Fit / Fill / Stretch / 100 % from the bar button, Z, the settings page and Ctrl+wheel; a drag pans, a click still plays; compare follows together',
+    sources: ['media/picture.js', 'media/inspect.js', ...PLAYER, ...COMPARE, 'src/bar.js', 'package.json'],
+    steps: [{ case: 'picture_size' }],
+  },
+  {
+    name: 'picture-size-native',
+    journey: 'With ffmpeg: native frames grow for Fill and 100 % and wait for the next seek when back to Fit',
+    sources: ['media/picture.js', 'media/inspect.js', 'media/engine.js', ...NATIVE, 'src/compare.js'],
+    steps: [{ case: 'picture_size_native' }],
+  },
+  {
     name: 'compare',
     journey: 'Compare mode: entering and leaving, the bar, tiles, views, the Tools grid, PSNR / SSIM against ffmpeg',
     sources: [...COMPARE, ...PLAYER, 'media/scopes.js'],

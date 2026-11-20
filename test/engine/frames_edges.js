@@ -8,6 +8,19 @@ runJobs('engine frames: edges, end of file, A-B loop, rounded times', [
   ['edges/s_hevc.mp4', 's_hevc.mp4', J.edges],
   ['eof/vp8_2s.webm', 'vp8_2s.webm', (P) => J.eof(P, 59)],
   ['eof/s_vp9.webm', 's_vp9.webm', (P) => J.eof(P, P.n - 1)],
+  // MP4 states its frame count: End works at once after the first picture, without waiting for 24 timestamps.
+  ['end-at-open/s_h264.mp4', 's_h264.mp4', async (P) => {
+    J.assert(P.n === 90 && P.fps === 30, `right after open: ${P.n} frames at ${P.fps} fps, expected 90 at 30`);
+    await J.endKey(P, 89);
+  }, { waitRate: false }],
+  // 10 frames, no rate in the MXF: the rate comes from the timestamps at the end of the file.
+  ['short-no-rate/dnxhr_pcm.mxf', 'fmt/dnxhr_pcm.mxf', async (P) => {
+    J.assert(await P.until(() => P.player.eof, 'end of file', 30000), 'never reached the end of the file');
+    J.assert(P.player.fps === 25 && P.n === 10, `${P.n} frames at ${P.player.fps} fps`);
+    P.step(1);
+    await P.expectFrame(1, 'step +1');
+    await J.endKey(P, 9);
+  }, { waitRate: false }],
   ['abloop/s_h264.mp4', 's_h264.mp4', J.abloop],
   ['abloop/s_mpeg2.mpg', 's_mpeg2.mpg', J.abloop],
   ['step-ms-rounded/h264_60fps.mkv', 'h264_60fps.mkv', (P) => J.msRounded(P, 60)],

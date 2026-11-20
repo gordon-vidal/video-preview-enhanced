@@ -9,7 +9,7 @@
   const ui = {
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), buffered: $('buffered'), tip: $('tip'),
     time: $('time'), now: $('now'), dur: $('dur'), rate: $('rate'), mute: $('mute'), volume: $('volume'),
-    info: $('info'), infoBtn: $('infoBtn'), pip: $('pip'), full: $('full'), cog: $('cog'), keysBtn: $('keysBtn'),
+    info: $('info'), infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), keysBtn: $('keysBtn'), picBtn: $('picBtn'),
     panel: $('panel'), sheet: $('sheet'), toast: $('toast'), abMarks: $('abMarks'), tracks: $('tracks'),
   };
 
@@ -27,6 +27,8 @@
   let rate = saved.rate || 1;
   // Jump sizes of the arrow keys ('frame' or seconds): settings videoPreviewEnhanced.jump.*, changed in the cog's Jump sizes page.
   const prefs = { jump: { arrow: 5, shift: 1, ctrl: 'frame', ...((cfg.prefs && cfg.prefs.jump) || {}) }, stepButtons: (cfg.prefs && cfg.prefs.stepButtons) === 'jump' ? 'jump' : 'frame' };
+  // Picture size for this tab (Fit, Fill, Stretch, 100 %): starts as the setting videoPreviewEnhanced.pictureSize; the button and Z change this tab only.
+  const startPicture = VpePicture.parse(cfg.prefs && cfg.prefs.pictureSize);
   // The bar's time: 0 m:ss.mmm, 1 SMPTE timecode, 2 frame number (a click on it cycles).
   let timeMode = Number(saved.timeMode) || 0;
 
@@ -158,7 +160,6 @@
     currentFrame() { return this.frameAt(this.t); }
     currentTime() { return this.t; }
     isPlaying() { return this.playing; }
-    canPip() { return false; }
 
     play() {
       if (this.frameAt(this.t) >= this.n - 1) this.t = 0;
@@ -432,7 +433,6 @@
     // Live streams play from the live edge; seeking is off (docs/notes/url-stream.md).
     ui.seek.disabled = !!(meta && meta.live);
     if (meta && meta.live) ui.seek.title = 'Live stream: seeking is not available';
-    ui.pip.hidden = !document.pictureInPictureEnabled || !canvas.captureStream;
     p.setRate(rate);
     p.setVolume(volume, muted);
     if (p.setLoop) p.setLoop(loop);
@@ -522,7 +522,16 @@
     ui.volume.value = String(volume);
     if (volume > 0 && muted) setMute(false); else setMute(muted);
   };
-  const toggleZoom = () => { exactTool(); insp.toggleZoom(); };
+  /** Z (and the button beside Keyboard shortcuts): the next picture size; zoomed in, back to Fit. 100 % shows the file's own pixels. */
+  const cyclePicture = () => { insp.cycleMode(); if (insp.picture().mode === 'actual') exactTool(); };
+  /** The button shows the current size and names the next one. */
+  function updatePicBtn() {
+    const m = insp.picture().mode;
+    const nx = VpePicture.next(m);
+    ui.picBtn.dataset.mode = m;
+    ui.picBtn.title = `Picture size: ${VpePicture.name(m)} (${VpePicture.WORDS[m]}). Click for ${VpePicture.name(nx)}  Z`;
+    ui.picBtn.setAttribute('aria-label', `Picture size: ${VpePicture.name(m)}. Next: ${VpePicture.name(nx)}`);
+  }
   /** The technical details overlay (codec, pixel format, decoder; frame link, A-B export, X-ray): "Full technical details". */
   const toggleInfo = () => { ui.info.hidden = !ui.info.hidden; };
 
@@ -537,27 +546,7 @@
       vscode.postMessage({ type: 'focusMode' });
     }
   }
-  // Picture-in-picture: VS Code allows it for <video> only, so stream the canvas into one.
-  let pipVideo = null;
-  async function togglePip() {
-    try {
-      if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return; }
-      if (!pipVideo) {
-        pipVideo = document.createElement('video');
-        pipVideo.muted = true;
-        pipVideo.playsInline = true;
-        pipVideo.srcObject = canvas.captureStream(60);
-        pipVideo.addEventListener('leavepictureinpicture', () => { ui.pip.classList.remove('on'); ui.pip.setAttribute('aria-pressed', 'false'); });
-      }
-      await pipVideo.play();
-      await pipVideo.requestPictureInPicture();
-      ui.pip.classList.add('on');
-      ui.pip.setAttribute('aria-pressed', 'true');
-    } catch (e) {
-      log(`picture-in-picture refused: ${e}`);
-      toast('Picture-in-picture is not available here');
-    }
-  }
+  // Picture-in-picture was removed (it did not work): git history has the button, the P key and togglePip.
 
   function grabFrame() {
     const src = player.snapshotSource();
@@ -596,7 +585,8 @@
 
   // Zoom/pan, pixel inspector, go to, frame links, stats (inspect.js).
   // A zoom changes the picture's size like a resize does: native frames follow it (scheduleView below).
-  const insp = VpeInspect.create({ vscode, stage, canvas, log, toast, getPlayer: () => player, fmtTime, cfg, onZoom: () => scheduleView() });
+  const insp = VpeInspect.create({ vscode, stage, canvas, log, toast, getPlayer: () => player, fmtTime, cfg, onZoom: () => scheduleView(), picture: startPicture, onPicture: () => { if (ui.picBtn) updatePicBtn(); if (controls) controls.refresh(); } });
+  updatePicBtn();
   // Waveform, RGB parade, vectorscope, histogram (scopes.js; W cycles).
   const scopes = VpeScopes.create({ stage, canvas, getPlayer: () => player, toast, log });
   if (/** @type {any} */ (window).__vpe) /** @type {any} */ (window).__vpe.scopes = scopes; // test harness hook
@@ -731,7 +721,6 @@
   }
   const seekDragger = dragRange(ui.seek);
   const volumeDragger = dragRange(ui.volume);
-  ui.pip.onclick = togglePip;
   ui.full.onclick = toggleFullscreen;
   ui.time.onclick = () => {
     // A live stream shows only the time since it started (no timecode or frame count to cycle to).
@@ -837,6 +826,7 @@
     const changed = () => {
       mq.removeEventListener('change', changed);
       watchDpr();
+  if (startPicture !== 'fit') scheduleView(); // frames for a Fill / Stretch / 100 % tab
       scheduleView();
     };
     mq.addEventListener('change', changed);
@@ -862,7 +852,7 @@
   document.addEventListener('keydown', (e) => {
     // Typing in a field, a list box, or Space / Enter on a button reached with the keyboard: not player keys.
     if (VpeModes.ownsKey(e)) return;
-    if (!e.ctrlKey && !e.metaKey && !e.altKey && /^[xXwWzZsS]$/.test(e.key)) exactTool();
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && /^[xXwWsS]$/.test(e.key)) exactTool();
     // AltGr (Ctrl+Alt on Windows) types { } [ ] # on many layouts: those are plain keys.
     const altGr = !!(e.getModifierState && e.getModifierState('AltGraph'));
     const mod = !altGr && (e.ctrlKey || e.metaKey) && !e.altKey;
@@ -897,16 +887,18 @@
       case 'm': case 'M': setMute(!muted); break;
       case 'r': case 'R': setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); break;
       case 'f': case 'F': toggleFullscreen(); break;
-      case 'p': togglePip(); break;
       case 'N': if (e.shiftKey) vscode.postMessage({ type: 'neighbour', d: 1 }); else handled = false; break;
-      case 'P': if (e.shiftKey) { vscode.postMessage({ type: 'neighbour', d: -1 }); break; } togglePip(); break;
+      case 'P': if (e.shiftKey) vscode.postMessage({ type: 'neighbour', d: -1 }); else handled = false; break;
       case 'a': case 'A': setAB('a'); break;
       case 'b': case 'B': setAB('b'); break;
-      case 'z': case 'Z': toggleZoom(); break;
+      case 'z': case 'Z': if (e.shiftKey) handled = false; else cyclePicture(); break;
+      case '+': case '=': insp.zoomStep(1); break;
+      case '-': case '_': insp.zoomStep(-1); break;
       case 'i': case 'I': controls.toggle('info', ui.infoBtn); break;
       case 's': case 'S': saveFrame(); break;
       case 'c': case 'C': ccClick(); break;
       case 'w': case 'W': scopes.cycle(); break;
+      case 'd': case 'D': comparePick(); break;
       default:
         if (/^[0-9]$/.test(e.key) && player.meta.duration) player.seekTime((Number(e.key) / 10) * player.meta.duration);
         else handled = false;
@@ -953,11 +945,33 @@
     'Pixel inspector': () => runTool('Inspector'), 'Stats overlay': () => runTool('Stats'), 'Codec X-ray strip': () => runTool('Codec X-ray'),
     // A URL tab has no Compare tool: the host answers with a toast that says why.
     'Compare with…': () => compareWith(),
-    Details: () => toggleInfo(), 'Zoom: fit / actual size': () => toggleZoom(), 'Export frames A–B…': () => sendRange('exportRange'),
+    Details: () => toggleInfo(), 'Zoom: fit / actual size': () => cyclePicture(), 'Export frames A–B…': () => sendRange('exportRange'),
     'Copy ffmpeg command for A–B': () => sendRange('ffmpegRange'), 'Go to frame or time…': () => press('g', { ctrlKey: true }),
   };
   /** Compare: VS Code's open dialog picks the other videos; compare then takes this tab's place, from here. */
   function compareWith() { vscode.postMessage({ type: 'compareWith', t: player ? player.currentTime() : 0 }); }
+  /** Key D: a quick pick of other videos (same folder first); compare then takes this tab's place. */
+  function comparePick() { vscode.postMessage({ type: 'comparePick', t: player ? player.currentTime() : 0 }); }
+  // Videos dragged from the Explorer (VS Code hands them to the page only while Shift is held): compare with them.
+  // Not for URLs (the host would refuse). Uses the URI lists VS Code puts on the drag (docs/notes/compare-ui.md).
+  const dropHint = document.createElement('div');
+  dropHint.id = 'dropHint'; dropHint.hidden = true; dropHint.setAttribute('aria-hidden', 'true');
+  dropHint.textContent = 'Drop to compare';
+  document.getElementById('stage').appendChild(dropHint);
+  const droppable = (e) => !cfg.url && !cfg.sequence && e.dataTransfer && [...(e.dataTransfer.types || [])].some((t) => /uri-list|resourceurls|^Files$/.test(t));
+  let dragDepth = 0;
+  document.addEventListener('dragenter', (e) => { if (droppable(e)) { dragDepth++; dropHint.hidden = false; e.preventDefault(); } });
+  document.addEventListener('dragover', (e) => { if (droppable(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  document.addEventListener('dragleave', () => { if (dragDepth > 0 && --dragDepth === 0) dropHint.hidden = true; });
+  document.addEventListener('drop', (e) => {
+    dragDepth = 0; dropHint.hidden = true;
+    if (!droppable(e)) return;
+    e.preventDefault();
+    const dt = e.dataTransfer;
+    const uris = ['text/uri-list', 'application/vnd.code.uri-list', 'resourceurls'].map((k) => { try { return dt.getData(k); } catch { return ''; } }).filter(Boolean);
+    if (!uris.length) { toast('Drag a video from the Explorer'); return; }
+    vscode.postMessage({ type: 'compareDrop', uris, t: player ? player.currentTime() : 0 });
+  });
   function runTool(label) {
     const t = TOOLS.find((x) => x.label === label);
     const fn = t ? t.run : MORE_TOOLS[label];
@@ -1004,13 +1018,14 @@
     showMessage('Switching quality…');
     vscode.postMessage({ type: 'quality', pick });
   }
+  const pictureState = () => { const v = insp.picture(); return { mode: v.mode, pct: player && player.meta && player.meta.width ? insp.zoomPercent() : null, zoomed: v.zoom !== 1 }; };
   controls = VpeControls.create({
     panel: ui.panel, sheet: ui.sheet, bar: ui.bar,
     buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, tracks: ui.tracks, keys: ui.keysBtn },
     get: () => {
       const d = subs.panelData();
       return {
-        rate, loop, jump: prefs.jump, stepButtons: prefs.stepButtons, abLabel: abLabel(), tools: TOOLS,
+        rate, loop, jump: prefs.jump, stepButtons: prefs.stepButtons, abLabel: abLabel(), picture: pictureState(), tools: TOOLS,
         subsLabel: d.subs.length ? d.label : 'None in file',
         audioLabel: d.audio.length ? (d.audio.find((a) => a.checked) || d.audio[0]).main : (player && player.info && player.info.audio) || (player && player.audio) ? 'Only one' : 'None',
         hasSound: !!(player && ((player.info && player.info.audio) || player.audio)),
@@ -1026,6 +1041,9 @@
       stepRate: (d) => bumpRate(d),
       setJump: (k, v) => setJump(k, v),
       setStepButtons: (v) => setStepButtons(v),
+      setPicture: (m) => insp.setMode(m),
+      zoomPicture: (d) => insp.zoomStep(d),
+      resetPicture: () => insp.resetZoom(),
       selectSub: (key) => subs.select(key),
       selectAudio: (id) => subs.selectAudio(id),
       loadSubs: () => subs.loadFile(),
@@ -1046,6 +1064,7 @@
   ui.rate.addEventListener('wheel', (e) => { e.preventDefault(); bumpRate(e.deltaY < 0 ? 1 : -1); }, { passive: false });
   ui.tracks.onclick = (e) => { e.stopPropagation(); ccClick(); };
   ui.keysBtn.onclick = (e) => { e.stopPropagation(); controls.toggleSheet(ui.keysBtn); };
+  ui.picBtn.onclick = (e) => { e.stopPropagation(); cyclePicture(); };
   setLoop(loop);
   updateCc();
 
@@ -1059,7 +1078,7 @@
     const o = {
       preventDefaultContextMenuItems: true, vpe: true, vpeReady: !!player,
       vpePlaying: !!player && player.isPlaying(), vpeLoop: loop, vpeMuted: muted,
-      vpeFile: !cfg.url && !(player instanceof FramePlayer), vpeSubs: av.subs > 0, vpeAudio: av.audio > 1, vpePip: !ui.pip.hidden, vpeAB: ab.isRange(), vpeABSet: ab.isSet(),
+      vpeFile: !cfg.url && !(player instanceof FramePlayer), vpeSubs: av.subs > 0, vpeAudio: av.audio > 1, vpeAB: ab.isRange(), vpeABSet: ab.isSet(),
     };
     const j = JSON.stringify(o);
     if (j !== ctxJson) { ctxJson = j; document.body.setAttribute('data-vscode-context', j); }
@@ -1070,7 +1089,7 @@
     copyFrame: () => copyFrame(), saveFrame: () => saveFrame(), copyLink: () => press('C', { shiftKey: true }),
     copyTime: () => { if (player) vscode.postMessage({ type: 'copyText', text: fmtTime(player.currentTime()) }); toast('Timestamp copied'); },
     subs: () => controls.show('subs', ui.tracks), audio: () => controls.show('audio', ui.cog),
-    pip: () => togglePip(), fullscreen: () => toggleFullscreen(),
+    fullscreen: () => toggleFullscreen(),
     stepBack: () => stepButton(-1), stepFwd: () => stepButton(1), keys: () => controls.openSheet(ui.keysBtn), cog: () => controls.show('main', ui.cog),
     xray: () => press('X', { shiftKey: true }),
     // From the menu "Set" always sets (at this moment); the A / B keys toggle.
@@ -1233,6 +1252,13 @@
       // Tests: a picture area of this many CSS pixels (as a resized panel or fullscreen would give); 0 restores it.
       if (m.action === 'stageSize') { stage.style.flex = m.h ? 'none' : ''; stage.style.width = m.w ? `${m.w}px` : ''; stage.style.height = m.h ? `${m.h}px` : ''; }
       if (m.action === 'wheel') stage.dispatchEvent(new WheelEvent('wheel', { deltaY: Number(m.deltaY) || 0, ctrlKey: !!m.ctrl, clientX: stage.getBoundingClientRect().width / 2, clientY: stage.getBoundingClientRect().height / 2, bubbles: true, cancelable: true }));
+      if (m.action === 'drop') { // tests: a drop carrying these URI lists, as VS Code would deliver (Shift held)
+        const dt = new DataTransfer();
+        for (const [k, v] of Object.entries(m.data || {})) dt.setData(k, v);
+        document.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true, cancelable: true }));
+        log(`debug dropHint ${!dropHint.hidden}`);
+        document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      }
       if (m.action === 'key') (m.target ? document.querySelector(m.target) : document).dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: !!m.shift, ctrlKey: !!m.ctrl, bubbles: true }));
       if (m.action === 'play') player.play();
       if (m.action === 'rate') setRate(m.r);
@@ -1244,8 +1270,8 @@
           const sc = document.getElementById('scopes');
           const xr = document.getElementById('xray');
           log(`modes report panel=${controls.view() || 'none'} sheet=${controls.sheetOpen()} tools=${TOOLS.length} ` +
-            `bar=${['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'full'].map((k) => `${k}:${vis(ui[k]) ? 1 : 0}`).join(',')} ` +
-            `scopes=${scopes.mode() || 'off'} scopesVisible=${vis(sc)} info=${vis(ui.info)} xray=${vis(xr)} zoomed=${stage.classList.contains('zoom')} ` +
+            `bar=${['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'picBtn', 'full'].map((k) => `${k}:${vis(ui[k]) ? 1 : 0}`).join(',')} ` +
+            `scopes=${scopes.mode() || 'off'} scopesVisible=${vis(sc)} info=${vis(ui.info)} xray=${vis(xr)} zoomed=${stage.classList.contains('zoom')} picture=${insp.picture().mode} ` +
             `frame=${player.currentFrame() + 1} t=${player.currentTime().toFixed(3)} playing=${player.isPlaying()}`);
         }, m.delay || 300);
       }
@@ -1291,7 +1317,7 @@
             bar: { rate: ui.rate.textContent, cc: ui.tracks.getAttribute('aria-label'), cogExpanded: ui.cog.getAttribute('aria-expanded'), infoExpanded: ui.infoBtn.getAttribute('aria-expanded'), rateExpanded: ui.rate.getAttribute('aria-expanded'), ccExpanded: ui.tracks.getAttribute('aria-expanded') },
             prefs, volume, drag: { seek: seekDragger.dragging(), volume: volumeDragger.dragging() }, volumeRect: rect(ui.volume),
             canvas: [canvas.width, canvas.height], canvasHidden: canvas.hidden, canvasRect: rect(canvas), video: vw,
-            stageClass: stage.className, imageRendering: canvas.style.imageRendering,
+            stageClass: stage.className, stageRect: rect(stage), picture: { ...insp.picture(), pct: pictureState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), btnTitle: ui.picBtn.title, need: insp.zoomedSize() }, imageRendering: canvas.style.imageRendering,
             pxgrid: !!byId('pxgrid') && !byId('pxgrid').hidden, pxread: byId('pxread') && !byId('pxread').hidden ? byId('pxread').innerText : '',
             goto: !!byId('goto') && !byId('goto').hidden, stats: byId('stats') && !byId('stats').hidden ? byId('stats').textContent : '',
             infoShown: !ui.info.hidden, abMarks: { hidden: ui.abMarks.hidden, left: ui.abMarks.style.left, width: ui.abMarks.style.width },
@@ -1418,7 +1444,7 @@
           const unnamed = [...document.querySelectorAll('button')].filter((b) => (b.textContent || b.getAttribute('aria-label')) && !/[A-Za-z]/.test(b.getAttribute('aria-label') || b.textContent || '')).map((b) => b.id || b.className || b.textContent);
           const cs = a && a !== document.body ? getComputedStyle(a) : null;
           let fv = false; try { fv = !!a && a.matches(':focus-visible'); } catch { /* old engine */ }
-          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'pip', 'full', 'noticeClose', 'canvas'];
+          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'picBtn', 'full', 'noticeClose', 'canvas'];
           log(`a11y ${JSON.stringify({
             id: m.id,
             controls: Object.fromEntries(ids.map((k) => [k, attrs(byId(k))])),

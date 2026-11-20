@@ -8,6 +8,7 @@
 'use strict';
 /* exported VpeControls */
 const VpeControls = (() => {
+  const PIC = typeof VpePicture !== 'undefined' ? VpePicture : require('./picture');
   const SVG = (body, o = {}) => `<svg width="${o.size || 18}" height="${o.size || 18}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${o.sw || 1.6}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const ICON = {
     speed: SVG('<circle cx="12" cy="13" r="8"></circle><path d="M12 13l4-4M12 3v2"></path>'),
@@ -23,6 +24,7 @@ const VpeControls = (() => {
     external: SVG('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path>', { size: 16, sw: 1.8 }),
     globe: SVG('<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"></path>'),
     jumps: SVG('<path d="M4 12h16M8 8l-4 4 4 4M16 8l4 4-4 4"></path>'),
+    picture: SVG('<rect x="3" y="5" width="18" height="14" rx="1.5"></rect><rect x="8" y="9" width="8" height="6" rx="0.8"></rect>'),
     quality: SVG('<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 15v-3M11 15V9M15 15v-5M19 15V8" stroke-width="1.4"></path>'),
   };
   /** Preset labels on the speed slider's track. */
@@ -178,7 +180,7 @@ const VpeControls = (() => {
         { title: 'Frames', rows: [['Previous / next frame (all videos)', ',', '.'], ['Copy view', `${ctrlName}+C`], ['Time / timecode / frames', 'click the time']] },
         { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M']] },
         { title: 'Compare', rows: [['Nudge the video under the pointer', '−', '+'], ['Swap sides (2 videos)', 'X']] },
-        { title: 'View and help', rows: [['Fullscreen', 'F'], ['About these videos', 'I'], ['This list', '?'], ['Close menus', 'Esc']] },
+        { title: 'View and help', rows: [['Fullscreen', 'F'], ['Picture size (all videos)', 'Z'], ['Zoom (all videos)', `${ctrlName}+wheel`], ['About these videos', 'I'], ['This list', '?'], ['Close menus', 'Esc']] },
       ];
     }
     return [
@@ -186,9 +188,9 @@ const VpeControls = (() => {
       { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End'], ['Jump to 0–90 %', '0…9']] },
       { title: 'Frames', rows: [['Previous / next frame', ',', '.'], ['Copy frame', `${ctrlName}+C`], ['Save frame as PNG', 'S'], ['Go to frame or time', `${ctrlName}+G`], ['Time / timecode / frames', 'click the time']] },
       { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M'], ['Next audio track', 'Shift+A']] },
-      { title: 'View', rows: [['Fullscreen', 'F'], ['Picture in picture', 'P'], ['Subtitles on / off', 'C'], ['About this video', 'I'], ['Zoom: fit / actual size', 'Z']] },
+      { title: 'View', rows: [['Fullscreen', 'F'], ['Subtitles on / off', 'C'], ['About this video', 'I'], ['Picture size: Fit, Fill, Stretch, 100 %', 'Z'], ['Zoom in / out', '+', '-'], ['Zoom at the pointer', `${ctrlName}+wheel`]] },
       { title: 'Tools', rows: [['Scopes', 'W'], ['Pixel inspector', 'X'], ['Codec X-ray', 'Shift+X'], ['Stats', 'Shift+I'], ['Previous / next keyframe', '{', '}']] },
-      { title: 'Files and help', rows: [['Next / previous video in folder', 'Shift+N', 'Shift+P'], ['This list', '?'], ['Close menus', 'Esc']] },
+      { title: 'Files and help', rows: [['Next / previous video in folder', 'Shift+N', 'Shift+P'], ['Compare with another video', 'D'], ['Compare by dropping a video here', 'Shift+drag'], ['This list', '?'], ['Close menus', 'Esc']] },
     ];
   }
 
@@ -201,7 +203,7 @@ const VpeControls = (() => {
    */
   function create(env) {
     const { panel, sheet, bar, buttons } = env;
-    /** @type {null|'main'|'speed'|'jumps'|'subs'|'audio'|'quality'|'info'} */
+    /** @type {null|'main'|'speed'|'jumps'|'picture'|'subs'|'audio'|'quality'|'info'} */
     let view = null;
     /** @type {HTMLElement|null} */
     let opener = null;
@@ -255,6 +257,7 @@ const VpeControls = (() => {
         // An HLS stream with several variants: the picture quality (the stream reopens at that variant).
         if (s.quality) f.appendChild(btn('row', 'Quality', () => show('quality'), { icon: ICON.quality, value: qualityLabel(s.quality), chev: true }));
       }
+      if (s.picture) f.appendChild(btn('row', 'Picture size', () => show('picture'), { icon: ICON.picture, value: `${PIC.name(s.picture.mode)}${s.picture.pct !== null ? ` · ${s.picture.pct}%` : ''}`, chev: true, aria: { 'aria-label': `Picture size, ${PIC.name(s.picture.mode)}` } }));
       f.appendChild(btn('row', s.compare ? 'Copy view' : 'Copy frame', () => { close(false); env.act.copyFrame(); }, { icon: ICON.camera, kbd: 'Ctrl+C' }));
       f.appendChild(btn('row', 'Keyboard shortcuts', () => openSheet(buttons.cog), { icon: ICON.keys, kbd: '?' }));
       f.appendChild(btn('row', 'Jump sizes', () => show('jumps'), { icon: ICON.jumps, value: [s.jump.arrow, s.jump.shift, s.jump.ctrl].map(navName).join(' · '), chev: true }));
@@ -311,6 +314,29 @@ const VpeControls = (() => {
       f.appendChild(sl);
       const note = el('div', 'pnote');
       note.append(`Steps of ${SPEED_STEP}×. Scroll on the speed button or `, kbd('Shift'), '+', kbd('<'), kbd('>'), '.');
+      f.appendChild(note);
+      return f;
+    }
+
+    function renderPicture(s) {
+      const f = document.createDocumentFragment();
+      f.appendChild(head('Picture size'));
+      const pc = s.picture;
+      f.appendChild(radios('Picture size', PIC.MODES.map((m) => ({ label: PIC.name(m), sub: PIC.SHORT[m], checked: pc.mode === m, pick: () => env.act.setPicture(m) }))));
+      f.appendChild(el('div', 'sep'));
+      const r = el('div', 'jrow');
+      r.setAttribute('role', 'group');
+      r.setAttribute('aria-label', 'Zoom');
+      const n = el('span', 'grow', 'Zoom');
+      n.setAttribute('aria-hidden', 'true');
+      const val = pc.pct === null ? '—' : `${pc.pct}%`;
+      r.append(n, btn('chip', '−', () => { env.act.zoomPicture(-1); render(); }, { aria: { 'aria-label': 'Zoom out' } }),
+        el('span', 'zval', val),
+        btn('chip', '+', () => { env.act.zoomPicture(1); render(); }, { aria: { 'aria-label': 'Zoom in' } }),
+        btn('chip', 'Reset', () => { env.act.resetPicture(); render(); }, { aria: { 'aria-label': 'Reset zoom' } }));
+      f.appendChild(r);
+      const note = el('div', 'pnote');
+      note.append(kbd('Z'), ' cycles the sizes (zoomed in: back to Fit). Ctrl+wheel zooms, drag moves the picture', s.compare ? '. All videos follow together.' : '.');
       f.appendChild(note);
       return f;
     }
@@ -430,7 +456,7 @@ const VpeControls = (() => {
       return f;
     }
 
-    const LABEL = { main: 'Player settings', speed: 'Speed', jumps: 'Jump sizes', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video' };
+    const LABEL = { main: 'Player settings', speed: 'Speed', jumps: 'Jump sizes', picture: 'Picture size', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video' };
     /**
      * Pages a page adds (compare's panel and its per-video page): { label, render(s, kit), parent?, button? }.
      * `button`: the bar button (env.buttons key) that shows it open; `parent`: where Esc goes.
@@ -447,7 +473,7 @@ const VpeControls = (() => {
       panel.className = `panel ${view}`;
       const custom = VIEWS[view];
       panel.setAttribute('aria-label', custom ? (typeof custom.label === 'function' ? custom.label(s) : custom.label) : view === 'info' && s.infoTabs ? 'About these videos' : LABEL[view]);
-      const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'speed' ? renderSpeed(s) : view === 'jumps' ? renderJumps(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : renderInfo(s);
+      const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'speed' ? renderSpeed(s) : view === 'jumps' ? renderJumps(s) : view === 'picture' ? renderPicture(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : renderInfo(s);
       panel.appendChild(body);
       const after = /** @type {HTMLElement[]} */ ([...panel.querySelectorAll('[data-nav]')]);
       if (fi >= 0 && after.length) after[Math.min(fi, after.length - 1)].focus();
@@ -463,7 +489,7 @@ const VpeControls = (() => {
     function sync() {
       const set = (b, on) => { if (b) { b.setAttribute('aria-expanded', String(on)); b.classList.toggle('open', on); } };
       const own = view && VIEWS[view] ? VIEWS[view].button : null;
-      set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'jumps' || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
+      set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'jumps' || view === 'picture' || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
       for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks', 'keys'].includes(k)) set(b, !!own && own === k);
       set(buttons.info, view === 'info');
       set(buttons.rate, view === 'speed' && opener === buttons.rate);

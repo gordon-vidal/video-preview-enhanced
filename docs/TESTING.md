@@ -22,6 +22,12 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 - A VS Code instance without WebGL2 is a broken instance, not a failed test: it is named and retried.
 - A page error ends a wait at once; no test waits out a timeout after an error was reported.
 - Flaky scenarios are fixed or quarantined (listed, skipped, tracked), never retried silently.
+- Tests wait for the event or state they need, with a generous deadline as a safety net only (tens of
+  seconds); a short wall-clock budget fails on a busy CI machine. Heavy files get their own `timeout` in
+  `test/layers.js` (default 60 s per file).
+- Generated test media must come out the same on every run and every ffmpeg version, or be checked after
+  making it: ffmpeg 7+ runs its steps in threads, so how it interleaves streams can vary between runs
+  (`test/bitmapsubs/make_media.js` forces time order and checks it).
 
 ## Commands
 
@@ -54,7 +60,7 @@ Measured 2026-11-20 on the i7-9700K / RTX 4070 desktop **while a game was runnin
 | Layer | What runs | Result | Wall time |
 |---|---|---|---|
 | 1. Unit | 65 files (`test/host`, `test/unit`, engine / inspect / subtitles / timestretch / AVI logic), 8 at a time | 65 passed | 28 s |
-| 2. Engine | 13 files: `test/engine` frame and format tests (the seeking checks of the WebAssembly path, every format of the test media), tracks, engine smoke, picture subtitles, X-ray index, pool, thumbnails | 13 passed (1 check quarantined) | 74 s |
+| 2. Engine | 13 files: `test/engine` frame and format tests (the seeking checks of the WebAssembly path, every format of the test media), tracks, engine smoke, picture subtitles, X-ray index, pool, thumbnails | 13 passed | 74 s |
 | 3. VS Code | 21 scenarios, 225 results, 3 instances at once | 223 passed; the 2 failures (sampling speed, fixed) passed when run again; 2 instances without WebGL2, both passed in a fresh one | 12.7 min (33 min of scenarios) |
 | 4. Performance | 29 benches (26 VS Code, 3 Node; 4 more with `VPE_TRANSFER_CLIPS`; `--list`) | built and tried (2 benches, not saved); no stored numbers yet | as long as it takes |
 
@@ -72,8 +78,6 @@ default is serial; `--parallel 3` (or `VPE_PARALLEL=3`) runs three. To settle it
 
 Listed here, reported as KNOWN by the test (not failing it), and removed when the test reports that it passes.
 
-| Test | Issue |
-|---|---|
-| `test/engine/formats_cases.js` `open/cases/fmt/dnxhr_pcm.mxf` | A file with fewer than 24 frames and no frame rate in its container never gets a rate in the engine (`engine.js` `trackTs`): the counter stays at frame 0 and steps assume 30 fps. |
+None at the moment.
 
 Inventory of every test before the layers and where it lives now: [docs/notes/test-inventory.md](notes/test-inventory.md).
