@@ -19,9 +19,12 @@ const HOST_ARGS = {
   'wav_parts_test.js': ['test/media/cases/s_mjpeg.avi'],
 };
 const HOST_MEDIA = { 'avi_scan_test.js': ['s_mjpeg.avi', 's_xvid.avi'], 'wav_parts_test.js': ['s_mjpeg.avi'] };
+// Time budgets above the default 60 s. remotestream encodes and decodes 200 s clips with ffmpeg: 26-36 s on
+// the Linux runner, 53 s on the Windows one beside three other tests, so 60 s timed it out now and then.
+const HOST_TIMEOUT = { 'remotestream_test.js': 180000 };
 
 const unit = [
-  ...hostTests.map((f) => ({ file: rel('test/host', f), args: HOST_ARGS[f], media: HOST_MEDIA[f] })),
+  ...hostTests.map((f) => ({ file: rel('test/host', f), args: HOST_ARGS[f], media: HOST_MEDIA[f], timeout: HOST_TIMEOUT[f] })),
   { file: 'test/engine/unit.js', sources: ['media/engine.js', 'media/pool.js', 'media/timestretch.js', 'media/membudget.js', 'media/decoder-worker.js'] },
   { file: 'test/inspect/inspect_test.js', sources: ['media/inspect.js'] },
   { file: 'test/subtitles/run.js', sources: ['media/subtitles.js'] },
