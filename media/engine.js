@@ -1971,7 +1971,6 @@ function createEngine(env) {
       return Math.max(0, Math.min(Math.max(0, this.n - 1), Math.round(this.rel(t) * (this.fps || 30))));
     }
     isPlaying() { return this.playing; }
-    canPip() { return false; }
 
     play() {
       wake();

@@ -1,7 +1,7 @@
 'use strict';
 // The player's bar (seek bar and buttons), shared by the player (src/extension.js html()) and compare
 // (src/compare.js compareHtml), so both look and behave the same (docs/notes/ui-simple.md, docs/notes/compare-ui.md).
-// Compare leaves out CC and picture-in-picture and adds the Compare button (two panes) that opens its panel.
+// Compare leaves out CC and adds the Compare button (two panes) that opens its panel.
 
 const CMP_BTN = "    <button id=\"cmpBtn\" class=\"ib\" title=\"Compare: videos, offsets, clock, sound\" aria-label=\"Compare\" aria-expanded=\"false\" aria-controls=\"panel\"><svg width=\"21\" height=\"21\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"2.5\" y=\"5\" width=\"8.5\" height=\"14\" rx=\"1.5\"></rect><rect x=\"13\" y=\"5\" width=\"8.5\" height=\"14\" rx=\"1.5\"></rect></svg></button>\n";
 
@@ -28,8 +28,6 @@ ${compare ? CMP_BTN : ''}    <button id="infoBtn" class="ib" title="About this v
     <button id="rate" class="ib speed mono" title="Speed: click, or scroll to change" aria-label="Speed 1×" aria-expanded="false" aria-controls="panel">1×</button>
     <button id="cog" class="ib" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="panel"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
     <button id="keysBtn" class="ib" title="Keyboard shortcuts  ?" aria-label="Keyboard shortcuts" aria-expanded="false" aria-keyshortcuts="?"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"></rect><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"></path></svg></button>
-${compare ? '' : `    <button id="pip" class="ib" title="Picture in picture  P" aria-label="Picture in picture" aria-pressed="false" aria-keyshortcuts="P" hidden><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="2"></rect><rect x="12" y="11.5" width="7" height="5.5" rx="1" fill="currentColor" stroke="none"></rect></svg></button>
-`}
     <button id="full" class="ib" title="Fullscreen  F" aria-label="Fullscreen" aria-keyshortcuts="F"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg></button>
   </div>
 </div>`;

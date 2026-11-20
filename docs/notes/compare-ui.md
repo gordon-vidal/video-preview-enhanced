@@ -8,7 +8,7 @@ Find diff button are gone from the UI.
 
 | Part | File |
 |---|---|
-| The bar's markup, shared by the player and compare (`barHtml({ compare })`: no CC, no PiP, plus `#cmpBtn`) | `src/bar.js` |
+| The bar's markup, shared by the player and compare (`barHtml({ compare })`: no CC, plus `#cmpBtn`) | `src/bar.js` |
 | The compare page (stage, cells layer, bar, panel, sheet, tile menu) and the host side (files, leave, replace, prefs) | `src/compare.js` |
 | Engines, lockstep, compositor, cells / pills / nudges / divider, the Compare panel pages, tile menu, keys, test hook | `media/compare.js` |
 | Panels: compare's ⚙ page variant (`s.compare`), extra pages (`env.views`), About tabs (`s.infoTabs`), compare key groups | `media/controls.js` |
@@ -61,7 +61,7 @@ Find diff button are gone from the UI.
 
 ## Tests
 
-- Host: `test/host/a11y_test.js` (compare markup: the player's bar without CC / PiP, `#cmpBtn`, scripts),
+- Host: `test/host/a11y_test.js` (compare markup: the player's bar without CC, `#cmpBtn`, scripts),
   `ctxmenu_test.js` (Compare With… in the menu, `vpeFile`), `compare_test.js` (session lifecycle).
 - Real VS Code: `case/compare_ui` (enter in place from the player at its position, tabs; the bar; the Compare
   panel and ⚙ › Tools › Compare; a video's page: offset frames / ms / Reset, clock and sound switches; pills,

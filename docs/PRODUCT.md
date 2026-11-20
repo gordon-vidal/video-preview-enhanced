@@ -95,7 +95,7 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 
 - **One player, no modes.** The separate advanced layout is dropped; `advancedMode` is deprecated and ignored.
 - **Bar:** previous frame, play/pause, next frame, mute, volume, time (click: time / timecode / frame number),
-  then CC, ⓘ (about this video), speed, ⚙, keyboard shortcuts, picture-in-picture, fullscreen. No status pill:
+  then CC, ⓘ (about this video), speed, ⚙, keyboard shortcuts, fullscreen. No status pill:
   only real problems show (a notice, once).
 - **⚙ panel:** speed, loop, A-B loop, subtitles, audio track, copy frame, keyboard shortcuts, jump sizes and a
   Tools grid (compare, scopes, inspector, stats, codec X-ray, export A-B).
@@ -116,7 +116,7 @@ One feature: compare becomes multi-view. The difference view is dropped.
 - **Later, low priority:** a flexible layout system, up to 16 videos.
 - **The player's UI (2026-11-20: the approved compare mock-up).** Compare is the player with more videos:
   the same bar drives all tiles (play, lockstep frame steps, seek, speed, loop, jumps); time and seek follow the
-  clock video with its letter; mute / volume act on the sound video; CC and picture-in-picture are hidden. One new
+  clock video with its letter; mute / volume act on the sound video; CC is hidden. One new
   bar button opens the **Compare panel** (⚙-panel style): a row per video (letter, name, clock / sound, offset)
   with its own page (offset − / + in frames or ms, Reset, Clock and Sound switches, Replace video…, Remove), Add
   video (n of 4), View (2 videos: Side by side | Split), Swap, Leave compare. Tiles are clean; hover shows the name

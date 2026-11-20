@@ -14,7 +14,7 @@ Implementation: `src/ctxmenu.js` (the item table, the generated `package.json` p
 - Page context: one helper, `updateMenuContext()`, writes JSON into `data-vscode-context` on `<body>` (every frame
   of the loop, but only touches the DOM when the JSON changed; plus once at start). Keys: `preventDefaultContextMenuItems: true`
   (drops Cut/Copy/Paste), `vpe`, `vpeReady`, `vpeAdvanced`, `vpePlaying`, `vpeLoop`, `vpeMuted`, `vpeSubs`,
-  `vpeAudio` (more than one), `vpePip`, `vpeAB` (A and B both set). `<body>` (not just the stage) so the bar and the
+  `vpeAudio` (more than one), `vpeAB` (A and B both set). `<body>` (not just the stage) so the bar and the
   overlays give the same menu.
 - Commands (`videoPreviewEnhanced.ctx.*`, hidden from the palette): VS Code passes the context object as the argument;
   it is not used for routing. The command finds the player like the A-B export does (the active session, else the last active)
