@@ -2,7 +2,7 @@
 
 Other video players for VS Code, from their Marketplace READMEs as of November 2026, with install counts from the Marketplace on 17 November 2026. "Not listed" means their README doesn't mention it; the feature may still exist. Corrections are welcome as issues.
 
-| | Video Preview Enhanced 0.7.2 | [MoviPlayer](https://marketplace.visualstudio.com/items?itemName=mrujjwalg.movi-player-vscode) 0.4.1 | [Modern Video Player](https://marketplace.visualstudio.com/items?itemName=Brodazz.mp4-player) 0.8.9 | [Video Preview (Player) – BNPL](https://marketplace.visualstudio.com/items?itemName=BatchNepal.vscode-video-preview) 0.2.0 | VS Code's built-in preview |
+| | Video Preview Enhanced 0.6.1 | [MoviPlayer](https://marketplace.visualstudio.com/items?itemName=mrujjwalg.movi-player-vscode) 0.4.1 | [Modern Video Player](https://marketplace.visualstudio.com/items?itemName=Brodazz.mp4-player) 0.8.9 | [Video Preview (Player) – BNPL](https://marketplace.visualstudio.com/items?itemName=BatchNepal.vscode-video-preview) 0.2.0 | VS Code's built-in preview |
 |---|---|---|---|---|---|
 | Installs | new | 2.8k | 3.9k | 23k | built in |
 | File types it opens | AVI, MKV, MOV, MP4, WebM, WMV, FLV, MPG, VOB, M2TS, MXF, OGV, 3GP, Y4M | MP4, MKV, WebM, MOV, TS, M2TS, AVI, FLV, WMV, MPG, 3GP, plus URLs | MP4, MOV, M4V, MKV, AVI, WebM, M2TS, MTS, FLV, F4V | MP4, WebM, MOV, MKV, AVI, M4V | MP4, WebM |
