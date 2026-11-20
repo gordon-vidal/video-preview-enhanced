@@ -3,9 +3,10 @@
 node_modules/
 
 # Editor, agent and OS files
-# .claude/: only the shared skills are tracked (worktrees and settings.local.json stay out)
+# .claude/: only the shared skills and settings.json are tracked (worktrees and settings.local.json stay out)
 .claude/*
 !.claude/skills/
+!.claude/settings.json
 .vscode-test/
 .DS_Store
 Thumbs.db
