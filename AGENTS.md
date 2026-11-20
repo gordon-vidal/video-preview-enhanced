@@ -86,7 +86,8 @@ before releases or in performance work.
   file set with its build definition (`media/libav-vpe/vpe-fragments.json`, `THIRD_PARTY_NOTICES.md`,
   [docs/licences.md](docs/licences.md)). Changing the decoder build needs the notices updated.
 - Releases and publishing are the maintainers' decision ([docs/RELEASING.md](docs/RELEASING.md));
-  never run the Publish workflow or tag a release.
+  merging a version bump in `package.json` to `main` publishes automatically (Publish workflow), so
+  never bump `version` outside a release the maintainer asked for, and never run the workflow or tag.
 
 ## Commits and PRs
 
