@@ -71,7 +71,7 @@ const debugPool = (() => { try { return logFile && process.env.VPE_POOL ? JSON.p
 const DEBUG_COMMANDS = new Set([
   'videoPreviewEnhanced.openWith', 'videoPreviewEnhanced.playSequence', 'videoPreviewEnhanced.compareWith',
   'videoPreviewEnhanced.showLog', 'workbench.action.closeActiveEditor', 'workbench.action.closeAllEditors', 'workbench.action.reloadWindow',
-  'notifications.clearAll', 'videoPreviewEnhanced.exportRange', 'workbench.files.action.refreshFilesExplorer',
+  'notifications.clearAll', 'videoPreviewEnhanced.exportRange', 'videoPreviewEnhanced.addFromExplorer', 'videoPreviewEnhanced.stopAddFromExplorer', 'workbench.files.action.refreshFilesExplorer',
 ]);
 const sessions = new Set();
 const compareSessions = new Set(); // open compare panels (src/compare.js)
@@ -81,6 +81,8 @@ const wcFailed = new Set();
 const pendingGoto = new Map();
 const PENDING_GOTO_MS = 30e3; // a link's player normally opens within a second
 let lastActive = null;
+/** Compare's add mode (src/compare.js registerCompare): claimOpen(uri) takes a video VS Code is opening. */
+let compareApi = null;
 
 function log(msg) {
   out.appendLine(msg);
@@ -1039,7 +1041,11 @@ function activate(context) {
 
   const provider = {
     openCustomDocument: (uri) => ({ uri, dispose() {} }),
-    resolveCustomEditor: (doc, panel) => new Session(context, { uri: doc.uri }, panel).show(),
+    resolveCustomEditor: (doc, panel) => {
+      // Add mode (docs/notes/compare-ui.md): the video goes into compare, and this new tab closes unused.
+      if (compareApi && compareApi.claimOpen(doc.uri)) { setTimeout(() => panel.dispose(), 0); return undefined; }
+      return new Session(context, { uri: doc.uri }, panel).show();
+    },
   };
   for (const viewType of VIEW_TYPES) {
     context.subscriptions.push(vscode.window.registerCustomEditorProvider(viewType, provider, {
@@ -1123,7 +1129,7 @@ function activate(context) {
   warnOldInstalls();
 
   // ---- compare mode (src/compare.js): Explorer "Compare Videos", "Compare With…" ----
-  registerCompare(context, {
+  compareApi = registerCompare(context, {
     vscode, log, sessions, compareSessions, nativeTransport, nativeQueue,
     // Videos compared lately (uri strings): the quick pick on key D lists them first.
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
@@ -1202,6 +1208,11 @@ function activate(context) {
                 log(`debug comparepick ${JSON.stringify(items.map((i) => i.label))}`);
                 return items.find((i) => i.uri && i.label.includes(c.pickCompare)) || undefined;
               });
+              continue;
+            }
+            if (c.openFile) { // tests: opens a file as an Explorer click would (a preview tab in the active group)
+              vscode.commands.executeCommand('vscode.open', vscode.Uri.file(c.openFile), { preview: c.preview !== false, preserveFocus: true })
+                .then(() => log(`debug done ${c.id || ''} openFile`), (e) => log(`debug openFile failed: ${e && e.message || e}`));
               continue;
             }
             if (c.compareAdd) { for (const s of compareSessions) s.addUris(c.compareAdd.map((f) => vscode.Uri.file(f))); continue; }
@@ -1740,6 +1751,11 @@ ${barHtml()}
       case 'comparePick': // key D: a quick pick of other videos
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         return vscode.commands.executeCommand('videoPreviewEnhanced.comparePick', this.uri, { t: Number(m.t) || 0 });
+      case 'addMode': // Shift+D: the next video opened (an Explorer click) is compared with this one
+        if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
+        if (Number(m.t) >= 0) this.pos = { ...(this.pos || {}), t: Number(m.t) };
+        return compareApi ? compareApi.toggleAddMode(this) : undefined;
+      case 'stopAddMode': return compareApi ? compareApi.stopAddMode() : undefined; // Esc in the page
       case 'compareDrop': // videos dropped on the player (docs/notes/compare-ui.md "Starting a compare")
         if (this.url || this.sequence || !Array.isArray(m.uris)) return undefined;
         return vscode.commands.executeCommand('videoPreviewEnhanced.compareDrop', this.uri, m.uris.filter((x) => typeof x === 'string').slice(0, 20), { t: Number(m.t) || 0 });

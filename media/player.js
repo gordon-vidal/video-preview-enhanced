@@ -864,6 +864,7 @@
     if (player && mod && !e.shiftKey && (e.key === 'c' || e.key === 'C')) { e.preventDefault(); e.stopPropagation(); exactTool(); copyFrame(); return; }
     if (insp.onKey(e)) { e.preventDefault(); if (e.ctrlKey || e.metaKey) e.stopPropagation(); return; }
     if (e.key === 'Escape' && controls && controls.anyOpen()) { e.preventDefault(); controls.closeAll(true); return; }
+    if (e.key === 'Escape' && !addHint.hidden) { e.preventDefault(); vscode.postMessage({ type: 'stopAddMode' }); return; }
     if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(ui.keysBtn); return; }
     if (!player || e.metaKey || (!altGr && (e.ctrlKey || e.altKey))) return;
     poke();
@@ -898,7 +899,8 @@
       case 's': case 'S': saveFrame(); break;
       case 'c': case 'C': ccClick(); break;
       case 'w': case 'W': scopes.cycle(); break;
-      case 'd': case 'D': comparePick(); break;
+      case 'd': comparePick(); break;
+      case 'D': if (e.shiftKey) addMode(); else comparePick(); break;
       default:
         if (/^[0-9]$/.test(e.key) && player.meta.duration) player.seekTime((Number(e.key) / 10) * player.meta.duration);
         else handled = false;
@@ -952,6 +954,18 @@
   function compareWith() { vscode.postMessage({ type: 'compareWith', t: player ? player.currentTime() : 0 }); }
   /** Key D: a quick pick of other videos (same folder first); compare then takes this tab's place. */
   function comparePick() { vscode.postMessage({ type: 'comparePick', t: player ? player.currentTime() : 0 }); }
+  /** Shift+D: the next video opened in VS Code (an Explorer click) is compared with this one (src/addmode.js). */
+  function addMode() { vscode.postMessage({ type: 'addMode', t: player ? player.currentTime() : 0 }); }
+  // The add mode's hint, while it is on (the host says so with 'addMode' messages).
+  const addHint = document.createElement('div');
+  addHint.id = 'addHint'; addHint.hidden = true; addHint.setAttribute('role', 'status');
+  document.getElementById('stage').appendChild(addHint);
+  function showAddMode(m) {
+    addHint.hidden = !m.on;
+    addHint.textContent = m.on ? 'Click a video in the Explorer to compare with this one · Esc to stop' : '';
+    if (m.on) announce(addHint.textContent);
+    log(`addMode ${m.on ? 'on' : 'off'}`);
+  }
   // Videos dragged from the Explorer (VS Code hands them to the page only while Shift is held): compare with them.
   // Not for URLs (the host would refuse). Uses the URI lists VS Code puts on the drag (docs/notes/compare-ui.md).
   const dropHint = document.createElement('div');
@@ -1180,6 +1194,7 @@
         break;
       }
       case 'toast': toast(m.text, Math.min(10000, Number(m.ms) || 900)); break;
+      case 'addMode': showAddMode(m); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
       case 'pauseForTest': if (player && player.isPlaying()) { player.pause(); toast('Paused while ffmpeg is tested', 3000); } break;
       case 'prefs': if (m.prefs && m.prefs.jump) { Object.assign(prefs.jump, m.prefs.jump); if (m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons === 'jump' ? 'jump' : 'frame'; stepTips(); controls.refresh(); } break;

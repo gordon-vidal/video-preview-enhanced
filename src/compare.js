@@ -21,7 +21,8 @@ const { NativeDecoder } = require('./native');
 const { budgets } = require('../media/membudget');
 const frameserver = require('./frameserver');
 const { barHtml } = require('./bar');
-const { pickRows, pushRecent, droppedVideos } = require('./comparepick');
+const { pickRows, pushRecent, droppedVideos, selectedVideos } = require('./comparepick');
+const { createAddMode } = require('./addmode');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
 
 const MAX_BLOCK = 8 * 1024 * 1024;
@@ -86,7 +87,7 @@ class CompareSession {
    * @param {vscode.ExtensionContext} context
    * @param {vscode.Uri[]} uris 2-4 files, A first
    */
-  constructor(context, uris, { log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn, start, openPlayer, setPref, prefs, copyText }) {
+  constructor(context, uris, { log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn, start, openPlayer, setPref, prefs, copyText, addMode }) {
     if (api) vscode = api;
     this.logRaw = log;
     this.engineCfg = engineCfg;
@@ -98,6 +99,8 @@ class CompareSession {
     this.openPlayer = openPlayer || null; // (uri, t, viewColumn): Leave compare
     this.setPref = setPref || null; // (key, value): the jump sizes, as in the player
     this.prefs = prefs || (() => null);
+    // Add from the Explorer (src/addmode.js): { toggle(session), hint(session) } from registerCompare.
+    this.addMode = addMode || null;
     this.copyText = copyText || ((t) => vscode.env.clipboard.writeText(t));
     this.start = start > 0 ? start : 0; // the player's position when it turned into compare (first page only)
     this.replaced = undefined; // the tile a "Replace video…" just changed (its offset starts at 0)
@@ -202,6 +205,9 @@ class CompareSession {
         const native = decisions.map((d, i) => this.startNative(i, d, heights[i], transport, origin, epoch, maxQueued));
         this.log(`opened, ${sizes.join(' / ')} bytes, ${this.files.length} tiles`);
         this.post({ type: 'open', sizes, native });
+        // A video added from the Explorer reloads the page: the mode's hint shows again on the new one.
+        const hint = this.addMode && this.addMode.hint(this);
+        if (hint) this.post(hint);
         return undefined;
       }
       case 'tileSize': {
@@ -213,6 +219,8 @@ class CompareSession {
       case 'readBlock': return this.readBlock(m.key, m.pos, m.len);
       case 'nd': { const n = this.natives[fileOfKey(m.key)]; return n ? n.handle(m.m) : undefined; }
       case 'add': return this.addVideos();
+      case 'addMode': return this.addMode ? this.addMode.toggle(this) : undefined; // Shift+D, the Compare panel's row
+      case 'stopAddMode': return this.addMode ? this.addMode.stop() : undefined; // Esc in the page
       case 'replace': return this.replaceVideo(Number(m.index));
       case 'leave': return this.leave(Number(m.keep), Number(m.t));
       case 'pref': return this.setPref ? this.setPref(m.key, m.value) : undefined;
@@ -424,10 +432,107 @@ function registerCompare(context, deps) {
       }
     }
     const viewColumn = from && from.panel ? from.panel.viewColumn : undefined;
-    const session = new CompareSession(context, list, { ...deps, transport, frameSource, pick: pickMany, viewColumn, start: t });
+    const session = new CompareSession(context, list, { ...deps, transport, frameSource, pick: pickMany, viewColumn, start: t, addMode: addModeApi });
     // In place: the player's tab closes once compare has opened beside it in the same group.
     if (from && from.panel && !from.disposed) from.panel.dispose();
     return session;
+  };
+  // ---- Add from the Explorer (src/addmode.js, docs/notes/compare-ui.md "Add mode") ----
+  const addMode = createAddMode({ max: MAX_TILES });
+  const watched = new WeakSet();
+  const setCtx = () => Promise.resolve(vscode.commands.executeCommand('setContext', 'videoPreviewEnhanced.addMode', addMode.active)).catch(() => {});
+  const isCompare = (x) => x instanceof CompareSession;
+  /** Turns the mode on or off for a player Session or a CompareSession (Shift+D, the quick pick, the panel). */
+  const toggleAddMode = async (target) => {
+    if (!target || target.disposed || !target.panel) return undefined;
+    if (!isCompare(target) && (target.url || target.sequence || !target.uri)) return undefined;
+    const prev = addMode.target;
+    const uris = isCompare(target) ? target.uris.map(String) : [target.uri.toString()];
+    const r = addMode.toggle(target, { multi: isCompare(target), uris });
+    if (prev && prev !== target && !prev.disposed) prev.post({ type: 'addMode', on: false });
+    deps.log(`compare: add from the Explorer ${r}`);
+    if (r === 'full') target.post({ type: 'toast', text: `Compare shows up to ${MAX_TILES} videos`, ms: 2500 });
+    if (r === 'on' && !watched.has(target)) {
+      watched.add(target);
+      target.panel.onDidDispose(() => { if (addMode.gone(target)) { deps.log('compare: add from the Explorer off (tab closed)'); setCtx(); } });
+    }
+    // A player in a preview tab: the Explorer's next single click would replace that tab, so it is kept first.
+    if (r === 'on' && !isCompare(target) && target.panel.active) await vscode.commands.executeCommand('workbench.action.keepEditor');
+    target.post(addMode.hint());
+    return setCtx();
+  };
+  const stopAddMode = () => {
+    const prev = addMode.target;
+    if (!addMode.stop()) return undefined;
+    deps.log('compare: add from the Explorer off');
+    if (prev && !prev.disposed) prev.post({ type: 'addMode', on: false });
+    return setCtx();
+  };
+  const addModeApi = { toggle: toggleAddMode, stop: stopAddMode, hint: (s) => (addMode.target === s ? addMode.hint() : null) };
+  /**
+   * A video VS Code is opening (extension.js: the player's resolveCustomEditor, or another editor's new tab).
+   * True: the mode took it; the caller closes that tab. The video goes into compare (from a player: compare
+   * takes the player's tab; in compare: added to it).
+   */
+  const claimOpen = (uri) => {
+    if (!addMode.active || !uri || !FS_SCHEMES.has(uri.scheme)) return false;
+    const target = addMode.target;
+    if (target.disposed) { addMode.stop(); setCtx(); return false; }
+    const d = addMode.claim(uri.toString(), uri.path);
+    if (!d) return false;
+    deps.log(`compare: add from the Explorer: ${path.basename(uri.fsPath)}${d.dup ? ' (shown already)' : ''}${d.stop ? ', mode off' : ''}`);
+    setCtx();
+    (async () => {
+      if (d.dup) { target.post({ type: 'toast', text: `${path.basename(uri.fsPath)} is in compare already`, ms: 2000 }); return; }
+      if (isCompare(target)) {
+        target.addUris([uri]);
+        if (d.full) target.post({ type: 'toast', text: `Compare is full (${MAX_TILES} videos)`, ms: 2500 });
+      } else {
+        const t = target.pos && Number.isFinite(target.pos.t) ? target.pos.t : 0;
+        await open([target.uri, uri], { from: target, t });
+      }
+      if (d.stop && !target.disposed) target.post({ type: 'addMode', on: false });
+    })().catch((e) => deps.log(`compare: add from the Explorer failed: ${e && e.stack || e}`));
+    return true;
+  };
+  // Videos opened in an editor that is not the player (VS Code's own preview, a text tab): their new tab closes.
+  if (vscode.window.tabGroups && vscode.window.tabGroups.onDidChangeTabs) {
+    context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs((e) => {
+      if (!addMode.active) return;
+      for (const tab of e.opened || []) {
+        const inp = tab.input || {};
+        if (!inp.uri || (typeof inp.viewType === 'string' && inp.viewType.startsWith('videoPreviewEnhanced.'))) continue;
+        if (claimOpen(inp.uri)) Promise.resolve(vscode.window.tabGroups.close(tab)).catch(() => {});
+      }
+    }));
+  }
+  /**
+   * Alt+D in the Explorer: the selected videos into compare. A keybinding passes no selection, so VS Code's
+   * "Copy Path" reads it (the clipboard's text is put back after). 2-4 videos: compare in a new tab; one: added
+   * to the compare that is picking (add mode), else compared with the visible player.
+   */
+  const compareSelected = async () => {
+    const clip = vscode.env.clipboard;
+    let saved = '';
+    try { saved = await clip.readText(); } catch { /* nothing to restore */ }
+    let text = '';
+    try {
+      await clip.writeText('');
+      await vscode.commands.executeCommand('copyFilePath');
+      text = await clip.readText();
+    } finally { await clip.writeText(saved); }
+    const base = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0] && vscode.workspace.workspaceFolders[0].uri;
+    const toUri = (p) => (base && base.scheme !== 'file' ? base.with({ path: p.replace(/\\/g, '/') }) : vscode.Uri.file(p));
+    const list = selectedVideos(text).map(toUri);
+    deps.log(`compare: Explorer selection: ${list.length} video(s)`);
+    if (list.length >= 2) return vscode.commands.executeCommand('videoPreviewEnhanced.compare', list[0], list);
+    if (list.length === 1) {
+      if (claimOpen(list[0])) return undefined;
+      const player = [...deps.sessions].find((s) => s.panel && s.panel.visible && !s.url && !s.sequence && s.uri && s.uri.toString() !== list[0].toString());
+      if (player) return open([player.uri, list[0]], { from: player, t: player.pos && Number.isFinite(player.pos.t) ? player.pos.t : 0 });
+    }
+    vscode.window.showInformationMessage('Video Preview: select 2 to 4 videos in the Explorer to compare them.');
+    return undefined;
   };
   const pickMany = async (label, defaultUri, many) => {
     const r = await vscode.window.showOpenDialog({
@@ -459,7 +564,8 @@ function registerCompare(context, deps) {
     } catch { /* no workspace */ }
     return pickRows({ current: a.toString(), folder, workspace, recent: deps.recent ? deps.recent.get() : [] }).map((r) => (
       r.kind === 'sep' ? { kind: vscode.QuickPickItemKind ? vscode.QuickPickItemKind.Separator : -1, label: r.label }
-        : { label: r.kind === 'browse' ? '$(folder-opened) Browse…' : r.label, browse: r.kind === 'browse', uri: r.uri,
+        : { label: r.kind === 'browse' ? '$(folder-opened) Browse…' : r.kind === 'explorer' ? '$(list-tree) Click videos in the Explorer…' : r.label,
+          browse: r.kind === 'browse', explorer: r.kind === 'explorer', uri: r.uri,
           description: r.uri && !folder.includes(r.uri) ? vscode.workspace.asRelativePath ? vscode.workspace.asRelativePath(vscode.Uri.parse(r.uri), false) : '' : '' }));
   };
   /** Key D in the player: quick pick of other videos (same folder first), then compare in this tab's place. */
@@ -469,6 +575,7 @@ function registerCompare(context, deps) {
     const items = await pickItems(a);
     const chosen = await (testPick ? testPick(items) : vscode.window.showQuickPick(items, { placeHolder: `Compare ${path.basename(a.fsPath)} with…`, matchOnDescription: true }));
     if (!chosen) return undefined;
+    if (chosen.explorer) { const from = playerOf(a); return from ? toggleAddMode(from) : undefined; }
     if (chosen.browse) return vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', a, opts);
     const b = vscode.Uri.parse(chosen.uri);
     const from = playerOf(a);
@@ -490,6 +597,13 @@ function registerCompare(context, deps) {
   context.subscriptions.push(
     vscode.commands.registerCommand('videoPreviewEnhanced.comparePick', comparePick),
     vscode.commands.registerCommand('videoPreviewEnhanced.compareDrop', compareDrop),
+    vscode.commands.registerCommand('videoPreviewEnhanced.addFromExplorer', () => {
+      // The palette: the active compare or player (the page posts its own Shift+D with its Session).
+      const target = [...(compareSessions || [])].find((s) => s.panel.active) || [...deps.sessions].find((s) => s.panel && s.panel.active);
+      return target ? toggleAddMode(target) : undefined;
+    }),
+    vscode.commands.registerCommand('videoPreviewEnhanced.stopAddFromExplorer', stopAddMode),
+    vscode.commands.registerCommand('videoPreviewEnhanced.compareSelected', compareSelected),
     vscode.commands.registerCommand('videoPreviewEnhanced.compare', async (uri, uris, opts) => {
       let list = Array.isArray(uris) && uris.length ? uris : uri ? [uri] : [];
       list = list.filter((u) => VIDEO_EXT.test(u.path));
@@ -515,6 +629,7 @@ function registerCompare(context, deps) {
       return open([a, ...files.slice(0, MAX_TILES - 1)], { from, t });
     }),
   );
+  return { claimOpen, toggleAddMode, stopAddMode };
 }
 
 module.exports = { registerCompare, setPickHook, compareHtml, CompareSession, fileOfKey, MAX_TILES };
