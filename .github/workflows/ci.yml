@@ -1,0 +1,118 @@
+# Checks on every push and pull request: layers 1-2 of docs/TESTING.md (Node only) on Linux and
+# Windows, a syntax check, and a `vsce package` dry run. The real-VS-Code scenarios (test/vscode,
+# layer 3) and performance runs (layer 4) need a GPU and a desktop session, which hosted runners
+# don't provide reliably, so they run locally before a merge or release.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VSCE_VERSION: 4.1.1
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      # Test videos (test/media) are in Git LFS, and GitHub's free LFS quota is 1 GB/month of
+      # bandwidth. So the checkout skips them and they are fetched once per change of the LFS set
+      # and cached in .git/lfs (a cache hit downloads nothing; `git lfs pull` finds them locally).
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: List LFS objects (cache key)
+        shell: bash
+        run: git lfs ls-files --long | cut -d' ' -f1 | sort > .lfs-ids
+
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ runner.os }}-${{ hashFiles('.lfs-ids') }}
+
+      - name: Fetch LFS objects (test videos)
+        run: git lfs pull
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The host tests compare against ffmpeg / ffprobe; on Windows run_all.js uses Python 3
+      # (preinstalled on the runner) for a job object per test.
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Install
+        run: npm ci
+
+      - name: Syntax check
+        shell: bash
+        run: |
+          git ls-files 'src/*.js' 'media/*.js' 'test/**/*.js' 'build/**/*.js' \
+            | xargs -n 1 node --check
+
+      - name: Host and engine tests
+        run: node test/host/run_all.js
+
+      - name: Other Node unit tests
+        run: |
+          node test/subtitles/run.js
+          node test/timestretch/run.js
+          node test/inspect/inspect_test.js
+
+  package:
+    name: Package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      # No LFS here: the package contains neither test/ nor LFS files (media/probe is plain git).
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm ci
+
+      - name: vsce package (dry run, nothing is published)
+        shell: bash
+        run: npx --yes "@vscode/vsce@${VSCE_VERSION}" package --readme-path LISTING.md --out vpe-ci.vsix
+
+      - name: List package contents
+        shell: bash
+        run: npx --yes "@vscode/vsce@${VSCE_VERSION}" ls --readme-path LISTING.md --tree
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: vsix-ci
+          path: vpe-ci.vsix
+          retention-days: 7

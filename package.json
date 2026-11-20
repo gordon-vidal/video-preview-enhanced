@@ -1,0 +1,617 @@
+{
+  "name": "video-preview-enhanced",
+  "displayName": "Video Preview Enhanced",
+  "description": "Play MKV, AVI, MOV, MP4, WebM, WMV, FLV, MPEG, HEVC, AV1 and ProRes videos in VS Code, with sound. No install needed; frame-exact tools; optional one-click ffmpeg.",
+  "version": "0.7.0",
+  "publisher": "gordon-vidal",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gordon-vidal/video-preview-enhanced.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gordon-vidal/video-preview-enhanced/issues"
+  },
+  "homepage": "https://github.com/gordon-vidal/video-preview-enhanced#readme",
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "video",
+    "video player",
+    "video preview",
+    "video viewer",
+    "media player",
+    "mkv",
+    "avi",
+    "mov",
+    "mp4",
+    "webm",
+    "wmv",
+    "flv",
+    "mpeg",
+    "m2ts",
+    "mxf",
+    "hevc",
+    "h265",
+    "h264",
+    "av1",
+    "vp9",
+    "prores",
+    "ffmpeg",
+    "frame by frame",
+    "subtitles",
+    "compare",
+    "codec",
+    "remote ssh",
+    "wsl",
+    "audio"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onUri",
+    "onStartupFinished"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode only the built-in (sandboxed WebAssembly) decoder runs; native ffmpeg never does.",
+      "restrictedConfigurations": [
+        "videoPreviewEnhanced.ffmpegPath"
+      ]
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "vpe-video",
+        "aliases": [],
+        "icon": {
+          "light": "./media/icons/video-light.svg",
+          "dark": "./media/icons/video-dark.svg"
+        }
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "videoPreviewEnhanced.player",
+        "displayName": "Video Preview Enhanced",
+        "priority": "default",
+        "selector": [
+          {
+            "filenamePattern": "*.{avi,AVI,mkv,MKV,mov,MOV,wmv,WMV,flv,FLV,mpg,MPG,mpeg,MPEG,m2ts,M2TS,mts,MTS,3gp,3GP,ogv,OGV,m4v,M4V,vob,VOB,divx,DIVX,asf,ASF,mxf,MXF,y4m,Y4M}"
+          }
+        ]
+      },
+      {
+        "viewType": "videoPreviewEnhanced.playerOptional",
+        "displayName": "Video Preview Enhanced",
+        "priority": "option",
+        "selector": [
+          {
+            "filenamePattern": "*.{mp4,MP4,webm,WEBM}"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "videoPreviewEnhanced.openWith",
+        "title": "Open with Video Preview Enhanced",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.playSequence",
+        "title": "Play Image Sequence",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.openUrl",
+        "title": "Open Video URL…",
+        "category": "Video Preview",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "videoPreviewEnhanced.openUrlToSide",
+        "title": "Open Video URL to the Side…",
+        "category": "Video Preview",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "videoPreviewEnhanced.openUrlInNewWindow",
+        "title": "Open Video URL in New Window…",
+        "category": "Video Preview",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "videoPreviewEnhanced.showLog",
+        "title": "Show Log",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.setupFfmpeg",
+        "title": "Set Up Optional ffmpeg (GPU decoding for 4K, AV1, ProRes)",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.retestFfmpeg",
+        "title": "Re-test ffmpeg",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.makeDefault",
+        "title": "Use Video Preview Enhanced for MP4/WebM",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.undoDefault",
+        "title": "Use VS Code's Preview for MP4/WebM",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.compare",
+        "title": "Compare / Play Together",
+        "category": "Video Preview",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "videoPreviewEnhanced.compareWith",
+        "title": "Compare With…",
+        "category": "Video Preview",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "videoPreviewEnhanced.loadSubtitles",
+        "title": "Load Subtitles…",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.exportRange",
+        "title": "Export Frames (A–B)…",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.copyFfmpegRange",
+        "title": "Copy ffmpeg Command for A–B",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.play",
+        "title": "Play",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.pause",
+        "title": "Pause",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.loopOn",
+        "title": "Loop",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.loopOff",
+        "title": "✓ Loop",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.setA",
+        "title": "Set Loop Start (A)",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.setB",
+        "title": "Set Loop End (B)",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.clearAB",
+        "title": "Clear A-B Loop",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.copyFrame",
+        "title": "Copy Frame",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.saveFrame",
+        "title": "Save Frame as PNG…",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.copyTime",
+        "title": "Copy Timestamp",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.compareWith",
+        "title": "Compare With…",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.keys",
+        "title": "Keyboard Shortcuts",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.playerSettings",
+        "title": "Settings…",
+        "category": "Video Preview"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "videoPreviewEnhanced.openWith",
+          "when": "resourceExtname =~ /^\\.(mp4|webm)$/i",
+          "group": "navigation@20"
+        },
+        {
+          "command": "videoPreviewEnhanced.playSequence",
+          "when": "explorerResourceIsFolder || resourceExtname =~ /^\\.(png|jpe?g|webp|bmp|gif|avif)$/i",
+          "group": "navigation@21"
+        },
+        {
+          "command": "videoPreviewEnhanced.compare",
+          "when": "listMultiSelection && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
+          "group": "3_compare@20"
+        },
+        {
+          "command": "videoPreviewEnhanced.compareWith",
+          "when": "!listMultiSelection && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
+          "group": "3_compare@21"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "videoPreviewEnhanced.openWith",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.loadSubtitles",
+          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\./ || activeWebviewPanelId == 'videoPreviewEnhanced.sequence'"
+        },
+        {
+          "command": "videoPreviewEnhanced.exportRange",
+          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/"
+        },
+        {
+          "command": "videoPreviewEnhanced.copyFfmpegRange",
+          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.play",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.pause",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.loopOn",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.loopOff",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.setA",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.setB",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.clearAB",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.copyFrame",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.saveFrame",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.copyTime",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.compareWith",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.keys",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.playerSettings",
+          "when": "false"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "videoPreviewEnhanced.compareWith",
+          "when": "activeCustomEditorId == videoPreviewEnhanced.player || activeCustomEditorId == videoPreviewEnhanced.playerOptional",
+          "group": "navigation@90"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "videoPreviewEnhanced.ctx.play",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && !vpePlaying",
+          "group": "1_play@1"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.pause",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpePlaying",
+          "group": "1_play@1"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.loopOn",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && !vpeLoop",
+          "group": "1_play@2"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.loopOff",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeLoop",
+          "group": "1_play@2"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.setA",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeReady",
+          "group": "2_ab@1"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.setB",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeReady",
+          "group": "2_ab@2"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.clearAB",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeABSet",
+          "group": "2_ab@3"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.copyFrame",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeReady",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.saveFrame",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeReady",
+          "group": "3_copy@2"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.copyTime",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeReady",
+          "group": "3_copy@3"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.compareWith",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeFile",
+          "group": "4_compare@1"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.keys",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpe",
+          "group": "9_help@1"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.playerSettings",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpe",
+          "group": "9_help@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Video Preview Enhanced",
+      "properties": {
+        "videoPreviewEnhanced.autoplay": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start playing when a video opens."
+        },
+        "videoPreviewEnhanced.advancedMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "No longer used: the player has one layout, and its tools (compare, scopes, inspector, stats, X-ray, A-B export) are always in the settings panel (the cog) and the right-click menu.",
+          "deprecationMessage": "No longer used: the tools are always in the player's settings panel (cog) and right-click menu."
+        },
+        "videoPreviewEnhanced.jump.arrow": {
+          "enum": [
+            "frame",
+            1,
+            5,
+            10,
+            30
+          ],
+          "enumItemLabels": [
+            "1 frame",
+            "1 s",
+            "5 s",
+            "10 s",
+            "30 s"
+          ],
+          "default": 5,
+          "markdownDescription": "How far **Left** / **Right** jump in the player: `\"frame\"` is one frame, a number is seconds. **,** and **.** always step one frame. Also set in the player's settings panel (cog › Jump sizes)."
+        },
+        "videoPreviewEnhanced.jump.shift": {
+          "enum": [
+            "frame",
+            1,
+            5,
+            10,
+            30
+          ],
+          "enumItemLabels": [
+            "1 frame",
+            "1 s",
+            "5 s",
+            "10 s",
+            "30 s"
+          ],
+          "default": 1,
+          "markdownDescription": "How far **Shift+Left** / **Shift+Right** jump in the player: `\"frame\"` is one frame, a number is seconds. **,** and **.** always step one frame. Also set in the player's settings panel (cog › Jump sizes)."
+        },
+        "videoPreviewEnhanced.jump.ctrl": {
+          "enum": [
+            "frame",
+            1,
+            5,
+            10,
+            30
+          ],
+          "enumItemLabels": [
+            "1 frame",
+            "1 s",
+            "5 s",
+            "10 s",
+            "30 s"
+          ],
+          "default": "frame",
+          "markdownDescription": "How far **Ctrl+Left** / **Ctrl+Right** (**Cmd** on macOS) jump in the player: `\"frame\"` is one frame, a number is seconds. **,** and **.** always step one frame. Also set in the player's settings panel (cog › Jump sizes)."
+        },
+        "videoPreviewEnhanced.stepButtons": {
+          "enum": [
+            "frame",
+            "jump"
+          ],
+          "enumItemLabels": [
+            "Step one frame",
+            "Jump by the Ctrl+arrow size"
+          ],
+          "default": "frame",
+          "markdownDescription": "What the two buttons beside Play do in the player. `\"frame\"` (default): step one frame back / forward. `\"jump\"`: jump back / forward by the **Ctrl+Left** / **Ctrl+Right** size (`jump.ctrl`, 1 frame or 1-30 s). **,** and **.** always step one frame. Also set in the player's settings panel (cog › Jump sizes)."
+        },
+        "videoPreviewEnhanced.loop": {
+          "type": "boolean",
+          "default": true,
+          "description": "Loop playback by default."
+        },
+        "videoPreviewEnhanced.sequenceFps": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 240,
+          "description": "Frame rate for image sequences."
+        },
+        "videoPreviewEnhanced.decoder": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "builtin",
+            "ffmpeg"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Native ffmpeg when it is installed, for everything except 8-bit H.264 and VP8 (those play on VS Code's GPU decoder), in local and WSL windows. Otherwise, and over SSH or in containers, the built-in decoder. Pixel tools can switch a tab to the built-in decoder for exact pixels.",
+            "Always the built-in decoder (WebAssembly + the GPU decoder in VS Code).",
+            "Always native ffmpeg when it is installed (local windows and WSL)."
+          ],
+          "description": "Which decoder plays videos."
+        },
+        "videoPreviewEnhanced.ffmpegPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Path to your own ffmpeg for native decoding. Empty: the one setup downloaded, then PATH."
+        },
+        "videoPreviewEnhanced.gpuDecoding": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let native ffmpeg decode on the GPU, with the method the ffmpeg test found best on this machine (d3d11va, qsv, cuda, dxva2, vaapi, videotoolbox). Off: CPU decoding only, and the test tries no GPU method."
+        },
+        "videoPreviewEnhanced.hdrOutput": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "off"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "HDR10 (PQ) and HLG video is shown in HDR when the display reports HDR (Windows: \"Use HDR\" on), else tone-mapped to SDR.",
+            "Always tone-map HDR video to SDR."
+          ],
+          "description": "How HDR video (HDR10, HLG, Dolby Vision profile 8, HDR10+) is shown."
+        },
+        "videoPreviewEnhanced.nativeMaxHeight": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Native decoding scales larger videos down to this height for display. 0 (automatic): in a local window raw frames reach the editor through a private local connection (127.0.0.1, this window only), and videos play at full resolution up to 2160p when their frame rate allows (4K at 30 fps in full, 4K at 60 fps at 1440p); when that connection is unavailable, and in WSL, frames go through VS Code's messages at 1080p (720p in WSL). A number: that height, whichever way the frames go."
+        },
+        "videoPreviewEnhanced.sizeFramesToView": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Performance: with ffmpeg, send frames only as large as the picture is shown (540p to 2160p), which saves a lot of CPU for 4K videos. The picture grows to full resolution at once when you enlarge the panel, go fullscreen or zoom in. Turn off to always get frames up to `#videoPreviewEnhanced.nativeMaxHeight#` (automatic: 2160p for 4K at 30 fps). A number in `nativeMaxHeight` wins either way."
+        },
+        "videoPreviewEnhanced.remoteStream": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "off",
+            "on"
+          ],
+          "default": "auto",
+          "scope": "machine",
+          "enumDescriptions": [
+            "In remote windows (SSH, WSL, containers, tunnels), formats VS Code's GPU decoder can't play (anything but 8-bit H.264 and VP8) are re-encoded by ffmpeg on the remote machine as a low-latency H.264 stream, when native ffmpeg can't play them there directly (it does in WSL). Needs ffmpeg on the remote machine; uses its GPU encoder (NVENC, Quick Sync, AMF, VAAPI) when it has one.",
+            "Disable remote H.264 re-encoding. Normal decoder selection still applies.",
+            "In every window, local ones too (for testing)."
+          ],
+          "markdownDescription": "Remote windows: let ffmpeg on the remote machine stream videos to the editor as H.264 (about 5-10 Mb/s), instead of decoding them in the built-in decoder. The picture is scaled to `#videoPreviewEnhanced.nativeMaxHeight#` and 8-bit; pixel tools switch to the built-in decoder for exact pixels. Set it in the remote's settings."
+        },
+        "videoPreviewEnhanced.fastPreviewWhenBehind": {
+          "type": "boolean",
+          "default": false,
+          "description": "Built-in decoder, HEVC and H.264 only: while playback is behind real time, leave out deblocking for about 1.2-1.5x faster decoding. The picture is approximate while playing; paused and stepped frames are always decoded exactly."
+        },
+        "videoPreviewEnhanced.overrideFileIcons": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Override the file icon of every video format the player opens (such as `.mkv`, `.flv`, `.m2ts`) with the video icon VS Code's default Seti theme uses for `.avi` and `.mov`. It adds `\"*.ext\": \"vpe-video\"` entries to your user `files.associations`, only where you have none; turning it off removes just those.\n\nWhy the extension starts with VS Code: so the icons (and the one-time default-viewer setup) are in place before you open your first video. Loading takes about 30 ms per window (Extensions view, Running). VS Code doesn't let a setting change when an extension loads, so it still loads with this off, but then it does no file-icon work."
+        },
+        "videoPreviewEnhanced.whenSlow": {
+          "type": "string",
+          "enum": [
+            "every",
+            "skip"
+          ],
+          "default": "every",
+          "enumDescriptions": [
+            "Show every frame: playback slows down to the decoding speed (sound pauses while behind). Reliable when decode times vary.",
+            "Keep real time: jump to the next keyframe when behind. Choppy; falls back to every frame when decoding is far too slow."
+          ],
+          "description": "What to do when a video decodes slower than real time. Click the status pill in the player to switch."
+        }
+      }
+    }
+  },
+  "galleryBanner": {
+    "color": "#161B22",
+    "theme": "dark"
+  },
+  "scripts": {
+    "test": "node test/host/run_all.js",
+    "package": "npx --yes @vscode/vsce@4.1.1 package --readme-path LISTING.md",
+    "test:vscode": "node test/vscode/run.js --quick",
+    "perf:vscode": "node test/benchq.js node test/vscode/run.js"
+  },
+  "icon": "media/icon.png",
+  "qna": false,
+  "pricing": "Free"
+}

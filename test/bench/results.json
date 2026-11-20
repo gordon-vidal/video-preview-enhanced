@@ -1,0 +1,1604 @@
+{
+ "cpu": "Intel(R) Core(TM) Ultra 7 165U",
+ "gpu": "Intel(R) Graphics (31.0.101.5234)",
+ "date": "2026-11-18T13:40:19.106Z",
+ "node": "v22.23.5",
+ "repeat": 2,
+ "files": {
+  "av1_10_1080p.mp4": {
+   "probe": {
+    "codec": "av1",
+    "profile": "Main",
+    "pix_fmt": "yuv420p10le",
+    "w": 1920,
+    "h": 1080,
+    "frames": 48,
+    "duration": 2,
+    "sizeMB": 0.73,
+    "mbps": 2.91
+   },
+   "othersLoad": 26.2,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.205,
+    "wall": 1.44,
+    "fps": 237.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\av1_10_1080p.mp4 -an -f null -",
+    "best": 240,
+    "spreadPct": 2,
+    "runs": [
+     240,
+     234.1
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.23,
+    "wall": 1.25,
+    "fps": 212,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\av1_10_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 215.2,
+    "spreadPct": 3,
+    "runs": [
+     215.2,
+     208.7
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.243,
+    "wall": 1.5,
+    "fps": 258.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\av1_10_1080p.mp4 -an -f null -",
+    "best": 320,
+    "spreadPct": 47,
+    "runs": [
+     197.5,
+     320
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.495,
+    "wall": 1.53,
+    "fps": 100.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\av1_10_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 103.7,
+    "spreadPct": 7,
+    "runs": [
+     97,
+     103.7
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 48,
+    "wall": 2.61,
+    "fps": 18.5,
+    "decodeOnlyFps": 21.8,
+    "convMs": 407,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5b7170] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5bec70] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "best": 18.6,
+    "spreadPct": 1,
+    "runs": [
+     18.4,
+     18.6
+    ]
+   }
+  },
+  "av1_10_2160p.mp4": {
+   "probe": {
+    "codec": "av1",
+    "profile": "Main",
+    "pix_fmt": "yuv420p10le",
+    "w": 3840,
+    "h": 2160,
+    "frames": 60,
+    "duration": 2.002,
+    "sizeMB": 3.06,
+    "mbps": 12.22
+   },
+   "othersLoad": 46.3,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.222,
+    "wall": 4.87,
+    "fps": 33.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\av1_10_2160p.mp4 -an -f null -",
+    "best": 40,
+    "spreadPct": 39,
+    "runs": [
+     40,
+     27
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.771,
+    "wall": 4,
+    "fps": 36.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\av1_10_2160p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 38.6,
+    "spreadPct": 13,
+    "runs": [
+     33.9,
+     38.6
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.893,
+    "wall": 4.14,
+    "fps": 145.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\av1_10_2160p.mp4 -an -f null -",
+    "best": 223.9,
+    "spreadPct": 108,
+    "runs": [
+     67.2,
+     223.9
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.896,
+    "wall": 3.83,
+    "fps": 35,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\av1_10_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "best": 38.4,
+    "spreadPct": 19,
+    "runs": [
+     31.6,
+     38.4
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 60,
+    "wall": 22.85,
+    "fps": 2.7,
+    "decodeOnlyFps": 3,
+    "convMs": 2707,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5b7170] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5b7c50] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "best": 2.7,
+    "spreadPct": 4,
+    "runs": [
+     2.6,
+     2.7
+    ]
+   }
+  },
+  "av1_8_1080p.mp4": {
+   "probe": {
+    "codec": "av1",
+    "profile": "Main",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 48,
+    "duration": 2,
+    "sizeMB": 0.72,
+    "mbps": 2.89
+   },
+   "othersLoad": 48.8,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.174,
+    "wall": 1.13,
+    "fps": 280,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\av1_8_1080p.mp4 -an -f null -",
+    "best": 284,
+    "spreadPct": 3,
+    "runs": [
+     284,
+     275.9
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.084,
+    "wall": 1.05,
+    "fps": 614.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\av1_8_1080p.mp4 -an -f null -",
+    "best": 657.5,
+    "spreadPct": 14,
+    "runs": [
+     657.5,
+     571.4
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.42,
+    "wall": 1.49,
+    "fps": 122.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\av1_8_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 130.4,
+    "spreadPct": 13,
+    "runs": [
+     114.3,
+     130.4
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 48,
+    "wall": 1.96,
+    "fps": 26.9,
+    "decodeOnlyFps": 24.6,
+    "convMs": 1,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5b7170] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5bec70] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "best": 29.2,
+    "spreadPct": 18,
+    "runs": [
+     29.2,
+     24.5
+    ]
+   }
+  },
+  "dnxhr_lb_1080p.mov": {
+   "probe": {
+    "codec": "dnxhd",
+    "profile": "DNXHR LB",
+    "pix_fmt": "yuv422p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 24,
+    "duration": 1,
+    "sizeMB": 4.52,
+    "mbps": 36.18
+   },
+   "othersLoad": 48.6,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.058,
+    "wall": 0.94,
+    "fps": 492.6,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 0000012dded85080] [warning] Discarding stream metadata 'vendor_id' because the stream is being re-encoded. Use '-keep_metadata vendor_id' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\dnxhr_lb_1080p.mov -an -f null -",
+    "best": 571.4,
+    "spreadPct": 32,
+    "runs": [
+     413.8,
+     571.4
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.089,
+    "wall": 1.1,
+    "fps": 308.8,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 000001bdddfb3940] [warning] Discarding stream metadata 'vendor_id' because the stream is being re-encoded. Use '-keep_metadata vendor_id' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\dnxhr_lb_1080p.mov -an -vf format=yuv420p -f null -",
+    "best": 347.8,
+    "spreadPct": 25,
+    "runs": [
+     347.8,
+     269.7
+    ]
+   },
+   "d3d_fmt": "?",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 24,
+    "wall": 1.03,
+    "fps": 25.5,
+    "decodeOnlyFps": 73.9,
+    "convMs": 693,
+    "srcFmt": 4,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "best": 27.6,
+    "spreadPct": 17,
+    "runs": [
+     23.3,
+     27.6
+    ]
+   }
+  },
+  "h264_10_1080p.mp4": {
+   "probe": {
+    "codec": "h264",
+    "profile": "High 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 1920,
+    "h": 1080,
+    "frames": 48,
+    "duration": 2,
+    "sizeMB": 1.24,
+    "mbps": 4.98
+   },
+   "othersLoad": 44.3,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.211,
+    "wall": 1.2,
+    "fps": 228.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\h264_10_1080p.mp4 -an -f null -",
+    "best": 228.6,
+    "spreadPct": 0,
+    "runs": [
+     228.6,
+     227.5
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.194,
+    "wall": 1.08,
+    "fps": 249.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\h264_10_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 251.3,
+    "spreadPct": 2,
+    "runs": [
+     251.3,
+     247.4
+    ]
+   },
+   "d3d_fmt": "yuv420p10le",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p10le"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p10le"
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 48,
+    "wall": 1.58,
+    "fps": 32.4,
+    "decodeOnlyFps": 40.2,
+    "convMs": 384,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "best": 34.5,
+    "spreadPct": 13,
+    "runs": [
+     30.3,
+     34.5
+    ]
+   }
+  },
+  "h264_8_1080p.mp4": {
+   "probe": {
+    "codec": "h264",
+    "profile": "High",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 48,
+    "duration": 2,
+    "sizeMB": 1.25,
+    "mbps": 4.99
+   },
+   "othersLoad": 17.1,
+   "load": "quiet",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.155,
+    "wall": 1.18,
+    "fps": 322.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\h264_8_1080p.mp4 -an -f null -",
+    "best": 335.7,
+    "spreadPct": 8,
+    "runs": [
+     309.7,
+     335.7
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.263,
+    "wall": 1.72,
+    "fps": 226.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\h264_8_1080p.mp4 -an -f null -",
+    "best": 269.7,
+    "spreadPct": 39,
+    "runs": [
+     182.5,
+     269.7
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.417,
+    "wall": 1.9,
+    "fps": 118.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\h264_8_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 122.4,
+    "spreadPct": 6,
+    "runs": [
+     115.1,
+     122.4
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 48,
+    "wall": 1.01,
+    "fps": 47.3,
+    "decodeOnlyFps": 47.5,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "best": 47.4,
+    "spreadPct": 0,
+    "runs": [
+     47.3,
+     47.4
+    ]
+   }
+  },
+  "h264_8_2160p.mp4": {
+   "probe": {
+    "codec": "h264",
+    "profile": "High",
+    "pix_fmt": "yuv420p",
+    "w": 3840,
+    "h": 2160,
+    "frames": 60,
+    "duration": 2.002,
+    "sizeMB": 4.61,
+    "mbps": 18.42
+   },
+   "othersLoad": 27.3,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.633,
+    "wall": 2.11,
+    "fps": 97.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\h264_8_2160p.mp4 -an -f null -",
+    "best": 100.5,
+    "spreadPct": 6,
+    "runs": [
+     100.5,
+     94.8
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.395,
+    "wall": 2.01,
+    "fps": 168.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\h264_8_2160p.mp4 -an -f null -",
+    "best": 184.6,
+    "spreadPct": 19,
+    "runs": [
+     184.6,
+     151.9
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.626,
+    "wall": 3.05,
+    "fps": 39.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\h264_8_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "best": 41.3,
+    "spreadPct": 11,
+    "runs": [
+     41.3,
+     36.9
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 60,
+    "wall": 6.1,
+    "fps": 10.1,
+    "decodeOnlyFps": 9.9,
+    "convMs": 1,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "best": 10.4,
+    "spreadPct": 6,
+    "runs": [
+     9.8,
+     10.4
+    ]
+   }
+  },
+  "h264_aac_anim_1080p.mp4": {
+   "probe": {
+    "codec": "h264",
+    "profile": "High",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 90,
+    "duration": 3,
+    "sizeMB": 2.17,
+    "mbps": 5.78
+   },
+   "othersLoad": 50.5,
+   "load": "very noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.211,
+    "wall": 1.55,
+    "fps": 427.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\h264_aac_anim_1080p.mp4 -an -f null -",
+    "best": 428.6,
+    "spreadPct": 0,
+    "runs": [
+     426.5,
+     428.6
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.353,
+    "wall": 1.51,
+    "fps": 309.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\h264_aac_anim_1080p.mp4 -an -f null -",
+    "best": 364.4,
+    "spreadPct": 35,
+    "runs": [
+     364.4,
+     255
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.961,
+    "wall": 2.24,
+    "fps": 115.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\h264_aac_anim_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 137.2,
+    "spreadPct": 38,
+    "runs": [
+     137.2,
+     93.7
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 90,
+    "wall": 2.35,
+    "fps": 45.5,
+    "decodeOnlyFps": 38.8,
+    "convMs": 3,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "best": 52.6,
+    "spreadPct": 31,
+    "runs": [
+     38.4,
+     52.6
+    ]
+   }
+  },
+  "hevc_10_1080p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 1920,
+    "h": 1080,
+    "frames": 48,
+    "duration": 2,
+    "sizeMB": 0.8,
+    "mbps": 3.22
+   },
+   "othersLoad": 43.7,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.294,
+    "wall": 1.21,
+    "fps": 181.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\hevc_10_1080p.mp4 -an -f null -",
+    "best": 199.2,
+    "spreadPct": 20,
+    "runs": [
+     199.2,
+     163.3
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.241,
+    "wall": 1.3,
+    "fps": 200.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\hevc_10_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 202.5,
+    "spreadPct": 2,
+    "runs": [
+     199.2,
+     202.5
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.125,
+    "wall": 1.41,
+    "fps": 436.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\hevc_10_1080p.mp4 -an -f null -",
+    "best": 489.8,
+    "spreadPct": 24,
+    "runs": [
+     384,
+     489.8
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.707,
+    "wall": 2.01,
+    "fps": 92.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\hevc_10_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 117.6,
+    "spreadPct": 54,
+    "runs": [
+     117.6,
+     67.9
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 48,
+    "wall": 4.25,
+    "fps": 12.6,
+    "decodeOnlyFps": 13.2,
+    "convMs": 598,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "best": 13.8,
+    "spreadPct": 20,
+    "runs": [
+     11.3,
+     13.8
+    ]
+   }
+  },
+  "hevc_10_2160p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 3840,
+    "h": 2160,
+    "frames": 60,
+    "duration": 2.002,
+    "sizeMB": 3.08,
+    "mbps": 12.32
+   },
+   "othersLoad": 44.6,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.203,
+    "wall": 2.4,
+    "fps": 58.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\hevc_10_2160p.mp4 -an -f null -",
+    "best": 66.4,
+    "spreadPct": 28,
+    "runs": [
+     49.9,
+     66.4
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.244,
+    "wall": 2.48,
+    "fps": 57,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\hevc_10_2160p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 65.8,
+    "spreadPct": 31,
+    "runs": [
+     48.2,
+     65.8
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.279,
+    "wall": 1.72,
+    "fps": 215.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\hevc_10_2160p.mp4 -an -f null -",
+    "best": 216.6,
+    "spreadPct": 1,
+    "runs": [
+     216.6,
+     215.1
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.431,
+    "wall": 2.66,
+    "fps": 44.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\hevc_10_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "best": 47.5,
+    "spreadPct": 13,
+    "runs": [
+     41.9,
+     47.5
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 60,
+    "wall": 10.03,
+    "fps": 6.1,
+    "decodeOnlyFps": 7,
+    "convMs": 1432,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "best": 6.1,
+    "spreadPct": 2,
+    "runs": [
+     6,
+     6.1
+    ]
+   }
+  },
+  "hevc_10_hlg_2160p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 3840,
+    "h": 2160,
+    "frames": 60,
+    "duration": 2.002,
+    "sizeMB": 2.88,
+    "mbps": 11.51
+   },
+   "othersLoad": 27.6,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.787,
+    "wall": 1.68,
+    "fps": 77.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\hevc_10_hlg_2160p.mp4 -an -f null -",
+    "best": 77.9,
+    "spreadPct": 2,
+    "runs": [
+     76.2,
+     77.9
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.867,
+    "wall": 1.79,
+    "fps": 71,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\hevc_10_hlg_2160p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 72.7,
+    "spreadPct": 5,
+    "runs": [
+     69.2,
+     72.7
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.286,
+    "wall": 1.49,
+    "fps": 231.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\hevc_10_hlg_2160p.mp4 -an -f null -",
+    "best": 253.2,
+    "spreadPct": 19,
+    "runs": [
+     253.2,
+     209.8
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.401,
+    "wall": 2.52,
+    "fps": 42.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\hevc_10_hlg_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "best": 42.9,
+    "spreadPct": 0,
+    "runs": [
+     42.8,
+     42.9
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 60,
+    "wall": 9.1,
+    "fps": 7.1,
+    "decodeOnlyFps": 8,
+    "convMs": 1562,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "best": 7.6,
+    "spreadPct": 14,
+    "runs": [
+     6.6,
+     7.6
+    ]
+   }
+  },
+  "hevc_10_pq_2160p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 3840,
+    "h": 2160,
+    "frames": 60,
+    "duration": 2.002,
+    "sizeMB": 2.86,
+    "mbps": 11.43
+   },
+   "othersLoad": 19.3,
+   "load": "quiet",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.835,
+    "wall": 1.76,
+    "fps": 72.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\hevc_10_pq_2160p.mp4 -an -f null -",
+    "best": 72.7,
+    "spreadPct": 1,
+    "runs": [
+     72.7,
+     71.9
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.937,
+    "wall": 1.87,
+    "fps": 67.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\hevc_10_pq_2160p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 71,
+    "spreadPct": 10,
+    "runs": [
+     71,
+     64
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.254,
+    "wall": 1.39,
+    "fps": 238.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\hevc_10_pq_2160p.mp4 -an -f null -",
+    "best": 240,
+    "spreadPct": 2,
+    "runs": [
+     240,
+     236.2
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.246,
+    "wall": 2.15,
+    "fps": 48.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\hevc_10_pq_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "best": 49.5,
+    "spreadPct": 3,
+    "runs": [
+     49.5,
+     48.2
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 60,
+    "wall": 8.74,
+    "fps": 7.1,
+    "decodeOnlyFps": 8.2,
+    "convMs": 1370,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "best": 7.3,
+    "spreadPct": 6,
+    "runs": [
+     6.9,
+     7.3
+    ]
+   }
+  },
+  "hevc_8_1080p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 48,
+    "duration": 2,
+    "sizeMB": 0.81,
+    "mbps": 3.24
+   },
+   "othersLoad": 25,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.194,
+    "wall": 1.06,
+    "fps": 252.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\hevc_8_1080p.mp4 -an -f null -",
+    "best": 256.7,
+    "spreadPct": 4,
+    "runs": [
+     256.7,
+     247.4
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.138,
+    "wall": 1.42,
+    "fps": 388.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\hevc_8_1080p.mp4 -an -f null -",
+    "best": 428.6,
+    "spreadPct": 21,
+    "runs": [
+     347.8,
+     428.6
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.386,
+    "wall": 1.35,
+    "fps": 125.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\hevc_8_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "best": 126,
+    "spreadPct": 1,
+    "runs": [
+     124.4,
+     126
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 48,
+    "wall": 1.41,
+    "fps": 34.1,
+    "decodeOnlyFps": 34.1,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "best": 34.1,
+    "spreadPct": 0,
+    "runs": [
+     34,
+     34.1
+    ]
+   }
+  },
+  "mpeg2_1080p.mpg": {
+   "probe": {
+    "codec": "mpeg2video",
+    "profile": "Main",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 48,
+    "duration": 2,
+    "sizeMB": 2.61,
+    "mbps": 10.44
+   },
+   "othersLoad": 35.2,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.04,
+    "wall": 1.11,
+    "fps": 1248.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\mpeg2_1080p.mpg -an -f null -",
+    "best": 1297.3,
+    "spreadPct": 8,
+    "runs": [
+     1200,
+     1297.3
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.423,
+    "wall": 2.47,
+    "fps": 205.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\mpeg2_1080p.mpg -an -f null -",
+    "best": 298.1,
+    "spreadPct": 90,
+    "runs": [
+     298.1,
+     113.5
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.648,
+    "wall": 3.67,
+    "fps": 37.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\mpeg2_1080p.mpg -an -vf format=yuv420p -f null -",
+    "best": 46.3,
+    "spreadPct": 46,
+    "runs": [
+     29.1,
+     46.3
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 48,
+    "wall": 0.78,
+    "fps": 77.7,
+    "decodeOnlyFps": 63.5,
+    "convMs": 1,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "best": 93.7,
+    "spreadPct": 41,
+    "runs": [
+     93.7,
+     61.7
+    ]
+   }
+  },
+  "prores_proxy_1080p.mov": {
+   "probe": {
+    "codec": "prores",
+    "profile": "Proxy",
+    "pix_fmt": "yuv422p10le",
+    "w": 1920,
+    "h": 1080,
+    "frames": 24,
+    "duration": 1,
+    "sizeMB": 4.92,
+    "mbps": 39.4
+   },
+   "othersLoad": 32.6,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.135,
+    "wall": 1.92,
+    "fps": 200,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 000002083e894ac0] [warning] Discarding stream metadata 'vendor_id' because the stream is being re-encoded. Use '-keep_metadata vendor_id' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\prores_proxy_1080p.mov -an -f null -",
+    "best": 222.2,
+    "spreadPct": 22,
+    "runs": [
+     177.8,
+     222.2
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.196,
+    "wall": 1.84,
+    "fps": 142.9,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 00000207dcfae900] [warning] Discarding stream metadata 'vendor_id' because the stream is being re-encoded. Use '-keep_metadata vendor_id' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\prores_proxy_1080p.mov -an -vf format=yuv420p -f null -",
+    "best": 163.3,
+    "spreadPct": 29,
+    "runs": [
+     163.3,
+     122.4
+    ]
+   },
+   "d3d_fmt": "yuv422p10le",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv422p10le"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv422p10le"
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 24,
+    "wall": 1.2,
+    "fps": 20.3,
+    "decodeOnlyFps": 45.3,
+    "convMs": 662,
+    "srcFmt": 64,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "best": 20.6,
+    "spreadPct": 3,
+    "runs": [
+     20,
+     20.6
+    ]
+   }
+  },
+  "vp9_1080p.webm": {
+   "probe": {
+    "codec": "vp9",
+    "profile": "Profile 0",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 48,
+    "duration": 2,
+    "sizeMB": 0.93,
+    "mbps": 3.73
+   },
+   "othersLoad": 41.1,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.149,
+    "wall": 1.31,
+    "fps": 353.1,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 00000206280e0c80] [warning] Discarding stream metadata 'DURATION' because the stream is being re-encoded. Use '-keep_metadata DURATION' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\vp9_1080p.webm -an -f null -",
+    "best": 384,
+    "spreadPct": 18,
+    "runs": [
+     322.1,
+     384
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.091,
+    "wall": 1.22,
+    "fps": 527.5,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 00000175df7b1640] [warning] Discarding stream metadata 'DURATION' because the stream is being re-encoded. Use '-keep_metadata DURATION' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\vp9_1080p.webm -an -f null -",
+    "best": 527.5,
+    "spreadPct": 0,
+    "runs": [
+     527.5,
+     527.5
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.399,
+    "wall": 1.72,
+    "fps": 136.1,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 000001d763bb4340] [warning] Discarding stream metadata 'DURATION' because the stream is being re-encoded. Use '-keep_metadata DURATION' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\vp9_1080p.webm -an -vf format=yuv420p -f null -",
+    "best": 151.9,
+    "spreadPct": 23,
+    "runs": [
+     120.3,
+     151.9
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 48,
+    "wall": 1.93,
+    "fps": 27,
+    "decodeOnlyFps": 24.9,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "best": 29.2,
+    "spreadPct": 16,
+    "runs": [
+     24.8,
+     29.2
+    ]
+   }
+  },
+  "vp9_2160p.webm": {
+   "probe": {
+    "codec": "vp9",
+    "profile": "Profile 0",
+    "pix_fmt": "yuv420p",
+    "w": 3840,
+    "h": 2160,
+    "frames": 60,
+    "duration": 2.002,
+    "sizeMB": 2.59,
+    "mbps": 10.36
+   },
+   "othersLoad": 31.9,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.356,
+    "wall": 1.5,
+    "fps": 171,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 000002ae3c30ddc0] [warning] Discarding stream metadata 'DURATION' because the stream is being re-encoded. Use '-keep_metadata DURATION' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\vp9_2160p.webm -an -f null -",
+    "best": 173.4,
+    "spreadPct": 3,
+    "runs": [
+     173.4,
+     168.5
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.273,
+    "wall": 1.64,
+    "fps": 227.1,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 0000027ae8957000] [warning] Discarding stream metadata 'DURATION' because the stream is being re-encoded. Use '-keep_metadata DURATION' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\vp9_2160p.webm -an -f null -",
+    "best": 234.4,
+    "spreadPct": 6,
+    "runs": [
+     219.8,
+     234.4
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.106,
+    "wall": 2.28,
+    "fps": 56.7,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 00000264115d6480] [warning] Discarding stream metadata 'DURATION' because the stream is being re-encoded. Use '-keep_metadata DURATION' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\vp9_2160p.webm -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "best": 59.1,
+    "spreadPct": 9,
+    "runs": [
+     59.1,
+     54.2
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 60,
+    "wall": 7.85,
+    "fps": 8.3,
+    "decodeOnlyFps": 7.7,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "best": 8.9,
+    "spreadPct": 16,
+    "runs": [
+     7.6,
+     8.9
+    ]
+   }
+  },
+  "vp9_opus_anim_1080p.webm": {
+   "probe": {
+    "codec": "vp9",
+    "profile": "Profile 0",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 90,
+    "duration": 3.008,
+    "sizeMB": 1.13,
+    "mbps": 3
+   },
+   "othersLoad": 27.3,
+   "load": "noisy",
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.174,
+    "wall": 1.32,
+    "fps": 547.1,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 000001ca949e7300] [warning] Discarding stream metadata 'DURATION' because the stream is being re-encoded. Use '-keep_metadata DURATION' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <repo>\\real-footage\\test\\media\\vp9_opus_anim_1080p.webm -an -f null -",
+    "best": 576.9,
+    "spreadPct": 11,
+    "runs": [
+     517.2,
+     576.9
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.137,
+    "wall": 1.35,
+    "fps": 672,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 0000017f1093e440] [warning] Discarding stream metadata 'DURATION' because the stream is being re-encoded. Use '-keep_metadata DURATION' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <repo>\\real-footage\\test\\media\\vp9_opus_anim_1080p.webm -an -f null -",
+    "best": 687,
+    "spreadPct": 4,
+    "runs": [
+     687,
+     656.9
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.537,
+    "wall": 1.64,
+    "fps": 177.4,
+    "fallback": false,
+    "warn": [
+     "[vost#0:0/wrapped_avframe @ 0000026a34844380] [warning] Discarding stream metadata 'DURATION' because the stream is being re-encoded. Use '-keep_metadata DURATION' to keep it."
+    ],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <repo>\\real-footage\\test\\media\\vp9_opus_anim_1080p.webm -an -vf format=yuv420p -f null -",
+    "best": 187.1,
+    "spreadPct": 11,
+    "runs": [
+     167.6,
+     187.1
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 90,
+    "wall": 1.63,
+    "fps": 55.2,
+    "decodeOnlyFps": 55.3,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "best": 55.2,
+    "spreadPct": 0,
+    "runs": [
+     55.2,
+     55.1
+    ]
+   }
+  }
+ }
+}

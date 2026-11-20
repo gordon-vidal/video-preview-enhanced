@@ -1,0 +1,5 @@
+tree: mixS  (libav.js 6.11.9.0.2, emsdk 6.0.5)
+ffmpeg configure: --arch=wasm --extra-cflags=-msimd128 --enable-small
+OPTFLAGS (ffmpeg, zlib, link): -O3 -msimd128 -fno-vectorize -fno-slp-vectorize
+DAV1DOPT (dav1d): -O3 -msimd128
+LINKXTRA: -sASYNCIFY_REMOVE=@asyncify-remove.json (5404 functions)

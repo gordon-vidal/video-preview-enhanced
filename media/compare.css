@@ -1,0 +1,104 @@
+/* Compare (docs/notes/compare-ui.md): on top of player.css, so the bar and the panels are the player's. */
+body.compare #stage { background: #000; overflow: hidden; }
+body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+#cells { position: absolute; inset: 0; }
+
+/* One cell per tile (2x2, side by side, or the split's single picture); its overlay covers the tile's picture. */
+.cell { position: absolute; box-sizing: border-box; }
+.ov { position: absolute; pointer-events: none; opacity: 0; transition: opacity 120ms; }
+.cell:hover .ov, .cell:focus-within .ov { opacity: 1; }
+.ov > * { pointer-events: auto; }
+.pill, .nudge { --chip: color-mix(in srgb, var(--vscode-editorWidget-background, #141414) 86%, transparent); }
+.pill {
+  position: absolute; top: 10px; display: flex; align-items: center; gap: 7px; height: 26px; padding: 0 9px 0 5px;
+  max-width: calc(70% - 10px); box-sizing: border-box; border: 0; border-radius: 6px; cursor: pointer;
+  font: inherit; color: var(--vscode-foreground, #e8e8e8); background: var(--chip);
+}
+.pill.left { left: 10px; }
+.pill.right { right: 10px; }
+.pill:hover { background: var(--vscode-editorWidget-background, #2d2d2e); }
+.pill .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pill .fr { color: var(--vpe-dim); font-size: 11.5px; }
+.ico { display: inline-flex; flex: none; color: var(--vpe-dim); }
+.ico.dim { opacity: 0.5; }
+.ltr {
+  width: 18px; height: 18px; flex: none; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; color: var(--vscode-foreground, #fff);
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.4));
+}
+.nudge {
+  position: absolute; top: 10px; display: flex; align-items: center; height: 26px; overflow: hidden; border-radius: 6px; background: var(--chip);
+}
+.nudge.left { left: 10px; }
+.nudge.right { right: 10px; }
+.nudge.below { top: 42px; }
+.nudge button { height: 26px; min-width: 26px; padding: 0 6px; border: 0; background: none; cursor: pointer; font: inherit; color: var(--vscode-foreground, #e8e8e8); }
+.nudge button:hover { background: var(--vpe-hover); }
+.nudge .offv { font-family: var(--vpe-mono); font-size: 11.5px; min-width: 44px; }
+.oor {
+  position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; pointer-events: none;
+  color: #8a8a8a; font-size: 13px;
+}
+.cell.split .oor { top: 12px; transform: none; }
+
+/* 3 videos: the fourth cell adds one (shows on hover). */
+.cell.add { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: #8a8a8a; display: flex; align-items: center; justify-content: center; }
+.addcell { display: flex; flex-direction: column; align-items: center; gap: 6px; opacity: 0; transition: opacity 120ms; }
+.cell.add:hover .addcell, .cell.add:focus-visible .addcell { opacity: 1; }
+
+/* Split: the divider (drag it, or ← → when focused). */
+#divider { position: absolute; width: 24px; margin-left: -12px; cursor: ew-resize; display: flex; justify-content: center; touch-action: none; }
+#divider::before { content: ''; width: 2px; height: 100%; background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25); }
+#divider .h {
+  position: absolute; top: 50%; width: 26px; height: 26px; margin-top: -13px; box-sizing: border-box; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; color: #fff;
+  background: rgba(20, 20, 20, 0.86); border: 2px solid rgba(255, 255, 255, 0.85);
+}
+
+/* The bar: the clock video's letter before the time. */
+#row #time .who { color: var(--vpe-dim); margin-right: 0.45em; }
+#row #time .who:empty { display: none; }
+
+/* The toast and the status in the middle top, as in the mock-up. */
+body.compare #toast { left: 50%; right: auto; top: 36px; transform: translateX(-50%); white-space: nowrap; z-index: 4; }
+
+/* The Compare panel and its per-video page (media/controls.js pages added by media/compare.js). */
+.panel.cmp, .panel.cmpVid { width: 340px; }
+.panel.cmpVid { padding: 4px 0 6px; }
+.panel .row.static { cursor: default; }
+.panel .row.static:hover { background: none; }
+.panel .row.tall { height: 44px; }
+.panel .row .two { display: flex; flex-direction: column; line-height: 1.25; }
+.panel .row .two .sub { font-size: 11.5px; color: var(--vpe-dim); overflow: hidden; text-overflow: ellipsis; }
+.panel .row .val.mono { font-size: 12px; min-width: 34px; text-align: right; }
+.panel .row.head .ltr { margin-right: 4px; }
+.panel .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
+.panel .row .seg { width: 166px; }
+.panel .seg .chip { white-space: nowrap; padding: 0 10px; }
+.panel.info .seg .chip, .panel.info .seg button {
+  height: 26px; border-radius: 5px; font-size: 11.5px; background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border);
+}
+.panel.info .seg button[aria-pressed="true"] { background: var(--vpe-on-bg); color: var(--vpe-on-fg); border-color: var(--vpe-accent); }
+.panel .unitrow { display: flex; align-items: center; gap: 10px; padding: 8px 12px 0; }
+.panel .unitrow .seg { flex: 1; }
+.panel .readout.off { font-size: 18px; }
+.panel .tool.on { box-shadow: inset 0 0 0 1px var(--vpe-accent); }
+
+/* A tile's right-click menu (VS Code's menu colours). */
+#menu {
+  position: fixed; z-index: 7; min-width: 250px; padding: 4px 0; display: flex; flex-direction: column;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground)); background: var(--vscode-menu-background, #252526);
+  border: 1px solid var(--vscode-menu-border, #454545); border-radius: 6px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
+  font-size: 13px;
+}
+#menu .mi {
+  height: 26px; padding: 0 12px 0 26px; display: flex; align-items: center; gap: 16px; border: 0; background: none; cursor: pointer;
+  text-align: left; font: inherit; color: inherit;
+}
+#menu .mi:hover, #menu .mi:focus { background: var(--vscode-menu-selectionBackground, #04395e); color: var(--vscode-menu-selectionForeground, #fff); outline: none; }
+#menu .mi .h { color: var(--vpe-dim); font-size: 12px; }
+#menu .mi:hover .h, #menu .mi:focus .h { color: inherit; }
+#menu .msep { height: 1px; margin: 4px 10px; background: var(--vscode-menu-separatorBackground, #454545); }
+
+body.vscode-high-contrast .pill, body.vscode-high-contrast .nudge { outline: 1px solid var(--vscode-contrastBorder, transparent); }
+@media (prefers-reduced-motion: reduce) { .ov, .addcell { transition: none; } }

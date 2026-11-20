@@ -1,0 +1,27 @@
+WEBVTT - with a header
+Kind: captions
+Language: en
+
+STYLE
+::cue { color: yellow }
+::cue(.loud) { font-weight: bold }
+
+NOTE this is a comment
+spanning two lines
+
+REGION
+id:fred width:40%
+
+intro
+00:01.000 --> 00:04.000
+<v Roger>Hi <c.loud>there</c></v> &lt;3
+
+00:00:02.000 --> 00:00:03.000 line:0 align:start
+Top left
+
+00:00:05.000 --> 00:00:06.000 position:20% line:10%,start
+Positioned <i>cue</i>
+<00:00:05.500>karaoke
+
+01:00:00.000 --> 01:00:01.500
+One hour in

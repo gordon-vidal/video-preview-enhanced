@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest a feature, a format to support, or a change to how something works.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or workflow, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+      description: How you imagine it working. Screenshots or examples from other players are welcome.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds you have tried
+  - type: input
+    id: formats
+    attributes:
+      label: Formats involved (if any)
+      placeholder: "e.g. MXF with DNxHR 4:2:2 10-bit"

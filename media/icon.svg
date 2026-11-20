@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1F6FEB"/>
+      <stop offset="1" stop-color="#0B3D91"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <!-- play triangle -->
+  <path d="M96 52 L206 112 L96 172 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="14" stroke-linejoin="round"/>
+  <!-- frame ticks: the timeline with the current frame marked -->
+  <rect x="36" y="206" width="184" height="12" rx="6" fill="#FFFFFF" fill-opacity="0.35"/>
+  <rect x="36" y="206" width="104" height="12" rx="6" fill="#FFFFFF"/>
+  <rect x="136" y="190" width="12" height="44" rx="6" fill="#FFD33D"/>
+</svg>

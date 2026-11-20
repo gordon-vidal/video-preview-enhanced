@@ -1,0 +1,71 @@
+name: Bug report
+description: A video doesn't open, plays wrong, or the player misbehaves.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Security problems: please use the private report form instead (see SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Steps to reproduce, if it isn't simply "open this file".
+    validations:
+      required: true
+  - type: input
+    id: ext-version
+    attributes:
+      label: Extension version
+      placeholder: "0.7.0"
+    validations:
+      required: true
+  - type: input
+    id: vscode-version
+    attributes:
+      label: VS Code version
+      description: Help > About (or `code --version`). Also say if it is Cursor, VSCodium, etc.
+      placeholder: "1.147.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux, Other]
+    validations:
+      required: true
+  - type: input
+    id: os-detail
+    attributes:
+      label: OS version, GPU and display (if relevant)
+      placeholder: "Windows 11 24H2, NVIDIA RTX 4070, HDR on"
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where is the file?
+      options: [Local, WSL, Remote-SSH, Dev Container / Codespaces, Network URL (http / HLS / DASH)]
+    validations:
+      required: true
+  - type: input
+    id: decoder
+    attributes:
+      label: Decoder that played it
+      description: Shown in ⓘ About this video (GPU / Built-in / ffmpeg).
+  - type: input
+    id: ffmpeg
+    attributes:
+      label: ffmpeg version, if you use one
+      description: "`ffmpeg -version`, first line; or \"none\"."
+  - type: textarea
+    id: file
+    attributes:
+      label: About the file
+      description: Output of `ffprobe -hide_banner <file>` (or container, codec, resolution, bit depth, HDR, size). Attach or link a short clip only if you may share it.
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: "Run **Video Preview: Show Log** and paste the relevant part. Remove any paths you don't want to share."
+      render: text

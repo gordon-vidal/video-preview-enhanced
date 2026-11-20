@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>frame path</title></head>
+<body>
+<canvas id="c" width="16" height="16"></canvas>
+<script>
+'use strict';
+// Driven by browser_path.js. Runs the real frame path in Chromium:
+// decoder-worker.js (or pool.js) -> postMessage -> GLRenderer.drawYuv (from engine.js),
+// flow-controlled like engine.js ('more' with 96 KB, one request in flight).
+// The renderer is the class from engine.js itself (cut out of createEngine).
+(async () => {
+  const q = new URLSearchParams(location.search);
+  const root = q.get('root'); // e.g. /r0/
+  const file = q.get('file');
+  const mode = q.get('mode'); // single | pool
+  const draw = q.get('draw') !== '0';
+  const out = { file, mode, draw };
+  const say = (x) => fetch('/log', { method: 'POST', body: String(x) });
+  const report = (r) => fetch('/result', { method: 'POST', body: JSON.stringify(r) });
+  window.onerror = (e) => report({ ...out, error: String(e) });
+  try {
+    const canvas = document.getElementById('c');
+    const engineSrc = await (await fetch(`${root}media/engine.js`)).text();
+    const a = engineSrc.indexOf('  class GLRenderer {');
+    const b = engineSrc.indexOf('\n  const hex2');
+    // eslint-disable-next-line no-new-func
+    const GLRenderer = new Function('canvas', `${engineSrc.slice(a, b)}\nreturn GLRenderer;`)(canvas);
+    const gl = new GLRenderer(canvas);
+    const dbg = gl.gl.getExtension('WEBGL_debug_renderer_info');
+    out.gpu = dbg ? gl.gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '?';
+    if (mode === 'pool') {
+      await new Promise((res, rej) => { const s = document.createElement('script'); s.src = `${root}media/pool.js`; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+    }
+    const size = +(await fetch(`/media/${file}`, { method: 'HEAD' })).headers.get('content-length');
+    const url = `${root}media/decoder-worker.js`;
+    // eslint-disable-next-line no-undef
+    const w = mode === 'pool' ? new DecoderPool(url, { multiRead: true, log: false, workers: q.get('workers') ? +q.get('workers') : undefined }) : new Worker(url);
+    if (q.get('recycle') !== '0') gl.onUploaded = (buf) => { if (buf.byteLength) w.postMessage({ type: 'recycle', bufs: [buf] }, [buf]); };
+    let frames = 0;
+    // shot=N: hash (and PNG) of the canvas after drawing frame N, to compare renderers.
+    const shot = +(q.get('shot') || 0);
+    const shotOut = (v) => {
+      const g = gl.gl;
+      const px = new Uint8Array(canvas.width * canvas.height * 4);
+      g.readPixels(0, 0, canvas.width, canvas.height, g.RGBA, g.UNSIGNED_BYTE, px);
+      let h = 2166136261;
+      for (let i = 0; i < px.length; i++) h = Math.imul(h ^ px[i], 16777619);
+      out.shot = { t: v.t, w: canvas.width, h: canvas.height, hash: (h >>> 0).toString(16), glError: g.getError() };
+      out.png = canvas.toDataURL('image/png');
+    };
+    let t0 = 0;
+    let drawMs = 0;
+    let maxDraw = 0;
+    // File reads through 1 MB blocks with two blocks of read-ahead, like engine.js's block cache.
+    const BS = 1 << 20;
+    const blocks = new Map(); // aligned pos -> Promise<Uint8Array>
+    const readers = new Map(); // rid -> last block read (pool workers read at different places)
+    const block = (b) => {
+      if (b >= size) return null;
+      if (!blocks.has(b)) blocks.set(b, fetch(`/media/${file}`, { headers: { Range: `bytes=${b}-${Math.min(size, b + BS) - 1}` } }).then((r) => r.arrayBuffer()).then((x) => new Uint8Array(x)));
+      return blocks.get(b);
+    };
+    const read = async (pos, len, rid) => {
+      let data = new Uint8Array(0);
+      if (pos < size) {
+        const b = Math.floor(pos / BS) * BS;
+        for (let k = 1; k <= 2; k++) block(b + k * BS);
+        readers.set(rid || 0, b);
+        for (const k of blocks.keys()) if (![...readers.values()].some((r) => k >= r - 4 * BS && k <= r + 4 * BS)) blocks.delete(k);
+        data = (await block(b)).slice(pos - b);
+      }
+      w.postMessage({ type: 'block', pos, data, rid }, [data.buffer]);
+    };
+    const more = () => w.postMessage({ type: 'more', gen: 0, limit: 96 * 1024 });
+    const lib = `${location.origin}${root}media/libav-vpe/libav-6.11.9.0.2-vpe`;
+    await new Promise((resolve, reject) => {
+      w.onerror = (e) => reject(new Error(`worker error ${e.message} ${e.filename}:${e.lineno}`));
+      w.onmessage = (e) => {
+        const m = e.data;
+        switch (m.type) {
+          case 'ready': w.postMessage({ type: 'open', size }); break;
+          case 'read': if (q.get('trace')) say(`read ${m.pos} ${m.len} size ${size}`); read(m.pos, m.len, m.rid); break;
+          case 'streams': out.info = m.info.video ? `${m.info.video.codec} ${m.info.video.width}x${m.info.video.height}` : 'none';
+            w.postMessage({ type: 'config', video: m.info.video ? 'soft' : 'none', audio: 'none', deep: true }); break;
+          case 'configured': t0 = performance.now(); more(); break;
+          case 'batch':
+            // Like engine.js: ask for more before drawing (it draws later, on animation frames).
+            if (!m.eof) more();
+            for (const v of m.video) {
+              if (v.kind !== 'yuv') continue;
+              frames++;
+              if (!draw) continue;
+              const d0 = performance.now();
+              gl.drawYuv(v);
+              if (frames === shot) shotOut(v);
+              const d = performance.now() - d0;
+              drawMs += d;
+              if (d > maxDraw) maxDraw = d;
+            }
+            if (m.eof) {
+              const p = new Uint8Array(4);
+              gl.gl.readPixels(0, 0, 1, 1, gl.gl.RGBA, gl.gl.UNSIGNED_BYTE, p); // wait for the GPU
+              const ms = performance.now() - t0;
+              Object.assign(out, { frames, fps: +(frames / (ms / 1000)).toFixed(1), drawMs: +(drawMs / Math.max(1, frames)).toFixed(2), maxDraw: +maxDraw.toFixed(1) });
+              w.terminate();
+              resolve();
+            }
+            break;
+          case 'log': say(m.msg); break;
+          case 'error': say(`error ${m.where}: ${m.message}`); if (m.where === 'open' || m.where === 'init') reject(new Error(m.message)); break;
+          default: break;
+        }
+      };
+      w.postMessage({ type: 'init', loader: `${lib}.js`, toImport: `${lib}.wasm.js`, wasmurl: `${lib}.wasm.wasm`, variant: 'vpe' });
+    });
+    report(out);
+  } catch (e) {
+    report({ ...out, error: String(e && e.stack || e) });
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+* text=auto eol=lf
+*.wasm binary
+*.png binary
+*.vsix binary
+
+# Test videos are stored with Git LFS: everything under test/media with a video extension
+# (86 files, about 63 MB; 35 of them are over 500 KB). Not tracked with LFS on purpose:
+# media/probe/ (1.5 MB; it ships in the VSIX, so it must be a real file in every checkout) and
+# media/libav-vpe/*.wasm (8 MB, ships in the VSIX). See CONTRIBUTING.md, "Test media and Git LFS".
+test/media/**/*.asf filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.avi filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.flv filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.m2ts filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.mkv filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.mov filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.mpg filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.mts filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.mxf filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.ogv filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.vob filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.webm filter=lfs diff=lfs merge=lfs -text
+test/media/**/*.wmv filter=lfs diff=lfs merge=lfs -text
+
+# Other binaries (small, plain git)
+*.tif binary
+media/probe/*.mkv binary

@@ -1,0 +1,202 @@
+# Public release: VS Marketplace (Trusted Publishing, no stored token), optionally Open VSX, and the
+# VSIX attached to a GitHub Release. Started by hand only (Actions > Publish > Run workflow). It never
+# runs on tags: internal releases are tagged too. Steps and checks: docs/RELEASING.md.
+#
+# Marketplace authentication is Trusted Publishing (GitHub OIDC), as documented in
+# https://code.visualstudio.com/api/working-with-extensions/publishing-extension#publish-with-github-actions-and-trusted-publishing
+# The publisher's Trusted Publishing policy names owner gordon-vidal, repository video-preview-enhanced,
+# workflow file publish.yml and no environment, so this file must keep its name and the Marketplace
+# job must not use a GitHub environment. The job needs `id-token: write`, and publishes with
+# `vsce publish --oidc` (the token exchange is single use and the credential lasts 15 minutes, so
+# packaging happens in an earlier job).
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish; must equal "version" in package.json on the chosen branch (e.g. 0.8.0)
+        required: true
+        type: string
+      confirm:
+        description: Type "publish" to confirm
+        required: true
+        type: string
+      pre_release:
+        description: Publish as a pre-release
+        required: false
+        type: boolean
+        default: false
+      open_vsx:
+        description: Also publish to Open VSX (needs the OVSX_PAT secret; skipped without it)
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  VSCE_VERSION: 4.1.1
+  OVSX_VERSION: 1.4.0
+
+jobs:
+  package:
+    name: Check and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      vsix: ${{ steps.pack.outputs.vsix }}
+    steps:
+      - name: Confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$CONFIRM" != "publish" ]; then echo "::error::Type \"publish\" in the confirm field."; exit 1; fi
+          if [ "$REF" != "refs/heads/main" ]; then echo "::error::Publish from main only (this run is on $REF)."; exit 1; fi
+
+      # lfs: true downloads the test videos for the tests below; a release is rare, so the bandwidth is fine.
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Version matches package.json
+        env:
+          WANT: ${{ inputs.version }}
+        run: |
+          HAVE=$(node -p "require('./package.json').version")
+          if [ "$WANT" != "$HAVE" ]; then echo "::error::Input version $WANT, package.json says $HAVE."; exit 1; fi
+          if ! grep -q "^## $HAVE" CHANGELOG.md; then echo "::error::CHANGELOG.md has no '## $HAVE' heading."; exit 1; fi
+
+      - name: Install ffmpeg (for the tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install
+        run: npm ci
+
+      - name: Tests
+        run: |
+          node test/host/run_all.js
+          node test/subtitles/run.js
+          node test/timestretch/run.js
+          node test/inspect/inspect_test.js
+
+      - name: Package
+        id: pack
+        env:
+          VERSION: ${{ inputs.version }}
+          PRE: ${{ inputs.pre_release }}
+        run: |
+          VSIX="video-preview-enhanced-${VERSION}.vsix"
+          FLAGS=""
+          if [ "$PRE" = "true" ]; then FLAGS="--pre-release"; fi
+          npx --yes "@vscode/vsce@${VSCE_VERSION}" package --readme-path LISTING.md $FLAGS --out "$VSIX"
+          echo "vsix=$VSIX" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: ${{ steps.pack.outputs.vsix }}
+          retention-days: 30
+
+  marketplace:
+    name: VS Marketplace
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # No `environment:` here: the Trusted Publishing policy has none.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+
+      - name: vsce publish --oidc
+        env:
+          VSIX: ${{ needs.package.outputs.vsix }}
+        run: npx --yes "@vscode/vsce@${VSCE_VERSION}" publish --oidc --packagePath "$VSIX"
+
+  open-vsx:
+    name: Open VSX
+    needs: [package, marketplace]
+    if: inputs.open_vsx
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Token present?
+        id: token
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -n "$OVSX_PAT" ]; then echo "have=true" >> "$GITHUB_OUTPUT"
+          else echo "::notice::OVSX_PAT is not set: skipping Open VSX."; echo "have=false" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.have == 'true'
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v4
+        if: steps.token.outputs.have == 'true'
+        with:
+          name: vsix
+
+      - name: ovsx publish
+        if: steps.token.outputs.have == 'true'
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+          VSIX: ${{ needs.package.outputs.vsix }}
+          PRE: ${{ inputs.pre_release }}
+        run: |
+          FLAGS=""
+          if [ "$PRE" = "true" ]; then FLAGS="--pre-release"; fi
+          npx --yes "ovsx@${OVSX_VERSION}" publish "$VSIX" -p "$OVSX_PAT" $FLAGS
+
+  github-release:
+    name: GitHub Release
+    needs: [package, marketplace]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+
+      # Attaches the VSIX to release v<version>: an existing (for example draft) release is updated
+      # and published; otherwise one is created on this commit, with the CHANGELOG section as notes.
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          VSIX: ${{ needs.package.outputs.vsix }}
+          PRE: ${{ inputs.pre_release }}
+        run: |
+          TAG="v${VERSION}"
+          awk -v v="## ${VERSION}" 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > notes.md
+          PREFLAG=""
+          if [ "$PRE" = "true" ]; then PREFLAG="--prerelease"; fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$VSIX" --clobber
+            gh release edit "$TAG" --draft=false $PREFLAG
+          else
+            gh release create "$TAG" "$VSIX" --title "$TAG" --notes-file notes.md --target "$GITHUB_SHA" $PREFLAG
+          fi

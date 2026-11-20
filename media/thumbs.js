@@ -1,0 +1,334 @@
+// @ts-check
+// Seek-bar hover thumbnails. One low-priority worker (thumbs-worker.js, a second
+// keyframe-only libav.js instance) is started on the first hover and decodes one
+// keyframe at a time; it is idle when nobody hovers and is stopped after a minute
+// without use (the cache stays). Engine side: the "seek-bar thumbnails" section
+// of engine.js. Not used for MJPEG AVI/image sequences (FramePlayer, no libav)
+// or audio-only files.
+//
+// Lazy (docs/notes/seek-preview.md): nothing decodes until the pointer is on the seek bar
+// (hover or drag). The picture under the pointer comes first (newest position wins), then,
+// while the pointer stays, a few neighbouring places so moving along the bar is quick.
+// When the pointer leaves, requests stop (a running worker request is cancelled) and the
+// worker is closed after some idle time. Decoded pictures stay cached (memory budget).
+// Native ffmpeg backend: o.request(t, w, h) replaces the worker; the extension host runs
+//   ffmpeg -skip_frame nokey -ss T -i FILE -frames:v 1 -vf scale=W:H -f rawvideo -pix_fmt rgba -
+// (src/thumbhost.js).
+'use strict';
+
+/* exported ThumbService */
+// eslint-disable-next-line no-unused-vars
+class ThumbService {
+  /**
+   * @param {object} o
+   * @param {string} o.workerSrcUrl URL of thumbs-worker.js (fetched, then run from a blob)
+   * @param {{loader: string, toImport: string, wasmurl: string, variant: string}} o.libav blob URLs of libav.js
+   * @param {number} o.size file size
+   * @param {number} o.duration seconds
+   * @param {number} o.startT first presentation time (absolute)
+   * @param {number} [o.fps]
+   * @param {number} [o.rotation] 0/90/180/270 clockwise
+   * @param {(pos: number, len: number) => void} o.onRead the worker wants file data
+   * @param {() => void} [o.onIdle] the worker stopped reading for now
+   * @param {() => boolean} [o.busy] true while playback needs the CPU (no neighbour filling then)
+   * @param {boolean} [o.remote] the file is on another machine (SSH/WSL): no neighbour filling,
+   *   since every thumbnail costs at least one 4 MB block over the connection
+   * @param {number} [o.idleMs] ms after the pointer left until the worker is closed (default 20 s)
+   * @param {number} [o.radius] neighbouring places filled each side of the pointer (default 4)
+   * @param {(msg: string) => void} [o.log]
+   * @param {number} [o.cap] bytes of thumbnails kept
+   * @param {(t: number, w: number, h: number) => Promise<any>} [o.request]
+   *   decodes one thumbnail elsewhere (native ffmpeg in the extension host) instead of the libav.js
+   *   worker; resolves {kt, w, h, data (RGBA)} or null
+   */
+  constructor(o) {
+    this.o = o;
+    this.rot = [90, 180, 270].includes(o.rotation || 0) ? o.rotation || 0 : 0;
+    // Grid: about 200 places along the bar, so nearby hovers share requests and cache entries.
+    this.step = Math.max(o.duration / 200, 1 / (o.fps || 30));
+    this.box = this.rot === 90 || this.rot === 270 ? { w: 120, h: 160 } : { w: 160, h: 120 };
+    this.cap = o.cap > 0 ? o.cap : 30e6; // bytes of thumbnails kept (less on small machines: media/membudget.js)
+    /** @type {Map<number, {bmp: ImageBitmap, w: number, h: number, bytes: number}>} keyframe time -> picture (LRU order) */
+    this.cache = new Map();
+    this.bytes = 0;
+    /** @type {Map<number, number|null>} grid slot -> keyframe time (null: none found) */
+    this.slotKt = new Map();
+    this.worker = null;
+    this.state = 'off'; // off | starting | ready | failed
+    this.id = 0;
+    this.inflight = null; // {id, slot, prefetch}
+    this.want = null; // slot the pointer is on
+    this.cb = null;
+    this.debounce = 0;
+    this.idleTimer = 0;
+    this.stats = { requests: 0, decoded: 0, ms: [] };
+  }
+
+  /** Counters (tests, notes): requests made, pictures decoded and cached, worker state. */
+  stats0() {
+    return { requests: this.stats.requests, decoded: this.stats.decoded, cached: this.cache.size, slots: this.slotKt.size, bytes: this.bytes, state: this.state, worker: !!this.worker, hovering: this.want !== null };
+  }
+
+  /** The cached picture nearest to `slot` (shown while the exact one decodes). */
+  nearest(slot) {
+    let best = null;
+    let bd = Infinity;
+    for (const [s, kt] of this.slotKt) {
+      if (kt === null || kt === undefined || !this.cache.has(kt)) continue;
+      const d = Math.abs(s - slot);
+      if (d < bd) { bd = d; best = s; }
+    }
+    return best === null ? null : this.lookup(best);
+  }
+
+  log(m) { if (this.o.log) this.o.log(`thumbs: ${m}`); }
+
+  /**
+   * Pointer at `rel` seconds on the bar. cb(picture | null) is called with the
+   * cached picture at once, or later when it is decoded (only if still wanted).
+   */
+  hover(rel, cb) {
+    if (this.state === 'failed') return;
+    const slot = Math.max(0, Math.min(Math.floor(this.o.duration / this.step), Math.round(rel / this.step)));
+    this.cb = cb;
+    this.want = slot;
+    this.lastHover = performance.now();
+    const hit = this.lookup(slot);
+    if (hit) cb(hit);
+    else {
+      const near = this.nearest(slot);
+      if (near) cb(near); // at once; replaced when the exact keyframe arrives
+    }
+    if (hit && this.nextNear() === null) return; // exact picture and neighbours cached: no work, no worker
+    this.start();
+    // Latest hover wins: a running request for another place is cancelled at once;
+    // otherwise ask 40 ms after the first move (the timer reads the newest position).
+    if (this.inflight) { this.kick(); return; }
+    if (!this.debounce) this.debounce = setTimeout(() => { this.debounce = 0; this.kick(); }, 40);
+  }
+
+  /** Pointer left the bar. */
+  leave() {
+    this.want = null;
+    this.cb = null;
+    clearTimeout(this.debounce);
+    this.debounce = 0;
+    // Stop at once: a running worker request is cancelled (a native ffmpeg one ends within a
+    // fraction of a second; its picture is still cached).
+    if (this.inflight && this.worker && !this.inflight.cancelSent) {
+      this.inflight.cancelSent = true;
+      this.worker.postMessage({ type: 'cancel', below: this.inflight.id + 1 });
+    }
+    if (!this.inflight) this.kick();
+  }
+
+  /** @returns {{bmp: ImageBitmap, w: number, h: number, rot: number} | null} */
+  lookup(slot) {
+    if (!this.slotKt.has(slot)) return null;
+    const kt = this.slotKt.get(slot);
+    const e = kt === null || kt === undefined ? null : this.cache.get(kt);
+    if (!e) return null;
+    // Recently used last.
+    this.cache.delete(/** @type {number} */ (kt));
+    this.cache.set(/** @type {number} */ (kt), e);
+    return { bmp: e.bmp, w: e.w, h: e.h, rot: this.rot };
+  }
+
+  async start() {
+    if (this.state !== 'off') return;
+    this.state = 'starting';
+    this.t0 = performance.now();
+    if (this.o.request) { this.state = 'ready'; this.kick(); return; }
+    try {
+      const res = await fetch(this.o.workerSrcUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const url = URL.createObjectURL(new Blob([await res.text()], { type: 'text/javascript' }));
+      this.worker = new Worker(url);
+      this.worker.onmessage = (e) => this.onMessage(e.data);
+      this.worker.onerror = (e) => this.fail(`worker error: ${e.message}`);
+      this.log(`starting worker (source fetched in ${Math.round(performance.now() - this.t0)} ms)`);
+      this.worker.postMessage({ type: 'init', ...this.o.libav });
+    } catch (e) {
+      this.fail(String(e && /** @type {any} */ (e).message || e));
+    }
+  }
+
+  fail(why) {
+    this.log(`off (${why})`);
+    this.state = 'failed';
+    this.stop();
+  }
+
+  /** Frees the worker (and its WebAssembly memory); the next hover starts it again. */
+  stop() {
+    clearTimeout(this.idleTimer);
+    clearTimeout(this.debounce);
+    this.debounce = 0;
+    if (this.worker) this.worker.terminate();
+    this.worker = null;
+    this.inflight = null;
+    if (this.state !== 'failed') this.state = 'off';
+    if (this.o.onIdle) this.o.onIdle();
+  }
+
+  dispose() {
+    this.state = 'failed';
+    this.stop();
+    for (const e of this.cache.values()) e.bmp.close();
+    this.cache.clear();
+    this.bytes = 0;
+  }
+
+  /** Engine: a file block for the worker. */
+  post(msg, transfer) { if (this.worker) this.worker.postMessage(msg, transfer || []); }
+
+  onMessage(m) {
+    switch (m.type) {
+      case 'ready': this.post({ type: 'open', size: this.o.size }); break;
+      case 'read': this.o.onRead(m.pos, m.len); break;
+      case 'opened':
+        if (!m.ok) { this.fail(m.why); return; }
+        this.state = 'ready';
+        this.log(`worker ready in ${Math.round(performance.now() - this.t0)} ms (${m.codec})`);
+        this.kick();
+        break;
+      case 'thumb': this.onThumb(m); break;
+      case 'log': this.log(m.msg); break;
+      case 'error':
+        this.log(`${m.where}: ${m.message}`);
+        if (m.where !== 'thumb') { this.fail(m.message); return; }
+        if (this.inflight && this.inflight.id === m.id) { this.slotKt.set(this.inflight.slot, null); this.inflight = null; }
+        this.kick();
+        break;
+    }
+  }
+
+  /** Sends the next request: the hovered slot first, otherwise a prefetch slot. */
+  kick() {
+    if (this.state !== 'ready' || (!this.worker && !this.o.request)) return;
+    clearTimeout(this.idleTimer);
+    if (this.inflight) {
+      // A newer hover makes the running request stale (unless it is that slot).
+      if (this.worker && this.want !== null && this.inflight.slot !== this.want && !this.inflight.cancelSent) {
+        this.inflight.cancelSent = true;
+        this.worker.postMessage({ type: 'cancel', below: this.inflight.id + 1 });
+      }
+      return;
+    }
+    let slot = null;
+    let prefetch = false;
+    if (this.want === null) {
+      // Pointer away: nothing to decode. Close the worker after some idle time.
+      if (this.o.onIdle) this.o.onIdle();
+      const left = (this.o.idleMs ?? 20e3) - (performance.now() - (this.lastHover || 0));
+      if (left <= 0) this.stop();
+      else this.idleTimer = setTimeout(() => this.kick(), left);
+      return;
+    }
+    if (!this.lookup(this.want) && !(this.slotKt.has(this.want) && this.slotKt.get(this.want) === null)) slot = this.want;
+    else if (!(this.o.busy && this.o.busy())) {
+      slot = this.nextNear();
+      prefetch = slot !== null;
+    }
+    if (slot === null) {
+      // Pointer on the bar and everything near it is there (or playback is busy: look again soon).
+      if (this.o.onIdle) this.o.onIdle();
+      if (this.o.busy && this.o.busy() && this.nextNear() !== null) this.idleTimer = setTimeout(() => this.kick(), 500);
+      return;
+    }
+    this.inflight = { id: ++this.id, slot, prefetch, t: performance.now() };
+    this.stats.requests++;
+    if (this.o.request) { this.requestHost(this.inflight); return; }
+    this.worker.postMessage({ type: 'thumb', id: this.id, t: this.o.startT + slot * this.step, w: this.box.w, h: this.box.h });
+  }
+
+  /** 0..n-1 ordered so every prefix covers the range evenly (n/2, n/4, 3n/4, ...). */
+  static coarseToFine(n) {
+    const out = [];
+    const seen = new Uint8Array(n);
+    for (let div = 1; out.length < n && div <= 2 * n; div *= 2) {
+      for (let k = 0; k < div; k++) {
+        const i = Math.min(n - 1, Math.floor(((k + 0.5) / div) * n));
+        if (!seen[i]) { seen[i] = 1; out.push(i); }
+      }
+    }
+    for (let i = 0; i < n; i++) if (!seen[i]) out.push(i);
+    return out;
+  }
+
+  /** Native backend: one thumbnail from the extension host (a stale answer is still cached). */
+  async requestHost(req) {
+    let r = null;
+    try { r = await /** @type {any} */ (this.o.request)(this.o.startT + req.slot * this.step, this.box.w, this.box.h); } catch (e) { this.log(`host: ${e && /** @type {any} */ (e).message || e}`); }
+    if (this.state === 'failed') return;
+    this.onThumb({ id: req.id, kt: r && typeof r.kt === 'number' ? r.kt : null, w: r && r.w, h: r && r.h, data: r && r.data, ms: Math.round(performance.now() - req.t) });
+  }
+
+  /** The nearest place around the pointer without a picture (within the radius), or null. */
+  nextNear() {
+    if (this.o.remote || this.want === null) return null;
+    const last = Math.floor(this.o.duration / this.step);
+    const rad = this.o.radius ?? 4;
+    for (let d = 1; d <= rad; d++) {
+      for (const s of [this.want + d, this.want - d]) {
+        if (s >= 0 && s <= last && !this.slotKt.has(s)) return s;
+      }
+    }
+    return null;
+  }
+
+  async onThumb(m) {
+    const req = this.inflight;
+    if (!req || req.id !== m.id) return;
+    this.inflight = null;
+    if (!m.cancelled) {
+      this.slotKt.set(req.slot, m.kt === undefined ? null : m.kt);
+      if (m.data && m.kt !== null) {
+        this.stats.decoded++;
+        const ms = Math.round(performance.now() - req.t);
+        this.stats.ms.push(ms);
+        if (this.stats.decoded <= 5) this.log(`${m.w}x${m.h} at ${m.kt.toFixed(2)} s in ${ms} ms (worker ${m.ms} ms)${req.prefetch ? ', prefetch' : ''}`);
+        try {
+          const bmp = await createImageBitmap(new ImageData(new Uint8ClampedArray(m.data.buffer, m.data.byteOffset, m.w * m.h * 4), m.w, m.h));
+          this.add(m.kt, { bmp, w: m.w, h: m.h, bytes: m.w * m.h * 4 });
+        } catch (e) { this.log(`bitmap failed: ${e}`); }
+      }
+      if (this.want === req.slot && this.cb) {
+        const hit = this.lookup(req.slot);
+        if (hit) this.cb(hit);
+      }
+    }
+    this.kick();
+  }
+
+  add(kt, e) {
+    const old = this.cache.get(kt);
+    if (old) { this.bytes -= old.bytes; old.bmp.close(); this.cache.delete(kt); }
+    this.cache.set(kt, e);
+    this.bytes += e.bytes;
+    for (const [k, v] of this.cache) {
+      if (this.bytes <= this.cap) break;
+      this.cache.delete(k);
+      this.bytes -= v.bytes;
+      v.bmp.close();
+      if (this.worker) this.worker.postMessage({ type: 'forget', kt: k });
+    }
+  }
+
+  /**
+   * Draws a picture from hover() into a canvas, turned like the video.
+   * @param {HTMLCanvasElement} cv
+   * @param {{bmp: ImageBitmap, w: number, h: number, rot: number}} p
+   */
+  static draw(cv, p) {
+    const side = p.rot === 90 || p.rot === 270;
+    const w = side ? p.h : p.w;
+    const h = side ? p.w : p.h;
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const ctx = /** @type {CanvasRenderingContext2D} */ (cv.getContext('2d'));
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.translate(w / 2, h / 2);
+    ctx.rotate((p.rot * Math.PI) / 180);
+    ctx.drawImage(p.bmp, -p.w / 2, -p.h / 2);
+  }
+}

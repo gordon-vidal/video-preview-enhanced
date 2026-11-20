@@ -1,0 +1,60 @@
+# Tests, test media and their outputs
+test/**
+out/**
+.vscode-test/**
+**/*.log
+
+# Development only
+docs/**
+node_modules/**
+.vscode/**
+.github/**
+.claude/**
+.gitignore
+.gitattributes
+package-lock.json
+*.vsix
+
+# Repository-only files (the README, CHANGELOG, LICENSE and THIRD_PARTY_NOTICES ship;
+# LISTING.md stays in so `vsce package --readme-path LISTING.md` can find it)
+.editorconfig
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+
+# Unused copies of the decoder. The webview loads libav-<version>-vpe.js,
+# .wasm.js and .wasm.wasm. LICENSE-NOTE.md, LICENSE-full.txt and
+# vpe-fragments.json (the build definition, for the LGPL) stay in the package.
+media/libav-vpe/*.mjs
+media/libav-vpe/libav-vpe.js
+
+# Stray media files never belong in the package
+**/*.mp4
+**/*.mkv
+**/*.mov
+**/*.avi
+**/*.webm
+**/*.wmv
+**/*.mxf
+**/*.m2ts
+**/*.y4m
+**/*.zip
+build/**
+README.md
+
+# The ffmpeg probe clips ship (src/probe.js tests GPU decoding with them)
+!media/probe/*.mkv
+
+# Icon sources (the package uses media/icon.png)
+media/icon.svg
+media/icon-128.png
+
+# Screenshots are for the listing page (rewritten to the repo URL), not the package
+media/screenshots/**
+media/marketing/**
+media/libav-vpe/asyncify-remove.json
+media/libav-vpe/BUILD-FLAGS.txt
+
+# Review launcher (docs/REVIEW.md)
+review.cmd
+tools/**

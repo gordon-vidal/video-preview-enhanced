@@ -1,0 +1,3961 @@
+{
+ "cpu": "Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz",
+ "date": "2026-11-18T01:36:13.631Z",
+ "node": "v24.22.1",
+ "files": {
+  "av1_10_1080p.mp4": {
+   "probe": {
+    "codec": "av1",
+    "profile": "Main",
+    "pix_fmt": "yuv420p10le",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 1.27,
+    "mbps": 1.02
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.876,
+    "wall": 0.91,
+    "fps": 342.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\av1_10_1080p.mp4 -an -f null -",
+    "runs": [
+     342.5,
+     292.7
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.176,
+    "wall": 1.21,
+    "fps": 255.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\av1_10_1080p.mp4 -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     242.1,
+     255.1
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.554,
+    "wall": 0.59,
+    "fps": 541.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\av1_10_1080p.mp4 -an -f null -",
+    "runs": [
+     525.4,
+     541.5
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.584,
+    "wall": 0.61,
+    "fps": 513.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\av1_10_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     410.4,
+     513.7
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.204,
+    "wall": 0.43,
+    "fps": 1470.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\av1_10_1080p.mp4 -an -f null -",
+    "runs": [
+     1470.6,
+     1388.9
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.266,
+    "wall": 1.48,
+    "fps": 237,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\av1_10_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     209.1,
+     237
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.221,
+    "wall": 0.42,
+    "fps": 1357.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_10_1080p.mp4 -an -f null -",
+    "runs": [
+     1181.1,
+     1357.5
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.625,
+    "wall": 0.92,
+    "fps": 480,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_10_1080p.mp4 -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     480,
+     453.2
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 4.71,
+    "fps": 63.7,
+    "decodeOnlyFps": 111.1,
+    "convMs": 2003,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5b7170] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5be0c0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     63.7,
+     60.6
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 6.93,
+    "fps": 43.3,
+    "decodeOnlyFps": 64.9,
+    "convMs": 2295,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5af460] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5b63c0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     43.3,
+     38.2
+    ]
+   }
+  },
+  "av1_10_2160p.mp4": {
+   "probe": {
+    "codec": "av1",
+    "profile": "Main",
+    "pix_fmt": "yuv420p10le",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 2.83,
+    "mbps": 2.26
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 3.297,
+    "wall": 3.34,
+    "fps": 91,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\av1_10_2160p.mp4 -an -f null -",
+    "runs": [
+     84,
+     91
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 3.552,
+    "wall": 3.58,
+    "fps": 84.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\av1_10_2160p.mp4 -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     81.8,
+     84.5
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.882,
+    "wall": 1.93,
+    "fps": 159.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\av1_10_2160p.mp4 -an -f null -",
+    "runs": [
+     159.4,
+     142.9
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.728,
+    "wall": 2.77,
+    "fps": 110,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\av1_10_2160p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     110,
+     97.6
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.607,
+    "wall": 0.92,
+    "fps": 494.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\av1_10_2160p.mp4 -an -f null -",
+    "runs": [
+     494.2,
+     470.2
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 4.335,
+    "wall": 4.57,
+    "fps": 69.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\av1_10_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "runs": [
+     55.3,
+     69.2
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.669,
+    "wall": 0.85,
+    "fps": 448.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_10_2160p.mp4 -an -f null -",
+    "runs": [
+     389.6,
+     448.4
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.967,
+    "wall": 1.21,
+    "fps": 310.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_10_2160p.mp4 -an -vf scale_cuda=-2:1440:format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     310.2,
+     237.5
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 17.93,
+    "fps": 16.7,
+    "decodeOnlyFps": 29.4,
+    "convMs": 7700,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5b7170] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5be0d0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     16.6,
+     16.7
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 23.86,
+    "fps": 12.6,
+    "decodeOnlyFps": 18.9,
+    "convMs": 7981,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5af460] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5b63d0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     12.6,
+     12.1
+    ]
+   }
+  },
+  "av1_10hb_1080p.mp4": {
+   "probe": {
+    "codec": "av1",
+    "profile": "Main",
+    "pix_fmt": "yuv420p10le",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 5.96,
+    "mbps": 4.76
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.303,
+    "wall": 1.34,
+    "fps": 230.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\av1_10hb_1080p.mp4 -an -f null -",
+    "runs": [
+     230.2,
+     205.2
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.277,
+    "wall": 1.31,
+    "fps": 234.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\av1_10hb_1080p.mp4 -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     232.2,
+     234.9
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.664,
+    "wall": 0.7,
+    "fps": 451.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\av1_10hb_1080p.mp4 -an -f null -",
+    "runs": [
+     451.8,
+     434.2
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.74,
+    "wall": 0.77,
+    "fps": 405.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\av1_10hb_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     405.4,
+     364.1
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.238,
+    "wall": 0.59,
+    "fps": 1260.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\av1_10hb_1080p.mp4 -an -f null -",
+    "runs": [
+     1000,
+     1260.5
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.235,
+    "wall": 1.53,
+    "fps": 242.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\av1_10hb_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     236.4,
+     242.9
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.246,
+    "wall": 0.47,
+    "fps": 1219.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_10hb_1080p.mp4 -an -f null -",
+    "runs": [
+     1219.5,
+     1052.6
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.473,
+    "wall": 0.66,
+    "fps": 634.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_10hb_1080p.mp4 -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     634.2,
+     553.5
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 5.35,
+    "fps": 56.1,
+    "decodeOnlyFps": 88.4,
+    "convMs": 1943,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5b7170] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5be0e0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     56.1,
+     55.2
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 6.5,
+    "fps": 46.2,
+    "decodeOnlyFps": 66.2,
+    "convMs": 1946,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5af460] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5b63e0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     40.3,
+     46.2
+    ]
+   }
+  },
+  "av1_10hb_2160p.mp4": {
+   "probe": {
+    "codec": "av1",
+    "profile": "Main",
+    "pix_fmt": "yuv420p10le",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 11.58,
+    "mbps": 9.26
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 3.901,
+    "wall": 3.94,
+    "fps": 76.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\av1_10hb_2160p.mp4 -an -f null -",
+    "runs": [
+     76.9,
+     69.4
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 4.25,
+    "wall": 4.28,
+    "fps": 70.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\av1_10hb_2160p.mp4 -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     57.3,
+     70.6
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.813,
+    "wall": 1.85,
+    "fps": 165.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\av1_10hb_2160p.mp4 -an -f null -",
+    "runs": [
+     154.8,
+     165.5
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.331,
+    "wall": 2.36,
+    "fps": 128.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\av1_10hb_2160p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     128.7,
+     124.3
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.512,
+    "wall": 0.76,
+    "fps": 585.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\av1_10hb_2160p.mp4 -an -f null -",
+    "runs": [
+     551.5,
+     585.9
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 4.388,
+    "wall": 4.63,
+    "fps": 68.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\av1_10hb_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "runs": [
+     55.9,
+     68.4
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.592,
+    "wall": 0.76,
+    "fps": 506.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_10hb_2160p.mp4 -an -f null -",
+    "runs": [
+     498.3,
+     506.8
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.82,
+    "wall": 1,
+    "fps": 365.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_10hb_2160p.mp4 -an -vf scale_cuda=-2:1440:format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     365.9,
+     348.8
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 18.93,
+    "fps": 15.9,
+    "decodeOnlyFps": 27,
+    "convMs": 7779,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5b7170] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5be1a0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     15.9,
+     14.7
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 24.58,
+    "fps": 12.2,
+    "decodeOnlyFps": 17.9,
+    "convMs": 7826,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5af460] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5b64a0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     12.2,
+     11.7
+    ]
+   }
+  },
+  "av1_8_1080p.mp4": {
+   "probe": {
+    "codec": "av1",
+    "profile": "Main",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 1.26,
+    "mbps": 1.01
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.551,
+    "wall": 0.58,
+    "fps": 544.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\av1_8_1080p.mp4 -an -f null -",
+    "runs": [
+     491,
+     544.5
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.259,
+    "wall": 0.29,
+    "fps": 1158.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\av1_8_1080p.mp4 -an -f null -",
+    "runs": [
+     1153.8,
+     1158.3
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.199,
+    "wall": 0.44,
+    "fps": 1507.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\av1_8_1080p.mp4 -an -f null -",
+    "runs": [
+     1507.5,
+     1204.8
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.735,
+    "wall": 0.97,
+    "fps": 408.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\av1_8_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     391.6,
+     408.2
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.2,
+    "wall": 0.35,
+    "fps": 1500,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_8_1080p.mp4 -an -f null -",
+    "runs": [
+     1470.6,
+     1500
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.364,
+    "wall": 0.51,
+    "fps": 824.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_8_1080p.mp4 -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     824.2,
+     759.5
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 2,
+    "fps": 149.8,
+    "decodeOnlyFps": 150.2,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5b7170] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5be0c0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     149.8,
+     148.9
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 3.16,
+    "fps": 95.1,
+    "decodeOnlyFps": 95.3,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5af460] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5b63c0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     95.1,
+     95
+    ]
+   }
+  },
+  "av1_8_2160p.mp4": {
+   "probe": {
+    "codec": "av1",
+    "profile": "Main",
+    "pix_fmt": "yuv420p",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 2.81,
+    "mbps": 2.25
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.334,
+    "wall": 2.37,
+    "fps": 128.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\av1_8_2160p.mp4 -an -f null -",
+    "runs": [
+     126.6,
+     128.5
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.896,
+    "wall": 0.93,
+    "fps": 334.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\av1_8_2160p.mp4 -an -f null -",
+    "runs": [
+     319.1,
+     334.8
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.557,
+    "wall": 0.8,
+    "fps": 538.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\av1_8_2160p.mp4 -an -f null -",
+    "runs": [
+     522.6,
+     538.6
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.29,
+    "wall": 2.49,
+    "fps": 131,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\av1_8_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "runs": [
+     131,
+     112.5
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.598,
+    "wall": 0.76,
+    "fps": 501.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_8_2160p.mp4 -an -f null -",
+    "runs": [
+     487.8,
+     501.7
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.735,
+    "wall": 0.9,
+    "fps": 408.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\av1_8_2160p.mp4 -an -vf scale_cuda=-2:1440:format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     408.2,
+     387.1
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 7.7,
+    "fps": 39,
+    "decodeOnlyFps": 39,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5b7170] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5be0d0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     39,
+     38.6
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 12.02,
+    "fps": 25,
+    "decodeOnlyFps": 25,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [
+     "[libdav1d @ 0x5af460] Frame size limit reduced from 2147483647 to 67108864.",
+     "[libdav1d @ 0x5b63d0] Frame size limit reduced from 2147483647 to 67108864."
+    ],
+    "runs": [
+     25,
+     24.6
+    ]
+   }
+  },
+  "dnxhr_hq_1080p.mov": {
+   "probe": {
+    "codec": "dnxhd",
+    "profile": "DNXHR HQ",
+    "pix_fmt": "yuv422p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 275.25,
+    "mbps": 220.2
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.678,
+    "wall": 1.71,
+    "fps": 178.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\dnxhr_hq_1080p.mov -an -f null -",
+    "runs": [
+     178.8,
+     176.2
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.712,
+    "wall": 1.75,
+    "fps": 175.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\dnxhr_hq_1080p.mov -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     175.2,
+     172.5
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.284,
+    "wall": 0.32,
+    "fps": 1056.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\dnxhr_hq_1080p.mov -an -f null -",
+    "runs": [
+     1056.3,
+     986.8
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.391,
+    "wall": 0.42,
+    "fps": 767.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\dnxhr_hq_1080p.mov -an -vf format=yuv420p -f null -",
+    "runs": [
+     737.1,
+     767.3
+    ]
+   },
+   "d3d_fmt": "?",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "cuda_fmt": "?",
+   "cuda_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "cuda_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 11.33,
+    "fps": 26.5,
+    "decodeOnlyFps": 75.2,
+    "convMs": 7012,
+    "srcFmt": 4,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     26.5,
+     24.8
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 11.17,
+    "fps": 26.9,
+    "decodeOnlyFps": 66.1,
+    "convMs": 6297,
+    "srcFmt": 4,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     26.1,
+     26.9
+    ]
+   }
+  },
+  "dnxhr_hq_2160p.mov": {
+   "probe": {
+    "codec": "dnxhd",
+    "profile": "DNXHR HQ",
+    "pix_fmt": "yuv422p",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 1092.41,
+    "mbps": 873.92
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 5.021,
+    "wall": 5.07,
+    "fps": 59.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\dnxhr_hq_2160p.mov -an -f null -",
+    "runs": [
+     59.7,
+     57
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 5.112,
+    "wall": 5.16,
+    "fps": 58.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\dnxhr_hq_2160p.mov -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     58.7,
+     56.7
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.018,
+    "wall": 1.08,
+    "fps": 294.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\dnxhr_hq_2160p.mov -an -f null -",
+    "runs": [
+     294.7,
+     287.1
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.594,
+    "wall": 1.65,
+    "fps": 188.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\dnxhr_hq_2160p.mov -an -vf format=yuv420p -f null -",
+    "runs": [
+     188.2,
+     184.7
+    ]
+   },
+   "d3d_fmt": "?",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "cuda_fmt": "?",
+   "cuda_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "cuda_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 42.66,
+    "fps": 7,
+    "decodeOnlyFps": 21.9,
+    "convMs": 27926,
+    "srcFmt": 4,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     7,
+     7
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 41.19,
+    "fps": 7.3,
+    "decodeOnlyFps": 19.7,
+    "convMs": 25013,
+    "srcFmt": 4,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     7,
+     7.3
+    ]
+   }
+  },
+  "h264_10_1080p.mp4": {
+   "probe": {
+    "codec": "h264",
+    "profile": "High 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 1.7,
+    "mbps": 1.36
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.062,
+    "wall": 1.1,
+    "fps": 282.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\h264_10_1080p.mp4 -an -f null -",
+    "runs": [
+     282.5,
+     273.2
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.1,
+    "wall": 1.14,
+    "fps": 272.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\h264_10_1080p.mp4 -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     260.6,
+     272.7
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.363,
+    "wall": 0.4,
+    "fps": 826.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\h264_10_1080p.mp4 -an -f null -",
+    "runs": [
+     826.4,
+     813
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.536,
+    "wall": 0.57,
+    "fps": 559.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\h264_10_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     550.5,
+     559.7
+    ]
+   },
+   "d3d_fmt": "yuv420p10le",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p10le"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p10le"
+   },
+   "cuda_fmt": "yuv420p10le",
+   "cuda_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p10le"
+   },
+   "cuda_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p10le"
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 4.48,
+    "fps": 67,
+    "decodeOnlyFps": 120.2,
+    "convMs": 1974,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     65.3,
+     67
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 4.84,
+    "fps": 62,
+    "decodeOnlyFps": 103,
+    "convMs": 1920,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     61.3,
+     62
+    ]
+   }
+  },
+  "h264_10_2160p.mp4": {
+   "probe": {
+    "codec": "h264",
+    "profile": "High 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 5.21,
+    "mbps": 4.17
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 4.378,
+    "wall": 4.44,
+    "fps": 68.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\h264_10_2160p.mp4 -an -f null -",
+    "runs": [
+     68.5,
+     68.1
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 4.517,
+    "wall": 4.58,
+    "fps": 66.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\h264_10_2160p.mp4 -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     66.4,
+     65.7
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.654,
+    "wall": 1.72,
+    "fps": 181.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\h264_10_2160p.mp4 -an -f null -",
+    "runs": [
+     181.4,
+     177.5
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.181,
+    "wall": 2.24,
+    "fps": 137.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\h264_10_2160p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     137.6,
+     136.9
+    ]
+   },
+   "d3d_fmt": "yuv420p10le",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p10le"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p10le"
+   },
+   "cuda_fmt": "yuv420p10le",
+   "cuda_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p10le"
+   },
+   "cuda_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p10le"
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 17.68,
+    "fps": 17,
+    "decodeOnlyFps": 29.7,
+    "convMs": 7556,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     16.6,
+     17
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 18.49,
+    "fps": 16.2,
+    "decodeOnlyFps": 26.7,
+    "convMs": 7235,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     16.1,
+     16.2
+    ]
+   }
+  },
+  "h264_8_1080p.mp4": {
+   "probe": {
+    "codec": "h264",
+    "profile": "High",
+    "pix_fmt": "yuvj420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 1.77,
+    "mbps": 1.41
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.715,
+    "wall": 0.76,
+    "fps": 419.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\h264_8_1080p.mp4 -an -f null -",
+    "runs": [
+     419.6,
+     419.6
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.221,
+    "wall": 0.26,
+    "fps": 1357.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\h264_8_1080p.mp4 -an -f null -",
+    "runs": [
+     1357.5,
+     1321.6
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.36,
+    "wall": 0.59,
+    "fps": 833.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\h264_8_1080p.mp4 -an -f null -",
+    "runs": [
+     789.5,
+     833.3
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.517,
+    "wall": 0.72,
+    "fps": 580.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\h264_8_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     580.3,
+     572.5
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.34,
+    "wall": 0.5,
+    "fps": 882.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\h264_8_1080p.mp4 -an -f null -",
+    "runs": [
+     874.6,
+     882.4
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.376,
+    "wall": 0.55,
+    "fps": 797.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\h264_8_1080p.mp4 -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     797.9,
+     791.6
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 2.13,
+    "fps": 140.6,
+    "decodeOnlyFps": 141,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     138.1,
+     140.6
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 2.78,
+    "fps": 107.8,
+    "decodeOnlyFps": 108.1,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     107.8,
+     104.1
+    ]
+   }
+  },
+  "h264_8_2160p.mp4": {
+   "probe": {
+    "codec": "h264",
+    "profile": "High",
+    "pix_fmt": "yuvj420p",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 5.42,
+    "mbps": 4.34
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.906,
+    "wall": 2.96,
+    "fps": 103.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\h264_8_2160p.mp4 -an -f null -",
+    "runs": [
+     101.6,
+     103.2
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.904,
+    "wall": 0.96,
+    "fps": 331.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\h264_8_2160p.mp4 -an -f null -",
+    "runs": [
+     331.9,
+     324.3
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.124,
+    "wall": 1.43,
+    "fps": 266.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\h264_8_2160p.mp4 -an -f null -",
+    "runs": [
+     261.1,
+     266.9
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.825,
+    "wall": 2.05,
+    "fps": 164.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\h264_8_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "runs": [
+     164.4,
+     162
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.199,
+    "wall": 1.39,
+    "fps": 250.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\h264_8_2160p.mp4 -an -f null -",
+    "runs": [
+     248.3,
+     250.2
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.219,
+    "wall": 1.42,
+    "fps": 246.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\h264_8_2160p.mp4 -an -vf scale_cuda=-2:1440:format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     246.1,
+     241.5
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 8.1,
+    "fps": 37.1,
+    "decodeOnlyFps": 37.1,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     37.1,
+     37.1
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 9.7,
+    "fps": 30.9,
+    "decodeOnlyFps": 31,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     29.9,
+     30.9
+    ]
+   }
+  },
+  "h264_8hb_1080p.mp4": {
+   "probe": {
+    "codec": "h264",
+    "profile": "High",
+    "pix_fmt": "yuvj420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 13.01,
+    "mbps": 10.41
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.313,
+    "wall": 1.36,
+    "fps": 228.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\h264_8hb_1080p.mp4 -an -f null -",
+    "runs": [
+     228.5,
+     216.1
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.309,
+    "wall": 0.35,
+    "fps": 970.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\h264_8hb_1080p.mp4 -an -f null -",
+    "runs": [
+     970.9,
+     940.4
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.381,
+    "wall": 0.61,
+    "fps": 787.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\h264_8hb_1080p.mp4 -an -f null -",
+    "runs": [
+     755.7,
+     787.4
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.51,
+    "wall": 0.72,
+    "fps": 588.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\h264_8hb_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     588.2,
+     588.2
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.358,
+    "wall": 0.54,
+    "fps": 838,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\h264_8hb_1080p.mp4 -an -f null -",
+    "runs": [
+     831,
+     838
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.393,
+    "wall": 0.57,
+    "fps": 763.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\h264_8hb_1080p.mp4 -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     763.4,
+     763.4
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 2.8,
+    "fps": 107.3,
+    "decodeOnlyFps": 108.2,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     102.6,
+     107.3
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 3.55,
+    "fps": 84.6,
+    "decodeOnlyFps": 85.3,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     81.2,
+     84.6
+    ]
+   }
+  },
+  "h264_8hb_2160p.mp4": {
+   "probe": {
+    "codec": "h264",
+    "profile": "High",
+    "pix_fmt": "yuvj420p",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 47.32,
+    "mbps": 37.86
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 5.143,
+    "wall": 5.23,
+    "fps": 58.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\h264_8hb_2160p.mp4 -an -f null -",
+    "runs": [
+     58.2,
+     58.3
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.098,
+    "wall": 1.19,
+    "fps": 273.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\h264_8hb_2160p.mp4 -an -f null -",
+    "runs": [
+     271.2,
+     273.2
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.221,
+    "wall": 1.54,
+    "fps": 245.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\h264_8hb_2160p.mp4 -an -f null -",
+    "runs": [
+     240.8,
+     245.7
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.808,
+    "wall": 2.06,
+    "fps": 165.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\h264_8hb_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "runs": [
+     165.9,
+     157.3
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.287,
+    "wall": 1.51,
+    "fps": 233.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\h264_8hb_2160p.mp4 -an -f null -",
+    "runs": [
+     230.9,
+     233.1
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.324,
+    "wall": 1.55,
+    "fps": 226.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\h264_8hb_2160p.mp4 -an -vf scale_cuda=-2:1440:format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     223.4,
+     226.6
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 10.64,
+    "fps": 28.2,
+    "decodeOnlyFps": 28.4,
+    "convMs": 1,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     26.7,
+     28.2
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 12.48,
+    "fps": 24,
+    "decodeOnlyFps": 24.2,
+    "convMs": 1,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     23.7,
+     24
+    ]
+   }
+  },
+  "hevc_10_1080p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 1.28,
+    "mbps": 1.02
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.429,
+    "wall": 1.46,
+    "fps": 209.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\hevc_10_1080p.mp4 -an -f null -",
+    "runs": [
+     209.4,
+     209.9
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.454,
+    "wall": 1.48,
+    "fps": 206.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\hevc_10_1080p.mp4 -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     206.3,
+     206.2
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.442,
+    "wall": 0.47,
+    "fps": 678.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\hevc_10_1080p.mp4 -an -f null -",
+    "runs": [
+     668.2,
+     678.7
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.578,
+    "wall": 0.61,
+    "fps": 519,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\hevc_10_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     519,
+     515.5
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.199,
+    "wall": 0.39,
+    "fps": 1507.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\hevc_10_1080p.mp4 -an -f null -",
+    "runs": [
+     1507.5,
+     1079.1
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.871,
+    "wall": 1.06,
+    "fps": 344.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\hevc_10_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     344.4,
+     326.1
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.172,
+    "wall": 0.33,
+    "fps": 1744.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_10_1080p.mp4 -an -f null -",
+    "runs": [
+     1724.1,
+     1744.2
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.3,
+    "wall": 0.46,
+    "fps": 1000,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_10_1080p.mp4 -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     980.4,
+     1000
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 5.74,
+    "fps": 52.2,
+    "decodeOnlyFps": 80.6,
+    "convMs": 2013,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     51.4,
+     52.2
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 6.28,
+    "fps": 47.8,
+    "decodeOnlyFps": 67.7,
+    "convMs": 1843,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     44.7,
+     47.8
+    ]
+   }
+  },
+  "hevc_10_2160p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 3.26,
+    "mbps": 2.61
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 5.405,
+    "wall": 5.44,
+    "fps": 55.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\hevc_10_2160p.mp4 -an -f null -",
+    "runs": [
+     55.3,
+     55.5
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 5.511,
+    "wall": 5.54,
+    "fps": 54.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\hevc_10_2160p.mp4 -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     52.4,
+     54.4
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.748,
+    "wall": 1.78,
+    "fps": 171.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\hevc_10_2160p.mp4 -an -f null -",
+    "runs": [
+     171.6,
+     169.9
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.374,
+    "wall": 2.4,
+    "fps": 126.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\hevc_10_2160p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     126.2,
+     126.4
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.519,
+    "wall": 0.74,
+    "fps": 578,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\hevc_10_2160p.mp4 -an -f null -",
+    "runs": [
+     556.6,
+     578
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 3.302,
+    "wall": 3.52,
+    "fps": 90.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\hevc_10_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "runs": [
+     90.7,
+     90.9
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.556,
+    "wall": 0.71,
+    "fps": 539.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_10_2160p.mp4 -an -f null -",
+    "runs": [
+     537.6,
+     539.6
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.584,
+    "wall": 0.73,
+    "fps": 513.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_10_2160p.mp4 -an -vf scale_cuda=-2:1440:format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     511.1,
+     513.7
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 21.39,
+    "fps": 14,
+    "decodeOnlyFps": 21.9,
+    "convMs": 7677,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     14,
+     14
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 23.51,
+    "fps": 12.8,
+    "decodeOnlyFps": 18.3,
+    "convMs": 7101,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     12.5,
+     12.8
+    ]
+   }
+  },
+  "hevc_10hb_1080p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 8.81,
+    "mbps": 7.05
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.243,
+    "wall": 2.27,
+    "fps": 133.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\hevc_10hb_1080p.mp4 -an -f null -",
+    "runs": [
+     132.7,
+     133.7
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.265,
+    "wall": 2.29,
+    "fps": 132.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\hevc_10hb_1080p.mp4 -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     132.5,
+     132.5
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.644,
+    "wall": 0.67,
+    "fps": 465.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\hevc_10hb_1080p.mp4 -an -f null -",
+    "runs": [
+     465.8,
+     463
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.729,
+    "wall": 0.75,
+    "fps": 411.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\hevc_10hb_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     403.2,
+     411.5
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.208,
+    "wall": 0.41,
+    "fps": 1442.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\hevc_10hb_1080p.mp4 -an -f null -",
+    "runs": [
+     1190.5,
+     1442.3
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.865,
+    "wall": 1.06,
+    "fps": 346.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\hevc_10hb_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     344.8,
+     346.8
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.192,
+    "wall": 0.34,
+    "fps": 1562.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_10hb_1080p.mp4 -an -f null -",
+    "runs": [
+     1562.5,
+     1546.4
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.308,
+    "wall": 0.47,
+    "fps": 974,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_10hb_1080p.mp4 -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     974,
+     974
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 6.87,
+    "fps": 43.7,
+    "decodeOnlyFps": 62.4,
+    "convMs": 2041,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     43.7,
+     41.3
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 7.81,
+    "fps": 38.4,
+    "decodeOnlyFps": 50.5,
+    "convMs": 1861,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     38.4,
+     36.6
+    ]
+   }
+  },
+  "hevc_10hb_2160p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main 10",
+    "pix_fmt": "yuv420p10le",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 29.19,
+    "mbps": 23.36
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 7.84,
+    "wall": 7.87,
+    "fps": 38.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\hevc_10hb_2160p.mp4 -an -f null -",
+    "runs": [
+     38.3,
+     38.2
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 7.944,
+    "wall": 7.97,
+    "fps": 37.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\hevc_10hb_2160p.mp4 -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     37.8,
+     37.8
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.955,
+    "wall": 1.98,
+    "fps": 153.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\hevc_10hb_2160p.mp4 -an -f null -",
+    "runs": [
+     152.8,
+     153.5
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.489,
+    "wall": 2.52,
+    "fps": 120.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\hevc_10hb_2160p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     120.5,
+     117.1
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.566,
+    "wall": 0.79,
+    "fps": 530,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\hevc_10hb_2160p.mp4 -an -f null -",
+    "runs": [
+     503.4,
+     530
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 3.219,
+    "wall": 3.44,
+    "fps": 93.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\hevc_10hb_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "runs": [
+     89.7,
+     93.2
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.592,
+    "wall": 0.74,
+    "fps": 506.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_10hb_2160p.mp4 -an -f null -",
+    "runs": [
+     493.4,
+     506.8
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.627,
+    "wall": 0.79,
+    "fps": 478.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_10hb_2160p.mp4 -an -vf scale_cuda=-2:1440:format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     478.5,
+     473.9
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 24.37,
+    "fps": 12.3,
+    "decodeOnlyFps": 18.1,
+    "convMs": 7702,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     11.6,
+     12.3
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 27.8,
+    "fps": 10.8,
+    "decodeOnlyFps": 14.5,
+    "convMs": 7056,
+    "srcFmt": 62,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     10.7,
+     10.8
+    ]
+   }
+  },
+  "hevc_8_1080p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main",
+    "pix_fmt": "yuvj420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 1.24,
+    "mbps": 0.99
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.011,
+    "wall": 1.03,
+    "fps": 296.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\hevc_8_1080p.mp4 -an -f null -",
+    "runs": [
+     295.6,
+     296.7
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.291,
+    "wall": 0.32,
+    "fps": 1030.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\hevc_8_1080p.mp4 -an -f null -",
+    "runs": [
+     1020.4,
+     1030.9
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.224,
+    "wall": 0.43,
+    "fps": 1339.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\hevc_8_1080p.mp4 -an -f null -",
+    "runs": [
+     1339.3,
+     1079.1
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.518,
+    "wall": 0.7,
+    "fps": 579.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\hevc_8_1080p.mp4 -an -vf format=yuv420p -f null -",
+    "runs": [
+     576.9,
+     579.2
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.171,
+    "wall": 0.32,
+    "fps": 1754.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_8_1080p.mp4 -an -f null -",
+    "runs": [
+     1754.4,
+     1754.4
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.319,
+    "wall": 0.47,
+    "fps": 940.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_8_1080p.mp4 -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     914.6,
+     940.4
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 2.97,
+    "fps": 101,
+    "decodeOnlyFps": 101.2,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     101,
+     100.2
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 3.42,
+    "fps": 87.8,
+    "decodeOnlyFps": 87.9,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     87.5,
+     87.8
+    ]
+   }
+  },
+  "hevc_8_2160p.mp4": {
+   "probe": {
+    "codec": "hevc",
+    "profile": "Main",
+    "pix_fmt": "yuvj420p",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 3.14,
+    "mbps": 2.51
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 4.022,
+    "wall": 4.05,
+    "fps": 74.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\hevc_8_2160p.mp4 -an -f null -",
+    "runs": [
+     74.6,
+     74.5
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.107,
+    "wall": 1.14,
+    "fps": 271,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\hevc_8_2160p.mp4 -an -f null -",
+    "runs": [
+     271,
+     267.1
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.514,
+    "wall": 0.73,
+    "fps": 583.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\hevc_8_2160p.mp4 -an -f null -",
+    "runs": [
+     525.4,
+     583.7
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.796,
+    "wall": 2,
+    "fps": 167,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\hevc_8_2160p.mp4 -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "runs": [
+     167,
+     165.5
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.511,
+    "wall": 0.65,
+    "fps": 587.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_8_2160p.mp4 -an -f null -",
+    "runs": [
+     462.2,
+     587.1
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.61,
+    "wall": 0.75,
+    "fps": 491.8,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\hevc_8_2160p.mp4 -an -vf scale_cuda=-2:1440:format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     305.2,
+     491.8
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 11.41,
+    "fps": 26.3,
+    "decodeOnlyFps": 26.3,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     26.1,
+     26.3
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 12.79,
+    "fps": 23.4,
+    "decodeOnlyFps": 23.5,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     22.5,
+     23.4
+    ]
+   }
+  },
+  "mjpeg_1080p.avi": {
+   "probe": {
+    "codec": "mjpeg",
+    "profile": "Baseline",
+    "pix_fmt": "yuvj420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 28.63,
+    "mbps": 22.9
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.862,
+    "wall": 0.89,
+    "fps": 348,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\mjpeg_1080p.avi -an -f null -",
+    "runs": [
+     348,
+     345.2
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.877,
+    "wall": 0.9,
+    "fps": 342.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\mjpeg_1080p.avi -an -f null -",
+    "runs": [
+     342.1,
+     335.2
+    ]
+   },
+   "d3d_fmt": "yuvj420p",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuvj420p"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuvj420p"
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.529,
+    "wall": 0.65,
+    "fps": 567.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\mjpeg_1080p.avi -an -f null -",
+    "runs": [
+     567.1,
+     561.8
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.566,
+    "wall": 0.69,
+    "fps": 530,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\mjpeg_1080p.avi -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     530,
+     527.2
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 2.42,
+    "fps": 123.9,
+    "decodeOnlyFps": 126.3,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     121.5,
+     123.9
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 2.69,
+    "fps": 111.5,
+    "decodeOnlyFps": 112.9,
+    "convMs": 0,
+    "srcFmt": 12,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     111.1,
+     111.5
+    ]
+   }
+  },
+  "mpeg2_1080p.mpg": {
+   "probe": {
+    "codec": "mpeg2video",
+    "profile": "Main",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 7,
+    "mbps": 5.6
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.308,
+    "wall": 0.34,
+    "fps": 974,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\mpeg2_1080p.mpg -an -f null -",
+    "runs": [
+     958.5,
+     974
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.13,
+    "wall": 0.16,
+    "fps": 2307.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\mpeg2_1080p.mpg -an -f null -",
+    "runs": [
+     2205.9,
+     2307.7
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.351,
+    "wall": 0.56,
+    "fps": 854.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\mpeg2_1080p.mpg -an -f null -",
+    "runs": [
+     828.7,
+     854.7
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.731,
+    "wall": 0.92,
+    "fps": 410.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\mpeg2_1080p.mpg -an -vf format=yuv420p -f null -",
+    "runs": [
+     409.3,
+     410.4
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.372,
+    "wall": 0.52,
+    "fps": 806.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\mpeg2_1080p.mpg -an -f null -",
+    "runs": [
+     806.5,
+     781.3
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.386,
+    "wall": 0.53,
+    "fps": 777.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\mpeg2_1080p.mpg -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     777.2,
+     771.2
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 1.05,
+    "fps": 284.8,
+    "decodeOnlyFps": 289.6,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     269.2,
+     284.8
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 1.25,
+    "fps": 240.1,
+    "decodeOnlyFps": 245.1,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     216.8,
+     240.1
+    ]
+   }
+  },
+  "mpeg4_1080p.avi": {
+   "probe": {
+    "codec": "mpeg4",
+    "profile": "Advanced Simple Profile",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 4.71,
+    "mbps": 3.77
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.361,
+    "wall": 0.39,
+    "fps": 831,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\mpeg4_1080p.avi -an -f null -",
+    "runs": [
+     831,
+     813
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.143,
+    "wall": 0.17,
+    "fps": 2097.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\mpeg4_1080p.avi -an -f null -",
+    "runs": [
+     2097.9,
+     1935.5
+    ]
+   },
+   "d3d_fmt": "yuv420p",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p"
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.306,
+    "wall": 0.44,
+    "fps": 980.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\mpeg4_1080p.avi -an -f null -",
+    "runs": [
+     925.9,
+     980.4
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.356,
+    "wall": 0.5,
+    "fps": 842.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\mpeg4_1080p.avi -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     813,
+     842.7
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 1.06,
+    "fps": 282.4,
+    "decodeOnlyFps": 284.8,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     268.7,
+     282.4
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 1.39,
+    "fps": 215.9,
+    "decodeOnlyFps": 217.4,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     179,
+     215.9
+    ]
+   }
+  },
+  "prores_hq_1080p.mov": {
+   "probe": {
+    "codec": "prores",
+    "profile": "HQ",
+    "pix_fmt": "yuv422p10le",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 190.3,
+    "mbps": 152.24
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 3.404,
+    "wall": 3.43,
+    "fps": 88.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\prores_hq_1080p.mov -an -f null -",
+    "runs": [
+     84.5,
+     88.1
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 3.368,
+    "wall": 3.4,
+    "fps": 89.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\prores_hq_1080p.mov -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     89.1,
+     88.1
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.535,
+    "wall": 0.56,
+    "fps": 560.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\prores_hq_1080p.mov -an -f null -",
+    "runs": [
+     531,
+     560.7
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.714,
+    "wall": 0.74,
+    "fps": 420.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\prores_hq_1080p.mov -an -vf format=yuv420p -f null -",
+    "runs": [
+     420.2,
+     337.1
+    ]
+   },
+   "d3d_fmt": "yuv422p10le",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv422p10le"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv422p10le"
+   },
+   "cuda_fmt": "yuv422p10le",
+   "cuda_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv422p10le"
+   },
+   "cuda_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv422p10le"
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 17.35,
+    "fps": 17.3,
+    "decodeOnlyFps": 36,
+    "convMs": 8764,
+    "srcFmt": 64,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     17.3,
+     16.8
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 17,
+    "fps": 17.6,
+    "decodeOnlyFps": 32.1,
+    "convMs": 7406,
+    "srcFmt": 64,
+    "filtered": true,
+    "note": "",
+    "logs": [],
+    "runs": [
+     17.6,
+     17.6
+    ]
+   }
+  },
+  "prores_hq_2160p.mov": {
+   "probe": {
+    "codec": "prores",
+    "profile": "HQ",
+    "pix_fmt": "yuv422p10le",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 444.38,
+    "mbps": 355.51
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 8.8,
+    "wall": 8.83,
+    "fps": 34.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\prores_hq_2160p.mov -an -f null -",
+    "runs": [
+     34.1,
+     34
+    ]
+   },
+   "cpu1_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 8.754,
+    "wall": 8.78,
+    "fps": 34.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\prores_hq_2160p.mov -an -threads 1 -filter_threads 1 -vf format=yuv420p -f null -",
+    "runs": [
+     34,
+     34.3
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.372,
+    "wall": 1.4,
+    "fps": 218.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\prores_hq_2160p.mov -an -f null -",
+    "runs": [
+     214.3,
+     218.7
+    ]
+   },
+   "cpuN_conv": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.956,
+    "wall": 1.98,
+    "fps": 153.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\prores_hq_2160p.mov -an -vf format=yuv420p -f null -",
+    "runs": [
+     148.5,
+     153.4
+    ]
+   },
+   "d3d_fmt": "yuv422p10le",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv422p10le"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv422p10le"
+   },
+   "cuda_fmt": "yuv422p10le",
+   "cuda_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv422p10le"
+   },
+   "cuda_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv422p10le"
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 248,
+    "wall": 45.02,
+    "fps": 5.5,
+    "decodeOnlyFps": 12.2,
+    "convMs": 24305,
+    "srcFmt": 64,
+    "filtered": true,
+    "note": "(capped at 45s)",
+    "logs": [],
+    "runs": [
+     5.5,
+     5.5
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 260,
+    "wall": 45.12,
+    "fps": 5.8,
+    "decodeOnlyFps": 10.9,
+    "convMs": 20931,
+    "srcFmt": 64,
+    "filtered": true,
+    "note": "(capped at 45s)",
+    "logs": [],
+    "runs": [
+     5.8,
+     5.8
+    ]
+   }
+  },
+  "vp8_1080p.webm": {
+   "probe": {
+    "codec": "vp8",
+    "profile": "0",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 5.6,
+    "mbps": 4.48
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.785,
+    "wall": 0.81,
+    "fps": 382.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\vp8_1080p.webm -an -f null -",
+    "runs": [
+     380.2,
+     382.2
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.161,
+    "wall": 0.18,
+    "fps": 1863.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\vp8_1080p.webm -an -f null -",
+    "runs": [
+     1829.3,
+     1863.4
+    ]
+   },
+   "d3d_fmt": "yuv420p",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "yuv420p"
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.302,
+    "wall": 0.43,
+    "fps": 993.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\vp8_1080p.webm -an -f null -",
+    "runs": [
+     940.4,
+     993.4
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.334,
+    "wall": 0.46,
+    "fps": 898.2,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\vp8_1080p.webm -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     879.8,
+     898.2
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 3.72,
+    "fps": 80.6,
+    "decodeOnlyFps": 80.8,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     78.5,
+     80.6
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 3.63,
+    "fps": 82.6,
+    "decodeOnlyFps": 82.9,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     82.6,
+     82.4
+    ]
+   }
+  },
+  "vp9_1080p.webm": {
+   "probe": {
+    "codec": "vp9",
+    "profile": "Profile 0",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 1.18,
+    "mbps": 0.94
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.587,
+    "wall": 0.63,
+    "fps": 511.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\vp9_1080p.webm -an -f null -",
+    "runs": [
+     511.1,
+     510.2
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.186,
+    "wall": 0.22,
+    "fps": 1612.9,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\vp9_1080p.webm -an -f null -",
+    "runs": [
+     1595.7,
+     1612.9
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.204,
+    "wall": 0.41,
+    "fps": 1470.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\vp9_1080p.webm -an -f null -",
+    "runs": [
+     1388.9,
+     1470.6
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.486,
+    "wall": 0.68,
+    "fps": 617.3,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\vp9_1080p.webm -an -vf format=yuv420p -f null -",
+    "runs": [
+     590.6,
+     617.3
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.199,
+    "wall": 0.35,
+    "fps": 1507.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\vp9_1080p.webm -an -f null -",
+    "runs": [
+     1415.1,
+     1507.5
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.296,
+    "wall": 0.44,
+    "fps": 1013.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\vp9_1080p.webm -an -vf scale_cuda=format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     993.4,
+     1013.5
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 2.37,
+    "fps": 126.3,
+    "decodeOnlyFps": 126.9,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     122.3,
+     126.3
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 2.59,
+    "fps": 115.7,
+    "decodeOnlyFps": 116.1,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     115.7,
+     107.6
+    ]
+   }
+  },
+  "vp9_2160p.webm": {
+   "probe": {
+    "codec": "vp9",
+    "profile": "Profile 0",
+    "pix_fmt": "yuv420p",
+    "w": 3840,
+    "h": 2160,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 2.86,
+    "mbps": 2.29
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 2.616,
+    "wall": 2.67,
+    "fps": 114.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\vp9_2160p.webm -an -f null -",
+    "runs": [
+     114.7,
+     114.7
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.779,
+    "wall": 0.83,
+    "fps": 385.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\vp9_2160p.webm -an -f null -",
+    "runs": [
+     381.2,
+     385.1
+    ]
+   },
+   "d3d_fmt": "d3d11",
+   "d3d_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.628,
+    "wall": 0.9,
+    "fps": 477.7,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -hwaccel_output_format d3d11 -i <scratch>\\bench\\media\\vp9_2160p.webm -an -f null -",
+    "runs": [
+     463.7,
+     477.7
+    ]
+   },
+   "d3d_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 1.761,
+    "wall": 1.98,
+    "fps": 170.4,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel d3d11va -i <scratch>\\bench\\media\\vp9_2160p.webm -an -vf scale=-2:1440:flags=bilinear,format=yuv420p -f null -",
+    "runs": [
+     169.4,
+     170.4
+    ]
+   },
+   "cuda_fmt": "cuda",
+   "cuda_gpu": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.645,
+    "wall": 0.82,
+    "fps": 465.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\vp9_2160p.webm -an -f null -",
+    "runs": [
+     453.9,
+     465.1
+    ]
+   },
+   "cuda_dl": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.677,
+    "wall": 0.84,
+    "fps": 443.1,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -hwaccel cuda -hwaccel_output_format cuda -i <scratch>\\bench\\media\\vp9_2160p.webm -an -vf scale_cuda=-2:1440:format=yuv420p,hwdownload,format=yuv420p -f null -",
+    "runs": [
+     443.1,
+     441.2
+    ]
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 9.28,
+    "fps": 32.3,
+    "decodeOnlyFps": 32.4,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     32.3,
+     29.9
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 10.08,
+    "fps": 29.8,
+    "decodeOnlyFps": 29.8,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     28.5,
+     29.8
+    ]
+   }
+  },
+  "wmv2_1080p.wmv": {
+   "probe": {
+    "codec": "wmv2",
+    "pix_fmt": "yuv420p",
+    "w": 1920,
+    "h": 1080,
+    "frames": 300,
+    "duration": 10,
+    "sizeMB": 7.62,
+    "mbps": 6.09
+   },
+   "cpu1": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.554,
+    "wall": 0.58,
+    "fps": 541.5,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -threads 1 -i <scratch>\\bench\\media\\wmv2_1080p.wmv -an -f null -",
+    "runs": [
+     533.8,
+     541.5
+    ]
+   },
+   "cpuN": {
+    "ok": true,
+    "status": 0,
+    "rtime": 0.556,
+    "wall": 0.58,
+    "fps": 539.6,
+    "fallback": false,
+    "warn": [],
+    "args": "-hide_banner -nostdin -nostats -loglevel level+info -benchmark -i <scratch>\\bench\\media\\wmv2_1080p.wmv -an -f null -",
+    "runs": [
+     539.6,
+     532.9
+    ]
+   },
+   "d3d_fmt": "?",
+   "d3d_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "d3d_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "cuda_fmt": "?",
+   "cuda_gpu": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "cuda_dl": {
+    "ok": false,
+    "fps": 0,
+    "nohw": true,
+    "chosen": "?"
+   },
+   "wasm": {
+    "ok": true,
+    "frames": 300,
+    "wall": 1.27,
+    "fps": 236.9,
+    "decodeOnlyFps": 239.8,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     225.5,
+     236.9
+    ]
+   },
+   "wasm_prev": {
+    "ok": true,
+    "frames": 300,
+    "wall": 1.45,
+    "fps": 206.3,
+    "decodeOnlyFps": 208.5,
+    "convMs": 0,
+    "srcFmt": 0,
+    "filtered": false,
+    "note": "",
+    "logs": [],
+    "runs": [
+     202.6,
+     206.3
+    ]
+   }
+  }
+ }
+}

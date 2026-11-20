@@ -1,0 +1,30 @@
+# Packages and dependencies
+*.vsix
+node_modules/
+
+# Editor, agent and OS files
+.claude/
+.vscode-test/
+.DS_Store
+Thumbs.db
+*.log
+
+# Git worktrees kept inside the checkout
+worktrees/
+.worktrees/
+
+# Test outputs and downloads
+out/
+coverage/
+test/vscode/.code/
+test/browser/
+# generated test clips (test/tracks/make_media.js)
+test/media/tracks/
+test/media/cases/startup_*
+test/media/cases/sp_*
+# Dolby Vision copies of the HDR pattern, made by test/vscode/cases/hdr_output.js (test/zoo/make_dv.js)
+test/media/cases/hdr/dv*.mp4
+
+# libav.js build outputs (build/libav/25_mix_build.sh, 32_relink.sh)
+build/libav/dist_*/
+.lfs-ids
