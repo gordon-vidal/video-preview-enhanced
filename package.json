@@ -1,7 +1,7 @@
 {
   "name": "video-preview-enhanced",
   "displayName": "Video Preview Enhanced",
-  "description": "Play MKV, AVI, MOV, MP4, WebM, WMV, FLV, MPEG, HEVC, AV1 and ProRes videos in VS Code, with sound. No install needed; frame-exact tools; optional one-click ffmpeg.",
+  "description": "Play MP4, MKV, MOV, AVI and WebM with sound in VS Code. Remote-SSH, WSL, video URLs, frame-accurate stepping, synchronized comparison and PNG export.",
   "version": "0.7.0",
   "publisher": "gordon-vidal",
   "license": "MIT",
