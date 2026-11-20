@@ -332,7 +332,7 @@ class CompareSession {
   /** "Replace video…": tile i shows another file (picked in VS Code's open dialog). */
   async replaceVideo(i) {
     if (!Number.isInteger(i) || i < 0 || i >= this.uris.length || !this.pick) return;
-    const picked = await this.pick(`Replace ${TILE_KEYS[i]} (${this.names[i]})`, vscode.Uri.joinPath(this.uris[i], '..'), false);
+    const picked = await this.pick(`Replace ${TILE_KEYS[i]}`, vscode.Uri.joinPath(this.uris[i], '..'), false);
     if (!picked || !picked.length || this.disposed) return;
     this.replaceUri(i, picked[0]);
   }
