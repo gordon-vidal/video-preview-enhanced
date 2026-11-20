@@ -89,3 +89,30 @@ Not measured here:
 - #7, #11, #13 (review first). Compare tiles don't hear about a hidden tab (compare only pauses), so their
   native ffmpeg keeps running while hidden, as before.
 - The ffprobe cache is per window (memory); a reload probes again.
+
+## Second batch (branch perf/invisible-2): #6, #14, #17 done; #15, #16 skipped
+
+Rough numbers: other agents loaded the machine, one run each.
+
+- **#6 One compiled WebAssembly module** (`media/engine.js`, `decoder-worker.js`, `thumbs-worker.js`): the page compiles the
+  decoder's wasm once (`WebAssembly.compile`) and sends the module in `init` to the player's worker, every extra pool worker (the
+  pool re-sends its init message) and the thumbnail worker. V8 shares the compiled code between workers; a worker answers libav.js's
+  one `instantiateStreaming` call from the module instead of compiling again. Any failure (compile, clone, instantiate) falls back
+  to the URL path. Worker `init: libav ready`: about 45 ms before, about 20 ms after (hidden VS Code, three WebAssembly clips);
+  the log says `shared module`.
+- **#14 Leaner activation** (`src/extension.js`): avi, setup, probe, localff, remoteff, proxy, rangecmd, urlsource and remotestream
+  load on first use (a forwarding Proxy, so call sites did not change); `fileIcons` writes globalState only when its record changed;
+  `warnOldInstalls` reads the folder with `fs.promises`. Loading `extension.js` with `vscode` mocked: median about 52 ms before,
+  about 40 ms after (8 runs each, same folder). Compare, native and the thumbnail host stay eager.
+- **#17 Native sound** (`src/native.js`, `media/engine.js`): the host no longer runs a `readFloatLE` loop per sample; it sends ffmpeg's
+  interleaved f32 bytes with the sample count and rate, and the page splits the channels. The page tells the host its AudioContext
+  rate (`audioRate`); ffmpeg resamples to it from its next start (a running ffmpeg keeps its rate and Web Audio resamples, as
+  before); the rate is remembered for later files of the window, and a standby ffmpeg at another rate is dropped.
+  `src/remotestream.js` is untouched. Test: `test/host/native_fallback_test.js` (`audioRate`).
+- **#15 Lazy tool scripts: skipped.** `player.js` creates inspect, scopes, subtitles, xray and the tracks menu at start and calls them
+  from about 50 places (keys, context menu, test hooks). The scripts are 130 KB; V8 pre-parses that in a few ms, so the estimate of
+  10-20 ms looks too high, and a lazy version needs stubs or async call sites: more risk than gain.
+- **#16 Skip the preload when the early probe chose native: skipped.** Tried: the host told the page (`nativeEarly`) when the probe
+  started native, and the page dropped or skipped the preload. In the hidden VS Code the page was ready (and had started the preload)
+  before the probe and GPU lookup finished, so it never won; the existing drop when the host's decision arrives already frees the
+  decoder. It could only help when the probe beats the page load, which I could not show.
