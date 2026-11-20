@@ -13,5 +13,5 @@
 ## Checklist
 
 - [ ] `CHANGELOG.md` has a line under **Unreleased** for user-visible changes
-- [ ] `README.md` / `LISTING.md` updated if behaviour, settings or claims changed
+- [ ] `README.md` / `docs/` updated if behaviour, settings or claims changed
 - [ ] No new runtime dependencies; any new test media is openly licensed and credited in `test/media/LICENSES.md`

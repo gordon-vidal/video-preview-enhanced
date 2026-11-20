@@ -65,8 +65,8 @@ To try a branch, commit or `.vsix` by hand in a throwaway profile on Windows: `r
   120 columns. Match the style of the file you are in.
 - Comments say why, not what. Settings and UI text are short and plain.
 - Put pure logic in small modules that a Node test can load without VS Code or a browser.
-- New user-visible behaviour: update `README.md` (and `LISTING.md` when it changes the Marketplace
-  claims) and add a line under **Unreleased** in `CHANGELOG.md`.
+- New user-visible behaviour: update `README.md` (the Marketplace page) and the matching page in `docs/`,
+  and add a line under **Unreleased** in `CHANGELOG.md`.
 - Design notes for larger changes go in `docs/notes/`. Product decisions are in `docs/PRODUCT.md`.
 - Test media must be openly licensed (CC BY or similar, no NC / ND) and credited in
   [test/media/LICENSES.md](test/media/LICENSES.md). Prefer generating clips with the scripts in

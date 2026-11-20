@@ -104,11 +104,11 @@ jobs:
 
       - name: vsce package (dry run, nothing is published)
         shell: bash
-        run: npx --yes "@vscode/vsce@${VSCE_VERSION}" package --readme-path LISTING.md --out vpe-ci.vsix
+        run: npx --yes "@vscode/vsce@${VSCE_VERSION}" package --out vpe-ci.vsix
 
       - name: List package contents
         shell: bash
-        run: npx --yes "@vscode/vsce@${VSCE_VERSION}" ls --readme-path LISTING.md --tree
+        run: npx --yes "@vscode/vsce@${VSCE_VERSION}" ls --tree
 
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'

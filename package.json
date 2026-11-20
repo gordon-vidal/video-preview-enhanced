@@ -607,7 +607,7 @@
   },
   "scripts": {
     "test": "node test/host/run_all.js",
-    "package": "npx --yes @vscode/vsce@4.1.1 package --readme-path LISTING.md",
+    "package": "npx --yes @vscode/vsce@4.1.1 package",
     "test:vscode": "node test/vscode/run.js --quick",
     "perf:vscode": "node test/benchq.js node test/vscode/run.js"
   },

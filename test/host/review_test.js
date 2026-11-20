@@ -41,7 +41,7 @@ function checkCommon(out) {
 let out = dry('main');
 let c = checkCommon(out);
 assert(c.some((x) => /worktree add --detach/.test(x)), 'temp worktree');
-assert(c.some((x) => /vsce package --readme-path LISTING\.md -o ".*vpe-[0-9a-f]{7}\.vsix"/.test(x)), 'vsce package');
+assert(c.some((x) => /vsce package -o ".*vpe-[0-9a-f]{7}\.vsix"/.test(x)), 'vsce package');
 assert(c.some((x) => /bin\\code\.cmd" --extensions-dir ".*" --user-data-dir ".*" --install-extension ".*\.vsix"/.test(x)), 'VSIX install');
 assert(/version\s+:\s+\d+\.\d+\.\d+/.test(out) && /commit\s+:\s+[0-9a-f]{40}/.test(out), 'summary');
 assert(c.some((x) => /hardlink-or-copy .*h264_aac_anim_1080p\.mp4/.test(x)), 'media linked');

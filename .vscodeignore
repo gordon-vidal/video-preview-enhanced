@@ -15,8 +15,7 @@ node_modules/**
 package-lock.json
 *.vsix
 
-# Repository-only files (the README, CHANGELOG, LICENSE and THIRD_PARTY_NOTICES ship;
-# LISTING.md stays in so `vsce package --readme-path LISTING.md` can find it)
+# Repository-only files (the README, CHANGELOG, LICENSE and THIRD_PARTY_NOTICES ship)
 .editorconfig
 CONTRIBUTING.md
 CODE_OF_CONDUCT.md
@@ -40,7 +39,6 @@ media/libav-vpe/libav-vpe.js
 **/*.y4m
 **/*.zip
 build/**
-README.md
 
 # The ffmpeg probe clips ship (src/probe.js tests GPU decoding with them)
 !media/probe/*.mkv

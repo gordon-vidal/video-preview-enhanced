@@ -16,11 +16,11 @@ Two kinds of release. Only maintainers make them; a public release is the projec
    `## <version> (<date>)` heading. The publish workflow refuses a version without that heading.
 2. Tests: layers 1-3 of [TESTING.md](TESTING.md) locally, and layer 4 (performance) against the
    last release's numbers. Only real VS Code counts for the user-facing claims: re-check the numbers
-   in `LISTING.md` and the README "Performance" table against the run.
-3. Build the package. The Marketplace page is `LISTING.md`; the VSIX carries it as its readme:
+   in the README and `docs/performance.md` against the run.
+3. Build the package. The Marketplace page is `README.md`; the VSIX carries it as its readme:
    ```
    npm ci
-   npm run package          # npx @vscode/vsce@<pinned> package --readme-path LISTING.md
+   npm run package          # npx @vscode/vsce@<pinned> package
    ```
    Expect no warnings (repository, licence, icon and publisher are set). `npx @vscode/vsce ls --tree`
    shows what ships; it should stay near 4.7 MB (the WebAssembly decoder is 7.9 MB uncompressed).

@@ -99,7 +99,7 @@ jobs:
           VSIX="video-preview-enhanced-${VERSION}.vsix"
           FLAGS=""
           if [ "$PRE" = "true" ]; then FLAGS="--pre-release"; fi
-          npx --yes "@vscode/vsce@${VSCE_VERSION}" package --readme-path LISTING.md $FLAGS --out "$VSIX"
+          npx --yes "@vscode/vsce@${VSCE_VERSION}" package $FLAGS --out "$VSIX"
           echo "vsix=$VSIX" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4

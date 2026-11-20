@@ -49,7 +49,7 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
   source rate: 2160p for a 4K 30 fps source and 1440p for a 4K 60 fps source. The local VS Code
   message fallback uses 1080p. On 2026-11-19, VS Code 1.147.0 on Windows 10 (i7-9700K, RTX 4070,
   32 GB RAM) showed 30 fps at 2160p for 10-bit HEVC and AV1, and 60 fps at 1440p for 10-bit HEVC
-  over the frame server. See [Performance](../README.md#performance) for the measured playback rates.
+  over the frame server. See [Performance](performance.md) for the measured playback rates.
 - **Frames sized to the picture** (2026-11-20; performance setting `sizeFramesToView`, on by default): with
   ffmpeg and the automatic `nativeMaxHeight`, frames are only as large as the picture is shown (540p, 720p, 1080p, 1440p or 2160p,
   the smallest that covers it in device pixels), capped by the source-rate rule above. Enlarging the panel, fullscreen

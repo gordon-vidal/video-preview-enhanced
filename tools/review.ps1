@@ -203,7 +203,7 @@ $settings = @'
 '@
 $utf8 = New-Object Text.UTF8Encoding($false)
 $needBuild = (-not $Dev) -and (-not $isVsix)
-$buildCmd = "(cd $(Q $buildDir)) npx --yes --prefer-offline @vscode/vsce package --readme-path LISTING.md -o $(Q $vsix)"
+$buildCmd = "(cd $(Q $buildDir)) npx --yes --prefer-offline @vscode/vsce package -o $(Q $vsix)"
 $wtCmd = "git -C $(Q $Main) worktree add --detach $(Q $Src) $sha"
 $installCmd = "$(Q $codeCli) --extensions-dir $(Q $ExtDir) --user-data-dir $(Q $UserData) --install-extension $(Q $vsix)"
 
@@ -252,7 +252,7 @@ try {
   if ($needBuild) {
     Cmd $buildCmd
     Push-Location $buildDir
-    try { & npx.cmd --yes --prefer-offline '@vscode/vsce' package --readme-path LISTING.md -o $vsix } finally { Pop-Location }
+    try { & npx.cmd --yes --prefer-offline '@vscode/vsce' package -o $vsix } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $vsix)) {
       Fail "vsce failed. It is fetched with npx on first use (needs network once; later runs use the npm cache). Check 'npx --yes @vscode/vsce --version', or build a .vsix yourself and pass its path."
     }

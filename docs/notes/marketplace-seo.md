@@ -3,7 +3,7 @@
 Method: the Marketplace gallery API (`extensionquery`, text filter, default sort = relevance) with
 "video", "mkv", "video player", "mkv player", "play mkv", "avi player", "media preview", "video preview",
 "hevc", "ffmpeg video", "video viewer", read 2026-11-19. Install counts are as shown then.
-Plus the 2026-11-17 notes that were in LISTING.md (kept below).
+Plus the 2026-11-17 notes that were in the old LISTING.md (kept below).
 
 ## How search ranks
 
@@ -56,7 +56,7 @@ search for after the first install. Drop the format list currently in `displayNa
   av1, vp9, prores, ffmpeg, frame by frame, subtitles, compare, codec, remote ssh, wsl, audio.
 - **categories:** Visualization, Other (same as the direct competitors; "Other" is where most
   video extensions sit).
-- The first lines of the page (LISTING.md) should repeat the format names: the page is what people
+- The first lines of the page (README.md) should repeat the format names: the page is what people
   read after the search card, and it is indexed by web search engines.
 - Revisit after the first 100 installs: if "mkv player" does not find it on page 1, add
   `(MKV, AVI, MOV)` as a suffix to the display name. That is a cheap change; the name is not part of
