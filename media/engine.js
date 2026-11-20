@@ -363,7 +363,7 @@ function createEngine(env) {
     const wasmAsset = async (url) => {
       const buf = await (await get(url)).arrayBuffer();
       const out = { url: blobUrl(buf, 'application/wasm'), module: null };
-      try { out.module = await WebAssembly.compile(buf); } catch (e) { log(`WebAssembly compile in the page failed: ${e && e.message || e}`); }
+      try { if (buf.byteLength) out.module = await WebAssembly.compile(buf); } catch (e) { log(`WebAssembly compile in the page failed: ${e && e.message || e}`); }
       signal.throwIfAborted();
       return out;
     };
