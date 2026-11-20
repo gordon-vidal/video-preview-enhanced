@@ -82,7 +82,8 @@ To try a branch, commit or `.vsix` by hand in a throwaway profile on Windows: `r
 4. Open a pull request against `main` and fill in the template. CI (host tests on Linux and Windows,
    a syntax check and a `vsce package` dry run) must pass.
 5. A maintainer reviews and merges. Releases are made by the maintainers (see
-   [docs/RELEASING.md](docs/RELEASING.md)).
+   [docs/RELEASING.md](docs/RELEASING.md)); do not change `version` in `package.json`, since
+   a version bump on `main` publishes a release automatically.
 
 By contributing you agree that your contribution is licensed under the [MIT licence](LICENSE) of
 this project.

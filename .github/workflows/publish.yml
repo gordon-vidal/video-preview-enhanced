@@ -1,6 +1,9 @@
-# Public release: VS Marketplace (Trusted Publishing, no stored token), optionally Open VSX, and the
-# VSIX attached to a GitHub Release. Started by hand only (Actions > Publish > Run workflow). It never
-# runs on tags: internal releases are tagged too. Steps and checks: docs/RELEASING.md.
+# Automatic release: every push to main that changes package.json runs this workflow. If the
+# "version" in package.json has no tag yet (v<version>), it tests, packages, publishes to the VS
+# Marketplace (Trusted Publishing, no stored token), optionally to Open VSX, then creates the tag
+# v<version> and a GitHub Release with the VSIX and the CHANGELOG section as notes. A push that does
+# not change the version finds the tag and does nothing. Manual fallback: Actions > Publish > Run
+# workflow (on main; the dry_run input stops after packaging). Steps and checks: docs/RELEASING.md.
 #
 # Marketplace authentication is Trusted Publishing (GitHub OIDC), as documented in
 # https://code.visualstudio.com/api/working-with-extensions/publishing-extension#publish-with-github-actions-and-trusted-publishing
@@ -12,16 +15,12 @@
 name: Publish
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
   workflow_dispatch:
     inputs:
-      version:
-        description: Version to publish; must equal "version" in package.json on the chosen branch (e.g. 0.8.0)
-        required: true
-        type: string
-      confirm:
-        description: Type "publish" to confirm
-        required: true
-        type: string
       pre_release:
         description: Publish as a pre-release
         required: false
@@ -32,10 +31,16 @@ on:
         required: false
         type: boolean
         default: true
+      dry_run:
+        description: Dry run - check, test and package only; publish nothing, create no tag or release
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# One release at a time; a second bump waits (it is never cancelled half-way through a publish).
 concurrency:
   group: publish
   cancel-in-progress: false
@@ -45,21 +50,53 @@ env:
   OVSX_VERSION: 1.4.0
 
 jobs:
+  check:
+    name: Is there a new version?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Read the version, look for its tag
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then echo "::error::Publish from main only (this run is on $REF)."; exit 1; fi
+          VERSION=$(node -p "require('./package.json').version")
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then echo "::error::package.json version '$VERSION' is not x.y.z."; exit 1; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ -n "$(git ls-remote --tags origin "refs/tags/v${VERSION}")" ]; then
+            if [ "$DRY" = "true" ]; then
+              echo "::notice::Tag v${VERSION} exists; continuing because this is a dry run."
+              echo "release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::notice::Tag v${VERSION} already exists: version not bumped, nothing to release."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          # New version: CHANGELOG.md must have its section (a heading "## <version>" and some text).
+          awk -v v="## ${VERSION}" 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then echo "::error::CHANGELOG.md has no '## ${VERSION}' section with content; add it in the same commit as the version bump."; exit 1; fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
   package:
     name: Check and package
+    needs: check
+    if: needs.check.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
       vsix: ${{ steps.pack.outputs.vsix }}
     steps:
-      - name: Confirmation
-        env:
-          CONFIRM: ${{ inputs.confirm }}
-          REF: ${{ github.ref }}
-        run: |
-          if [ "$CONFIRM" != "publish" ]; then echo "::error::Type \"publish\" in the confirm field."; exit 1; fi
-          if [ "$REF" != "refs/heads/main" ]; then echo "::error::Publish from main only (this run is on $REF)."; exit 1; fi
-
       # lfs: true downloads the test videos for the tests below; a release is rare, so the bandwidth is fine.
       - uses: actions/checkout@v4
         with:
@@ -69,19 +106,21 @@ jobs:
         with:
           node-version: 22
 
-      - name: Version matches package.json
-        env:
-          WANT: ${{ inputs.version }}
-        run: |
-          HAVE=$(node -p "require('./package.json').version")
-          if [ "$WANT" != "$HAVE" ]; then echo "::error::Input version $WANT, package.json says $HAVE."; exit 1; fi
-          if ! grep -q "^## $HAVE" CHANGELOG.md; then echo "::error::CHANGELOG.md has no '## $HAVE' heading."; exit 1; fi
-
       - name: Install ffmpeg (for the tests)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
 
       - name: Install
         run: npm ci
+
+      - name: Syntax check
+        run: |
+          git ls-files 'src/*.js' 'media/*.js' 'test/**/*.js' 'build/**/*.js' \
+            | xargs -n 1 node --check
+
+      - name: Hygiene checks
+        run: |
+          node tools/check-personal-data.js
+          node tools/check-links.js
 
       - name: Tests
         run: |
@@ -93,7 +132,7 @@ jobs:
       - name: Package
         id: pack
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.check.outputs.version }}
           PRE: ${{ inputs.pre_release }}
         run: |
           VSIX="video-preview-enhanced-${VERSION}.vsix"
@@ -110,7 +149,8 @@ jobs:
 
   marketplace:
     name: VS Marketplace
-    needs: package
+    needs: [check, package]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # No `environment:` here: the Trusted Publishing policy has none.
@@ -134,7 +174,7 @@ jobs:
   open-vsx:
     name: Open VSX
     needs: [package, marketplace]
-    if: inputs.open_vsx
+    if: ${{ !inputs.dry_run && inputs.open_vsx != false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -167,31 +207,37 @@ jobs:
           if [ "$PRE" = "true" ]; then FLAGS="--pre-release"; fi
           npx --yes "ovsx@${OVSX_VERSION}" publish "$VSIX" -p "$OVSX_PAT" $FLAGS
 
+  # Runs only when the Marketplace publish succeeded (a failed publish leaves no tag or release, so
+  # the next run can try again). Open VSX is independent: its failure does not block the release.
   github-release:
-    name: GitHub Release
-    needs: [package, marketplace]
+    name: Tag and GitHub Release
+    needs: [check, package, marketplace]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: false
 
       - uses: actions/download-artifact@v4
         with:
           name: vsix
 
-      # Attaches the VSIX to release v<version>: an existing (for example draft) release is updated
-      # and published; otherwise one is created on this commit, with the CHANGELOG section as notes.
-      - name: Create or update the release
+      # Creates the tag v<version> on this commit and the release with the CHANGELOG section as
+      # notes. An existing (for example draft) release for the tag is updated and published instead.
+      - name: Create the tag and release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.check.outputs.version }}
           VSIX: ${{ needs.package.outputs.vsix }}
           PRE: ${{ inputs.pre_release }}
         run: |
           TAG="v${VERSION}"
           awk -v v="## ${VERSION}" 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then echo "::error::CHANGELOG.md has no '## ${VERSION}' section."; exit 1; fi
           PREFLAG=""
           if [ "$PRE" = "true" ]; then PREFLAG="--prerelease"; fi
           if gh release view "$TAG" > /dev/null 2>&1; then
