@@ -21,7 +21,6 @@ them all, with the jump sizes you chose.
 | R | Loop on or off |
 | A / B | Set the A-B loop start / end (press again to clear) |
 | F | Fill the editor and switch to zen mode |
-| P | Picture-in-picture |
 | Shift+N / Shift+P | Next / previous video in the folder |
 | S / Ctrl+C | Save the frame as PNG / copy it |
 | ? | Keyboard shortcuts |

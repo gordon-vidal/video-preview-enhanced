@@ -9,7 +9,7 @@
   const ui = {
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), buffered: $('buffered'), tip: $('tip'),
     time: $('time'), now: $('now'), dur: $('dur'), rate: $('rate'), mute: $('mute'), volume: $('volume'),
-    info: $('info'), infoBtn: $('infoBtn'), pip: $('pip'), full: $('full'), cog: $('cog'), keysBtn: $('keysBtn'),
+    info: $('info'), infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), keysBtn: $('keysBtn'),
     panel: $('panel'), sheet: $('sheet'), toast: $('toast'), abMarks: $('abMarks'), tracks: $('tracks'),
   };
 
@@ -158,7 +158,6 @@
     currentFrame() { return this.frameAt(this.t); }
     currentTime() { return this.t; }
     isPlaying() { return this.playing; }
-    canPip() { return false; }
 
     play() {
       if (this.frameAt(this.t) >= this.n - 1) this.t = 0;
@@ -432,7 +431,6 @@
     // Live streams play from the live edge; seeking is off (docs/notes/url-stream.md).
     ui.seek.disabled = !!(meta && meta.live);
     if (meta && meta.live) ui.seek.title = 'Live stream: seeking is not available';
-    ui.pip.hidden = !document.pictureInPictureEnabled || !canvas.captureStream;
     p.setRate(rate);
     p.setVolume(volume, muted);
     if (p.setLoop) p.setLoop(loop);
@@ -537,27 +535,7 @@
       vscode.postMessage({ type: 'focusMode' });
     }
   }
-  // Picture-in-picture: VS Code allows it for <video> only, so stream the canvas into one.
-  let pipVideo = null;
-  async function togglePip() {
-    try {
-      if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return; }
-      if (!pipVideo) {
-        pipVideo = document.createElement('video');
-        pipVideo.muted = true;
-        pipVideo.playsInline = true;
-        pipVideo.srcObject = canvas.captureStream(60);
-        pipVideo.addEventListener('leavepictureinpicture', () => { ui.pip.classList.remove('on'); ui.pip.setAttribute('aria-pressed', 'false'); });
-      }
-      await pipVideo.play();
-      await pipVideo.requestPictureInPicture();
-      ui.pip.classList.add('on');
-      ui.pip.setAttribute('aria-pressed', 'true');
-    } catch (e) {
-      log(`picture-in-picture refused: ${e}`);
-      toast('Picture-in-picture is not available here');
-    }
-  }
+  // Picture-in-picture was removed (it did not work): git history has the button, the P key and togglePip.
 
   function grabFrame() {
     const src = player.snapshotSource();
@@ -731,7 +709,6 @@
   }
   const seekDragger = dragRange(ui.seek);
   const volumeDragger = dragRange(ui.volume);
-  ui.pip.onclick = togglePip;
   ui.full.onclick = toggleFullscreen;
   ui.time.onclick = () => {
     // A live stream shows only the time since it started (no timecode or frame count to cycle to).
@@ -897,9 +874,8 @@
       case 'm': case 'M': setMute(!muted); break;
       case 'r': case 'R': setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); break;
       case 'f': case 'F': toggleFullscreen(); break;
-      case 'p': togglePip(); break;
       case 'N': if (e.shiftKey) vscode.postMessage({ type: 'neighbour', d: 1 }); else handled = false; break;
-      case 'P': if (e.shiftKey) { vscode.postMessage({ type: 'neighbour', d: -1 }); break; } togglePip(); break;
+      case 'P': if (e.shiftKey) vscode.postMessage({ type: 'neighbour', d: -1 }); else handled = false; break;
       case 'a': case 'A': setAB('a'); break;
       case 'b': case 'B': setAB('b'); break;
       case 'z': case 'Z': toggleZoom(); break;
@@ -1059,7 +1035,7 @@
     const o = {
       preventDefaultContextMenuItems: true, vpe: true, vpeReady: !!player,
       vpePlaying: !!player && player.isPlaying(), vpeLoop: loop, vpeMuted: muted,
-      vpeFile: !cfg.url && !(player instanceof FramePlayer), vpeSubs: av.subs > 0, vpeAudio: av.audio > 1, vpePip: !ui.pip.hidden, vpeAB: ab.isRange(), vpeABSet: ab.isSet(),
+      vpeFile: !cfg.url && !(player instanceof FramePlayer), vpeSubs: av.subs > 0, vpeAudio: av.audio > 1, vpeAB: ab.isRange(), vpeABSet: ab.isSet(),
     };
     const j = JSON.stringify(o);
     if (j !== ctxJson) { ctxJson = j; document.body.setAttribute('data-vscode-context', j); }
@@ -1070,7 +1046,7 @@
     copyFrame: () => copyFrame(), saveFrame: () => saveFrame(), copyLink: () => press('C', { shiftKey: true }),
     copyTime: () => { if (player) vscode.postMessage({ type: 'copyText', text: fmtTime(player.currentTime()) }); toast('Timestamp copied'); },
     subs: () => controls.show('subs', ui.tracks), audio: () => controls.show('audio', ui.cog),
-    pip: () => togglePip(), fullscreen: () => toggleFullscreen(),
+    fullscreen: () => toggleFullscreen(),
     stepBack: () => stepButton(-1), stepFwd: () => stepButton(1), keys: () => controls.openSheet(ui.keysBtn), cog: () => controls.show('main', ui.cog),
     xray: () => press('X', { shiftKey: true }),
     // From the menu "Set" always sets (at this moment); the A / B keys toggle.
@@ -1418,7 +1394,7 @@
           const unnamed = [...document.querySelectorAll('button')].filter((b) => (b.textContent || b.getAttribute('aria-label')) && !/[A-Za-z]/.test(b.getAttribute('aria-label') || b.textContent || '')).map((b) => b.id || b.className || b.textContent);
           const cs = a && a !== document.body ? getComputedStyle(a) : null;
           let fv = false; try { fv = !!a && a.matches(':focus-visible'); } catch { /* old engine */ }
-          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'pip', 'full', 'noticeClose', 'canvas'];
+          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'full', 'noticeClose', 'canvas'];
           log(`a11y ${JSON.stringify({
             id: m.id,
             controls: Object.fromEntries(ids.map((k) => [k, attrs(byId(k))])),

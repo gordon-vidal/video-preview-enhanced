@@ -1,6 +1,6 @@
 'use strict';
 // Compare's UI in a real VS Code (docs/notes/compare-ui.md, the approved mock-up): entering from a player
-// takes its tab in place and starts at its position; the player's bar (no CC, no picture-in-picture, the
+// takes its tab in place and starts at its position; the player's bar (no CC, the
 // Compare button); the Compare panel and a video's page (offset in frames / ms, Reset, clock, sound);
 // the hover pills and ‹ offset › nudges, − / + on the video under the pointer; side by side / split with
 // a dragged divider and Swap; the tile's right-click menu; 3 videos in a 2x2 grid with an "Add video" cell;
@@ -76,12 +76,12 @@ module.exports = [{
     const all = tb.flat();
     ok(all.length === 1 && /compare/i.test(all[0].viewType), `tabs after entering: ${JSON.stringify(tb)}`);
 
-    // ---- the bar: the player's, without CC and picture-in-picture, plus Compare ----
+    // ---- the bar: the player's, without CC, plus Compare ----
     ok = t('bar');
     let u = await ui();
     const ids = u.bar.ids;
     for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'keysBtn', 'full']) ok(ids.includes(id), `bar has no #${id} (${ids})`);
-    ok(!ids.includes('tracks') && !ids.includes('pip'), `CC or PiP shown while comparing: ${ids}`);
+    ok(!ids.includes('tracks'), `CC shown while comparing: ${ids}`);
     ok(/^A ?\d/.test(u.bar.time), `time does not start with the clock's letter: ${u.bar.time}`);
     ok(/sound from A/.test(u.bar.mute), `mute title: ${u.bar.mute}`);
     act({ action: 'key', key: '>', shift: true });

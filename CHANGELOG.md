@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Removed picture-in-picture for now (it was not working): the bar button and the `P` key are gone. `Shift+P` still opens the previous video in the folder.
+
 ## 0.7.1 (2026-11-20)
 
 First release on the VS Code Marketplace (publisher `gordon-vidal`).

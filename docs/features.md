@@ -16,7 +16,7 @@
 - **Seek-bar thumbnails.** Hover or drag the seek bar for a picture of that moment (built-in decoder and native ffmpeg). Pictures are decoded only while the pointer is on the bar, never in the background after a video opens; the one under the pointer first, then a few neighbours.
 - **Grab a frame.** `Ctrl+C` copies the current frame to the clipboard; `S` saves it as a full-size PNG.
 - **About this video (ⓘ, `I`).** The file in plain words: size and length, resolution (4K, 1080p…), frame rate, HDR and bit depth, video and sound codecs with bit rates, tracks, and what plays it (your GPU through ffmpeg, the built-in decoder, the remote stream). **Copy details** copies it; **Full technical details** shows the technical overlay.
-- **Picture-in-picture** (`P`), and **fill the editor** (`F`). Fill also switches VS Code to zen mode, since VS Code doesn't allow real full screen in an editor.
+- **Fill the editor** (`F`). Fill also switches VS Code to zen mode, since VS Code doesn't allow real full screen in an editor.
 - **Phone videos play upright.** Rotation metadata in MP4/MOV is applied.
 - **HDR10 and HLG in HDR on HDR displays.** When Windows reports an HDR display ("Use HDR" on) and VS Code's WebGPU can draw an extended-range canvas, HDR10 (PQ), HLG, HDR10+ and Dolby Vision profile 8 are shown as HDR: 203 nits is SDR white and brighter highlights go above it, up to what the display can show (`videoPreviewEnhanced.hdrOutput`). On SDR displays they are tone-mapped to SDR in the shader (BT.2390, 203 nits as SDR white), so they don't look flat and grey. The info and stats overlays (`I`, `Shift+I`) say which: "HDR output" or "HDR tone-mapped to SDR".
 - **Next and previous file.** `Shift+N` and `Shift+P` open the next or previous video in the same folder, in the same tab.
@@ -70,7 +70,7 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 
 **Compare / play together (up to 4 videos).** Check an encoder, a shader, a renderer or a model against a reference, frame by frame. For example, the expected and actual output of a failing test, or four camera angles of one take.
 - **Open it:** in a player, ⚙ › Tools › **Compare**, or right-click the picture › **Compare With…**, and pick 1–3 more videos in VS Code's open dialog. Compare takes the player's tab and starts where the player was. Or select 2–4 videos in the Explorer, right-click → **Compare / Play Together** (a new tab). **Leave compare** (in the Compare panel) puts the player back in that tab, at the moment of the clock video.
-- **The same bar for all videos:** play, frame steps (in lockstep), seek, speed, loop and the jump keys act on every video. The time and the seek bar follow the **clock** video (its letter shows before the time); mute and volume act on the **sound** video. CC and picture-in-picture are hidden while comparing; the bar's Compare button (two panes) opens the **Compare panel**.
+- **The same bar for all videos:** play, frame steps (in lockstep), seek, speed, loop and the jump keys act on every video. The time and the seek bar follow the **clock** video (its letter shows before the time); mute and volume act on the **sound** video. CC is hidden while comparing; the bar's Compare button (two panes) opens the **Compare panel**.
 - **Compare panel:** one row per video (letter, name, ⏱ clock, 🔊 sound, offset) that opens its page; **Add video…** (up to 4); with 2 videos **View** (Side by side or Split) and **Swap sides**; **Leave compare**. A video's page: its **offset** (− / + in frames of that video or in ms, with Reset; positive shows a later moment), **Clock** (the seek bar, time and frame steps follow it), **Sound from this video**, **Replace video…** and **Remove**.
 - **Layout:** 2 videos side by side, or split (one picture, drag the divider); 3 videos in a 2×2 grid with an empty cell that adds a fourth; 4 in a 2×2 grid. Each video keeps its own shape in its cell. Hover a video for its name, its own frame number and a ‹ offset › nudge; click the name for its page. `−` / `+` nudge the video under the pointer. Right-click a video for its actions: clock, sound, offset, copy its frame or timestamp, replace, remove, add, leave.
 - **In sync:** the others follow the clock's time, and a paused view only updates once every video shows its frame, so a step always shows matching frames. Another frame rate is matched by time.
@@ -97,7 +97,7 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 One layout (the old simple / advanced switch is gone). The bar, left to right:
 previous frame, play / pause, next frame, mute, volume, the time (click it: time → SMPTE timecode → frame
 number; the same detail while playing and paused), then CC (subtitles), ⓘ (about this video), the speed
-(click: speed panel; scroll: ±0.05), ⚙ (settings), ⌨ (keyboard shortcuts), picture-in-picture and fullscreen.
+(click: speed panel; scroll: ±0.05), ⚙ (settings), ⌨ (keyboard shortcuts) and fullscreen.
 
 - A click on the picture plays or pauses; with a panel open it closes the panel.
 - Each bar button opens its panel and closes it when clicked again. `Esc` closes any panel.

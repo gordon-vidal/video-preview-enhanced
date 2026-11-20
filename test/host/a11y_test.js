@@ -64,9 +64,9 @@ const cmp = compareHtml({ uri: (...p) => `https://webview/${p.join('/')}`, cspSo
 checkButtons(cmp, 'compare');
 assert.match(cmp, liveRegion, 'compare: live region');
 assert.ok(pressed(cmp, 'mute'), 'compare: #mute has aria-pressed');
-// The player's bar (src/bar.js) without CC and picture-in-picture, plus the Compare button that opens its panel.
+// The player's bar (src/bar.js) without CC, plus the Compare button that opens its panel.
 assert.match(cmp, /<button id="cmpBtn"[^>]*aria-controls="panel"/);
-assert.ok(!/id="tracks"|id="pip"|id="syncBtn"|id="mode"/.test(cmp), 'compare: no CC, PiP or old compare toolbar');
+assert.ok(!/id="tracks"|id="syncBtn"|id="mode"/.test(cmp), 'compare: no CC or old compare toolbar');
 for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'infoBtn', 'rate', 'cog', 'keysBtn', 'full', 'panel', 'sheet', 'menu']) assert.match(cmp, new RegExp(`id="${id}"`), `compare: #${id}`);
 assert.ok(cmp.indexOf('controls.js') > 0 && cmp.indexOf('controls.js') < cmp.indexOf('compare.js"'), 'compare: controls.js (the panels) loads before compare.js');
 assert.ok(cmp.indexOf('modes.js') > 0 && cmp.indexOf('modes.js') < cmp.indexOf('compare.js"'), 'compare: modes.js (ownsKey) loads before compare.js');
@@ -79,7 +79,8 @@ assert.ok(cmp.indexOf('modes.js') > 0 && cmp.indexOf('modes.js') < cmp.indexOf('
   assert.ok(html.includes('id="bar"'), 'player page rendered');
   checkButtons(html, 'player');
   assert.match(html, liveRegion, 'player: live region');
-  for (const id of ['mute', 'pip']) assert.ok(pressed(html, id), `player: #${id} has aria-pressed`);
+  assert.ok(pressed(html, 'mute'), 'player: #mute has aria-pressed');
+  assert.ok(!html.includes('id="pip"'), 'player: no picture-in-picture button');
   // One layout: no mode switch, no Tools / CC popup menus; the bar's panel buttons say what they open.
   for (const id of ['modeBtn', 'toolsBtn', 'toolsMenu', 'tracksMenu', 'pill']) assert.ok(!html.includes(`id="${id}"`), `player: #${id} is gone`);
   for (const id of ['tracks', 'infoBtn', 'rate', 'cog']) assert.match(html, new RegExp(`<button id="${id}"[^>]*aria-expanded="false" aria-controls="panel"`));

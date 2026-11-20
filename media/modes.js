@@ -7,7 +7,7 @@
 const VpeModes = (() => {
   /**
    * Keys that belong to tools: in simple mode they do nothing, so a stray key can't open an overlay.
-   * Transport, volume, speed, subtitle, fullscreen and picture-in-picture keys always work.
+   * Transport, volume, speed, subtitle and fullscreen keys always work.
    * @param {KeyboardEvent} e
    */
   function isToolKey(e) {
