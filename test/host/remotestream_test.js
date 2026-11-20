@@ -170,6 +170,17 @@ function driver(tools, file, pr, opts = {}) {
     },
   });
   st.rs = rs;
+  // Every ffmpeg this stream starts, with how it ended (for the messages of failed checks).
+  st.procs = [];
+  const launch = rs.launch.bind(rs);
+  rs.launch = (t, audio) => {
+    const proc = launch(t, audio);
+    const rec = { t, audio: !!audio, out: 0, exit: null };
+    st.procs.push(rec);
+    proc.stdout.on('data', (d) => { rec.out += d.length; });
+    proc.on('exit', (code, signal) => { rec.exit = signal || code; rec.err = proc.err.text.trim().slice(-300); });
+    return proc;
+  };
   st.more = () => rs.handle({ type: 'more', gen: st.gen, limit: st.limit });
   st.seek = (t) => { st.gen++; st.video = []; st.audio = []; rs.handle({ type: 'seek', gen: st.gen, t }); };
   return st;
@@ -236,7 +247,7 @@ async function withFfmpeg(tools) {
       st.rs.dispose();
       assert.deepStrictEqual(st.fails, []);
       // Says what the stream did when it ended without a picture (seen once on the Windows runner).
-      assert.ok(st.video.length, `${k} from ${from} s: EOF without picture packets (${st.audio.length} sound items; ${st.logs.join(' / ')})`);
+      assert.ok(st.video.length, `${k} from ${from} s: EOF without picture packets (${st.audio.length} sound items; ffmpeg runs ${JSON.stringify(st.procs)}; frames split ${st.rs.frameIndex}, ${st.rs.pending.length} bytes pending; ${st.logs.join(' / ')})`);
       const idx = Math.floor(from * pr.video.fps + 1e-6);
       assert.ok(Math.abs(st.video[0].t - idx / pr.video.fps) < 1e-9 && st.video[0].key, `${k}: first packet is the target frame's IDR`);
       if (st.audio.length) assert.ok(Math.abs(st.audio[0].t - idx / pr.video.fps) < 1e-9, `${k}: sound starts at the target`);
