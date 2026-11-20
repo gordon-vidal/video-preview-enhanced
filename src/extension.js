@@ -71,7 +71,7 @@ const debugPool = (() => { try { return logFile && process.env.VPE_POOL ? JSON.p
 const DEBUG_COMMANDS = new Set([
   'videoPreviewEnhanced.openWith', 'videoPreviewEnhanced.playSequence', 'videoPreviewEnhanced.compareWith',
   'videoPreviewEnhanced.showLog', 'workbench.action.closeActiveEditor', 'workbench.action.closeAllEditors', 'workbench.action.reloadWindow',
-  'notifications.clearAll', 'videoPreviewEnhanced.exportRange',
+  'notifications.clearAll', 'videoPreviewEnhanced.exportRange', 'workbench.files.action.refreshFilesExplorer',
 ]);
 const sessions = new Set();
 const compareSessions = new Set(); // open compare panels (src/compare.js)

@@ -851,6 +851,7 @@
     const key = `${cellsKey}|${st.clock}|${st.sound}|${st.muted}|${st.offsets.map((o) => `${o.v}${o.unit}`).join(',')}`;
     if (key === overlaysKey) return;
     overlaysKey = key;
+    infoDirty = true;  // the new pills start empty: refill the frame numbers on the next tick even when paused
     const html = (i, side) => {
       const clockI = i === st.clock ? `<span class="ico" title="Clock">${ICONS.clock(14)}</span>` : '';
       const soundI = i === st.sound ? `<span class="ico${st.muted ? ' dim' : ''}" title="${st.muted ? 'Sound (muted)' : 'Sound'}">${ICONS.sound(14)}</span>` : '';
