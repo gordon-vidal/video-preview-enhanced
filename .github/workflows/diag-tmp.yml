@@ -32,7 +32,9 @@ jobs:
           }
           ffmpeg -hide_banner -version | Select-Object -First 1
       - name: Interleaving of the made files
-        run: node test/bitmapsubs/diag_tmp.js 25
+        run: |
+          node test/bitmapsubs/diag_tmp.js 24
+          node test/bitmapsubs/diag_tmp.js 24 --busy
       - name: Picture subtitle test, 10 times on fresh media
         shell: bash
         run: |
