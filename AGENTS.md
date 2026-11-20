@@ -87,7 +87,8 @@ before releases or in performance work.
   [docs/licences.md](docs/licences.md)). Changing the decoder build needs the notices updated.
 - Releases and publishing are the maintainers' decision ([docs/RELEASING.md](docs/RELEASING.md));
   merging a version bump in `package.json` to `main` publishes automatically (Publish workflow), so
-  never bump `version` outside a release the maintainer asked for, and never run the workflow or tag.
+  **version bumps happen only when the maintainer explicitly says so**: never change `version` in
+  `package.json` / `package-lock.json` on your own, not even on a branch, and never run the workflow or tag.
 
 ## Commits and PRs
 
