@@ -179,7 +179,7 @@ const VpeControls = (() => {
         { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End']] },
         { title: 'Frames', rows: [['Previous / next frame (all videos)', ',', '.'], ['Copy view', `${ctrlName}+C`], ['Time / timecode / frames', 'click the time']] },
         { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M']] },
-        { title: 'Compare', rows: [['Nudge the video under the pointer', '−', '+'], ['Swap sides (2 videos)', 'X']] },
+        { title: 'Compare', rows: [['Nudge the video under the pointer', '−', '+'], ['Swap sides (2 videos)', 'X'], ['Add videos by clicking them in the Explorer', 'Shift+D']] },
         { title: 'View and help', rows: [['Fullscreen', 'F'], ['Picture size (all videos)', 'Z'], ['Zoom (all videos)', `${ctrlName}+wheel`], ['About these videos', 'I'], ['This list', '?'], ['Close menus', 'Esc']] },
       ];
     }
@@ -190,7 +190,7 @@ const VpeControls = (() => {
       { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M'], ['Next audio track', 'Shift+A']] },
       { title: 'View', rows: [['Fullscreen', 'F'], ['Subtitles on / off', 'C'], ['About this video', 'I'], ['Picture size: Fit, Fill, Stretch, 100 %', 'Z'], ['Zoom in / out', '+', '-'], ['Zoom at the pointer', `${ctrlName}+wheel`]] },
       { title: 'Tools', rows: [['Scopes', 'W'], ['Pixel inspector', 'X'], ['Codec X-ray', 'Shift+X'], ['Stats', 'Shift+I'], ['Previous / next keyframe', '{', '}']] },
-      { title: 'Files and help', rows: [['Next / previous video in folder', 'Shift+N', 'Shift+P'], ['Compare with another video', 'D'], ['Compare by dropping a video here', 'Shift+drag'], ['This list', '?'], ['Close menus', 'Esc']] },
+      { title: 'Files and help', rows: [['Next / previous video in folder', 'Shift+N', 'Shift+P'], ['Compare with another video', 'D'], ['Compare with the next video clicked in the Explorer', 'Shift+D'], ['Compare by dropping a video here', 'Shift+drag'], ['This list', '?'], ['Close menus', 'Esc']] },
     ];
   }
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- New (for review): **add videos to a compare by clicking them in the Explorer.** Press **Shift+D** in the player, then click a video in the Explorer: compare opens with it in the player's tab. In compare, Shift+D (or Compare panel › Add from the Explorer) adds every video you click, until Esc, Shift+D again or 4 videos. The D quick pick has the same as a row. **Alt+D** in the Explorer compares the selected videos.
+
 ## 0.7.2 (2026-11-20)
 
 Picture size and zoom, a faster way to start a compare, and frame-count fixes.

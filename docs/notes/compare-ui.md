@@ -76,6 +76,76 @@ Added without changing the player's look except a drop hint (a dashed frame with
   Compare / Play Together and "Compare With…" already cover it); `DocumentDropEditProvider` (text editors only);
   dropping onto the compare page to add a video (Add video… exists).
 
+## A plain drag from the Explorer (investigated 2026-11-20)
+
+Gordon's first wish: a drag without Shift from the Explorer onto the player starts compare. **Not possible with
+the VS Code API.** Read in VS Code 1.147.0's own code (the portable build in `test/vscode/.code`,
+`workbench.desktop.main.js` and `contrib/webview/browser/pre/index.html`):
+
+- **The page never sees the drag.** The workbench's webview drag monitor listens on the window for `dragstart`,
+  `drag` and `dragover`: without Shift it calls `windowDidDragStart()` on every webview, which sets the webview's
+  `<iframe>` to `pointer-events: none`; with Shift it calls `windowDidDragEnd()` (pointer events back on). An
+  Explorer drag starts inside the workbench window, so the iframe is blocked before the pointer reaches it.
+  (For drags from outside VS Code, `pre/index.html` posts `drag-start` unless the page called `preventDefault()`
+  on `dragenter` first, "Extension code has already handled this event": that escape hatch does not help for
+  Explorer drags, which never reach the page.)
+- **The editor group's drop overlay** (`EditorDropTarget`) lets a drop through to the editor only when
+  `editor.dropIntoEditor.enabled` is on, the active editor has the "can drop into editor" capability (webviews and
+  custom editors have it) and Shift is held. The overlay itself says "Hold Shift to drop into editor". There is no
+  option on `registerCustomEditorProvider`, `createWebviewPanel` or `WebviewOptions` that changes this, and no
+  setting that turns the overlay off (`editor.dropIntoEditor.enabled: false` only turns Shift off too).
+- **`DocumentDropEditProvider`** is for text editors only; `TreeDragAndDropController` only for the extension's own
+  tree views, not the Explorer.
+- **Detecting VS Code's own "drop opens the file in this group"**: a drop on the player's group opens the video as
+  a new, pinned editor in that group. The host sees that open (our `resolveCustomEditor`, or a tab event) but
+  cannot tell it from a double-click in the Explorer or Quick Open: there is no drag or drop event for extensions,
+  and focus and pinning look the same. Turning every such open into "add to compare" would break plain opening.
+  So it is used only while the user asked for it: add mode, below (with add mode on, a plain drop on the editor
+  works too, since it is just another open).
+- Not read: the discussion of microsoft/vscode#339036 (no web access in this run). Worth a look for a planned API.
+
+## Add mode: add videos by clicking them in the Explorer (2026-11-20, branch `feat/compare-gesture`, for review)
+
+The fallback Gordon asked for. Logic in `src/addmode.js` (pure), the host side in `src/compare.js`
+(`registerCompare`: `toggleAddMode`, `claimOpen`, `stopAddMode`, `compareSelected`), the open interception in
+`src/extension.js` (`resolveCustomEditor`).
+
+- **Start:** Shift+D in the player or compare; in the D quick pick the row "Click videos in the Explorer…"; in the
+  Compare panel the row "Add from the Explorer" (a switch, Shift+D shown); the palette command "Compare: Add Videos
+  from the Explorer". The same key or row again turns it off.
+- **While on:** the next video VS Code opens (an Explorer click, a double-click, Quick Open, a plain drop on the
+  editor) does not get its own player: the host takes it in `resolveCustomEditor` before a Session starts and
+  closes that tab right after. A video opened in another editor (VS Code's own MP4 preview, a text tab) is taken
+  from the tab events and its tab closed. Only `file` / `vscode-remote` video files are taken.
+- **From a player:** one video. Compare opens with [player's video, clicked video] in the player's tab at the
+  player's position, and the mode ends. The player's tab is pinned first (`workbench.action.keepEditor`), because an
+  Explorer single click would otherwise replace a preview tab, the player with it.
+- **In compare:** every video clicked is added (the page reloads, as Add video… does), until Esc, Shift+D / the row
+  again, compare is full (4) or the compare tab closes. A video already shown is not added (toast). A full compare
+  does not start the mode (toast).
+- **Hint:** a small line at the top of the picture, dashed border in the focus colour, `role="status"` (read once):
+  "Click a video in the Explorer to compare with this one · Esc to stop" in the player, "Click videos in the
+  Explorer to add them (n of 4) · Esc to stop" in compare. It comes back after compare's page reloads.
+- **Esc:** the user is in the Explorer by then, so Esc is a keybinding (`videoPreviewEnhanced.stopAddFromExplorer`,
+  `when: videoPreviewEnhanced.addMode && !inputFocus && !inQuickOpen`), plus the page's own Esc. Known: while the mode
+  is on, Esc in the Explorer only stops the mode, and an Esc that closes a player panel also stops it (the page
+  forwards Esc to the workbench).
+- **Alt+D in the Explorer** ("Compare Selected Videos", `when: explorerViewletFocus && !inputFocus`; Alt+D is free
+  in VS Code's defaults): 2-4 selected videos open compare in a new tab; one video joins the compare in add mode, or
+  else the visible player in its place. A keybinding gets no Explorer selection, so it runs VS Code's "Copy Path" and
+  reads the clipboard; the clipboard's text is put back after (a picture on the clipboard would be lost: Gordon to
+  decide if that is acceptable, or drop Alt+D and keep the context menu's Compare / Play Together).
+
+Options for Gordon (not built): a button on the bar instead of / beside Shift+D; add mode always multi (also from the
+player); a status bar item instead of the in-picture hint; time out the mode after a minute; a setting "a video
+dropped on a player's group joins compare" (accepts the double-click ambiguity above).
+
+Tests: `test/host/addmode_test.js` (the rules; with a fake VS Code: Shift+D in a player and an open become compare
+in place at its position, compare adds until full, duplicates, other editors' tabs closed, Esc, closing compare, Alt+D
+with the clipboard put back), `test/host/comparepick_test.js` (the new quick pick row, Copy Path parsing),
+`case/compare_addmode` (layer 3: the opens are `vscode.open` with a preview tab through the test hook `openFile`, since
+the hidden runner can't click the Explorer).
+
 ## Deviations from the mock-up
 
 - The tab is swapped rather than the same webview turning into compare (above).
