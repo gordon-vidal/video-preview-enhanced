@@ -149,8 +149,8 @@ module.exports = [
   {
     name: 'remote-stream',
     journey: 'Remote windows: formats the GPU decoder can\'t play are re-encoded to H.264 by ffmpeg; seeks, scrubbing, the quality ladder, pixel tools',
-    sources: ['src/remotestream.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/player.js'],
-    steps: [{ case: 'remote_stream' }, { case: 'remote_stream_long' }, { case: 'remote_stream_fallback' }],
+    sources: ['src/remotestream.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/player.js'],
+    steps: [{ case: 'remote_stream' }, { case: 'remote_stream_long' }, { case: 'remote_stream_size' }, { case: 'remote_stream_fallback' }],
   },
   {
     name: 'file-icons',

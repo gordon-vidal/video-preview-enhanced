@@ -87,6 +87,7 @@ self.onmessage = (e) => {
     try {
       switch (m.type) {
         case 'init': return await init(m);
+        case 'remoteAudio': return await remoteAudio(m);
         case 'open': return await open(m);
         case 'config': return await configure(m);
         case 'more': return await more(m);
@@ -100,7 +101,7 @@ self.onmessage = (e) => {
         default: return undefined;
       }
     } catch (err) {
-      post({ type: 'error', where: m.type, message: String(err && err.message || err), stack: err && err.stack });
+      post({ type: 'error', where: m.type, id: m.id, message: String(err && err.message || err), stack: err && err.stack });
       return undefined;
     }
   });
@@ -1144,3 +1145,35 @@ async function xrayChapters() {
   return out.sort((a, b) => a.start - b.start);
 }
 // ---- end xray
+
+// Remote Opus batches include 80 ms of preroll and explicit sample trimming. No WebCodecs
+// audio support is needed, and a seek cannot inherit decoder state from the previous timeline.
+async function remoteAudio(m) {
+  const audio = [];
+  for (const it of m.audio) {
+    if (it.kind !== 'opus') { audio.push(it); continue; }
+    const [, c, pkt, frame] = await libav.ff_init_decoder('opus', {
+      codecpar: { codec_type: 1, sample_rate: 48000, channels: 2, channel_layout: 3, extradata: it.head },
+      time_base: [1, 48000],
+    });
+    try {
+      const frames = await libav.ff_decode_multi(c, pkt, frame,
+        it.packets.map((data) => ({ data })), { fin: true });
+      const planes = [new Float32Array(it.samples), new Float32Array(it.samples)];
+      let pos = 0;
+      for (const f of frames) {
+        const decoded = audioToFloat(f);
+        const lo = Math.max(0, it.skip - pos);
+        const hi = Math.min(f.nb_samples, it.skip + it.samples - pos);
+        if (hi > lo) for (let ch = 0; ch < 2; ch++) {
+          planes[ch].set(decoded[ch].subarray(lo, hi), pos + lo - it.skip);
+        }
+        pos += f.nb_samples;
+      }
+      if (pos < it.skip + it.samples) throw new Error('Short remote Opus decode');
+      audio.push({ kind: 'pcm', t: it.t, sampleRate: 48000, planes });
+    } finally { await libav.ff_free_decoder(c, pkt, frame); }
+  }
+  post({ type: 'remoteAudio', id: m.id, audio },
+    audio.flatMap((it) => (it.planes || []).map((p) => p.buffer)));
+}

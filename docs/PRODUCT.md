@@ -145,6 +145,9 @@ One feature: compare becomes multi-view. The difference view is dropped.
 
 - SSH: done (`remoteStream`, on by default): ffmpeg on the remote machine sends a compressed,
   low-latency H.264 stream that the panel decodes with A — instead of raw frames, or WebAssembly only.
+  Remote stream sound may be converted or compressed to fit the link: Opus when the remote ffmpeg
+  can encode it, otherwise s16 PCM. Local playback sound is unchanged. The remote encode follows
+  the picture size with the same setting and height steps as native playback, within the link tier cap.
 
 ## Testing
 

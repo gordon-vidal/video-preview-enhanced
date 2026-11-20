@@ -368,7 +368,7 @@ function createEngine(env) {
       if (cfg.debug || env.debug) log(`memory budgets: ${mem.gb ? `${mem.gb} GB` : 'default'}: frames ${Math.round(mem.frames / 1e6)} MB, pool ${Math.round(mem.pool / 1e6)} MB, ${mem.workers} extra workers at most, blocks ${Math.round(mem.blocks / 1e6)} MB`);
       // Several WebAssembly decoders for heavy intra/short-GOP video (pool.js); one worker otherwise.
       const poolOpts = { budget: mem.pool, batchBytes: mem.batch, maxWorkers: mem.workers, ...(cfg.pool || {}), multiRead: true };
-      worker = typeof DecoderPool === 'function' ? new DecoderPool(url, poolOpts) : new Worker(url);
+      worker = !cfg.singleWorker && typeof DecoderPool === 'function' ? new DecoderPool(url, poolOpts) : new Worker(url);
       const d = { url, worker, chars: src.length, queue: [], error: null, libav: null, preloaded: false };
       worker.onmessage = (e) => d.queue.push(e.data);
       worker.onerror = (e) => { d.error = e; };
@@ -1017,10 +1017,13 @@ function createEngine(env) {
 
     // ---- data in --------------------------------------------------------
 
-    receiveRemoteBatch(m) {
+    async receiveRemoteBatch(m) {
       const videoBytes = m.video.reduce((n, it) => n + it.data.byteLength, 0);
-      const bytes = videoBytes + m.audio.reduce((n, it) => n + it.planes.reduce((sum, p) => sum + p.byteLength, 0), 0);
-      const receive = () => {
+      const bytes = videoBytes + m.audio.reduce((n, it) => {
+        if (it.kind === 'opus') return n + it.packets.reduce((sum, p) => sum + p.byteLength, 0) + it.head.byteLength;
+        return n + (it.data ? it.data.byteLength : it.planes.reduce((sum, p) => sum + p.byteLength, 0));
+      }, 0);
+      const receive = async () => {
         if (this.disposed || m.gen !== this.gen) return;
         const w = this.remoteWindow;
         if (w && this.remoteReadAt >= w.eligibleSince) {
@@ -1030,12 +1033,55 @@ function createEngine(env) {
           w.readMs += performance.now() - this.remoteReadAt;
           w.hostWaitMs += m.hostWaitMs || 0; // the host waiting for its ffmpeg, not the link
         }
-        this.remoteVideoEnd = m.eof || m.videoEnd;
-        this.onBatch(m);
+        try {
+          if (m.audio.some((it) => it.kind === 'opus')) m.audio = await this.decodeRemoteAudio(m.audio);
+          if (this.disposed || m.gen !== this.gen) return;
+          this.remoteVideoEnd = m.eof || m.videoEnd;
+          this.onBatch(m);
+        } catch (e) {
+          if (this.disposed || m.gen !== this.gen) return;
+          log(`remote sound decode failed: ${e.message}`);
+          this.worker.postMessage({ type: 'remoteAudioFailed', message: e.message });
+        }
       };
       // The VS Code test hook paces delivery at a fixed payload rate, including PCM.
       if (this.debugRemoteRate > 0) setTimeout(receive, bytes * 1000 / this.debugRemoteRate);
       else receive();
+    }
+
+    async decodeRemoteAudio(audio) {
+      if (!this.remoteAudioBoot) {
+        const boot = bootDecoder({ ...this.cfg, singleWorker: true }, this.mem);
+        this.remoteAudioBoot = boot;
+        this.remoteAudioPending = new Map();
+        this.remoteAudioId = 0;
+        this.remoteAudioReady = boot.promise.then((d) => {
+          this.remoteAudioWorker = d.worker;
+          d.worker.onmessage = (e) => {
+            const m = e.data;
+            const pending = this.remoteAudioPending && this.remoteAudioPending.get(m.id);
+            if (pending && (m.type === 'remoteAudio' || m.type === 'error')) {
+              this.remoteAudioPending.delete(m.id);
+              if (m.type === 'error') pending.reject(new Error(m.message));
+              else {
+                if (!this.remoteAudioLogged) { log('remote sound: Opus decoded by the built-in decoder'); this.remoteAudioLogged = true; }
+                pending.resolve(m.audio);
+              }
+            }
+          };
+          d.worker.onerror = (e) => {
+            for (const pending of this.remoteAudioPending.values()) pending.reject(new Error(e.message));
+            this.remoteAudioPending.clear();
+          };
+        });
+      }
+      await this.remoteAudioReady;
+      if (this.disposed) return [];
+      return new Promise((resolve, reject) => {
+        const id = ++this.remoteAudioId;
+        this.remoteAudioPending.set(id, { resolve, reject });
+        this.remoteAudioWorker.postMessage({ type: 'remoteAudio', id, audio });
+      });
     }
 
     onBatch(m) {
@@ -1083,6 +1129,14 @@ function createEngine(env) {
             // How far sound has gone into the decoder (pump throttles on what hasn't come out yet).
             this.aSubmitT = Math.max(this.aSubmitT === undefined ? -Infinity : this.aSubmitT, it.t);
           } catch (e) { log(`audio decode: ${e.message}`); }
+        } else if (it.kind === 's16') {
+          const samples = new DataView(it.data.buffer, it.data.byteOffset, it.data.byteLength);
+          const planes = [new Float32Array(it.data.byteLength / 4), new Float32Array(it.data.byteLength / 4)];
+          for (let i = 0; i < planes[0].length; i++) {
+            planes[0][i] = samples.getInt16(i * 4, true) / 32768;
+            planes[1][i] = samples.getInt16(i * 4 + 2, true) / 32768;
+          }
+          this.addAudio(it.t, it.sampleRate, planes);
         } else if (it.kind === 'pcm' && it.t !== null) {
           let { t, planes } = it;
           // After audioToSoft: the re-read repeats sound that is already decoded; keep only what follows it.
@@ -2434,6 +2488,11 @@ function createEngine(env) {
       this.loopCache = null;
       if (this.hdrOutput && this.hdrOutput.out) { this.hdrOutput.out.dispose(); this.gl.twin = null; }
       if (this.boot) this.boot.drop();
+      if (this.remoteAudioBoot) this.remoteAudioBoot.drop();
+      if (this.remoteAudioPending) {
+        for (const pending of this.remoteAudioPending.values()) pending.resolve([]);
+        this.remoteAudioPending.clear();
+      }
       this.gen++; // late decoder outputs and worker messages of the old generation are dropped
       clearTimeout(this.readTimer);
       clearTimeout(this.acTimer);

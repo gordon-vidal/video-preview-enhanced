@@ -34,9 +34,23 @@ Finished (2026-11-19, second pass; see "Finishing" below). Setting `videoPreview
   The engine sets `nativeLossy` so pixel tools offer the exact decoder.
   The extension's `tryRemoteStream()` reuses the
   `this.native` slot, so `useFullRes` (pixel tools → built-in decoder) and dispose work unchanged.
-- **Sound.** Not re-encoded: float PCM 48 kHz stereo as `pcm` batch items (3.1 Mb/s; s16 would be
-  1.5, FLAC ~1). If it ever needs to be smaller: mp3 or FLAC (VS Code webviews decode those with
-  AudioDecoder); **not AAC or Opus**, which VS Code webviews can't decode.
+- **Sound (2026-11-20).** Remote ffmpeg encodes stereo Opus at 96 kb/s when available (libopus,
+  then the native opus encoder, each checked with a short encode). Both are usable without GPL
+  codecs. The bundled decoder already includes `decoder-opus` and `decoder-aac`; no decoder
+  build change is needed. VS Code's WebCodecs audio refuses Opus/AAC, so a separate built-in
+  decoder worker decodes Opus. If neither encoder works, or encoding/decoding fails during
+  playback, the stream uses interleaved signed 16-bit PCM at 48 kHz (1.536 Mb/s). Conversion
+  to float happens in the page, so the link really carries half the former PCM bytes.
+- **Opus sync.** The Ogg header supplies encoder delay; the last granule removes final padding.
+  The host sends half-second batches with 80 ms of preroll. Each batch decodes independently,
+  then trims to its explicit sample range. Seeks from memory, restarts, pauses and loops keep
+  the same sample clock as PCM. The ladder allows 128 kb/s including repeated preroll. With
+  450 kb/s picture at 360p, its payload budget is 578 kb/s (previously 3522 kb/s with f32 PCM;
+  s16 fallback: 1986 kb/s), before VS Code message and network overhead.
+- **Picture size.** With automatic `nativeMaxHeight` and `sizeFramesToView` enabled, the encode
+  uses the smallest native picture step that covers the view (540, 720, 1080, 1440, 2160), capped
+  by the source, configured maximum and link tier. Enlarging grows it at once; shrinking waits
+  for the next seek. Explicit height and the setting being off keep the configured cap.
 - **Timestamps / A/V sync.** Raw H.264 carries no timestamps, so ffmpeg is made to emit both
   outputs *on* the stream's timestamps from the output's zero (the seek target): `-fps_mode cfr
   -r <fps>` (`-vsync cfr` before ffmpeg 5.1) duplicates/drops frames to the video timestamps (a
@@ -73,6 +87,28 @@ Finished (2026-11-19, second pass; see "Finishing" below). Setting `videoPreview
 - **After dispose** nothing starts ffmpeg again: `handle`, `startAt`, `seek` and `more` return early
   (review 2026-11-19 #5), and a pending scrub timer is cleared.
 
+## Compressed sound checks (2026-11-20)
+
+`test/host/remotestream_test.js`, ffmpeg 9.0.2: the six 200 s sync checks (late sound, late
+picture, a sound timestamp gap; from zero and after a seek) passed with s16 PCM and libopus.
+The same six checks also passed with the native opus encoder (`VPE_RS_TEST_AUDIO_ENCODER=opus`).
+The page's actual WebAssembly worker decoded the packets in these checks. Worst flash/beep
+error: 0 ms for the late starts, 33 ms for the gap at 29.97 fps, with no growing drift.
+Memory seeks, pause/read-ahead, return to zero, encoder failure to s16 and fragmented Ogg pages
+with a partial final frame are covered too.
+
+| Stereo audio payload | kb/s |
+|---|---:|
+| Previous f32 PCM (48 kHz, calculated) | 3072 |
+| s16 PCM (48 kHz, calculated and sample-count checked) | 1536 |
+| libopus at 96 kb/s, including repeated preroll (measured on the sync clips) | 115.5 |
+
+The hidden VS Code remote-stream scenario checks real WebAssembly Opus output, seeks and
+steps, the quality ladder, and a 360p picture with sound on a throttled 0.7 Mb/s payload link.
+This is the same stream path with `remoteStream: on` in a local window. A fresh Remote-SSH
+session and listening to the sound are still manual checks; no dedicated SSH test config was
+available for this change.
+
 ## Encoder choice
 
 `probeEncoder()` (src/remotestream.js), once per extension host and ffmpeg build
@@ -102,7 +138,7 @@ At 1080p, x264 ultrafast costs about one core; the source decode is the expensiv
 
 ## Slow links
 
-The webview samples normal 1× playback in two-second windows. It counts H.264 and PCM payload
+The webview samples normal 1× playback in two-second windows. It counts H.264 and audio payload
 bytes received and divides by the elapsed time of completed `more` requests. This measures
 effective stream delivery, including remote encoder wait and message round trips. Time between
 requests is omitted because a full decode buffer naturally stops asking for data. The samples
@@ -114,12 +150,12 @@ behind-real-time signal. The webview excludes pauses, seeks and the audio-only t
   step down. The capped profiles use libx264 with VBV caps of **720p / 3 Mb/s**, **480p / 1.2 Mb/s**,
   and **360p / 0.45 Mb/s**. The height never exceeds the configured or source height.
 - Recovery takes four consecutive healthy windows with at least 0.25 s buffered on average and 30%
-  delivery headroom for the next profile, including 3.072 Mb/s for stereo PCM when present.
+  delivery headroom for the next profile, including 128 kb/s for Opus or 1.536 Mb/s for stereo s16 PCM when present.
   The top profile uses the measured cost of its original stream for this comparison, with a
   3 Mb/s minimum. A switch discards only unsent video. The new encoder starts with an IDR at the
   first unsent frame, and the existing audio process and sample cursor continue.
-- Two more starved windows at the lowest profile switch the tab to the built-in decoder and
-  disable streaming for that tab, as with a terminal ffmpeg error.
+- At the lowest profile, further starved windows show one slow-connection notice. The stream
+  stays there; reading the whole source with the built-in decoder would need the same link.
 
 The hidden-desktop VS Code cases use `remoteStream: on`. They pace batch delivery in the webview
 by payload size. On the generated 1080p clip, a 4.4 Mb/s limit drops playback to 720p and holds

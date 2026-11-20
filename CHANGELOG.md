@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Remote streams use compressed Opus sound when available, with s16 PCM as a fallback, so slow connections can keep the picture and sound playing. Remote pictures also follow the player size.
+
 ## 0.7.2 (2026-11-20)
 
 Picture size and zoom, a faster way to start a compare, and frame-count fixes.

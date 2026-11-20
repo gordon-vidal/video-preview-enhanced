@@ -7,8 +7,8 @@
 // every frame, no B-frames) with the remote's GPU encoder when it has one (probeEncoder), else
 // libx264 (GPL builds) or libopenh264 (the LGPL build src/remoteff.js downloads); the packets go
 // to the webview, which decodes them with WebCodecs (H.264 is one of the two video codecs VS Code
-// webviews can decode). Sound goes as float PCM (48 kHz stereo, 3 Mb/s),
-// no encoder needed. A seek inside what was already read is served from memory; others restart
+// webviews can decode). Sound goes as Opus (96 kb/s), or signed 16-bit PCM when no Opus encoder
+// works. A seek inside what was already read is served from memory; others restart
 // ffmpeg at the target frame, at most one start per burst of seeks (scrubbing).
 //
 // It speaks media/decoder-worker.js's protocol (streams, config, more -> batch, seek -> seeked)
@@ -18,7 +18,8 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
-const { lowerPriority } = require('./ffmpeg');
+const { lowerPriority, run } = require('./ffmpeg');
+const { OggOpus } = require('./remoteopus');
 
 const AUDIO_RATE = 48000;
 const MAX_QUEUED_SECONDS = 2; // packets read ahead of the webview before ffmpeg is paused
@@ -41,12 +42,32 @@ const SEEK_KEEP_S = 1.5;
 const HISTORY_MAX_S = 20;
 // Sound sent at most this far past the picture sent.
 const AUDIO_LEAD_S = 2;
-const MAX_QUEUED_AUDIO = 4 * AUDIO_RATE * 8; // four seconds of unsent stereo f32le
+const MAX_QUEUED_AUDIO = 4 * AUDIO_RATE * 4; // four seconds of unsent stereo s16le
 const MAX_AUDIO_BATCH = 256 * 1024;
 // Keep the normal encoder on fast links. Capped tiers use x264's VBV across ffmpeg builds.
 const LINK_TIERS = [null, { height: 720, kbps: 3000 }, { height: 480, kbps: 1200 }, { height: 360, kbps: 450 }];
-// Sound is never re-encoded (docs/PRODUCT.md): stereo f32 PCM costs this on every tier.
-const PCM_KBPS = AUDIO_RATE * 8 * 8 / 1000;
+// Opus budget includes the 80 ms seek preroll repeated in each half-second batch.
+const PCM_KBPS = AUDIO_RATE * 4 * 8 / 1000;
+const OPUS_KBPS = 128;
+const audioEncoders = new Map();
+
+async function audioEncoderFor(tools, exec = run) {
+  const key = encoderCacheKey(tools);
+  if (!audioEncoders.has(key)) audioEncoders.set(key, (async () => {
+    for (const encoder of ['libopus', 'opus']) {
+      const r = await exec(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i',
+        'anullsrc=r=48000:cl=stereo', '-t', '0.04', ...opusArgs(encoder), '-f', 'null', '-'], 10000);
+      if (r.code === 0) return encoder;
+    }
+    return null;
+  })());
+  return audioEncoders.get(key);
+}
+
+function opusArgs(encoder) {
+  return ['-c:a', encoder, '-strict', '-2', '-b:a', '96k',
+    ...(encoder === 'libopus' ? ['-vbr', 'off', '-frame_duration', '20'] : [])];
+}
 // Link samples (2 s windows from the webview) are ignored until this long after ffmpeg's first
 // output following a start, restart or seek, so its start-up stall is not taken for a slow link.
 const LINK_SETTLE_MS = 2500;
@@ -203,12 +224,15 @@ function encoderFailed(tools, choice) {
 }
 
 class RemoteStream {
-  constructor({ tools, file, post, log, maxHeight, probed, onFail, stats, encoder, device, cpuEncoder: cpu, onEncoderFail }) {
+  constructor({ tools, file, post, log, maxHeight, probed, onFail, stats, encoder, device,
+    cpuEncoder: cpu, onEncoderFail, audioEncoder = null, fitView = true }) {
     this.tools = tools;
     this.file = file;
     this.post = post;
     this.log = log;
     this.maxHeight = maxHeight || 1080;
+    this.fitView = fitView;
+    this.audioEncoder = audioEncoder;
     this.pr = probed;
     this.onFail = onFail || (() => {});
     this.onEncoderFail = onEncoderFail || (() => {});
@@ -244,7 +268,9 @@ class RemoteStream {
   async handle(m) {
     if (this.disposed) return undefined;
     switch (m.type) {
-      case 'open': return this.open();
+      case 'open': this.setView(m.view); return this.open();
+      case 'view': return this.setView(m);
+      case 'remoteAudioFailed': return this.audioFallback(m.message);
       case 'config':
         if (m.video !== 'webcodecs' && this.pr.video) { this.onFail('H.264 WebCodecs not available in this webview'); return undefined; }
         return this.post({ type: 'configured', video: this.pr.video ? m.video : 'none', audio: this.pr.audio ? m.audio : 'none' });
@@ -284,17 +310,50 @@ class RemoteStream {
         remoteStream: { fps: this.fps, sourceCodec: v.codec, sourcePixFmt: v.pixFmt, sourceWidth: v.width, sourceHeight: v.height },
         // H.264 High, Annex B (no description: SPS/PPS come in-band before every IDR), SDR BT.709.
         video: { codec: 'h264', width: this.w, height: this.h, profile: 100, level: this.w * this.h > 1920 * 1088 ? 51 : 42, colorSpace: 1, colorTrc: 0 },
-        audio: this.pr.audio ? { codec: 'pcm_f32le', sampleRate: AUDIO_RATE, channels: 2 } : null,
+        audio: this.pr.audio ? { codec: this.audioEncoder ? 'opus' : 'pcm_s16le', sampleRate: AUDIO_RATE, channels: 2 } : null,
       },
     });
   }
 
+  setView(view) {
+    if (!view || !(view.w > 0 && view.h > 0) || !Number.isFinite(view.w + view.h)) return;
+    this.view = { w: view.w, h: view.h };
+    this.reSize();
+  }
+
+  setFit(on) { this.fitView = !!on; this.reSize(); }
+
+  viewCap() {
+    if (!this.fitView || !this.view) return Infinity;
+    const r = this.pr.video.height / this.pr.video.width;
+    const { w, h } = this.view;
+    const need = Math.max(Math.min(h, w * r), Math.min(w, h * r));
+    return [540, 720, 1080, 1440, 2160].find((x) => x >= need) || Infinity;
+  }
+
+  reSize() {
+    if (!this.fps) return;
+    const { w, h } = this;
+    this.sizeVideo();
+    const grow = this.h > h;
+    this.resizePending = this.w !== w || this.h !== h;
+    if (this.resizePending) this.log(`remote stream: picture ${this.view?.w}x${this.view?.h}: frames ${w}x${h} -> ${this.w}x${this.h}${grow ? '' : ' at the next seek'}`);
+    this.w = w;
+    this.h = h;
+    // Drop the page's queued smaller frames too, as native playback does on enlargement.
+    if (grow) this.post({ type: 'refresh' });
+    // Shrinking waits for a seek; the ladder always remains an upper cap.
+  }
+
   sizeVideo() {
     const v = this.pr.video;
-    const h = Math.min(v.height, this.maxHeight, LINK_TIERS[this.tier]?.height ?? Infinity);
-    this.h = h - (h % 2);
+    const h = Math.min(v.height, this.maxHeight, this.viewCap(), LINK_TIERS[this.tier]?.height ?? Infinity);
+    const height = h - (h % 2);
+    if (height !== this.h && this.standby) this.takeStandby(NaN);
+    this.h = height;
     const w = Math.round((v.width * this.h) / v.height);
     this.w = w - (w % 2);
+    this.resizePending = false;
   }
 
   args(t, audio) {
@@ -307,7 +366,8 @@ class RemoteStream {
     // Keep the outputs in separate processes: a full PCM pipe must not stall video (or vice
     // versa), and changing the video encoder must not move the audio sample clock.
     if (audio) return args.concat('-map', `0:${this.pr.audio.index}`, '-af', `aresample=${AUDIO_RATE}:async=1:first_pts=0`,
-      '-ac', '2', '-ar', String(AUDIO_RATE), '-f', 'f32le', 'pipe:1');
+      '-ac', '2', '-ar', String(AUDIO_RATE), ...(this.audioEncoder
+        ? [...opusArgs(this.audioEncoder), '-page_duration', '20000', '-f', 'opus'] : ['-f', 's16le']), 'pipe:1');
     // Timestamps: both outputs follow the stream's timestamps from the output's zero (the seek
     // target), so frame i is at base + i/fps and sample n at base + n/48000 exactly:
     // cfr duplicates/drops video frames to the timestamps (a late video start is filled), and
@@ -329,8 +389,12 @@ class RemoteStream {
     this.frameIndex = 0; // video packets read from this stream
     this.vAll = []; // packets read: the previous and the current GOP already sent, and the ones not sent yet
     this.vNext = 0; // index in vAll of the next packet to send
-    this.aStore = []; // sound read, { s: first sample (from base), b: interleaved f32le Buffer }
+    this.aStore = []; // sound read, { s: first sample (from base), b: interleaved s16le Buffer, or Opus packet }
     this.aEnd = 0; // samples read
+    this.ogg = this.audioEncoder ? new OggOpus((p) => {
+      this.aStore.push(p);
+      this.aEnd = Math.max(this.aEnd, p.s + p.n);
+    }) : null;
     this.aRest = Buffer.alloc(0); // bytes of a partial sample
     this.aNext = 0; // next sample to send
     this.pending = Buffer.alloc(0);
@@ -348,6 +412,16 @@ class RemoteStream {
     this.spawnNow();
   }
 
+  audioFallback(why) {
+    if (!this.audioEncoder) return;
+    this.log(`remote stream: Opus failed (${why}); using s16 PCM`);
+    this.audioEncoder = null;
+    this.takeStandby(NaN);
+    this.reset(this.base);
+    // Let the page seek from its playhead, discarding compressed batches from the old generation.
+    this.post({ type: 'refresh' });
+  }
+
   /** Starts ffmpeg for the current (reset) stream. */
   spawnNow() {
     if (this.disposed) return;
@@ -360,13 +434,16 @@ class RemoteStream {
     this.audioProc = proc;
     proc.stdout.on('data', (d) => {
       if (proc !== this.audioProc) return;
-      this.addAudio(d);
-      this.answer();
+      try { this.addAudio(d); this.answer(); } catch (e) { this.audioFallback(e.message); }
     });
     this.onExit(proc, (code, signal) => {
       if (proc !== this.audioProc) return;
       this.audioProc = null;
-      if (code !== 0 || signal) { this.fail(`audio: ${this.exitReason(proc, code, signal)}`); return; }
+      if (code !== 0 || signal) {
+        if (this.audioEncoder) this.audioFallback(this.exitReason(proc, code, signal));
+        else this.fail(`audio: ${this.exitReason(proc, code, signal)}`);
+        return;
+      }
       this.audioEnded = true;
       if (this.videoEnded) this.prepareLoop();
       this.answer();
@@ -461,7 +538,7 @@ class RemoteStream {
    * that the picture buffer ran low most of the window. Only link-limited windows count: a window
    * where the host mostly waited for ffmpeg (a slow remote CPU or source decode) says nothing about
    * the link, and neither do the windows right after ffmpeg (re)started. Two bad windows step down,
-   * straight to the first tier whose video cap plus the sound (PCM, never re-encoded) fits what the
+   * straight to the first tier whose video cap plus the sound (Opus or s16 PCM) fits what the
    * link delivered; four good windows with 30% headroom step up one tier. The lowest tier is the
    * floor: when the link can't carry even that, the stream stays there and says so once (the
    * built-in decoder would read the whole source file over the same link).
@@ -479,7 +556,7 @@ class RemoteStream {
       this.topPeak = Math.max(m.videoKbps, 0.9 * this.topPeak);
     }
     const nextCap = LINK_TIERS[this.tier - 1]?.kbps ?? Math.max(3000, this.topKbps, this.topPeak);
-    const pcm = this.pr.audio ? PCM_KBPS : 0;
+    const pcm = this.pr.audio ? (this.audioEncoder ? OPUS_KBPS : PCM_KBPS) : 0;
     // No read completed in the window (one read outlasted it): only a very slow link does that.
     const readMs = m.readMs ?? 0;
     const linkLimited = !(readMs > 0) || (m.hostWaitMs || 0) < ENCODER_WAIT_SHARE * readMs;
@@ -496,7 +573,7 @@ class RemoteStream {
     const last = LINK_TIERS.length - 1;
     if (down && this.tier === last) { this.slowLink(detail); return; }
     let tier = this.tier + step;
-    // Skip tiers that can't fit either: PCM is the same on all of them.
+    // Skip tiers that cannot fit alongside the sound.
     if (down) while (tier < last && LINK_TIERS[tier].kbps + pcm > m.kbps) tier++;
     this.tier = tier;
     this.sizeVideo();
@@ -509,7 +586,7 @@ class RemoteStream {
   /** At the lowest tier the link still can't keep up: stay there (no fallback) and tell the user once. */
   slowLink(detail) {
     this.log(`remote stream: the link can't carry the lowest quality${this.pr.audio ? ' with its sound' : ''} (${detail}); staying at ${this.h}p`);
-    this.notice('slow', `The connection is too slow for this video${this.pr.audio ? ` with its sound (sent uncompressed, about ${(PCM_KBPS / 1000).toFixed(1)} Mb/s)` : ''}, even at ${this.h}p: playback may stutter.`);
+    this.notice('slow', `The connection is too slow for this video${this.pr.audio ? ` with its sound (${this.audioEncoder ? 'Opus, about 0.13' : 'uncompressed, about 1.5'} Mb/s)` : ''}, even at ${this.h}p: playback may stutter.`);
   }
 
   /** A notice in the webview, once per stream and kind. */
@@ -582,13 +659,21 @@ class RemoteStream {
   }
 
   addAudio(d) {
+    if (this.audioEncoder) {
+      this.ogg.push(d);
+      if (this.aEnd - this.aNext >= 4 * AUDIO_RATE) {
+        this.audioPaused = true;
+        this.audioProc.stdout.pause();
+      }
+      return;
+    }
     const all = this.aRest.length ? Buffer.concat([this.aRest, d]) : Buffer.from(d);
-    const n = Math.floor(all.length / 8);
-    this.aRest = Buffer.from(all.subarray(n * 8));
+    const n = Math.floor(all.length / 4);
+    this.aRest = Buffer.from(all.subarray(n * 4));
     if (!n) return;
-    this.aStore.push({ s: this.aEnd, b: all.subarray(0, n * 8) });
+    this.aStore.push({ s: this.aEnd, b: all.subarray(0, n * 4) });
     this.aEnd += n;
-    if ((this.aEnd - this.aNext) * 8 >= MAX_QUEUED_AUDIO) {
+    if ((this.aEnd - this.aNext) * 4 >= MAX_QUEUED_AUDIO) {
       this.audioPaused = true;
       this.audioProc.stdout.pause();
     }
@@ -625,10 +710,12 @@ class RemoteStream {
     const tail = this.videoEnded && this.vNext === this.vAll.length;
     // Catch sound up to each picture batch even when it contains several seconds of small
     // H.264 packets. Once there is only sound left, each read gets a bounded chunk of PCM.
-    const aCap = tail ? this.aNext + Math.max(1, Math.floor(Math.min(limit, MAX_AUDIO_BATCH) / 8))
+    const aCap = tail ? this.aNext + Math.max(1, Math.floor(Math.min(limit, MAX_AUDIO_BATCH) / 4))
       : Math.round((vT + AUDIO_LEAD_S - this.base) * AUDIO_RATE);
-    const aHi = Math.min(this.aEnd, aCap, this.tier ? this.aNext + Math.floor(MAX_AUDIO_BATCH / 8) : Infinity);
-    if (end === this.vNext && aHi - this.aNext < 1) {
+    const aHi = Math.min(this.aEnd, aCap, this.audioEncoder ? this.aNext + AUDIO_RATE / 2 : Infinity,
+      this.tier ? this.aNext + Math.floor(MAX_AUDIO_BATCH / 4) : Infinity);
+    if (end === this.vNext && (aHi - this.aNext < 1
+      || (this.audioEncoder && !this.audioEnded && aHi - this.aNext < AUDIO_RATE / 2))) {
       if (tail && this.audioEnded) { this.waiting = null; this.post({ type: 'batch', gen, eof: true, video: [], audio: [], hostWaitMs: Date.now() - this.waitingSince }); }
       return;
     }
@@ -639,7 +726,7 @@ class RemoteStream {
     this.trim();
     this.account(video.length, bytes, audio);
     if (this.proc && this.proc.stdout.isPaused() && this.vAll.length - this.vNext < (MAX_QUEUED_SECONDS * this.fps) / 2) this.proc.stdout.resume();
-    if (this.audioProc && this.audioPaused && (this.aEnd - this.aNext) * 8 < MAX_QUEUED_AUDIO / 2) {
+    if (this.audioProc && this.audioPaused && (this.aEnd - this.aNext) * 4 < MAX_QUEUED_AUDIO / 2) {
       this.audioPaused = false;
       this.audioProc.stdout.resume();
     }
@@ -647,25 +734,30 @@ class RemoteStream {
     this.post({ type: 'batch', gen, video, audio, videoEnd: this.videoEnded && this.vNext === this.vAll.length, hostWaitMs: Date.now() - this.waitingSince });
   }
 
-  /** The sound from aNext up to sample hi (read already), as one pcm item. */
+  /** The sound from aNext up to sample hi (read already), still compressed or signed 16-bit. */
   takeAudio(hi) {
     const from = this.aNext;
     const n = hi - from;
     if (n < 1) return [];
-    const l = new Float32Array(n);
-    const r = new Float32Array(n);
+    if (this.audioEncoder) {
+      // Every batch is independently decodable: 80 ms of Opus preroll makes seeks and loop
+      // starts use exactly the same path as ordinary reads, without moving the sample clock.
+      if (!this.audioEnded && n < AUDIO_RATE / 2) return [];
+      const packets = this.aStore.filter((p) => p.s + p.n > from - 3840 && p.s < hi);
+      if (!packets.length) return [];
+      this.aNext = hi;
+      return [{ kind: 'opus', t: this.base + from / AUDIO_RATE, sampleRate: AUDIO_RATE,
+        head: this.ogg.head, packets: packets.map((p) => new Uint8Array(p.b)),
+        skip: from - packets[0].s, samples: n }];
+    }
+    const data = new Uint8Array(n * 4);
     for (const c of this.aStore) {
-      const cn = c.b.length / 8;
       const lo = Math.max(from, c.s);
-      const top = Math.min(hi, c.s + cn);
-      for (let s = lo; s < top; s++) {
-        const o = (s - c.s) * 8;
-        l[s - from] = c.b.readFloatLE(o);
-        r[s - from] = c.b.readFloatLE(o + 4);
-      }
+      const top = Math.min(hi, c.s + c.b.length / 4);
+      if (top > lo) data.set(c.b.subarray((lo - c.s) * 4, (top - c.s) * 4), (lo - from) * 4);
     }
     this.aNext = hi;
-    return [{ kind: 'pcm', t: this.base + from / AUDIO_RATE, sampleRate: AUDIO_RATE, planes: [l, r] }];
+    return [{ kind: 's16', t: this.base + from / AUDIO_RATE, sampleRate: AUDIO_RATE, data }];
   }
 
   /**
@@ -685,8 +777,8 @@ class RemoteStream {
       this.vNext -= k;
     }
     const keepFrom = this.vAll.length ? Math.round((this.vAll[0].t - this.base) * AUDIO_RATE) : this.aNext;
-    const sMin = Math.max(Math.min(keepFrom, this.aNext), this.aNext - HISTORY_MAX_S * AUDIO_RATE);
-    while (this.aStore.length && this.aStore[0].s + this.aStore[0].b.length / 8 <= sMin) this.aStore.shift();
+    const sMin = Math.max(Math.min(keepFrom, this.aNext), this.aNext - HISTORY_MAX_S * AUDIO_RATE) - (this.audioEncoder ? 4800 : 0);
+    while (this.aStore.length && this.aStore[0].s + (this.aStore[0].n ?? this.aStore[0].b.length / 4) <= sMin) this.aStore.shift();
   }
 
   /** Test logs: packets and megabits per second sent, and how far sound leads the picture, every 2 s. */
@@ -722,7 +814,7 @@ class RemoteStream {
     const now = Date.now();
     const quiet = now - this.lastSeekAt >= SEEK_QUIET_MS;
     this.lastSeekAt = now;
-    if (this.reuse(t)) {
+    if (!this.resizePending && this.reuse(t)) {
       this.post({ type: 'seeked', gen: m.gen, t });
       return;
     }
@@ -733,6 +825,7 @@ class RemoteStream {
     const near = (x) => t < x && x - t <= STEP_BACK_SPAN_S;
     const back = this.vAll.length && t < from && (near(from) || near(this.base));
     const start = back ? Math.max(0, idx - Math.round(this.fps * STEP_BACK_LEAD_S)) / this.fps : t;
+    this.sizeVideo();
     this.reset(start);
     this.aNext = Math.max(0, Math.round((t - start) * AUDIO_RATE));
     this.post({ type: 'seeked', gen: m.gen, t });
@@ -786,4 +879,4 @@ class RemoteStream {
   }
 }
 
-module.exports = { RemoteStream, wanted, enabled, encoderArgs, encoderFrame, probeEncoder, encoderFor, encoderFailed, cpuEncoder, GPU_ENCODERS, CPU_ENCODERS, ENCODER_KEY, LINK_TIERS, PCM_KBPS, LINK_SETTLE_MS };
+module.exports = { RemoteStream, wanted, enabled, encoderArgs, encoderFrame, probeEncoder, encoderFor, encoderFailed, cpuEncoder, GPU_ENCODERS, CPU_ENCODERS, ENCODER_KEY, LINK_TIERS, PCM_KBPS, OPUS_KBPS, audioEncoderFor, LINK_SETTLE_MS };
