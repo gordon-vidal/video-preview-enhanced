@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1 (2026-11-20)
+
+First release on the VS Code Marketplace (publisher `gordon-vidal`).
+
+- Fixed: in Compare, the tile labels show each video's frame number while paused.
+- Fixed (Linux): ffmpeg processes stop reliably when a video pauses, its tab is hidden or a loop restarts; no leftover ffmpeg keeps running.
+- New Marketplace and GitHub page with a short tour GIF; the full reference (keys, settings, formats, remote, ffmpeg, FAQ) moved to the `docs/` folder on GitHub.
+
 ## 0.7.0 (2026-11-20)
 
 The UI overhaul release: a new player, panels for everything, previews on the seek bar, less CPU on 4K, and a smoother first start.
