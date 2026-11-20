@@ -359,6 +359,14 @@ function createEngine(env) {
       const res = await get(url);
       return blobUrl(await res.arrayBuffer(), type);
     };
+    // The decoder's wasm as a blob URL (libav.js loads it by URL) and compiled once here for the workers.
+    const wasmAsset = async (url) => {
+      const buf = await (await get(url)).arrayBuffer();
+      const out = { url: blobUrl(buf, 'application/wasm'), module: null };
+      try { out.module = await WebAssembly.compile(buf); } catch (e) { log(`WebAssembly compile in the page failed: ${e && e.message || e}`); }
+      signal.throwIfAborted();
+      return out;
+    };
     const stem = cfg.loader.replace(/\.js$/, '');
     // Fetch all four at once, and start loading the worker while the wasm is still downloading.
     const startWorker = async () => {
@@ -378,11 +386,18 @@ function createEngine(env) {
       startWorker(),
       asset(cfg.loader, 'text/javascript'),
       asset(`${stem}.wasm.js`, 'text/javascript'),
-      asset(`${stem}.wasm.wasm`, 'application/wasm'),
-    ]).then(([d, loader, toImport, wasmurl]) => {
+      wasmAsset(`${stem}.wasm.wasm`),
+    ]).then(([d, loader, toImport, { url: wasmurl, module: wasmModule }]) => {
       signal.throwIfAborted();
       d.libav = { loader, toImport, wasmurl, variant: cfg.variant };
-      d.worker.postMessage({ type: 'init', ...d.libav, freeBytes: mem.freeBufs });
+      // One compiled module for every worker (pool, thumbnails): the compile happens once.
+      try {
+        d.worker.postMessage({ type: 'init', ...d.libav, ...(wasmModule ? { wasmModule } : {}), freeBytes: mem.freeBufs });
+        if (wasmModule) d.libav.wasmModule = wasmModule;
+      } catch (e) {
+        log(`shared WebAssembly module not sent: ${e && e.message || e}`);
+        d.worker.postMessage({ type: 'init', ...d.libav, freeBytes: mem.freeBufs });
+      }
       return d;
     }).catch((err) => { drop(); throw err; });
     return { promise, drop };
