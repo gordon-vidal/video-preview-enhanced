@@ -62,15 +62,42 @@ module.exports = [{
 
     let ok = null;
     try {
+    // ---- starting a compare: key D (quick pick) and a dropped video (docs/notes/compare-ui.md) ----
+    ok = t('start/key-d');
+    let from = await h.openClip(vs, files[0]);
+    await vs.waitLog(new RegExp(`\\[${tagA}\\] webview: first frame shown`), { from, timeout: 45000, what: 'first frame' });
+    from = vs.mark();
+    vs.send({ pickCompare: CLIPS[1] });
+    vs.send({ name: CLIPS[0], action: 'key', key: 'd' });
+    const rows = JSON.parse(/debug comparepick (\[.*\])/.exec(await vs.waitLog(/debug comparepick \[/, { from, timeout: 20000, what: 'the quick pick' }))[1]);
+    ok(rows[0] === 'Same folder' && !rows.includes(CLIPS[0]) && rows.includes(CLIPS[1]) && rows[rows.length - 1].includes('Browse'), `quick pick rows: ${rows}`);
+    await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened by key D' });
+    await vs.waitLog(new RegExp(`\\[${tagA}\\] session closed`), { from, timeout: 10000, what: 'the player tab closed' });
+    let r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
+    ok(r.synced === 'true', `compare after key D: ${JSON.stringify(r)}`);
+    vs.send({ command: 'workbench.action.closeActiveEditor' });
+    await h.sleep(800);
+    ok = t('start/drop');
+    from = await h.openClip(vs, files[0]);
+    await vs.waitLog(new RegExp(`\\[${tagA}\\] webview: first frame shown`), { from, timeout: 45000, what: 'first frame' });
+    from = vs.mark();
+    vs.send({ name: CLIPS[0], action: 'drop', data: { 'text/uri-list': `${require('url').pathToFileURL(files[1]).href}\r\n` } });
+    ok(/debug dropHint true/.test(await vs.waitLog(/debug dropHint /, { from, timeout: 10000, what: 'drop hint' })), 'no drop hint while dragging');
+    await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened by a drop' });
+    r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
+    ok(r.synced === 'true', `compare after the drop: ${JSON.stringify(r)}`);
+    vs.send({ command: 'workbench.action.closeActiveEditor' });
+    await h.sleep(800);
+
     // ---- entering from the player: in place, at its position ----
     ok = t('enter/in-place');
-    let from = await h.openClip(vs, files[0]);
+    from = await h.openClip(vs, files[0]);
     await vs.waitLog(new RegExp(`\\[${tagA}\\] webview: first frame shown`), { from, timeout: 45000, what: 'first frame' });
     from = vs.mark();
     vs.send({ compareWith: [files[1]], name: CLIPS[0], t: 1.0 });
     await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened from the player' });
     await vs.waitLog(new RegExp(`\\[${tagA}\\] session closed`), { from, timeout: 10000, what: 'the player tab closed' });
-    let r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
+    r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
     ok(Math.abs(nums(r.frames)[0] - 31) <= 1, `compare started at A #${nums(r.frames)[0]}, expected about #31 (the player's 1.0 s)`);
     const tb = await tabs();
     const all = tb.flat();

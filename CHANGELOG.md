@@ -4,6 +4,7 @@
 
 - Removed picture-in-picture for now (it was not working): the bar button and the `P` key are gone. `Shift+P` still opens the previous video in the folder.
 - Fixed: the frame count is known right after opening an MP4/MOV (from the container), so End works at once; short files without a frame rate in the container (10-frame MXF) now get one from their timestamps, so the frame counter and stepping work.
+- New: start a compare faster. Press **D** in the player for a quick pick of other videos (same folder first, then the workspace, recently compared first, **Browse…** for the open dialog), or hold **Shift** and drop a video from the Explorer onto the player.
 
 ## 0.7.1 (2026-11-20)
 

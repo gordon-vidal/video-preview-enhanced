@@ -122,7 +122,7 @@ One feature: compare becomes multi-view. The difference view is dropped.
   video (n of 4), View (2 videos: Side by side | Split), Swap, Leave compare. Tiles are clean; hover shows the name
   pill with the tile's own frame number and a ‹ offset › nudge; − / + nudge the tile under the pointer;
   right-click a tile for its actions. The old compare toolbar and sync panel are gone.
-- **Entering:** ⚙ › Tools › Compare and "Compare with…" in the player's right-click menu, both with VS Code's open
+- **Entering:** key **D** (quick pick of other videos, same folder first), Shift+drop of an Explorer video on the player, ⚙ › Tools › Compare and "Compare with…" in the player's right-click menu, both with VS Code's open
   dialog; compare takes the player's tab and starts at its position; Leave compare puts the player back there.
   (It is a separate webview panel that replaces the player's tab, not the same webview: docs/notes/compare-ui.md.)
 - Each video has its own offset, by **time or frame number** (hover nudge and the panel only).

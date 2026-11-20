@@ -22,6 +22,7 @@ them all, with the jump sizes you chose.
 | A / B | Set the A-B loop start / end (press again to clear) |
 | F | Fill the editor and switch to zen mode |
 | Shift+N / Shift+P | Next / previous video in the folder |
+| D | Compare with another video: a quick pick of the videos in this folder, then the workspace (**Browse…** opens the file dialog) |
 | S / Ctrl+C | Save the frame as PNG / copy it |
 | ? | Keyboard shortcuts |
 | Esc | Close a panel or the shortcuts |
@@ -60,6 +61,7 @@ leaves them alone (`docs/notes/ui-simple.md`).
 | Mouse | Action |
 |---|---|
 | Click the picture | Play or pause (or close an open panel) |
+| Shift+drag a video from the Explorer onto the picture | Compare with it (VS Code only hands drops to the player while Shift is held) |
 | Double-click the picture | Fill the editor |
 | Wheel, while paused | Step frames |
 | Ctrl+wheel (or pinch) | Zoom around the cursor; drag to pan |

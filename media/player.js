@@ -883,6 +883,7 @@
       case 's': case 'S': saveFrame(); break;
       case 'c': case 'C': ccClick(); break;
       case 'w': case 'W': scopes.cycle(); break;
+      case 'd': case 'D': comparePick(); break;
       default:
         if (/^[0-9]$/.test(e.key) && player.meta.duration) player.seekTime((Number(e.key) / 10) * player.meta.duration);
         else handled = false;
@@ -934,6 +935,28 @@
   };
   /** Compare: VS Code's open dialog picks the other videos; compare then takes this tab's place, from here. */
   function compareWith() { vscode.postMessage({ type: 'compareWith', t: player ? player.currentTime() : 0 }); }
+  /** Key D: a quick pick of other videos (same folder first); compare then takes this tab's place. */
+  function comparePick() { vscode.postMessage({ type: 'comparePick', t: player ? player.currentTime() : 0 }); }
+  // Videos dragged from the Explorer (VS Code hands them to the page only while Shift is held): compare with them.
+  // Not for URLs (the host would refuse). Uses the URI lists VS Code puts on the drag (docs/notes/compare-ui.md).
+  const dropHint = document.createElement('div');
+  dropHint.id = 'dropHint'; dropHint.hidden = true; dropHint.setAttribute('aria-hidden', 'true');
+  dropHint.textContent = 'Drop to compare';
+  document.getElementById('stage').appendChild(dropHint);
+  const droppable = (e) => !cfg.url && !cfg.sequence && e.dataTransfer && [...(e.dataTransfer.types || [])].some((t) => /uri-list|resourceurls|^Files$/.test(t));
+  let dragDepth = 0;
+  document.addEventListener('dragenter', (e) => { if (droppable(e)) { dragDepth++; dropHint.hidden = false; e.preventDefault(); } });
+  document.addEventListener('dragover', (e) => { if (droppable(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+  document.addEventListener('dragleave', () => { if (dragDepth > 0 && --dragDepth === 0) dropHint.hidden = true; });
+  document.addEventListener('drop', (e) => {
+    dragDepth = 0; dropHint.hidden = true;
+    if (!droppable(e)) return;
+    e.preventDefault();
+    const dt = e.dataTransfer;
+    const uris = ['text/uri-list', 'application/vnd.code.uri-list', 'resourceurls'].map((k) => { try { return dt.getData(k); } catch { return ''; } }).filter(Boolean);
+    if (!uris.length) { toast('Drag a video from the Explorer'); return; }
+    vscode.postMessage({ type: 'compareDrop', uris, t: player ? player.currentTime() : 0 });
+  });
   function runTool(label) {
     const t = TOOLS.find((x) => x.label === label);
     const fn = t ? t.run : MORE_TOOLS[label];
@@ -1209,6 +1232,13 @@
       // Tests: a picture area of this many CSS pixels (as a resized panel or fullscreen would give); 0 restores it.
       if (m.action === 'stageSize') { stage.style.flex = m.h ? 'none' : ''; stage.style.width = m.w ? `${m.w}px` : ''; stage.style.height = m.h ? `${m.h}px` : ''; }
       if (m.action === 'wheel') stage.dispatchEvent(new WheelEvent('wheel', { deltaY: Number(m.deltaY) || 0, ctrlKey: !!m.ctrl, clientX: stage.getBoundingClientRect().width / 2, clientY: stage.getBoundingClientRect().height / 2, bubbles: true, cancelable: true }));
+      if (m.action === 'drop') { // tests: a drop carrying these URI lists, as VS Code would deliver (Shift held)
+        const dt = new DataTransfer();
+        for (const [k, v] of Object.entries(m.data || {})) dt.setData(k, v);
+        document.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true, cancelable: true }));
+        log(`debug dropHint ${!dropHint.hidden}`);
+        document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      }
       if (m.action === 'key') (m.target ? document.querySelector(m.target) : document).dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: !!m.shift, ctrlKey: !!m.ctrl, bubbles: true }));
       if (m.action === 'play') player.play();
       if (m.action === 'rate') setRate(m.r);
