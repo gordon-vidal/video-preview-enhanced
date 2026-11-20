@@ -373,7 +373,7 @@ async function withFfmpeg(tools) {
     await until(() => st.rs.aEnd >= 48000, 'PCM buffered across video restart point');
     st.rs.encoder = 'h264_nvenc'; // exercise the hardware retry on this real child's close event
     const next = st.video.length;
-    st.rs.proc.kill();
+    st.rs.proc.kill("SIGKILL"); // SIGTERM is ignored by an ffmpeg blocked on a full pipe (Linux)
     await until(() => st.rs.spawns === 2, 'signal-killed GPU stream retries on CPU');
     assert.strictEqual(st.rs.audioProc, audio, 'the original PCM process survives the retry');
     st.hold = false;
@@ -389,10 +389,10 @@ async function withFfmpeg(tools) {
   {
     const st = driver(tools, file, pr, { encoder: 'libx264' });
     await st.rs.handle({ type: 'open' });
-    st.rs.proc.kill();
+    st.rs.proc.kill("SIGKILL"); // SIGTERM is ignored by an ffmpeg blocked on a full pipe (Linux)
     st.more();
     await until(() => st.fails.length, 'signal-killed CPU stream reports a failure');
-    assert.match(st.fails[0], /signal SIGTERM/);
+    assert.match(st.fails[0], /signal SIGKILL/);
     assert.strictEqual(st.eof, false);
     st.rs.dispose();
     out.signal = 'failure, not EOF';

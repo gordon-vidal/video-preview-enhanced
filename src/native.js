@@ -492,7 +492,7 @@ class NativeDecoder {
     };
     sb.on('error', discard);
     sb.on('close', discard);
-    sb.timer = setTimeout(() => { discard(); sb.kill(); }, STANDBY_MS);
+    sb.timer = setTimeout(() => { discard(); sb.kill("SIGKILL"); }, STANDBY_MS);
   }
 
   takeStandby(t) {
@@ -502,7 +502,7 @@ class NativeDecoder {
     clearTimeout(sb.timer);
     if (sb.t === t && sb.method === this.method && sb.w === this.w && sb.h === this.h && sb.deep === !!this.deep && sb.exitCode === null &&
         !(sb.gpuFilter && failedGpuFilters.get(this.tools)?.has(sb.gpuFilterKey))) { sb.adopted = true; return sb; }
-    sb.kill();
+    sb.kill("SIGKILL");
     return null;
   }
 
