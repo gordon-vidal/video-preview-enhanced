@@ -119,7 +119,9 @@ One feature: compare becomes multi-view. The difference view is dropped.
 
 - **Now:** up to 4 videos in a sensible layout (2 side by side or split with a draggable divider, 3–4 in a 2×2 grid;
   3 leave an "Add video" cell). The toggle (flip) view is dropped.
-- **Later, low priority:** a flexible layout system, up to 16 videos.
+- **Later, low priority:** a flexible layout system, up to 16 videos. The engine already takes 16 (Gordon, 2026-11-20):
+  the experimental setting `compare.maxVideos` (default 4) allows up to 16 in a plain automatic grid; free placement
+  and how more than 4 videos get in are still to be designed (docs/notes/multiview-engine.md).
 - **The player's UI (2026-11-20: the approved compare mock-up).** Compare is the player with more videos:
   the same bar drives all tiles (play, lockstep frame steps, seek, speed, loop, jumps); time and seek follow the
   clock video with its letter; mute / volume act on the sound video; CC is hidden. One new
