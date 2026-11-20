@@ -17,7 +17,7 @@ build dependencies, no build step. Works locally, in WSL and over Remote-SSH.
 |---|---|
 | `src/` | Extension host (Node, CommonJS): activation, custom editor, ffmpeg setup, remote streaming, settings |
 | `media/` | Webview player (browser scripts, workers): `player.js`, `engine.js`, `compare.js`, scopes, thumbs; `media/libav-vpe/` is the prebuilt WebAssembly decoder (do not hand-edit) |
-| `test/host/`, `test/engine/` | Layers 1-2: Node tests. `test/host/run_all.js` is the runner |
+| `test/host/`, `test/engine/` | Layers 1-2: Node tests. `node test/run.js unit engine` runs them |
 | `test/vscode/` | Layers 3-4: real VS Code on a hidden desktop (Windows). `cases/` are the scenarios |
 | `test/subtitles`, `test/timestretch`, `test/inspect` | More Node unit tests that CI runs |
 | `test/media/` | Test clips (Git LFS) and generators; licences in `test/media/LICENSES.md` |
@@ -38,15 +38,14 @@ live there and in [test/vscode/README.md](test/vscode/README.md), not here. If t
 the docs. Quick reference:
 
 ```
-npm test                                # layers 1-2 (node test/host/run_all.js)
-node test/subtitles/run.js              # plus the other CI Node tests
-node test/timestretch/run.js
-node test/inspect/inspect_test.js
-node test/vscode/run.js --quick         # layer 3, Windows only, hidden desktop
-node test/vscode/run.js --grep '^case/<name>'   # one scenario
+node test/run.js unit engine            # layers 1-2 (what CI runs), all cores
+node test/run.js vscode                 # layer 3, Windows only, hidden desktop
+node test/run.js vscode --grep <re>     # only matching scenarios / cases
+node test/run.js unit engine vscode --changed   # what the changed files need
+npm test                                # layers 1-3 (before a merge)
 ```
 
-Layer 4 (performance) runs only through `node test/benchq.js <cmd>` (it holds the lock) and only
+Layer 4 (performance) runs only through `node test/run.js perf` (it holds the lock) and only
 before releases or in performance work.
 
 ## Guard rails

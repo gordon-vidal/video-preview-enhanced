@@ -30,6 +30,7 @@ for (const a of process.argv.slice(2)) {
   else if (m[1] === 'seek') opt.seek = true;
   else if (m[1] === 'soft-all') opt.softAll = true;
   else if (m[1] === 'json') opt.json = m[2];
+  else if (m[1] === 'check') opt.check = true; // layer 2: exit 1 unless the pool's frames (and seeks) match one worker's
   else if (m[1] === 'engine-cache') opt.engineCache = true;
   else if (m[1] === 'fault') opt.fault = +m[2]; // a pool worker fails after this many batches
 }
@@ -325,5 +326,11 @@ function compare(a, b) {
     ].filter(Boolean).join('  '));
   }
   if (opt.json) fs.writeFileSync(opt.json, JSON.stringify(out, null, 1));
+  if (opt.check) {
+    const bad = out.filter((r) => r.error || r.check !== 'ok' || (opt.seek && (r.seekAccurate !== 'ok')));
+    for (const r of bad) console.log(`FAIL ${r.file}: ${r.error ? r.error.split('\n')[0] : `frames ${r.check}${opt.seek ? `, seeks ${r.seekAccurate}` : ''}`}`);
+    console.log(`${out.length - bad.length} passed, ${bad.length} failed`);
+    process.exit(bad.length ? 1 : 0);
+  }
   process.exit(0);
 })();

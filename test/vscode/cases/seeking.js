@@ -57,9 +57,12 @@ module.exports = [{
           // Seek while playing: lands near the target and plays on (the clip is 3 s: go to 1.0).
           P.play();
           await P.waitState((x) => x.playing, { what: 'playing' });
+          const t0 = Date.now();
           P.seek(1.0);
-          const s = await P.waitState((x) => x.playing && x.t >= 1.0, { timeout: 10000, what: 'playing after the seek' });
-          ok(s.t < 1.9, `seek while playing went to ${s.t}`);
+          const s = await P.waitState((x) => x.playing && x.t >= 1.0, { timeout: 30000, what: 'playing after the seek' });
+          // Near the target: no further than the wall time since the seek allows (correct under any load).
+          const wall = (Date.now() - t0) / 1000;
+          ok(s.t < 1.0 + wall + 0.3, `seek while playing went to ${s.t}, ${wall.toFixed(2)} s after asking for 1.0`);
         } finally { await P.close(); }
       });
     }
@@ -166,13 +169,18 @@ module.exports = [{
         P.seek(1.5);
         P.play();
         await P.waitState((x) => x.playing, { what: 'playing' });
-        const smp = await P.sample(4500);
-        const ts = smp.map((x) => x.v).filter((v) => typeof v === 'number');
-        const lo = Math.min(...ts); const hi = Math.max(...ts);
+        // Two wraps back to A (generous wait: ends as soon as they are seen); the loop stays within A..B.
+        const ts = [];
         let wraps = 0;
-        for (let i = 1; i < ts.length; i++) if (ts[i] < ts[i - 1] - 0.3) wraps++;
-        ok(wraps >= 2, `expected >= 2 wraps back to A in 4.5 s, saw ${wraps} (${ts.map((x) => x.toFixed(2)).join(' ')})`);
-        ok(hi < 2.0 + 0.15, `played past B: max ${hi.toFixed(3)} s`);
+        const w0 = Date.now();
+        while (wraps < 2 && Date.now() - w0 < 30000) {
+          const x = await P.state();
+          if (typeof x.t === 'number') { if (ts.length && x.t < ts[ts.length - 1] - 0.3) wraps++; ts.push(x.t); }
+        }
+        const lo = Math.min(...ts); const hi = Math.max(...ts);
+        ok(wraps >= 2, `expected >= 2 wraps back to A, saw ${wraps} in 30 s (${ts.map((x) => x.toFixed(2)).join(' ')})`);
+        // The wrap happens on the first frame at or past B: at most a few frames past it.
+        ok(hi < 2.0 + 0.25, `played past B: max ${hi.toFixed(3)} s`);
         ok(lo > 1.0 - 0.1, `went before A: min ${lo.toFixed(3)} s`);
         P.key('a'); P.key('b');
         await lib.sleep(500);

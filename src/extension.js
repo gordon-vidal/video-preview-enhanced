@@ -1194,6 +1194,27 @@ function activate(context) {
               continue;
             }
             if (c.compareAdd) { for (const s of compareSessions) s.addUris(c.compareAdd.map((f) => vscode.Uri.file(f))); continue; }
+            // Scenario tests (test/vscode/scenarios.js) run many checks in one VS Code: between them they change
+            // user settings, the extension host's environment (the VPE_* test switches, PATH) and clear the stored
+            // state, as a fresh profile would have. Each answers "debug done <id>" once applied.
+            if (c.settings) {
+              const cfg = vscode.workspace.getConfiguration();
+              Promise.all(Object.entries(c.settings).map(([k, v]) => cfg.update(k, v === null ? undefined : v, vscode.ConfigurationTarget.Global)))
+                .then(() => log(`debug done ${c.id} settings`), (e) => log(`debug done ${c.id} settings failed: ${e && e.message || e}`));
+              continue;
+            }
+            if (c.env) {
+              for (const [k, v] of Object.entries(c.env)) { if (v === null) delete process.env[k]; else process.env[k] = String(v); }
+              toolsPromise = null; // PATH may have gained or lost ffmpeg
+              log(`debug done ${c.id} env`);
+              continue;
+            }
+            if (c.resetState) {
+              const keys = context.globalState.keys();
+              Promise.all(keys.map((k) => context.globalState.update(k, undefined)))
+                .then(() => log(`debug done ${c.id} resetState ${keys.length}`), (e) => log(`debug done ${c.id} resetState failed: ${e && e.message || e}`));
+              continue;
+            }
             if (c.tabs) { // the editor tabs, for tests (compare takes a player's place)
               const tabs = vscode.window.tabGroups.all.map((g) => g.tabs.map((t) => ({ label: t.label, active: t.isActive, viewType: t.input && t.input.viewType ? String(t.input.viewType) : '' })));
               log(`tabs ${JSON.stringify(tabs)}`);
@@ -1657,6 +1678,8 @@ ${barHtml()}
 <script nonce="${nonce}" src="${uri('xray.js')}"></script>
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
+<script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
+<script nonce="${nonce}" src="${uri('abloop.js')}"></script>
 <script nonce="${nonce}" src="${uri('player.js')}"></script>
 </body></html>`;
   }

@@ -10,9 +10,10 @@ module.exports = {
       { file: 'h264_8_1080p.mp4', expect: 'webcodecs', fps: 24 },
     ]) {
       const from = vs.mark();
-      const r = await h.playClip(vs, clip, { seconds: 8 });
-      // Sample several wraps after startup, allowing for timing at the sample edges.
-      if (r.shownFpsWindows.length < 4 || Math.abs(r.shownFps - clip.fps) > 1) {
+      const r = await h.playClip(vs, clip, { seconds: h.scenario ? 4 : 8 });
+      // Sample several wraps after startup, allowing for timing at the sample edges. A speed figure: layer 4 only
+      // (h.scenario is set in layer 3, which checks correctness: the loop reuses the decode).
+      if (!h.scenario && (r.shownFpsWindows.length < 4 || Math.abs(r.shownFps - clip.fps) > 1)) {
         r.ok = false;
         r.problems.push(`expected ${clip.fps} shown fps across loops, got ${JSON.stringify(r.shownFpsWindows)}`);
       }

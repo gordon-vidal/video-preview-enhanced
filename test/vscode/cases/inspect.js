@@ -197,7 +197,7 @@ module.exports = [{
       await act.close();
       const from = vs.mark();
       // What the OS does for a vscode:// link: Code.exe itself with --open-url (the second instance hands it to the running one).
-      const runMod = require('../run');
+      const runMod = require('../hidden');
       await runMod.run('python', ['-I', require('path').join(__dirname, '..', 'hidden_launch.py'), '--wait', vs.desktop, vs.envMain, vs.code.exe,
         '--user-data-dir', vs.user, '--extensions-dir', vs.ext, '--open-url', url]).catch((e) => { r.cliError = e.message.slice(0, 200); });
       const P = new lib.Player(vs, h, file);

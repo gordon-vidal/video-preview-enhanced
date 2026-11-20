@@ -72,14 +72,8 @@ jobs:
           git ls-files 'src/*.js' 'media/*.js' 'test/**/*.js' 'build/**/*.js' \
             | xargs -n 1 node --check
 
-      - name: Host and engine tests
-        run: node test/host/run_all.js
-
-      - name: Other Node unit tests
-        run: |
-          node test/subtitles/run.js
-          node test/timestretch/run.js
-          node test/inspect/inspect_test.js
+      - name: Layers 1-2 (unit and engine)
+        run: node test/run.js unit engine
 
   # Seconds-long repository hygiene checks (no dependencies): no personal data in tracked files,
   # no broken relative Markdown links. Also runnable locally: node tools/check-personal-data.js

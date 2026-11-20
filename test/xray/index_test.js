@@ -27,6 +27,7 @@ for (const a of process.argv.slice(2)) {
   else if (m[1] === 'no-probe') opt.probe = false;
   else if (m[1] === 'frames') opt.frames = true;
   else if (m[1] === 'json') opt.json = m[2];
+  else if (m[1] === 'check') opt.check = true; // layer 2: exit 1 on any difference from ffprobe or between read orders
 }
 const files = [];
 for (const i of inputs) {
@@ -183,6 +184,7 @@ function probeFrames(file, stream) {
           if (p.key !== q.key) keyd++;
         }
         r.ffprobe = `${fp.length} pkts, missing ${miss}, size diff ${size}, key diff ${keyd}`;
+        r.diff = miss + size + keyd;
         if (opt.frames) {
           const ff = probeFrames(file, a.stream);
           let ok = 0;
@@ -211,5 +213,11 @@ function probeFrames(file, stream) {
     ].filter(Boolean).join('  '));
   }
   if (opt.json) fs.writeFileSync(opt.json, JSON.stringify(out, null, 1));
+  if (opt.check) {
+    const bad = out.filter((r) => r.error || r.diff || r.dtsNonMono || (r.shuffle && r.shuffle !== 'same') || !r.packets);
+    for (const r of bad) console.log(`FAIL ${r.file}: ${r.error || [r.diff ? `ffprobe ${r.ffprobe}` : '', r.dtsNonMono ? `dts non-monotonic ${r.dtsNonMono}` : '', r.shuffle && r.shuffle !== 'same' ? `shuffle ${r.shuffle}` : '', !r.packets ? 'no packets' : ''].filter(Boolean).join(', ')}`);
+    console.log(`${out.length - bad.length} passed, ${bad.length} failed`);
+    process.exit(bad.length ? 1 : 0);
+  }
   process.exit(0);
 })();

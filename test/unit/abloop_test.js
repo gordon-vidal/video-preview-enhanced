@@ -1,0 +1,77 @@
+'use strict';
+// media/abloop.js: the A-B loop of the player (keys A / B, context menu, settings panel, export range).
+const assert = require('assert');
+const AB = require('../../media/abloop');
+const T = require('../../media/timefmt');
+
+let n = 0;
+const test = (name, fn) => { fn(); n++; console.log(`ok   ${name}`); };
+
+test('A then B: a range, the toast and the panel label', () => {
+  const ab = AB.create();
+  assert.strictEqual(ab.label(T.fmtClock), 'Off · press A');
+  ab.set('a', 1.0, 30);
+  assert.strictEqual(ab.toast(T.fmtTime), 'Loop start 0:01.000 (B sets the end)');
+  assert.strictEqual(ab.label(T.fmtClock), 'Start 0:01 · press B');
+  assert.ok(ab.isSet() && !ab.isRange());
+  ab.set('b', 2.0, 60);
+  assert.strictEqual(ab.toast(T.fmtTime), 'Loop 0:01.000 – 0:02.000');
+  assert.ok(/^Loop 0:01\.\d{3} – 0:02\.\d{3}$/.test(ab.toast(T.fmtTime)), 'the toast the VS Code scenario reads');
+  assert.strictEqual(ab.label(T.fmtClock), '0:01 – 0:02');
+  assert.deepStrictEqual(ab.exportRange(30, 90), { fa: 30, fb: 60, fps: 30, n: 90, a: 1.0, b: 2.0 });
+});
+
+test('the same key again clears that end; both cleared: "A-B loop off"', () => {
+  const ab = AB.create();
+  ab.set('a', 1, 30); ab.set('b', 2, 60);
+  ab.set('a', 5, 150);
+  assert.strictEqual(ab.a, null); assert.strictEqual(ab.af, null); assert.strictEqual(ab.b, 2);
+  assert.strictEqual(ab.toast(T.fmtTime), 'Loop end 0:02.000 (A sets the start)');
+  assert.strictEqual(ab.label(T.fmtClock), 'End 0:02 · press A');
+  ab.set('b', 9, 9);
+  assert.ok(!ab.isSet());
+  assert.strictEqual(ab.toast(T.fmtTime), 'A-B loop off');
+  assert.strictEqual(ab.exportRange(30, 90), null);
+});
+
+test('B before A swaps the ends (times and frames)', () => {
+  const ab = AB.create();
+  ab.set('a', 3, 90); ab.set('b', 1, 30);
+  assert.deepStrictEqual([ab.a, ab.b, ab.af, ab.bf], [1, 3, 30, 90]);
+  assert.deepStrictEqual(ab.exportRange(30, 120), { fa: 30, fb: 90, fps: 30, n: 120, a: 1, b: 3 });
+});
+
+test('wrap: only while playing, at or after B, to A (or the start without A)', () => {
+  const ab = AB.create();
+  assert.strictEqual(ab.wrapTarget(10, true), null);
+  ab.set('b', 2, 60);
+  assert.strictEqual(ab.wrapTarget(1.99, true), null);
+  assert.strictEqual(ab.wrapTarget(2, false), null);
+  assert.strictEqual(ab.wrapTarget(2, true), 0);
+  ab.set('a', 1, 30);
+  assert.strictEqual(ab.wrapTarget(2.01, true), 1);
+});
+
+test('context menu "Set" always sets; the panel row cycles start, end, off', () => {
+  const ab = AB.create();
+  ab.reset('a', 1, 30); ab.reset('a', 1.5, 45);
+  assert.deepStrictEqual([ab.a, ab.af], [1.5, 45], 'Set Loop Start twice moves A, never clears it');
+  ab.reset('b', 2, 60); ab.reset('b', 2.5, 75);
+  assert.deepStrictEqual([ab.b, ab.bf], [2.5, 75]);
+  const c = AB.create();
+  c.cycle(1, 30); assert.ok(c.a === 1 && c.b === null);
+  c.cycle(2, 60); assert.ok(c.b === 2);
+  c.cycle(3, 90); assert.ok(!c.isSet());
+});
+
+test('seek-bar marks', () => {
+  const ab = AB.create();
+  assert.deepStrictEqual(ab.marks(10), { hidden: true, left: 0, width: 0 });
+  ab.set('a', 2, 60);
+  assert.deepStrictEqual(ab.marks(10), { hidden: false, left: 20, width: 80 });
+  ab.set('b', 2.01, 61);
+  assert.strictEqual(ab.marks(10).width, 0.3, 'a minimum width stays visible');
+  assert.ok(ab.marks(0).hidden, 'no duration: no marks');
+});
+
+console.log(`${n} passed`);

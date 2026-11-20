@@ -18,7 +18,7 @@ session. Prepare the bump on a branch / PR only.
    CHANGELOG **Unreleased** entries under `## <version> (<date>)` (the Publish workflow fails on a new
    version without that section). Bump and CHANGELOG go in one commit.
 3. Tests: layers 1-3 (`run-tests` skill), and layer 4 against the last release's numbers
-   (`node test/benchq.js node test/vscode/run.js`). Re-check every number and claim in `README.md`
+   (`node test/run.js perf`). Re-check every number and claim in `README.md`
    and `docs/performance.md` against the run; correct the claim, not the measurement.
 4. Package: `npm ci && npm run package`. Expect no warnings and a size near 4.7 MB.
    `npx --yes @vscode/vsce@4.1.1 ls --tree` must include `LICENSE`, `THIRD_PARTY_NOTICES.md` and

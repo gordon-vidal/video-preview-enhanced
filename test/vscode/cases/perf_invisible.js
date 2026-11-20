@@ -170,7 +170,8 @@ const functional = {
         const drifts = d.map((q) => q.v).filter((v) => typeof v === 'number');
         x.driftMs = drifts.map((v) => Math.round(v * 1000));
         if (!drifts.length) p.push('no drift readings (the sound is not the clock)');
-        else if (Math.max(...drifts.map(Math.abs)) > 0.1) p.push(`picture and sound apart by up to ${Math.round(Math.max(...drifts.map(Math.abs)) * 1000)} ms after resuming`);
+        // Layer 3 (h.scenario): only gross drift; the 100 ms figure is judged by layer 4 on a quiet machine.
+        else if (Math.max(...drifts.map(Math.abs)) > (h.scenario ? 0.5 : 0.1)) p.push(`picture and sound apart by up to ${Math.round(Math.max(...drifts.map(Math.abs)) * 1000)} ms after resuming`);
         P.pause();
       } finally { await P.close(); }
     });

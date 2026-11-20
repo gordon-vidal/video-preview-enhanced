@@ -129,8 +129,8 @@ module.exports = [{
         await P.ask('click', { sel: '#panel [role=radio]', text: 'Deutsch 5.1' });
         const sw = await P.waitState((s) => s.tracks && s.tracks.audioId === 2 && s.audioChunks > 0, { timeout: 12000, what: 'audio track 2 decoded' });
         ok(sw.audioChannels === 6, `audio switched: ${sw.audioChannels} channels (amode ${sw.amode})`);
-        await lib.sleep(1500);
-        const after = await P.state();
+        // Keeps playing after the switch (generous wait, ends once it has).
+        const after = await P.waitState((s) => s.shownCount - before.shownCount > 20 && s.t > before.t + 1, { timeout: 20000, what: 'the picture playing on after the switch' }).catch(() => P.state());
         ok(after.shownCount - before.shownCount > 20 && after.t > before.t + 1, `picture kept playing: ${after.shownCount - before.shownCount} frames, ${before.t.toFixed(2)} -> ${after.t.toFixed(2)} s`);
 
         // ASS track via the menu, then seeks to cues (every 3 s from 1 s, 1.5 s long: DE cue 4 at 4-5.5, DE cue 13 at 13-14.5).

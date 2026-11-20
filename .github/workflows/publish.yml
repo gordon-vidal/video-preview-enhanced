@@ -124,10 +124,7 @@ jobs:
 
       - name: Tests
         run: |
-          node test/host/run_all.js
-          node test/subtitles/run.js
-          node test/timestretch/run.js
-          node test/inspect/inspect_test.js
+          node test/run.js unit engine
 
       - name: Package
         id: pack

@@ -115,30 +115,8 @@
     ui.tracks.title = `${label}  C`;
   }
 
-  const fmtTime = (/** @type {number} */ t) => {
-    if (!isFinite(t) || t < 0) t = 0;
-    const h = Math.floor(t / 3600);
-    const m = Math.floor((t % 3600) / 60);
-    const s = t - h * 3600 - m * 60;
-    return `${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${s.toFixed(3).padStart(6, '0')}`;
-  };
-  /** m:ss.mmm (h:mm:ss.mmm); without milliseconds when asked. */
-  const fmtClock = (/** @type {number} */ t, ms = true) => {
-    if (!isFinite(t) || t < 0) t = 0;
-    const h = Math.floor(t / 3600);
-    const m = Math.floor((t % 3600) / 60);
-    const sec = t - h * 3600 - m * 60;
-    const whole = Math.floor(sec + 1e-6);
-    return `${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${String(whole).padStart(2, '0')}${ms ? `.${String(Math.min(999, Math.floor((sec - whole) * 1000 + 1e-6))).padStart(3, '0')}` : ''}`;
-  };
-  /** SMPTE timecode hh:mm:ss:ff of frame index f (non-drop, at the rounded frame rate). */
-  const fmtTimecode = (/** @type {number} */ f, /** @type {number} */ fps) => {
-    const r = Math.max(1, Math.round(fps || 30));
-    const secs = Math.floor(f / r);
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${pad(Math.floor(secs / 3600))}:${pad(Math.floor(secs / 60) % 60)}:${pad(secs % 60)}:${pad(f % r)}`;
-  };
-  const fmtSize = (/** @type {number} */ b) => (b > 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(1)} MB`);
+  // Labels: media/timefmt.js.
+  const { fmtTime, fmtClock, fmtTimecode, fmtSize, frameText } = /** @type {any} */ (self).VpeTime;
 
   function setInfo(meta) {
     const fps = meta.fps ? `${Number(meta.fps).toFixed(3).replace(/\.?0+$/, '')} fps · ` : '';
@@ -420,7 +398,7 @@
       insp.tick(now);
       scopes.tick(now);
       subs.tick();
-      if (abB !== null && player.isPlaying() && player.currentTime() >= abB) player.seekTime(abA === null ? 0 : abA);
+      { const to = ab.wrapTarget(player.currentTime(), player.isPlaying()); if (to !== null) player.seekTime(to); }
       changed = updateUi();
       if (xray) xray.chapterTicks();
       updateMenuContext();
@@ -475,44 +453,28 @@
     if ((cfg.autoplay || playOn) && !linked) p.play(); // a frame link opens paused on that frame
   }
 
-  // A-B loop: A sets the start, B the end; pressing the same key again clears it.
-  let abA = null;
-  let abB = null;
-  // The frames shown when A and B were set (0-based): the range the frame export uses.
-  let abAf = null;
-  let abBf = null;
+  // A-B loop: A sets the start, B the end; pressing the same key again clears it (media/abloop.js).
+  const ab = /** @type {any} */ (self).VpeAbLoop.create();
+  function abChanged() {
+    toast(ab.toast(fmtTime));
+    drawAB();
+    if (controls) controls.refresh();
+  }
   function setAB(which) {
     if (!player) return;
-    const t = player.currentTime();
-    const f = player.currentFrame();
-    if (which === 'a') { abA = abA === null ? t : null; abAf = abA === null ? null : f; } else { abB = abB === null ? t : null; abBf = abB === null ? null : f; }
-    if (abA !== null && abB !== null && abB <= abA) { const x = abA; abA = abB; abB = x; const y = abAf; abAf = abBf; abBf = y; }
-    toast(abA !== null && abB !== null ? `Loop ${fmtTime(abA)} – ${fmtTime(abB)}` : abA !== null ? `Loop start ${fmtTime(abA)} (B sets the end)` : abB !== null ? `Loop end ${fmtTime(abB)} (A sets the start)` : 'A-B loop off');
-    drawAB();
-    if (controls) controls.refresh();
+    ab.set(which, player.currentTime(), player.currentFrame());
+    abChanged();
   }
-  function clearAB() {
-    abA = abB = abAf = abBf = null;
-    toast('A-B loop off');
-    drawAB();
-    if (controls) controls.refresh();
-  }
+  function clearAB() { ab.clear(); abChanged(); }
   /** The settings panel's A-B row: start, then end, then off. */
-  function cycleAB() { if (abA === null) setAB('a'); else if (abB === null) setAB('b'); else clearAB(); }
-  function abLabel() {
-    if (abA === null && abB === null) return 'Off · press A';
-    if (abB === null) return `Start ${fmtClock(abA, false)} · press B`;
-    if (abA === null) return `End ${fmtClock(abB, false)} · press A`;
-    return `${fmtClock(abA, false)} – ${fmtClock(abB, false)}`;
-  }
+  function cycleAB() { if (!player) return; ab.cycle(player.currentTime(), player.currentFrame()); abChanged(); }
+  function abLabel() { return ab.label(fmtClock); }
   function drawAB() {
-    const dur = player && player.meta.duration;
-    ui.abMarks.hidden = !dur || (abA === null && abB === null);
-    if (ui.abMarks.hidden) return;
-    const a = abA === null ? 0 : abA / dur;
-    const b = abB === null ? 1 : abB / dur;
-    ui.abMarks.style.left = `${a * 100}%`;
-    ui.abMarks.style.width = `${Math.max(0.3, (b - a) * 100)}%`;
+    const m = ab.marks(player && player.meta.duration);
+    ui.abMarks.hidden = m.hidden;
+    if (m.hidden) return;
+    ui.abMarks.style.left = `${m.left}%`;
+    ui.abMarks.style.width = `${m.width}%`;
   }
 
   const togglePlay = () => { if (!player) return; player.isPlaying() ? player.pause() : player.play(); };
@@ -641,9 +603,8 @@
 
   // ---- A-B export: the host asks for the range, then for each frame (src/extension.js exportRange) ----
   function abRange() {
-    if (!player || abAf === null || abBf === null) return null;
-    const fps = player.fps || (player.meta && player.meta.fps) || 0;
-    return { fa: Math.min(abAf, abBf), fb: Math.max(abAf, abBf), fps, n: player.n || 0, a: abA, b: abB };
+    if (!player) return null;
+    return ab.exportRange(player.fps || (player.meta && player.meta.fps) || 0, player.n || 0);
   }
   /**
    * Shows frame k (0-based) paused; resolves with the index of the frame on the canvas once the
@@ -1098,7 +1059,7 @@
     const o = {
       preventDefaultContextMenuItems: true, vpe: true, vpeReady: !!player,
       vpePlaying: !!player && player.isPlaying(), vpeLoop: loop, vpeMuted: muted,
-      vpeFile: !cfg.url && !(player instanceof FramePlayer), vpeSubs: av.subs > 0, vpeAudio: av.audio > 1, vpePip: !ui.pip.hidden, vpeAB: abAf !== null && abBf !== null, vpeABSet: abA !== null || abB !== null,
+      vpeFile: !cfg.url && !(player instanceof FramePlayer), vpeSubs: av.subs > 0, vpeAudio: av.audio > 1, vpePip: !ui.pip.hidden, vpeAB: ab.isRange(), vpeABSet: ab.isSet(),
     };
     const j = JSON.stringify(o);
     if (j !== ctxJson) { ctxJson = j; document.body.setAttribute('data-vscode-context', j); }
@@ -1113,7 +1074,7 @@
     stepBack: () => stepButton(-1), stepFwd: () => stepButton(1), keys: () => controls.openSheet(ui.keysBtn), cog: () => controls.show('main', ui.cog),
     xray: () => press('X', { shiftKey: true }),
     // From the menu "Set" always sets (at this moment); the A / B keys toggle.
-    setA: () => { if (abA !== null) { abA = null; abAf = null; } setAB('a'); }, setB: () => { if (abB !== null) { abB = null; abBf = null; } setAB('b'); },
+    setA: () => { if (player) { ab.reset('a', player.currentTime(), player.currentFrame()); abChanged(); } }, setB: () => { if (player) { ab.reset('b', player.currentTime(), player.currentFrame()); abChanged(); } },
     clearAB: () => clearAB(),
     inspector: () => { exactTool(); press('x'); }, scopes: () => { exactTool(); scopes.cycle(); }, stats: () => press('I', { shiftKey: true }),
   };
@@ -1314,7 +1275,7 @@
             notice: byId('notice').hidden ? '' : byId('noticeText').textContent,
             message: overlay.hidden ? '' : message.textContent, hint: overlay.hidden ? '' : hint.textContent,
             action: overlay.hidden || actionBtn.hidden ? '' : actionBtn.textContent, seekDisabled: ui.seek.disabled,
-            frameText: p ? `#${p.currentFrame() + 1}/${p.n || '?'}` : '', timeText: ui.time.textContent.replace(/\s+/g, ' ').trim(),
+            frameText: p ? frameText(p.currentFrame(), p.n) : '', timeText: ui.time.textContent.replace(/\s+/g, ' ').trim(),
             panel: (() => {
               const pn = ui.panel;
               if (pn.hidden) return null;
