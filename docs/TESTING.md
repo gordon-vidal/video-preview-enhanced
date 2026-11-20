@@ -22,6 +22,12 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 - A VS Code instance without WebGL2 is a broken instance, not a failed test: it is named and retried.
 - A page error ends a wait at once; no test waits out a timeout after an error was reported.
 - Flaky scenarios are fixed or quarantined (listed, skipped, tracked), never retried silently.
+- Tests wait for the event or state they need, with a generous deadline as a safety net only (tens of
+  seconds); a short wall-clock budget fails on a busy CI machine. Heavy files get their own `timeout` in
+  `test/layers.js` (default 60 s per file).
+- Generated test media must come out the same on every run and every ffmpeg version, or be checked after
+  making it: ffmpeg 7+ runs its steps in threads, so how it interleaves streams can vary between runs
+  (`test/bitmapsubs/make_media.js` forces time order and checks it).
 
 ## Commands
 

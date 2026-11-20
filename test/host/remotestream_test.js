@@ -19,8 +19,9 @@ const { RemoteStream, enabled, wanted } = rsm;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Waits for a state, not for a time: the deadline is only a safety net for a busy CI machine.
 async function until(ready, why) {
-  const end = Date.now() + 10000;
+  const end = Date.now() + 30000;
   while (!ready()) {
     assert.ok(Date.now() < end, why);
     await sleep(20);
@@ -126,8 +127,12 @@ function makeClips(dir) {
   const mk = (name, args) => {
     const out = path.join(dir, name);
     if (!fs.existsSync(out)) {
-      const r = spawnSync('ffmpeg', ['-v', 'error', '-y', ...args, '-c:v', 'mpeg4', '-q:v', '6', '-c:a', 'pcm_s16le', out], { encoding: 'utf8' });
+      // Made under a temporary name and renamed: a run that stops halfway (timeout) or another run at the same
+      // time never leaves or reads a half-written clip under the final name.
+      const part = `${out}.${process.pid}.part.mkv`;
+      const r = spawnSync('ffmpeg', ['-v', 'error', '-y', ...args, '-c:v', 'mpeg4', '-q:v', '6', '-c:a', 'pcm_s16le', part], { encoding: 'utf8' });
       assert.strictEqual(r.status, 0, r.stderr);
+      fs.renameSync(part, out);
     }
     return out;
   };
@@ -230,6 +235,8 @@ async function withFfmpeg(tools) {
       await done;
       st.rs.dispose();
       assert.deepStrictEqual(st.fails, []);
+      // Says what the stream did when it ended without a picture (seen once on the Windows runner).
+      assert.ok(st.video.length, `${k} from ${from} s: EOF without picture packets (${st.audio.length} sound items; ${st.logs.join(' / ')})`);
       const idx = Math.floor(from * pr.video.fps + 1e-6);
       assert.ok(Math.abs(st.video[0].t - idx / pr.video.fps) < 1e-9 && st.video[0].key, `${k}: first packet is the target frame's IDR`);
       if (st.audio.length) assert.ok(Math.abs(st.audio[0].t - idx / pr.video.fps) < 1e-9, `${k}: sound starts at the target`);
@@ -251,7 +258,9 @@ async function withFfmpeg(tools) {
     const spawns = st.rs.spawns;
     st.hold = false;
     st.seek(2.519); // 1 ms before the next frame: picture and PCM must use the same floor.
-    while (st.video.length < 30) await sleep(20);
+    // Picture and sound come from separate ffmpeg processes; on a busy machine the sound can be behind the
+    // picture, and then its first batches follow the picture's. Wait for both (as the cold seek below does).
+    await until(() => st.video.length >= 30 && st.audio.length, 'picture and sound after the seek from memory');
     assert.strictEqual(st.rs.spawns, spawns, 'seek back from memory: no restart');
     assert.ok(st.logs.some((l) => /from memory/.test(l)));
     assert.deepStrictEqual(st.seeked.at(-1), { type: 'seeked', gen: st.gen, t: 2.48 });
@@ -321,7 +330,7 @@ async function withFfmpeg(tools) {
     await st.rs.handle({ type: 'open' });
     st.rs.handle({ type: 'more', gen: 0, limit: 1 << 20 });
     const t0 = Date.now();
-    while (st.video.length < 50 && Date.now() - t0 < 10000) await sleep(20);
+    while (st.video.length < 50 && Date.now() - t0 < 30000) await sleep(20);
     st.rs.dispose();
     assert.strictEqual(failedEnc, 'h264_vaapi');
     assert.strictEqual(st.rs.encoder, 'libx264');

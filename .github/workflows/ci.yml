@@ -55,13 +55,24 @@ jobs:
 
       # The host tests compare against ffmpeg / ffprobe; on Windows run_all.js uses Python 3
       # (preinstalled on the runner) for a job object per test.
+      # The version goes into the log: the runner images move to newer ffmpeg versions by themselves.
       - name: Install ffmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -hide_banner -version | head -n 1
 
+      # Chocolatey's server sometimes answers 504; choco then installs nothing and still exits 0, and the
+      # tests fail later in confusing ways ("ffmpeg on PATH"). So: retry, and fail here if ffmpeg is missing.
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 4 -and -not (Get-Command ffmpeg -ErrorAction SilentlyContinue); $i++) {
+            if ($i -gt 1) { Write-Host "ffmpeg not installed, try $i of 4"; Start-Sleep -Seconds (20 * $i) }
+            choco install ffmpeg -y --no-progress
+          }
+          ffmpeg -hide_banner -version | Select-Object -First 1
 
       - name: Install
         run: npm ci
