@@ -103,7 +103,7 @@ const PREFS = {
 };
 function prefsOf(c) {
   const v = (k) => (PREFS[k].values.includes(c.jumps[k]) ? c.jumps[k] : PREFS[k].dflt);
-  return { jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl') }, stepButtons: v('stepButtons') };
+  return { jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl') }, stepButtons: v('stepButtons'), pictureSize: c.pictureSize };
 }
 
 const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
@@ -160,6 +160,7 @@ function config() {
     gpuDecoding: c.get('gpuDecoding', true),
     remoteStream: c.get('remoteStream', 'auto'),
     hdrOutput: c.get('hdrOutput', 'auto') === 'off' ? 'off' : 'auto',
+    pictureSize: ['fit', 'fill', 'stretch', 'actual'].includes(c.get('pictureSize')) ? c.get('pictureSize') : 'fit',
   };
 }
 
@@ -1681,6 +1682,7 @@ ${barHtml()}
 <script nonce="${nonce}" src="${uri('framestream.js')}"></script>
 <script nonce="${nonce}" src="${uri('hdr.js')}"></script>
 <script nonce="${nonce}" src="${uri('engine.js')}"></script>
+<script nonce="${nonce}" src="${uri('picture.js')}"></script>
 <script nonce="${nonce}" src="${uri('inspect.js')}"></script>
 <script nonce="${nonce}" src="${uri('scopes.js')}"></script>
 <script nonce="${nonce}" src="${uri('subtitles.js')}"></script>

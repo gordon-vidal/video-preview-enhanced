@@ -95,10 +95,16 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 
 - **One player, no modes.** The separate advanced layout is dropped; `advancedMode` is deprecated and ignored.
 - **Bar:** previous frame, play/pause, next frame, mute, volume, time (click: time / timecode / frame number),
-  then CC, ⓘ (about this video), speed, ⚙, keyboard shortcuts, fullscreen. No status pill:
+  then CC, ⓘ (about this video), speed, ⚙, keyboard shortcuts, picture size, fullscreen. No status pill:
   only real problems show (a notice, once).
 - **⚙ panel:** speed, loop, A-B loop, subtitles, audio track, copy frame, keyboard shortcuts, jump sizes and a
   Tools grid (compare, scopes, inspector, stats, codec X-ray, export A-B).
+- **Picture size** (2026-11-20): **Fit** (default: whole picture, bars where the shape differs), **Fill** (no bars,
+  edges cropped, centred), **Stretch** (fills the area, distorted), **100 %** (one video pixel = one device pixel,
+  drag to pan when larger). A bar button between keyboard shortcuts and fullscreen and the key **Z** cycle them
+  (zoomed in, Z goes back to Fit first); ⚙ › Picture size has the four modes and a zoom row; Ctrl+wheel zoom and
+  drag-to-pan work in every mode (`+` / `-` zoom in the player). Setting `pictureSize` is the default for new tabs;
+  the button changes the current tab only. Native frames are sized to the picture, a crop or 100 % included.
 - **Speed:** 0.25×–4× in steps of 0.05 (the range where the sound keeps its pitch).
 - **Jumps:** ← →, Shift+← →, Ctrl+← → each 1 frame / 1 s / 5 s / 10 s / 30 s (defaults 5 s, 1 s, 1 frame);
   `,` `.` always one frame. Keys VS Code uses are avoided (Alt+← →, Ctrl+K, Ctrl+Shift+C).
@@ -125,6 +131,8 @@ One feature: compare becomes multi-view. The difference view is dropped.
 - **Entering:** key **D** (quick pick of other videos, same folder first), Shift+drop of an Explorer video on the player, ⚙ › Tools › Compare and "Compare with…" in the player's right-click menu, both with VS Code's open
   dialog; compare takes the player's tab and starts at its position; Leave compare puts the player back there.
   (It is a separate webview panel that replaces the player's tab, not the same webview: docs/notes/compare-ui.md.)
+- **Picture size in compare:** one mode for every tile (the same button, Z and ⚙ page), and zoom and pan in lockstep:
+  the same relative zoom and position in each tile, like a magnifier over all videos.
 - Each video has its own offset, by **time or frame number** (hover nudge and the panel only).
 - One video sets the clock; **sound comes from one chosen video** (the first by default).
 - Lockstep frame stepping: a step always shows matching frames in every tile.

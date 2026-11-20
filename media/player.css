@@ -151,7 +151,8 @@ body.idle { cursor: none; }
 }
 
 /* ---- Inspection (inspect.js): zoom and pan, pixel grid and readout, go to, stats ---- */
-#stage.zoom { overflow: hidden; display: block; cursor: grab; }
+#stage.zoom { overflow: hidden; display: block; }
+#stage.zoom.pannable { cursor: grab; }
 #stage.zoom canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; max-height: none; }
 #stage.zoom.panning { cursor: grabbing; }
 #stage.inspecting, #stage.inspecting.zoom { cursor: crosshair; }
@@ -343,6 +344,9 @@ body.idle { cursor: none; }
 #play.playing .i-pause { display: block; }
 #mute .i-muted, #mute.muted .i-sound { display: none; }
 #mute.muted .i-muted { display: block; }
+/* Picture size button: the icon of the current mode (media/picture.js). */
+#picBtn svg { display: none; }
+#picBtn[data-mode="fit"] .i-fit, #picBtn[data-mode="fill"] .i-fill, #picBtn[data-mode="stretch"] .i-stretch, #picBtn[data-mode="actual"] .i-actual { display: block; }
 #volume { width: 84px; margin: 0 12px 0 2px; accent-color: var(--vscode-foreground); flex: none; }
 #row #time { font-family: var(--vpe-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 8px; }
 #row #time #dur { color: var(--vpe-dim); margin-left: 0.45em; }
@@ -387,7 +391,8 @@ kbd {
 .panel .row svg { flex: none; }
 .panel .row.head { height: 40px; padding: 0 10px; gap: 8px; font-weight: 600; border-bottom: 1px solid var(--vpe-sep); }
 .panel .row.radio { height: 34px; gap: 10px; }
-.panel .row .mark { width: 14px; flex: none; font-size: 10px; color: var(--vpe-accent); }
+/* The radio mark: .panel .mark below is the speed presets (absolute), so reset what it sets. */
+.panel .row .mark { position: static; transform: none; width: 14px; height: auto; padding: 0; flex: none; font-size: 10px; color: var(--vpe-accent); background: none; }
 .panel .abicon { width: 18px; flex: none; text-align: center; font-weight: 600; font-size: 9.5px; letter-spacing: -0.02em; white-space: nowrap; }
 .panel .switch { position: relative; width: 34px; height: 18px; flex: none; border-radius: 9px; background: var(--vscode-checkbox-background, rgba(128, 128, 128, 0.45)); border: 1px solid var(--vscode-checkbox-border, transparent); box-sizing: border-box; }
 .panel .switch .knob { position: absolute; top: 1px; left: 1px; width: 14px; height: 14px; border-radius: 50%; background: var(--vscode-foreground); }
@@ -407,6 +412,7 @@ kbd {
   background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border);
 }
 .panel .chip[aria-pressed="true"], .panel .chip[aria-checked="true"] { background: var(--vpe-on-bg); color: var(--vpe-on-fg); border-color: var(--vpe-accent); }
+.panel .zval { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
 .panel .jrow { display: flex; align-items: center; gap: 6px; padding: 2px 14px; }
 .panel .jbox { display: flex; flex-direction: column; gap: 5px; padding: 0 14px; }
 .panel .jtitle { font-size: 12.5px; }

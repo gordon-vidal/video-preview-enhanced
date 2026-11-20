@@ -45,7 +45,7 @@ Find diff button are gone from the UI.
 - **About (ⓘ / I):** "About these videos" with a tab per video (the player's facts for that tile).
 - **Keys:** the player's (Space/K, , ., arrows with the jump sizes, J/L, Home/End, Shift+< >, ↑↓, M, R, F, I, ?,
   Esc, Ctrl+C copies the view) plus − / + (the video under the pointer, else the last chosen) and X (swap, 2
-  videos). Gone: S (sync panel), 1–3 and T (views), N (find), I as metrics, Z (actual size).
+  videos). Gone: S (sync panel), 1–3 and T (views), N (find), I as metrics. Z is back as the picture size for all videos (docs/notes/ui-simple.md "Picture size").
 - **Hidden for now (2026-11-20):** the "A vs B" section (PSNR / SSIM switch, Find first difference), the
   seek-bar amber band, the paused metrics readout and the 3–4 video note. The code stays: `pairMetrics`,
   `computeMetrics`, `ssim`, the scanner (hidden engine pair). Debug builds (`VPE_LOG`) still compute and log the

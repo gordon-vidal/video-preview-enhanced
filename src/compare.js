@@ -74,6 +74,7 @@ ${barHtml({ compare: true })}
 <script nonce="${nonce}" src="${uri('framestream.js')}"></script>
 <script nonce="${nonce}" src="${uri('hdr.js')}"></script>
 <script nonce="${nonce}" src="${uri('engine.js')}"></script>
+<script nonce="${nonce}" src="${uri('picture.js')}"></script>
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
 <script nonce="${nonce}" src="${uri('compare.js')}"></script>
@@ -258,8 +259,10 @@ class CompareSession {
   /** Fit the composited view to the stage, then scale all native outputs together to fit the link. */
   tileHeights() {
     const { w, h, cols, rows, rate, actual } = this.tile || {};
-    let tw = !actual && w > 0 ? w / (cols === 2 ? 2 : 1) : Infinity;
-    let th = !actual && h > 0 ? h / (rows === 2 ? 2 : 1) : Infinity;
+    // Fill, Stretch, 100 % and zoom show a picture larger (or smaller) than the plain Fit: the page says by how much (media/compare.js frameFactor).
+    const factor = Number(this.tile && this.tile.factor) > 0 ? Math.max(0.1, Math.min(64, Number(this.tile.factor))) : 1;
+    let tw = !actual && w > 0 ? (w / (cols === 2 ? 2 : 1)) * factor : Infinity;
+    let th = !actual && h > 0 ? (h / (rows === 2 ? 2 : 1)) * factor : Infinity;
     const rotated = (i) => this.rotation[i] % 180 !== 0;
     const first = this.decisions[0]?.probed?.video;
     if (first && first.width && first.height) {

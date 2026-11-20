@@ -33,6 +33,7 @@ All are under **Video Preview** in the Command Palette.
 | `videoPreviewEnhanced.jump.shift` | `1` | The same for Shift+← / Shift+→. |
 | `videoPreviewEnhanced.jump.ctrl` | `"frame"` | The same for Ctrl+← / Ctrl+→ (Cmd on macOS). |
 | `videoPreviewEnhanced.stepButtons` | `"frame"` | What the two buttons beside Play do: `"frame"` steps one frame, `"jump"` jumps by the Ctrl+← / Ctrl+→ size (`jump.ctrl`). Also ⚙ › Jump sizes. |
+| `videoPreviewEnhanced.pictureSize` | `"fit"` | How the picture sits in the player (and in compare) for new tabs: `"fit"` (whole picture, bars where the shape differs), `"fill"` (no bars, edges cropped), `"stretch"` (fills the player, distorted) or `"actual"` (100 %: one video pixel per screen pixel). The bar button and `Z` change the current tab only. |
 | `videoPreviewEnhanced.advancedMode` | `false` | No longer used (deprecated): the player has one layout and its tools are always in the ⚙ panel ([details](features.md#the-player)). |
 | `videoPreviewEnhanced.autoplay` | `true` | Start playing when a video opens. |
 | `videoPreviewEnhanced.loop` | `true` | Loop playback. |

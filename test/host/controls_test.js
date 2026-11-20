@@ -25,6 +25,11 @@ const all = JSON.stringify(C.keyGroups({ jump: { arrow: 5, shift: 1, ctrl: 'fram
 assert.ok(!/Alt\+/.test(all), 'no Alt+arrow binding (VS Code: Go Back / Forward)');
 assert.ok(/Volume ±5 %/.test(all) && /Ctrl\+C|Cmd\+C/.test(all));
 
+// Picture size: the sheet names Z for the player and for compare (+ / - only in the player: compare nudges offsets with them).
+const view = (p) => JSON.stringify(C.keyGroups({ jump: { arrow: 5, shift: 1, ctrl: 'frame' }, ...p }));
+assert.ok(view({}).includes('"Picture size: Fit, Fill, Stretch, 100 %","Z"') && view({}).includes('"Zoom in / out","+","-"'), 'player sheet: Z and + / -');
+assert.ok(view({ compare: true }).includes('"Picture size (all videos)","Z"') && !view({ compare: true }).includes('Zoom in / out'), 'compare sheet: Z, no + / - zoom');
+
 const row = (f, k) => (f.rows.find((r) => r[0] === k) || [])[1];
 
 // Native ffmpeg: 4K HEVC 10-bit HDR, AAC 5.1 (what src/native.js posts as streams info).

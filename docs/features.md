@@ -39,7 +39,7 @@ These are for checking encodes, renders, captures and test output.
 - For very large files a view reads at most about 2 GB (256 MB over SSH/WSL). Beyond that it indexes evenly spaced parts, and zooming in fills the gaps. In AVI files with B-frames the bars are in decode order, as AVI stores no presentation times.
 
 **Zoom and pixel inspector.**
-- `Ctrl`+wheel zooms around the cursor; drag to pan when zoomed. `Z` switches between fit and actual size.
+- `Ctrl`+wheel zooms around the cursor, from any picture size; drag to pan when the picture is larger than the player. `+` / `-` zoom around the middle. `Z` cycles the **picture size** (below); zoomed in, `Z` goes back to Fit first.
 - `Shift+Z` turns on nearest-neighbour pixels. They also turn on by themselves from 200 %, with a pixel grid from 800 %.
 - `X` shows the position, RGB and the source Y/U/V values under the cursor, with an 8× loupe. Click copies the values. Press `X` again for the inspector without the loupe, and a third time to turn it off.
 
@@ -76,6 +76,7 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 - **In sync:** the others follow the clock's time, and a paused view only updates once every video shows its frame, so a step always shows matching frames. Another frame rate is matched by time.
 - **Decoding:** every video is its own player. With native ffmpeg, each gets frames at its cell's size (e.g. about 960×540 per cell of a 2×2 grid in a 1080p panel), never above `nativeMaxHeight`, so four videos stay under the transfer limit between VS Code and the panel.
 - PSNR / SSIM and "find the first difference" are hidden for now (kept for a later advanced mode).
+- **Picture size in compare:** the same button, `Z` and ⚙ › Picture size apply to every video at once; Ctrl+wheel and drag zoom and pan all videos together, each showing the same part of its own picture, like a magnifier over all of them.
 - Keys: see [Keys in compare](keys.md#keys-in-compare).
 
 ## Remote
@@ -97,7 +98,8 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 One layout (the old simple / advanced switch is gone). The bar, left to right:
 previous frame, play / pause, next frame, mute, volume, the time (click it: time → SMPTE timecode → frame
 number; the same detail while playing and paused), then CC (subtitles), ⓘ (about this video), the speed
-(click: speed panel; scroll: ±0.05), ⚙ (settings), ⌨ (keyboard shortcuts) and fullscreen.
+(click: speed panel; scroll: ±0.05), ⚙ (settings), ⌨ (keyboard shortcuts), the **picture size** button and
+fullscreen.
 
 - A click on the picture plays or pauses; with a panel open it closes the panel.
 - Each bar button opens its panel and closes it when clicked again. `Esc` closes any panel.
@@ -105,6 +107,7 @@ number; the same detail while playing and paused), then CC (subtitles), ⓘ (abo
   Keyboard shortcuts, Jump sizes › and a **Tools** grid: Compare, Scopes, Inspector, Stats, Codec X-ray,
   Export A-B, then **Open video URL…** ([network URLs](urls.md)) and last **Extension settings** (VS Code's Settings, filtered to this extension). The tools'
   keys work at any time.
+- **Picture size:** how the picture sits in the player. **Fit** (default) shows the whole picture, with bars where its shape differs; **Fill** has no bars and crops the edges (centred); **Stretch** fills the player and distorts the picture; **100 %** shows one video pixel per screen pixel, and you drag to move a picture larger than the player. The button beside the keyboard shortcuts cycles Fit → Fill → Stretch → 100 % → Fit (its icon shows the current size, the tooltip names the next one) and so does `Z`; ⚙ › **Picture size ›** picks one and has a zoom row (− value + Reset). Ctrl+wheel zoom works in every size. The setting `pictureSize` chooses the size for new tabs; the button and `Z` change the current tab only. Native ffmpeg frames follow the picture (a crop or 100 % gets larger frames).
 - **Jump sizes ›:** what ← →, Shift+← → and Ctrl+← → (Cmd on macOS) jump: 1 frame, 1 s, 5 s, 10 s or 30 s
   each (defaults 5 s, 1 s, 1 frame). Saved as settings. `,` and `.` always step one frame.
 - No status pill: when decoding falls behind, a notice says so once, with its action (set up ffmpeg, or

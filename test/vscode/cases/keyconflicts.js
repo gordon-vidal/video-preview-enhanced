@@ -9,7 +9,7 @@ const path = require('path');
 const lib = require('../lib');
 
 // Player keys (must be free) and keys the player avoids on purpose (expected to be taken).
-const PLAYER = ['left', 'right', 'shift+left', 'shift+right', 'ctrl+left', 'ctrl+right', 'up', 'down', 'space', ',', '.', 'shift+/', 'shift+,', 'shift+.', 'ctrl+c', 'k', 'j', 'l', 'home', 'end', 'escape'];
+const PLAYER = ['left', 'right', 'shift+left', 'shift+right', 'ctrl+left', 'ctrl+right', 'up', 'down', 'space', ',', '.', 'shift+/', 'shift+,', 'shift+.', 'ctrl+c', 'k', 'j', 'l', 'home', 'end', 'escape', 'z', '+', '-', '='];
 const AVOIDED = ['alt+left', 'alt+right', 'ctrl+k', 'ctrl+shift+c'];
 // Reported only (the player uses them today; see the notes).
 const INFO = ['ctrl+g', 'shift+c', 'ctrl+shift+n'];
