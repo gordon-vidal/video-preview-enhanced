@@ -3,11 +3,16 @@
 node_modules/
 
 # Editor, agent and OS files
-.claude/
+# .claude/: only the shared skills are tracked (worktrees and settings.local.json stay out)
+.claude/*
+!.claude/skills/
 .vscode-test/
 .DS_Store
 Thumbs.db
 *.log
+
+# Maintainer's private notes, local only (docs/private-context.md)
+.private-context/
 
 # Git worktrees kept inside the checkout
 worktrees/
