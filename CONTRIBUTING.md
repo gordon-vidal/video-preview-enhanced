@@ -58,6 +58,13 @@ what you ran.
 To try a branch, commit or `.vsix` by hand in a throwaway profile on Windows: `review.cmd <ref>`
 ([docs/REVIEW.md](docs/REVIEW.md)).
 
+## Optional local pre-commit check
+
+CI scans every push and pull request for secrets (gitleaks) and personal data. To catch both before you
+commit, enable the shared hook once per clone: `git config core.hooksPath .githooks`. It runs
+`node tools/check-personal-data.js` and, if [gitleaks](https://github.com/gitleaks/gitleaks) is installed,
+`gitleaks protect --staged`.
+
 ## Code style
 
 - Plain JavaScript, no transpiler, no runtime npm dependencies. Keep it that way unless discussed first.

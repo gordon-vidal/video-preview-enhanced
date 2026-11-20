@@ -1,9 +1,9 @@
 # Copilot instructions
 
-Read [AGENTS.md](../AGENTS.md) at the repository root first: it holds the project overview, repo map,
-test commands, rules (no visible VS Code windows, no personal data, licence limits) and PR
-conventions for every coding agent. Tests: [docs/TESTING.md](../docs/TESTING.md). Product decisions:
-[docs/PRODUCT.md](../docs/PRODUCT.md).
+The instructions for every coding agent are in [AGENTS.md](../AGENTS.md) at the repository root
+(Copilot reads it too); this file only repeats the essentials for features that read this file alone.
 
-Short version: plain JavaScript, no new runtime dependencies, `npm test` must pass, update
-`CHANGELOG.md` for user-visible changes, keep `README.md` short.
+Plain JavaScript, no new runtime dependencies, `npm test` must pass, never open a visible VS Code
+window or a browser, no personal data in tracked files, update `CHANGELOG.md` for user-visible
+changes and keep `README.md` short. Tests: [docs/TESTING.md](../docs/TESTING.md). Product decisions:
+[docs/PRODUCT.md](../docs/PRODUCT.md).

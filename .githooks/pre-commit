@@ -1,0 +1,12 @@
+#!/bin/sh
+# Optional local guard. Enable once per clone: git config core.hooksPath .githooks
+# Runs the personal-data check and, if installed, gitleaks on the staged changes.
+set -e
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+node tools/check-personal-data.js
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact --no-banner
+else
+  echo "pre-commit: gitleaks not installed, skipping secret scan (CI still runs it)" >&2
+fi

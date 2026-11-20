@@ -49,6 +49,15 @@ node test/vscode/run.js --grep '^case/<name>'   # one scenario
 Layer 4 (performance) runs only through `node test/benchq.js <cmd>` (it holds the lock) and only
 before releases or in performance work.
 
+## Guard rails
+
+- `.claude/settings.json` (shared Claude Code settings) denies `git add` of `.private-context` and
+  `git add -f`, and runs the hook `tools/hooks/block-visible-launch.js`, which blocks shell commands that
+  open a visible VS Code or a browser (`code`, `Code.exe`, `msedge`, `chrome`, `start`/`Start-Process` on
+  URLs or HTML ...). `node test/vscode/...` (hidden desktop) is unaffected. Other agents: obey the same rule.
+- CI runs gitleaks (secret scan of the full history) and the personal-data check. Optional local hook:
+  `git config core.hooksPath .githooks` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+
 ## Rules
 
 - **Never open a visible VS Code window or a browser** in automated runs. Real-VS-Code tests go only
