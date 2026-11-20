@@ -147,6 +147,7 @@ async function open(m) {
         // Bit depth as coded (the host files decode speeds per codec/depth/size).
         depth: cp.format >= 0 ? ((await describe(cp.format)) || { depth: 0 }).depth : 0,
         bitRate: Number(cp.bit_rate) > 0 ? Number(cp.bit_rate) : 0, // for the "About this video" panel
+        ...(await streamRate(s)),
       };
       V.codec = name;
       V.nalLen = name === 'h264' && cp.extradata && cp.extradata[0] === 1 && cp.extradata.length > 4 ? (cp.extradata[4] & 3) + 1 : 0;
@@ -695,6 +696,21 @@ async function disposition(s) {
     if (w[1] !== s.index || w[3] !== s.codecpar || w[15] !== await libav.AVStream_discard(s.ptr) || w[18] !== await libav.AVStream_metadata(s.ptr)) return 0;
     return w[14] >>> 0;
   } catch { return 0; }
+}
+
+/**
+ * The container's frame rate (AVStream.avg_frame_rate) and frame count (nb_frames, the sample table of MP4),
+ * 0 when it states none. libav.js has no getters for them: read the struct, with the same layout check as
+ * disposition() (wasm32: ... metadata word 18, avg_frame_rate num/den words 19-20, nb_frames int64 words 12-13).
+ */
+async function streamRate(s) {
+  try {
+    const w = await libav.copyout_s32(s.ptr, 21);
+    if (w[1] !== s.index || w[3] !== s.codecpar || w[15] !== await libav.AVStream_discard(s.ptr) || w[18] !== await libav.AVStream_metadata(s.ptr)) return { fps: 0, frames: 0 };
+    const fps = w[19] > 0 && w[20] > 0 ? w[19] / w[20] : 0;
+    const frames = w[13] === 0 && w[12] > 0 ? w[12] : 0;
+    return { fps: fps > 0 && fps < 1000 ? fps : 0, frames };
+  } catch { return { fps: 0, frames: 0 }; }
 }
 
 async function listTracks() {

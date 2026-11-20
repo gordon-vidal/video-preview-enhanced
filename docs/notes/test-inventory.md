@@ -34,7 +34,7 @@ numbers of 14 cases left for layer 4.
 | `test/avi_test.js` | 1 | the AVI index and the standard DHT table, MJPEG frames against ffmpeg | needs an MJPEG AVI: gets `s_mjpeg.avi` |
 | `test/unit/abloop_test.js`, `timefmt_test.js` | 1 | new: `media/abloop.js` (A-B loop) and `media/timefmt.js` (time labels, frame counter), moved out of `media/player.js` unchanged | before: only the VS Code cases `seeking/abloop`, `ui/time/formats`, `seeking/step-ms-rounded` (counter) |
 | `test/engine/frames_hevc_vp9.js`, `frames_mpeg2_prores.js`, `frames_mpeg4_h264.js`, `frames_edges.js` | 2 | new: step, seek (also while playing), ms-rounded 60 fps and NTSC, End with longer sound, edges, end of file, A-B loop, open-GOP: the engine says frame k and the picture is ffmpeg's frame k | `test/engine/harness.js` runs `media/engine.js` with the real decoder worker / pool and a stub WebGL that keeps the luma plane |
-| `test/engine/formats_cases.js`, `formats_media.js`, `formats_4k.js` | 2 | new: every clip of the open-and-play set (`test/media/cases/fmt`), the start-at-3600 / multichannel / rotated / gapped clips, the 1080p clips and the container set of `test/media`: first picture = ffmpeg's, a seek = ffmpeg's frame, sound decodes; 4K: first picture | one quarantined check (see Known issues) |
+| `test/engine/formats_cases.js`, `formats_media.js`, `formats_4k.js` | 2 | new: every clip of the open-and-play set (`test/media/cases/fmt`), the start-at-3600 / multichannel / rotated / gapped clips, the 1080p clips and the container set of `test/media`: first picture = ffmpeg's, a seek = ffmpeg's frame, sound decodes; 4K: first picture | |
 | `test/tracks/run.js` | 2 | track lists, stream discard, audio switching, embedded subtitles, open-GOP seeks in the decoder worker | ~60 s, the longest file of the layer |
 | `test/tracks/engine_smoke.js` | 2 | the engine switching sound and subtitle tracks; open-GOP fallback with a WebCodecs stand-in | fixed: its fake AudioContext had no `suspend()` (the engine rests the AudioContext while paused since f97fd39), so it crashed after 11 checks |
 | `test/bitmapsubs/run.js` | 2 | PGS / DVD / DVB picture subtitles: cue index and palette | |
@@ -70,13 +70,9 @@ tables, not JSON): `test/perf/frame_path.js`, `test/perf/browser_path.js` (needs
 
 ## Known issues found while porting
 
-- **Short files without a container frame rate** (`fmt/dnxhr_pcm.mxf`, 10 frames): the engine learns the rate from
-  24-40 timestamps (`engine.js` `trackTs`); with fewer, `fps` and `n` stay 0 after the end, the counter stays at
-  frame 0 and steps assume 30 fps. Quarantined in `test/engine/formats_cases.js` (reported as KNOWN, a pass says
-  it is fixed). VS Code only checked that the file opens and plays.
-- **End right after opening** (MP4 H.264 without a stated rate): until 24 timestamps are seen `n` is 0, so End goes
-  to frame 0. The VS Code case passed only because its polling gave the engine time; the engine harness waits for
-  the rate like a user would. Not quarantined (no test presses End that early), worth a fix.
+Both fixed (branch `fix/engine-frame-count`): the engine takes the frame rate / count the container states
+(`avg_frame_rate`, MP4 sample table) at open, and a short file without a rate gets it from its timestamps at the
+end of the file. Checks: `test/engine/frames_edges.js` `end-at-open/` and `short-no-rate/`.
 
 ## Every VS Code result
 

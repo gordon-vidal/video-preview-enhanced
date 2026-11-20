@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: the frame count is known right after opening an MP4/MOV (from the container), so End works at once; short files without a frame rate in the container (10-frame MXF) now get one from their timestamps, so the frame counter and stepping work.
+
 ## 0.7.1 (2026-11-20)
 
 First release on the VS Code Marketplace (publisher `gordon-vidal`).
