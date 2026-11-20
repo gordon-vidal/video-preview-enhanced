@@ -428,8 +428,8 @@
         "videoPreviewEnhanced.advancedMode": {
           "type": "boolean",
           "default": false,
-          "description": "No longer used: the player has one layout, and its tools (compare, scopes, inspector, stats, X-ray, A-B export) are always in the settings panel (the cog) and the right-click menu.",
-          "deprecationMessage": "No longer used: the tools are always in the player's settings panel (cog) and right-click menu."
+          "description": "No longer used: the player has one layout, and its tools (compare, scopes, inspector, stats, X-ray, A-B export) are always in the player's settings panel (the cog).",
+          "deprecationMessage": "No longer used: the tools are always in the player's settings panel (cog)."
         },
         "videoPreviewEnhanced.jump.arrow": {
           "enum": [
@@ -618,7 +618,7 @@
             "Show every frame: playback slows down to the decoding speed (sound pauses while behind). Reliable when decode times vary.",
             "Keep real time: jump to the next keyframe when behind. Choppy; falls back to every frame when decoding is far too slow."
           ],
-          "description": "What to do when a video decodes slower than real time. Click the status pill in the player to switch."
+          "description": "What to do when a video decodes slower than real time. The slow-playback notice can switch it for you."
         }
       }
     }
