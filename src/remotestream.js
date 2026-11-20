@@ -536,7 +536,7 @@ class RemoteStream {
     if (this.standby || this.disposed) return;
     const sb = this.launch(0);
     this.standby = sb;
-    sb.timer = setTimeout(() => { if (this.standby === sb) { this.standby = null; sb.kill(); } }, 20000);
+    sb.timer = setTimeout(() => { if (this.standby === sb) { this.standby = null; sb.kill("SIGKILL"); } }, 20000);
   }
 
   takeStandby(t) {
@@ -545,7 +545,7 @@ class RemoteStream {
     if (!sb) return null;
     clearTimeout(sb.timer);
     if (sb.t === t && sb.pid && sb.exitCode === null && !sb.signalCode) { sb.adopted = true; return sb; }
-    sb.kill();
+    sb.kill("SIGKILL");
     return null;
   }
 
