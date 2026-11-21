@@ -11,9 +11,27 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 
 ## When what runs
 
-- **While working** (everyone): layers 1-2, plus the layer-3 scenarios that cover the changed files. Run only what fails until it passes.
-- **Before a merge:** layers 1-3, **at most about 10 minutes**.
-- **Before a release:** everything, including layer 4 against the last release's numbers.
+- **While working** (everyone): layers 1-2, plus the layer-3 scenarios that cover what you changed. Run only what fails until it passes.
+- **Before a merge:** layers 1-2 (as CI runs them: `CI=true node test/run.js unit engine`) and **the layer-3 scenarios
+  you choose** for what you changed and what depends on it, about 10 minutes at most. Name each chosen scenario with a
+  one-line reason in your report or PR, so a reviewer can see what was left out. `--changed` is only a hint: it selects by
+  file name, and the core player files are in nearly every scenario, so it usually picks the whole layer.
+- **Before a release:** everything, including layer 4 against the last release's numbers. Only a release must have
+  everything working (maintainer, 2026-11-21): a side effect missed between releases is acceptable, the full run before
+  the release catches it.
+
+**Known dependencies** (the minimum when you touch these; add a line when a miss is found):
+
+| You changed | Also run |
+|---|---|
+| Stepping, seeking, the decoder pool, end of file (`media/engine.js` seek paths, `media/pool.js`) | `seeking`, `playback` |
+| Native ffmpeg transport or frame sizes (`src/native.js`, `src/frameserver.js`, `sizeFramesToView`) | `native`, `picture-size-native` |
+| Drawn picture size, zoom, pan (`media/picture.js`, `media/inspect.js` geometry) | `picture-size`, `compare`, `inspect` |
+| Compare / multi-view (`media/compare.js`, `src/compare.js`) | `compare`, `multiview` |
+| Remote stream (`src/remotestream.js`) | `remote-stream` |
+| URLs (`src/urlsource.js`) | `url`, `url-native` |
+| The bar, panels, keys (`media/controls.js`, `src/bar.js`) | `ui` |
+| Subtitles, tracks | `subtitles` |
 - **GitHub Actions:** layers 1-2 on every push and pull request. Layer 3 stays local for now (needs a GPU).
 
 ## Rules

@@ -41,9 +41,15 @@ the docs. Quick reference:
 node test/run.js unit engine            # layers 1-2 (what CI runs), all cores
 node test/run.js vscode                 # layer 3, Windows only, hidden desktop
 node test/run.js vscode --grep <re>     # only matching scenarios / cases
-node test/run.js unit engine vscode --changed   # what the changed files need
-npm test                                # layers 1-3 (before a merge)
+node test/run.js unit engine vscode --changed   # a hint only: by file name, usually picks everything
+npm test                                # layers 1-3 (before a release, not before every merge)
 ```
+
+**Choose your layer-3 scenarios yourself** (maintainer, 2026-11-21): before a merge run layers 1-2 as CI does
+(`CI=true node test/run.js unit engine`) plus the scenarios that cover what you changed and what depends on it
+(at least those in "Known dependencies" in docs/TESTING.md), about 10 minutes at most, and list each with a
+one-line reason in your report or PR. Do not run the whole layer just to be safe: only a release has to have
+everything working, and the full run before a release catches what a merge missed.
 
 Layer 4 (performance) runs only through `node test/run.js perf` (it holds the lock) and only
 before releases or in performance work.
