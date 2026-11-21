@@ -20,6 +20,7 @@ const setup = lazy('./setup');
 const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
 const { decodeThumb } = require('./thumbhost');
+const { ExactFrameGrabber } = require('./exact_frame');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
 const remotestream = lazy('./remotestream'); // unified Live transcode stream engine (ADR 0002)
 const transcodePolicy = lazy('./transcode_policy');
@@ -1567,6 +1568,7 @@ class Session {
     remoteAuthority(this.webview); // learn the host for frame links arriving later
     this.disposed = false;
     this.page = 0;
+    this.exact = new ExactFrameGrabber({ log: (m) => log(`[${this.name}] ${m}`) }); // single exact frames (src/exact_frame.js)
     this.benchChannels = new Set();
     this.fh = null;
     this.frames = null;
@@ -1702,6 +1704,7 @@ class Session {
     if (this.disposed) return;
     log(`[${this.name}] ${why}, reloading`);
     this.loadGen = (this.loadGen || 0) + 1;
+    this.exact.cancel();
     this.closeBenchChannels();
     this.webviewOrigin = null;
     this.closeFile();
@@ -1806,6 +1809,7 @@ ${barHtml()}
 <script nonce="${nonce}" src="${uri('picture.js')}"></script>
 <script nonce="${nonce}" src="${uri('inspect.js')}"></script>
 <script nonce="${nonce}" src="${uri('scopes.js')}"></script>
+<script nonce="${nonce}" src="${uri('exactframe.js')}"></script>
 <script nonce="${nonce}" src="${uri('subtitles.js')}"></script>
 <script nonce="${nonce}" src="${uri('tracks-menu.js')}"></script>
 <script nonce="${nonce}" src="${uri('xray.js')}"></script>
@@ -1826,6 +1830,26 @@ ${barHtml()}
     if (!(nd instanceof NativeDecoder) || !v || !nd.file || !Number.isFinite(m.t) || !(m.w > 0 && m.w <= 640 && m.h > 0 && m.h <= 640)) { reply(null); return undefined; }
     const src = { w: v.sourceWidth || v.width, h: v.sourceHeight || v.height };
     this.thumbChain = (this.thumbChain || Promise.resolve()).then(() => decodeThumb(nd.tools, nd.file, src, m.t, m.w, m.h, (x) => log(`[${this.name}] ${x}`))).then(reply, () => reply(null));
+    return undefined;
+  }
+
+  /**
+   * Live transcode only: one exact full-resolution PNG of the source at m.t for the pixel tools (src/exact_frame.js).
+   * Answers {type: 'exactFrame', page, reqId, t, png | error}; a newer request, a reload or a closed tab ends this one,
+   * and an answer for a replaced page is dropped.
+   */
+  async sendExactFrame(m) {
+    const page = this.page;
+    const reqId = Number(m.reqId);
+    const t = Number(m.t);
+    if (m.page !== page || !Number.isSafeInteger(reqId)) return undefined; // a message of another page
+    const reply = (r) => { if (!this.disposed && page === this.page) this.post({ type: 'exactFrame', page, reqId, t, ...r }); };
+    const nd = this.native;
+    const video = nd instanceof remotestream.EncodedStream && nd.pr && nd.pr.video;
+    if (!video || this.url || this.sequence || !nd.file) { reply({ error: 'exact frames are for Live transcode of a video file' }); return undefined; }
+    const r = await this.exact.grab({ tools: nd.tools, file: nd.file, t, video, rotation: rotationOf(nd.file), page, isCurrent: (p) => !this.disposed && p === this.page });
+    if (r.cancelled || r.stale) return undefined; // superseded or replaced: the newer request answers
+    reply(r.png ? { png: new Uint8Array(r.png.buffer, r.png.byteOffset, r.png.length), w: r.w, h: r.h } : { error: r.error || 'failed' });
     return undefined;
   }
 
@@ -1860,6 +1884,7 @@ ${barHtml()}
         else if (m.m && m.m.type === 'open' && m.m.view && m.m.view.w > 0 && m.m.view.h > 0) rememberView(m.m.view.w, m.m.view.h);
         return this.native ? this.native.handle(m.m) : undefined;
       case 'thumb': return this.sendThumb(m);
+      case 'grabExactFrame': return this.sendExactFrame(m);
       // Jump sizes and speed step from the player's panels: only declared values.
       case 'pref': return PREFS[m.key] && PREFS[m.key].values.includes(m.value) ? setSetting(m.key, m.value, prefTarget(m.key)) : undefined;
       // Live transcode mode and max bitrate from the ⚙ panel (machine-scoped).
@@ -2890,6 +2915,7 @@ ${barHtml()}
     sessions.delete(this);
     if (this.pos && this.pos !== this.savedPos) this.savePos();
     this.disposed = true;
+    this.exact.dispose();
     this.closeBenchChannels();
     if (this.watcher) this.watcher.close();
     this.closeFile();

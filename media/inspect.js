@@ -143,7 +143,7 @@ const VpeInspect = (() => {
 
   /**
    * @param {{vscode: any, stage: HTMLElement, canvas: HTMLCanvasElement, log: Function, toast: Function,
-   *   getPlayer: () => any, fmtTime: (t: number) => string, cfg: any}} env
+   *   getPlayer: () => any, fmtTime: (t: number) => string, cfg: any, getExact?: () => any, exactCtx?: (e: any) => any}} env
    */
   function create(env) {
     const { vscode, stage, canvas, toast, getPlayer, fmtTime } = env;
@@ -367,6 +367,12 @@ const VpeInspect = (() => {
       return null;
     }
 
+    /** 15×15 RGBA around (x, y) of the exact picture (transparent outside it). */
+    function readExact(ex, x, y) {
+      const h = LOUPE_PX >> 1;
+      return env.exactCtx(ex).getImageData(x - h, y - h, LOUPE_PX, LOUPE_PX).data;
+    }
+
     function pick() {
       pickQueued = false;
       const p = getPlayer();
@@ -375,18 +381,22 @@ const VpeInspect = (() => {
       const x = Math.floor(((mouse.x - r.left) / r.width) * canvas.width);
       const y = Math.floor(((mouse.y - r.top) / r.height) * canvas.height);
       if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) { readout.hidden = true; lastPick = null; return; }
-      const block = readBlock(p, x, y);
+      // Live transcode, paused: the exact picture of the file (media/exactframe.js), read at the same place of the picture.
+      const ex = env.getExact ? env.getExact() : null;
+      const exX = ex ? Math.min(ex.w - 1, Math.floor(((x + 0.5) * ex.w) / canvas.width)) : x;
+      const exY = ex ? Math.min(ex.h - 1, Math.floor(((y + 0.5) * ex.h) / canvas.height)) : y;
+      const block = ex ? readExact(ex, exX, exY) : readBlock(p, x, y);
       if (!block) return;
       const c = ((LOUPE_PX >> 1) * LOUPE_PX + (LOUPE_PX >> 1)) * 4;
       const [R, G, B] = [block[c], block[c + 1], block[c + 2]];
-      const rot = p.gl ? p.gl.rot || 0 : 0;
+      const rot = !ex && p.gl ? p.gl.rot || 0 : 0;
       const frame = p.currentFrame();
-      const base = `${x},${y}`;
-      const lines = [`x ${x}  y ${y}${rot ? `  (turned ${rot}°)` : ''}`, `RGB ${R} ${G} ${B}  ${hex(R, G, B)}`];
-      let text = `frame ${frame + 1} x=${x} y=${y} rgb=(${R},${G},${B}) ${hex(R, G, B)}`;
+      const base = `${exX},${exY}`;
+      const lines = [`x ${exX}  y ${exY}${rot ? `  (turned ${rot}°)` : ''}${ex ? '  (exact frame)' : ''}`, `RGB ${R} ${G} ${B}  ${hex(R, G, B)}`];
+      let text = `frame ${frame + 1} x=${exX} y=${exY} rgb=(${R},${G},${B}) ${hex(R, G, B)}${ex ? ' exact' : ''}`;
       // Source code values: soft frames are kept on the CPU; GPU frames via copyTo.
       const shown = p.lastShown;
-      if (shown && shown.yuv) {
+      if (ex) { /* the transcoded picture's code values are not the file's */ } else if (shown && shown.yuv) {
         const [sx, sy] = displayToSource(x, y, canvas.width, canvas.height, rot, shown.yuv.width, shown.yuv.height);
         const v = yuvAt(shown.yuv, sx, sy);
         if (v) {
@@ -590,7 +600,7 @@ const VpeInspect = (() => {
       }
       // Paused frame changes (stepping): refresh the readout under a still cursor.
       if (inspecting && p && mouse && !pickQueued) {
-        const key = `${p.currentFrame()}|${p.shownCount || p.shown}`;
+        const key = `${p.currentFrame()}|${p.shownCount || p.shown}${env.getExact && env.getExact() ? '|exact' : ''}`;
         if (key !== tick.key) { tick.key = key; pickQueued = true; requestAnimationFrame(pick); }
       }
     }
@@ -631,7 +641,7 @@ const VpeInspect = (() => {
     const idle = () => stats.hidden && !pendingGoto && !pickQueued;
     return {
       onKey, onWheel, tick, idle, cycleMode, setMode, resetZoom, zoomStep, zoomTo, zoomPercent, zoomedSize,
-      picture: () => ({ ...pic }), decorateInfo, goToLink, copyLink,
+      picture: () => ({ ...pic }), decorateInfo, goToLink, copyLink, inspecting: () => inspecting,
     };
   }
 
