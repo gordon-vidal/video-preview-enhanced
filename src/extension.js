@@ -1635,6 +1635,8 @@ class Session {
         hdrOutput: c.hdrOutput,
         // Tests (VPE_LOG only): VPE_HDR_FORCE=1 takes the HDR output path on an SDR display.
         hdrForce: !!logFile && process.env.VPE_HDR_FORCE === '1',
+        // Tests (VPE_LOG only): VPE_NO_WEBGL=1 makes the decoder fail as on a machine without WebGL2 (the error screen).
+        noWebgl: !!logFile && process.env.VPE_NO_WEBGL === '1',
         // Tests (VPE_LOG only): VPE_THUMB_STRIP=0 leaves out the background seek-bar strip (CPU measurements).
       },
     });

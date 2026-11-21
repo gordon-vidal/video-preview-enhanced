@@ -4,6 +4,7 @@
 
 - Fixed: stale texts in settings (`whenSlow`, `advancedMode`) and the FAQ.
 - Fixed: closing a web video that is still downloading (server without range support) left pending reads hanging; closing now cancels the requests and settles them.
+- Fixed: when the decoder cannot start (for example no WebGL2), the message no longer sits on an empty black or white box; it shows on the plain stage in the theme colours, readable in the high-contrast themes.
 
 ## 0.7.2 (2026-11-20)
 

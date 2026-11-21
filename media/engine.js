@@ -524,6 +524,7 @@ function createEngine(env) {
       this.adec = null;
       this.outCount = 0;
       canvas.hidden = false;
+      if (cfg.noWebgl) throw new Error('WebGL2 is not available'); // test hook (VPE_NO_WEBGL, with VPE_LOG)
       this.gl = new GLRenderer(canvas);
       this.gl.setRotation(cfg.rotation || 0);
       // Uploaded buffers go back to the decoder unless the next loop still needs them.
