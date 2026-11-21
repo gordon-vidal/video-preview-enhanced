@@ -27,7 +27,8 @@ const NATIVE_CLIPS = ['hevc_10_2160p.mp4', 'av1_10_2160p.mp4'];
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const med = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : null; };
 
-async function playClip(vs, clip, { seconds, native, onShown }) {
+// slow: the open is slow by nature (remote re-encode, 4K software decode): keep firstFrameTimeout as given.
+async function playClip(vs, clip, { seconds, native, onShown, firstFrameTimeout = 45000, slow = false }) {
   const name = path.basename(clip.file);
   const tag = `\\[${esc(name)}\\]`;
   const r = { clip: name, ok: true, problems: [] };
@@ -36,7 +37,7 @@ async function playClip(vs, clip, { seconds, native, onShown }) {
   const idle = await lm.sample(1); // others' load, before our clip runs
   r.othersLoad = Math.round(idle.load);
   const from = await openClip(vs, path.join(MEDIA, clip.file));
-  await vs.waitLog(new RegExp(`${tag} webview: first frame shown`), { from, timeout: 45000, what: `${name}: first frame` });
+  await vs.waitLog(new RegExp(`${tag} webview: first frame shown`), { from, timeout: firstFrameTimeout, what: `${name}: first frame`, slow: slow || native });
   r.openMs = Date.now() - t0; // command to first frame
   const dec = native ? await vs.waitLog(new RegExp(`${tag} decoder: `), { from, timeout: 8000 }).catch(() => null)
     : vs.lines.slice(from).find((l) => new RegExp(`${tag} decoder: `).test(l));

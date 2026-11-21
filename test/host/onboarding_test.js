@@ -1,7 +1,7 @@
 'use strict';
 // node test/host/onboarding_test.js: the first-open popup (src/extension.js maybeOnboard, with
 // the mock vscode): the first video of each session without ffmpeg; "Set up ffmpeg" runs the setup
-// flow, "Not now" asks again next session, "Don't remind me (use built-in player)" is final; never in
+// flow, "Not now" asks again next session, "Don't Show Again" is final; never in
 // SSH or untrusted windows, nor when ffmpeg is found (VPE_FFMPEG or PATH; that part is skipped without one).
 const assert = require('assert');
 const path = require('path');
@@ -46,14 +46,14 @@ async function start({ answer, remote, trusted = true, settings = none, state } 
   assert.strictEqual(d.afterOnboard(d.ONBOARD_LATER, 1).choice, 'later');
   assert.strictEqual(d.afterOnboard(undefined, 1).choice, 'dismissed');
 
-  // First video: asked, with the three choices; "Don't remind me" is final.
+  // First video: asked, with the three choices; "Don't Show Again" is final.
   let x = await start({ answer: d.ONBOARD_BUILTIN });
   let s = await x.openOne();
   assert.strictEqual(x.shown.filter(isOnboard).length, 1);
   const q = x.shown.find(isOnboard);
   assert.match(q[0], /^Video Preview works best with ffmpeg: .*Set it up now\?$/);
   assert.doesNotMatch(q[0], /download|MB/i, 'the first popup never mentions a download');
-  assert.deepStrictEqual(q.slice(1), [d.ONBOARD_SETUP, d.ONBOARD_LATER, d.ONBOARD_BUILTIN]);
+  assert.deepStrictEqual(q.slice(1), ['Set up ffmpeg', 'Not now', "Don't Show Again"]);
   assert.strictEqual(x.h.context.globalState.get(d.ONBOARD_KEY).choice, 'builtin');
   s.panel.dispose();
   s = await x.openOne();

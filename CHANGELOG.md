@@ -3,6 +3,12 @@
 ## Unreleased
 
 - New (for review): **add videos to a compare by clicking them in the Explorer.** Press **Shift+D** in the player, then click a video in the Explorer: compare opens with it in the player's tab. In compare, Shift+D (or Compare panel › Add from the Explorer) adds every video you click, until Esc, Shift+D again or 4 videos. The D quick pick has the same as a row. **Alt+D** in the Explorer compares the selected videos.
+- Remote streams use compressed Opus sound when available, with s16 PCM as a fallback, so slow connections can keep the picture and sound playing. Remote pictures also follow the player size.
+- New (experimental): setting `videoPreviewEnhanced.compare.maxVideos` (default 4, up to 16) lets compare play more videos at once, in a plain grid (3×2, 3×3, 4×3, 4×4). From 5 videos on, all tiles share one renderer and the memory and transfer budgets of 4, and native ffmpeg tiles use WebSocket channels. 2–4 videos are unchanged. With ffmpeg on the test PC, 9 and 16 1080p HEVC videos each play at about 24 fps (measured 23.5-24.0). How more than 4 videos get into compare, and free placement of tiles, come later.
+- Fixed: notification buttons that stop future prompts now all say "Don't Show Again".
+- Fixed: stale texts in settings (`whenSlow`, `advancedMode`) and the FAQ.
+- Fixed: closing a web video that is still downloading (server without range support) left pending reads hanging; closing now cancels the requests and settles them.
+- Fixed: when the decoder cannot start (for example no WebGL2), the message no longer sits on an empty black or white box; it shows on the plain stage in the theme colours, readable in the high-contrast themes.
 
 ## 0.7.2 (2026-11-20)
 

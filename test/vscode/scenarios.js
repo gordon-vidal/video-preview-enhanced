@@ -22,6 +22,8 @@ const os = require('os');
 const path = require('path');
 const H = require('./hidden');
 const lib = require('./lib');
+const { BUDGETS, DEFAULT: DEFAULT_BUDGET } = require('./budgets');
+const TIMEOUT_RE = /TIMEOUT after|did not finish within/;
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
@@ -38,7 +40,7 @@ function loadCases() {
 
 let hookSeq = 0;
 /** Sends a hook line with an id and waits for "debug done <id>". */
-async function hook(vs, obj, timeout = 30000) {
+async function hook(vs, obj, timeout = 10000) { // a hook answers in well under 1 s
   const id = `h${++hookSeq}`;
   const from = vs.mark();
   vs.send({ ...obj, id });
@@ -54,13 +56,28 @@ async function runScenario(sc, ctx, attempt = 1) {
   const stripped = H.pathWithoutFfmpeg();
   const vs = new H.HiddenCode({ code, keep: flag('--keep'), tag: 'vpe3', env: { PATH: stripped, ...(sc.env || {}) }, settings: sc.settings });
   const results = [];
-  const add = (r) => { results.push(r); console.log(`${r.ok ? (r.skipped ? 'skip' : 'ok  ') : 'FAIL'} ${r.name}${r.skipped ? `: ${r.skipped}` : ''}${r.problems && r.problems.length ? `: ${r.problems.join('; ')}` : ''}`); };
+  // The scenario's time budget (test/vscode/budgets.js): past it the scenario is ended and reported as TIMEOUT.
+  const budget = Math.round((BUDGETS[sc.name] || DEFAULT_BUDGET) * Number(process.env.VPE_BUDGET_SCALE || process.env.VPE_TIME_SCALE || (process.env.CI ? 3 : 1)));
+  let expired = false;
+  let where = 'starting VS Code';
+  let budgetTimer;
+  const budgetP = new Promise((_, rej) => { budgetTimer = setTimeout(() => rej(Object.assign(new Error('budget'), { budget: true })), budget); });
+  budgetP.catch(() => {}); // handled by the race below
+  const add = (r) => {
+    if (expired) return; // a step still running after the budget ended the scenario
+    if (!r.ok && (r.problems || []).some((p) => TIMEOUT_RE.test(p))) r.timeout = true;
+    results.push(r);
+    console.log(`${r.ok ? (r.skipped ? 'skip' : 'ok  ') : r.timeout ? 'TIMEOUT' : 'FAIL'} ${r.name}${r.skipped ? `: ${r.skipped}` : ''}${r.problems && r.problems.length ? `: ${r.problems.join('; ')}` : ''}`);
+  };
   let noGl = false;
   try {
+    await Promise.race([budgetP, (async () => {
     await vs.start();
-    await vs.waitLog(/activated: module load/, { timeout: 90000, what: 'the extension activating' });
+    await vs.waitLog(/activated: module load/, { timeout: 45000, what: 'the extension activating' });
     let applied = {}; let envApplied = {};
     for (const step of sc.steps) {
+      if (expired) break;
+      where = `${sc.name}/${step.case}`;
       const c = cases[step.case];
       const base = `${sc.name}/${step.case}`;
       if (!c) { add({ name: base, ok: false, problems: [`no case named ${step.case}`] }); continue; }
@@ -89,7 +106,8 @@ async function runScenario(sc, ctx, attempt = 1) {
         const drop = step.skip ? new RegExp(step.skip) : null;
         lib.setFilter((n) => (!keep || keep.test(n)) && (!drop || !drop.test(n)));
         const h = { MEDIA: H.MEDIA, sleep, fwd, esc: lib.esc, openClip: H.openClip, closeClip: H.closeClip, playClip: ctx.playClip, seconds: ctx.perf ? 5 : 2, quick: !ctx.perf, ffmpeg: ff, scenario: ctx.perf ? undefined : sc.name };
-        const rs = await withTimeout(c.run(vs, h), step.timeout || 15 * 60e3, `${base} did not finish`);
+        const gl = brokenGl(vs);
+        const rs = await withTimeout(Promise.race([c.run(vs, h), gl.promise]).finally(gl.stop), step.timeout || 15 * 60e3, `${base} did not finish`);
         for (const r of rs) {
           const name = r.name ? `${base}/${r.name}` : base;
           if ((keep || drop) && r.name && !((!keep || keep.test(r.name)) && (!drop || !drop.test(r.name)))) continue; // moved to another layer
@@ -101,9 +119,19 @@ async function runScenario(sc, ctx, attempt = 1) {
       if (vs.lines.some((l) => H.NO_WEBGL.test(l))) { noGl = true; break; }
       console.log(`  ${base}: ${((Date.now() - ts) / 1000).toFixed(0)} s`);
     }
+    })()]);
   } catch (e) {
-    add({ name: sc.name, ok: false, problems: [e && e.message || String(e)] });
+    if (e && e.budget) {
+      const waiting = vs.waitingFor();
+      const left = sc.steps.map((s) => s.case).slice(Math.max(0, sc.steps.findIndex((s) => `${sc.name}/${s.case}` === where)));
+      const r = { name: sc.name, ok: false, timeout: true, problems: [`TIMEOUT after ${Math.round((Date.now() - t0) / 1000)} s (budget ${Math.round(budget / 1000)} s) in ${where}; ${waiting ? `waiting for ${waiting}` : 'not in a wait (a step doing work or a stuck page)'}; not finished: ${left.join(', ')}`] };
+      expired = true;
+      results.push(r);
+      console.log(`TIMEOUT ${r.name}: ${r.problems[0]}`);
+    } else add({ name: sc.name, ok: false, problems: [e && e.message || String(e)] });
   } finally {
+    clearTimeout(budgetTimer);
+    expired = true;
     if (noGl) H.saveGpuLogs(vs, sc.name, attempt);
     await vs.stop();
   }
@@ -116,6 +144,20 @@ async function runScenario(sc, ctx, attempt = 1) {
     results.push({ name: `${sc.name}/webgl2`, ok: false, problems: ['two instances in a row had no WebGL2 (GPU process): logs in test/vscode/out/nogl-*'] });
   }
   return { name: sc.name, ms: Date.now() - t0, attempts: attempt, noGl, results };
+}
+
+/** Rejects as soon as this instance logs "no WebGL2": a broken instance ends the step now, not after each wait's timeout. */
+function brokenGl(vs) {
+  let timer;
+  const promise = new Promise((_, rej) => {
+    timer = setInterval(() => {
+      vs.mark();
+      const l = vs.lines.find((x) => H.NO_WEBGL.test(x));
+      if (l) rej(new Error(`no WebGL2 in this VS Code instance: ${l.replace(/^.*?webview: /, '')}`));
+    }, 300);
+  });
+  promise.catch(() => {});
+  return { promise, stop: () => clearInterval(timer) };
 }
 
 function withTimeout(p, ms, what) {
@@ -168,15 +210,16 @@ async function main() {
   const res = {
     started: new Date(t0).toISOString(), seconds: Math.round((Date.now() - t0) / 1000), parallel, code: code.exe, host: os.hostname(), cpus: os.cpus().length,
     loadBefore: loadBefore && Math.round(loadBefore.load), noWebGl: out.filter((s) => s.attempts > 1 || s.noGl).map((s) => s.name),
-    scenarios: out.map((s) => ({ name: s.name, ms: s.ms, attempts: s.attempts, failed: s.results.filter((x) => !x.ok).length, results: s.results.length })),
+    scenarios: out.map((s) => ({ name: s.name, ms: s.ms, attempts: s.attempts, failed: s.results.filter((x) => !x.ok).length, timeouts: s.results.filter((x) => x.timeout).length, results: s.results.length })),
     tests: all,
   };
   const file = opt('--json') || path.join(H.OUT, `scenarios-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
   fs.writeFileSync(file, JSON.stringify(res, null, 1));
   console.log('\nscenario               s    results  failed');
   for (const s of res.scenarios.sort((a, b) => b.ms - a.ms)) console.log(`${s.name.padEnd(22)} ${String(Math.round(s.ms / 1000)).padStart(4)}  ${String(s.results).padStart(7)}  ${s.failed || ''}${s.attempts > 1 ? '  (no WebGL2 in the first instance)' : ''}`);
-  for (const r of failed) console.log(`FAIL ${r.name}: ${(r.problems || []).join('; ')}`);
-  console.log(`\nlayer vscode: ${all.length - failed.length} passed, ${failed.length} failed of ${all.length} in ${out.length} scenarios, ${res.seconds} s wall, ${parallel} at a time${res.noWebGl.length ? `; instances without WebGL2: ${res.noWebGl.join(', ')}` : ''}; ${file}`);
+  for (const r of failed) console.log(`${r.timeout ? 'TIMEOUT' : 'FAIL'} ${r.name}: ${(r.problems || []).join('; ')}`);
+  const hung = failed.filter((r) => r.timeout);
+  console.log(`\nlayer vscode: ${all.length - failed.length} passed, ${failed.length} failed${hung.length ? ` (${hung.length} TIMEOUT)` : ''} of ${all.length} in ${out.length} scenarios, ${res.seconds} s wall, ${parallel} at a time${res.noWebGl.length ? `; instances without WebGL2: ${res.noWebGl.join(', ')}` : ''}; ${file}`);
   return failed.length ? 1 : 0;
 }
 

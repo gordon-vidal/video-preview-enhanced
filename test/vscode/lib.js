@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const media = require('../media/make_cases_media');
+const { tightFirstFrame } = require('./hidden');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -115,13 +116,16 @@ class Player {
     const t0 = Date.now();
     const from = this.vs.mark();
     let s;
-    for (;;) {
-      s = await this.state();
-      if (await pred(s)) return s;
-      if (!allowErrors) { const e = pageError(this.vs, from, this.name); if (e) throw new Error(`${this.name}: page error while waiting for ${what}: ${e}`); }
-      if (Date.now() - t0 > timeout) throw new Error(`${this.name}: timeout (${timeout / 1000} s) waiting for ${what}; last: ${JSON.stringify(brief(s))}`);
-      await sleep(interval);
-    }
+    this.vs.polling = { what: `${this.name}: ${what}`, t0 };
+    try {
+      for (;;) {
+        s = await this.state();
+        if (await pred(s)) return s;
+        if (!allowErrors) { const e = pageError(this.vs, from, this.name); if (e) throw new Error(`${this.name}: page error while waiting for ${what}: ${e}`); }
+        if (Date.now() - t0 > timeout) throw new Error(`${this.name}: TIMEOUT after ${timeout / 1000} s waiting for ${what}; last: ${JSON.stringify(brief(s))}`);
+        await sleep(interval);
+      }
+    } finally { this.vs.polling = null; }
   }
 
   /** The picture is on screen (engine's first frame, a frame player's canvas) or an error message is up. */
@@ -131,6 +135,7 @@ class Player {
    * ("player says -1", "reading 'toFixed'") and hide why.
    */
   async waitFirstFrame(timeout = 30000, { allowError = false } = {}) {
+    timeout = tightFirstFrame(timeout, `${this.name} first frame`);
     const s = await this.waitState(pictureOrError, { timeout, what: 'first frame' });
     if (!allowError && !s.firstShown && ERR.test(s.message || '')) throw new Error(`${this.name}: no first frame; page says "${s.message}"${s.hint ? ` (${s.hint})` : ''}`);
     return s;
@@ -230,15 +235,16 @@ const pictureOrError = (s) => s.firstShown || (!s.engine && s.canvas[0] > 0 && !
  */
 async function open(vs, h, file, { until = pictureOrError, timeout = 40000 } = {}) {
   const P = new Player(vs, h, file);
+  if (until === pictureOrError) timeout = tightFirstFrame(timeout, `${P.name} first frame`);
   P.fromMark = await h.openClip(vs, P.file);
   if (until) {
     // The page answers `state` once its script runs; until then nothing comes back, so just poll.
     const t0 = Date.now();
     for (;;) {
       let s = null;
-      try { s = await P.ask('state', {}, 4000); } catch { /* not up yet */ }
+      try { s = await P.ask('state', {}, 4000); } catch (e) { if (/no WebGL2/.test(e.message)) throw e; /* else: not up yet */ }
       if (s && until(s)) { P.first = s; break; }
-      if (Date.now() - t0 > timeout) throw new Error(`${P.name}: nothing to wait for within ${timeout / 1000} s${s ? ` (${JSON.stringify(brief(s))})` : ''}`);
+      if (Date.now() - t0 > timeout) throw new Error(`${P.name}: TIMEOUT after ${timeout / 1000} s waiting for the page to open${s ? ` (${JSON.stringify(brief(s))})` : ' (no answer from the page)'}`);
       await sleep(300);
     }
   }

@@ -15,7 +15,7 @@ const PLAYER = ['media/player.js', 'media/controls.js', 'media/modes.js', 'media
 const ENGINE = ['media/engine.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
 const HOST = ['src/extension.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
-const COMPARE = ['src/compare.js', 'src/addmode.js', 'src/comparepick.js', 'media/compare.js', 'media/compare.css'];
+const COMPARE = ['src/compare.js', 'src/addmode.js', 'src/comparepick.js', 'media/compare.js', 'media/compare.css', 'media/compare-grid.js'];
 
 module.exports = [
   {
@@ -97,6 +97,18 @@ module.exports = [
     steps: [{ case: 'multiview-native' }, { case: 'multiview-native-fallback' }],
   },
   {
+    name: 'multiview-large',
+    journey: 'More than 4 videos (experimental setting compare.maxVideos): 9 then 16 tiles on the GPU and built-in decoders with one shared renderer; lockstep, offsets, clock, play, remove, add, close',
+    sources: [...COMPARE, ...ENGINE],
+    steps: [{ case: 'multiview-large' }],
+  },
+  {
+    name: 'multiview-large-native',
+    journey: '9 and 16 native ffmpeg tiles: frames at the cell size over WebSockets on one port, the shared budget, offsets, playing in step, a seek through a resize',
+    sources: [...COMPARE, ...NATIVE, 'src/decide.js'],
+    steps: [{ case: 'multiview-large-native' }],
+  },
+  {
     name: 'native',
     journey: 'With ffmpeg: native decoding plays, frames sized to the picture and grown on resize / zoom, the message fallback, About this video',
     sources: [...NATIVE, 'src/decide.js', 'src/extension.js', 'media/framestream.js', 'media/engine.js', 'media/player.js'],
@@ -149,8 +161,8 @@ module.exports = [
   {
     name: 'remote-stream',
     journey: 'Remote windows: formats the GPU decoder can\'t play are re-encoded to H.264 by ffmpeg; seeks, scrubbing, the quality ladder, pixel tools',
-    sources: ['src/remotestream.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/player.js'],
-    steps: [{ case: 'remote_stream' }, { case: 'remote_stream_long' }, { case: 'remote_stream_fallback' }],
+    sources: ['src/remotestream.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/player.js'],
+    steps: [{ case: 'remote_stream' }, { case: 'remote_stream_long' }, { case: 'remote_stream_size' }, { case: 'remote_stream_fallback' }],
   },
   {
     name: 'file-icons',

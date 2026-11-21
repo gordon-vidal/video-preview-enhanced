@@ -1143,6 +1143,9 @@
           showMessage('Opening…');
         } catch (err) {
           log(`decoder could not start: ${err && err.message || err}`);
+          // The failed engine had already shown its (empty) canvas: a black or, in forced-colours themes, a white
+          // box under the message. Hide it so the message reads on the stage in the theme's colours.
+          canvas.hidden = true;
           showMessage('The decoder could not start.', String(err && err.message || err));
         }
         break;

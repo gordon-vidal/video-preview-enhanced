@@ -1,12 +1,14 @@
 /* global createEngine, VpeControls, VpeModes */
 // @ts-check
-// Compare / multi-view: 2-4 videos on one transport, frame accurate, with the player's own bar and
-// panels (docs/notes/compare-ui.md, the approved mock-up).
+// Compare / multi-view: 2-4 videos (up to 16 with the experimental setting compare.maxVideos) on one
+// transport, frame accurate, with the player's own bar and panels (docs/notes/compare-ui.md, the approved
+// mock-up; docs/notes/multiview-engine.md for more than 4).
 //
 // Design:
 // - One LibavPlayer engine per tile (engine.js, used as it is), each with its own detached
-//   canvas and message key ('A'-'D'), so the host serves each file's blocks, or runs native
-//   ffmpeg for that tile with frames at the tile's size.
+//   canvas and message key ('A'-'P'), so the host serves each file's blocks, or runs native
+//   ffmpeg for that tile with frames at the tile's size. From 5 tiles on, the engines share one
+//   WebGL renderer (sharedRenderer) and split fixed memory budgets (media/compare-grid.js).
 // - One tile is the clock (the first by default): its own clock (audio, or timer) drives
 //   playback, frame steps move it and the seek bar counts its frames. Every other tile follows:
 //   its clock is replaced by the clock's time plus the offsets (per tile, in ms or in that tile's
@@ -16,7 +18,8 @@
 //   and the view only updates once every tile shows its frame, so a step always shows matching frames.
 // - One visible WebGL2 canvas covers the picture area and draws each tile's engine canvas (uploaded
 //   as a texture when it changes, mipmapped) fitted into its cell: 2 tiles side by side or split
-//   (one picture, a draggable divider); 3-4 tiles a 2x2 grid (with an "Add video" cell for 3).
+//   (one picture, a draggable divider); 3-4 tiles a 2x2 grid (with an "Add video" cell for 3); more a
+//   plain automatic grid (3x2, 3x3, 4x3, 4x4).
 //   Over each cell, a DOM layer shows on hover: the name pill (letter, name, clock / sound, the
 //   tile's frame number) and the ‹ offset › nudge. Right-click on a tile: that tile's actions.
 // - The bar is the player's (src/bar.js); the panels are the player's (media/controls.js) plus the
@@ -45,10 +48,14 @@
     overlay: $('overlay'), message: $('message'), hint: $('hint'),
   };
   const names = cfg.names || ['A', 'B'];
-  /** Tiles in this panel (2-4; the code below works with any count, the layouts stop at 4). */
+  const Grid = /** @type {any} */ (globalThis).CompareGrid;
+  /** Tiles in this panel (2-4; up to 16 with the experimental setting compare.maxVideos). */
   const N = names.length;
-  const KEYS = 'ABCD';
-  const MAX_TILES = 4;
+  const KEYS = Grid.TILE_KEYS;
+  /** Videos this panel may show (the setting; the host enforces it too). */
+  const MAX_TILES = Math.max(N, Grid.clampMax(cfg.maxVideos));
+  /** 5 tiles or more: one shared renderer, divided budgets, a plain grid. 2-4 tiles are unchanged. */
+  const largeGrid = Grid.isLarge(N);
   /** Metrics and the difference search: kept in code for a future advanced mode; only debug builds run them. */
   const INTERNAL = !!cfg.debug;
 
@@ -152,14 +159,16 @@
       onReady: () => onEngineReady(key),
       onMeta: () => onEngineMeta(key),
       wake: () => wakeLoop(),
+      createRenderer: largeGrid && !quiet ? (Renderer) => sharedRenderer(Renderer, cv, file) : undefined,
     };
     const eng = createEngine(env);
-    const p = new eng.LibavPlayer({ size: sizes[file], duration: 0, label: '', native: !quiet && !!nativeTiles[file] }, { ...cfg.engine, mem: tileMem(), rotation: (cfg.rotation || [])[file] || 0 });
+    const p = new eng.LibavPlayer({ size: sizes[file], duration: 0, label: '', native: !quiet && !!nativeTiles[file] },
+      { ...cfg.engine, mem: memory.engine, rotation: (cfg.rotation || [])[file] || 0, ...(largeGrid ? { largeGrid: true } : {}) });
     p.cv = cv;
     p.key = key;
     p.budget = () => budget;
     p.setLoop(false);
-    captureLuma(p);
+    if (!largeGrid) captureLuma(p); // metrics are for 2 videos; a clone of every frame of 16 tiles is not free
     if (quiet) {
       const streams = p.onStreams.bind(p);
       p.onStreams = (info) => streams({ ...info, audio: null });
@@ -260,15 +269,12 @@
 
   // Memory: the host sizes budgets from the machine (media/membudget.js; null in remote windows = the
   // 32 GB values). Every tile runs its own decoders, so they share the machine's budget (review 2026-11-19-3 M3).
-  const MEM = cfg.engine && cfg.engine.mem;
-  /** This machine's share of a 32 GB machine's frame budget (1 there or when unknown). */
-  const memScale = () => (MEM && MEM.frames > 0 ? Math.min(1, MEM.frames / 400e6) : 1);
-  /** One tile's engine budgets: the pool, workers and caches split among the tiles shown. */
-  const tileMem = () => {
-    if (!MEM) return undefined;
-    const n = Math.max(1, N);
-    return { ...MEM, frames: MEM.frames / n, pool: MEM.pool / n, workers: Math.max(1, Math.floor(MEM.workers / n)), blocks: Math.max(16e6, MEM.blocks / n), thumbs: MEM.thumbs / n };
-  };
+  // A large grid in a remote window sizes from this client's memory: 16 tiles at the 32 GB defaults would be 6 GB.
+  const MemBudget = /** @type {any} */ (globalThis).MemBudget;
+  const MEM = (cfg.engine && cfg.engine.mem)
+    || (largeGrid && MemBudget ? MemBudget.fromDeviceMemory(/** @type {any} */ (navigator).deviceMemory) : null);
+  /** Each tile's budgets (media/compare-grid.js): frames it keeps decoded, its engine's mem. */
+  const memory = Grid.tileMemory(MEM, N);
   const fpsOf = (p) => (p && p.fps) || 30;
   /** Index of the shown frame; unlike currentFrame() also right before the frame count is known. */
   const frameOf = (p) => (p.shownT === null ? 0 : Math.max(0, Math.floor(p.rel(p.shownT) * fpsOf(p) + 0.01)));
@@ -299,6 +305,7 @@
   function onEngineMeta(key) {
     if (clock && key === clock.key) ui.seek.max = String(Math.max(0, (clock.n || 1) - 1));
     infoDirty = true;
+    if (largeGrid && key === KEYS[0]) requestTileSize(); // the first tile's shape sizes the native tiles
     // A frame offset synced with the assumed 30 fps is redone with the real rate (review 2026-11-19 #7).
     const i = tiles.findIndex((p) => p.key === key);
     if (i < 0) return;
@@ -496,7 +503,7 @@
 
   // Each tile is drawn into its own rectangle of the stage-sized canvas (viewport), the split's second
   // tile clipped to the right of the divider (scissor). Tile i's picture is texture slot i.
-  const SLOTS = MAX_TILES;
+  const SLOTS = N;
   const DRAW_FS = `#version 300 es
     precision highp float;
     in vec2 uv; out vec4 o; uniform sampler2D t; uniform vec4 win;
@@ -562,6 +569,46 @@
       }
       gl.disable(gl.SCISSOR_TEST);
     }
+  }
+
+  // A WebGL context per engine plus the compositor's would pass Chromium's 16 per page (the oldest is
+  // lost). From 5 tiles on, one renderer on a scratch canvas draws each tile's frame when its engine
+  // shows it, and the result goes straight into that tile's compositor texture; the engine's own
+  // canvas only keeps the size (no context). Buffer recycling and colour state stay per tile.
+  let scratch = null, renderer = null;
+  function sharedRenderer(Renderer, cv, slot) {
+    if (!renderer) {
+      scratch = document.createElement('canvas');
+      renderer = new Renderer(scratch);
+      renderer.maxPixels = Grid.texturePixels(N); // all tiles' textures together: one 4K picture
+    }
+    let rotation = 0;
+    let held = null;
+    const out = {
+      norm16: renderer.norm16, hdrPeak: 0, hdr: 0, onUploaded: null, twin: null, gl: null,
+      get rot() { return rotation; },
+      setRotation(deg) { rotation = [90, 180, 270].includes(deg) ? deg : 0; },
+      prepareNative(w, h) {
+        const r = rotation % 180 ? [h, w] : [w, h];
+        const c = Grid.capSize(r[0], r[1], renderer ? renderer.maxPixels : 0);
+        if (cv.width !== c.w || cv.height !== c.h) { cv.width = c.w; cv.height = c.h; }
+      },
+      drawYuv(f) { draw(() => renderer.drawYuv(f)); },
+      drawFrame(vf) { draw(() => renderer.drawFrame(vf)); },
+    };
+    function draw(render) {
+      if (!renderer || !comp) return;
+      renderer.setRotation(rotation);
+      renderer.hdrPeak = out.hdrPeak;
+      renderer.heldBuf = held;
+      renderer.onUploaded = out.onUploaded;
+      render();
+      held = renderer.heldBuf;
+      out.hdr = renderer.hdr;
+      if (cv.width !== scratch.width || cv.height !== scratch.height) { cv.width = scratch.width; cv.height = scratch.height; }
+      comp.upload(slot, scratch);
+    }
+    return out;
   }
 
   // ---- metrics ----------------------------------------------------------------------
@@ -792,12 +839,14 @@
       const w = (W - GAP) / 2;
       return pairOrder().map((i, k) => ({ x: k * (w + GAP), y: 0, w, h: H, tiles: [i], ...placed(i, k * (w + GAP), 0, w, H) }));
     }
-    const w = (W - GAP) / 2, h = (H - GAP) / 2;
+    const { cols, rows } = Grid.gridFor(N, 'grid');
+    const w = (W - GAP * (cols - 1)) / cols, h = (H - GAP * (rows - 1)) / rows;
     const out = [];
-    for (let k = 0; k < MAX_TILES; k++) {
-      const x = (k % 2) * (w + GAP), y = Math.floor(k / 2) * (h + GAP);
+    // The first empty cell adds a video (3 of 4; in a larger grid while the setting allows more).
+    for (let k = 0; k < cols * rows; k++) {
+      const x = (k % cols) * (w + GAP), y = Math.floor(k / cols) * (h + GAP);
       if (k < N) out.push({ x, y, w, h, tiles: [k], ...placed(k, x, y, w, h) });
-      else if (k === N) out.push({ x, y, w, h, tiles: [], add: true, pic: { x, y, w, h }, full: { x, y, w, h } });
+      else if (k === N && N < MAX_TILES) out.push({ x, y, w, h, tiles: [], add: true, pic: { x, y, w, h }, full: { x, y, w, h } });
     }
     return out;
   }
@@ -984,10 +1033,8 @@
 
   function present(now) {
     if (!clock || clock.shownT === null) return;
-    if (!comp) {
-      comp = new Compositor(canvas);
-      canvas.hidden = false;
-    }
+    if (!comp) comp = new Compositor(canvas);
+    if (canvas.hidden) canvas.hidden = false;
     const paused = !clock.playing;
     const cRel = clock.rel(clock.shownT);
     outs = tiles.map((p, i) => p !== clock && outOfRange(p, relFor(i, cRel)));
@@ -1003,7 +1050,8 @@
     if (ready) {
       tiles.forEach((p, i) => {
         const n = p.shownCount || 0;
-        if (p.shownT !== null && n !== upCount[i]) { comp.upload(i, p.cv); upCount[i] = n; viewDirty = true; }
+        // A large grid's textures are filled by the shared renderer as each engine draws.
+        if (p.shownT !== null && n !== upCount[i]) { if (!largeGrid) comp.upload(i, p.cv); upCount[i] = n; viewDirty = true; }
       });
     }
     // A tile's picture size known (or changed): its picture rectangle changes.
@@ -1012,7 +1060,8 @@
     const ok = outs.join(',');
     if (ok !== lastOuts) { lastOuts = ok; viewDirty = true; }
     if (layoutDirty) { layoutDirty = false; layoutCells(); viewDirty = true; }
-    if (viewDirty) {
+    // A large grid's textures already hold the newest frames: draw only a matching set (paused lockstep).
+    if (viewDirty && (!largeGrid || ready)) {
       viewDirty = false;
       draw();
       infoDirty = true;
@@ -1073,10 +1122,12 @@
 
   function tileSize() {
     const dpr = window.devicePixelRatio || 1;
+    const { cols, rows } = Grid.gridFor(N, st.mode);
     return {
       w: Math.floor(stage.clientWidth * dpr), h: Math.floor(stage.clientHeight * dpr),
-      cols: st.mode === 'grid' || st.mode === 'side' ? 2 : 1,
-      rows: st.mode === 'grid' ? 2 : 1,
+      cols, rows,
+      // A large grid's first tile may be built-in (no ffprobe on the host): the page says its shape.
+      ...(largeGrid ? { aspect: Math.round(aspectOf(0) * 1e4) / 1e4 } : {}),
       rate: st.rate, factor: frameFactor(),
     };
   }
@@ -1349,7 +1400,20 @@
     const p = tiles[i];
     if (!p) return;
     pause();
+    // A large grid's engine canvases hold no picture (sharedRenderer): the tile as drawn in the view.
+    if (largeGrid) { copyTileView(i); return; }
     copyCanvas(p.snapshotSource ? p.snapshotSource() : p.cv, `Frame of ${KEYS[i]}`);
+  }
+  function copyTileView(i) {
+    const c = cells.find((x) => !x.add && x.tiles[0] === i);
+    if (!comp || !c || !(c.pic.w > 0 && c.pic.h > 0)) return;
+    draw();
+    const dpr = window.devicePixelRatio || 1;
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(c.pic.w * dpr));
+    out.height = Math.max(1, Math.round(c.pic.h * dpr));
+    out.getContext('2d').drawImage(canvas, Math.round(c.pic.x * dpr), Math.round(c.pic.y * dpr), out.width, out.height, 0, 0, out.width, out.height);
+    copyCanvas(out, `Frame of ${KEYS[i]}`);
   }
   function copyTileTime(i) {
     const text = fmtTime(tileTime(i));
@@ -1812,8 +1876,8 @@
       this.started = false;
       this.found = null;
       this.d = offSec(1) - offSec(0); // B against A, seconds
-      this.sA = makeEngine('sA', { quiet: true, budget: 96e6 * memScale() });
-      this.sB = makeEngine('sB', { quiet: true, budget: 96e6 * memScale() });
+      this.sA = makeEngine('sA', { quiet: true, budget: 96e6 * memory.scale });
+      this.sB = makeEngine('sB', { quiet: true, budget: 96e6 * memory.scale });
       this.timer = setTimeout(() => this.loop(), 20);
     },
     onReady() { /* the loop polls */ },
@@ -1895,9 +1959,9 @@
       } catch (e) { log(`dispose ${p.key}: ${e && e.message || e}`); }
       delete engines[p.key];
     }
-    for (const r of [comp, metrics]) r?.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    for (const r of [comp, metrics, renderer]) r?.gl?.getExtension('WEBGL_lose_context')?.loseContext();
     tiles = [];
-    clock = comp = metrics = null;
+    clock = comp = metrics = renderer = scratch = null;
   }
   window.addEventListener('pagehide', disposeEngines, { once: true });
 
@@ -1959,8 +2023,9 @@
         sizes = m.sizes;
         nativeTiles = m.native || nativeTiles;
         try {
-          const budget = (N <= 2 ? 250e6 : 120e6) * memScale(); // decoded frames kept per tile
-          tiles = names.map((_, i) => makeEngine(KEYS[i], { quiet: false, budget }));
+          // The shared renderer of a large grid draws into the compositor's textures from the first frame.
+          if (largeGrid && !comp) comp = new Compositor(canvas);
+          tiles = names.map((_, i) => makeEngine(KEYS[i], { quiet: false, budget: memory.frames }));
           setClock(st.clock, true);
         } catch (err) {
           disposeEngines();
@@ -2034,7 +2099,10 @@
   // Test hook (VPE_LOG only): the host forwards debug messages from the test runner.
   function report() {
     const per = (f) => tiles.map(f).join(',');
-    log(`compare report n=${N} mode=${st.mode} modes=${N > 2 ? 'grid' : 'side,split'} canvas=${canvas.width}x${canvas.height}`
+    const g = Grid.gridFor(N, st.mode);
+    log(`compare report n=${N} mode=${st.mode} modes=${N > 2 ? 'grid' : 'side,split'} canvas=${canvas.width}x${canvas.height} grid=${g.cols}x${g.rows} max=${MAX_TILES} now=${Math.round(performance.now())}`
+      // WebGL contexts in use: the compositor, the shared renderer (5+ tiles), each engine's own (2-4 tiles), metrics.
+      + ` contexts=${[comp, renderer, metrics].filter(Boolean).length + tiles.filter((p) => p.gl && p.gl.gl).length}`
       + ` frame=${clock ? clock.currentFrame() + 1 : '-'} clock=${st.clock} sound=${st.sound} muted=${st.muted} split=${st.split.toFixed(3)} swap=${st.swap}`
       + ` playing=${per((p) => (p.playing ? 1 : 0))} frames=${per((p) => (p.shownT === null ? '-' : frameOf(p) + 1))} shown=${per((p) => p.shownCount || 0)}`
       + ` synced=${synced()} native=${per((p) => (p.cfg.native ? 1 : 0))} heights=${per((p) => p.cv.height || 0)} fps=${per((p) => fpsOf(p).toFixed(2))}`
@@ -2137,11 +2205,13 @@
         }
         case 'scan': if (m.thresh) st.thresh = Number(m.thresh); scanner.start(); break;
         case 'leave': leave(m.tile); break;
-        case 'stageSize':
+        case 'stageSize': { // CSS pixels, or device pixels with `physical`
+          const dpr = m.physical ? window.devicePixelRatio || 1 : 1;
           stage.style.flex = m.w ? 'none' : '';
-          stage.style.width = m.w ? `${m.w}px` : '';
-          stage.style.height = m.h ? `${m.h}px` : '';
+          stage.style.width = m.w ? `${m.w / dpr}px` : '';
+          stage.style.height = m.h ? `${m.h / dpr}px` : '';
           break;
+        }
         case 'report': setTimeout(report, m.delay || 400); break;
         case 'ui': setTimeout(() => log(`compare ui ${JSON.stringify({ id: m.id, ...uiState() })}`), m.delay || 50); break;
         case 'a11y': { // names and states of the bar's buttons, the live region, focus

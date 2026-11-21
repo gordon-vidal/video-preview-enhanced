@@ -50,7 +50,7 @@ function shouldOffer(ctx) {
 
 const OFFER_DOWNLOAD = 'Download ffmpeg';
 const OFFER_LATER = 'Not now';
-const OFFER_NEVER = "Don't ask again";
+const OFFER_NEVER = "Don't Show Again";
 
 function offerText({ codec, host, mb }) {
   const what = codec ? String(codec).toUpperCase() : 'This video';
@@ -59,7 +59,7 @@ function offerText({ codec, host, mb }) {
     `into the extension's folder on ${host}?`;
 }
 
-/** globalState OFFER_KEY after an answer: "Don't ask again" is kept per remote. */
+/** globalState OFFER_KEY after an answer: "Don't Show Again" is kept per remote. */
 function afterOffer(state, key, answer, now = Date.now()) {
   const next = { ...(state || {}) };
   next[key] = { at: now, answer: answer === OFFER_DOWNLOAD ? 'download' : answer === OFFER_NEVER ? 'never' : 'later', never: answer === OFFER_NEVER };

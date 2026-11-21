@@ -87,6 +87,7 @@ self.onmessage = (e) => {
     try {
       switch (m.type) {
         case 'init': return await init(m);
+        case 'remoteAudio': return await remoteAudio(m);
         case 'open': return await open(m);
         case 'config': return await configure(m);
         case 'more': return await more(m);
@@ -100,19 +101,39 @@ self.onmessage = (e) => {
         default: return undefined;
       }
     } catch (err) {
-      post({ type: 'error', where: m.type, message: String(err && err.message || err), stack: err && err.stack });
+      post({ type: 'error', where: m.type, id: m.id, message: String(err && err.message || err), stack: err && err.stack });
       return undefined;
     }
   });
 };
 
+/**
+ * The page compiled the decoder once and sent the WebAssembly.Module: V8 shares its compiled code between
+ * the workers, so each extra worker (pool, thumbnails) skips the compile. libav.js's own loader fetches
+ * and compiles the wasm by URL with instantiateStreaming; this answers that one call from the module
+ * (any failure falls back to the URL path).
+ */
+function useSharedModule(mod) {
+  if (!mod || typeof WebAssembly.instantiateStreaming !== 'function') return () => {};
+  const orig = WebAssembly.instantiateStreaming;
+  WebAssembly.instantiateStreaming = async function (source, imports) {
+    WebAssembly.instantiateStreaming = orig;
+    try { return { module: mod, instance: await WebAssembly.instantiate(mod, imports) }; } catch (e) { return orig.call(WebAssembly, source, imports); }
+  };
+  return () => { if (WebAssembly.instantiateStreaming !== orig) WebAssembly.instantiateStreaming = orig; };
+}
+
 async function init(m) {
   const t0 = performance.now();
   if (m.freeBytes > 0) FREE_BYTES = m.freeBytes;
+  if (m.strictFreeBytes) FREE_MIN = 0;
   self.LibAV = {};
   importScripts(m.loader);
-  libav = await self.LibAV.LibAV({ noworker: true, nothreads: true, toImport: m.toImport, wasmurl: m.wasmurl, variant: m.variant });
-  log(`init: libav ready (${libav.libavjsMode}) in ${Math.round(performance.now() - t0)} ms`);
+  const restore = useSharedModule(m.wasmModule);
+  try {
+    libav = await self.LibAV.LibAV({ noworker: true, nothreads: true, toImport: m.toImport, wasmurl: m.wasmurl, variant: m.variant });
+  } finally { restore(); }
+  log(`init: libav ready (${libav.libavjsMode}${m.wasmModule ? ", shared module" : ""}) in ${Math.round(performance.now() - t0)} ms`);
   post({ type: 'ready', mode: libav.libavjsMode });
 }
 
@@ -247,6 +268,7 @@ async function describe(format) {
 // ('recycle'), so steady playback allocates no new frame memory.
 const FREE = []; // returned ArrayBuffers, newest last
 let FREE_BYTES = 64e6; // keep at most this much (but two buffers at any size); 'init' sets it from the machine's memory
+let FREE_MIN = 2; // compare's large grid: 0, so 16 tiles of 4K frames still fit their shared budget
 
 function recycle(bufs) {
   for (const b of bufs || []) {
@@ -255,7 +277,7 @@ function recycle(bufs) {
     // Drop the oldest (e.g. a size no longer in use) beyond the cap.
     let bytes = 0;
     for (const x of FREE) bytes += x.byteLength;
-    while (FREE.length > 2 && bytes > FREE_BYTES) bytes -= FREE.shift().byteLength;
+    while (FREE.length > FREE_MIN && bytes > FREE_BYTES) bytes -= FREE.shift().byteLength;
   }
 }
 
@@ -1144,3 +1166,35 @@ async function xrayChapters() {
   return out.sort((a, b) => a.start - b.start);
 }
 // ---- end xray
+
+// Remote Opus batches include 80 ms of preroll and explicit sample trimming. No WebCodecs
+// audio support is needed, and a seek cannot inherit decoder state from the previous timeline.
+async function remoteAudio(m) {
+  const audio = [];
+  for (const it of m.audio) {
+    if (it.kind !== 'opus') { audio.push(it); continue; }
+    const [, c, pkt, frame] = await libav.ff_init_decoder('opus', {
+      codecpar: { codec_type: 1, sample_rate: 48000, channels: 2, channel_layout: 3, extradata: it.head },
+      time_base: [1, 48000],
+    });
+    try {
+      const frames = await libav.ff_decode_multi(c, pkt, frame,
+        it.packets.map((data) => ({ data })), { fin: true });
+      const planes = [new Float32Array(it.samples), new Float32Array(it.samples)];
+      let pos = 0;
+      for (const f of frames) {
+        const decoded = audioToFloat(f);
+        const lo = Math.max(0, it.skip - pos);
+        const hi = Math.min(f.nb_samples, it.skip + it.samples - pos);
+        if (hi > lo) for (let ch = 0; ch < 2; ch++) {
+          planes[ch].set(decoded[ch].subarray(lo, hi), pos + lo - it.skip);
+        }
+        pos += f.nb_samples;
+      }
+      if (pos < it.skip + it.samples) throw new Error('Short remote Opus decode');
+      audio.push({ kind: 'pcm', t: it.t, sampleRate: 48000, planes });
+    } finally { await libav.ff_free_decoder(c, pkt, frame); }
+  }
+  post({ type: 'remoteAudio', id: m.id, audio },
+    audio.flatMap((it) => (it.planes || []).map((p) => p.buffer)));
+}

@@ -8,9 +8,15 @@ const { spawn } = require('child_process');
 const ff = require('./ffmpeg');
 const hw = require('./hwaccel');
 const frameserver = require('./frameserver');
+const Grid = require('../media/compare-grid');
 
 const MAX_QUEUED_FRAMES = 12; // on a 32 GB machine; less on smaller ones (opts.maxQueued, media/membudget.js)
+// Sound goes out at the page's AudioContext rate (the page tells us when it makes one; else 48 kHz):
+// Web Audio resamples a buffer of any other rate itself, but ffmpeg's resampler is better and it
+// is one step less. A rate told mid-run applies from the next start of ffmpeg (startAt).
 const AUDIO_RATE = 48000;
+let lastAudioRate = AUDIO_RATE; // the last rate a page told: later files of the window start with it
+const sane = (r) => (Number.isFinite(r) && r >= 8000 && r <= 192000 ? Math.round(r) : 0);
 const STANDBY_MS = 20000;
 // The webview has this long to connect to the frame server before frames go by postMessage.
 const CONNECT_MS = 3000;
@@ -48,11 +54,14 @@ class NativeDecoder {
    * maxHeight: the frame size cap; messageMaxHeight: a lower cap when frames go by postMessage
    * (decided when the transport settles or changes).
    */
-  constructor({ tools, file, input, post, postRaw, log, maxHeight, messageMaxHeight, method, methodGuessed, onFail, probed, stats, transport, origin, maxQueued, onMessages, fitView, view }) {
+  constructor({ tools, file, input, post, postRaw, log, maxHeight, messageMaxHeight, method, methodGuessed, onFail, probed, stats, transport, origin, maxQueued, onMessages, fitView, view, largeGrid = false }) {
     this.transport = transport || 'message';
     this.onMessages = onMessages; // told once frames fall back to messages mid-play (compare re-sizes every tile)
     this.origin = origin;
     this.maxQueued = maxQueued > 0 ? maxQueued : MAX_QUEUED_FRAMES;
+    // A tile of compare's large grid (5-16 videos, media/compare-grid.js): fewer frames in flight, no loop standby.
+    this.largeGrid = !!largeGrid;
+    this.credit = Grid.nativeCredits(this.largeGrid);
     this.messageMaxHeight = messageMaxHeight || maxHeight || 1080;
     this.link = 'message'; // 'pending' (waiting for the webview to connect), 'stream', 'message'
     this.tools = tools;
@@ -127,6 +136,7 @@ class NativeDecoder {
       case 'transport': return this.toMessages(`webview: ${String(m.failed || 'failed').slice(0, 200)}`);
       case 'view': return this.setView(m);
       case 'hidden': return this.setHidden(!!m.on);
+      case 'audioRate': { const r = sane(m.rate); if (r) { lastAudioRate = r; if (r !== (this.nextRate || this.rate)) this.takeStandby(NaN); this.nextRate = r; } return undefined; }
       default: return undefined;
     }
   }
@@ -187,7 +197,7 @@ class NativeDecoder {
         duration: pr.duration,
         native: true,
         video: pr.video ? { codec: pr.video.codec, width: this.w, height: this.h, format: 0, sourceWidth: pr.video.width, sourceHeight: pr.video.height, pixFmt: pr.video.pixFmt, fps: this.fps, bitRate: pr.video.bitRate || 0, ...colourTags(pr.video), ...(this.deep ? { depth: 10 } : {}), ...(pr.video.dv ? { dv: pr.video.dv } : {}) } : null,
-        audio: pr.audio ? { codec: pr.audio.codec, sampleRate: AUDIO_RATE, channels: 2, sourceRate: pr.audio.sampleRate || 0, sourceChannels: pr.audio.channels || 0, bitRate: pr.audio.bitRate || 0 } : null,
+        audio: pr.audio ? { codec: pr.audio.codec, sampleRate: this.rate || lastAudioRate, channels: 2, sourceRate: pr.audio.sampleRate || 0, sourceChannels: pr.audio.channels || 0, bitRate: pr.audio.bitRate || 0 } : null,
         // For the player's "About this video" panel (media/controls.js facts).
         method: this.method, trackCounts: pr.counts || null,
       },
@@ -311,7 +321,8 @@ class NativeDecoder {
     this.link = 'message';
     this.log(`native transport: message (${why})`);
     this.settled();
-    if (this.onMessages && restart) setTimeout(() => { if (!this.disposed && this.onMessages) this.onMessages(); }, 0);
+    // A large grid re-sizes all its tiles together for the message budget, also before ffmpeg starts.
+    if (this.onMessages && (restart || this.largeGrid)) setTimeout(() => { if (!this.disposed && this.onMessages) this.onMessages(); }, 0);
     // open() will choose the message size before starting ffmpeg; after a hidden tab stopped it, the next seek does.
     if (!restart) { if (this.fps && this.w) this.resizePending = true; return; }
 
@@ -333,6 +344,7 @@ class NativeDecoder {
     this.base = t;
     this.frameIndex = 0;
     this.samples = 0;
+    this.rate = this.nextRate || lastAudioRate;
     this.frames = [];
     this.pending = Buffer.alloc(0);
     this.audioChunks = [];
@@ -430,7 +442,8 @@ class NativeDecoder {
       }
       this.ended = true;
       this.flushWaiting();
-      if (!failed && proc === this.proc) this.prepareLoop();
+      // 16 waiting ffmpegs (one per tile) cost more than a loop's start-up saves.
+      if (!failed && proc === this.proc && !this.largeGrid) this.prepareLoop();
     };
     proc.on('error', (error) => finish(null, null, error));
     proc.on('close', (code, signal) => finish(code, signal));
@@ -461,7 +474,7 @@ class NativeDecoder {
       args.push('-map', `0:${v.index}`, '-vf', hw.videoFilter(this.method, this.w, this.h, gpuFilter, hw.depthOf(v.pixFmt, v.codec), this.deep ? 'yuv420p10le' : 'yuv420p'),
         ...(modern ? ['-fps_mode', 'cfr'] : ['-vsync', 'cfr']), '-r', String(this.fps), '-f', 'rawvideo', 'pipe:1');
     }
-    if (a) args.push('-map', `0:${a.index}`, '-ac', '2', '-ar', String(AUDIO_RATE), '-f', 'f32le', 'pipe:3');
+    if (a) args.push('-map', `0:${a.index}`, '-ac', '2', '-ar', String(this.rate), '-f', 'f32le', 'pipe:3');
     const proc = ff.lowerPriority(spawn(this.tools.ffmpeg, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'pipe'] }));
     proc.t = t;
     proc.method = this.method;
@@ -509,7 +522,7 @@ class NativeDecoder {
   /** Each 'more' grants credits; frames are pushed as they arrive, up to the credits. */
   more(m) {
     if (this.recovering || m.gen !== this.gen) return;
-    this.credits = Math.min(16, (this.credits || 0) + 8);
+    this.credits = Math.min(this.credit.cap, (this.credits || 0) + this.credit.batch);
     this.flushWaiting();
   }
 
@@ -583,14 +596,14 @@ class NativeDecoder {
     if (this.proc?.gpuFilter && !this.gotOutput && !this.ended) return;
     if (this.audioBytes < 8) return;
     const all = Buffer.concat(this.audioChunks, this.audioBytes);
-    const n = Math.floor(all.length / 8); // stereo float32
+    const n = Math.floor(all.length / 8); // stereo float32, interleaved
     const rest = all.subarray(n * 8);
     this.audioChunks = rest.length ? [Buffer.from(rest)] : [];
     this.audioBytes = rest.length;
-    const l = new Float32Array(n);
-    const r = new Float32Array(n);
-    for (let i = 0; i < n; i++) { l[i] = all.readFloatLE(i * 8); r[i] = all.readFloatLE(i * 8 + 4); }
-    this.postRaw({ type: 'nda', gen, t: this.base + this.samples / AUDIO_RATE, l, r });
+    // Interleaved as ffmpeg wrote it (a copy, not a per-sample loop here): the page splits the channels.
+    const data = new Uint8Array(n * 8);
+    data.set(all.subarray(0, n * 8));
+    this.postRaw({ type: 'nda', gen, t: this.base + this.samples / this.rate, rate: this.rate, n, data });
     this.samples += n;
     if (!this.pr.video) this.credits--;
   }
@@ -631,6 +644,8 @@ class NativeDecoder {
     this.settled();
     this.kill();
     this.takeStandby(NaN);
+    this.frames = [];
+    this.audioChunks = [];
   }
 }
 

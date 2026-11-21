@@ -53,6 +53,8 @@ function createEngine(env) {
       const gl = cv.getContext('webgl2', { preserveDrawingBuffer: true, alpha: false, antialias: false });
       if (!gl) throw new Error('WebGL2 is not available');
       this.gl = gl;
+      this.cv = cv;
+      this.maxPixels = 0; // compare's shared large-grid renderer caps its output (media/compare-grid.js)
       const vs = `#version 300 es
         in vec2 p; out vec2 uv; uniform int rot;
         void main() {
@@ -163,7 +165,13 @@ function createEngine(env) {
 
     size(w, h) {
       if (this.rot === 90 || this.rot === 270) { const x = w; w = h; h = x; }
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      if (this.maxPixels && w * h > this.maxPixels) {
+        const s = Math.sqrt(this.maxPixels / (w * h));
+        w = Math.max(1, Math.floor(w * s));
+        h = Math.max(1, Math.floor(h * s));
+      }
+      const cv = this.cv;
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
       this.gl.viewport(0, 0, w, h);
     }
 
@@ -359,6 +367,14 @@ function createEngine(env) {
       const res = await get(url);
       return blobUrl(await res.arrayBuffer(), type);
     };
+    // The decoder's wasm as a blob URL (libav.js loads it by URL) and compiled once here for the workers.
+    const wasmAsset = async (url) => {
+      const buf = await (await get(url)).arrayBuffer();
+      const out = { url: blobUrl(buf, 'application/wasm'), module: null };
+      try { if (buf.byteLength) out.module = await WebAssembly.compile(buf); } catch (e) { log(`WebAssembly compile in the page failed: ${e && e.message || e}`); }
+      signal.throwIfAborted();
+      return out;
+    };
     const stem = cfg.loader.replace(/\.js$/, '');
     // Fetch all four at once, and start loading the worker while the wasm is still downloading.
     const startWorker = async () => {
@@ -368,7 +384,7 @@ function createEngine(env) {
       if (cfg.debug || env.debug) log(`memory budgets: ${mem.gb ? `${mem.gb} GB` : 'default'}: frames ${Math.round(mem.frames / 1e6)} MB, pool ${Math.round(mem.pool / 1e6)} MB, ${mem.workers} extra workers at most, blocks ${Math.round(mem.blocks / 1e6)} MB`);
       // Several WebAssembly decoders for heavy intra/short-GOP video (pool.js); one worker otherwise.
       const poolOpts = { budget: mem.pool, batchBytes: mem.batch, maxWorkers: mem.workers, ...(cfg.pool || {}), multiRead: true };
-      worker = typeof DecoderPool === 'function' ? new DecoderPool(url, poolOpts) : new Worker(url);
+      worker = !cfg.singleWorker && typeof DecoderPool === 'function' ? new DecoderPool(url, poolOpts) : new Worker(url);
       const d = { url, worker, chars: src.length, queue: [], error: null, libav: null, preloaded: false };
       worker.onmessage = (e) => d.queue.push(e.data);
       worker.onerror = (e) => { d.error = e; };
@@ -378,11 +394,20 @@ function createEngine(env) {
       startWorker(),
       asset(cfg.loader, 'text/javascript'),
       asset(`${stem}.wasm.js`, 'text/javascript'),
-      asset(`${stem}.wasm.wasm`, 'application/wasm'),
-    ]).then(([d, loader, toImport, wasmurl]) => {
+      wasmAsset(`${stem}.wasm.wasm`),
+    ]).then(([d, loader, toImport, { url: wasmurl, module: wasmModule }]) => {
       signal.throwIfAborted();
       d.libav = { loader, toImport, wasmurl, variant: cfg.variant };
-      d.worker.postMessage({ type: 'init', ...d.libav, freeBytes: mem.freeBufs });
+      // One compiled module for every worker (pool, thumbnails): the compile happens once.
+      // A large compare grid shares one buffer budget among its tiles: no two-buffer floor per worker.
+      const strict = cfg.largeGrid ? { strictFreeBytes: true } : {};
+      try {
+        d.worker.postMessage({ type: 'init', ...d.libav, ...(wasmModule ? { wasmModule } : {}), freeBytes: mem.freeBufs, ...strict });
+        if (wasmModule) d.libav.wasmModule = wasmModule;
+      } catch (e) {
+        log(`shared WebAssembly module not sent: ${e && e.message || e}`);
+        d.worker.postMessage({ type: 'init', ...d.libav, freeBytes: mem.freeBufs, ...strict });
+      }
       return d;
     }).catch((err) => { drop(); throw err; });
     return { promise, drop };
@@ -509,7 +534,9 @@ function createEngine(env) {
       this.adec = null;
       this.outCount = 0;
       canvas.hidden = false;
-      this.gl = new GLRenderer(canvas);
+      if (cfg.noWebgl) throw new Error('WebGL2 is not available'); // test hook (VPE_NO_WEBGL, with VPE_LOG)
+      // Compare's large grid draws every tile with one shared renderer (Chromium keeps 16 WebGL contexts per page).
+      this.gl = env.createRenderer ? env.createRenderer(GLRenderer) : new GLRenderer(canvas);
       this.gl.setRotation(cfg.rotation || 0);
       // Uploaded buffers go back to the decoder unless the next loop still needs them.
       this.gl.onUploaded = (buf) => {
@@ -579,8 +606,10 @@ function createEngine(env) {
 
     initBlocks() {
       // Remote windows and URLs (each block is a round trip, or an HTTP range request): larger blocks, more ahead.
-      this.blockSize = this.cfg.remote || this.cfg.net ? 4 << 20 : 1 << 20;
-      this.readAhead = this.cfg.remote || this.cfg.net ? 4 : 1;
+      // A large compare grid: small blocks for every tile, or 16 remote tiles would hold 16 x 24 MB.
+      const big = (this.cfg.remote || this.cfg.net) && !this.cfg.largeGrid;
+      this.blockSize = big ? 4 << 20 : 1 << 20;
+      this.readAhead = big ? 4 : 1;
       this.blocks = new Map(); // aligned pos -> Uint8Array
       this.inflight = new Set();
       this.wantReads = new Map(); // reader id (pool worker, 0 for one worker) -> {pos, len} it waits for
@@ -977,6 +1006,8 @@ function createEngine(env) {
     ensureAudio() {
       if (!this.info.audio || this.ac) return;
       this.ac = new AudioContext({ latencyHint: 'playback' });
+      // Native ffmpeg resamples to the context's own rate (from its next start) instead of 48 kHz.
+      if (this.cfg.native && !this.remoteStream) this.worker.postMessage({ type: 'audioRate', rate: this.ac.sampleRate });
       this.gain = this.ac.createGain();
       this.gain.connect(this.ac.destination);
       this.applyVolume();
@@ -1017,10 +1048,13 @@ function createEngine(env) {
 
     // ---- data in --------------------------------------------------------
 
-    receiveRemoteBatch(m) {
+    async receiveRemoteBatch(m) {
       const videoBytes = m.video.reduce((n, it) => n + it.data.byteLength, 0);
-      const bytes = videoBytes + m.audio.reduce((n, it) => n + it.planes.reduce((sum, p) => sum + p.byteLength, 0), 0);
-      const receive = () => {
+      const bytes = videoBytes + m.audio.reduce((n, it) => {
+        if (it.kind === 'opus') return n + it.packets.reduce((sum, p) => sum + p.byteLength, 0) + it.head.byteLength;
+        return n + (it.data ? it.data.byteLength : it.planes.reduce((sum, p) => sum + p.byteLength, 0));
+      }, 0);
+      const receive = async () => {
         if (this.disposed || m.gen !== this.gen) return;
         const w = this.remoteWindow;
         if (w && this.remoteReadAt >= w.eligibleSince) {
@@ -1030,12 +1064,55 @@ function createEngine(env) {
           w.readMs += performance.now() - this.remoteReadAt;
           w.hostWaitMs += m.hostWaitMs || 0; // the host waiting for its ffmpeg, not the link
         }
-        this.remoteVideoEnd = m.eof || m.videoEnd;
-        this.onBatch(m);
+        try {
+          if (m.audio.some((it) => it.kind === 'opus')) m.audio = await this.decodeRemoteAudio(m.audio);
+          if (this.disposed || m.gen !== this.gen) return;
+          this.remoteVideoEnd = m.eof || m.videoEnd;
+          this.onBatch(m);
+        } catch (e) {
+          if (this.disposed || m.gen !== this.gen) return;
+          log(`remote sound decode failed: ${e.message}`);
+          this.worker.postMessage({ type: 'remoteAudioFailed', message: e.message });
+        }
       };
       // The VS Code test hook paces delivery at a fixed payload rate, including PCM.
       if (this.debugRemoteRate > 0) setTimeout(receive, bytes * 1000 / this.debugRemoteRate);
       else receive();
+    }
+
+    async decodeRemoteAudio(audio) {
+      if (!this.remoteAudioBoot) {
+        const boot = bootDecoder({ ...this.cfg, singleWorker: true }, this.mem);
+        this.remoteAudioBoot = boot;
+        this.remoteAudioPending = new Map();
+        this.remoteAudioId = 0;
+        this.remoteAudioReady = boot.promise.then((d) => {
+          this.remoteAudioWorker = d.worker;
+          d.worker.onmessage = (e) => {
+            const m = e.data;
+            const pending = this.remoteAudioPending && this.remoteAudioPending.get(m.id);
+            if (pending && (m.type === 'remoteAudio' || m.type === 'error')) {
+              this.remoteAudioPending.delete(m.id);
+              if (m.type === 'error') pending.reject(new Error(m.message));
+              else {
+                if (!this.remoteAudioLogged) { log('remote sound: Opus decoded by the built-in decoder'); this.remoteAudioLogged = true; }
+                pending.resolve(m.audio);
+              }
+            }
+          };
+          d.worker.onerror = (e) => {
+            for (const pending of this.remoteAudioPending.values()) pending.reject(new Error(e.message));
+            this.remoteAudioPending.clear();
+          };
+        });
+      }
+      await this.remoteAudioReady;
+      if (this.disposed) return [];
+      return new Promise((resolve, reject) => {
+        const id = ++this.remoteAudioId;
+        this.remoteAudioPending.set(id, { resolve, reject });
+        this.remoteAudioWorker.postMessage({ type: 'remoteAudio', id, audio });
+      });
     }
 
     onBatch(m) {
@@ -1083,6 +1160,14 @@ function createEngine(env) {
             // How far sound has gone into the decoder (pump throttles on what hasn't come out yet).
             this.aSubmitT = Math.max(this.aSubmitT === undefined ? -Infinity : this.aSubmitT, it.t);
           } catch (e) { log(`audio decode: ${e.message}`); }
+        } else if (it.kind === 's16') {
+          const samples = new DataView(it.data.buffer, it.data.byteOffset, it.data.byteLength);
+          const planes = [new Float32Array(it.data.byteLength / 4), new Float32Array(it.data.byteLength / 4)];
+          for (let i = 0; i < planes[0].length; i++) {
+            planes[0][i] = samples.getInt16(i * 4, true) / 32768;
+            planes[1][i] = samples.getInt16(i * 4 + 2, true) / 32768;
+          }
+          this.addAudio(it.t, it.sampleRate, planes);
         } else if (it.kind === 'pcm' && it.t !== null) {
           let { t, planes } = it;
           // After audioToSoft: the re-read repeats sound that is already decoded; keep only what follows it.
@@ -1213,7 +1298,13 @@ function createEngine(env) {
     onNativeAudio(m) {
       if (m.gen !== this.gen) return;
       this.requesting = false;
-      this.addAudio(m.t, 48000, [m.l, m.r]);
+      // Interleaved stereo f32 from the host (src/native.js sendAudio), at the rate the page asked for.
+      const raw = m.data.byteOffset % 4 ? m.data.slice() : m.data;
+      const f = new Float32Array(raw.buffer, raw.byteOffset, m.n * 2);
+      const l = new Float32Array(m.n);
+      const r = new Float32Array(m.n);
+      for (let i = 0, j = 0; i < m.n; i++, j += 2) { l[i] = f[j]; r[i] = f[j + 1]; }
+      this.addAudio(m.t, m.rate || 48000, [l, r]);
     }
 
     /** Frame rate from the spacing of the first presentation times. */
@@ -1460,7 +1551,8 @@ function createEngine(env) {
         // Until the first picture is shown, one packet per batch: the first frame comes back as soon
         // as it is decoded, not with the ~6 after it (1080p HEVC: ~220 -> ~135 ms from the streams to the first frame).
         // Paused WebCodecs reads ~1 s ahead (PAUSED_AHEAD_S): in smaller batches, or one batch of small packets overshoots by seconds.
-        const limit = this.vmode === 'soft' ? (this.firstShown ? 96 * 1024 : 1) : !this.playing && this.firstShown ? 64 * 1024 : 384 * 1024;
+        // A large compare grid: one packet per batch for the built-in decoder, whose batch becomes full-size frames in every tile.
+        const limit = this.vmode === 'soft' ? (this.firstShown && !this.cfg.largeGrid ? 96 * 1024 : 1) : !this.playing && this.firstShown ? 64 * 1024 : 384 * 1024;
         if (this.remoteStream) this.remoteReadAt = performance.now();
         this.worker.postMessage({ type: 'more', gen: this.gen, limit, ...(videoUntil !== undefined ? { videoUntil } : {}) });
       }
@@ -2434,6 +2526,11 @@ function createEngine(env) {
       this.loopCache = null;
       if (this.hdrOutput && this.hdrOutput.out) { this.hdrOutput.out.dispose(); this.gl.twin = null; }
       if (this.boot) this.boot.drop();
+      if (this.remoteAudioBoot) this.remoteAudioBoot.drop();
+      if (this.remoteAudioPending) {
+        for (const pending of this.remoteAudioPending.values()) pending.resolve([]);
+        this.remoteAudioPending.clear();
+      }
       this.gen++; // late decoder outputs and worker messages of the old generation are dropped
       clearTimeout(this.readTimer);
       clearTimeout(this.acTimer);

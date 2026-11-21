@@ -144,12 +144,15 @@ async function longChecks(vs, h, name, seconds) {
 module.exports = [{
   name: 'remote_stream',
   ffmpeg: true,
-  settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'workbench.editorAssociations': ASSOC },
+  settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.sizeFramesToView': false, 'workbench.editorAssociations': ASSOC },
   async run(vs, h) {
     const out = [];
     for (const file of CLIPS) {
       try {
-        const r = await h.playClip(vs, { file, expect: 'webcodecs' }, { seconds: h.seconds });
+        // Encoder probing plus a 4K software decode can wait behind other agents' CPU work.
+        const r = await h.playClip(vs, { file, expect: 'webcodecs' }, {
+          seconds: h.seconds, slow: true, firstFrameTimeout: file.includes('2160p') ? 120000 : 45000,
+        });
         if (!/^remote stream/.test(r.decision || '')) { r.ok = false; r.problems.push(`decision: ${r.decision || 'none logged'}`); }
         const stats = vs.lines.filter((l) => l.includes(`[${file}] remote stream stats:`)).map((l) => l.replace(/^.*stats: /, ''));
         r.streamStats = stats.slice(-3);
@@ -174,7 +177,7 @@ module.exports = [{
 }, {
   name: 'remote_stream_long',
   ffmpeg: true,
-  settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.loop': false, 'workbench.editorAssociations': ASSOC },
+  settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.loop': false, 'videoPreviewEnhanced.sizeFramesToView': false, 'workbench.editorAssociations': ASSOC },
   async run(vs, h) {
     const file = makeLongClip(h.ffmpeg);
     const name = path.basename(file);
@@ -192,10 +195,42 @@ module.exports = [{
     } catch (e) { return [{ name, ok: false, problems: [e.message] }]; } finally { try { await h.closeClip(vs); } catch { /* gone */ } }
   },
 }, {
+  name: 'remote_stream_size',
+  ffmpeg: true,
+  settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.sizeFramesToView': true,
+    'workbench.editorAssociations': ASSOC },
+  async run(vs, h) {
+    const { out, run } = lib.recorder();
+    await run('size-to-picture', async (ok) => {
+      const p = await lib.open(vs, h, path.join(h.MEDIA, 'hevc_10_2160p.mp4'));
+      try {
+        await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown);
+        p.pause();
+        const from = vs.mark();
+        p.act({ action: 'stageSize', w: 640, h: 360 });
+        await vs.waitLog(/remote stream: picture .* -> 960x540 at the next seek/, { from });
+        p.seek(0);
+        const small = await p.waitState((s) => !s.playing && s.canvas[1] === 540);
+        p.act({ action: 'stageSize', w: 1920, h: 1080 });
+        const large = await p.waitState((s) => !s.playing && s.canvas[1] === 1080);
+        ok(Math.abs(large.t - small.t) <= 1 / large.fps, 'enlarging moved the paused playhead');
+        const shrink = vs.mark();
+        p.act({ action: 'stageSize', w: 640, h: 360 });
+        await vs.waitLog(/remote stream: picture .* -> 960x540 at the next seek/, { from: shrink });
+        const held = await p.state();
+        ok(held.canvas[1] === 1080, 'shrinking restarted the picture before a seek');
+        // Forward within decoded frames does not ask the host to seek; go back to the start.
+        p.seek(0);
+        await p.waitState((s) => s.canvas[1] === 540 && s.t < 0.1);
+      } finally { await h.closeClip(vs); }
+    });
+    return out;
+  },
+}, {
   name: 'remote_stream_fallback',
   ffmpeg: true,
   env: { VPE_RS_ENCODER: 'libx264' },
-  settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.loop': false, 'videoPreviewEnhanced.advancedMode': true, 'workbench.editorAssociations': ASSOC },
+  settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.loop': false, 'videoPreviewEnhanced.advancedMode': true, 'videoPreviewEnhanced.sizeFramesToView': false, 'workbench.editorAssociations': ASSOC },
   async run(vs, h) {
     const { out, run } = lib.recorder();
     await run('pixel-tools', async (ok) => {
@@ -255,24 +290,25 @@ module.exports = [{
       }
     });
     await run('slow-link-sound', async (ok, r) => {
-      // Sound stays PCM (about 3 Mb/s): at 5.6 Mb/s only 480p fits next to it, so the ladder goes straight there.
+      // Opus lets a 1.6 Mb/s link carry 480p with sound (1.2 Mb/s video + 0.128 Mb/s audio budget).
       const file = makeLinkClip(h.ffmpeg, true);
       const p = await lib.open(vs, h, file);
       try {
         const first = await p.waitState((s) => s.playing && s.vmode === 'webcodecs' && s.firstShown && s.canvas[1] === 1080);
-        p.act({ action: 'remoteStreamRate', bytesPerSecond: 700000 });
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 200000 });
         const reduced = await p.waitState((s) => s.playing && s.canvas[1] < 1080, { timeout: 20000, what: 'a lower-quality frame' });
         ok(reduced.canvas[1] === 480, `stepped to ${reduced.canvas[1]}p, expected 480p`);
         ok(reduced.gen === first.gen && reduced.t > first.t, 'quality drop interrupted the playback timeline');
         await h.sleep(5000);
         const steady = await p.state();
         ok(steady.playing && steady.vmode === 'webcodecs' && steady.frame - reduced.frame >= 1 * steady.fps, `480p with sound did not keep playing: ${steady.frame - reduced.frame} frames in 5 s`);
-        // Slower than the PCM alone: the floor, a notice, no failover.
+        // A 0.7 Mb/s link can still carry the lowest tier with compressed sound.
         const from = vs.mark();
-        p.act({ action: 'remoteStreamRate', bytesPerSecond: 250000 });
-        await vs.waitLog(/remote stream: the link can't carry the lowest quality with its sound/, { from, timeout: 30000 });
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 87500 });
         const floor = await p.waitState((s) => s.canvas[1] === 360 || s.vmode !== 'webcodecs', { timeout: 30000, what: 'a 360p frame' });
         ok(floor.vmode === 'webcodecs' && floor.canvas[1] === 360, `at the floor: ${floor.vmode} ${floor.canvas}`);
+        ok(!vs.lines.slice(from).some((l) => l.includes("link can't carry the lowest quality with its sound")), 'Opus floor did not fit 0.7 Mb/s');
+        ok(vs.lines.some((l) => l.includes(`[${p.name}] webview: remote sound: Opus decoded`)), 'no WebAssembly Opus output');
         ok(!vs.lines.slice(from).some((l) => l.includes(`[${p.name}] remote stream failed`)), 'link speed made the stream fail over');
       } finally {
         r.quality = vs.lines.filter((l) => l.includes(`[${p.name}] remote stream: quality`)).map((l) => l.split('remote stream: ')[1]);

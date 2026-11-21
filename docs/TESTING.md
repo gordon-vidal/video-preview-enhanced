@@ -22,12 +22,35 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 - A VS Code instance without WebGL2 is a broken instance, not a failed test: it is named and retried.
 - A page error ends a wait at once; no test waits out a timeout after an error was reported.
 - Flaky scenarios are fixed or quarantined (listed, skipped, tracked), never retried silently.
-- Tests wait for the event or state they need, with a generous deadline as a safety net only (tens of
-  seconds); a short wall-clock budget fails on a busy CI machine. Heavy files get their own `timeout` in
-  `test/layers.js` (default 60 s per file).
+- Tests wait for the event or state they need; the deadline is a safety net sized from measured times, not a
+  speed check (see "Time limits": tight enough that a hang shows in seconds to a minute, loose enough that a
+  busy machine does not fail a good run).
 - Generated test media must come out the same on every run and every ffmpeg version, or be checked after
   making it: ffmpeg 7+ runs its steps in threads, so how it interleaves streams can vary between runs
   (`test/bitmapsubs/make_media.js` forces time order and checks it).
+
+## Time limits
+
+A hang must show within seconds to a minute, not after minutes. Timeouts and stalls are counted apart from
+failures (`TIMEOUT` / `STALLED` in the lines and the summary), and every message names the elapsed time and what
+was waited for.
+
+- **Layers 1-2** (`test/layers.js`): each file has an explicit `timeout`: max(20 s, 3 x its median time, 1.5 x
+  its slowest passed run), from the history in `test/out/*.json`. A file that prints nothing for its `stall`
+  limit (default 30 s) is killed and reported `STALLED: no output for N s after: <last line>`; past the timeout,
+  `TIMEOUT after N s; last output: <last line>`. Both kill the process tree (Windows job object).
+- **Layer 3** (`test/vscode/budgets.js`): each scenario has a time budget, about 2.5 x its typical time + 30 s
+  (3.5 x for native, remote, URL, HDR and many-video scenarios; min 90 s). Past it the scenario ends and reports
+  `TIMEOUT after N s in <scenario>/<case>; waiting for <thing>`. Waits: a hook answer 10 s, the extension
+  activating 45 s, the first frame of an ordinary clip 15 s (4K, native, remote, URL and HDR keep their longer
+  waits), other waits as the case sets them. A page error still ends a wait at once; an instance without WebGL2 is
+  retried, not failed. `VPE_BUDGET_SCALE=2` doubles every budget on a slow machine.
+- The limits are measured on the maintainer's desktop. On CI (`CI` set) every timeout, stall limit and budget is
+  multiplied by 3: GitHub's Windows runners take 2-3x as long per file (4 files at once). `VPE_TIME_SCALE=<n>`
+  sets the factor anywhere.
+- **After a layer got slower or faster on purpose**, or a new test was added: `node test/tune_timeouts.js`
+  rewrites the numbers from the recorded runs (a file with no history gets 60 s / 30 s stall until then).
+  A test that fails only on a tight timeout in a normal run needs its number raised, not a retry.
 
 ## Commands
 
@@ -71,8 +94,10 @@ playback and open-formats (2.5-3 min each, the slowest instance sets the pace wi
 **Parallel instances (layer 3):** in the full run with 3 instances, 2 of 21 scenarios started in an instance
 whose pages got no WebGL2; a single instance lost WebGL2 the same day too, and the game was using the GPU, so
 the cause is not settled. Following the rule above (parallel only after a full run without WebGL2 losses), the
-default is serial; `--parallel 3` (or `VPE_PARALLEL=3`) runs three. To settle it: a full run with
-`--parallel 3` on an idle machine; with no losses, make 3 the default.
+default is serial; `--parallel 3` (or `VPE_PARALLEL=3`) runs three.
+**Settled 2026-11-21: serial stays the default.** A full `--parallel 3` run (25 scenarios) lost WebGL2 in 3
+instances (`playback` and `scopes-export` twice in a row, `file-icons` once); run serially, those scenarios passed
+42/42, and a full serial run passed 246/246 in about 33 minutes. `--parallel 3` remains available but is not trusted.
 
 ## Known issues (quarantined)
 

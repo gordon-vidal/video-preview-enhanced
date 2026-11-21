@@ -8,30 +8,33 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const avi = require('./avi');
+// Modules a feature needs (URLs, ffmpeg setup and download, A-B export, AVI, the remote stream) load on first use:
+// a window start pays only for what it runs. The proxy forwards property reads to the real module.
+const lazy = (id) => { let m; return new Proxy({}, { get: (_, k) => (m || (m = require(id)))[k] }); };
+const avi = lazy('./avi');
 const { findSequence } = require('./sequence');
 const ff = require('./ffmpeg');
-const setup = require('./setup');
+const setup = lazy('./setup');
 const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
 const { decodeThumb } = require('./thumbhost');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
-const remotestream = require('./remotestream'); // remote windows: H.264 re-encoded on the remote host (docs/notes/remote-stream.md)
-const probe = require('./probe'); // ffmpeg's GPU decoding tested on this machine
+const remotestream = lazy('./remotestream'); // remote windows: H.264 re-encoded on the remote host (docs/notes/remote-stream.md)
+const probe = lazy('./probe'); // ffmpeg's GPU decoding tested on this machine
 const decide = require('./decide'); // native ffmpeg or built-in, per file
-const localff = require('./localff'); // "Use an ffmpeg I already have…"
-const remoteff = require('./remoteff'); // ffmpeg downloaded on the remote host, for the remote stream
-const proxy = require('./proxy');
+const localff = lazy('./localff'); // "Use an ffmpeg I already have…"
+const remoteff = lazy('./remoteff'); // ffmpeg downloaded on the remote host, for the remote stream
+const proxy = lazy('./proxy');
 const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
 const { registerCompare, setPickHook } = require('./compare'); // compare mode (src/compare.js)
 const { barHtml } = require('./bar'); // the bar's markup, shared with compare
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
-const rangecmd = require('./rangecmd'); // A-B frame export and ffmpeg command
+const rangecmd = lazy('./rangecmd'); // A-B frame export and ffmpeg command
 const ctxmenu = require('./ctxmenu'); // the player's right-click menu
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
-const urlsource = require('./urlsource'); // Open Video URL… (docs/notes/url-stream.md)
+const urlsource = lazy('./urlsource'); // Open Video URL… (docs/notes/url-stream.md)
 
 const VIEW_TYPES = ['videoPreviewEnhanced.player', 'videoPreviewEnhanced.playerOptional'];
 const MAX_WAV_BYTES = 512 * 1024 * 1024;
@@ -328,7 +331,7 @@ function flushSpeeds() {
 
 /**
  * The first video of a session while no ffmpeg is found: "Set up ffmpeg",
- * "Not now" / "Don't remind me". Once per session until "Don't remind me"; never in SSH/container or untrusted windows.
+ * "Not now" / "Don't Show Again". Once per session until "Don't Show Again"; never in SSH/container or untrusted windows.
  */
 async function maybeOnboard() {
   const base = { state: globalState.get(decide.ONBOARD_KEY), remote: vscode.env.remoteName, trusted: vscode.workspace.isTrusted, pending: onboardPending, shownThisSession: onboardShown };
@@ -338,7 +341,7 @@ async function maybeOnboard() {
     const t = await tools();
     if (t) { await globalState.update(decide.ONBOARD_KEY, decide.afterOnboard('had-ffmpeg')); return; }
     const st0 = globalState.get(decide.ONBOARD_KEY);
-    if (st0 && st0.choice === 'builtin') return; // "Don't remind me"
+    if (st0 && st0.choice === 'builtin') return; // "Don't Show Again"
     onboardShown = true;
     log('onboarding: first video, asking about ffmpeg');
     const answer = await vscode.window.showInformationMessage(decide.ONBOARD_TEXT.replace('{mb}', setup.downloadSizeMB()), decide.ONBOARD_SETUP, decide.ONBOARD_LATER, decide.ONBOARD_BUILTIN);
@@ -367,7 +370,7 @@ async function maybeHint(sess, sample) {
   log(`[${sess.name}] built-in decoding at ${sample.ratio.toFixed(2)}x (sample ${sess.slowRun}); suggesting ffmpeg: ${text}`);
   hintPending = true;
   let answer;
-  try { answer = await vscode.window.showInformationMessage(text, 'Set up', 'Not now', "Don't ask again"); } finally { hintPending = false; }
+  try { answer = await vscode.window.showInformationMessage(text, 'Set up', 'Not now', "Don't Show Again"); } finally { hintPending = false; }
   await globalState.update(decide.HINT_KEY, decide.afterHint(globalState.get(decide.HINT_KEY), answer));
   if (answer === 'Set up') setupFfmpeg();
 }
@@ -568,7 +571,7 @@ async function downloadManaged(build) {
 /**
  * Remote windows (SSH, containers, tunnels): the picture of this file decodes in WebAssembly, the
  * remote stream would take it, and the remote has no ffmpeg. Offers BtbN's static Linux build
- * (x64, arm64) in the extension's folder there: once per remote and session, "Don't ask again" per
+ * (x64, arm64) in the extension's folder there: once per remote and session, "Don't Show Again" per
  * remote (docs/notes/remote-stream.md).
  */
 async function maybeOfferRemoteFfmpeg(sess, m) {
@@ -871,7 +874,8 @@ async function fileIcons({ force = false } = {}) {
       seen = [];
     }
     if (changed) await cfg.update('associations', assoc, vscode.ConfigurationTarget.Global);
-    await globalState.update(FILE_ICONS_KEY, { added, seen });
+    // Every window start runs this: write only when the record changed (a globalState write is a disk round trip).
+    if (JSON.stringify(st) !== JSON.stringify({ added, seen })) await globalState.update(FILE_ICONS_KEY, { added, seen });
   } catch (e) {
     log(`fileIcons failed: ${e && e.message || e}`); // never shown
   }
@@ -885,7 +889,7 @@ async function warnOldInstalls() {
     const mine = path.basename(extensionDir);
     const base = mine.replace(/-\d[\w.+-]*$/, '');
     if (base === mine) return;
-    const others = fs.readdirSync(dir).filter((n) => n !== mine && n.startsWith(`${base}-`) && /^\d/.test(n.slice(base.length + 1))).sort();
+    const others = (await fs.promises.readdir(dir)).filter((n) => n !== mine && n.startsWith(`${base}-`) && /^\d/.test(n.slice(base.length + 1))).sort();
     const key = others.join(',');
     if (!others.length || globalState.get('videoPreviewEnhanced.warnedOld') === key) return;
     await globalState.update('videoPreviewEnhanced.warnedOld', key);
@@ -1642,6 +1646,8 @@ class Session {
         hdrOutput: c.hdrOutput,
         // Tests (VPE_LOG only): VPE_HDR_FORCE=1 takes the HDR output path on an SDR display.
         hdrForce: !!logFile && process.env.VPE_HDR_FORCE === '1',
+        // Tests (VPE_LOG only): VPE_NO_WEBGL=1 makes the decoder fail as on a machine without WebGL2 (the error screen).
+        noWebgl: !!logFile && process.env.VPE_NO_WEBGL === '1',
         // Tests (VPE_LOG only): VPE_THUMB_STRIP=0 leaves out the background seek-bar strip (CPU measurements).
       },
     });
@@ -2284,11 +2290,12 @@ ${barHtml()}
     }
     if (this.stale(gen) || !pr || !remotestream.wanted(pr)) return false;
     // Reuse the remote's confirmed encoder choice unless a stream failure calls for a new probe.
-    const enc = await remotestream.encoderFor(t, ff.run, globalState, log);
+    const [enc, audioEncoder] = await Promise.all([remotestream.encoderFor(t, ff.run, globalState, log),
+      pr.audio ? remotestream.audioEncoderFor(t) : null]);
     if (this.stale(gen)) return false;
     log(`[${this.name}] decoder: remote stream (H.264 re-encoded on this host by ${enc.encoder}, ${remote || 'local'} window): ${pr.video.codec} ${pr.video.pixFmt} ${pr.video.width}x${pr.video.height}`);
     this.native = new remotestream.RemoteStream({
-      tools: t, file: this.file, maxHeight: c.nativeMaxHeight, probed: pr, stats: !!logFile, encoder: enc.encoder, device: enc.device, cpuEncoder: enc.cpu,
+      tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), audioEncoder, probed: pr, stats: !!logFile, encoder: enc.encoder, device: enc.device, cpuEncoder: enc.cpu,
       // The stream's notices (quality lowered, connection too slow) show as the player's toast.
       post: (msg) => this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg }),
       log: (msg) => log(`[${this.name}] ${msg}`),
@@ -2637,7 +2644,7 @@ ${barHtml()}
 
   /**
    * Whether the page may offer the ffmpeg setup (status pill) and mention ffmpeg (toast):
-   * offered when it isn't installed, in a local trusted window, unless "Don't ask again".
+   * offered when it isn't installed, in a local trusted window, unless "Don't Show Again".
    */
   sendFfmpegState() {
     // Restricted Mode runs no ffmpeg at all, not even `-version` (security review 2026-11-19 #6).

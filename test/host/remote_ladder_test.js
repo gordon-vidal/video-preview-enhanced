@@ -6,11 +6,11 @@
 const assert = require('assert');
 const { RemoteStream, LINK_TIERS, PCM_KBPS } = require('../../src/remotestream');
 
-function stream({ audio = true } = {}) {
+function stream({ audio = true, audioEncoder = null } = {}) {
   const posts = [];
   const fails = [];
   const rs = new RemoteStream({
-    tools: {}, file: 'x.mkv', post: (m) => posts.push(m), log: () => {}, onFail: (e) => fails.push(e),
+    tools: {}, audioEncoder, file: 'x.mkv', post: (m) => posts.push(m), log: () => {}, onFail: (e) => fails.push(e),
     probed: { duration: 100, video: { codec: 'hevc', width: 3840, height: 2160, fps: 30 }, audio: audio ? { codec: 'aac' } : null },
   });
   rs.restarts = 0;
@@ -27,17 +27,17 @@ const good = (kbps, more = {}) => ({ type: 'remoteLink', gen: 0, kbps, videoKbps
 const notices = (posts) => posts.filter((m) => m.type === 'remoteNotice');
 
 const last = LINK_TIERS.length - 1;
-assert.ok(PCM_KBPS > 3000 && PCM_KBPS < 3200, `PCM ${PCM_KBPS}`);
+assert.ok(PCM_KBPS === 1536, `PCM ${PCM_KBPS}`);
 
-{ // #1: with sound on a 2.5 Mb/s link no tier fits: go straight to the lowest, say so once, never fail.
+{ // #1: with s16 sound on a 1.5 Mb/s link no tier fits: go straight to the lowest, say so once, never fail.
   const { rs, posts, fails } = stream();
-  rs.adapt(bad(2500));
+  rs.adapt(bad(1500));
   assert.strictEqual(rs.tier, 0, 'one bad window is not enough');
-  rs.adapt(bad(2500));
+  rs.adapt(bad(1500));
   assert.strictEqual(rs.tier, last, 'skips tiers that cannot fit with the PCM');
   assert.strictEqual(rs.restarts, 1);
   assert.strictEqual(rs.h, 360);
-  for (let i = 0; i < 10; i++) rs.adapt(bad(2500));
+  for (let i = 0; i < 10; i++) rs.adapt(bad(1500));
   assert.strictEqual(rs.tier, last);
   assert.strictEqual(rs.restarts, 1, 'no restarts at the floor');
   assert.deepStrictEqual(fails, [], 'link speed never fails over to the built-in decoder');
@@ -105,6 +105,33 @@ assert.ok(PCM_KBPS > 3000 && PCM_KBPS < 3200, `PCM ${PCM_KBPS}`);
   rs.gen = 3;
   for (let i = 0; i < 4; i++) rs.adapt(bad(500, { gen: 2 }));
   assert.strictEqual(rs.tier, 0);
+}
+
+
+{ // Opus makes 360p with sound fit below 0.6 Mb/s; s16 would require nearly 2 Mb/s.
+  const { rs, posts } = stream({ audioEncoder: 'libopus' });
+  rs.adapt(bad(650)); rs.adapt(bad(650));
+  assert.strictEqual(rs.tier, last);
+  assert.deepStrictEqual(notices(posts).map((m) => m.kind), ['quality']);
+  const { rs: fit, posts: fitPosts } = stream();
+  fit.fps = 30;
+  fit.setView({ w: 960, h: 540 });
+  fit.sizeVideo();
+  assert.strictEqual(fit.h, 540);
+  let standbyKilled = false;
+  fit.standby = { kill: () => { standbyKilled = true; } };
+  fit.setView({ w: 1920, h: 1080 });
+  assert.strictEqual(standbyKilled, true, 'a loop standby at the old size cannot be adopted');
+  assert.strictEqual(fitPosts.at(-1).type, 'refresh', 'enlargement asks the page to refresh immediately');
+  fit.sizeVideo();
+  assert.strictEqual(fit.h, 1080);
+  fit.setView({ w: 640, h: 360 });
+  assert.strictEqual(fit.h, 1080, 'shrinks only at next seek');
+  fit.sizeVideo();
+  assert.strictEqual(fit.h, 540);
+  fit.setFit(false);
+  fit.sizeVideo();
+  assert.strictEqual(fit.h, 1080);
 }
 
 console.log('remote ladder: ok');

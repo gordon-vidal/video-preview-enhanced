@@ -73,7 +73,7 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
   (remembered per ffmpeg and stream class). No decoding is needed to choose.
 - **Nothing decodes in the background on its own** (2026-11-20: a CPU/GPU spike right after installing looks like
   malware). No automatic GPU test after install, after setup or after an ffmpeg/driver change. The test is only
-  offered (a popup with "Run test" / "Not now" / "Don't remind me") when a video plays slower than real time and this
+  offered (a popup with "Run test" / "Not now" / "Don't Show Again") when a video plays slower than real time and this
   ffmpeg/GPU has no test result, and runs from "Video Preview: Re-test ffmpeg". ffmpeg stays the recommended setup: the
   first video recommends setting it up, and it is used whenever it plays a file better than the built-in decoder.
   Seek-bar thumbnails follow the same rule: they decode only while the pointer hovers or drags on the seek bar (picture under the
@@ -82,14 +82,14 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 ## Onboarding
 
 - **The first video of each session while no ffmpeg is found** (2026-11-20): "Video Preview works best with
-  ffmpeg …" with **Set up ffmpeg** / **Not now** / **Don't remind me (use built-in player)**. Say "set up" (download
+  ffmpeg …" with **Set up ffmpeg** / **Not now** / **Don't Show Again**. Say "set up" (download
   portable ffmpeg or use a local copy), and "download portable ffmpeg" when the download is meant. "Not now" asks
-  again next session; "Don't remind me" is final and also silences the slow-playback reminder. Not in remote or
+  again next session; "Don't Show Again" is final and also silences the slow-playback reminder. Not in remote or
   restricted windows.
 - **When the built-in decoder falls behind** and ffmpeg isn't set up: a reminder with measured
   numbers for this kind of file (no guessed gain table).
 - **When playback falls behind with ffmpeg installed** and no GPU test has run for this ffmpeg and GPU: the GPU
-  test offer (Decoder rule above), once per session, "Don't remind me" kept.
+  test offer (Decoder rule above), once per session, "Don't Show Again" kept.
 
 ## The player (2026-11-19: one layout, the approved mock-up)
 
@@ -119,7 +119,9 @@ One feature: compare becomes multi-view. The difference view is dropped.
 
 - **Now:** up to 4 videos in a sensible layout (2 side by side or split with a draggable divider, 3–4 in a 2×2 grid;
   3 leave an "Add video" cell). The toggle (flip) view is dropped.
-- **Later, low priority:** a flexible layout system, up to 16 videos.
+- **Later, low priority:** a flexible layout system, up to 16 videos. The engine already takes 16 (Gordon, 2026-11-20):
+  the experimental setting `compare.maxVideos` (default 4) allows up to 16 in a plain automatic grid; free placement
+  and how more than 4 videos get in are still to be designed (docs/notes/multiview-engine.md).
 - **The player's UI (2026-11-20: the approved compare mock-up).** Compare is the player with more videos:
   the same bar drives all tiles (play, lockstep frame steps, seek, speed, loop, jumps); time and seek follow the
   clock video with its letter; mute / volume act on the sound video; CC is hidden. One new
@@ -145,6 +147,9 @@ One feature: compare becomes multi-view. The difference view is dropped.
 
 - SSH: done (`remoteStream`, on by default): ffmpeg on the remote machine sends a compressed,
   low-latency H.264 stream that the panel decodes with A — instead of raw frames, or WebAssembly only.
+  Remote stream sound may be converted or compressed to fit the link: Opus when the remote ffmpeg
+  can encode it, otherwise s16 PCM. Local playback sound is unchanged. The remote encode follows
+  the picture size with the same setting and height steps as native playback, within the link tier cap.
 
 ## Testing
 

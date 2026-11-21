@@ -272,7 +272,9 @@ async function inspect(url, opts = {}) {
 class HttpFile {
   constructor(info, opts = {}) {
     this.url = info.url;
-    this.opts = opts;
+    // Closing aborts every request this file has in flight (reads, the whole-file download).
+    this.abort = new AbortController();
+    this.opts = { ...opts, signal: this.abort.signal };
     this.size = info.size;
     this.rangeOk = info.rangeOk;
     this.head = info.head;
@@ -286,21 +288,24 @@ class HttpFile {
   /** No range support: download the whole file in the background (reads wait for their bytes). */
   startWhole() {
     if (this.whole) return this.whole;
-    const w = { buf: Buffer.alloc(this.size), got: 0, waits: [], error: null };
+    const w = { buf: Buffer.alloc(this.size), got: 0, waits: [], error: this.closed ? closedError() : null };
     this.whole = w;
     const wake = () => { const ws = w.waits; w.waits = []; for (const f of ws) f(); };
+    if (w.error) return w;
     open(this.url, this.opts).then(({ res }) => {
       if (res.statusCode !== 200) { res.resume(); throw httpError(res.statusCode, this.url); }
       res.on('data', (d) => { const n = Math.min(d.length, this.size - w.got); d.copy(w.buf, w.got, 0, n); w.got += n; wake(); });
       res.on('end', () => { if (w.got < this.size) w.error = new Error('the download ended early'); wake(); });
-      res.on('error', (e) => { w.error = new Error(describeError(e, this.url)); wake(); });
+      res.on('error', (e) => { w.error = w.error || new Error(describeError(e, this.url)); wake(); });
+      res.on('close', () => { if (!w.error && w.got < this.size) w.error = new Error('the download ended early'); wake(); });
       this.wholeRes = res;
       if (this.closed) res.destroy();
-    }).catch((e) => { w.error = e; wake(); });
+    }).catch((e) => { w.error = w.error || e; wake(); });
     return w;
   }
 
   async read(pos, len) {
+    if (this.closed) throw closedError();
     if (pos >= this.size || len <= 0) return Buffer.alloc(0);
     const end = Math.min(this.size, pos + len);
     if (end <= this.head.length) return this.head.subarray(pos, end);
@@ -313,16 +318,32 @@ class HttpFile {
     let last;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
+        if (this.closed) throw closedError();
         const r = await fetchRange(this.url, pos, end - 1, this.opts);
         if (r.status !== 206) throw new Error('the server stopped answering range requests');
         return r.body;
-      } catch (e) { last = e; if (e.status && e.status < 500) break; }
+      } catch (e) { last = e; if (this.closed || (e.status && e.status < 500)) break; }
     }
     throw last;
   }
 
-  close() { this.closed = true; if (this.wholeRes) this.wholeRes.destroy(); }
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.abort.abort();
+    if (this.wholeRes) this.wholeRes.destroy();
+    const w = this.whole;
+    if (w) {
+      // Readers waiting for bytes that will never come must settle now.
+      if (!w.error && w.got < this.size) w.error = closedError();
+      const ws = w.waits;
+      w.waits = [];
+      for (const f of ws) f();
+    }
+  }
 }
+
+function closedError() { const e = new Error('the file was closed'); e.code = 'CLOSED'; return e; }
 
 // ---- HLS -----------------------------------------------------------------
 
@@ -649,7 +670,8 @@ class HlsFile {
   constructor(plan, opts = {}) {
     this.plan = plan && plan.playlist ? plan : null;
     this.info = plan && plan.playlist ? null : plan;
-    this.opts = opts;
+    this.abort = new AbortController(); // close() cancels the requests still running
+    this.opts = { ...opts, signal: this.abort.signal };
     this.parts = [];
     this.size = 0;
     this.keys = new Map(); // key URI -> Promise<Buffer> (never logged)
@@ -774,7 +796,7 @@ class HlsFile {
     return plain.subarray(a - ba, b - ba);
   }
 
-  close() { this.keys.clear(); }
+  close() { this.closed = true; this.keys.clear(); this.abort.abort(); }
 }
 
 /** True when an HLS playlist (or, for a master playlist, its first variant) is live: no #EXT-X-ENDLIST, not VOD. */
