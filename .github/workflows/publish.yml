@@ -171,7 +171,7 @@ jobs:
   open-vsx:
     name: Open VSX
     needs: [package, marketplace]
-    if: ${{ !inputs.dry_run && inputs.open_vsx != false }}
+    if: ${{ !inputs.dry_run && (github.event_name == 'push' || inputs.open_vsx != false) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
