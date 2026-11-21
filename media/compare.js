@@ -920,7 +920,7 @@
   }
 
   /** True when the picture is larger than its cell on some side (it can be dragged). */
-  const overflows = (c) => !c.add && (c.full.w > c.w + 0.5 || c.full.h > c.h + 0.5);
+  const overflows = Pic.overflows;
   let overlaysKey = '';
   /** Pill and nudge content of every tile (letter, name, clock / sound, offset). */
   function updateOverlays() {
@@ -1668,8 +1668,11 @@
   stage.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || !clock || /** @type {any} */ (e.target).closest('#divider, #menu')) return;
     const hit = cellAt(e.clientX, e.clientY);
-    if (!hit || !overflows(hit.c)) return;
-    panDrag = { x: e.clientX, y: e.clientY, pic: st.pic, hit, moved: false, id: e.pointerId };
+    if (!hit) return;
+    // One view for all tiles: a tile that fits its cell may start the drag when another one overflows.
+    const ref = Pic.panCell(cells, hit.c);
+    if (!ref) return;
+    panDrag = { x: e.clientX, y: e.clientY, pic: st.pic, hit: { ...hit, c: ref, i: ref.tiles[0] }, moved: false, id: e.pointerId };
   });
   stage.addEventListener('pointermove', (e) => {
     if (!panDrag || e.pointerId !== panDrag.id) return;

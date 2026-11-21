@@ -113,6 +113,21 @@
     return { ...v, cx: clampAxis(v.cx - dx / r.w, r.w, view.w), cy: clampAxis(v.cy - dy / r.h, r.h, view.h) };
   }
 
+  /** True when a compare cell's picture (c.full) is larger than the cell on some side, so it can be dragged. */
+  function overflows(c) {
+    return !c.add && (c.full.w > c.w + 0.5 || c.full.h > c.h + 0.5);
+  }
+
+  /**
+   * The cell whose size a drag in compare moves the shared view by. The view is one for all tiles, so a drag that
+   * starts on a tile that fits its cell (another one is zoomed past its own) must still pan: it follows the first
+   * cell that overflows, because a tile that fits ignores the pan and would swallow the movement. Null = no pan.
+   */
+  function panCell(cells, hit) {
+    if (hit && overflows(hit)) return hit;
+    return cells.find(overflows) || null;
+  }
+
   /**
    * What Z does: zoomed in (Ctrl+wheel, keys) it goes back to Fit, as Z always did; otherwise the next mode.
    * Any change of mode starts at its own size, centred.
@@ -149,7 +164,7 @@
     return turned ? { w: meta.h, h: meta.w } : { w: meta.w, h: meta.h };
   }
 
-  const api = { MODES, NAMES, WORDS, SHORT, STEP, parse, isMode, next, name, fresh, plain, baseSize, limits, rectOf, clamp, zoomAt, panBy, cycle, percent, frameNeed, sourceSize };
+  const api = { MODES, NAMES, WORDS, SHORT, STEP, parse, isMode, next, name, fresh, plain, baseSize, limits, rectOf, clamp, zoomAt, panBy, overflows, panCell, cycle, percent, frameNeed, sourceSize };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VpePicture = api;
 }(typeof self !== 'undefined' ? self : this));

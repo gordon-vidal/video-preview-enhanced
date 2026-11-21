@@ -90,6 +90,15 @@ near(far.x, 0, 'drag clamped'); near(far.y, 0, 'drag clamped');
 const fp = P.panBy(P.fresh('fill'), 100, 100, nat, vid, view);
 const fr = P.rectOf(fp, nat, vid, view);
 near(fr.y, 0, 'fill: nothing to pan vertically'); near(fr.x, -(1422.2222222 - 1000) / 2 + 100, 'fill: panned along the crop');
+// Compare: a tile that fits its cell can start a pan while another overflows; the overflowing tile sets the pace.
+const fits = { w: 400, h: 300, full: { w: 400, h: 300 }, tiles: [0] };
+const over = { w: 400, h: 300, full: { w: 1200, h: 900 }, tiles: [1] };
+const addCell = { w: 400, h: 300, full: { w: 1200, h: 900 }, add: true, tiles: [] };
+assert.ok(!P.overflows(fits) && P.overflows(over) && !P.overflows(addCell), 'overflow: only a picture larger than its cell');
+assert.strictEqual(P.panCell([fits, over], fits), over, 'a fitting tile pans by the overflowing one');
+assert.strictEqual(P.panCell([fits, over], over), over, 'an overflowing tile pans by itself');
+assert.strictEqual(P.panCell([fits, fits], fits), null, 'nothing overflows: no pan');
+assert.strictEqual(P.panCell([addCell, fits], fits), null, 'the Add cell never counts');
 // 100 % of a large picture pans; the pan survives a resize through clamp().
 const big = P.panBy(P.fresh('actual'), 5000, 0, nat, vid, view);
 near(P.rectOf(big, nat, vid, view).x, 0, '100 %: left edge pinned');
