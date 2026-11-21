@@ -105,6 +105,7 @@ const VpeScopes = (() => {
    */
   function create(env) {
     const { stage, canvas, getPlayer, toast, log } = env;
+    const getExact = env.getExact || (() => null); // the exact picture of the paused frame (media/exactframe.js), or null
     const panel = document.createElement('div');
     panel.id = 'scopes';
     panel.hidden = true;
@@ -189,14 +190,14 @@ const VpeScopes = (() => {
 
     // Frame players (MJPEG, sequences) draw with a 2D context: scale down with drawImage.
     let cpu = null;
-    function cpuSample(sw, sh) {
+    function cpuSample(sw, sh, src = canvas) {
       if (!cpu) {
         const c = document.createElement('canvas');
         cpu = { c, ctx: /** @type {CanvasRenderingContext2D} */ (c.getContext('2d', { willReadFrequently: true })) };
       }
       if (cpu.c.width !== sw || cpu.c.height !== sh) { cpu.c.width = sw; cpu.c.height = sh; }
       cpu.ctx.imageSmoothingEnabled = false;
-      cpu.ctx.drawImage(canvas, 0, 0, sw, sh);
+      cpu.ctx.drawImage(src, 0, 0, sw, sh);
       return cpu.ctx.getImageData(0, 0, sw, sh).data;
     }
 
@@ -207,13 +208,15 @@ const VpeScopes = (() => {
       const t0 = performance.now();
       const [sw, sh] = sampleSize(canvas.width, canvas.height);
       const gl = p.gl && p.gl.gl;
-      const job = { mode: MODES[mode], matrix: p.shownMatrix ? p.shownMatrix(true) : matrixBySize(canvas.width, canvas.height), sw, sh };
+      const ex = getExact();
+      // The exact picture is the file's own: its matrix, not the transcoded stream's.
+      const job = { mode: MODES[mode], matrix: ex && ex.matrix ? ex.matrix : p.shownMatrix ? p.shownMatrix(true) : matrixBySize(canvas.width, canvas.height), sw, sh };
       try {
-        if (gl && gl.fenceSync) {
+        if (gl && gl.fenceSync && !ex) {
           pending = Object.assign(gpuStart(gl, sw, sh), job, { ms: performance.now() - t0 });
           return true;
         }
-        finish(cpuSample(sw, sh), job, performance.now() - t0);
+        finish(cpuSample(sw, sh, ex ? ex.img : canvas), job, performance.now() - t0);
       } catch (e) { log(`scopes: ${e && e.message}`); pending = null; return false; }
       return true;
     }
@@ -415,7 +418,7 @@ const VpeScopes = (() => {
       if (mode < 0) return;
       const p = getPlayer();
       if (!p) return;
-      const key = `${p.currentFrame()}|${p.shownCount || p.shown}|${canvas.width}x${canvas.height}`;
+      const key = `${p.currentFrame()}|${p.shownCount || p.shown}|${canvas.width}x${canvas.height}${getExact() ? '|exact' : ''}`;
       if (p.isPlaying()) {
         if (now - lastAt < 100) return;
       } else if (key === lastKey) return;

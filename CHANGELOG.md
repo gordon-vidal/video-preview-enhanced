@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- New: with **Live transcode** active, **Copy Frame**, **Save Frame as PNG**, the **Pixel Inspector** and the **Scopes** now use one exact, full-resolution frame of the file (decoded on the host by ffmpeg, sent as a PNG: local, WSL and Remote-SSH) instead of the transcoded picture, without leaving Live transcode. The inspector and scopes fetch it once per paused frame; if it can't be fetched the tool falls back to the transcoded picture with a notice.
+
 ## 0.8.0 (2026-11-21)
 
 Live transcode for smooth 4K60 and remote playback, faster Explorer compare workflows (Add Mode, Open Together, Compare Videos in Folder), wheel step-back fixes, and a refreshed extension icon.

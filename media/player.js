@@ -76,9 +76,10 @@
    * ffmpeg scaled down or reduced to 8-bit: offer the built-in decoder's exact pixels, once per page.
    */
   let exactOffered = false;
-  function exactTool() {
+  function exactTool(zoom = false) {
     const p = player;
-    if (exactOffered || !p || !p.nativeLossy) return;
+    // Live transcode hands the pixel tools one exact frame from the host (exactFrame below); only 1:1 zoom has none.
+    if (exactOffered || !p || !p.nativeLossy || (p.remoteStream && !zoom)) return;
     exactOffered = true;
     const { width, height } = (p.remoteStream ? p.meta : p.info?.video) || {};
     showNotice({
@@ -387,7 +388,7 @@
   function restful() {
     return !!player && typeof player.settled === 'function' && player.settled() && !player.isPlaying()
       && !scrubbing && pendingSeekFrame === null && !seekDragger.dragging() && !volumeDragger.dragging()
-      && insp.idle() && !scopes.mode() && !(xray && xray.isShown());
+      && insp.idle() && !scopes.mode() && !(xray && xray.isShown()) && !exactNeeded();
   }
   function frameLoop(now) {
     loopStats.frames++;
@@ -402,6 +403,7 @@
         lastSeekAt = now;
       }
       player.tick(now);
+      exactTick(now);
       insp.tick(now);
       scopes.tick(now);
       subs.tick();
@@ -539,7 +541,7 @@
     if (volume > 0 && muted) setMute(false); else setMute(muted);
   };
   /** Z (and the button beside Keyboard shortcuts): the next picture size; zoomed in, back to Fit. 100 % shows the file's own pixels. */
-  const cyclePicture = () => { insp.cycleMode(); if (insp.picture().mode === 'actual') exactTool(); };
+  const cyclePicture = () => { insp.cycleMode(); if (insp.picture().mode === 'actual') exactTool(true); };
   /** The button shows the current size and names the next one. */
   function updatePicBtn() {
     const m = insp.picture().mode;
@@ -575,22 +577,65 @@
     c.getContext('2d').drawImage(src, 0, 0, w, h);
     return new Promise((res) => c.toBlob(res, 'image/png'));
   }
+  // ---- exact frames while Live transcode is active (media/exactframe.js, src/exact_frame.js) ----
+  const exact = VpeExact.create({
+    page: cfg.page, post: (m) => vscode.postMessage(m), toast, log,
+    // Said once per failed frame (it is not asked for again): the tools carry on with the transcoded picture.
+    onFail: (key, error) => toast(`Exact frame unavailable (${error}); showing live-transcode pixels`, 4500),
+  });
+  const exactActive = () => !!(player && player.remoteStream && !cfg.url);
+  /** The shown frame: seek generation, frame number and picture count. */
+  const exactKey = () => `${player.gen}|${player.currentFrame()}|${player.shownCount || 0}`;
+  /** The exact picture of the paused frame, for the inspector and scopes; null while playing, not fetched yet or failed. */
+  const exactShown = () => (exactActive() && !player.isPlaying() ? exact.peek(exactKey()) : null);
+  let exactSettle = { key: '', at: 0 };
+  /** Whether the paused frame still needs its exact picture (an open inspector or scope asked for it). */
+  const exactNeeded = () => exactActive() && !player.isPlaying() && player.seekTarget == null && (insp.inspecting() || !!scopes.mode())
+    && !exact.peek(exactKey()) && !exact.failed(exactKey());
+  /** From the frame loop: playing, forget it; paused with a tool open, fetch once the frame has been still for a moment. */
+  function exactTick(now) {
+    if (!exactActive()) return;
+    if (player.isPlaying()) { exact.invalidate(); return; }
+    if (!exactNeeded()) return;
+    const key = exactKey();
+    if (exactSettle.key !== key) { exactSettle = { key, at: now }; return; }
+    if (now - exactSettle.at >= 150 && !exact.inflight(key)) exact.grab(key, player.currentTime(), { notify: false }).then((r) => {
+      if (cfg.debug && r && r.png) log(`exact frame ${r.w}x${r.h} for frame ${player.currentFrame() + 1}`); // test hook (layer 3)
+      if (r) wakeLoop();
+    });
+  }
+  /**
+   * The PNG of the shown frame with its frame number, both taken before any await (stepping meanwhile must not
+   * label this frame's pixels with another number). Live transcode: the host's exact frame, or the canvas when
+   * it fails (the notice comes from onFail). null: nothing to save, or cancelled (resumed, stepped away).
+   */
+  async function frameBlob(what) {
+    const frame = player.currentFrame();
+    if (!exactActive()) { const blob = await grabFrame(); return blob ? { blob, frame } : null; }
+    const key = exactKey();
+    const r = await exact.grab(key, player.currentTime());
+    if (r && r.png) return { blob: new Blob([r.png], { type: 'image/png' }), frame };
+    if (!r || exactKey() !== key || player.isPlaying()) { toast(`${what} cancelled: the frame changed`, 2000); return null; }
+    const blob = await grabFrame(); // the host could not give it: the canvas still shows this frame
+    return blob ? { blob, frame } : null;
+  }
+
   async function saveFrame() {
     if (!player) return;
     exactTool();
     player.pause();
-    const blob = await grabFrame();
-    if (!blob) return;
-    vscode.postMessage({ type: 'saveFrame', frame: player.currentFrame(), data: new Uint8Array(await blob.arrayBuffer()) });
+    const got = await frameBlob('Save');
+    if (!got) return;
+    vscode.postMessage({ type: 'saveFrame', frame: got.frame, data: new Uint8Array(await got.blob.arrayBuffer()) });
   }
   async function copyFrame() {
     if (!player) return;
     exactTool();
     player.pause();
     try {
-      const blob = await grabFrame();
-      if (!blob) return;
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      const got = await frameBlob('Copy');
+      if (!got) return;
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': got.blob })]);
       toast('Frame copied');
     } catch (e) {
       log(`clipboard refused: ${e}`);
@@ -601,10 +646,10 @@
 
   // Zoom/pan, pixel inspector, go to, frame links, stats (inspect.js).
   // A zoom changes the picture's size like a resize does: native frames follow it (scheduleView below).
-  const insp = VpeInspect.create({ vscode, stage, canvas, log, toast, getPlayer: () => player, fmtTime, cfg, onZoom: () => scheduleView(), picture: startPicture, onPicture: () => { if (ui.picBtn) updatePicBtn(); if (controls) controls.refresh(); } });
+  const insp = VpeInspect.create({ vscode, stage, canvas, log, toast, getPlayer: () => player, fmtTime, cfg, getExact: () => exactShown(), exactCtx: (e) => exact.ctxOf(e), onZoom: () => scheduleView(), picture: startPicture, onPicture: () => { if (ui.picBtn) updatePicBtn(); if (controls) controls.refresh(); } });
   updatePicBtn();
   // Waveform, RGB parade, vectorscope, histogram (scopes.js; W cycles).
-  const scopes = VpeScopes.create({ stage, canvas, getPlayer: () => player, toast, log });
+  const scopes = VpeScopes.create({ stage, canvas, getPlayer: () => player, toast, log, getExact: () => exactShown() });
   if (/** @type {any} */ (window).__vpe) /** @type {any} */ (window).__vpe.scopes = scopes; // test harness hook
 
   // ---- A-B export: the host asks for the range, then for each frame (src/extension.js exportRange) ----
@@ -1224,6 +1269,7 @@
         });
         break;
       }
+      case 'exactFrame': exact.onReply(m).then(wakeLoop, () => {}); break;
       case 'toast': toast(m.text, Math.min(10000, Number(m.ms) || 900)); break;
       case 'addMode': showAddMode(m); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
