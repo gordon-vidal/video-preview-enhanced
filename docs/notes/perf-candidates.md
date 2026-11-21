@@ -4,6 +4,8 @@ Research only, no code changed. I checked each item against the code in this rep
 Gains are estimates unless the note says "measured". The method for each is the `cpu_4k.js` approach: Win32_Process kernel+user time of every
 VS Code process over a fixed window, private bytes for memory, `VPE_LOG` stats lines for frame counts.
 
+**Status:** #1-5, #8, #10 done and #6, #14, #17 done (see [perf-invisible.md](perf-invisible.md)); #15 and #16 looked at and skipped (reasons there); #7, #11, #13 wait for review; #9, #12 are other work.
+
 ## Top 5
 
 ### 1. Kill native ffmpeg (and its standby) while the tab is hidden

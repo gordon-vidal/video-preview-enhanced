@@ -91,6 +91,12 @@ module.exports = [{
             const want = ref.stdout[180 * 640 + i * 80 + 40];
             ok(levels.length === 1 && Math.abs(levels[0] - want) <= 5, `${BAR_NAMES[i]} bar at ${levels}, ffmpeg ${want}`);
           });
+          if (matrix === 709) {
+            // Fixed limited-range BT.709 levels also catch a wrong reference clip or matrix guess.
+            const nominal = [235, 168, 145, 133, 63, 51, 28, 16];
+            a.wave.forEach((levels, i) => ok(levels.length === 1 && Math.abs(levels[0] - nominal[i]) <= 5,
+              `${BAR_NAMES[i]} bar at ${levels}, nominal BT.709 ${nominal[i]}`));
+          }
           P.key('w'); P.key('w');
           const v = await waitDump(P, (d) => d.vec, 'vectorscope analysis');
           ok(v.matrix === matrix, `vectorscope BT.${v.matrix}, expected BT.${matrix}`);
@@ -226,6 +232,9 @@ module.exports = [{
         const done = lib.lines(vs, /exported \d+\/280 frames/, from)[0];
         const n = fs.readdirSync(EXPORT_DIR).length;
         ok(n === 280 && /exported 280\/280 frames/.test(done), `${n} files; ${done}`);
+        const files = fs.readdirSync(EXPORT_DIR).sort();
+        const want = Array.from({ length: 280 }, (_, i) => `long_20s_f${String(i + 1).padStart(6, '0')}.png`);
+        ok(files.join(',') === want.join(','), 'hidden export did not write every frame from 1 through 280');
       } finally { await P.close(); }
     });
 

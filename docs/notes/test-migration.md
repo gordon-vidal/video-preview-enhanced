@@ -88,16 +88,18 @@ policy is `wcprobe` in `run.js`), `fakehost.js`, `shim.js`, `harness.js`, `probe
 
 ## Findings while porting
 
-- **Scopes use the wrong colour matrix for tagged BT.709 video below 1280x720 on the WebCodecs path.** `matrixOf` in
-  `media/scopes.js` reads `lastShown.yuv.space`, which WebCodecs frames do not have, and then guesses 709 only from the
-  size. A 640x360 H.264 clip tagged BT.709 showed `BT.601` and the bars' luma was off by up to 22 codes. The cases use a
-  1280x720 bars clip (as the Edge test did, where the size guess made it pass) so this stays visible only here. Not fixed
-  (product behaviour).
-- **Export after a hidden player is shown again can lose a frame** (279 of 280 on a 280-frame A-B range, 3 runs of 4).
+- **Fixed: scopes used the wrong colour matrix for tagged BT.709 video below 1280x720 on the WebCodecs path.** `matrixOf` in
+  `media/scopes.js` read `lastShown.yuv.space`, which WebCodecs frames do not have, and then guessed 709 only from the
+  size. A 640x360 H.264 clip tagged BT.709 showed `BT.601` and the bars' luma was off by up to 22 codes. The original
+  1280x720 bars clip hid the bug because the size guess made it pass. Fixed in `3b4f4e8`: stream colour
+  tags take priority, with a size guess only when untagged. SD tagged and untagged bars and the pixel inspector
+  have regression checks.
+- **Fixed: export after a hidden player was shown again could lose a frame** (279 of 280 on a 280-frame A-B range, 3 runs of 4).
   `exportRange` names files from the frame the page reports and skips a frame that is not newer than the last one
   written; after the player was hidden the first picture shown can still be the previous frame, so the frame asked
-  for is skipped and the loop moves on. `export/hidden` accepts 279 or 280 and records the loss as `known`. Visible
-  exports (`export/range`, `export/vfr`) are exact. Not fixed here (product behaviour, src/extension.js).
+  for is skipped and the loop moves on. Fixed in `8236551`: a visibility counter detects an interrupted grab and
+  retries the same requested frame before advancing. `export/hidden` is no longer quarantined and requires every
+  frame in the range. Visible exports (`export/range`, `export/vfr`) retain their checks.
 - Four VS Code instances rendering at once can fail with "WebGL2 is not available" (the decoder could not start): run
   the cases a few at a time, not all in parallel.
 - `AudioContext` is `suspended` in a hidden window (no user gesture): sound-clock behaviour cannot be tested there.

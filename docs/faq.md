@@ -7,7 +7,7 @@ VS Code blocks sound until you interact with the page. Click the video or press 
 You may have undone the automatic default, or chosen another editor for them. See [Making it the default](commands-and-settings.md#making-it-the-default-for-mp4-and-webm), or right-click → **Open With…** → **Video Preview Enhanced**.
 
 **A 4K video plays in slow motion.**
-The tested 4K HEVC, AV1 and VP9 clips played below their source rate in WebAssembly. See [Performance](performance.md) for frame rates. VS Code lets the player use the GPU decoder only for H.264 and VP8. ⓘ (About this video) says what plays the file and the stats overlay (`Shift+I`) shows the decoding speed; when playback falls behind, a notice offers to skip to keyframes. Or or run **Set Up Optional ffmpeg** (no admin rights needed) to decode natively.
+The tested 4K HEVC, AV1 and VP9 clips played below their source rate in WebAssembly. See [Performance](performance.md) for frame rates. VS Code lets the player use the GPU decoder only for H.264 and VP8. ⓘ (About this video) says what plays the file and the stats overlay (`Shift+I`) shows the decoding speed; when playback falls behind, a notice offers to skip to keyframes. Or run **Set Up Optional ffmpeg** (no admin rights needed) to decode natively.
 
 **The stats overlay says "4.5 s decoded ahead" or "Fully decoded".**
 While paused, the player decodes ahead within its frame memory budget so playback resumes smoothly. "Fully decoded" means the rest of the clip is in memory. (These used to be a status pill on the bar; the bar no longer shows it.)

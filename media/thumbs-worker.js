@@ -50,10 +50,29 @@ self.onmessage = (e) => {
   });
 };
 
+/**
+ * The page compiled the decoder once and sent the WebAssembly.Module: V8 shares its compiled code between
+ * the workers, so each extra worker (pool, thumbnails) skips the compile. libav.js's own loader fetches
+ * and compiles the wasm by URL with instantiateStreaming; this answers that one call from the module
+ * (any failure falls back to the URL path).
+ */
+function useSharedModule(mod) {
+  if (!mod || typeof WebAssembly.instantiateStreaming !== 'function') return () => {};
+  const orig = WebAssembly.instantiateStreaming;
+  WebAssembly.instantiateStreaming = async function (source, imports) {
+    WebAssembly.instantiateStreaming = orig;
+    try { return { module: mod, instance: await WebAssembly.instantiate(mod, imports) }; } catch (e) { return orig.call(WebAssembly, source, imports); }
+  };
+  return () => { if (WebAssembly.instantiateStreaming !== orig) WebAssembly.instantiateStreaming = orig; };
+}
+
 async function init(m) {
   self.LibAV = {};
   importScripts(m.loader);
-  libav = await self.LibAV.LibAV({ noworker: true, nothreads: true, toImport: m.toImport, wasmurl: m.wasmurl, variant: m.variant });
+  const restore = useSharedModule(m.wasmModule);
+  try {
+    libav = await self.LibAV.LibAV({ noworker: true, nothreads: true, toImport: m.toImport, wasmurl: m.wasmurl, variant: m.variant });
+  } finally { restore(); }
   post({ type: 'ready' });
 }
 
