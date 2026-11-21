@@ -77,6 +77,7 @@ function compareHtml({ uri, cspSource, nonce, cfg, frameSource }) {
 <div id="stage">
   <canvas id="canvas" hidden role="img" aria-label="Videos compared"></canvas>
   <div id="cells"${large ? ' class="dense"' : ''}></div>
+  <div id="reorderHint" hidden>Drag tiles to reorder · Esc or Done to finish</div>
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div></div>
   <div id="toast" hidden aria-hidden="true"></div>
 </div>
@@ -145,20 +146,24 @@ class CompareSession {
     });
     if (compareSessions) compareSessions.add(this);
     panel.onDidDispose(() => this.dispose());
-    panel.onDidChangeViewState(() => this.post({ type: 'visible', visible: panel.visible }));
+    panel.onDidChangeViewState(() => this.post({ type: 'visible', visible: panel.visible, active: panel.active }));
   }
 
   setFiles(uris) {
     this.uris = uris;
     this.files = uris.map((u) => u.fsPath);
     this.names = this.files.map((f) => path.basename(f));
+    this.order = Grid.tileOrder(uris.length, this.order);
     this.fhs = this.files.map(() => null);
     this.log = (m) => this.logRaw(`[compare ${this.names.join(' ↔ ')}] ${m}`);
   }
 
-  title() { return this.names.length === 2 ? `${this.names[0]} ↔ ${this.names[1]}` : this.names.join(' · '); }
+  title() {
+    const names = this.order.map((i) => this.names[i]);
+    return names.join(names.length === 2 ? ' ↔ ' : ' · ');
+  }
 
-  /** A new set of files: the page starts again (its saved state keeps position, offsets, clock and sound). */
+  /** A new set of files: the page starts again with its saved order, position, offsets, clock and sound. */
   reload(uris) {
     this.closeFiles();
     if (uris) {
@@ -248,6 +253,10 @@ class CompareSession {
         return undefined;
       }
       case 'stop': this.closeFiles(); return undefined;
+      case 'tileOrder':
+        this.order = Grid.tileOrder(this.names.length, m.order);
+        this.panel.title = this.title();
+        return undefined;
       case 'readBlock': return this.readBlock(m.key, m.pos, m.len);
       case 'nd': {
         const i = TILE_KEYS.indexOf(m.key);
@@ -281,6 +290,7 @@ class CompareSession {
         if (!Number.isInteger(i) || i < 0 || i >= this.uris.length || this.uris.length <= 2) return undefined;
         this.log(`remove ${this.names[i]}`);
         this.originalTiles.splice(i, 1);
+        this.order = Grid.orderAfterRemoval(this.order, i);
         this.reload(this.uris.filter((_, j) => j !== i));
         return undefined;
       }
@@ -465,7 +475,7 @@ class CompareSession {
   /** "Replace video…": tile i shows another file (picked in VS Code's open dialog). */
   async replaceVideo(i) {
     if (!Number.isInteger(i) || i < 0 || i >= this.uris.length || !this.pick) return;
-    const picked = await this.pick(`Replace ${TILE_KEYS[i]}`, vscode.Uri.joinPath(this.uris[i], '..'), false);
+    const picked = await this.pick(`Replace ${TILE_KEYS[this.order.indexOf(i)]}`, vscode.Uri.joinPath(this.uris[i], '..'), false);
     if (!picked || !picked.length || this.disposed) return;
     this.replaceUri(i, picked[0]);
   }

@@ -65,6 +65,9 @@
 
   const saved = vscode.getState() || {};
   const tileOr0 = (i) => (Number.isInteger(i) && i >= 0 && i < N ? i : 0);
+  const reorderBtn = $('reorderBtn'), reorderHint = $('reorderHint');
+  let reordering = false;
+  let reorderDrag = null;
   const prefs = {
     ...cfg.prefs,
     jump: { arrow: 5, shift: 1, ctrl: 'frame', ...cfg.prefs?.jump },
@@ -77,7 +80,7 @@
     // 2 videos: side by side or split (an older 'wipe' is the split, 'toggle' is gone); 3-4: the grid.
     mode: N > 2 ? 'grid' : saved.mode === 'split' || saved.mode === 'wipe' ? 'split' : 'side',
     split: typeof saved.split === 'number' ? saved.split : 0.5,
-    swap: !!saved.swap && N === 2,
+    order: Grid.tileOrder(N, saved.order, saved.swap),
     /** Per tile: offset value and unit ('frames' of that tile, or 'ms'). */
     offsets: names.map((_, i) => {
       const o = saved.offsets && saved.offsets[i];
@@ -85,10 +88,14 @@
       if (o && (o.unit === 'ms' || o.unit === 'frames') && isFinite(o.v)) return { unit: o.unit, v: o.v };
       return { unit: 'frames', v: i === 1 && typeof saved.offset === 'number' ? saved.offset : 0 }; // older state: B's offset in frames
     }),
-    clock: tileOr0(saved.clock), sound: tileOr0(saved.sound), sel: tileOr0(saved.sel) || 1, infoSel: 0,
+    clock: tileOr0(saved.clock), sound: tileOr0(saved.sound), sel: tileOr0(saved.sel ?? 1), infoSel: 0,
     rate: VpeControls.clampRate(saved.rate || 1), volume: saved.volume !== undefined ? saved.volume : 1, muted: !!saved.muted,
     loop: saved.loop !== undefined ? saved.loop : true, thresh: saved.thresh || 40, metrics: INTERNAL, timeMode: Number(saved.timeMode) || 0,
   };
+
+  // Decoder keys and per-video state use the host's indices. Only the display slots move.
+  const displayOrder = () => reorderDrag?.preview || st.order;
+  const tileLabel = (i) => KEYS[st.order.indexOf(i)];
 
   // Screen readers: toasts and messages go to one polite live region (#live).
   let liveTimer = 0;
@@ -274,7 +281,7 @@
     return out;
   }
 
-  /** @type {any[]} the tiles' engines, in order (A, B, ...) */
+  /** @type {any[]} the tiles' engines, indexed by the host's file order */
   let tiles = [];
   /** @type {any} the clock tile's engine */
   let clock = null;
@@ -384,7 +391,7 @@
     lastUi = '';
     refreshPanel();
     save();
-    if (!quiet) toast(`Clock: ${KEYS[st.clock]} · seek bar and frame steps follow it`);
+    if (!quiet) toast(`Clock: ${tileLabel(st.clock)} · seek bar and frame steps follow it`);
   }
 
   // ---- transport ---------------------------------------------------------------
@@ -814,8 +821,6 @@
 
   // ---- layout: cells and the pictures in them ---------------------------------------------
 
-  /** Tile order left to right for 2 videos (Swap). */
-  const pairOrder = () => (st.swap ? [1, 0] : [0, 1]);
   /** A tile's display aspect: its engine canvas once it has drawn, else the file's size, else 16:9. */
   function aspectOf(i) {
     const p = tiles[i];
@@ -854,15 +859,15 @@
   /**
    * The cells in CSS pixels of the stage: {x, y, w, h, tiles: [i] or [left, right] (split) or [] (the add cell), pic}.
    */
-  function computeCells() {
+  function computeCells(order = displayOrder()) {
     const W = stage.clientWidth, H = stage.clientHeight;
     if (st.mode === 'split') {
-      const [l, r] = pairOrder();
+      const [l, r] = order;
       return [{ x: 0, y: 0, w: W, h: H, tiles: [l, r], split: true, ...placed(l, 0, 0, W, H) }];
     }
     if (st.mode === 'side') {
       const w = (W - GAP) / 2;
-      return pairOrder().map((i, k) => ({ x: k * (w + GAP), y: 0, w, h: H, tiles: [i], ...placed(i, k * (w + GAP), 0, w, H) }));
+      return order.map((i, k) => ({ x: k * (w + GAP), y: 0, w, h: H, tiles: [i], ...placed(i, k * (w + GAP), 0, w, H) }));
     }
     const { cols, rows } = Grid.gridFor(N, 'grid');
     const w = (W - GAP * (cols - 1)) / cols, h = (H - GAP * (rows - 1)) / rows;
@@ -870,7 +875,7 @@
     // The first empty cell adds a video (3 of 4; in a larger grid while the setting allows more).
     for (let k = 0, count = Grid.gridCellCount(N, MAX_TILES, cols, rows); k < count; k++) {
       const x = (k % cols) * (w + GAP), y = Math.floor(k / cols) * (h + GAP);
-      if (k < N) out.push({ x, y, w, h, tiles: [k], ...placed(k, x, y, w, h) });
+      if (k < N) out.push({ x, y, w, h, tiles: [order[k]], ...placed(order[k], x, y, w, h) });
       else out.push({ x, y, w, h, tiles: [], add: true, pic: { x, y, w, h }, full: { x, y, w, h } });
     }
     return out;
@@ -907,7 +912,7 @@
   /** Builds the cells' DOM when the structure changes; positions them on every layout. */
   function layoutCells() {
     cells = computeCells();
-    const key = `${st.mode}|${st.swap}|${cells.length}`;
+    const key = `${st.mode}|${cells.length}`;
     if (key !== cellsKey) {
       cellsKey = key;
       cellsEl.textContent = '';
@@ -920,11 +925,10 @@
           d.innerHTML = `<span class="addcell">${ICONS.plus}<span>Add video</span></span>`;
         } else if (c.split) {
           d.dataset.tile = 'split';
-          d.innerHTML = `<div class="ov L" data-side="L"></div><div class="ov R" data-side="R"></div><div class="oor" hidden>One side has no picture at this moment</div>`
+          d.innerHTML = `<div class="ov L" data-side="L"></div><div class="ov R" data-side="R"></div><div class="move L"></div><div class="move R"></div><div class="oor" hidden>One side has no picture at this moment</div>`
             + `<div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" title="Drag, or ← → (Shift: 10 %), Home / End"><span class="h">${ICONS.split}</span></div>`;
         } else {
-          d.dataset.tile = String(c.tiles[0]);
-          d.innerHTML = '<div class="ov"></div><div class="oor" hidden>No picture at this moment (offset or length)</div>';
+          d.innerHTML = '<div class="ov"></div><div class="move"></div><div class="oor" hidden>No picture at this moment (offset or length)</div>';
         }
         cellsEl.appendChild(d);
       }
@@ -934,8 +938,11 @@
     [...cellsEl.children].forEach((d, k) => {
       const c = cells[k];
       if (!c) return;
+      if (c.add) d.inert = reordering;
+      if (!c.add && !c.split) d.dataset.tile = String(c.tiles[0]);
       Object.assign(d.style, { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` });
       for (const ov of d.querySelectorAll('.ov')) {
+        ov.inert = reordering;
         // A narrow letterboxed picture still gets the whole cell's width for its controls.
         const box = largeGrid ? c : c.pic;
         Object.assign(ov.style, {
@@ -953,19 +960,27 @@
   let overlaysKey = '';
   /** Pill and nudge content of every tile (letter, name, clock / sound, offset). */
   function updateOverlays() {
-    const key = `${cellsKey}|${st.clock}|${st.sound}|${st.muted}|${st.offsets.map((o) => `${o.v}${o.unit}`).join(',')}`;
+    const order = displayOrder();
+    const key = `${cellsKey}|${order}|${st.clock}|${st.sound}|${st.muted}|${st.offsets.map((o) => `${o.v}${o.unit}`).join(',')}`;
     if (key === overlaysKey) return;
     overlaysKey = key;
     infoDirty = true;  // the new pills start empty: refill the frame numbers on the next tick even when paused
     const html = (i, side) => {
       const clockI = i === st.clock ? `<span class="ico" title="Clock">${ICONS.clock(14)}</span>` : '';
       const soundI = i === st.sound ? `<span class="ico${st.muted ? ' dim' : ''}" title="${st.muted ? 'Sound (muted)' : 'Sound'}">${ICONS.sound(14)}</span>` : '';
-      const k = KEYS[i];
+      const k = KEYS[order.indexOf(i)];
       return `<button class="pill ${side === 'R' ? 'right' : 'left'}" data-act="openVid" data-i="${i}" title="${esc(names[i])}: offset, clock, sound, replace, remove"><span class="ltr">${k}</span><span class="nm">${esc(names[i])}</span>${clockI}${soundI}<span class="fr mono" data-fr="${i}"></span></button>`
         + `<div class="nudge ${side === 'R' ? 'right below' : side === 'L' ? 'left below' : 'right'}" role="group" aria-label="Offset of ${k}"><button data-act="nudge" data-i="${i}" data-d="-1" aria-label="${k} earlier" title="Earlier  −">‹</button>`
         + `<button class="offv mono" data-act="openVid" data-i="${i}" title="Offset of ${k}" aria-label="Offset of ${k}: ${offText(i, true)}">${offText(i)}</button>`
         + `<button data-act="nudge" data-i="${i}" data-d="1" aria-label="${k} later" title="Later  +">›</button></div>`;
     };
+    const arrows = (i) => [-1, 1].map((d) => {
+      const pos = order.indexOf(i) + d;
+      const label = `Move ${esc(names[i])} ${d < 0 ? 'earlier' : 'later'}`;
+      const icon = d < 0 ? 'M6 14l6-6 6 6' : 'M6 10l6 6 6-6';
+      const disabled = pos < 0 || pos >= N ? ' disabled' : '';
+      return `<button data-act="move" data-i="${i}" data-d="${d}" aria-label="${label}" title="${label}"${disabled}>${SVG(`<path d="${icon}"></path>`)}</button>`;
+    }).join('');
     [...cellsEl.children].forEach((d, k) => {
       const c = cells[k];
       if (!c || c.add) return;
@@ -973,7 +988,12 @@
         const [l, r] = c.tiles;
         d.querySelector('.ov.L').innerHTML = html(l, 'L');
         d.querySelector('.ov.R').innerHTML = html(r, 'R');
-      } else d.querySelector('.ov').innerHTML = html(c.tiles[0]);
+        d.querySelector('.move.L').innerHTML = arrows(l);
+        d.querySelector('.move.R').innerHTML = arrows(r);
+      } else {
+        d.querySelector('.ov').innerHTML = html(c.tiles[0]);
+        d.querySelector('.move').innerHTML = arrows(c.tiles[0]);
+      }
     });
     lastFr = '';
   }
@@ -999,11 +1019,11 @@
   function placeDivider(d, c) {
     const dv = d.querySelector('#divider');
     if (!dv) return;
+    dv.inert = reordering;
     Object.assign(dv.style, { left: `${c.pic.x - c.x + c.pic.w * st.split}px`, top: `${c.pic.y - c.y}px`, height: `${c.pic.h}px` });
     const pct = Math.round(st.split * 100);
-    const [l, r] = c.tiles;
     dv.setAttribute('aria-valuenow', String(pct));
-    dv.setAttribute('aria-valuetext', `${KEYS[l]} ${pct}%, ${KEYS[r]} ${100 - pct}%`);
+    dv.setAttribute('aria-valuetext', `A ${pct}%, B ${100 - pct}%`);
   }
   function setSplit(x) {
     st.split = Math.max(0, Math.min(1, x));
@@ -1167,7 +1187,7 @@
   function frameFactor() {
     if (st.pic.mode === 'fit' && Pic.plain(st.pic)) return 1;
     let f = 0;
-    for (const c of computeCells()) {
+    for (const c of computeCells(st.order)) {
       if (c.add) continue;
       const i = c.tiles[0];
       const fit = Pic.rectOf(Pic.fresh('fit'), tileNat(i), tileSrc(i), { w: c.w, h: c.h }, picOpts());
@@ -1196,6 +1216,7 @@
     if (N > 2) m = 'grid';
     else if (m === 'wipe') m = 'split';
     else if (m !== 'side' && m !== 'split') return;
+    finishReorderDrag();
     st.mode = m;
     layoutDirty = true;
     viewDirty = true;
@@ -1268,7 +1289,7 @@
     if (!o) return;
     st.sel = i;
     setOffset(i, o.v + d * (o.unit === 'ms' ? 10 : 1));
-    toast(`${KEYS[i]} offset ${offText(i, true)}`);
+    toast(`${tileLabel(i)} offset ${offText(i, true)}`);
   }
   /** Tile i's offset in frames or in ms, keeping the moment it stands for. */
   function setUnit(i, unit) {
@@ -1279,14 +1300,8 @@
     else setOffset(i, (o.v / 1000) * fps, 'frames');
   }
   function swapSides() {
-    if (N !== 2) return;
-    st.swap = !st.swap;
-    layoutDirty = true;
-    viewDirty = true;
-    if (!clock) layoutCells();
-    refreshPanel();
-    save();
-    toast(st.swap ? 'B on the left' : 'A on the left');
+    finishReorderDrag();
+    if (N === 2) commitOrder(Grid.moveTile(st.order, 0, 1), st.order[1]);
   }
   /** Sound from tile i only; the others are muted. */
   function setSound(i, quiet) {
@@ -1296,7 +1311,7 @@
     updateMuteUi();
     refreshPanel();
     save();
-    if (!quiet) toast(`Sound from ${KEYS[st.sound]}`);
+    if (!quiet) toast(`Sound from ${tileLabel(st.sound)}`);
   }
   function applyVolume() { tiles.forEach((p, j) => p.setVolume(st.volume, st.muted || j !== st.sound)); }
   function updateMuteUi() {
@@ -1304,8 +1319,8 @@
     ui.mute.classList.toggle('muted', m || st.volume === 0);
     ui.mute.classList.toggle('on', m);
     ui.mute.setAttribute('aria-pressed', String(m));
-    ui.mute.setAttribute('aria-label', `${m ? 'Unmute' : 'Mute'} (sound from ${KEYS[st.sound]})`);
-    ui.mute.title = `${m ? 'Unmute' : 'Mute'} (sound from ${KEYS[st.sound]})  M`;
+    ui.mute.setAttribute('aria-label', `${m ? 'Unmute' : 'Mute'} (sound from ${tileLabel(st.sound)})`);
+    ui.mute.title = `${m ? 'Unmute' : 'Mute'} (sound from ${tileLabel(st.sound)})  M`;
   }
   function setMute(m) {
     st.muted = m;
@@ -1382,24 +1397,26 @@
     if (!(i >= 0 && i < N)) return;
     if (N <= 2) { leave(i === 0 ? 1 : 0); return; }
     closeMenu();
-    const to = (j) => (j === i ? 0 : j > i ? j - 1 : j);
-    // Removing the clock: the next one (old tile 1 if tile 0 goes, else old tile 0) resumes at the same picture.
-    const t = clock && i === st.clock ? tileTime(i === 0 ? 1 : 0) : undefined;
-    st.offsets.splice(i, 1);
-    st.clock = to(st.clock);
-    st.sound = to(st.sound);
-    st.sel = Math.min(Math.max(1, to(st.sel)), N - 2);
-    saveNow(t);
+    // If a selected video leaves, use the first remaining display slot.
+    const first = st.order.find((j) => j !== i);
+    const to = (j) => { const keep = j === i ? first : j; return keep > i ? keep - 1 : keep; };
+    const t = clock && i === st.clock ? tileTime(first) : undefined;
+    saveNow(t, {
+      order: Grid.orderAfterRemoval(st.order, i),
+      offsets: st.offsets.filter((_, j) => j !== i),
+      clock: to(st.clock), sound: to(st.sound), sel: to(st.sel),
+    });
     vscode.postMessage({ type: 'remove', index: i });
   }
 
   let saveTimer = 0;
-  function saveNow(t) {
+  function saveNow(t, changes) {
     clearTimeout(saveTimer);
     vscode.setState({
-      pic: st.pic.mode, mode: st.mode, split: st.split, swap: st.swap, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
+      pic: st.pic.mode, mode: st.mode, split: st.split, order: st.order, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
       rate: st.rate, volume: st.volume, muted: st.muted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode,
-      t: t ?? (clock ? clock.currentTime() : saved.t || 0),
+      t: t ?? (pendingStart || (clock && begun && clock.startT !== null ? clock.currentTime() : saved.t || 0)),
+      ...changes,
     });
   }
   function save() {
@@ -1435,7 +1452,7 @@
     pause();
     // A large grid's engine canvases hold no picture (sharedRenderer): the tile as drawn in the view.
     if (largeGrid) { copyTileView(i); return; }
-    copyCanvas(p.snapshotSource ? p.snapshotSource() : p.cv, `Frame of ${KEYS[i]}`, p.remoteStream);
+    copyCanvas(p.snapshotSource ? p.snapshotSource() : p.cv, `Frame of ${tileLabel(i)}`, p.remoteStream);
   }
   function copyTileView(i) {
     const c = cells.find((x) => !x.add && x.tiles[0] === i);
@@ -1446,7 +1463,7 @@
     out.width = Math.max(1, Math.round(c.pic.w * dpr));
     out.height = Math.max(1, Math.round(c.pic.h * dpr));
     out.getContext('2d').drawImage(canvas, Math.round(c.pic.x * dpr), Math.round(c.pic.y * dpr), out.width, out.height, 0, 0, out.width, out.height);
-    copyCanvas(out, `Frame of ${KEYS[i]}`, tiles[i]?.remoteStream);
+    copyCanvas(out, `Frame of ${tileLabel(i)}`, tiles[i]?.remoteStream);
   }
   function copyTileTime(i) {
     const text = fmtTime(tileTime(i));
@@ -1471,11 +1488,12 @@
   function renderCompare(s, k) {
     const f = document.createDocumentFragment();
     f.appendChild(k.heading('Videos'));
-    names.forEach((name, i) => {
+    st.order.forEach((i) => {
+      const name = names[i];
       const role = `${i === st.clock ? ', clock' : ''}${i === st.sound ? ', sound' : ''}`;
-      const b = k.btn('row cvid', name, () => { st.sel = i; k.show('cmpVid'); }, { value: offText(i), chev: true, aria: { 'aria-label': `${KEYS[i]}: ${name}${role}, offset ${offText(i, true)}` } });
+      const b = k.btn('row cvid', name, () => { st.sel = i; k.show('cmpVid'); }, { value: offText(i), chev: true, aria: { 'aria-label': `${tileLabel(i)}: ${name}${role}, offset ${offText(i, true)}` } });
       b.dataset.i = String(i);
-      const ltr = k.el('span', 'ltr', KEYS[i]);
+      const ltr = k.el('span', 'ltr', tileLabel(i));
       ltr.setAttribute('aria-hidden', 'true');
       b.insertBefore(ltr, b.firstChild);
       const val = b.querySelector('.val');
@@ -1503,7 +1521,7 @@
       f.appendChild(k.btn('row', 'Swap sides', () => { swapSides(); k.render(); }, { icon: ICONS.swap, kbd: 'X' }));
       f.appendChild(k.el('div', 'sep'));
     }
-    f.appendChild(k.btn('row', 'Leave compare', () => leave(), { icon: ICONS.leave, value: `keep ${KEYS[st.clock]}`, aria: { 'aria-label': `Leave compare, keep ${KEYS[st.clock]}` } }));
+    f.appendChild(k.btn('row', 'Leave compare', () => leave(), { icon: ICONS.leave, value: `keep ${tileLabel(st.clock)}`, aria: { 'aria-label': `Leave compare, keep ${tileLabel(st.clock)}` } }));
     return f;
   }
 
@@ -1512,15 +1530,15 @@
     const i = Math.min(st.sel, N - 1);
     const o = st.offsets[i];
     const f = document.createDocumentFragment();
-    const head = k.head(`${KEYS[i]} ${names[i]}`, 'cmp');
+    const head = k.head(`${tileLabel(i)} ${names[i]}`, 'cmp');
     const g = head.querySelector('.grow');
-    if (g) { g.textContent = names[i]; const l = k.el('span', 'ltr', KEYS[i]); l.setAttribute('aria-hidden', 'true'); head.insertBefore(l, g); }
+    if (g) { g.textContent = names[i]; const l = k.el('span', 'ltr', tileLabel(i)); l.setAttribute('aria-hidden', 'true'); head.insertBefore(l, g); }
     f.appendChild(head);
     f.appendChild(k.heading('Offset'));
     const top = k.el('div', 'speedTop');
     const read = k.el('div', 'readout off', offText(i, true));
-    const minus = k.btn('big', null, () => { nudge(i, -1); k.render(); }, { aria: { 'aria-label': `${KEYS[i]} earlier` } });
-    const plus = k.btn('big', null, () => { nudge(i, 1); k.render(); }, { aria: { 'aria-label': `${KEYS[i]} later` } });
+    const minus = k.btn('big', null, () => { nudge(i, -1); k.render(); }, { aria: { 'aria-label': `${tileLabel(i)} earlier` } });
+    const plus = k.btn('big', null, () => { nudge(i, 1); k.render(); }, { aria: { 'aria-label': `${tileLabel(i)} later` } });
     minus.textContent = '−';
     plus.textContent = '+';
     top.append(minus, read, plus);
@@ -1531,10 +1549,10 @@
     seg.setAttribute('aria-label', 'Offset in');
     for (const [u, label] of [['frames', 'Frames'], ['ms', 'Time (ms)']]) seg.appendChild(k.btn('chip', label, () => { setUnit(i, u); k.render(); }, { aria: { 'aria-pressed': String(o.unit === u) } }));
     units.appendChild(seg);
-    if (o.v) units.appendChild(k.btn('link', 'Reset', () => { setOffset(i, 0); toast(`${KEYS[i]} in step`); k.render(); }, { aria: { 'aria-label': `Reset the offset of ${KEYS[i]}` } }));
+    if (o.v) units.appendChild(k.btn('link', 'Reset', () => { setOffset(i, 0); toast(`${tileLabel(i)} in step`); k.render(); }, { aria: { 'aria-label': `Reset the offset of ${tileLabel(i)}` } }));
     f.appendChild(units);
     const note = k.el('div', 'pnote');
-    note.append(`Positive shows a later moment of ${KEYS[i]}. `, k.kbd('−'), ' ', k.kbd('+'), ` nudge the video under the pointer${o.unit === 'ms' ? ' by 10 ms' : ''}.`);
+    note.append(`Positive shows a later moment of ${tileLabel(i)}. `, k.kbd('−'), ' ', k.kbd('+'), ` nudge the video under the pointer${o.unit === 'ms' ? ' by 10 ms' : ''}.`);
     f.appendChild(note);
     f.appendChild(k.el('div', 'sep'));
     const clockRow = k.btn('row tall', null, () => { setClock(i); k.render(); }, { aria: { role: 'switch', 'aria-checked': String(i === st.clock), 'aria-label': 'Clock: seek bar, time and frame steps follow it' } });
@@ -1554,10 +1572,10 @@
     panel: ui.panel, sheet: ui.sheet, bar: ui.bar,
     buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, keys: ui.keysBtn, cmp: ui.cmpBtn, tracks: null },
     get: () => ({
-      rate: st.rate, loop: st.loop, jump: prefs.jump, stepButtons: prefs.stepButtons, picture: picState(), compare: { soundLabel: `from ${KEYS[st.sound]}` },
+      rate: st.rate, loop: st.loop, jump: prefs.jump, stepButtons: prefs.stepButtons, picture: picState(), compare: { soundLabel: `from ${tileLabel(st.sound)}` },
       tools: [{ label: 'Compare', note: `${N} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', ui.cmpBtn) }],
       facts: factsOf(Math.min(st.infoSel, N - 1)),
-      infoTabs: { keys: names.map((_, i) => KEYS[i]), sel: Math.min(st.infoSel, N - 1), pick: (i) => { st.infoSel = i; } },
+      infoTabs: { keys: st.order.map(tileLabel), sel: st.order.indexOf(st.infoSel), pick: (slot) => { st.infoSel = st.order[slot]; } },
       canUseOriginal: nativeTiles[st.infoSel] === 'transcode',
       transcode: {
         mode: prefs.transcode, maxBitrateMbps: prefs.transcodeMaxBitrate,
@@ -1584,13 +1602,113 @@
     },
     views: {
       cmp: { label: 'Compare', button: 'cmp', render: renderCompare },
-      cmpVid: { label: () => `${KEYS[Math.min(st.sel, N - 1)]}: ${names[Math.min(st.sel, N - 1)]}`, button: 'cmp', parent: 'cmp', render: renderVideo },
+      cmpVid: { label: () => `${tileLabel(st.sel)}: ${names[st.sel]}`, button: 'cmp', parent: 'cmp', render: renderVideo },
     },
   });
   /** An open Compare page follows changes (clock, sound, offsets) made elsewhere (keys, tiles). */
   function refreshPanel() {
     const v = controls.view();
     if (v === 'cmp' || v === 'cmpVid' || v === 'main') controls.render();
+  }
+
+  // ---- tile reordering -----------------------------------------------------------------------
+
+  function updateOrderLayout() {
+    layoutCells();
+    viewDirty = infoDirty = true;
+    wakeLoop();
+  }
+  function commitOrder(order, video) {
+    if (order === st.order) return;
+    st.order = order;
+    hover = null;
+    closeMenu();
+    updateOrderLayout();
+    updateMuteUi();
+    if (controls.view() === 'info') controls.refresh();
+    else refreshPanel();
+    requestTileSize();
+    saveNow();
+    vscode.postMessage({ type: 'tileOrder', order });
+    announce(`${names[video]} moved to ${tileLabel(video)}`);
+  }
+  function moveWithArrow(el) {
+    const video = Number(el.dataset.i), direction = Number(el.dataset.d);
+    const from = st.order.indexOf(video);
+    const focused = el === document.activeElement;
+    finishReorderDrag();
+    commitOrder(Grid.moveTile(st.order, from, from + direction), video);
+    if (focused) {
+      const buttons = `[data-act="move"][data-i="${video}"]:enabled`;
+      (cellsEl.querySelector(`${buttons}[data-d="${direction}"]`) || cellsEl.querySelector(buttons))?.focus();
+    }
+  }
+  function setReordering(on) {
+    if (on === reordering) return;
+    reordering = on;
+    finishReorderDrag();
+    stage.classList.toggle('reordering', on);
+    reorderBtn.textContent = on ? 'Done' : 'Reorder';
+    reorderHint.hidden = !on;
+    if (on) {
+      closeMenu();
+      controls.closeAll(false);
+      if (!addHint.hidden) vscode.postMessage({ type: 'stopAddMode' });
+      panDrag = null;
+      stage.classList.remove('panning');
+      announce(reorderHint.textContent);
+    }
+    layoutCells();
+  }
+  reorderBtn.onclick = () => setReordering(!reordering);
+
+  function reorderSlot(e, splitX) {
+    const hit = cellAt(e.clientX, e.clientY);
+    if (!hit) return -1;
+    return hit.c.split ? Number(e.clientX >= splitX) : cells.indexOf(hit.c);
+  }
+  stage.addEventListener('pointerdown', (e) => {
+    if (!reordering || reorderDrag || e.button !== 0 || e.target.closest('[data-act="move"]')) return;
+    const r = stage.getBoundingClientRect(), c = cells[0];
+    // Keep the target boundary fixed while previewing two videos of different shapes.
+    // A divider at either edge still leaves a target for each video.
+    const splitX = c.split ? r.left + Math.max(r.width * 0.1, Math.min(r.width * 0.9, c.pic.x + c.pic.w * st.split)) : 0;
+    const from = reorderSlot(e, splitX);
+    if (from < 0) return;
+    reorderDrag = { id: e.pointerId, from, to: from, x: e.clientX, y: e.clientY, splitX, moved: false, preview: st.order };
+    e.preventDefault();
+    try { stage.setPointerCapture(e.pointerId); } catch { /* synthetic pointer (test hook) */ }
+  });
+  function previewReorder(e) {
+    const drag = reorderDrag;
+    if (!drag || e.pointerId !== drag.id) return;
+    if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
+    drag.moved = true;
+    stage.classList.add('reorder-drag');
+    const to = reorderSlot(e, drag.splitX);
+    if (to === drag.to) return;
+    drag.to = to;
+    // Every preview starts from the committed order, so reversing direction is reversible.
+    drag.preview = Grid.moveTile(st.order, drag.from, to);
+    updateOrderLayout();
+  }
+  function finishReorderDrag(commit = false) {
+    const drag = reorderDrag;
+    if (!drag) return;
+    reorderDrag = null;
+    stage.classList.remove('reorder-drag');
+    if (stage.hasPointerCapture(drag.id)) stage.releasePointerCapture(drag.id);
+    if (commit && drag.preview !== st.order) commitOrder(drag.preview, st.order[drag.from]);
+    else if (drag.preview !== st.order) updateOrderLayout();
+  }
+  stage.addEventListener('pointermove', previewReorder);
+  stage.addEventListener('pointerup', (e) => {
+    if (e.pointerId !== reorderDrag?.id) return;
+    previewReorder(e);
+    finishReorderDrag(true);
+  });
+  for (const event of ['pointercancel', 'lostpointercapture']) {
+    stage.addEventListener(event, (e) => { if (e.pointerId === reorderDrag?.id) finishReorderDrag(); });
   }
 
   // ---- the tiles' right-click menu --------------------------------------------------------------
@@ -1605,7 +1723,7 @@
   /** Tile i's actions (as in the mock-up), at client (x, y). */
   function openMenu(i, x, y) {
     controls.closeAll(false);
-    const k = KEYS[i];
+    const k = tileLabel(i);
     const m = ui.menu;
     m.textContent = '';
     const item = (label, hint, run) => {
@@ -1677,7 +1795,7 @@
   document.addEventListener('contextmenu', (e) => {
     // Our own menu instead of VS Code's (a webview's default menu only has Cut / Copy / Paste).
     e.preventDefault();
-    if (!clock) return;
+    if (reordering || !clock) return;
     const t = tileAt(e.target, e.clientX);
     openMenu(t === null ? st.clock : t, e.clientX, e.clientY);
   });
@@ -1693,14 +1811,16 @@
     if (el) {
       e.stopPropagation();
       const i = Number(el.dataset.i);
-      if (el.dataset.act === 'openVid') { closeMenu(); st.sel = i; controls.show('cmpVid', ui.cmpBtn); }
+      if (el.dataset.act === 'move') moveWithArrow(el);
+      else if (reordering) return;
+      else if (el.dataset.act === 'openVid') { closeMenu(); st.sel = i; controls.show('cmpVid', ui.cmpBtn); }
       else if (el.dataset.act === 'nudge') nudge(i, Number(el.dataset.d));
       else if (el.dataset.act === 'add') addVideo();
     }
   });
   // A click on the picture plays or pauses; with a panel or the menu open it only closes them.
   stage.addEventListener('click', (e) => {
-    if (e.defaultPrevented) return;
+    if (reordering || e.defaultPrevented) return;
     if (!ui.menu.hidden) { closeMenu(); return; }
     if (controls.anyOpen()) { controls.closeAll(false); return; }
     if (performance.now() - dragEnded < 300) return;
@@ -1709,6 +1829,7 @@
   });
   // Ctrl+wheel (pinch) zooms every tile around the pointer; a drag moves them all (the same part of each picture).
   stage.addEventListener('wheel', (e) => {
+    if (reordering) { e.preventDefault(); return; }
     if (!e.ctrlKey || !clock) return;
     const hit = cellAt(e.clientX, e.clientY);
     if (!hit) return;
@@ -1721,7 +1842,7 @@
   // A drag may start on a name pill or an offset nudge too (they sit over the picture's corners and edges): the 4 px
   // threshold keeps a plain click on them a click, and the click that ends a drag is swallowed below.
   stage.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || !clock || /** @type {any} */ (e.target).closest('#divider, #menu')) return;
+    if (reordering || e.button !== 0 || !clock || /** @type {any} */ (e.target).closest('#divider, #menu, .move')) return;
     const hit = cellAt(e.clientX, e.clientY);
     if (!hit) return;
     // One view for all tiles: a tile that fits its cell may start the drag when another one overflows.
@@ -1750,7 +1871,7 @@
     e.preventDefault();
   }, true);
   stage.addEventListener('pointercancel', endPan);
-  stage.addEventListener('wheel', (e) => { if (e.ctrlKey) return; if (clock && !clock.playing) { e.preventDefault(); step(e.deltaY > 0 ? 1 : -1); } }, { passive: false });
+  stage.addEventListener('wheel', (e) => { if (reordering || e.ctrlKey) return; if (clock && !clock.playing) { e.preventDefault(); step(e.deltaY > 0 ? 1 : -1); } }, { passive: false });
 
   // ---- the bar ------------------------------------------------------------------------------------
 
@@ -1775,17 +1896,17 @@
       const dur = clock.meta.duration || 0;
       const fps = fpsOf(clock);
       const nFrames = clock.n || (fps && dur ? Math.round(dur * fps) : 0);
-      who.textContent = KEYS[st.clock];
+      who.textContent = tileLabel(st.clock);
       if (st.timeMode === 1) { ui.now.textContent = fmtTimecode(f, fps); ui.dur.textContent = `/ ${fmtTimecode(nFrames, fps)}`; }
       else if (st.timeMode === 2) { ui.now.textContent = `frame ${f + 1}`; ui.dur.textContent = `/ ${nFrames || '?'}`; }
       else { ui.now.textContent = fmtTime(t); ui.dur.textContent = `/ ${fmtTime(dur)}`; }
-      ui.time.title = `Time of the clock video (${KEYS[st.clock]}). Click: time / timecode / frames`;
-      ui.time.setAttribute('aria-label', `${KEYS[st.clock]} position ${fmtTime(t)}, frame ${f + 1}. Click to change the format.`);
+      ui.time.title = `Time of the clock video (${tileLabel(st.clock)}). Click: time / timecode / frames`;
+      ui.time.setAttribute('aria-label', `${tileLabel(st.clock)} position ${fmtTime(t)}, frame ${f + 1}. Click to change the format.`);
       ui.play.classList.toggle('playing', playing);
       ui.play.setAttribute('aria-label', playing ? 'Pause all' : 'Play all');
       ui.play.title = `${playing ? 'Pause' : 'Play'} all  Space`;
       // The slider's value is a frame index: screen readers read the time instead.
-      ui.seek.setAttribute('aria-valuetext', `${KEYS[st.clock]} ${fmtTime(t)} of ${fmtTime(dur)}, frame ${f + 1}`);
+      ui.seek.setAttribute('aria-valuetext', `${tileLabel(st.clock)} ${fmtTime(t)} of ${fmtTime(dur)}, frame ${f + 1}`);
       updateTileInfo(fr);
     }
   }
@@ -1825,7 +1946,7 @@
     const r = ui.seek.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     const f = Math.round(x * (clock.n - 1));
-    ui.tip.textContent = `${KEYS[st.clock]} ${fmtTime(f / fpsOf(clock))} · #${f + 1}`;
+    ui.tip.textContent = `${tileLabel(st.clock)} ${fmtTime(f / fpsOf(clock))} · #${f + 1}`;
     ui.tip.style.left = `${Math.max(30, Math.min(r.width - 30, e.clientX - r.left))}px`;
     ui.tip.hidden = false;
   });
@@ -1855,6 +1976,14 @@
   document.addEventListener('focusin', poke);
   document.addEventListener('fullscreenchange', () => { poke(); layoutDirty = true; });
 
+  document.addEventListener('keydown', (e) => {
+    if (!reordering || e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    controls.closeAll(false);
+    setReordering(false);
+    reorderBtn.focus();
+  }, { capture: true });
   document.addEventListener('keydown', (e) => {
     // Typing in a field, a list box, or Space / Enter on a button reached with the keyboard: not player keys.
     if (VpeModes.ownsKey(e)) return;
@@ -1894,8 +2023,8 @@
       case 'x': case 'X': if (pair) swapSides(); else handled = false; break;
       case 'z': case 'Z': if (e.shiftKey) handled = false; else cyclePic(); break;
       case 'D': if (e.shiftKey && N < MAX_TILES) toggleAddMode(); else handled = false; break;
-      case '-': case '_': nudge(target(), -1); break;
-      case '+': case '=': nudge(target(), 1); break;
+      case '-': case '_': if (!reordering) nudge(target(), -1); break;
+      case '+': case '=': if (!reordering) nudge(target(), 1); break;
       case 'Escape': if (INTERNAL && scanner.running) scanner.stop('Stopped'); else handled = false; break;
       default: handled = false;
     }
@@ -2069,6 +2198,7 @@
   let resumeOnShow = false;
   const syncVisibility = Grid.compareVisibility((shown) => {
     visible = shown;
+    if (!visible) setReordering(false);
     if (!clock) return;
     if (!visible) { resumeOnShow = resumeOnShow || clock.playing; pause(); }
     for (const p of tiles) if (p.remoteStream) p.setHidden(!visible);
@@ -2097,7 +2227,7 @@
     lastMetrics = null;
     lastMetricsKey = '';
     infoDirty = layoutDirty = true;
-    if (notice) toast(`${KEYS[i]}: ${notice}`);
+    if (notice) toast(`${tileLabel(i)}: ${notice}`);
     controls.refresh();
   }
 
@@ -2106,7 +2236,10 @@
     if (!m || m.page !== cfg.page) return;
     switch (m.type) {
       case 'toast': toast(String(m.text || ''), Math.min(10000, Number(m.ms) || 1500)); break;
-      case 'addMode': showAddMode(m); break;
+      case 'addMode':
+        if (m.on) setReordering(false);
+        showAddMode(m);
+        break;
       case 'open':
         syncVisibility(document.hidden, m.visible !== false);
         sizes = m.sizes;
@@ -2159,6 +2292,7 @@
       case 'nda': { const p = engines[m.key]; if (p) p.onNativeAudio(m); break; }
       case 'originalTile': useOriginalTile(m.index, m.notice); break;
       case 'visible':
+        if (m.active === false) setReordering(false);
         syncVisibility(document.hidden, m.visible);
         break;
       case 'prefs':
@@ -2201,7 +2335,7 @@
     log(`compare report n=${N} mode=${st.mode} modes=${N > 2 ? 'grid' : 'side,split'} canvas=${canvas.width}x${canvas.height} grid=${g.cols}x${g.rows} max=${MAX_TILES} now=${Math.round(performance.now())}`
       // WebGL contexts in use: the compositor, the shared renderer (5+ tiles), each engine's own (2-4 tiles), metrics.
       + ` contexts=${[comp, renderer, metrics].filter(Boolean).length + tiles.filter((p) => p.gl && p.gl.gl).length}`
-      + ` frame=${clock ? clock.currentFrame() + 1 : '-'} clock=${st.clock} sound=${st.sound} muted=${st.muted} split=${st.split.toFixed(3)} swap=${st.swap}`
+      + ` frame=${clock ? clock.currentFrame() + 1 : '-'} clock=${st.clock} sound=${st.sound} muted=${st.muted} split=${st.split.toFixed(3)} swap=${N === 2 && st.order[0] === 1}`
       + ` playing=${per((p) => (p.playing ? 1 : 0))} frames=${per((p) => (p.shownT === null ? '-' : frameOf(p) + 1))} shown=${per((p) => p.shownCount || 0)}`
       + ` synced=${synced()} native=${per((p) => (p.cfg.native ? 1 : 0))} heights=${per((p) => p.cv.height || 0)} fps=${per((p) => fpsOf(p).toFixed(2))}`
       + ` widths=${per((p) => p.cv.width || 0)} stage=${tileSize().w}x${tileSize().h}`
@@ -2231,12 +2365,16 @@
       cells: [...cellsEl.children].map((d) => ({
         tile: d.dataset.tile === undefined ? (d.classList.contains('add') ? 'add' : '') : d.dataset.tile, rect: rect(d),
         pills: [...d.querySelectorAll('.pill')].map((p) => text(p)), nudges: [...d.querySelectorAll('.nudge')].map((n) => text(n)),
+        moves: [...d.querySelectorAll('[data-act="move"]')].map((b) => ({
+          label: b.getAttribute('aria-label'), disabled: b.disabled, focused: b === document.activeElement,
+        })),
         pillRects: [...d.querySelectorAll('.pill')].map(rect),
         nudgeRects: [...d.querySelectorAll('.nudge')].map(rect),
         pics: [...d.querySelectorAll('.ov')].map((o) => rect(o)), oor: !!d.querySelector('.oor:not([hidden])'),
       })),
       divider: (() => { const dv = cellsEl.querySelector('#divider'); return dv ? { rect: rect(dv), value: dv.getAttribute('aria-valuenow') } : null; })(),
       stage: rect(stage), toast: ui.toast.hidden ? '' : ui.toast.textContent, live: ui.live.textContent, hover,
+      reorder: { button: text(reorderBtn), hint: reorderHint.hidden ? '' : text(reorderHint) },
       picture: {
         ...st.pic, factor: frameFactor(), pct: picState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), pannable: stage.classList.contains('pannable'),
         tiles: cells.filter((c) => !c.add).map((c) => ({ tiles: c.tiles, box: [c.x, c.y, c.w, c.h], full: [c.full.x, c.full.y, c.full.w, c.full.h], pic: [c.pic.x, c.pic.y, c.pic.w, c.pic.h] })),
@@ -2337,5 +2475,6 @@
   // Frames for native tiles come at the tile's size: tell the host how big a tile is.
   const tile = tileSize();
   lastTileSize = JSON.stringify(tile);
+  vscode.postMessage({ type: 'tileOrder', order: st.order });
   vscode.postMessage({ type: 'ready', tile, origin: window.location.origin });
 })();

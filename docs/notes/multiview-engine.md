@@ -76,6 +76,6 @@ about 20-35 % CPU). Under heavy load (other agents near 100 % CPU) a run gave 23
 
 ## Open
 
-- Drag to reorder and free tile placement.
+- Free tile placement. For ordering within the grid, see [Tile order](compare-ui.md#tile-order).
 - 16 tiles on the built-in (WebAssembly) decoder run 16 workers, each with its own heap; 1080p HEVC there
   is far below real time. With ffmpeg they play.

@@ -1,7 +1,7 @@
 'use strict';
 // The player's bar (seek bar and buttons), shared by the player (src/extension.js html()) and compare
 // (src/compare.js compareHtml), so both look and behave the same (docs/notes/ui-simple.md, docs/notes/compare-ui.md).
-// Compare leaves out CC and adds the Compare button (two panes) that opens its panel.
+// Compare leaves out CC and adds its own panel and reorder buttons.
 
 const CMP_BTN = "    <button id=\"cmpBtn\" class=\"ib\" title=\"Compare: videos, offsets, clock, sound\" aria-label=\"Compare\" aria-expanded=\"false\" aria-controls=\"panel\"><svg width=\"21\" height=\"21\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"2.5\" y=\"5\" width=\"8.5\" height=\"14\" rx=\"1.5\"></rect><rect x=\"13\" y=\"5\" width=\"8.5\" height=\"14\" rx=\"1.5\"></rect></svg></button>\n";
 
@@ -27,6 +27,7 @@ function barHtml({ compare = false } = {}) {
     <input id="volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume  ↑ ↓" aria-label="Volume">
     <button id="time" class="mono" title="Click: time / timecode / frames" aria-label="Position"><span id="now">0:00.000</span> <span id="dur">/ 0:00.000</span></button>
     <span class="spacer"></span>
+${compare ? '    <button id="reorderBtn" class="ib" aria-controls="cells">Reorder</button>\n' : ''}
 ${compare ? '' : `    <button id="tracks" class="ib" title="Subtitles  C" aria-label="Subtitles" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="C"><span class="ccline"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M10.5 10h-2A1.5 1.5 0 0 0 7 11.5v1A1.5 1.5 0 0 0 8.5 14h2M17 10h-2a1.5 1.5 0 0 0-1.5 1.5v1A1.5 1.5 0 0 0 15 14h2"></path></svg></span></button>
 `}
 ${compare ? CMP_BTN : ''}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v6M12 7.5v.01"></path></svg></button>

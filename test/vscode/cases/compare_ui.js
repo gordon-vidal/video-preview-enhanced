@@ -218,9 +218,11 @@ module.exports = [{
     r = await until((x) => x.swap === 'true', 5000);
     ok(r.swap === 'true', 'X did not swap');
     u = await ui();
-    ok(u.cells[0].pills[0].startsWith('B'), `after Swap the left pill is ${u.cells[0].pills[0]}`);
-    act({ action: 'key', key: 'x' });
+    ok(u.cells[0].pills[0].startsWith(`A${CLIPS[1]}`), `after Swap the left pill is ${u.cells[0].pills[0]}`);
     act({ action: 'mode', mode: 'side' });
+    u = await ui();
+    ok(u.cells[0].pills[0].startsWith(`A${CLIPS[1]}`), `Side by side kept ${u.cells[0].pills[0]} on the left`);
+    await click({ text: `Move ${CLIPS[1]} later` });
     r = await until((x) => x.mode === 'side' && x.divider === 'false' && x.swap === 'false', 5000);
     ok(r.mode === 'side' && r.cells === '2', `back to side by side: mode=${r.mode} cells=${r.cells}`);
 
