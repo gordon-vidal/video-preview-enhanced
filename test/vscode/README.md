@@ -51,6 +51,7 @@ results say `retried`); twice in a row is a failure.
 | `restore` | perf-invisible, startup-restore | A window reload restores the player tabs; a background tab doesn't decode until it is shown | 102 s, 2 |
 | `seek-preview` | seek_preview, seek_preview_native | The seek-bar picture: hover, drag, release on the exact frame (WebAssembly and native) | 73 s, 2 |
 | `hdr` | hdr_output, hdr_output_forced, hdr_output_forced_native | HDR output: the display probe, tone mapping on SDR, Dolby Vision, PQ / HLG on an HDR canvas (built-in and native 10-bit) | 95 s, 15 |
+| `wheel-step` | wheel_step, wheel_step_native | Paused mouse-wheel steps on 4K HEVC 10-bit (2 s keyframe interval, about 45 Mbit/s) and the 4K PQ clip: rapid and slow notches back and forward land on exactly the frame (built-in, native, native HDR output) | about 150 s, 4 |
 | `onboarding` | onboarding-ffmpeg, onboarding | First video: the ffmpeg recommendation once (none with ffmpeg), the reminder for a slow 4K file, the decoder rule | 30 s, 5 |
 | `url` | url_stream | Open Video URL: MP4, HLS (TS, fMP4, AES, qualities, subtitles), DRM and web pages refused, DASH and live need ffmpeg | 111 s, 14 |
 | `url-native` | url_stream_native, url_stream_native_mp4 | Open Video URL with ffmpeg: HLS, DASH, live, HEVC MP4 natively; H.264 MP4 stays on the GPU | 97 s, 9 |

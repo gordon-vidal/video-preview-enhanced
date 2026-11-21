@@ -135,6 +135,12 @@ module.exports = [
     steps: [{ case: 'seek_preview' }, { case: 'seek_preview_native' }],
   },
   {
+    name: 'wheel-step',
+    journey: 'Paused mouse-wheel frame steps on heavy 4K HEVC 10-bit: rapid and slow notches back and forward land on exactly the frame (built-in, native, native HDR output)',
+    sources: ['media/player.js', 'src/native.js', ...ENGINE],
+    steps: [{ case: 'wheel_step' }, { case: 'wheel_step_native' }],
+  },
+  {
     name: 'hdr',
     journey: 'HDR output: the display probe, tone mapping on SDR, Dolby Vision, PQ / HLG on an HDR canvas (built-in and native 10-bit)',
     sources: ['media/hdr.js', 'media/engine.js', 'src/native.js', 'src/probe.js', 'src/extension.js'],

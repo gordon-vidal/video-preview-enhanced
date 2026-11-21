@@ -1,3 +1,5 @@
 *.part*
 bitmapsubs/bitmap_dvb.ts
 bitmapsubs/bitmap_pgs.sup
+# 34 MB each: made on demand (make_cases_media.js), not committed
+step4k_hevc10*.mp4

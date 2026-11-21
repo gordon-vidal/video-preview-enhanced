@@ -637,6 +637,76 @@ test('invisible: paused read-ahead is ~1 s for native ffmpeg and WebCodecs, the 
   assert.ok(ahead({}, 5), 'built-in decoder: paused read-ahead fills the budget (5 s)');
 });
 
+// Mouse-wheel steps back on heavy 4K (2026-11-21): a step back decodes from the keyframe before; notches that came
+// meanwhile counted from the frame still shown, so 10 quick notches moved one frame.
+const yuvFrame = (t) => ({ t, yuv: { data: { buffer: new ArrayBuffer(8) } }, bytes: 8 });
+const seeksOf = (p) => p.worker.msgs.filter((m) => m.type === 'seek');
+const shown = (p) => { const fr = p.queue.shift(); p.shownT = fr.t; p.shownFrame = fr; p.shownCount = (p.shownCount || 0) + 1; return fr; };
+
+test('steps back while a step is decoding add up to one target, in few seeks', () => {
+  const p = player({ firstShown: true, shownT: 60 / 30, shownCount: 1, pauseT: 2, keptBufs: new WeakSet() });
+  P.stepFrame.call(p, -1);
+  assert.strictEqual(seeksOf(p).length, 1, 'the first notch seeks at once');
+  assert.ok(Math.abs(seeksOf(p)[0].t - 59.5 / 30) < 1e-6, `first target ${seeksOf(p)[0].t * 30}`);
+  for (let i = 0; i < 9; i++) P.stepFrame.call(p, -1);
+  assert.strictEqual(seeksOf(p).length, 1, 'notches within STEP_SEEK_MS wait for one seek');
+  const st = p.stepTo;
+  assert.ok(st.timer && Math.abs(st.t - 50 / 30) < 1e-6, `the waiting step is at frame ${st.t * 30}`);
+  clearTimeout(st.timer);
+  P.flushStep.call(p, st);
+  const last = seeksOf(p).pop();
+  assert.ok(Math.abs(last.t - 50.5 / 30) < 1e-6, `10 notches back from 60: seek to ${last.t * 30} (frame 50)`);
+  // Forward from there while it decodes: from frame 50, not from the 60 still shown.
+  ctx.perfNow += 1000;
+  P.stepFrame.call(p, 1);
+  assert.ok(Math.abs(seeksOf(p).pop().t - 51 / 30) < 1e-6, 'a step forward counts from the pending frame');
+  // Once a new frame is shown, steps count from it again.
+  p.seekTarget = null;
+  p.queue = [yuvFrame(51 / 30)];
+  shown(p);
+  ctx.perfNow += 1000;
+  P.stepFrame.call(p, -1);
+  assert.ok(Math.abs(seeksOf(p).pop().t - 50.5 / 30) < 1e-6, 'from the shown frame');
+});
+
+test('steps back are served from the frames decoded on the way to the target', () => {
+  const p = player({ firstShown: true, shownT: 61 / 30, shownCount: 1, pauseT: 61 / 30, keptBufs: new WeakSet(), amode: 'none' });
+  P.stepFrame.call(p, -1); // to frame 60 ... decoded from the keyframe at 50
+  const n0 = seeksOf(p).length;
+  for (let k = 50; k <= 62; k++) P.addFrame.call(p, yuvFrame(k / 30));
+  assert.strictEqual(p.seekTarget, null, 'landed');
+  assert.ok(Math.abs(p.queue[0].t - 60 / 30) < 1e-6, `landed on ${p.queue[0].t * 30}`);
+  assert.strictEqual(p.back.map((x) => Math.round(x.t * 30)).join(), '50,51,52,53,54,55,56,57,58,59', 'frames before the target kept');
+  shown(p);
+  for (let k = 59; k >= 55; k--) {
+    P.stepFrame.call(p, -1);
+    assert.strictEqual(seeksOf(p).length, n0, `step back to ${k} without a seek`);
+    assert.ok(Math.abs(p.queue[0].t - k / 30) < 1e-6 && Math.abs(p.pauseT - k / 30) < 1e-6, `frame ${k} next: ${p.queue[0].t * 30}`);
+    shown(p);
+  }
+  // Forward again: the frames stepped back over are in the queue, in order.
+  for (let k = 56; k <= 62; k++) {
+    P.stepFrame.call(p, 1);
+    assert.strictEqual(seeksOf(p).length, n0, `step forward to ${k} without a seek`);
+    assert.ok(Math.abs(p.queue[0].t - k / 30) < 1e-6, `frame ${k} next: ${p.queue[0].t * 30}`);
+    shown(p);
+  }
+  // ...and back over them again, from memory (the frames passed forward are kept).
+  for (let k = 61; k >= 57; k--) {
+    P.stepFrame.call(p, -1);
+    assert.strictEqual(seeksOf(p).length, n0, `again back to ${k} without a seek`);
+    assert.ok(Math.abs(p.queue[0].t - k / 30) < 1e-6, `again frame ${k} next: ${p.queue[0].t * 30}`);
+    shown(p);
+  }
+  // Rapid notches before the frame is drawn: they add up in memory too.
+  P.stepFrame.call(p, -1);
+  P.stepFrame.call(p, -1);
+  assert.ok(Math.abs(p.queue[0].t - 55 / 30) < 1e-6, `two quick notches from 57: ${p.queue[0].t * 30}`);
+  // Playing drops them.
+  P.play.call(p);
+  assert.strictEqual(p.back.length, 0, 'play drops the kept frames');
+});
+
 test('invisible: settled() lets the page rest only when nothing is under way', () => {
   const p = player({ firstShown: true, shownT: 0, pauseT: 0 });
   p.queue.push(frame(0.5));
