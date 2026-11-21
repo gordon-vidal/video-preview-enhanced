@@ -137,6 +137,26 @@ The fallback Gordon asked for. Logic in `src/addmode.js` (pure), the host side i
   reads the clipboard; the clipboard's text is put back after (a picture on the clipboard would be lost: Gordon to
   decide if that is acceptable, or drop Alt+D and keep the context menu's Compare / Play Together).
 
+### Maintainer feedback 2026-11-21: "Shift+D is good"
+
+- **Compare button = add mode.** ⚙ › Tools › Compare (the player; key hint Shift+D) and, in compare, **Add video…** (panel
+  row, tile menu, the Add cell) now start add mode instead of the open dialog. Unchanged: the D quick pick (its
+  **Browse…** row still opens the dialog), the player's right-click **Compare With…** and the palette command (all
+  named for the dialog), and the host's `add` message (the dialog, used by tests / the old path). The maximum follows
+  `compare.maxVideos` (`createAddMode({ max: maxVideos })` reads it at each use).
+- **Open together.** A multi-selection opened through Open With…, Enter or a double-click is one editor per file
+  in quick succession. `src/burst.js` (pure, timers injected) groups videos that arrive within 400 ms of the one before
+  (`VPE_BURST_MS` overrides it for tests) and, once it is quiet, `src/compare.js` opens them as one compare (the first
+  tab's group, or in the first video's player's place) and closes the burst's tabs and panels. Reports come from two
+  places so a lazily resolved editor still counts: `resolveCustomEditor` (`noteOpen`) and `tabGroups.onDidChangeTabs`
+  for our view types (the same file from both is one entry). More than `compare.maxVideos`: the first ones are
+  compared and the rest stay as their own tabs (warning). Not started: one video, the same file twice, add mode on,
+  setting `compare.openTogether` off. Known limits: the first video's player has already started (it is closed
+  after compare opens: a short flash); a user who opens two videos within 400 ms by hand gets a compare; session
+  restore at start-up does not report tab events after activation, but the resolves of restored editors that land
+  within the window would (not seen, not tested: a real restart is not driven). Fallback if it misfires for someone:
+  the setting, and the Explorer's **Compare / Play Together**.
+
 Options for Gordon (not built): a button on the bar instead of / beside Shift+D; add mode always multi (also from the
 player); a status bar item instead of the in-picture hint; time out the mode after a minute; a setting "a video
 dropped on a player's group joins compare" (accepts the double-click ambiguity above).

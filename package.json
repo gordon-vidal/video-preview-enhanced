@@ -558,6 +558,11 @@
           "default": "fit",
           "markdownDescription": "How the picture sits in the player for **new** tabs, in the player and in compare: `\"fit\"`, `\"fill\"`, `\"stretch\"` or `\"actual\"` (100 %). The button beside the keyboard shortcuts and the **Z** key change the current tab only."
         },
+        "videoPreviewEnhanced.compare.openTogether": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Videos that VS Code opens together (several files selected in the Explorer, then **Open With…**, Enter or double-click) open in **one compare view** instead of separate tabs. Opening one video, or videos a moment apart, is not affected. Up to `compare.maxVideos`."
+        },
         "videoPreviewEnhanced.compare.maxVideos": {
           "type": "integer",
           "default": 4,

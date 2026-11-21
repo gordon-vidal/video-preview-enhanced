@@ -935,7 +935,7 @@
   };
   const TOOLS = [
     // Compare needs a second file next to this one: not offered for a URL (Open Video URL…).
-    ...(cfg.url ? [] : [{ label: 'Compare', key: '', run: () => compareWith() }]),
+    ...(cfg.url ? [] : [{ label: 'Compare', key: 'Shift+D', run: () => addMode() }]),
     { label: 'Scopes', key: 'W', run: () => { exactTool(); scopes.cycle(); } },
     { label: 'Inspector', key: 'X', run: () => { exactTool(); press('x'); } },
     { label: 'Stats', key: 'Shift+I', run: () => press('I', { shiftKey: true }) },

@@ -1330,7 +1330,8 @@
     if (m.on) announce(addHint.textContent);
     log(`addMode ${m.on ? 'on' : 'off'}`);
   }
-  const addVideo = () => { if (N < MAX_TILES) { closeMenu(); saveNow(); vscode.postMessage({ type: 'add' }); } };
+  // Add video…: starts add mode (click videos in the Explorer); the file dialog is only the host's 'add' message (palette / tests).
+  const addVideo = () => { if (N < MAX_TILES) { closeMenu(); if (addHint.hidden) vscode.postMessage({ type: 'addMode' }); } };
   function replaceVideo(i) {
     closeMenu();
     saveNow();

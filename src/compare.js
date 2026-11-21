@@ -25,6 +25,7 @@ const frameserver = require('./frameserver');
 const { barHtml } = require('./bar');
 const { pickRows, pushRecent, droppedVideos, selectedVideos } = require('./comparepick');
 const { createAddMode } = require('./addmode');
+const { createBurst } = require('./burst');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
 
 const MAX_BLOCK = 8 * 1024 * 1024;
@@ -34,6 +35,10 @@ const TILE_KEYS = Grid.TILE_KEYS;
 /** The setting compare.maxVideos (experimental): how many videos one compare panel takes. */
 function maxVideos() {
   try { return Grid.clampMax(vscode.workspace.getConfiguration('videoPreviewEnhanced').get('compare.maxVideos')); } catch { return Grid.DEFAULT_MAX; }
+}
+/** The setting compare.openTogether: several videos opened at once (an Explorer multi-selection) become one compare. */
+function openTogether() {
+  try { return vscode.workspace.getConfiguration('videoPreviewEnhanced').get('compare.openTogether', true) !== false; } catch { return true; }
 }
 const VIDEO_EXT = /\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i;
 
@@ -436,7 +441,7 @@ function registerCompare(context, deps) {
   vscode = deps.vscode;
   compareSessions = deps.compareSessions || null;
   /** Opens compare; `from` (a player Session) is replaced in its tab, `t` is where it was. */
-  const open = async (list, { from, t } = {}) => {
+  const open = async (list, { from, t, viewColumn: col } = {}) => {
     for (const u of list) {
       if (!FS_SCHEMES.has(u.scheme)) {
         vscode.window.showWarningMessage(`Video Preview: can't compare ${u.toString()} (not a file).`);
@@ -458,14 +463,14 @@ function registerCompare(context, deps) {
         transport = 'message';
       }
     }
-    const viewColumn = from && from.panel ? from.panel.viewColumn : undefined;
+    const viewColumn = from && from.panel ? from.panel.viewColumn : col;
     const session = new CompareSession(context, list, { ...deps, transport, frameSource, pick: pickMany, viewColumn, start: t, addMode: addModeApi });
     // In place: the player's tab closes once compare has opened beside it in the same group.
     if (from && from.panel && !from.disposed) from.panel.dispose();
     return session;
   };
   // ---- Add from the Explorer (src/addmode.js, docs/notes/compare-ui.md "Add mode") ----
-  const addMode = createAddMode({ max: MAX_TILES });
+  const addMode = createAddMode({ max: maxVideos });
   const watched = new WeakSet();
   const setCtx = () => Promise.resolve(vscode.commands.executeCommand('setContext', 'videoPreviewEnhanced.addMode', addMode.active)).catch(() => {});
   const isCompare = (x) => x instanceof CompareSession;
@@ -478,7 +483,7 @@ function registerCompare(context, deps) {
     const r = addMode.toggle(target, { multi: isCompare(target), uris });
     if (prev && prev !== target && !prev.disposed) prev.post({ type: 'addMode', on: false });
     deps.log(`compare: add from the Explorer ${r}`);
-    if (r === 'full') target.post({ type: 'toast', text: `Compare shows up to ${MAX_TILES} videos`, ms: 2500 });
+    if (r === 'full') target.post({ type: 'toast', text: `Compare shows up to ${maxVideos()} videos`, ms: 2500 });
     if (r === 'on' && !watched.has(target)) {
       watched.add(target);
       target.panel.onDidDispose(() => { if (addMode.gone(target)) { deps.log('compare: add from the Explorer off (tab closed)'); setCtx(); } });
@@ -513,7 +518,7 @@ function registerCompare(context, deps) {
       if (d.dup) { target.post({ type: 'toast', text: `${path.basename(uri.fsPath)} is in compare already`, ms: 2000 }); return; }
       if (isCompare(target)) {
         target.addUris([uri]);
-        if (d.full) target.post({ type: 'toast', text: `Compare is full (${MAX_TILES} videos)`, ms: 2500 });
+        if (d.full) target.post({ type: 'toast', text: `Compare is full (${maxVideos()} videos)`, ms: 2500 });
       } else {
         const t = target.pos && Number.isFinite(target.pos.t) ? target.pos.t : 0;
         await open([target.uri, uri], { from: target, t });
@@ -522,14 +527,42 @@ function registerCompare(context, deps) {
     })().catch((e) => deps.log(`compare: add from the Explorer failed: ${e && e.stack || e}`));
     return true;
   };
+  // ---- Open together: videos that VS Code opens in one burst (an Explorer multi-selection: Open With…, Enter,
+  // double-click) become one compare (src/burst.js). A single video, or videos opened apart, are untouched.
+  const burst = createBurst({
+    windowMs: Number(process.env.VPE_BURST_MS) > 0 ? Number(process.env.VPE_BURST_MS) : 400,
+    max: maxVideos,
+    onBurst: ({ items, extra }) => {
+      if (addMode.active || !openTogether()) return;
+      const list = items.map((i) => i.uri).filter((u) => FS_SCHEMES.has(u.scheme) && VIDEO_EXT.test(u.path));
+      if (list.length < 2) return;
+      deps.log(`compare: ${list.length} videos opened together -> one compare${extra.length ? `, ${extra.length} more stay as tabs` : ''}`);
+      const first = items[0];
+      const from = playerOf(first.uri);
+      const tabCol = first.tabs[0] && first.tabs[0].group ? first.tabs[0].group.viewColumn : (first.panels[0] && first.panels[0].viewColumn);
+      (async () => {
+        await open(list, { from, t: 0, viewColumn: tabCol });
+        for (const it of items) {
+          for (const pn of it.panels) { try { pn.dispose(); } catch { /* gone already */ } }
+          for (const tb of it.tabs) Promise.resolve(vscode.window.tabGroups.close(tb)).catch(() => {});
+        }
+        if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
+      })().catch((e) => deps.log(`compare: open together failed: ${e && e.stack || e}`));
+    },
+  });
+  /** A video opened in our player (extension.js resolveCustomEditor) or a tab of it appeared: part of a burst? */
+  const noteOpen = (uri, o) => {
+    if (!uri || !FS_SCHEMES.has(uri.scheme) || !VIDEO_EXT.test(uri.path) || addMode.active || !openTogether()) return;
+    burst.add(uri.toString(), uri, o);
+  };
   // Videos opened in an editor that is not the player (VS Code's own preview, a text tab): their new tab closes.
   if (vscode.window.tabGroups && vscode.window.tabGroups.onDidChangeTabs) {
     context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs((e) => {
-      if (!addMode.active) return;
       for (const tab of e.opened || []) {
         const inp = tab.input || {};
-        if (!inp.uri || (typeof inp.viewType === 'string' && inp.viewType.startsWith('videoPreviewEnhanced.'))) continue;
-        if (claimOpen(inp.uri)) Promise.resolve(vscode.window.tabGroups.close(tab)).catch(() => {});
+        if (!inp.uri) continue;
+        if (typeof inp.viewType === 'string' && inp.viewType.startsWith('videoPreviewEnhanced.')) { noteOpen(inp.uri, { tab }); continue; }
+        if (addMode.active && claimOpen(inp.uri)) Promise.resolve(vscode.window.tabGroups.close(tab)).catch(() => {});
       }
     }));
   }
@@ -659,7 +692,7 @@ function registerCompare(context, deps) {
       return open([a, ...files.slice(0, max - 1)], { from, t });
     }),
   );
-  return { claimOpen, toggleAddMode, stopAddMode };
+  return { claimOpen, noteOpen, toggleAddMode, stopAddMode };
 }
 
 module.exports = { registerCompare, setPickHook, compareHtml, CompareSession, fileOfKey, MAX_TILES, maxVideos };

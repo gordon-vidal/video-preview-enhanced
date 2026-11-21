@@ -8,13 +8,15 @@
 const { VIDEO_EXT } = require('./comparepick');
 
 /**
- * @param {{ max: number }} o  the most videos compare shows
+ * @param {{ max: number|(() => number) }} o  the most videos compare shows (a function: read each time, the setting can change)
  */
-function createAddMode({ max }) {
+function createAddMode({ max: maxOpt }) {
+  const maxNow = () => (typeof maxOpt === 'function' ? maxOpt() : maxOpt);
   /** @type {null | { target: any, multi: boolean, uris: Set<string> }} */
   let st = null;
   const hint = () => {
     if (!st) return { type: 'addMode', on: false };
+    const max = maxNow();
     const room = Math.max(0, max - st.uris.size);
     return { type: 'addMode', on: true, multi: st.multi, n: st.uris.size, max, room };
   };
@@ -30,7 +32,7 @@ function createAddMode({ max }) {
      */
     toggle(target, { multi = false, uris = [] } = {}) {
       if (st && st.target === target) { st = null; return 'off'; }
-      if (new Set(uris).size >= max) { st = null; return 'full'; }
+      if (new Set(uris).size >= maxNow()) { st = null; return 'full'; }
       st = { target, multi: !!multi, uris: new Set(uris) };
       return 'on';
     },
@@ -53,7 +55,7 @@ function createAddMode({ max }) {
       const target = st.target;
       if (st.uris.has(uri)) return { target, uri, dup: true, stop: false };
       st.uris.add(uri);
-      const full = st.uris.size >= max;
+      const full = st.uris.size >= maxNow();
       const stop = full || !st.multi;
       const d = { target, uri, dup: false, stop, full, n: st.uris.size };
       if (stop) st = null;

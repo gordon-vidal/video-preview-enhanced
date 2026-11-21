@@ -1048,6 +1048,8 @@ function activate(context) {
     resolveCustomEditor: (doc, panel) => {
       // Add mode (docs/notes/compare-ui.md): the video goes into compare, and this new tab closes unused.
       if (compareApi && compareApi.claimOpen(doc.uri)) { setTimeout(() => panel.dispose(), 0); return undefined; }
+      // Several videos opened at once (an Explorer multi-selection) become one compare (src/burst.js).
+      if (compareApi) compareApi.noteOpen(doc.uri, { panel });
       return new Session(context, { uri: doc.uri }, panel).show();
     },
   };
@@ -1217,6 +1219,10 @@ function activate(context) {
             if (c.openFile) { // tests: opens a file as an Explorer click would (a preview tab in the active group)
               vscode.commands.executeCommand('vscode.open', vscode.Uri.file(c.openFile), { preview: c.preview !== false, preserveFocus: true })
                 .then(() => log(`debug done ${c.id || ''} openFile`), (e) => log(`debug openFile failed: ${e && e.message || e}`));
+              continue;
+            }
+            if (c.openWithBurst) { // tests: several files opened at once through vscode.openWith, as an Explorer multi-selection does
+              for (const f of c.openWithBurst) vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(f), c.viewType || 'videoPreviewEnhanced.player', { preview: false, preserveFocus: true }).then(undefined, (e) => log(`debug openWithBurst failed: ${e && e.message || e}`));
               continue;
             }
             if (c.compareAdd) { for (const s of compareSessions) s.addUris(c.compareAdd.map((f) => vscode.Uri.file(f))); continue; }
