@@ -97,6 +97,10 @@ what and why, which tests you ran, checklist. CI (host tests on Linux and Window
 `vsce package` dry run, personal-data and link checks) must pass. Say in the PR what you did not run
 (layer 3 needs a GPU and runs locally).
 
+- **Clean up after merge**: once a branch is merged into `main` and pushed (so the work is safely
+  online with no open issues), remove its local worktree (`git worktree remove`) and delete the
+  merged local branch (`git branch -d`). Never force-delete (`-D`) unmerged work.
+
 ## Private context
 
 If `.private-context/` exists at the repo root, read its `README.md` first: it holds the
@@ -107,5 +111,7 @@ chat shared outside this machine. If it is absent, work from the public docs onl
 
 ## Skills
 
-Project skills live in `.claude/skills/` (Claude Code; other agents can read them as plain
-Markdown): `run-tests`, `reproduce-decode-bug`, `add-format`, `release-checklist`, `update-docs`.
+Project skills live in `.claude/skills/<name>/SKILL.md` (auto-discovered by Claude Code; other
+agents should read the relevant `SKILL.md` directly before running tests, debugging decode issues,
+adding a format, releasing, or updating docs): `run-tests`, `reproduce-decode-bug`, `add-format`,
+`release-checklist`, `update-docs`.
