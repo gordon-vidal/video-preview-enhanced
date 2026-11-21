@@ -1,5 +1,6 @@
 // @ts-check
 'use strict';
+/** @import { BlockReply } from '../tools/read-block-contract.js' */
 (function () {
   const vscode = acquireVsCodeApi();
   const cfg = JSON.parse(/** @type {HTMLElement} */ (document.getElementById('cfg')).textContent || '{}');
@@ -1136,9 +1137,15 @@
         }
         break;
       }
-      case 'block':
-        if (player && player.onBlock) player.onBlock(m.pos, m.data, m.error);
+      // checkJs: start
+      case /** @satisfies {BlockReply['type']} */ ('block'): {
+        const reply = /** @type {BlockReply} */ (m);
+        const receiver = /** @type {Partial<Pick<InstanceType<ReturnType<typeof createEngine>['LibavPlayer']>,
+          'onBlock'>> | null} */ (player);
+        if (receiver && receiver.onBlock) receiver.onBlock(reply.pos, reply.data, reply.error);
         break;
+      }
+      // checkJs: end
       case 'nd':
         if (player && player.onWorker) player.onWorker(m.m);
         break;

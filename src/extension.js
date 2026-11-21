@@ -1,4 +1,5 @@
 'use strict';
+/** @import { ReadBlockRequest, BlockReply } from '../tools/read-block-contract.js' */
 const T_LOAD = Date.now(); // start-up timeline (tests): when the extension's module started loading
 // Video Preview Enhanced: a decode-only video player for VS Code.
 // The extension host only reads files; all decoding happens in the webview
@@ -1729,7 +1730,12 @@ ${barHtml()}
       // The settings panel's "Extension settings" row: VS Code's Settings, filtered to this extension.
       case 'openSettings': return vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXT_ID}`);
       case 'frames': return this.sendFrames(m.indices || []);
-      case 'readBlock': return this.readBlock(m.pos, m.len);
+      // checkJs: start
+      case /** @satisfies {ReadBlockRequest['type']} */ ('readBlock'): {
+        const request = /** @type {ReadBlockRequest} */ (m);
+        return this.readBlock(request.pos, request.len);
+      }
+      // checkJs: end
       case 'nd':
         // The page's picture area, with open and after a resize: the next prestart's guess (fitView).
         // A zoomed picture is no guess for the next video's player.
@@ -2309,6 +2315,7 @@ ${barHtml()}
     return this.blockFh;
   }
 
+  /** @param {number} pos @param {number} len */
   async readBlock(pos, len) {
     const gen = this.loadGen;
     let data = new Uint8Array(0);
@@ -2324,7 +2331,11 @@ ${barHtml()}
           if (gen === this.loadGen && !this.netFailed) { this.netFailed = true; this.fail(e, 'Check the connection and open the URL again.'); }
         }
       }
-      if (gen === this.loadGen && net === this.net) this.post({ type: 'block', pos, data });
+      // checkJs: start
+      if (gen === this.loadGen && net === this.net) {
+        this.post(/** @satisfies {BlockReply} */ ({ type: 'block', pos, data }));
+      }
+      // checkJs: end
       return;
     }
     try {
@@ -2338,7 +2349,11 @@ ${barHtml()}
     }
     // Always answer (empty on error), or the webview keeps the block in flight forever.
     // A reply for the page before a reload would be stale.
-    if (gen === this.loadGen) this.post({ type: 'block', pos, data });
+    // checkJs: start
+    if (gen === this.loadGen) {
+      this.post(/** @satisfies {BlockReply} */ ({ type: 'block', pos, data }));
+    }
+    // checkJs: end
   }
 
   async openSequence() {

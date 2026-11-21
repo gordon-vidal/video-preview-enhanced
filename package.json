@@ -638,6 +638,7 @@
     "theme": "dark"
   },
   "scripts": {
+    "typecheck": "node tools/check-js.js",
     "test": "node test/run.js unit engine vscode",
     "test:unit": "node test/run.js unit",
     "test:engine": "node test/run.js engine",
@@ -647,5 +648,8 @@
   },
   "icon": "media/icon.png",
   "qna": false,
-  "pricing": "Free"
+  "pricing": "Free",
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
 }

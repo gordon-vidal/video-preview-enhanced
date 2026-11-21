@@ -16,6 +16,7 @@ CLAUDE.md
 .gitignore
 .gitattributes
 package-lock.json
+tsconfig.check.json
 *.vsix
 
 # Repository-only files (the README, CHANGELOG, LICENSE and THIRD_PARTY_NOTICES ship)

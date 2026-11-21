@@ -5,6 +5,7 @@
 // browser's hardware decoder (WebCodecs). Frames are drawn with WebGL, sound is
 // played with WebAudio, which is also the clock. Nothing is ever re-encoded.
 'use strict';
+/** @import { ReadBlockRequest } from '../tools/read-block-contract.js' */
 
 /* exported createEngine, matrixBySize */
 const matrixBySize = (w, h) => w >= 1280 || h >= 720 ? 709 : 601;
@@ -625,12 +626,15 @@ function createEngine(env) {
       this.blockBytes = 0;
     }
 
+    // checkJs: start
+    /** @param {number} bpos */
     requestBlock(bpos) {
       if (bpos < 0 || bpos >= this.meta.size || this.blocks.has(bpos) || this.inflight.has(bpos)) return;
       this.inflight.add(bpos);
       (this.reqAt = this.reqAt || new Map()).set(bpos, performance.now());
-      vscode.postMessage({ type: 'readBlock', pos: bpos, len: this.blockSize });
+      vscode.postMessage(/** @satisfies {ReadBlockRequest} */ ({ type: 'readBlock', pos: bpos, len: this.blockSize }));
     }
+    // checkJs: end
 
     /** A block the host could not read: the reads waiting for it fail (an empty block is a read error). */
     failReads(bpos) {
@@ -667,6 +671,11 @@ function createEngine(env) {
       if (!this.readTimer) this.readTimer = setTimeout(() => this.retryReads(), 5000);
     }
 
+    /**
+     * @param {number} pos
+     * @param {Uint8Array} data
+     * @param {string} [error]
+     */
     onBlock(pos, data, error) {
       if (!this.blocks) this.initBlocks();
       this.inflight.delete(pos);
