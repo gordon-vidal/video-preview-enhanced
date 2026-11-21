@@ -2274,11 +2274,12 @@ ${barHtml()}
     }
     if (this.stale(gen) || !pr || !remotestream.wanted(pr)) return false;
     // Reuse the remote's confirmed encoder choice unless a stream failure calls for a new probe.
-    const enc = await remotestream.encoderFor(t, ff.run, globalState, log);
+    const [enc, audioEncoder] = await Promise.all([remotestream.encoderFor(t, ff.run, globalState, log),
+      pr.audio ? remotestream.audioEncoderFor(t) : null]);
     if (this.stale(gen)) return false;
     log(`[${this.name}] decoder: remote stream (H.264 re-encoded on this host by ${enc.encoder}, ${remote || 'local'} window): ${pr.video.codec} ${pr.video.pixFmt} ${pr.video.width}x${pr.video.height}`);
     this.native = new remotestream.RemoteStream({
-      tools: t, file: this.file, maxHeight: c.nativeMaxHeight, probed: pr, stats: !!logFile, encoder: enc.encoder, device: enc.device, cpuEncoder: enc.cpu,
+      tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), audioEncoder, probed: pr, stats: !!logFile, encoder: enc.encoder, device: enc.device, cpuEncoder: enc.cpu,
       // The stream's notices (quality lowered, connection too slow) show as the player's toast.
       post: (msg) => this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg }),
       log: (msg) => log(`[${this.name}] ${msg}`),

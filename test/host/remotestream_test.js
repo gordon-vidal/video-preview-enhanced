@@ -16,6 +16,7 @@ const { spawnSync } = require('child_process');
 const ff = require('../../src/ffmpeg');
 const rsm = require('../../src/remotestream');
 const { RemoteStream, enabled, wanted } = rsm;
+const remoteAudio = require('../lib/remote_audio');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -83,6 +84,20 @@ async function probeFake() {
   assert.strictEqual(rsm.cpuEncoder(' V....D libx264  x\n V....D libopenh264  y\n'), 'libx264', 'libx264 first');
   assert.ok(!rsm.encoderArgs('libopenh264', 30).includes('-bf'), 'OpenH264: no B-frame option');
   await assert.rejects(rsm.probeEncoder('ffmpeg', fake({ list, listCode: 1, ok: [] })), /-encoders failed.*listing error/);
+  // Opus capability is an actual encode, cached per build; native Opus and s16 are fallbacks.
+  for (const accepted of ['libopus', 'opus', null]) {
+    const attempts = [];
+    const tools = { ffmpeg: 'audio-probe', version: String(accepted) };
+    const exec = async (cmd, args) => {
+      const enc = args[args.indexOf('-c:a') + 1];
+      attempts.push(enc);
+      return { code: enc === accepted ? 0 : 1 };
+    };
+    assert.strictEqual(await rsm.audioEncoderFor(tools, exec), accepted);
+    assert.deepStrictEqual(attempts, accepted === 'libopus' ? ['libopus'] : ['libopus', 'opus']);
+    await rsm.audioEncoderFor(tools, exec);
+    assert.strictEqual(attempts.length, accepted === 'libopus' ? 1 : 2, 'audio probe is cached');
+  }
   // Keep a confirmed pick in the store. A stream failure prompts a new probe.
   const store = { data: {}, get(k) { return this.data[k]; }, async update(k, v) { this.data[k] = v; } };
   let runs = 0;
@@ -155,9 +170,15 @@ function driver(tools, file, pr, opts = {}) {
   st.ended = () => new Promise((r) => { onEof = r; });
   const rs = new RemoteStream({
     tools, file, probed: pr, maxHeight: 180, log: (m) => st.logs.push(m), onFail: (e) => st.fails.push(e), ...opts,
-    post: (m) => {
+    post: async (m) => {
       if (m.type === 'seeked') { st.seeked.push(m); if (m.gen === st.gen) setImmediate(() => st.more()); }
       if (m.type !== 'batch' || m.gen !== st.gen) return;
+      const raw = m.audio;
+      st.audioBytes = (st.audioBytes || 0) + raw.reduce((n, a) => n + (a.data ? a.data.byteLength : a.packets.reduce((x, p) => x + p.length, 19)), 0);
+      try {
+        m.audio = raw.some((a) => a.kind === 'opus') ? await remoteAudio.decode(raw) : remoteAudio.pcm(raw);
+      } catch (e) { st.fails.push(e.message); onEof(); return; }
+      if (m.gen !== st.gen) return;
       st.video.push(...m.video);
       st.audio.push(...m.audio);
       if (m.eof) { st.eof = true; onEof(); return; }
@@ -179,7 +200,7 @@ function checkAudio(audio, frames, checkBatchLimit = false) {
   let n = 0;
   for (const a of audio) {
     assert.ok(Math.abs(a.t - n / 48000) < 1e-9, `PCM continuous at sample ${n}, got ${a.t} s`);
-    if (checkBatchLimit) assert.ok(a.planes[0].byteLength + a.planes[1].byteLength <= 256 * 1024, 'bounded PCM tail message');
+    if (checkBatchLimit) assert.ok((a.planes[0].byteLength + a.planes[1].byteLength) / 2 <= 256 * 1024, 'bounded PCM tail message');
     n += a.planes[0].length;
   }
   assert.strictEqual(n, frames, 'all PCM samples delivered');
@@ -243,6 +264,72 @@ async function withFfmpeg(tools) {
       assert.ok((st.maxLead || 0) <= 2 + 2 / pr.video.fps, `${k}: sound sent ${st.maxLead} s ahead of the picture`);
       out[`${k}@${from}`] = checkSync(`${k} from ${from} s`, st.video, st.audio, pr.video.fps, from);
     }
+  }
+  const audioEncoder = process.env.VPE_RS_TEST_AUDIO_ENCODER || await rsm.audioEncoderFor(tools);
+  out.audioEncoder = audioEncoder;
+  if (audioEncoder) for (const [k, file] of Object.entries(clips)) {
+    const pr = await ff.probe(tools, file);
+    for (const from of [0, 95.5]) {
+      console.log(`checking Opus ${k}@${from}`);
+      const st = driver(tools, file, pr, { audioEncoder });
+      await st.rs.handle({ type: 'open' });
+      const done = st.ended();
+      if (from) st.seek(from); else st.more();
+      await done;
+      st.rs.dispose();
+      assert.deepStrictEqual(st.fails, []);
+      const sync = checkSync(`Opus ${k}@${from}`, st.video, st.audio, pr.video.fps, from);
+      const duration = st.audio.reduce((n, a) => n + a.planes[0].length / a.sampleRate, 0);
+      const kbps = st.audioBytes * 8 / duration / 1000;
+      assert.ok(kbps < rsm.OPUS_KBPS, `Opus payload ${kbps} kb/s`);
+      out[`Opus ${k}@${from}`] = { ...sync, kbps: Math.round(kbps * 10) / 10 };
+    }
+  }
+  if (audioEncoder) {
+    const file = clips.lateAudio;
+    const pr = await ff.probe(tools, file);
+    const st = driver(tools, file, pr, { audioEncoder });
+    try {
+      st.holdAt = 3;
+      await st.rs.open(); st.more();
+      await until(() => st.hold && st.audio.length, 'Opus picture and sound before pause');
+      const spawns = st.rs.spawns;
+      st.hold = false; st.seek(2.519);
+      await until(() => st.audio.length, 'Opus from memory');
+      assert.strictEqual(st.rs.spawns, spawns);
+      assert.strictEqual(st.audio[0].t, 2.48);
+      st.holdAt = 1;
+      st.seek(0);
+      await until(() => st.audio.length, 'Opus loop to zero');
+      assert.strictEqual(st.audio[0].t, 0);
+      out.opusReuse = 'pause, memory seek, loop to zero';
+    } finally { st.rs.dispose(); }
+    // A runtime encoder failure refreshes from the playhead with s16 PCM, never silent audio.
+    const fallback = driver(tools, file, pr, { audioEncoder: 'no-such-encoder' });
+    const post = fallback.rs.post;
+    fallback.rs.post = (m) => {
+      if (m.type === 'refresh') { fallback.seek(1.24); return; }
+      return post(m);
+    };
+    try {
+      await fallback.rs.open(); fallback.more();
+      await until(() => fallback.audio.length, 's16 after failed Opus encoder');
+      assert.strictEqual(fallback.rs.audioEncoder, null);
+      assert.strictEqual(fallback.audio[0].t, 1.24);
+      assert.deepStrictEqual(fallback.fails, []);
+      out.opusFallback = 's16 at the playhead';
+    } finally { fallback.rs.dispose(); }
+    // Ogg pages can span arbitrary stdout chunks. The final granule must remove padding.
+    const encoded = spawnSync(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i',
+      'sine=sample_rate=48000:duration=1.003', '-ac', '2', '-c:a', audioEncoder,
+      '-strict', '-2', '-b:a', '96k', '-f', 'opus', '-']);
+    assert.strictEqual(encoded.status, 0, String(encoded.stderr));
+    const packets = [];
+    const ogg = new (require('../../src/remoteopus').OggOpus)((p) => packets.push(p));
+    for (const byte of encoded.stdout) ogg.push(Buffer.from([byte]));
+    assert.strictEqual(packets.at(-1).s + packets.at(-1).n, Math.round(1.003 * 48000));
+    assert.ok(packets[0].s < 0, 'encoder delay is explicit');
+    out.opusGranule = 'fragmented pages, delay and final padding';
   }
   const file = clips.lateAudio;
   const pr = await ff.probe(tools, file);
@@ -360,8 +447,8 @@ async function withFfmpeg(tools) {
     pcm.resume();
     await until(() => st.audio.length > 0, 'PCM wakes a pending read after picture EOF');
     await until(() => pcm.isPaused(), 'PCM backpressure with no renderer reads');
-    const queued = (st.rs.aEnd - st.rs.aNext) * 8;
-    assert.ok(queued >= 4 * 48000 * 8 && queued <= 4 * 48000 * 8 + 128 * 1024, `${queued} PCM bytes queued`);
+    const queued = (st.rs.aEnd - st.rs.aNext) * 4;
+    assert.ok(queued >= 4 * 48000 * 4 && queued <= 4 * 48000 * 4 + 128 * 1024, `${queued} PCM bytes queued`);
     assert.strictEqual(st.eof, false);
     st.hold = false;
     st.more();
@@ -437,4 +524,4 @@ async function withFfmpeg(tools) {
   const out = await withFfmpeg(tools);
   console.log(JSON.stringify(out));
   console.log('remotestream_test: ok');
-})().catch((e) => { console.error(e); process.exit(1); });
+})().catch((e) => { console.error(e); process.exitCode = 1; }).finally(() => remoteAudio.close());

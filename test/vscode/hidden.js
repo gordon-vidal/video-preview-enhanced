@@ -139,6 +139,9 @@ class HiddenCode {
 
   /** The first log line from index `from` on that matches; rejects after `timeout` ms. */
   waitLog(re, { from = 0, timeout = 20000, what } = {}) {
+    // Startup can report the broken GPU before the caller installs its first wait.
+    const broken = this.lines.find((l) => NO_WEBGL.test(l));
+    if (broken) return Promise.reject(new Error(`no WebGL2 in this VS Code instance: ${broken.replace(/^.*?webview: /, '')}`));
     const hit = this.lines.slice(from).find((l) => re.test(l));
     if (hit) return Promise.resolve(hit);
     return new Promise((resolve, reject) => {
