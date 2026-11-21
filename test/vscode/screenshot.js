@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Screenshots of a real VS Code window on the hidden desktop (nothing appears on screen).
-//   node test/vscode/screenshot.js <out.png> <video file> [--wait seconds] [--code Code.exe] [--act '<json>' ...]
+//   node test/vscode/screenshot.js <out.png> <video file> [--wait seconds] [--theme name] [--code Code.exe] [--act '<json>' ...]
 // --act: a test-hook line for the player (README "Hooks"), e.g. '{"action":"panel","view":"main"}', sent after the
 // wait (VPE_LOG is set only then); the capture follows 2 s later.
 // Starts the pinned portable VS Code (test/vscode/get_code.js) with this checkout as the
@@ -16,6 +16,7 @@ const wait = +opt('--wait', 30);
 const acts = [];
 for (let a = opt('--act', null); a !== null; a = opt('--act', null)) acts.push(JSON.parse(a));
 let code = opt('--code', '');
+const theme = opt('--theme', ''); // e.g. "Default High Contrast"
 const [out, file] = args;
 if (!out || !file) { console.error('usage: screenshot.js <out.png> <video> [--wait s] [--code Code.exe]'); process.exit(2); }
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -30,7 +31,7 @@ const prof = path.join(dir, 'prof'), ext = path.join(dir, 'ext'), desk = 'vpesho
 fs.mkdirSync(path.join(prof, 'User'), { recursive: true }); fs.mkdirSync(ext);
 fs.writeFileSync(path.join(prof, 'User', 'settings.json'), JSON.stringify({
   'telemetry.telemetryLevel': 'off', 'workbench.startupEditor': 'none', 'security.workspace.trust.enabled': false,
-  'extensions.autoUpdate': false, 'update.mode': 'none', 'workbench.enableExperiments': false,
+  'extensions.autoUpdate': false, 'update.mode': 'none', 'workbench.enableExperiments': false, ...(theme ? { 'workbench.colorTheme': theme } : {}),
   'chat.disableAIFeatures': true, 'window.restoreWindows': 'none', 'files.hotExit': 'off',
   'workbench.activityBar.location': 'hidden', 'workbench.secondarySideBar.defaultVisibility': 'hidden',
   'window.commandCenter': false, 'workbench.tips.enabled': false, 'breadcrumbs.enabled': false }));
@@ -38,8 +39,9 @@ const env = path.join(dir, 'env.json');
 // no ffmpeg on PATH: the extension would otherwise start its ffmpeg test and show a toast
 const PATH = (process.env.PATH || process.env.Path || '').split(path.delimiter)
   .filter((d) => d && !fs.existsSync(path.join(d, 'ffmpeg.exe'))).join(path.delimiter);
-const vpeLog = acts.length ? path.join(dir, 'vpe.log') : null;
-fs.writeFileSync(env, JSON.stringify({ PATH, ...(vpeLog ? { VPE_LOG: vpeLog } : {}), ELECTRON_RUN_AS_NODE: null, VSCODE_IPC_HOOK_CLI: null, VSCODE_PID: null, VSCODE_CWD: null }));
+const noWebgl = process.env.VPE_NO_WEBGL === '1'; // the error screen without WebGL2 (hook needs VPE_LOG)
+const vpeLog = acts.length || noWebgl ? path.join(dir, 'vpe.log') : null;
+fs.writeFileSync(env, JSON.stringify({ PATH, ...(vpeLog ? { VPE_LOG: vpeLog } : {}), ...(noWebgl ? { VPE_NO_WEBGL: '1' } : {}), ELECTRON_RUN_AS_NODE: null, VSCODE_IPC_HOOK_CLI: null, VSCODE_PID: null, VSCODE_CWD: null }));
 const envCli = path.join(dir, 'env-cli.json');
 fs.writeFileSync(envCli, JSON.stringify({ PATH, ELECTRON_RUN_AS_NODE: '1', VSCODE_IPC_HOOK_CLI: null, VSCODE_PID: null, VSCODE_CWD: null }));
 let cli = path.join(path.dirname(code), 'resources', 'app', 'out', 'cli.js');
