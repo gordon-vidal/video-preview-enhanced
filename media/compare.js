@@ -1320,7 +1320,19 @@
 
   // ---- files: add, replace, remove, leave ---------------------------------------------------------
 
-  const addVideo = () => { if (N < MAX_TILES) { closeMenu(); saveNow(); vscode.postMessage({ type: 'add' }); } };
+  const toggleAddMode = () => { closeMenu(); vscode.postMessage({ type: 'addMode' }); };
+  // The add mode's hint, while it is on (the host says so with 'addMode' messages).
+  const addHint = document.createElement('div');
+  addHint.id = 'addHint'; addHint.hidden = true; addHint.setAttribute('role', 'status');
+  document.getElementById('stage').appendChild(addHint);
+  function showAddMode(m) {
+    addHint.hidden = !m.on;
+    addHint.textContent = m.on ? `Click videos in the Explorer to add them (${m.n} of ${m.max}) · Esc to stop` : '';
+    if (m.on) announce(addHint.textContent);
+    log(`addMode ${m.on ? 'on' : 'off'}`);
+  }
+  // Add video…: starts add mode (click videos in the Explorer); the file dialog is only the host's 'add' message (palette / tests).
+  const addVideo = () => { if (N < MAX_TILES) { closeMenu(); if (addHint.hidden) vscode.postMessage({ type: 'addMode' }); } };
   function replaceVideo(i) {
     closeMenu();
     saveNow();
@@ -1442,6 +1454,8 @@
       f.appendChild(b);
     });
     if (N < MAX_TILES) f.appendChild(k.btn('row', 'Add video…', () => { k.close(false); addVideo(); }, { icon: ICONS.plus, value: `${N} of ${MAX_TILES}` }));
+    // Add mode (src/addmode.js): every video clicked in the Explorer is added, until Esc, this row again or full.
+    if (N < MAX_TILES) f.appendChild(k.btn('row', 'Add from the Explorer', () => { k.close(false); toggleAddMode(); }, { icon: ICONS.plus, kbd: 'Shift+D', aria: { role: 'switch', 'aria-checked': String(!addHint.hidden) } }));
     f.appendChild(k.el('div', 'sep'));
     if (N === 2) {
       const row = k.el('div', 'row static');
@@ -1811,6 +1825,7 @@
     if (clock && mod && !e.shiftKey && (e.key === 'c' || e.key === 'C')) { e.preventDefault(); e.stopPropagation(); copyView(); return; }
     if (e.key === 'Escape' && !ui.menu.hidden) { e.preventDefault(); closeMenu(); return; }
     if (e.key === 'Escape' && controls.anyOpen()) { e.preventDefault(); controls.closeAll(true); return; }
+    if (e.key === 'Escape' && !addHint.hidden) { e.preventDefault(); vscode.postMessage({ type: 'stopAddMode' }); return; }
     if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(ui.keysBtn); return; }
     if (!clock || e.metaKey || (!altGr && (e.ctrlKey || e.altKey))) return;
     poke();
@@ -1838,6 +1853,7 @@
       case 'i': case 'I': controls.toggle('info', ui.infoBtn); break;
       case 'x': case 'X': if (pair) swapSides(); else handled = false; break;
       case 'z': case 'Z': if (e.shiftKey) handled = false; else cyclePic(); break;
+      case 'D': if (e.shiftKey && N < MAX_TILES) toggleAddMode(); else handled = false; break;
       case '-': case '_': nudge(target(), -1); break;
       case '+': case '=': nudge(target(), 1); break;
       case 'Escape': if (INTERNAL && scanner.running) scanner.stop('Stopped'); else handled = false; break;
@@ -2013,6 +2029,8 @@
     const m = e.data;
     if (!m || m.page !== cfg.page) return;
     switch (m.type) {
+      case 'toast': toast(String(m.text || ''), Math.min(10000, Number(m.ms) || 1500)); break;
+      case 'addMode': showAddMode(m); break;
       case 'open':
         sizes = m.sizes;
         nativeTiles = m.native || nativeTiles;

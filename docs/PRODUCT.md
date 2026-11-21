@@ -130,8 +130,13 @@ One feature: compare becomes multi-view. The difference view is dropped.
   video (n of 4), View (2 videos: Side by side | Split), Swap, Leave compare. Tiles are clean; hover shows the name
   pill with the tile's own frame number and a ‹ offset › nudge; − / + nudge the tile under the pointer;
   right-click a tile for its actions. The old compare toolbar and sync panel are gone.
-- **Entering:** key **D** (quick pick of other videos, same folder first), Shift+drop of an Explorer video on the player, ⚙ › Tools › Compare and "Compare with…" in the player's right-click menu, both with VS Code's open
-  dialog; compare takes the player's tab and starts at its position; Leave compare puts the player back there.
+- **Entering:** key **D** (quick pick of other videos, same folder first), Shift+drop of an Explorer video on the player, ⚙ › Tools › Compare (the same as **Shift+D**: add mode, click videos in the Explorer; from a player one click opens
+  compare and ends the mode, in compare it stays on until Esc, Shift+D or `compare.maxVideos`) and "Compare With…"
+  in the player's right-click menu (VS Code's open dialog); from the Explorer: **Compare Videos** (a multi-selection),
+  **Compare Videos in Folder** (a folder's videos, natural order, up to `compare.maxVideos`) and opening several
+  selected videos at once (**open together**, setting `compare.openTogether`: a one-time notice, and a preview tab of
+  a compared video is closed, not left as a duplicate). There is no Explorer key (Alt+D was dropped); the Explorer menu
+  has no single-video "Compare With…" and no "Play Image Sequence" (Command Palette only). Compare takes the player's tab and starts at its position; Leave compare puts the player back there.
   (It is a separate webview panel that replaces the player's tab, not the same webview: docs/notes/compare-ui.md.)
 - **Picture size in compare:** one mode for every tile (the same button, Z and ⚙ page), and zoom and pan in lockstep:
   the same relative zoom and position in each tile, like a magnifier over all videos.

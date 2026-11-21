@@ -16,7 +16,7 @@ function pushRecent(recent, uri) {
 /**
  * @param {{ current: string, folder: string[], workspace: string[], recent?: string[] }} o
  *   uri strings: the current video, the video files next to it, the workspace's video files, the recent list
- * @returns {{ kind: 'sep'|'file'|'browse', label: string, uri?: string }[]} quick pick rows, in order
+ * @returns {{ kind: 'sep'|'file'|'explorer'|'browse', label: string, uri?: string }[]} quick pick rows, in order
  */
 function pickRows({ current, folder, workspace, recent = [] }) {
   const rank = (u) => { const i = recent.indexOf(u); return i < 0 ? Infinity : i; };
@@ -29,7 +29,8 @@ function pickRows({ current, folder, workspace, recent = [] }) {
   const rows = [];
   if (inFolder.length) rows.push({ kind: 'sep', label: 'Same folder' }, ...inFolder.map((uri) => ({ kind: 'file', label: nameOf(uri), uri })));
   if (rest.length) rows.push({ kind: 'sep', label: 'Workspace' }, ...rest.map((uri) => ({ kind: 'file', label: nameOf(uri), uri })));
-  rows.push({ kind: 'sep', label: '' }, { kind: 'browse', label: 'Browse…' });
+  // "Click videos in the Explorer…" turns on add mode (src/addmode.js); Browse… opens the file dialog.
+  rows.push({ kind: 'sep', label: '' }, { kind: 'explorer', label: 'Click videos in the Explorer…' }, { kind: 'browse', label: 'Browse…' });
   return rows;
 }
 
@@ -45,4 +46,15 @@ function droppedVideos(values) {
   return [...new Set(out)];
 }
 
-module.exports = { pickRows, pushRecent, droppedVideos, VIDEO_EXT, RECENT_MAX };
+/**
+ * The video files among a folder's entry names, natural name order, at most `max` of them (Explorer "Compare
+ * Videos in Folder"). `total` counts all videos so the caller can say when some were left out.
+ * @returns {{ names: string[], total: number }}
+ */
+function folderVideos(names, max) {
+  const vids = [...new Set((names || []).filter((n) => VIDEO_EXT.test(n)))]
+    .sort((a, b) => coll.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0));
+  return { names: vids.slice(0, Math.max(2, max | 0)), total: vids.length };
+}
+
+module.exports = { pickRows, pushRecent, droppedVideos, folderVideos, VIDEO_EXT, RECENT_MAX };

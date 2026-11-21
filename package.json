@@ -158,13 +158,29 @@
       },
       {
         "command": "videoPreviewEnhanced.compare",
-        "title": "Compare / Play Together",
+        "title": "Compare Videos",
         "category": "Video Preview",
         "icon": "$(diff)"
       },
       {
         "command": "videoPreviewEnhanced.compareWith",
         "title": "Compare With…",
+        "category": "Video Preview",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "videoPreviewEnhanced.addFromExplorer",
+        "title": "Compare: Add Videos from the Explorer",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.stopAddFromExplorer",
+        "title": "Compare: Stop Adding from the Explorer",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.compareFolder",
+        "title": "Compare Videos in Folder",
         "category": "Video Preview",
         "icon": "$(diff)"
       },
@@ -257,19 +273,14 @@
           "group": "navigation@20"
         },
         {
-          "command": "videoPreviewEnhanced.playSequence",
-          "when": "explorerResourceIsFolder || resourceExtname =~ /^\\.(png|jpe?g|webp|bmp|gif|avif)$/i",
-          "group": "navigation@21"
-        },
-        {
           "command": "videoPreviewEnhanced.compare",
           "when": "listMultiSelection && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
           "group": "3_compare@20"
         },
         {
-          "command": "videoPreviewEnhanced.compareWith",
-          "when": "!listMultiSelection && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
-          "group": "3_compare@21"
+          "command": "videoPreviewEnhanced.compareFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "3_compare@20"
         }
       ],
       "commandPalette": [
@@ -339,6 +350,18 @@
         },
         {
           "command": "videoPreviewEnhanced.ctx.playerSettings",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.addFromExplorer",
+          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/ || activeWebviewPanelId == 'videoPreviewEnhanced.compare'"
+        },
+        {
+          "command": "videoPreviewEnhanced.stopAddFromExplorer",
+          "when": "videoPreviewEnhanced.addMode"
+        },
+        {
+          "command": "videoPreviewEnhanced.compareFolder",
           "when": "false"
         }
       ],
@@ -417,6 +440,13 @@
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "videoPreviewEnhanced.stopAddFromExplorer",
+        "key": "escape",
+        "when": "videoPreviewEnhanced.addMode && !inputFocus && !inQuickOpen"
+      }
+    ],
     "configuration": {
       "title": "Video Preview Enhanced",
       "properties": {
@@ -518,6 +548,11 @@
           ],
           "default": "fit",
           "markdownDescription": "How the picture sits in the player for **new** tabs, in the player and in compare: `\"fit\"`, `\"fill\"`, `\"stretch\"` or `\"actual\"` (100 %). The button beside the keyboard shortcuts and the **Z** key change the current tab only."
+        },
+        "videoPreviewEnhanced.compare.openTogether": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Videos that VS Code opens together (several files selected in the Explorer, then **Open With…**, Enter or double-click) open in **one compare view** instead of separate tabs. Opening one video, or videos a moment apart, is not affected. Up to `compare.maxVideos`."
         },
         "videoPreviewEnhanced.compare.maxVideos": {
           "type": "integer",

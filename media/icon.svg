@@ -1,15 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1F6FEB"/>
-      <stop offset="1" stop-color="#0B3D91"/>
+    <clipPath id="tri">
+      <path d="M52 44.5C52 24.8 73.5 12.6 90.4 22.6L215.2 96.1C231.9 105.9 231.9 130.1 215.2 139.9L90.4 213.4C73.5 223.4 52 211.2 52 191.5V44.5Z"/>
+    </clipPath>
+    <linearGradient id="base" x1="48" y1="216" x2="226" y2="92" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2e4ff5"/>
+      <stop offset="100%" stop-color="#43a8e9"/>
     </linearGradient>
+    <linearGradient id="wave" x1="78" y1="156" x2="226" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3f7cf8"/>
+      <stop offset="100%" stop-color="#7becff"/>
+    </linearGradient>
+    <filter id="sblur" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
   </defs>
-  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
-  <!-- play triangle -->
-  <path d="M96 52 L206 112 L96 172 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="14" stroke-linejoin="round"/>
-  <!-- frame ticks: the timeline with the current frame marked -->
-  <rect x="36" y="206" width="184" height="12" rx="6" fill="#FFFFFF" fill-opacity="0.35"/>
-  <rect x="36" y="206" width="104" height="12" rx="6" fill="#FFFFFF"/>
-  <rect x="136" y="190" width="12" height="44" rx="6" fill="#FFD33D"/>
+  <g clip-path="url(#tri)">
+    <rect width="256" height="256" fill="url(#base)"/>
+    <path d="M162 -20L152 46C136 78 116 88 94 98C70 109 68 136 90 150C112 164 134 168 144 212L152 276L290 276L290 -20Z" fill="url(#wave)" filter="url(#sblur)"/>
+  </g>
 </svg>

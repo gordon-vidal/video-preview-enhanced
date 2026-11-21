@@ -12,7 +12,7 @@ Read them if a command below fails; if they disagree with this file, they win an
 
 | Changed | Run |
 |---|---|
-| `src/*.js` pure logic (decide, probe, sequence, urlsource ...) | the matching `node test/host/<name>_test.js`, then `node test/run.js unit engine` |
+| `src/*.js` pure logic (decide, probe, sequence, urlsource ...) | `node test/run.js unit --grep <name>`, then `node test/run.js unit engine` |
 | `media/*.js` logic (engine, subtitles, timestretch, inspect, hdr ...) | `node test/run.js unit engine --changed` |
 | Decoder behaviour, seeking, formats | `node test/run.js engine` plus scenario `seeking` / `playback` |
 | Player UI, panels, compare, scopes | the scenario(s) that cover the file, see the table in `test/vscode/README.md` |
@@ -23,7 +23,7 @@ Read them if a command below fails; if they disagree with this file, they win an
 ```
 node test/run.js unit engine                     # layers 1-2 (what CI runs), all cores
 node test/run.js unit engine --changed           # only what the changed files need
-node test/host/<name>_test.js                    # one failing host test
+node test/run.js unit --grep <name>              # one failing host test (guarded with timeout + stall kill; never run bare `node test/host/...`)
 node test/vscode/get_code.js                     # once: pinned portable VS Code into test/vscode/.code
 node test/run.js vscode --changed                # layer 3 scenarios for the changed files
 node test/run.js vscode --grep seeking           # one scenario; see test/vscode/README.md

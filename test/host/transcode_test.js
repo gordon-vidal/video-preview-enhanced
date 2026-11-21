@@ -344,5 +344,38 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     }
   }
 
+  // ---- Failed -encoders enumeration & legacy cached noGpu record invalidation ----
+  {
+    const fakeToolsFail = { ffmpeg: 'fake-fail-enum-ffmpeg', version: 'v-fail-1' };
+    let calls = 0;
+    const failRun = async () => { calls++; return { code: 1, stdout: '', stderr: 'boom' }; };
+    const r1 = await probe.encoderFor(fakeToolsFail, failRun, null, () => {}, { platform: 'win32', nodes: [] });
+    assert.strictEqual(r1.encoder, null, 'failed enumeration returns unavailable encoder (null), not libx264');
+    assert.strictEqual(r1.hw, false);
+    // Retry behavior retained: next call probes again rather than returning a permanent cached entry.
+    const r2 = await probe.encoderFor(fakeToolsFail, async (_c, a) => {
+      calls++;
+      if (a.includes('-encoders')) return { code: 0, stdout: ' V..... libopenh264\n', stderr: '' };
+      return { code: 1, stdout: '', stderr: '' };
+    }, null, () => {}, { platform: 'win32', nodes: [] });
+    assert.strictEqual(calls, 2, 'retried after failed enumeration');
+    assert.strictEqual(r2.encoder, 'libopenh264');
+  }
+  {
+    const fakeToolsLegacy = { ffmpeg: 'fake-legacy-nogpu-ffmpeg', version: 'v-legacy-1' };
+    const key = probe.encoderCacheKey(fakeToolsLegacy);
+    const bag = { [probe.ENCODER_KEY]: { [key]: { encoder: 'libx264', noGpu: true, at: 1 } } };
+    const store = { get: (k) => bag[k], update: async (k, v) => { bag[k] = v; } };
+    let probed = false;
+    const r = await probe.encoderFor(fakeToolsLegacy, async (_c, a) => {
+      probed = true;
+      if (a.includes('-encoders')) return { code: 0, stdout: ' V..... mpeg4\n', stderr: '' };
+      return { code: 1, stdout: '', stderr: '' };
+    }, store, () => {}, { platform: 'win32', nodes: [] });
+    assert.strictEqual(probed, true, 'legacy unversioned noGpu record is ignored and re-probed');
+    assert.strictEqual(r.encoder, null);
+    assert.strictEqual(bag[probe.ENCODER_KEY][key].v, probe.ENCODER_CACHE_VER, 'new cache record carries ENCODER_CACHE_VER');
+  }
+
   console.log('transcode_test: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

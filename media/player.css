@@ -469,3 +469,6 @@ body.vscode-high-contrast .panel .row:hover, body.vscode-high-contrast .panel .t
 body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-contrast .panel .chip[aria-checked="true"], body.vscode-high-contrast .panel .mark[aria-pressed="true"] { outline: 1px solid var(--vscode-contrastActiveBorder, transparent); }
 @media (prefers-reduced-motion: reduce) { #cog svg { transition: none; } }
 #sheet .srow .grow { white-space: normal; }
+/* Add mode (compare from the Explorer): a quiet line at the top while it is on. */
+#addHint { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 4px 12px; border-radius: 12px; border: 1px dashed var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground, inherit); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; z-index: 6; }
+#addHint[hidden] { display: none; }

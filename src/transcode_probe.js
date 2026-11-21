@@ -107,6 +107,7 @@ async function probeEncoder(ffmpeg, run, opts = {}) {
 // Encoder choice per host, ffmpeg binary and NVIDIA driver: confirmed choices are kept in globalState.
 const encoderMem = new Map();
 const ENCODER_KEY = 'remoteStreamEncoders';
+const ENCODER_CACHE_VER = 2; // bump to ignore legacy unversioned noGpu records (which defaulted to libx264)
 const ENCODER_RETRY_MS = 60000;
 
 function encoderCacheKey(tools, nvidiaDriver) {
@@ -130,8 +131,8 @@ async function encoderFor(tools, run, store, log = () => {}, opts = {}) {
   const cached = encoderMem.get(key);
   if (cached && cached.until > Date.now()) return cached.result;
   const saved = !cached && store && (store.get(ENCODER_KEY) || {})[key];
-  if (saved && (saved.noGpu || GPU_ENCODERS.includes(saved.encoder))) {
-    const rec = { ...saved, hw: !CPU_ENCODERS.includes(saved.encoder) };
+  if (saved && saved.v === ENCODER_CACHE_VER && (saved.noGpu || GPU_ENCODERS.includes(saved.encoder))) {
+    const rec = { ...saved, hw: !!saved.encoder && !CPU_ENCODERS.includes(saved.encoder) };
     encoderMem.set(key, { choice: rec, result: Promise.resolve(rec), until: Infinity });
     return rec;
   }
@@ -140,12 +141,12 @@ async function encoderFor(tools, run, store, log = () => {}, opts = {}) {
     const t0 = Date.now();
     let r;
     try { r = await probeEncoder(tools.ffmpeg, run, opts); } catch (e) {
-      log(`live transcode encoder probe on ${os.hostname()} failed: ${e.message}; using libx264 for this stream`);
+      log(`live transcode encoder probe on ${os.hostname()} failed: ${e.message}; no encoder available for this stream`);
       entry.until = 0;
-      return { encoder: 'libx264', hw: false, cpu: 'libx264', driverNotice: null };
+      return { encoder: null, hw: false, cpu: null, driverNotice: null };
     }
     log(`remote stream encoder on ${os.hostname()}: ${r.encoder || 'none'}${r.device ? ` (${r.device})` : ''}, tested in ${Date.now() - t0} ms${r.tried.length ? `: ${r.tried.map((x) => `${x.encoder}${x.device ? ` ${x.device}` : ''} ${x.ok ? 'ok' : `failed (${x.error})`}`).join('; ')}` : ''}`);
-    const rec = { encoder: r.encoder, hw: r.hw, device: r.device, cpu: r.cpu, driverNotice: r.driverNotice || null, at: Date.now() };
+    const rec = { v: ENCODER_CACHE_VER, encoder: r.encoder, hw: r.hw, device: r.device, cpu: r.cpu, driverNotice: r.driverNotice || null, at: Date.now() };
     entry.choice = rec;
     if (!r.encoder || CPU_ENCODERS.includes(r.encoder)) {
       if (r.tried.length) { entry.until = Date.now() + ENCODER_RETRY_MS; return rec; }
@@ -180,4 +181,5 @@ module.exports = {
   encoderFor,
   encoderFailed,
   ENCODER_KEY,
+  ENCODER_CACHE_VER,
 };
