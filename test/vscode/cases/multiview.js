@@ -677,5 +677,86 @@ module.exports = [{
     }
     return out;
   },
+}, {
+  name: 'multiview-reorder',
+  settings: { 'videoPreviewEnhanced.autoplay': false },
+  async run(vs, h) {
+    const { act, until } = helpers(vs, h);
+    const results = require('../lib').recorder();
+    const files = CLIPS.map((clip) => path.join(h.MEDIA, clip));
+    let id = 0;
+    const ui = async () => {
+      const from = vs.mark(), next = ++id;
+      act({ action: 'ui', id: next });
+      const line = await vs.waitLog(new RegExp(`compare ui \\{"id":${next},`), { from, timeout: 10000 });
+      return JSON.parse(line.slice(line.indexOf('compare ui ') + 'compare ui '.length));
+    };
+    const order = (u) => u.cells.map((c) => c.tile).join(',');
+    const click = (sel) => act({ action: 'click', sel });
+    const pointer = (ev, [x, y, w, height]) => act({ action: 'dom', ev, x: x + w / 2, y: y + height / 2 });
+    await activate(vs, h, files[0]);
+    try {
+      let from = vs.mark();
+      vs.send({ compareFiles: files.slice(0, 3) });
+      await vs.waitLog(opened(3), { from, timeout: 30000 });
+      act({ action: 'offset', tile: 1, v: 3, unit: 'frames' });
+      act({ action: 'clock', tile: 2 });
+      act({ action: 'sound', tile: 1 });
+      act({ action: 'seek', t: 0.5 });
+      let u = await ui();
+      await results.run('reorder/arrows', (ok) => {
+        ok(order(u) === '0,1,2,add', `initial order: ${order(u)}`);
+        ok(u.cells[0].moves[0].disabled && u.cells[2].moves[1].disabled, 'the end arrows are disabled');
+      });
+      const earlier = '[data-act="move"][data-i="2"][data-d="-1"]';
+      act({ action: 'a11y', focus: earlier, click: earlier });
+      u = await ui();
+      await results.run('reorder/arrow-result', (ok) => {
+        ok(order(u) === '0,2,1,add', `after the arrow: ${order(u)}`);
+        const arrow = u.cells[1].moves.find((b) => b.focused);
+        ok(arrow?.label === `Move ${CLIPS[2]} earlier`, `focus did not follow the video: ${JSON.stringify(arrow)}`);
+      });
+      click('#reorderBtn');
+      const grid = u.cells;
+      pointer('pointerdown', grid[1].rect);
+      pointer('pointermove', grid[0].rect);
+      u = await ui();
+      await results.run('reorder/drag-preview', (ok) => {
+        ok(u.reorder.button === 'Done' && u.reorder.hint.includes('Drag tiles'), `mode: ${JSON.stringify(u.reorder)}`);
+        ok(order(u) === '2,0,1,add', `preview order: ${order(u)}`);
+      });
+      pointer('pointerup', grid[0].rect);
+      act({ action: 'key', key: '+' });
+      act({ action: 'key', key: 'Escape' });
+      act({ action: 'panel', view: 'cmp' });
+      u = await ui();
+      await results.run('reorder/commit', (ok) => {
+        ok(order(u) === '2,0,1,add', `committed order: ${order(u)}`);
+        ok(u.reorder.button === 'Reorder' && !u.reorder.hint, 'Escape should leave Reorder mode');
+        const rows = (u.panel?.rows || []).map((r) => r.label);
+        ok(rows.some((label) => label.startsWith(`A: ${CLIPS[2]}, clock`)), `clock did not follow the video: ${rows}`);
+        ok(rows.some((label) => label === `C: ${CLIPS[1]}, sound, offset +3 frames`), `sound or offset changed: ${rows}`);
+      });
+      from = vs.mark();
+      vs.send({ compareAdd: [files[3]] });
+      await vs.waitLog(opened(4), { from, timeout: 30000 });
+      u = await ui();
+      const addedOrder = order(u);
+      from = vs.mark();
+      act({ action: 'remove', tile: 0 });
+      await vs.waitLog(opened(3), { from, timeout: 30000 });
+      const r = await until((x) => x.synced === 'true');
+      u = await ui();
+      await results.run('reorder/restore', (ok) => {
+        ok(addedOrder === '2,0,1,3', `added video should go last: ${addedOrder}`);
+        ok(order(u) === '1,0,2,add', `removal should keep the other videos' order: ${order(u)}`);
+        ok(r.synced === 'true' && r.clock === '1' && r.sound === '0' && r.offsets === '3f,0f,0f',
+          `restored sync, clock, sound and offset: ${JSON.stringify(r)}`);
+      });
+    } finally {
+      await h.closeClip(vs);
+    }
+    return results.out;
+  },
 }];
 

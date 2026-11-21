@@ -53,6 +53,32 @@ Find diff button are gone from the UI.
   paused pair's metrics (`metrics frameA=… psnrY=…`, used by `case/compare_metrics`); the scanner runs only from
   `window.vpeCompare.scanner` or the test hook (`scan`).
 
+## Tile order
+
+Put matching camera angles or references next to each other while the videos keep playing. The bar shows
+**Reorder** beside the Compare button. In Reorder mode it shows **Done**, and the stage shows this cue.
+
+```text
+            Drag tiles to reorder · Esc or Done to finish
+       ┌╌╌ A clip.mp4 ╌╌┐ ┌╌╌ B clip.webm ╌┐ ┌╌╌ C clip.mov ╌╌┐
+       │                 │ │                 │ │                 │
+       │           [↑ ↓] │ │                 │ │                 │
+       └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
+```
+
+Drag over another tile to preview insertion into its slot. Release on a tile to keep the change. **Done**,
+**Esc** or switching editor tabs ends the mode and cancels an unfinished drag. While in the mode, the tiles
+pause their pan, zoom, wheel stepping, divider and offset gestures.
+
+Hover or focus a tile to reveal its arrows in either mode. **Tab** reaches the enabled arrows and
+**Enter** or **Space** activates them. Their accessible names are “Move <name> earlier” and
+“Move <name> later”. An arrow at an end of the order is disabled. Focus follows the moved tile.
+
+The letters, Compare panel, About tabs and editor title follow the new order. Decoders, clock, sound
+and offsets stay with their videos. The Add cell stays in the first spare slot, and a newly added video
+goes last when the page reloads. For two videos, **X** and **Swap sides** apply the same order change as the
+arrows or drag, in Side by side and Split.
+
 ## Starting a compare (2026-11-20)
 
 Added without changing the player's look except a drop hint (a dashed frame with "Drop to compare").

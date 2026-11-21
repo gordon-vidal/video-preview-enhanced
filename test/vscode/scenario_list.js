@@ -84,7 +84,7 @@ module.exports = [
     name: 'multiview',
     journey: 'Play together: grids of 2-4, lockstep, offsets, the sync clock and sound, a short loop',
     sources: [...COMPARE, ...ENGINE],
-    steps: [{ case: 'multiview' }, { case: 'multiview-short-loop' }],
+    steps: [{ case: 'multiview' }, { case: 'multiview-reorder' }, { case: 'multiview-short-loop' }],
   },
   {
     name: 'multiview-transcode',
