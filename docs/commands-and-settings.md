@@ -11,9 +11,9 @@ All are under **Video Preview** in the Command Palette.
 | Use Video Preview Enhanced for MP4/WebM | Opens MP4 and WebM in this player by default |
 | Use VS Code's Preview for MP4/WebM | Undoes that |
 | Open with Video Preview Enhanced | Explorer context menu on an MP4 or WebM file (not in the Command Palette) |
-| Compare Videos | Shows the 2–4 videos selected in the Explorer together, in sync (up to 16 with the experimental `compare.maxVideos`) |
+| Compare Videos | Shows the selected videos together, in sync (2–8 by default, up to 16 with `compare.maxVideos`) |
 | Compare Videos in Folder | Explorer context menu of a folder: compares the videos directly in it (natural name order, up to `compare.maxVideos`; needs at least 2). Not in the Command Palette |
-| Compare With… | Compares the open video with 1–3 more files (in the player's place); in the player's right-click menu and editor title, not in the Explorer menu |
+| Compare With… | Compares the open video with more files, up to `compare.maxVideos` total (in the player's place); in the player's right-click menu and editor title, not in the Explorer menu |
 | Load Subtitles… | Opens a subtitle file for the current video (needs an open player) |
 | Export Frames (A–B)… | (needs an open player) Saves every frame of the A-B loop as PNG into a folder you pick |
 | Copy ffmpeg Command for A–B | (needs an open player) Copies an ffmpeg command that cuts the A-B loop (exact or `-c copy`) |
@@ -35,7 +35,7 @@ All are under **Video Preview** in the Command Palette.
 | `videoPreviewEnhanced.jump.ctrl` | `"frame"` | The same for Ctrl+← / Ctrl+→ (Cmd on macOS). |
 | `videoPreviewEnhanced.stepButtons` | `"frame"` | What the two buttons beside Play do: `"frame"` steps one frame, `"jump"` jumps by the Ctrl+← / Ctrl+→ size (`jump.ctrl`). Also ⚙ › Jump sizes. |
 | `videoPreviewEnhanced.pictureSize` | `"fit"` | How the picture sits in the player (and in compare) for new tabs: `"fit"` (whole picture, bars where the shape differs), `"fill"` (no bars, edges cropped), `"stretch"` (fills the player, distorted) or `"actual"` (100 %: one video pixel per screen pixel). The bar button and `Z` change the current tab only. |
-| `videoPreviewEnhanced.compare.maxVideos` | `4` | Experimental: how many videos one compare takes, 2 to 16. From 5 on they sit in a plain grid (3×2, 3×3, 4×3, 4×4) and share the memory and transfer of 4 videos, so each picture gets fewer pixels. Applies to the next compare or the next video you add. |
+| `videoPreviewEnhanced.compare.maxVideos` | `8` | How many videos one compare takes, 2 to 16. From 5 on they sit in a static grid (3×2, 3×3, 4×3, 4×4) and share the memory and transfer of 4 videos, so each picture gets fewer pixels. Applies to the next compare or the next video you add. |
 | `videoPreviewEnhanced.advancedMode` | `false` | No longer used (deprecated): the player has one layout and its tools are always in the ⚙ panel ([details](features.md#the-player)). |
 | `videoPreviewEnhanced.autoplay` | `true` | Start playing when a video opens. |
 | `videoPreviewEnhanced.loop` | `true` | Loop playback. |

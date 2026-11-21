@@ -45,7 +45,7 @@ results say `retried`); twice in a row is a failure.
 | `multiview` | multiview, multiview-short-loop | Play together: grids of 2-4, lockstep, offsets, the sync clock and sound, a short loop | 68 s, 11 |
 | `multiview-transcode` | multiview-transcode | Live transcode in Compare, shared bitrate and returning one tile to original video | — |
 | `multiview-native` | multiview-native, multiview-native-fallback | Play together with native ffmpeg: tile sizes, the frame server and its budget, resizing, the message fallback | 38 s, 7 |
-| `multiview-large` | multiview-large | More than 4 videos (experimental `compare.maxVideos`): 9 then 16 GPU / built-in tiles with one shared renderer; lockstep, offsets, clock, play, remove, add, close | 36 s, 6 |
+| `multiview-large` | multiview-large | More than 4 videos: 9 then 16 GPU / built-in tiles with one shared renderer; lockstep, offsets, clock, play, remove, add, close | 36 s, 6 |
 | `multiview-large-native` | multiview-large-native | 9 and 16 native ffmpeg tiles: cell-sized frames over WebSockets on one port, the budget, offsets, playing in step, a seek through a resize | 44 s, 2 |
 | `native` | open-native, native-transfer, native-transfer-resize, native-transfer-fallback, ui_info_native | With ffmpeg: native decoding plays, frames sized to the picture and grown on resize / zoom, the message fallback, About this video | 102 s, 6 |
 | `invisible` | perf-invisible | Work a user never notices: a hidden native tab stops ffmpeg, paused players read only about 1 s ahead, the frame loop rests while paused | 83 s, 4 |

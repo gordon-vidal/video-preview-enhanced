@@ -92,7 +92,7 @@ const { make } = require('../media/make_cases_media');
       const page = () => Number(/"page":(\d+)/.exec(cmp.webview.html)[1]);
       await cmp.msg({ type: 'addMode', page: page() });
       const hint = cmp.posted.filter((m) => m.type === 'addMode').pop();
-      assert.ok(hint && hint.on && hint.multi && hint.n === 2 && hint.max === 4, `compare hint: ${JSON.stringify(hint)}`);
+      assert.ok(hint && hint.on && hint.multi && hint.n === 2 && hint.max === 8, `compare hint: ${JSON.stringify(hint)}`);
       const c = path.join(dir, 'c.mkv');
       const d = path.join(dir, 'd.webm');
       assert.strictEqual(resolve(c).r, undefined, 'c claimed');
@@ -106,6 +106,11 @@ const { make } = require('../media/make_cases_media');
       await tick();
       assert.strictEqual(closedTabs.length, 1, 'the other editor tab closes');
       assert.ok(/"names":\[[^\]]*"d\.webm"\]/.test(cmp.webview.html), 'd added');
+      for (const i of [5, 6, 7, 8]) {
+        assert.strictEqual(resolve(path.join(dir, `video-${i}.mp4`)).r, undefined, `video ${i} claimed`);
+        await tick();
+        assert.ok(cmp.webview.html.includes(`"video-${i}.mp4"`), `video ${i} added`);
+      }
       assert.strictEqual(ctx().pop(), false, 'full: off');
       assert.ok(cmp.posted.some((m) => m.type === 'toast' && /full/.test(m.text)), 'full toast');
 

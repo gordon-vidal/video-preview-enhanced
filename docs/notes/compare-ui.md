@@ -13,7 +13,7 @@ Find diff button are gone from the UI.
 | Engines, lockstep, compositor, cells / pills / nudges / divider, the Compare panel pages, tile menu, keys, test hook | `media/compare.js` |
 | Panels: compare's ⚙ page variant (`s.compare`), extra pages (`env.views`), About tabs (`s.infoTabs`), compare key groups | `media/controls.js` |
 | Styles (cells, pill, nudge, divider, add cell, menu, panel rows) on top of `player.css` | `media/compare.css` |
-| More than 4 videos (experimental `compare.maxVideos`): grid, budgets, shared renderer | `media/compare-grid.js`, docs/notes/multiview-engine.md |
+| More than 4 videos (static grid with `compare.maxVideos`): grid, budgets, shared renderer | `media/compare-grid.js`, docs/notes/multiview-engine.md |
 | "Compare With…" in the player's right-click menu (`vpeFile`: files, not URLs or image sequences) | `src/ctxmenu.js`, `package.json`, `media/player.js` |
 | Leave compare → player at the kept video's moment (`openPlayer`, through `pendingGoto`) | `src/extension.js` `registerCompare` deps |
 
@@ -126,7 +126,7 @@ The fallback Gordon asked for. Logic in `src/addmode.js` (pure), the host side i
   does not start the mode (toast).
 - **Hint:** a small line at the top of the picture, dashed border in the focus colour, `role="status"` (read once):
   "Click a video in the Explorer to compare with this one · Esc to stop" in the player, "Click videos in the
-  Explorer to add them (n of 4) · Esc to stop" in compare. It comes back after compare's page reloads.
+  Explorer to add them (n of the set limit) · Esc to stop" in compare. It comes back after compare's page reloads.
 - **Esc:** the user is in the Explorer by then, so Esc is a keybinding (`videoPreviewEnhanced.stopAddFromExplorer`,
   `when: videoPreviewEnhanced.addMode && !inputFocus && !inQuickOpen`), plus the page's own Esc. Known: while the mode
   is on, Esc in the Explorer only stops the mode, and an Esc that closes a player panel also stops it (the page

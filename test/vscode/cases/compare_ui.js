@@ -125,7 +125,7 @@ module.exports = [{
     u = await ui();
     ok(u.panel && u.panel.view === 'cmp' && u.bar.cmpExpanded === 'true', `Compare button: panel ${u.panel && u.panel.view}, expanded ${u.bar.cmpExpanded}`);
     const txt = panelText(u);
-    for (const want of ['Videos', CLIPS[0], CLIPS[1], 'Add video…', '2 of 4', 'View', 'Side by side', 'Split', 'Swap sides', 'Leave compare', 'keep A']) ok(txt.includes(want), `panel lacks "${want}": ${txt}`);
+    for (const want of ['Videos', CLIPS[0], CLIPS[1], 'Add video…', '2 of 8', 'View', 'Side by side', 'Split', 'Swap sides', 'Leave compare', 'keep A']) ok(txt.includes(want), `panel lacks "${want}": ${txt}`);
     for (const gone of ['PSNR', 'SSIM', 'Find first difference', 'A vs B']) ok(!txt.includes(gone), `panel shows "${gone}" (hidden for now)`);
     ok(u.panel.rows.some((x) => /^A: .*clock, sound, offset In step/.test(x.label)), `A's row: ${JSON.stringify(u.panel.rows.map((x) => x.label))}`);
     await click({ sel: '#cmpBtn' });
@@ -260,7 +260,7 @@ module.exports = [{
     act({ action: 'panel', view: 'cmp' });
     await h.sleep(200);
     u = await ui();
-    ok(panelText(u).includes('3 of 4') && !panelText(u).includes('Side by side') && !panelText(u).includes('PSNR'), `3-video panel: ${panelText(u)}`);
+    ok(panelText(u).includes('3 of 8') && !panelText(u).includes('Side by side') && !panelText(u).includes('PSNR'), `3-video panel: ${panelText(u)}`);
     act({ action: 'select', tile: 2 });
     act({ action: 'panel', view: 'cmpVid' });
     await h.sleep(200);
