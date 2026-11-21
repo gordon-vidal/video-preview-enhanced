@@ -53,6 +53,13 @@ const JOBS = {
   'audio_longer_soft.mkv': [...pic(S, 2), ...tone(5), '-c:v', 'mpeg4', '-q:v', '5', '-c:a', 'libopus'],
   'sine_only.mkv': [...tone(5, 1000), '-c:a', 'aac'],
   'vp8_2s.webm': [...pic(S, 2), '-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '300k', '-g', '30'],
+  // Wheel steps back on heavy 4K (test/vscode/cases/wheel_step.js): HEVC 10-bit, 6 s, a keyframe every 2 s,
+  // light noise for a high bit rate (about 45 Mbit/s), so a step back decodes up to 59 heavy frames.
+  'step4k_hevc10.mp4': [...pic('3840x2160', 6), '-vf', 'noise=alls=6:allf=t', '-c:v', 'libx265', '-preset', 'ultrafast',
+    '-pix_fmt', 'yuv420p10le', '-tag:v', 'hvc1', '-x265-params', 'log-level=error:keyint=60:min-keyint=60:crf=20'],
+  // The same stream tagged HDR10 (PQ, BT.2020) for the HDR output path: its frames differ clearly even tone-mapped.
+  'step4k_hevc10_pq.mp4': (out) => ff(['-i', make('step4k_hevc10.mp4'), '-c', 'copy',
+    '-bsf:v', 'hevc_metadata=colour_primaries=9:transfer_characteristics=16:matrix_coefficients=9', out]),
   'long_20s.mp4': [...pic(S, 20), ...tone(20), ...X264, '-crf', '34', '-c:a', 'aac'],
   // 24 s of the 1080p clips (copied 12 times, no re-encode) for the 9- and 16-video grids (test/vscode/cases/multiview.js).
   'multiview_hevc.mp4': ['-stream_loop', '11', '-i', path.join(__dirname, 'hevc_8_1080p.mp4'), '-an', '-c:v', 'copy'],

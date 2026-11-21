@@ -28,5 +28,6 @@ const BUDGETS = {
   ui: 345000,
   url: 415000,
   'url-native': 345000,
+  'wheel-step': 640000,
 };
 module.exports = { BUDGETS, DEFAULT: 600000 };
