@@ -48,11 +48,15 @@ const hw = (extra) => ({ os: 'win32', arch: 'x64', gpus: [], nvidiaDriver: null,
   assert.doesNotMatch(b.note, /encod|NVENC/i, 'no encoding talk');
   assert.strictEqual(b.sizeMB, 77);
 
-  // An old NVIDIA driver no longer pins an old build: decoding doesn't need NVENC's driver level.
-  b = await setup.chooseBuild(hw({ gpus: [{ vendor: 'nvidia', name: 'GTX 1060', driver: '456.71' }], nvidiaDriver: '456.71' }));
-  assert.strictEqual(b.files[0].name, 'ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip', 'old NVIDIA driver: still the newest build');
+  // Driver-aware NVIDIA line selection (ADR 0002): n9.0 needs driver 610+, n8.1 works on 570+.
+  b = await setup.chooseBuild(hw({ gpus: [{ vendor: 'nvidia', name: 'RTX 4070', driver: '581.15' }], nvidiaDriver: '581.15' }));
+  assert.strictEqual(b.files[0].name, 'ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip', 'NVIDIA 581.15 picks n8.1');
   assert.match(b.note, /NVIDIA NVDEC/);
   assert.ok(!requests.some((r) => /autobuild-/.test(r.url)), 'no pinned old release fetched');
+  b = await setup.chooseBuild(hw({ gpus: [{ vendor: 'nvidia', name: 'RTX 4070', driver: '610.00' }], nvidiaDriver: '610.00' }));
+  assert.strictEqual(b.files[0].name, 'ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip', 'NVIDIA 610+ picks newest n9.0');
+  b = await setup.chooseBuild(hw({ gpus: [{ vendor: 'nvidia', name: 'GTX 1060', driver: '456.71' }], nvidiaDriver: '456.71' }));
+  assert.strictEqual(b.files[0].name, 'ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip', 'very old driver falls back to lowest available line');
 
   b = await setup.chooseBuild(hw({ arch: 'arm64' }));
   assert.strictEqual(b.files[0].name, 'ffmpeg-n9.0-latest-winarm64-lgpl-shared-9.0.zip');

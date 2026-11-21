@@ -591,6 +591,31 @@
           "default": true,
           "markdownDescription": "Performance: with ffmpeg, send frames only as large as the picture is shown (540p to 2160p), which saves a lot of CPU for 4K videos. The picture grows to full resolution at once when you enlarge the panel, go fullscreen or zoom in. Turn off to always get frames up to `#videoPreviewEnhanced.nativeMaxHeight#` (automatic: 2160p for 4K at 30 fps). A number in `nativeMaxHeight` wins either way."
         },
+        "videoPreviewEnhanced.transcode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "auto",
+            "always",
+            "off"
+          ],
+          "default": "ask",
+          "scope": "machine",
+          "enumDescriptions": [
+            "Ask once when Live transcode is needed (locally when raw frame transfer falls behind, or on first remote video) and remember your choice.",
+            "Automatically use Live transcode when needed (over remote links, or locally when raw frame transfer falls behind).",
+            "Always start with Live transcode for non-HDR files that qualify (avoids startup stutter on 4K60 or fluctuating SSH links).",
+            "Never use Live transcode."
+          ],
+          "markdownDescription": "Live transcode (ADR 0002): let ffmpeg on this host (local or remote) transcode video on the fly to a low-latency H.264 stream for WebCodecs. Prefers GPU decode and GPU encode when available, with software encoding as the last resort. Pixel tools always use exact original pixels. Also set in the player's settings panel (⚙ › Live transcode)."
+        },
+        "videoPreviewEnhanced.transcodeMaxBitrate": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "scope": "machine",
+          "markdownDescription": "Maximum bitrate in Mb/s for Live transcode (`0` = Auto). Uses best quality capped strictly at this ceiling (capped VBR) so the stream never exceeds your link budget while staying compact on easy or low-fps scenes. Also set in ⚙ › Live transcode."
+        },
         "videoPreviewEnhanced.remoteStream": {
           "type": "string",
           "enum": [
@@ -600,12 +625,13 @@
           ],
           "default": "auto",
           "scope": "machine",
+          "deprecationMessage": "Replaced by videoPreviewEnhanced.transcode (auto -> auto, off -> off, on -> always).",
           "enumDescriptions": [
             "In remote windows (SSH, WSL, containers, tunnels), formats VS Code's GPU decoder can't play (anything but 8-bit H.264 and VP8) are re-encoded by ffmpeg on the remote machine as a low-latency H.264 stream, when native ffmpeg can't play them there directly (it does in WSL). Needs ffmpeg on the remote machine; uses its GPU encoder (NVENC, Quick Sync, AMF, VAAPI) when it has one.",
             "Disable remote H.264 re-encoding. Normal decoder selection still applies.",
             "In every window, local ones too (for testing)."
           ],
-          "markdownDescription": "Remote windows: let ffmpeg on the remote machine stream videos to the editor as H.264 (about 5-10 Mb/s), instead of decoding them in the built-in decoder. The picture is scaled to `#videoPreviewEnhanced.nativeMaxHeight#` and 8-bit; pixel tools switch to the built-in decoder for exact pixels. Set it in the remote's settings."
+          "markdownDescription": "Deprecated: use `#videoPreviewEnhanced.transcode#` instead. Kept for backwards compatibility."
         },
         "videoPreviewEnhanced.fastPreviewWhenBehind": {
           "type": "boolean",

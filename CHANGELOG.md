@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- New: **Live transcode** (`videoPreviewEnhanced.transcode` and `videoPreviewEnhanced.transcodeMaxBitrate`, replacing `remoteStream`) unifies local high-rate playback (such as 4K60) and remote streaming (SSH, WSL, containers, tunnels) into one H.264 → WebCodecs stream engine with hardware-first, software-last GPU decode and encode, a strict max bitrate cap, ⚙ › Live transcode controls, pipeline details + **Use original video** in ⓘ, and driver-aware managed ffmpeg line selection for NVIDIA GPUs (ADR 0002).
 - Remote streams use compressed Opus sound when available, with s16 PCM as a fallback, so slow connections can keep the picture and sound playing. Remote pictures also follow the player size.
 - New (experimental): setting `videoPreviewEnhanced.compare.maxVideos` (default 4, up to 16) lets compare play more videos at once, in a plain grid (3×2, 3×3, 4×3, 4×4). From 5 videos on, all tiles share one renderer and the memory and transfer budgets of 4, and native ffmpeg tiles use WebSocket channels. 2–4 videos are unchanged. With ffmpeg on the test PC, 9 and 16 1080p HEVC videos each play at about 24 fps (measured 23.5-24.0). How more than 4 videos get into compare, and free placement of tiles, come later.
 - Fixed: Fit now enlarges a small video as far as the panel allows, keeping its shape (like mpv or VLC), also in the player; before, a 640x360 clip stayed small in a large panel. 100 % is unchanged (pixel for pixel).

@@ -46,9 +46,15 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.match(logOf(h), /full resolution asked for: built-in decoder, reloading/);
   s.panel.dispose(); h.dispose();
 
-  // remoteStream auto (default): WSL plays native ffmpeg (no stream); SSH and containers stream
-  // (src/remotestream.js); remoteStream off: SSH stays built-in.
-  for (const [remote, want, rs] of [['wsl', 'native', undefined], ['ssh-remote', 'stream', undefined], ['dev-container', 'stream', undefined], ['ssh-remote', 'builtin', 'off']]) {
+  // Live transcode (ADR 0002): WSL plays native ffmpeg (no stream); with transcode: auto,
+  // SSH and containers stream; remoteStream off (migrated) keeps SSH built-in.
+  for (const [remote, want, tc, rs] of [
+    ['wsl', 'native', 'auto', undefined],
+    ['ssh-remote', 'stream', 'auto', undefined],
+    ['dev-container', 'stream', 'auto', undefined],
+    ['ssh-remote', 'builtin', undefined, 'off'],
+  ]) {
+    if (tc) settings['videoPreviewEnhanced.transcode'] = tc; else delete settings['videoPreviewEnhanced.transcode'];
     if (rs) settings['videoPreviewEnhanced.remoteStream'] = rs; else delete settings['videoPreviewEnhanced.remoteStream'];
     ({ h, s } = await start(remote));
     meta = s.posted.find((m) => m.type === 'libav').meta;
@@ -58,6 +64,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 ${log}`);
     s.panel.dispose(); h.dispose();
   }
+  delete settings['videoPreviewEnhanced.transcode'];
   delete settings['videoPreviewEnhanced.remoteStream'];
   await wait(10);
   console.log('native choice: ok');

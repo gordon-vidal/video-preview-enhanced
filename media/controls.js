@@ -155,7 +155,8 @@ const VpeControls = (() => {
     const ns = (tr.sub || 0) + (o.subFiles || 0);
     rows.push(['Tracks', `${na === 0 ? 'no sound' : na === 1 ? '1 audio' : `${na} audio`} · ${ns === 0 ? 'no subtitles' : ns === 1 ? '1 subtitle' : `${ns} subtitles`}`]);
     let by;
-    if (o.remoteStream) by = 'ffmpeg on the remote machine, sent as H.264 to your GPU';
+    if (info.transcode && info.transcode.label) by = info.transcode.label;
+    else if (o.remoteStream) by = 'ffmpeg on the remote machine, sent as H.264 to your GPU';
     else if (o.native) by = info.method && info.method !== 'none' ? `your GPU (${info.method}), through ffmpeg` : 'ffmpeg, on the processor';
     else if (o.frames) by = 'the built-in image decoder';
     else if (o.vmode === 'webcodecs') by = 'your GPU (built into VS Code)';
@@ -203,7 +204,7 @@ const VpeControls = (() => {
    */
   function create(env) {
     const { panel, sheet, bar, buttons } = env;
-    /** @type {null|'main'|'speed'|'jumps'|'picture'|'subs'|'audio'|'quality'|'info'} */
+    /** @type {null|'main'|'speed'|'jumps'|'picture'|'transcode'|'subs'|'audio'|'quality'|'info'} */
     let view = null;
     /** @type {HTMLElement|null} */
     let opener = null;
@@ -258,6 +259,12 @@ const VpeControls = (() => {
         if (s.quality) f.appendChild(btn('row', 'Quality', () => show('quality'), { icon: ICON.quality, value: qualityLabel(s.quality), chev: true }));
       }
       if (s.picture) f.appendChild(btn('row', 'Picture size', () => show('picture'), { icon: ICON.picture, value: `${PIC.name(s.picture.mode)}${s.picture.pct !== null ? ` · ${s.picture.pct}%` : ''}`, chev: true, aria: { 'aria-label': `Picture size, ${PIC.name(s.picture.mode)}` } }));
+      if (s.transcode) {
+        const tm = s.transcode.mode || 'ask';
+        const mbps = s.transcode.maxBitrateMbps > 0 ? ` · ${s.transcode.maxBitrateMbps} Mb/s` : '';
+        const modeName = tm === 'ask' ? 'Ask' : tm === 'auto' ? 'Auto' : tm === 'always' ? 'Always' : 'Off';
+        f.appendChild(btn('row', 'Live transcode', () => show('transcode'), { icon: ICON.quality, value: `${modeName}${mbps}`, chev: true, aria: { 'aria-label': `Live transcode, ${modeName}${mbps}` } }));
+      }
       f.appendChild(btn('row', s.compare ? 'Copy view' : 'Copy frame', () => { close(false); env.act.copyFrame(); }, { icon: ICON.camera, kbd: 'Ctrl+C' }));
       f.appendChild(btn('row', 'Keyboard shortcuts', () => openSheet(buttons.cog), { icon: ICON.keys, kbd: '?' }));
       f.appendChild(btn('row', 'Jump sizes', () => show('jumps'), { icon: ICON.jumps, value: [s.jump.arrow, s.jump.shift, s.jump.ctrl].map(navName).join(' · '), chev: true }));
@@ -432,6 +439,39 @@ const VpeControls = (() => {
       return f;
     }
 
+    const TRANSCODE_RATES = [0, 2, 5, 10, 20, 40];
+    function renderTranscode(s) {
+      const f = document.createDocumentFragment();
+      f.appendChild(head('Live transcode'));
+      const tc = s.transcode || { mode: 'ask', maxBitrateMbps: 0, active: false };
+      f.appendChild(radios('Live transcode mode', [
+        { label: 'Ask', sub: 'Prompt when needed', checked: tc.mode === 'ask', pick: () => env.act.setTranscode('ask') },
+        { label: 'Auto', sub: 'Switch automatically', checked: tc.mode === 'auto', pick: () => env.act.setTranscode('auto') },
+        { label: 'Always', sub: 'Start transcoded', checked: tc.mode === 'always', pick: () => env.act.setTranscode('always') },
+        { label: 'Off', sub: 'Never transcode', checked: tc.mode === 'off', pick: () => env.act.setTranscode('off') },
+      ]));
+      f.appendChild(el('div', 'sep'));
+      const box = el('div', 'jbox');
+      const title = el('div', 'jtitle', 'Max bitrate (best quality up to cap)');
+      title.setAttribute('aria-hidden', 'true');
+      const g = el('div', 'jopts');
+      g.setAttribute('role', 'radiogroup');
+      g.setAttribute('aria-label', 'Max bitrate');
+      const rates = tc.maxBitrateMbps > 0 && !TRANSCODE_RATES.includes(tc.maxBitrateMbps)
+        ? [...TRANSCODE_RATES, tc.maxBitrateMbps].sort((a, b) => a - b) : TRANSCODE_RATES;
+      for (const r of rates) {
+        const label = r === 0 ? 'Auto' : `${r} Mb/s`;
+        g.appendChild(btn('chip', label, () => { env.act.setTranscodeMaxBitrate(r); render(); }, {
+          aria: { role: 'radio', 'aria-checked': String(Number(tc.maxBitrateMbps || 0) === r) },
+        }));
+      }
+      box.append(title, g);
+      f.appendChild(box);
+      const note = el('div', 'pnote', 'Uses GPU decode and encode when available, CPU as last resort. Pixel tools always use exact original pixels.');
+      f.appendChild(note);
+      return f;
+    }
+
     function renderInfo(s) {
       const f = document.createDocumentFragment();
       const d = s.facts;
@@ -450,13 +490,14 @@ const VpeControls = (() => {
       f.appendChild(grid);
       const row = el('div', 'ibtns');
       row.append(btn('secondary', 'Copy details', () => env.act.copyInfo(d)));
+      if (s.canUseOriginal && env.act.useOriginal) row.append(btn('secondary', 'Use original video', () => { close(false); env.act.useOriginal(); }));
       if (env.act.moreInfo) row.append(btn('link', 'Full technical details', () => { close(false); env.act.moreInfo(); }));
       if (s.canExternal) row.appendChild(btn('link', 'Open in system player', () => { close(false); env.act.external(); }));
       f.appendChild(row);
       return f;
     }
 
-    const LABEL = { main: 'Player settings', speed: 'Speed', jumps: 'Jump sizes', picture: 'Picture size', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video' };
+    const LABEL = { main: 'Player settings', speed: 'Speed', jumps: 'Jump sizes', picture: 'Picture size', transcode: 'Live transcode', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video' };
     /**
      * Pages a page adds (compare's panel and its per-video page): { label, render(s, kit), parent?, button? }.
      * `button`: the bar button (env.buttons key) that shows it open; `parent`: where Esc goes.
@@ -473,7 +514,7 @@ const VpeControls = (() => {
       panel.className = `panel ${view}`;
       const custom = VIEWS[view];
       panel.setAttribute('aria-label', custom ? (typeof custom.label === 'function' ? custom.label(s) : custom.label) : view === 'info' && s.infoTabs ? 'About these videos' : LABEL[view]);
-      const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'speed' ? renderSpeed(s) : view === 'jumps' ? renderJumps(s) : view === 'picture' ? renderPicture(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : renderInfo(s);
+      const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'speed' ? renderSpeed(s) : view === 'jumps' ? renderJumps(s) : view === 'picture' ? renderPicture(s) : view === 'transcode' ? renderTranscode(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : renderInfo(s);
       panel.appendChild(body);
       const after = /** @type {HTMLElement[]} */ ([...panel.querySelectorAll('[data-nav]')]);
       if (fi >= 0 && after.length) after[Math.min(fi, after.length - 1)].focus();
@@ -489,7 +530,7 @@ const VpeControls = (() => {
     function sync() {
       const set = (b, on) => { if (b) { b.setAttribute('aria-expanded', String(on)); b.classList.toggle('open', on); } };
       const own = view && VIEWS[view] ? VIEWS[view].button : null;
-      set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'jumps' || view === 'picture' || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
+      set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'jumps' || view === 'picture' || view === 'transcode' || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
       for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks', 'keys'].includes(k)) set(b, !!own && own === k);
       set(buttons.info, view === 'info');
       set(buttons.rate, view === 'speed' && opener === buttons.rate);

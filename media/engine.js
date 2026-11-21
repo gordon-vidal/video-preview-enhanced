@@ -1800,7 +1800,7 @@ function createEngine(env) {
       if (frac >= 0.8 && ratio > 0 && ratio < 1) s = { realtime: false, ratio: Math.round(ratio * 1000) / 1000 };
       else if (frac === 0) s = { realtime: true, ratio: 1 };
       if (!s) return null;
-      const sample = { type: 'decodeSpeed', codec: v.codec, depth: v.depth || 8, width: v.width, height: v.height, fps: this.fps, vmode: this.vmode, ...(this.cfg.native ? { native: true } : {}), ...s };
+      const sample = { type: 'decodeSpeed', codec: v.codec, depth: v.depth || 8, width: v.width, height: v.height, fps: this.fps, vmode: this.vmode, ...(this.cfg.native ? { native: true } : {}), ...(this.remoteStream ? { remoteStream: true } : {}), ...s };
       vscode.postMessage(sample);
       return sample;
     }

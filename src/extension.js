@@ -20,7 +20,9 @@ const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
 const { decodeThumb } = require('./thumbhost');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
-const remotestream = lazy('./remotestream'); // remote windows: H.264 re-encoded on the remote host (docs/notes/remote-stream.md)
+const remotestream = lazy('./remotestream'); // unified Live transcode stream engine (ADR 0002)
+const transcodePolicy = lazy('./transcode_policy');
+const transcodeProbe = lazy('./transcode_probe');
 const probe = lazy('./probe'); // ffmpeg's GPU decoding tested on this machine
 const decide = require('./decide'); // native ffmpeg or built-in, per file
 const localff = lazy('./localff'); // "Use an ffmpeg I already have…"
@@ -107,7 +109,13 @@ const PREFS = {
 };
 function prefsOf(c) {
   const v = (k) => (PREFS[k].values.includes(c.jumps[k]) ? c.jumps[k] : PREFS[k].dflt);
-  return { jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl') }, stepButtons: v('stepButtons'), pictureSize: c.pictureSize };
+  return {
+    jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl') },
+    stepButtons: v('stepButtons'),
+    pictureSize: c.pictureSize,
+    transcode: c.transcode,
+    transcodeMaxBitrate: c.transcodeMaxBitrate,
+  };
 }
 
 const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
@@ -163,6 +171,22 @@ function config() {
     sizeFramesToView: c.get('sizeFramesToView', true) !== false,
     gpuDecoding: c.get('gpuDecoding', true),
     remoteStream: c.get('remoteStream', 'auto'),
+    transcode: (() => {
+      const ti = (c.inspect && c.inspect('transcode')) || {};
+      const ri = (c.inspect && c.inspect('remoteStream')) || {};
+      const fb = (globalState && globalState.get(FALLBACK_KEY)) || {};
+      const rawTranscode = settingOr(c, 'transcode', 'ask');
+      const rawRemote = c.get('remoteStream', 'auto');
+      const tExp = ti.globalValue !== undefined || ti.workspaceValue !== undefined || ti.workspaceFolderValue !== undefined || fb.transcode !== undefined || rawTranscode !== 'ask';
+      const rExp = ri.globalValue !== undefined || ri.workspaceValue !== undefined || ri.workspaceFolderValue !== undefined || rawRemote !== 'auto';
+      return transcodePolicy.resolveSetting({
+        transcode: rawTranscode,
+        transcodeExplicit: tExp,
+        remoteStream: rawRemote,
+        remoteStreamExplicit: rExp,
+      });
+    })(),
+    transcodeMaxBitrate: Math.max(0, Number(settingOr(c, 'transcodeMaxBitrate', 0)) || 0),
     hdrOutput: c.get('hdrOutput', 'auto') === 'off' ? 'off' : 'auto',
     pictureSize: ['fit', 'fill', 'stretch', 'actual'].includes(c.get('pictureSize')) ? c.get('pictureSize') : 'fit',
   };
@@ -579,7 +603,7 @@ async function maybeOfferRemoteFfmpeg(sess, m) {
   const key = remoteff.remoteKey(remote);
   const ctx = () => ({
     remote, platform: hostPlatform(), arch: hostArch(), trusted: vscode.workspace.isTrusted,
-    streamOn: remotestream.enabled({ setting: c.remoteStream, remote, nativeChosen: false }), builtinOnly: c.decoder === 'builtin',
+    streamOn: c.transcode !== 'off', builtinOnly: c.decoder === 'builtin',
     askedThisSession: remoteOfferAsked, state: globalState.get(remoteff.OFFER_KEY), key, pending: remoteOfferPending || onboardPending,
   });
   if (!remoteff.shouldOffer(ctx())) return;
@@ -623,6 +647,65 @@ async function downloadRemoteFfmpeg() {
   const nt = await tools();
   vscode.window.showInformationMessage(nt ? `Video Preview: ffmpeg ready on ${host} (${nt.version.replace(/ Copyright.*/, '')}). Videos the GPU can't decode stream from there now.` : `Video Preview: ffmpeg was downloaded on ${host} but does not run there; see the output log.`);
   for (const s of sessions) s.reload('ffmpeg changed');
+}
+
+const DRIVER_NOTICE_KEY = 'videoPreviewEnhanced.nvencDriverNotice';
+let transcodeOfferPending = false;
+
+/** Shows a one-time notice per ffmpeg binary + NVIDIA driver when NVENC refuses an older driver. */
+function maybeShowDriverNotice(t, notice, nvidiaDriver) {
+  if (!notice || !globalState) return;
+  const key = `${t.ffmpeg}|${t.version || ''}|${nvidiaDriver || ''}`;
+  const seen = globalState.get(DRIVER_NOTICE_KEY) || {};
+  if (seen[key]) return;
+  seen[key] = Date.now();
+  globalState.update(DRIVER_NOTICE_KEY, seen).then(undefined, () => {});
+  const text = transcodePolicy.driverNoticeText(notice);
+  log(`[live transcode] ${text}`);
+  vscode.window.showInformationMessage(text, 'Set Up Optional ffmpeg').then((ans) => {
+    if (ans === 'Set Up Optional ffmpeg') setupFfmpeg();
+  }, () => {});
+}
+
+/** First remote video when transcode is 'ask': let the user pick Live transcode vs original quality. */
+async function maybeOfferRemoteTranscode(sess, remote) {
+  if (transcodeOfferPending || sess.disposed) return;
+  transcodeOfferPending = true;
+  let answer;
+  try {
+    answer = await vscode.window.showInformationMessage(
+      transcodePolicy.remotePromptText(remote),
+      transcodePolicy.REMOTE_PROMPT_YES,
+      transcodePolicy.REMOTE_PROMPT_NO,
+    );
+  } finally { transcodeOfferPending = false; }
+  if (answer === transcodePolicy.REMOTE_PROMPT_YES) {
+    await setSetting('transcode', 'auto', vscode.ConfigurationTarget.Global);
+    if (!sess.disposed) { sess.forceTranscode = true; sess.reload('live transcode accepted'); }
+  } else if (answer === transcodePolicy.REMOTE_PROMPT_NO) {
+    await setSetting('transcode', 'off', vscode.ConfigurationTarget.Global);
+  }
+}
+
+/** Local playback falling behind on raw frame transfer when transcode is 'ask': offer Live transcode. */
+async function maybeOfferLocalTranscode(sess) {
+  if (transcodeOfferPending || sess.disposed) return;
+  transcodeOfferPending = true;
+  let answer;
+  try {
+    answer = await vscode.window.showInformationMessage(
+      transcodePolicy.localOfferText(),
+      transcodePolicy.LOCAL_OFFER_YES,
+      transcodePolicy.LOCAL_OFFER_KEEP,
+      transcodePolicy.LOCAL_OFFER_NEVER,
+    );
+  } finally { transcodeOfferPending = false; }
+  if (answer === transcodePolicy.LOCAL_OFFER_YES) {
+    await setSetting('transcode', 'auto', vscode.ConfigurationTarget.Global);
+    if (!sess.disposed) { sess.forceTranscode = true; sess.reload('live transcode accepted'); }
+  } else if (answer === transcodePolicy.LOCAL_OFFER_NEVER) {
+    await setSetting('transcode', 'off', vscode.ConfigurationTarget.Global);
+  }
 }
 
 /**
@@ -1110,8 +1193,19 @@ function activate(context) {
       // Cheap to apply at once: larger frames with a seek to the same moment, smaller ones at the next seek.
       if (e.affectsConfiguration('videoPreviewEnhanced.sizeFramesToView')) for (const s of sessions) if (s.native && s.native.setFit) s.native.setFit(fitsView());
       if (e.affectsConfiguration('videoPreviewEnhanced.overrideFileIcons')) fileIcons({ force: true });
-      if (Object.keys(PREFS).some((k) => e.affectsConfiguration(`videoPreviewEnhanced.${k}`))) {
-        const msg = { type: 'prefs', prefs: prefsOf(config()) };
+      if (Object.keys(PREFS).some((k) => e.affectsConfiguration(`videoPreviewEnhanced.${k}`))
+        || e.affectsConfiguration('videoPreviewEnhanced.transcode')
+        || e.affectsConfiguration('videoPreviewEnhanced.transcodeMaxBitrate')
+        || e.affectsConfiguration('videoPreviewEnhanced.remoteStream')) {
+        const c = config();
+        if (e.affectsConfiguration('videoPreviewEnhanced.transcodeMaxBitrate')) {
+          for (const s of sessions) {
+            if (s.native instanceof remotestream.EncodedStream) {
+              s.native.setMaxKbps(c.transcodeMaxBitrate > 0 ? Math.round(c.transcodeMaxBitrate * 1000) : 0);
+            }
+          }
+        }
+        const msg = { type: 'prefs', prefs: prefsOf(c) };
         for (const sess of [...sessions, ...compareSessions]) sess.post(msg);
       }
     }),
@@ -1745,6 +1839,28 @@ ${barHtml()}
       case 'thumb': return this.sendThumb(m);
       // Jump sizes and speed step from the player's panels: only declared values.
       case 'pref': return PREFS[m.key] && PREFS[m.key].values.includes(m.value) ? setSetting(m.key, m.value, prefTarget(m.key)) : undefined;
+      // Live transcode mode and max bitrate from the ⚙ panel (machine-scoped).
+      case 'transcodePref': {
+        if (m.mode !== undefined && transcodePolicy.MODES.includes(m.mode)) {
+          await setSetting('transcode', m.mode, vscode.ConfigurationTarget.Global);
+          const isStreaming = this.native instanceof remotestream.EncodedStream;
+          if (m.mode === 'off' && isStreaming) this.useFullRes();
+          else if (m.mode === 'always' && !isStreaming) {
+            this.forceTranscode = true;
+            this.fullRes = false;
+            this.noRemoteStream = false;
+            this.reload('live transcode enabled');
+          }
+        }
+        if (m.maxBitrateMbps !== undefined) {
+          const mbps = Math.max(0, Number(m.maxBitrateMbps) || 0);
+          await setSetting('transcodeMaxBitrate', mbps, vscode.ConfigurationTarget.Global);
+          if (this.native instanceof remotestream.EncodedStream) {
+            this.native.setMaxKbps(mbps > 0 ? Math.round(mbps * 1000) : 0);
+          }
+        }
+        return undefined;
+      }
       case 'compareWith':
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         // Compare takes this tab's place and starts where the player is (src/compare.js).
@@ -1849,10 +1965,10 @@ ${barHtml()}
     // (src/decide.js): an SSH/container window, a file it failed on, pixel tools.
     const c = config();
     const remote = vscode.env.remoteName;
-    // remoteStream "on" (tests): the stream before native ffmpeg, in any window.
-    if (c.remoteStream === 'on') {
+    // Live transcode "always" (or forced for this session): stream before raw native ffmpeg, in any window.
+    if (c.transcode === 'always' || this.forceTranscode) {
       if (early) early.abort.abort();
-      if (await this.tryRemoteStream(gen, stat)) return undefined;
+      if (await this.tryRemoteStream(gen, stat, null, { forced: !!this.forceTranscode })) return undefined;
     }
     let probed = null; // ffmpeg and its probe of the file, for the stream below
     const nativePossible = this.nativePossible(c);
@@ -1908,9 +2024,11 @@ ${barHtml()}
       }
     }
     if (this.stale(gen)) return undefined;
-    // remoteStream "auto" (default): a remote window where native ffmpeg didn't take the file
-    // (SSH, containers, tunnels; WSL only when native ffmpeg can't play it).
-    if (c.remoteStream !== 'on' && remotestream.enabled({ setting: c.remoteStream, remote, nativeChosen: false }) && await this.tryRemoteStream(gen, stat, probed)) return undefined;
+    // Remote windows where raw native ffmpeg didn't take the file (SSH, containers, tunnels):
+    // consult the unified Live transcode policy (auto -> stream, ask -> prompt once on first remote use).
+    if (c.transcode !== 'always' && !this.forceTranscode && remote && remote !== 'wsl') {
+      if (await this.tryRemoteStream(gen, stat, probed)) return undefined;
+    }
     if (this.stale(gen)) return undefined;
     log(`[${this.name}] decoding with libav.js (${this.build.variant})`);
     this.post({ type: 'libav', meta: { size: stat.size, duration: 0, label: '' } });
@@ -2140,7 +2258,7 @@ ${barHtml()}
   /** First visible page only: ffmpeg lookup and ffprobe overlap the webview's load. */
   probeEarly() {
     const c = config();
-    if (!FS_SCHEMES.has(this.uri.scheme) || !this.nativePossible(c) || c.remoteStream === 'on') return null;
+    if (!FS_SCHEMES.has(this.uri.scheme) || !this.nativePossible(c) || c.transcode === 'always' || this.forceTranscode) return null;
     const abort = new AbortController();
     const stat = fs.promises.stat(this.file).catch(() => null);
     // The page reuses this scan, unless the file changed. Only probe AVI after ruling out the frame player.
@@ -2150,7 +2268,7 @@ ${barHtml()}
       if (decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, st)) return null;
       const t = scan ? await tools() : found;
       const current = config();
-      if (abort.signal.aborted || !this.nativePossible(current) || current.remoteStream === 'on') return null;
+      if (abort.signal.aborted || !this.nativePossible(current) || current.transcode === 'always' || this.forceTranscode) return null;
       if (!t) return { t };
       let probing = true;
       const gpus = gpusForMethod(t, current); // the method depends on them before any GPU test (hardware.detect, no decoding)
@@ -2233,8 +2351,8 @@ ${barHtml()}
 
   tryStartNativeEarly(t, pr, stat, guessed) {
     const c = config();
-    // remoteStream "on" (tests) streams first; pixel tools want the built-in decoder.
-    if (c.remoteStream === 'on' || !this.nativePossible(c)) return;
+    // Live transcode "always" (or forced) streams first; pixel tools want the built-in decoder.
+    if (c.transcode === 'always' || this.forceTranscode || !this.nativePossible(c)) return;
     const d = this.decideNative(c, t, pr, stat);
     if (d.use !== 'native') return;
     this.earlyNd = this.newNative(t, pr, d, c);
@@ -2261,16 +2379,14 @@ ${barHtml()}
   }
 
   /**
-   * The remote stream (src/remotestream.js): ffmpeg on this (remote) host re-encodes formats the
-   * webview can't decode on the GPU as low-latency H.264 for WebCodecs. The caller decides whether
-   * the window streams (videoPreviewEnhanced.remoteStream); this checks the file. True when it took over.
-   * probed: { t, pr } when the native decision already ran ffprobe.
+   * Unified Live transcode (ADR 0002, src/stream.js): ffmpeg on this host (local or remote)
+   * decodes (GPU when available), scales and re-encodes a low-latency H.264 stream for WebCodecs.
+   * True when it took over playback.
    */
-  async tryRemoteStream(gen, stat, probed) {
+  async tryRemoteStream(gen, stat, probed, opts = {}) {
     const c = config();
     const remote = vscode.env.remoteName;
     if (this.fullRes || this.noRemoteStream || !vscode.workspace.isTrusted) return false;
-    // decoder: builtin means built-in, and a file native ffmpeg failed on stays built-in (review 2026-11-19 #3).
     if (c.decoder === 'builtin' || decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, stat)) return false;
     const t = probed ? probed.t : await tools();
     if (!t) return false;
@@ -2278,25 +2394,52 @@ ${barHtml()}
     if (!pr) {
       try { pr = await ff.probe(t, this.file); } catch (e) { log(`[${this.name}] ffprobe failed: ${e.message}`); }
     }
-    if (this.stale(gen) || !pr || !remotestream.wanted(pr)) return false;
-    // Reuse the remote's confirmed encoder choice unless a stream failure calls for a new probe.
-    const [enc, audioEncoder] = await Promise.all([remotestream.encoderFor(t, ff.run, globalState, log),
-      pr.audio ? remotestream.audioEncoderFor(t) : null]);
+    if (this.stale(gen) || !pr || !pr.video) return false;
+    const lastView = globalState && globalState.get(LAST_VIEW_KEY);
+    const decision = transcodePolicy.shouldTranscodeOnOpen({
+      mode: c.transcode,
+      remote,
+      video: pr.video,
+      maxBitrateMbps: c.transcodeMaxBitrate,
+      viewHeight: lastView && lastView.h > 0 ? lastView.h : 0,
+      forced: !!opts.forced,
+      remotePrompted: !!this.remoteTranscodePrompted,
+    });
+    if (decision.action === 'prompt_remote') {
+      this.remoteTranscodePrompted = true;
+      maybeOfferRemoteTranscode(this, remote).catch((e) => log(`remote transcode prompt failed: ${e && e.message || e}`));
+      return false;
+    }
+    if (decision.action !== 'stream') return false;
+    const isRemoteLink = (!!remote && remote !== 'wsl') || c.remoteStream === 'on';
+    const hw = await machine().catch(() => null);
     if (this.stale(gen)) return false;
-    log(`[${this.name}] decoder: remote stream (H.264 re-encoded on this host by ${enc.encoder}, ${remote || 'local'} window): ${pr.video.codec} ${pr.video.pixFmt} ${pr.video.width}x${pr.video.height}`);
-    this.native = new remotestream.RemoteStream({
-      tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), audioEncoder, probed: pr, stats: !!logFile, encoder: enc.encoder, device: enc.device, cpuEncoder: enc.cpu,
-      // The stream's notices (quality lowered, connection too slow) show as the player's toast.
+    const [enc, audioEncoder] = await Promise.all([
+      transcodeProbe.encoderFor(t, ff.run, globalState, log, { nvidiaDriver: hw && hw.nvidiaDriver }),
+      isRemoteLink && pr.audio ? remotestream.audioEncoderFor(t) : null,
+    ]);
+    if (this.stale(gen)) return false;
+    if (enc.driverNotice) maybeShowDriverNotice(t, enc.driverNotice, hw && hw.nvidiaDriver);
+    // Hardware-first decode method (works on both local and remote GPU machines).
+    const probeRec = !isRemoteLink ? probeRecord(t, hw) : null;
+    const decodeMethod = c.gpuDecoding === false ? 'none' : decide.nativeMethod(probeRec, pr.video, true, hw).method;
+    const maxKbps = c.transcodeMaxBitrate > 0
+      ? transcodePolicy.effectiveMaxKbps({ maxBitrateMbps: c.transcodeMaxBitrate, w: pr.video.width, h: pr.video.height, fps: pr.video.fps, remote: isRemoteLink })
+      : (isRemoteLink ? 0 : transcodePolicy.autoMaxKbps({ w: pr.video.width, h: pr.video.height, fps: pr.video.fps, remote: false }));
+    log(`[${this.name}] decoder: remote stream / live transcode (${enc.encoder}, decode=${decodeMethod}, ${remote || 'local'} window): ${pr.video.codec} ${pr.video.pixFmt} ${pr.video.width}x${pr.video.height}`);
+    this.native = new remotestream.EncodedStream({
+      tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), audioEncoder, probed: pr,
+      stats: !!logFile, encoder: enc.encoder, device: enc.device, cpuEncoder: enc.cpu, decodeMethod,
+      maxKbps, allowLinkAdapt: isRemoteLink, remote: isRemoteLink, allowSoftwareFallback: true,
       post: (msg) => this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg }),
       log: (msg) => log(`[${this.name}] ${msg}`),
-      onEncoderFail: () => remotestream.encoderFailed(t, enc),
-      // Only real failures end here (ffmpeg errors, no WebCodecs), never link speed (review 7 #3, #5).
-      // The built-in decoder reads the whole file over the connection, so say so; the page reloads, so not as a toast.
+      onEncoderFail: () => transcodeProbe.encoderFailed(t, enc, hw && hw.nvidiaDriver),
       onFail: (err) => {
         log(`[${this.name}] remote stream failed (${err}); using the built-in decoder`);
         this.noRemoteStream = true;
-        vscode.window.showWarningMessage(`${path.basename(this.file)}: the remote stream failed (${err}). Using the built-in decoder, which reads the whole file over the connection.`);
-        this.reload('remote stream failed');
+        this.forceTranscode = false;
+        vscode.window.showWarningMessage(`${path.basename(this.file)}: live transcode failed (${err}). Using the original decoder.`);
+        this.reload('live transcode failed');
       },
     });
     this.post({ type: 'libav', meta: { size: stat.size, duration: 0, label: '', native: true } });
@@ -2619,6 +2762,7 @@ ${barHtml()}
   useFullRes() {
     if (this.fullRes || !this.native) return;
     this.fullRes = true;
+    this.forceTranscode = false;
     this.reload('full resolution asked for: built-in decoder');
   }
 
@@ -2660,6 +2804,7 @@ ${barHtml()}
    * class and may bring the setup hint; slow ones, and native ones, may bring the GPU test offer.
    */
   onSpeed(m) {
+    if (m.remoteStream || this.native instanceof remotestream.EncodedStream) return;
     const native = !!this.native;
     if (!!m.native !== native) return; // a sample from before the page switched decoders
     const sample = {
@@ -2671,7 +2816,37 @@ ${barHtml()}
       const was = this.slowRun || 0;
       this.slowRun = sample.realtime ? 0 : was + 1;
       if (!sample.realtime && was === 0) log(`[${this.name}] native ffmpeg below real time: ${sample.ratio.toFixed(2)}x (${decide.describe(sample)}, ${this.native.method})`);
-      if (!sample.realtime) maybeOfferProbe(this, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));
+      if (!sample.realtime) {
+        const c = config();
+        const v = this.native.pr && this.native.pr.video;
+        // Distinguish raw transfer bottleneck from decode bottleneck: raw frame transfer is the bottleneck
+        // when the source pixel rate exceeds raw transport capacity or the host ffmpeg output is backpressured.
+        const hostKeepsUp = transcodePolicy.exceedsRawTransfer(v) || !!(this.native.proc && this.native.proc.stdout && this.native.proc.stdout.isPaused());
+        const stallAction = transcodePolicy.evaluateLocalStall({
+          mode: c.transcode,
+          slowWindows: this.slowRun,
+          hostKeepsUp,
+          playing: true,
+          rate: 1,
+          hidden: false,
+          sinceEventMs: transcodePolicy.STALL_SETTLE_MS,
+          video: v,
+          alreadyTranscoding: false,
+          promptedThisSession: !!this.localTranscodePrompted,
+        });
+        if (stallAction === 'switch') {
+          log(`[${this.name}] live transcode: auto-switching after transfer stall`);
+          this.forceTranscode = true;
+          this.reload('live transcode auto');
+          return;
+        }
+        if (stallAction === 'prompt') {
+          this.localTranscodePrompted = true;
+          maybeOfferLocalTranscode(this).catch((e) => log(`local transcode prompt failed: ${e && e.message || e}`));
+          return;
+        }
+        if (!hostKeepsUp) maybeOfferProbe(this, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));
+      }
       return;
     }
     recordSpeed(sample);

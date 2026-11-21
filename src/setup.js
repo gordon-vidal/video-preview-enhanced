@@ -89,16 +89,28 @@ function downloadSizeMB(os = process.platform, arch = process.arch) {
 }
 
 /**
+ * Highest BtbN FFmpeg release line whose NVENC headers match an NVIDIA driver version
+ * (docs/notes/4k60-smooth.md, ADR 0002): n9.0+ needs NVENC API 13.1 (driver 610+),
+ * n8.0/n8.1 uses SDK 13.0 (driver 570+), earlier lines use SDK 11.1 (driver 471.41+).
+ * Returns null when no cap applies (no NVIDIA GPU, unknown driver, or driver >= 610).
+ */
+function nvidiaLineMax(driver) {
+  const m = /^(\d+)(?:\.(\d+))?/.exec(String(driver || '').trim());
+  if (!m) return null;
+  const ver = Number(`${m[1]}.${m[2] || '0'}`);
+  if (!(ver > 0) || ver >= 610) return null;
+  if (ver >= 570) return { major: 8, minor: 1 };
+  return { major: 7, minor: 1 };
+}
+
+/**
  * Chooses a build for this machine. Returns
  * { source, label, licence, files: [{url, sha256Url | sha256, name}], sizeMB, note }.
  *
- * Playback only decodes, and every decoder that matters is in FFmpeg's LGPL core
- * (plus dav1d, BSD), so the LGPL build is the one to fetch: it decodes exactly what
- * the GPL build does (only niche AVS2 via libdavs2 is GPL-only) and sits better next
- * to this MIT extension. GPU decoding needs no particular driver version: d3d11va,
- * dxva2, vaapi and videotoolbox use the system's video driver; NVIDIA's cuda (NVDEC)
- * loads the driver at run time. Whether a method works is not guessed from driver
- * numbers: the probe (src/probe.js) tries each one after the install.
+ * Uses BtbN's LGPL builds (matching this MIT extension). When an NVIDIA GPU and driver
+ * version are detected, selects the highest release line compatible with that driver's
+ * NVENC API (e.g. n8.1 for driver 570-609, n9.0 for 610+), falling back to the lowest
+ * available release line if BtbN has retired older lines.
  */
 async function chooseBuild(hw, { base = BTBN_DL } = {}) {
   if (hw.os === 'darwin') {
@@ -121,11 +133,16 @@ async function chooseBuild(hw, { base = BTBN_DL } = {}) {
   const latest = text.split(/\r?\n/).map((l) => /^([0-9a-f]{64})\s+\*?(\S+)$/i.exec(l.trim())).filter(Boolean)
     .map((m) => ({ sha256: m[1].toLowerCase(), name: m[2], url: `${base}latest/${m[2]}` }));
   const re = new RegExp(`^ffmpeg-n(\\d+)\\.(\\d+)-latest-${plat}-${variant}-[\\d.]+\\.${extRe}$`);
-  const pick = latest.map((a) => ({ a, m: re.exec(a.name) })).filter((x) => x.m)
+  const candidates = latest.map((a) => ({ a, m: re.exec(a.name) })).filter((x) => x.m)
     .map((x) => ({ asset: x.a, major: Number(x.m[1]), minor: Number(x.m[2]) }))
-    .sort((p, q) => q.major - p.major || q.minor - p.minor)[0];
+    .sort((p, q) => q.major - p.major || q.minor - p.minor);
+  const vendors = new Set((hw.gpus || []).map((g) => g.vendor));
+  const cap = vendors.has('nvidia') ? nvidiaLineMax(hw.nvidiaDriver) : null;
+  const pick = cap
+    ? (candidates.find((c) => c.major < cap.major || (c.major === cap.major && c.minor <= cap.minor))
+      || candidates[candidates.length - 1])
+    : candidates[0];
   if (!pick) throw new Error(`no ${plat} build found in BtbN's latest release`);
-  const vendors = new Set(hw.gpus.map((g) => g.vendor));
   const gpu = [];
   if (hw.os === 'win32') gpu.push('Direct3D 11');
   if (vendors.has('intel')) gpu.push('Intel Quick Sync');
@@ -252,4 +269,4 @@ function packageManagerCommand() {
   return 'sudo apt install ffmpeg   # or: sudo dnf install ffmpeg / sudo pacman -S ffmpeg';
 }
 
-module.exports = { chooseBuild, installBuild, packageManagerCommand, downloadSizeMB, setAgentFor, prune, findBinary, BTBN_DL };
+module.exports = { chooseBuild, installBuild, packageManagerCommand, downloadSizeMB, setAgentFor, prune, findBinary, nvidiaLineMax, BTBN_DL };

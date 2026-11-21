@@ -27,7 +27,12 @@
   let volume = saved.volume !== undefined ? saved.volume : 1;
   let rate = saved.rate || 1;
   // Jump sizes of the arrow keys ('frame' or seconds): settings videoPreviewEnhanced.jump.*, changed in the cog's Jump sizes page.
-  const prefs = { jump: { arrow: 5, shift: 1, ctrl: 'frame', ...((cfg.prefs && cfg.prefs.jump) || {}) }, stepButtons: (cfg.prefs && cfg.prefs.stepButtons) === 'jump' ? 'jump' : 'frame' };
+  const prefs = {
+    jump: { arrow: 5, shift: 1, ctrl: 'frame', ...((cfg.prefs && cfg.prefs.jump) || {}) },
+    stepButtons: (cfg.prefs && cfg.prefs.stepButtons) === 'jump' ? 'jump' : 'frame',
+    transcode: (cfg.prefs && cfg.prefs.transcode) || 'ask',
+    transcodeMaxBitrate: Number(cfg.prefs && cfg.prefs.transcodeMaxBitrate) || 0,
+  };
   // Picture size for this tab (Fit, Fill, Stretch, 100 %): starts as the setting videoPreviewEnhanced.pictureSize; the button and Z change this tab only.
   const startPicture = VpePicture.parse(cfg.prefs && cfg.prefs.pictureSize);
   // The bar's time: 0 m:ss.mmm, 1 SMPTE timecode, 2 frame number (a click on it cycles).
@@ -77,7 +82,7 @@
     exactOffered = true;
     const { width, height } = (p.remoteStream ? p.meta : p.info?.video) || {};
     showNotice({
-      text: `${p.remoteStream ? 'The remote stream' : 'Native ffmpeg'} shows this video at ${width ? `${width}×${height}` : 'a reduced size'}, 8-bit 4:2:0: pixel values and saved frames are not the file's own.`,
+      text: `${p.remoteStream ? 'Live transcode' : 'Native ffmpeg'} shows this video at ${width ? `${width}×${height}` : 'a reduced size'}, 8-bit 4:2:0: pixel values and saved frames are not the file's own.`,
       action: { label: 'Use full resolution', id: 'fullRes' },
     });
   }
@@ -508,6 +513,16 @@
     stepTips();
     vscode.postMessage({ type: 'pref', key: 'stepButtons', value });
     toast(value === 'jump' ? `Buttons beside Play jump ${VpeControls.navName(prefs.jump.ctrl)}` : 'Buttons beside Play step one frame');
+  }
+  function setTranscode(mode) {
+    prefs.transcode = mode;
+    vscode.postMessage({ type: 'transcodePref', mode });
+    toast(`Live transcode: ${mode === 'ask' ? 'Ask' : mode === 'auto' ? 'Auto' : mode === 'always' ? 'Always' : 'Off'}`);
+  }
+  function setTranscodeMaxBitrate(mbps) {
+    prefs.transcodeMaxBitrate = Number(mbps) || 0;
+    vscode.postMessage({ type: 'transcodePref', maxBitrateMbps: prefs.transcodeMaxBitrate });
+    toast(prefs.transcodeMaxBitrate > 0 ? `Max bitrate: ${prefs.transcodeMaxBitrate} Mb/s` : 'Max bitrate: Auto');
   }
   const setLoop = (l) => { loop = l; if (player && player.setLoop) player.setLoop(l); if (controls) controls.refresh(); };
   function setMute(m) {
@@ -1031,6 +1046,8 @@
         audioLabel: d.audio.length ? (d.audio.find((a) => a.checked) || d.audio[0]).main : (player && player.info && player.info.audio) || (player && player.audio) ? 'Only one' : 'None',
         hasSound: !!(player && ((player.info && player.info.audio) || player.audio)),
         tracks: d, facts: infoFacts(), canExternal: !!cfg.canOpenExternal,
+        canUseOriginal: !!(player && player.remoteStream),
+        transcode: !cfg.url && !(player instanceof FramePlayer) ? { mode: prefs.transcode, maxBitrateMbps: prefs.transcodeMaxBitrate, active: !!(player && player.remoteStream) } : null,
         quality: streamQ,
       };
     },
@@ -1042,6 +1059,9 @@
       stepRate: (d) => bumpRate(d),
       setJump: (k, v) => setJump(k, v),
       setStepButtons: (v) => setStepButtons(v),
+      setTranscode: (m) => setTranscode(m),
+      setTranscodeMaxBitrate: (r) => setTranscodeMaxBitrate(r),
+      useOriginal: () => vscode.postMessage({ type: 'action', id: 'fullRes' }),
       setPicture: (m) => insp.setMode(m),
       zoomPicture: (d) => insp.zoomStep(d),
       resetPicture: () => insp.resetZoom(),
@@ -1192,7 +1212,7 @@
       case 'toast': toast(m.text, Math.min(10000, Number(m.ms) || 900)); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
       case 'pauseForTest': if (player && player.isPlaying()) { player.pause(); toast('Paused while ffmpeg is tested', 3000); } break;
-      case 'prefs': if (m.prefs && m.prefs.jump) { Object.assign(prefs.jump, m.prefs.jump); if (m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons === 'jump' ? 'jump' : 'frame'; stepTips(); controls.refresh(); } break;
+      case 'prefs': if (m.prefs && m.prefs.jump) { Object.assign(prefs.jump, m.prefs.jump); if (m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons === 'jump' ? 'jump' : 'frame'; if (m.prefs.transcode) prefs.transcode = m.prefs.transcode; if (m.prefs.transcodeMaxBitrate !== undefined) prefs.transcodeMaxBitrate = Number(m.prefs.transcodeMaxBitrate) || 0; stepTips(); controls.refresh(); } break;
       case 'menu': if (MENU_ACTIONS[m.action]) { MENU_ACTIONS[m.action](m); updateMenuContext(); } break;
       case 'ffmpegState': ffmpegState = { installed: !!m.installed, offer: !!m.offer, mb: Number(m.mb) || 0 }; if (player) player.ffmpeg = ffmpegState; break;
       case 'goto': insp.goToLink(m); break;

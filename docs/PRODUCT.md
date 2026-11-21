@@ -143,13 +143,11 @@ One feature: compare becomes multi-view. The difference view is dropped.
   channel and a share of one budget).
 - PSNR/SSIM and find-first-difference are hidden for now; kept in code for a future advanced mode (2026-11-20).
 
-## Remote (research, high interest)
+## Live transcode and Remote (2026-11-21, ADR 0002)
 
-- SSH: done (`remoteStream`, on by default): ffmpeg on the remote machine sends a compressed,
-  low-latency H.264 stream that the panel decodes with A — instead of raw frames, or WebAssembly only.
-  Remote stream sound may be converted or compressed to fit the link: Opus when the remote ffmpeg
-  can encode it, otherwise s16 PCM. Local playback sound is unchanged. The remote encode follows
-  the picture size with the same setting and height steps as native playback, within the link tier cap.
+- **Unified Live transcode** (`videoPreviewEnhanced.transcode`: `ask | auto | always | off`, `videoPreviewEnhanced.transcodeMaxBitrate`: `0` = Auto or Mb/s; replaces deprecated `remoteStream`): one host-side H.264 → WebCodecs stream engine (`src/stream.js`) for local high-rate playback (e.g. 4K60) and remote windows (SSH, WSL, containers, tunnels).
+- **Hardware-first, software-last:** prefers GPU decode → GPU scale → GPU encode on both local and remote GPU hosts (Windows: NVENC → QSV → AMF → Media Foundation `-hw_encoding 1`; macOS: VideoToolbox; Linux: NVENC → VA-API), then CPU decode → GPU encode, then software (`libx264` / `libopenh264`) only as the last resort. Managed ffmpeg setup selects the highest BtbN LGPL line compatible with the detected NVIDIA driver.
+- **User control:** never silently degrades pixels on first use (prompts once when needed), configurable in ⚙ › Live transcode and shown with exact pipeline details + **Use original video** in ⓘ (no player-bar status pill). Remote sound uses Opus (96 kb/s) with s16 PCM fallback; local uses s16 PCM. Pixel Inspector, scopes, and exact frame export always use exact original pixels.
 
 ## Testing
 
