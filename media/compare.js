@@ -78,7 +78,7 @@
     // The picture size, zoom and pan, one for every tile (media/picture.js): this tab starts as the setting and keeps its own choice.
     pic: Pic.fresh(Pic.parse(saved.pic || (cfg.prefs && cfg.prefs.pictureSize))),
     // 2 videos: side by side or split (an older 'wipe' is the split, 'toggle' is gone); 3-4: the grid.
-    mode: N > 2 ? 'grid' : saved.mode === 'split' || saved.mode === 'wipe' ? 'split' : 'side',
+    mode: N > 2 ? 'grid' : N === 2 && (saved.mode === 'split' || saved.mode === 'wipe') ? 'split' : 'side',
     split: typeof saved.split === 'number' ? saved.split : 0.5,
     order: Grid.tileOrder(N, saved.order, saved.swap),
     /** Per tile: offset value and unit ('frames' of that tile, or 'ms'). */
@@ -1370,12 +1370,12 @@
   document.getElementById('stage').appendChild(addHint);
   function showAddMode(m) {
     addHint.hidden = !m.on;
-    addHint.textContent = m.on ? `Click videos in the Explorer to add them (${m.n} of ${m.max}) · Esc to stop` : '';
+    addHint.textContent = m.on ? 'Click videos in Explorer to add · Esc to stop' : '';
     if (m.on) announce(addHint.textContent);
     log(`addMode ${m.on ? 'on' : 'off'}`);
   }
   // Add video…: starts add mode (click videos in the Explorer); the file dialog is only the host's 'add' message (palette / tests).
-  const addVideo = () => { if (N < MAX_TILES) { closeMenu(); if (addHint.hidden) vscode.postMessage({ type: 'addMode' }); } };
+  const addVideo = () => { if (N < MAX_TILES) { closeMenu(); vscode.postMessage({ type: 'startAddMode' }); } };
   function replaceVideo(i) {
     closeMenu();
     saveNow();
@@ -1395,7 +1395,7 @@
   /** Tile i leaves the view: the page starts again with the others (offsets, clock and sound move with their videos); with 2, back to one video. */
   function removeTile(i) {
     if (!(i >= 0 && i < N)) return;
-    if (N <= 2) { leave(i === 0 ? 1 : 0); return; }
+    if (N <= 2) { leave(N === 2 && i === 0 ? 1 : 0); return; }
     closeMenu();
     // If a selected video leaves, use the first remaining display slot.
     const first = st.order.find((j) => j !== i);
@@ -2396,6 +2396,12 @@
         case 'play': play(); break;
         case 'pause': pause(); break;
         case 'seek': pause(); seekClock(Number(m.t) || 0); break;
+        case 'scrub': {
+          ui.seek.value = String(Math.round(Number(ui.seek.max) * m.frac));
+          ui.seek.dispatchEvent(new Event('input'));
+          ui.seek.dispatchEvent(new Event('change'));
+          break;
+        }
         case 'rate': setRate(m.rate); break;
         case 'split': setSplit(Number(m.x)); break;
         case 'panel': if (m.view) controls.show(m.view, m.view === 'main' ? ui.cog : ui.cmpBtn); else controls.closeAll(false); break;

@@ -117,6 +117,8 @@ const { make } = require('../media/make_cases_media');
     assert.strictEqual(infos.length, 1, 'first time: one notice');
     assert.ok(/2 videos together/.test(infos[0][0]) && infos[0].slice(1).join() === 'Got it,Open Settings', 'notice text and buttons');
     assert.strictEqual(h2.context.globalState.get('videoPreviewEnhanced.openTogetherNoticed'), true, 'noticed is remembered');
+    // End Add Mode so subsequent opens exercise Open Together again.
+    await W._commands['videoPreviewEnhanced.stopAddFromExplorer']();
     // A single click's preview tab of a compared video stays in the group: it closes with the compare.
     const prev = { input: { uri: W.Uri.file(a), viewType: 'videoPreviewEnhanced.player' }, group: { viewColumn: 1 } };
     const elsewhere = { input: { uri: W.Uri.file(a), viewType: 'videoPreviewEnhanced.player' }, group: { viewColumn: 2 } };
@@ -127,13 +129,14 @@ const { make } = require('../media/make_cases_media');
     assert.deepStrictEqual(closedTabs, [prev], 'the leftover preview tab closes, other groups stay');
     assert.strictEqual(infos.length, 1, 'the notice never repeats');
     tabGroups.all = [];
-    // Compare Videos (a multi-selection) closes the same duplicates.
+    // The direct compare command closes the same duplicates.
     tabGroups.all = [{ viewColumn: 1, tabs: [prev] }];
     closedTabs.length = 0;
     await W._commands['videoPreviewEnhanced.compare'](W.Uri.file(a), [W.Uri.file(a), W.Uri.file(b)]);
     assert.deepStrictEqual(closedTabs, [prev], 'Compare Videos closes the duplicate tab');
     tabGroups.all = [];
     panels.length = 1;
+    await W._commands['videoPreviewEnhanced.stopAddFromExplorer']();
     // The setting turns it off.
     settings['videoPreviewEnhanced.compare.openTogether'] = false; // read at each open
     const q1 = resolve(a); const q2 = resolve(b);

@@ -2,7 +2,7 @@
 
 ## Commands
 
-All are under **Video Preview** in the Command Palette.
+Palette commands are under **Video Preview**.
 
 | Command | What it does |
 |---|---|
@@ -11,9 +11,10 @@ All are under **Video Preview** in the Command Palette.
 | Use Video Preview Enhanced for MP4/WebM | Opens MP4 and WebM in this player by default |
 | Use VS Code's Preview for MP4/WebM | Undoes that |
 | Open with Video Preview Enhanced | Explorer context menu on an MP4 or WebM file (not in the Command Palette) |
-| Compare Videos | Shows the selected videos together, in sync (2–8 by default, up to 16 with `compare.maxVideos`) |
-| Compare Videos in Folder | Explorer context menu of a folder: compares the videos directly in it (natural name order, up to `compare.maxVideos`; needs at least 2). Not in the Command Palette |
+| Add to Compare | Explorer context menu for videos and folders. Adds the selection to the most recently active Compare, uses the open player, or starts a new Compare. Folders contribute their direct video files in natural name order. |
 | Compare With… | Compares the open video with more files, up to `compare.maxVideos` total (in the player's place); in the player's right-click menu and editor title, not in the Explorer menu |
+| Compare: Add Videos from the Explorer | Toggles Add Mode for the active player or Compare. Open videos in the Explorer to add them. |
+| Compare: Stop Adding from the Explorer | Ends Add Mode. Esc does the same. |
 | Load Subtitles… | Opens a subtitle file for the current video (needs an open player) |
 | Export Frames (A–B)… | (needs an open player) Saves every frame of the A-B loop as PNG into a folder you pick |
 | Copy ffmpeg Command for A–B | (needs an open player) Copies an ffmpeg command that cuts the A-B loop (exact or `-c copy`) |

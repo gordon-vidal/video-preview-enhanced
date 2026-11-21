@@ -23,7 +23,7 @@ them all, with the jump sizes you chose.
 | F | Fill the editor and switch to zen mode |
 | Shift+N / Shift+P | Next / previous video in the folder |
 | D | Compare with another video: a quick pick of the videos in this folder, then the workspace (**Browse…** opens the file dialog) |
-| Shift+D | Compare with the next video you click in the Explorer: one click opens compare and ends the mode (a hint shows while it waits; Esc stops). ⚙ › Tools › Compare does the same |
+| Shift+D | Wait for the next video you open from the Explorer. It opens Compare in the player's tab with Add Mode on if there is room. Esc cancels the wait. ⚙ › Tools › Compare does the same |
 | S / Ctrl+C | Save the frame as PNG / copy it |
 | ? | Keyboard shortcuts |
 | Esc | Close a panel or the shortcuts |
@@ -93,7 +93,7 @@ The player's keys, for all videos at once, plus:
 | X | Swap sides (2 videos) |
 | Tab, then Enter / Space on a tile's up or down arrow | Move the tile earlier or later |
 | Esc while reordering | Exit Reorder mode and discard any unfinished drag |
-| Shift+D | Add videos by clicking them in the Explorer; it stays on until Esc, Shift+D again or the maximum (8 by default; `compare.maxVideos`). Also what ⚙ › Tools › Compare and **Add video…** in compare do |
+| Shift+D | Toggle Add Mode. It starts on when Compare opens with room for more tiles. Click videos in the Explorer to add them. Esc, Shift+D, reaching the maximum or switching editors turns it off. **Add video…** turns it on |
 | ← / → on the focused split divider | Move it by 1 % (Shift: 10 %); Home / End |
 | Z | Picture size for all videos: Fit, Fill, Stretch, 100 %, then Fit; zoomed in, back to Fit first |
 | Ctrl+wheel, drag | Zoom and pan all videos together (the same part of every picture) |

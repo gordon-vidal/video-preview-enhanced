@@ -1259,9 +1259,10 @@ function activate(context) {
   fileIcons();
   warnOldInstalls();
 
-  // ---- compare mode (src/compare.js): Explorer "Compare Videos", "Compare With…" ----
+  // ---- Compare and Add to Compare (src/compare.js) ----
   compareApi = registerCompare(context, {
     vscode, log, sessions, compareSessions, nativeTransport, nativeQueue,
+    lastActivePlayer: () => lastActive,
     // Videos compared lately (uri strings): the quick pick on key D lists them first.
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
     // Compare's bar and panels are the player's: the same jump sizes, written the same way.
@@ -1351,6 +1352,12 @@ function activate(context) {
               vscode.commands.executeCommand('videoPreviewEnhanced.compare', list[0], list);
               continue;
             }
+            if (c.addToCompare) { // the context-menu arguments: primary resource, then the selection
+              const list = c.addToCompare.map((f) => vscode.Uri.file(f));
+              vscode.commands.executeCommand('videoPreviewEnhanced.addToCompare', list[0], list.length > 1 ? list : undefined)
+                .then(() => log(`debug done ${c.id || ''} addToCompare`), (e) => log(`debug addToCompare failed: ${e.message}`));
+              continue;
+            }
             if (c.pickCompare) { // tests: the next compare quick pick logs its rows and picks one (label part, or Browse…)
               setPickHook(async (items) => {
                 setPickHook(null);
@@ -1360,7 +1367,7 @@ function activate(context) {
               continue;
             }
             if (c.openFile) { // tests: opens a file as an Explorer click would (a preview tab in the active group)
-              vscode.commands.executeCommand('vscode.open', vscode.Uri.file(c.openFile), { preview: c.preview !== false, preserveFocus: true })
+              vscode.commands.executeCommand('vscode.open', vscode.Uri.file(c.openFile), { preview: c.preview !== false, preserveFocus: c.preserveFocus !== false })
                 .then(() => log(`debug done ${c.id || ''} openFile`), (e) => log(`debug openFile failed: ${e && e.message || e}`));
               continue;
             }
