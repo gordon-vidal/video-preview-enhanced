@@ -238,11 +238,14 @@ module.exports = [{
       try {
         await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown && s.canvas[1] === 1080);
         p.pause();
+        const from = vs.mark();
         p.key('x');
+        // Live transcode stays on: the inspector reads one exact full-resolution frame from the host (docs/PRODUCT.md).
+        await vs.waitLog(new RegExp(`\\[${p.name}\\] webview: exact frame 3840x2160 for frame`), { from, timeout: 20000 });
+        const s = await p.state();
+        ok(s.vmode === 'webcodecs' && s.canvas[1] === 1080, `left Live transcode: ${s.vmode} ${s.canvas}`);
         const click = await p.ask('click', { sel: '#notice:not([hidden]) #noticeAction', text: 'Use full resolution' });
-        if (!ok(click.found, 'pixel inspector did not offer full resolution')) return;
-        const exact = await p.waitState((s) => s.vmode === 'soft' && s.firstShown && s.canvas[1] === 2160);
-        ok(exact.canvas[0] === 3840, `built-in decoder canvas: ${exact.canvas}`);
+        ok(!click.found, 'the inspector still offers full resolution under Live transcode');
       } finally { await h.closeClip(vs); }
     });
     await run('ffmpeg-exit', async (ok) => {

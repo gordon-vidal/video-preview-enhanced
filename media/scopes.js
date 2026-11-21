@@ -208,13 +208,14 @@ const VpeScopes = (() => {
       const t0 = performance.now();
       const [sw, sh] = sampleSize(canvas.width, canvas.height);
       const gl = p.gl && p.gl.gl;
-      const job = { mode: MODES[mode], matrix: p.shownMatrix ? p.shownMatrix(true) : matrixBySize(canvas.width, canvas.height), sw, sh };
+      const ex = getExact();
+      // The exact picture is the file's own: its matrix, not the transcoded stream's.
+      const job = { mode: MODES[mode], matrix: ex && ex.matrix ? ex.matrix : p.shownMatrix ? p.shownMatrix(true) : matrixBySize(canvas.width, canvas.height), sw, sh };
       try {
-        if (gl && gl.fenceSync && !getExact()) {
+        if (gl && gl.fenceSync && !ex) {
           pending = Object.assign(gpuStart(gl, sw, sh), job, { ms: performance.now() - t0 });
           return true;
         }
-        const ex = getExact();
         finish(cpuSample(sw, sh, ex ? ex.img : canvas), job, performance.now() - t0);
       } catch (e) { log(`scopes: ${e && e.message}`); pending = null; return false; }
       return true;

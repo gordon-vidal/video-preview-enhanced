@@ -7,18 +7,22 @@
 // Plain logic over injected functions: test/host/exact_frame_test.js loads it without a browser.
 'use strict';
 (function (root) {
+  const MATRIX = { bt709: 709, bt601: 601, bt2020: 2020, smpte240m: 709 };
   const SLOW_MS = 250; // a grab slower than this shows "Fetching exact frame…"
   const GIVE_UP_MS = 25000; // the host stops at 20 s; this one only frees the page if no answer ever comes
 
   /**
    * @param {{
    *   page: number, post: (m: any) => void, toast?: (t: string, ms?: number) => void, log?: (m: string) => void,
-   *   decode?: (png: Uint8Array) => Promise<any>, setTimeout?: Function, clearTimeout?: Function,
+   *   onFail?: (key: string, error: string) => void, decode?: (png: Uint8Array) => Promise<any>, setTimeout?: Function, clearTimeout?: Function,
    * }} o decode: PNG bytes to a drawable picture ({width, height, close?}), default createImageBitmap
    */
   function create(o) {
     const toast = o.toast || (() => {});
     const log = o.log || (() => {});
+    const onFail = o.onFail || (() => {});
+    /** The frame the host could not give: remembered (no retry loop) and said once. */
+    const fail = (key, error) => { failedKey = key; log(`exact frame: ${error}`); onFail(key, error); finish({ error }); };
     const st = o.setTimeout || setTimeout;
     const ct = o.clearTimeout || clearTimeout;
     const decode = o.decode || ((png) => createImageBitmap(new Blob([png], { type: 'image/png' })));
@@ -52,7 +56,7 @@
       finish(null); // superseded
       const id = ++reqId;
       return new Promise((resolve) => {
-        const timer = st(() => finish({ error: 'no answer from the extension host' }), GIVE_UP_MS);
+        const timer = st(() => { if (pending && pending.id === id) fail(key, 'no answer from the extension host'); }, GIVE_UP_MS);
         const slow = notify ? st(() => toast('Fetching exact frame…', 2000), SLOW_MS) : null;
         pending = { id, key, resolve, timer, slow };
         o.post({ type: 'grabExactFrame', page: o.page, reqId: id, t });
@@ -63,18 +67,14 @@
     async function onReply(m) {
       if (!m || m.page !== o.page || !pending || m.reqId !== pending.id) return;
       const p = pending;
-      if (!m.png) {
-        failedKey = p.key;
-        log(`exact frame: ${m.error || 'failed'}`);
-        finish({ error: String(m.error || 'failed') });
-        return;
-      }
+      if (!m.png) { fail(p.key, String(m.error || 'failed')); return; }
       let img = null;
       try { img = await decode(m.png); } catch (e) { log(`exact frame: PNG decode failed: ${e && e.message || e}`); }
       if (pending !== p) { if (img && img.close) img.close(); return; } // superseded while decoding
-      if (!img) { failedKey = p.key; finish({ error: 'the picture could not be decoded' }); return; }
+      if (!img) { fail(p.key, 'the picture could not be decoded'); return; }
       drop();
-      cache = { key: p.key, img, w: m.w || img.width, h: m.h || img.height, png: m.png };
+      // The source's matrix (709, 601, 2020) for the scopes: the exact picture is RGB, the file's own is not the stream's.
+      cache = { key: p.key, img, w: m.w || img.width, h: m.h || img.height, png: m.png, matrix: MATRIX[m.matrix] || 0 };
       finish(cache);
     }
 
@@ -103,7 +103,7 @@
     return { grab, onReply, peek, invalidate, ctxOf, failed: (key) => failedKey === key, inflight: (key) => !!pending && pending.key === key };
   }
 
-  const api = { create, SLOW_MS };
+  const api = { create, SLOW_MS, GIVE_UP_MS };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VpeExact = api;
 }(typeof self !== 'undefined' ? self : this));

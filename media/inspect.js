@@ -139,6 +139,9 @@ const VpeInspect = (() => {
 
   const hex = (r, g, b) => `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 
+  /** The pixel of a w×h picture under the fractional position (fx, fy: 0..1 over the picture), rounded once. */
+  const exactPixel = (fx, fy, w, h) => [Math.max(0, Math.min(w - 1, Math.floor(fx * w))), Math.max(0, Math.min(h - 1, Math.floor(fy * h)))];
+
   // ---- in the webview ---------------------------------------------------------
 
   /**
@@ -382,9 +385,9 @@ const VpeInspect = (() => {
       const y = Math.floor(((mouse.y - r.top) / r.height) * canvas.height);
       if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) { readout.hidden = true; lastPick = null; return; }
       // Live transcode, paused: the exact picture of the file (media/exactframe.js), read at the same place of the picture.
+      // The pointer's fractional place in the picture goes straight into the exact picture's pixels (one rounding).
       const ex = env.getExact ? env.getExact() : null;
-      const exX = ex ? Math.min(ex.w - 1, Math.floor(((x + 0.5) * ex.w) / canvas.width)) : x;
-      const exY = ex ? Math.min(ex.h - 1, Math.floor(((y + 0.5) * ex.h) / canvas.height)) : y;
+      const [exX, exY] = ex ? exactPixel((mouse.x - r.left) / r.width, (mouse.y - r.top) / r.height, ex.w, ex.h) : [x, y];
       const block = ex ? readExact(ex, exX, exY) : readBlock(p, x, y);
       if (!block) return;
       const c = ((LOUPE_PX >> 1) * LOUPE_PX + (LOUPE_PX >> 1)) * 4;
@@ -645,7 +648,7 @@ const VpeInspect = (() => {
     };
   }
 
-  return { create, parseGoto, resolveGoto, parseFragment, clampPan, zoomAround, displayToSource, yuvAt, softFormat, vfSample };
+  return { create, exactPixel, parseGoto, resolveGoto, parseFragment, clampPan, zoomAround, displayToSource, yuvAt, softFormat, vfSample };
 })();
 
 if (typeof module !== 'undefined') module.exports = VpeInspect;

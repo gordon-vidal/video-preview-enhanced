@@ -1849,7 +1849,7 @@ ${barHtml()}
     if (!video || this.url || this.sequence || !nd.file) { reply({ error: 'exact frames are for Live transcode of a video file' }); return undefined; }
     const r = await this.exact.grab({ tools: nd.tools, file: nd.file, t, video, rotation: rotationOf(nd.file), page, isCurrent: (p) => !this.disposed && p === this.page });
     if (r.cancelled || r.stale) return undefined; // superseded or replaced: the newer request answers
-    reply(r.png ? { png: new Uint8Array(r.png.buffer, r.png.byteOffset, r.png.length), w: r.w, h: r.h } : { error: r.error || 'failed' });
+    reply(r.png ? { png: new Uint8Array(r.png.buffer, r.png.byteOffset, r.png.length), w: r.w, h: r.h, matrix: r.matrix } : { error: r.error || 'failed' });
     return undefined;
   }
 
