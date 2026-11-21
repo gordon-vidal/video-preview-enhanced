@@ -1,5 +1,5 @@
 'use strict';
-/** @import { ReadBlockRequest, BlockReply } from '../tools/read-block-contract.js' */
+/** @import { ReadBlockRequest } from '../tools/read-block-contract.js' */
 const T_LOAD = Date.now(); // start-up timeline (tests): when the extension's module started loading
 // Video Preview Enhanced: a decode-only video player for VS Code.
 // The extension host only reads files; all decoding happens in the webview
@@ -9,6 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { serveBlock } = require('./read-block');
 // Modules a feature needs (URLs, ffmpeg setup and download, A-B export, AVI, the remote stream) load on first use:
 // a window start pays only for what it runs. The proxy forwards property reads to the real module.
 const lazy = (id) => { let m; return new Proxy({}, { get: (_, k) => (m || (m = require(id)))[k] }); };
@@ -1454,6 +1455,7 @@ class Session {
     this.webview = panel.webview;
     remoteAuthority(this.webview); // learn the host for frame links arriving later
     this.disposed = false;
+    this.page = 0;
     this.benchChannels = new Set();
     this.fh = null;
     this.frames = null;
@@ -1622,6 +1624,7 @@ class Session {
     const goto = this.goto || null;
     this.goto = null;
     const cfg = JSON.stringify({
+      page: ++this.page,
       autoplay: c.autoplay, loop: c.loop, prefs: prefsOf(c), canOpenExternal: this.canOpenExternal(), name: this.name, debug: !!logFile, resume: this.resumeAt(), goto,
       // A URL tab (Open Video URL…): file-only tools are off; the info panel names the host instead of a size.
       url: this.url ? { host: new URL(this.url).host } : null,
@@ -1733,7 +1736,10 @@ ${barHtml()}
       // checkJs: start
       case /** @satisfies {ReadBlockRequest['type']} */ ('readBlock'): {
         const request = /** @type {ReadBlockRequest} */ (m);
-        return this.readBlock(request.pos, request.len);
+        const isCurrent = (/** @type {number} */ page) => !this.disposed && page === this.page;
+        return serveBlock(request, isCurrent,
+          (pos, len) => this.readBlock(pos, len, () => isCurrent(request.page)),
+          (reply) => this.post(reply));
       }
       // checkJs: end
       case 'nd':
@@ -2315,9 +2321,8 @@ ${barHtml()}
     return this.blockFh;
   }
 
-  /** @param {number} pos @param {number} len */
-  async readBlock(pos, len) {
-    const gen = this.loadGen;
+  /** @param {number} pos @param {number} len @param {() => boolean} isCurrent */
+  async readBlock(pos, len, isCurrent) {
     let data = new Uint8Array(0);
     if (this.url) {
       // Over the network (src/urlsource.js): an empty answer is a read error for the decoder.
@@ -2328,15 +2333,10 @@ ${barHtml()}
           data = new Uint8Array(buf.buffer, buf.byteOffset, buf.length);
         } catch (e) {
           log(`[${this.name}] read ${pos}+${len}: ${e.message}`);
-          if (gen === this.loadGen && !this.netFailed) { this.netFailed = true; this.fail(e, 'Check the connection and open the URL again.'); }
+          if (isCurrent() && !this.netFailed) { this.netFailed = true; this.fail(e, 'Check the connection and open the URL again.'); }
         }
       }
-      // checkJs: start
-      if (gen === this.loadGen && net === this.net) {
-        this.post(/** @satisfies {BlockReply} */ ({ type: 'block', pos, data }));
-      }
-      // checkJs: end
-      return;
+      return net === this.net ? data : undefined;
     }
     try {
       const { fh, size } = await this.blockFile();
@@ -2345,15 +2345,10 @@ ${barHtml()}
       const { bytesRead } = n ? await fh.read(buf, 0, n, pos) : { bytesRead: 0 };
       data = new Uint8Array(buf.buffer, buf.byteOffset, bytesRead);
     } catch (e) {
-      if (gen === this.loadGen) this.fail(e);
+      if (isCurrent()) this.fail(e);
     }
     // Always answer (empty on error), or the webview keeps the block in flight forever.
-    // A reply for the page before a reload would be stale.
-    // checkJs: start
-    if (gen === this.loadGen) {
-      this.post(/** @satisfies {BlockReply} */ ({ type: 'block', pos, data }));
-    }
-    // checkJs: end
+    return data;
   }
 
   async openSequence() {

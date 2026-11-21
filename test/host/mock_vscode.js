@@ -129,4 +129,8 @@ function load({ settings, env, setup, state: sharedState } = {}) {
   return { ext, vscode, context, open, dispose: () => { for (const s of subs) if (s && s.dispose) s.dispose(); } };
 }
 
-module.exports = { load };
+function webviewConfig(webview) {
+  return JSON.parse(/<script type="application\/json" id="cfg">([^<]*)<\/script>/.exec(webview.html)[1]);
+}
+
+module.exports = { load, webviewConfig };

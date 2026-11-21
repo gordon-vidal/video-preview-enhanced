@@ -632,7 +632,9 @@ function createEngine(env) {
       if (bpos < 0 || bpos >= this.meta.size || this.blocks.has(bpos) || this.inflight.has(bpos)) return;
       this.inflight.add(bpos);
       (this.reqAt = this.reqAt || new Map()).set(bpos, performance.now());
-      vscode.postMessage(/** @satisfies {ReadBlockRequest} */ ({ type: 'readBlock', pos: bpos, len: this.blockSize }));
+      vscode.postMessage(/** @satisfies {ReadBlockRequest} */ ({
+        type: 'readBlock', page: env.page, pos: bpos, len: this.blockSize,
+      }));
     }
     // checkJs: end
 

@@ -909,7 +909,7 @@
 
   // ---- Decode engine (engine.js) --------------------------------------------
   const engine = createEngine({
-    vscode, canvas, log, showMessage, toast, debug: !!cfg.debug,
+    vscode, canvas, log, showMessage, toast, page: cfg.page, debug: !!cfg.debug,
     wake: () => wakeLoop(),
     getState: () => ({ rate, volume, muted, loop }),
     setMuteUi: (m) => setMute(m),
@@ -1140,6 +1140,7 @@
       // checkJs: start
       case /** @satisfies {BlockReply['type']} */ ('block'): {
         const reply = /** @type {BlockReply} */ (m);
+        if (reply.page !== cfg.page) break;
         const receiver = /** @type {Partial<Pick<InstanceType<ReturnType<typeof createEngine>['LibavPlayer']>,
           'onBlock'>> | null} */ (player);
         if (receiver && receiver.onBlock) receiver.onBlock(reply.pos, reply.data, reply.error);

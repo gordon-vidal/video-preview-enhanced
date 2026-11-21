@@ -16,7 +16,7 @@ const { spawnSync } = require('child_process');
 const us = require('../../src/urlsource');
 const ff = require('../../src/ffmpeg');
 const urlserver = require('../urlserver');
-const { load } = require('./mock_vscode');
+const { load, webviewConfig } = require('./mock_vscode');
 
 const STREAMS = path.join(os.tmpdir(), 'vpe_url_streams');
 const hasFfmpeg = spawnSync('ffmpeg', ['-version'], { windowsHide: true }).status === 0;
@@ -354,8 +354,10 @@ async function rejects(p, re, what) {
       const meta = p.posted.find((m) => m.type === 'libav');
       assert.ok(meta, `libav meta posted: ${JSON.stringify(p.posted.find((m) => m.type === 'error'))}`);
       assert.strictEqual(meta.meta.size, src.length);
-      await p.send({ type: 'readBlock', pos: 4 << 20 >> 4, len: 1 << 20 });
+      const { page } = webviewConfig(p.webview);
+      await p.send({ type: 'readBlock', page, pos: 4 << 20 >> 4, len: 1 << 20 });
       const blk = p.posted.find((m) => m.type === 'block');
+      assert.strictEqual(blk.page, page);
       assert.ok(Buffer.from(blk.data).equals(src.subarray(262144, 262144 + (1 << 20))), 'block bytes over HTTP');
       // File-only features say so instead of acting.
       await p.send({ type: 'copyLink', frame: 3, t: 0.1 });
@@ -395,7 +397,7 @@ async function rejects(p, re, what) {
       await side.send({ type: 'ready', origin: 'vscode-webview://abg' });
       await until(() => side.posted.some((m) => m.type === 'libav' || m.type === 'error'));
       assert.strictEqual((side.posted.find((m) => m.type === 'libav') || {}).meta.size, Buffer.concat(segBufs).length, JSON.stringify(side.posted.find((m) => m.type === 'error')));
-      await side.send({ type: 'readBlock', pos: 0, len: 1 << 20 });
+      await side.send({ type: 'readBlock', page: webviewConfig(side.webview).page, pos: 0, len: 1 << 20 });
       await until(() => side.posted.some((m) => m.type === 'block'));
       assert.ok(Buffer.from(side.posted.find((m) => m.type === 'block').data).equals(Buffer.concat(segBufs).subarray(0, 1 << 20)), 'decrypted block');
       const keyHex = urlserver.TEST_KEYS.map((k) => k.toString('hex'));

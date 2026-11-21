@@ -149,6 +149,7 @@
     const cv = document.createElement('canvas');
     const file = Math.max(0, KEYS.indexOf(key.slice(-1)));
     const env = {
+      page: cfg.page,
       vscode: { postMessage: (m) => vscode.postMessage({ ...m, key }), getState: () => ({}), setState() {} },
       canvas: cv,
       log: (...a) => log(`[${key}]`, ...a),
