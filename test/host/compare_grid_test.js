@@ -51,6 +51,22 @@ for (let n = 2; n <= 16; n++) {
   }
 }
 
+// ---- display order: insertion, saved sessions and stable video indices ----
+assert.deepStrictEqual(Grid.tileOrder(2, undefined, true), [1, 0]);
+assert.deepStrictEqual(Grid.tileOrder(4, [2, 2, -1, 4, '1', 0]), [2, 0, 1, 3]);
+assert.deepStrictEqual(Grid.moveTile([0, 1], 0, 1), [1, 0]);
+for (let n = 2; n <= 16; n++) {
+  const initial = Grid.tileOrder(n);
+  const moved = Grid.moveTile(initial, 0, n - 1);
+  assert.deepStrictEqual(moved, [...initial.slice(1), 0]);
+  assert.deepStrictEqual(Grid.moveTile(moved, n - 1, 0), initial);
+  assert.strictEqual(Grid.moveTile(moved, 0, -1), moved);
+  assert.strictEqual(Grid.moveTile(moved, 0, n), moved);
+  assert.strictEqual(Grid.moveTile(moved, 0, 0), moved);
+  assert.deepStrictEqual(Grid.tileOrder(n + 1, moved), [...moved, n]);
+  assert.deepStrictEqual(Grid.orderAfterRemoval(moved, 1), [...initial.slice(1, -1), 0]);
+}
+
 // ---- memory: 2-4 tiles exactly as before; 5-16 share fixed budgets ----
 for (const gb of [null, 8, 16, 32]) {
   const mem = gb === null ? null : budgets(gb);
