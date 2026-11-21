@@ -126,6 +126,7 @@ class CompareSession {
     this.start = start > 0 ? start : 0; // the player's position when it turned into compare (first page only)
     this.replaced = undefined; // the tile a "Replace video…" just changed (its offset starts at 0)
     this.noNative = new Set(); // files native ffmpeg failed on: built-in from then on
+    this.originalTiles = []; // indexed by tile occurrence, including duplicate URIs
     this.natives = [];
     this.disposed = false;
     this.setFiles(uris);
@@ -220,7 +221,7 @@ class CompareSession {
         this.liveTransport = transport;
         const [sizes, decisions] = await Promise.all([
           Promise.all(this.files.map((f) => fs.promises.stat(f).then((s) => s.size))),
-          Promise.all(this.files.map((f, i) => this.chooseNative(f, transport))),
+          Promise.all(this.files.map((f, i) => this.chooseNative(f, transport, i))),
         ]);
         if (this.disposed || epoch !== this.epoch) return undefined;
         this.decisions = decisions;
@@ -251,7 +252,10 @@ class CompareSession {
       case 'nd': {
         const i = TILE_KEYS.indexOf(m.key);
         const n = m.key?.length === 1 && this.natives[i];
-        return n && m.m ? n.handle(m.m) : undefined;
+        if (!n || !m.m) return undefined;
+        // The panel can hide after the host sent the page its initial visibility.
+        if (m.m.type === 'open' && n instanceof EncodedStream && this.panel.visible === false) n.setHidden(true);
+        return n.handle(m.m);
       }
       case 'add': return this.addVideos();
       case 'addMode': return this.addMode ? this.addMode.toggle(this) : undefined; // Shift+D, the Compare panel's row
@@ -276,6 +280,7 @@ class CompareSession {
         const i = Number(m.index);
         if (!Number.isInteger(i) || i < 0 || i >= this.uris.length || this.uris.length <= 2) return undefined;
         this.log(`remove ${this.names[i]}`);
+        this.originalTiles.splice(i, 1);
         this.reload(this.uris.filter((_, j) => j !== i));
         return undefined;
       }
@@ -292,8 +297,8 @@ class CompareSession {
     }
   }
 
-  async chooseNative(file, transport) {
-    if (!this.nativeFor || this.noNative.has(file)) return null;
+  async chooseNative(file, transport, i) {
+    if (!this.nativeFor || this.noNative.has(file) || this.originalTiles[i] === this.uris[i]) return null;
     try {
       const videoCell = { h: this.tile?.h / (this.tile?.rows || 1) };
       return await this.nativeFor(file, transport, videoCell);
@@ -344,6 +349,7 @@ class CompareSession {
     const current = () => !this.disposed && epoch === this.epoch && this.natives[i] === stream;
     const stream = new EncodedStream({
       ...d.stream, tools: d.tools, file: this.files[i], probed: d.probed,
+      hidden: this.panel.visible === false,
       maxHeight: output.height, maxKbps: output.kbps, fitView: false, allowLinkAdapt: d.stream.remote,
       post: (m) => { if (current()) this.post({ type: 'nd', key, m }); },
       log: (msg) => this.log(`tile ${key}: ${msg}`),
@@ -360,6 +366,7 @@ class CompareSession {
   useOriginalTile(i, notice) {
     if (!Number.isInteger(i) || !(this.natives[i] instanceof EncodedStream)) return;
     this.natives[i].dispose();
+    this.originalTiles[i] = this.uris[i];
     this.natives[i] = null;
     this.decisions[i] = null;
     this.post({ type: 'originalTile', index: i, notice });
@@ -468,6 +475,7 @@ class CompareSession {
     if (this.disposed || !(i >= 0 && i < this.uris.length) || !uri || !FS_SCHEMES.has(uri.scheme)) return;
     this.log(`replace ${this.names[i]} with ${path.basename(uri.fsPath)}`);
     this.replaced = i;
+    delete this.originalTiles[i];
     this.reload(this.uris.map((u, j) => (j === i ? uri : u)));
   }
 

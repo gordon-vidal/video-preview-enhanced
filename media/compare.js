@@ -154,7 +154,15 @@
     const file = Math.max(0, KEYS.indexOf(key.slice(-1)));
     const env = {
       page: cfg.page,
-      vscode: { postMessage: (m) => vscode.postMessage({ ...m, key }), getState: () => ({}), setState() {} },
+      vscode: {
+        postMessage: (m) => {
+          if (nativeTiles[file] === 'transcode' && m.type === 'nd' && m.m.type === 'open') {
+            m = { ...m, m: { ...m.m, hidden: !visible || document.hidden } };
+          }
+          vscode.postMessage({ ...m, key });
+        },
+        getState: () => ({}), setState() {},
+      },
       canvas: cv,
       log: (...a) => log(`[${key}]`, ...a),
       showMessage: (text, sub) => { if (!quiet) showMessage(key, text, sub); else if (text) scanner.fail(`${key}: ${text}`); },
@@ -304,7 +312,10 @@
   function onEngineReady(key) {
     if (key.length > 1) { scanner.onReady(key); return; }
     const p = engines[key];
-    if (p?.remoteStream) p.setHidden(!panelVisible || document.hidden);
+    if (p?.remoteStream) {
+      if (visible && !p.hidden) p.worker.postMessage({ type: 'hidden', on: false });
+      else p.setHidden(!visible);
+    }
     if (tiles.length === N && tiles.every((p) => p.vmode !== undefined) && !begun) begin();
   }
   /** Frame rate each tile's frame offsets were last synced with (30 is assumed before the engine knows). */
@@ -2025,13 +2036,13 @@
     if (clock && tiles.length === N) {
       try {
         clock.tick(now);
-        if (restoreClock && clock.startT !== null && clock.vmode !== undefined && !document.hidden && panelVisible) {
+        if (restoreClock && clock.startT !== null && clock.vmode !== undefined && visible) {
           const { time, playing } = restoreClock;
           restoreClock = null;
           if (time > 0) clock.seekTime(time);
           if (playing) play();
         }
-        if (begun && panelVisible && !document.hidden) {
+        if (begun && visible) {
           if (pendingStart && tiles.every((p) => p.startT !== null)) { clock.seekTime(pendingStart); pendingStart = 0; }
           if (clock.playing) syncPlaying(); else syncPaused();
         }
@@ -2050,17 +2061,16 @@
   requestAnimationFrame(frameLoop);
 
   let restoreClock = null;
-  let panelVisible = true;
+  let visible = !document.hidden;
   let resumeOnShow = false;
-  function setVisible(visible) {
+  const syncVisibility = Grid.compareVisibility((shown) => {
+    visible = shown;
     if (!clock) return;
     if (!visible) { resumeOnShow = resumeOnShow || clock.playing; pause(); }
     for (const p of tiles) if (p.remoteStream) p.setHidden(!visible);
     if (visible && resumeOnShow) { resumeOnShow = false; play(); }
-  }
-  document.addEventListener('visibilitychange', () => {
-    if (nativeTiles.includes('transcode')) setVisible(panelVisible && !document.hidden);
   });
+  document.addEventListener('visibilitychange', () => syncVisibility(document.hidden));
 
   function useOriginalTile(i, notice) {
     const old = tiles[i];
@@ -2094,7 +2104,7 @@
       case 'toast': toast(String(m.text || ''), Math.min(10000, Number(m.ms) || 1500)); break;
       case 'addMode': showAddMode(m); break;
       case 'open':
-        panelVisible = m.visible !== false;
+        syncVisibility(document.hidden, m.visible !== false);
         sizes = m.sizes;
         nativeTiles = m.native || nativeTiles;
         try {
@@ -2145,8 +2155,7 @@
       case 'nda': { const p = engines[m.key]; if (p) p.onNativeAudio(m); break; }
       case 'originalTile': useOriginalTile(m.index, m.notice); break;
       case 'visible':
-        panelVisible = m.visible;
-        setVisible(panelVisible && !document.hidden);
+        syncVisibility(document.hidden, m.visible);
         break;
       case 'prefs':
         if (m.prefs && m.prefs.jump) Object.assign(prefs.jump, m.prefs.jump);

@@ -8,6 +8,22 @@ const Grid = require('../../media/compare-grid');
 const { budgets } = require('../../media/membudget');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS } = require('../../src/decide');
 
+// A raw Compare grid also resumes when the document reveals after VS Code's panel event.
+{
+  let playing = true;
+  let resumeOnShow = false;
+  const syncVisibility = Grid.compareVisibility((visible) => {
+    if (!visible) { resumeOnShow = resumeOnShow || playing; playing = false; }
+    else if (resumeOnShow) { resumeOnShow = false; playing = true; }
+  });
+  syncVisibility(false, false);
+  assert.strictEqual(playing, false, 'hidden panel pauses playback');
+  syncVisibility(true, true);
+  assert.strictEqual(playing, false, 'visible panel waits for its document');
+  syncVisibility(false);
+  assert.strictEqual(playing, true, 'the document event resumes playback');
+}
+
 // ---- the setting and the grid ----
 assert.strictEqual(Grid.TILE_KEYS, 'ABCDEFGHIJKLMNOP');
 assert.strictEqual(Grid.MAX_VIDEOS, 16);

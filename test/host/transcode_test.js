@@ -260,6 +260,24 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
       p.signalCode = null;
       return p;
     };
+    const hiddenPosts = [];
+    const initiallyHidden = new EncodedStream({
+      tools: {}, file: 'x.mkv', post: (m) => hiddenPosts.push(m), log: () => {}, hidden: true,
+      encoder: 'h264_nvenc', cpuEncoder: null,
+      probed: { duration: 30, video: { width: 1920, height: 1080, fps: 30 }, audio: { index: 1 } },
+    });
+    const starts = [];
+    initiallyHidden.launch = (_, audio) => { starts.push(!!audio); return mkFakeProc(); };
+    initiallyHidden.open();
+    initiallyHidden.seek({ gen: 1, t: 0 });
+    assert.ok(hiddenPosts.some((m) => m.type === 'streams'), 'hidden open still sends metadata');
+    assert.deepStrictEqual(starts, [], 'hidden open launches neither video nor audio');
+    initiallyHidden.setHidden(false);
+    initiallyHidden.setHidden(false);
+    initiallyHidden.seek({ gen: 2, t: 0 });
+    assert.deepStrictEqual(starts, [false, true], 'first reveal starts video and audio once');
+    initiallyHidden.dispose();
+
     const s = new EncodedStream({
       tools: {}, file: 'x.mkv', post: (m) => posts.push(m), log: () => {}, remote: false,
       encoder: 'h264_nvenc', cpuEncoder: null,

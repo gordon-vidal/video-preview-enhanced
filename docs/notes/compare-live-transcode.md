@@ -18,4 +18,5 @@ Compare needs a shared video bitrate cap for constrained connections and a way t
 The existing settings and About buttons open these panels. Live transcode mode and Max bitrate use the existing
 radio groups. Split bitrate is a switch in Compare with the accessible name “Split bitrate”. Tab reaches the
 controls, Enter or Space activates a choice, and Escape closes the panel. Use original video applies to the selected
-About tab. Compare keeps its existing player bar.
+About tab. That tile stays on original video when other tiles are added, removed, or replaced. Compare keeps its
+existing player bar.

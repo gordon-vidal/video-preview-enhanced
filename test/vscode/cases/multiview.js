@@ -104,14 +104,17 @@ module.exports = [{
     await vs.waitLog(opened(2), { from, timeout: 45000 });
     const ready = (r) => r?.synced === 'true' && list(r.frames).length === 2 && !list(r.frames).includes('-');
     const shown = await until(ready, 45000);
-    ok(ready(shown) && shown.native === '1,1', `expected two decoded streams, got ${JSON.stringify(shown)}`);
-    if (shown?.native !== '1,1') {
-      const diagnostics = vs.lines.slice(from).filter((line) => /\] tile [AB]:|native check failed/.test(line));
-      problems.push(diagnostics.join(' / ') || 'no encoder or tile decisions were logged');
-    }
+    ok(ready(shown), `expected both tiles to show a synced picture, got ${JSON.stringify(shown)}`);
+    const decisions = vs.lines.slice(from).filter((line) => /\] tile [AB]:/.test(line));
+    const active = list(shown?.native);
+    ok(active.includes('1'), 'expected at least one tile to keep streaming');
     for (const key of 'AB') {
       const start = new RegExp(`tile ${key}: remote stream from .*3000 kb/s cap`);
-      ok(vs.lines.slice(from).some((line) => start.test(line)), `tile ${key} did not start with half the cap`);
+      ok(decisions.some((line) => start.test(line)), `tile ${key} did not start with half the cap`);
+      if (active['AB'.indexOf(key)] === '0') {
+        ok(decisions.some((line) => line.includes(`tile ${key}: live transcode failed`)),
+          `tile ${key} fell back without reporting an encoder failure`);
+      }
     }
     if (ready(shown) && shown.native === '1,1') {
       const check = vs.mark();

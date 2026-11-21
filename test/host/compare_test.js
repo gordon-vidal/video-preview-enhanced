@@ -100,15 +100,22 @@ const { make } = require('../media/make_cases_media');
       stream: { encoder: 'h264_nvenc', cpuEncoder: null, remote: false },
     });
     compare.reload(compare.uris.slice(0, 2));
+    compare.panel.visible = false;
     const ready = () => compare.onMessage({ type: 'ready', tile: { w: 1280, h: 720, cols: 2, rows: 1 } });
     const caps = () => compare.natives.filter(Boolean).map((n) => n.activeCapKbps());
     await ready();
+    assert.ok(compare.natives.every((n) => n.hidden), 'host constructs streams hidden before the page configures them');
+    compare.panel.visible = true;
     assert.deepStrictEqual(caps(), [6000, 6000]);
     const pair = compare.natives.slice();
     compare.addUris([h.vscode.Uri.file(upright)]);
     assert.ok(pair.every((n) => n.disposed), 'add reload closes the old streams');
     await ready();
     assert.deepStrictEqual(caps(), [4000, 4000, 4000]);
+    compare.panel.visible = false;
+    await compare.onMessage({ type: 'nd', key: 'A', m: { type: 'open' } });
+    assert.strictEqual(compare.natives[0].spawns, 0, 'a panel hidden during page startup starts no encoder');
+    compare.panel.visible = true;
     const trio = compare.natives.slice();
     await compare.onMessage({ type: 'remove', index: 1 });
     assert.ok(trio.every((n) => n.disposed), 'remove reload closes the old streams');
@@ -127,6 +134,21 @@ const { make } = require('../media/make_cases_media');
     failed.post({ type: 'batch' });
     trio[1].post({ type: 'batch' });
     assert.deepStrictEqual(posts, [], 'disposed streams cannot post to the current tile or page');
+
+    compare.addUris([compare.uris[1]]);
+    await ready();
+    const paths = () => Array.from(compare.uris, (_, i) => Boolean(compare.natives[i]));
+    assert.deepStrictEqual(paths(), [false, true, true], 'add keeps fallback on the original occurrence');
+    await compare.onMessage({ type: 'originalTile', index: 2 });
+    compare.replaceUri(1, h.vscode.Uri.file(upright));
+    await ready();
+    assert.deepStrictEqual(paths(), [false, true, false], 'unrelated replace keeps both original tiles');
+    await compare.onMessage({ type: 'remove', index: 0 });
+    await ready();
+    assert.deepStrictEqual(paths(), [true, false], 'remove shifts the surviving override with its tile');
+    compare.replaceUri(1, compare.uris[1]);
+    await ready();
+    assert.deepStrictEqual(paths(), [true, true], 'replacing the overridden occurrence allows transcode again');
 
     // Extension shutdown disposes open compare sessions (and their native tiles).
     await compare.onMessage({ type: 'ready' });
