@@ -3,7 +3,7 @@
 // Layer 3 (docs/TESTING.md): user scenarios in real VS Code on hidden desktops, correctness only.
 //
 //   node test/vscode/scenarios.js [--grep re] [--parallel N] [--list] [--keep] [--json file]
-//                                 [--changed-files <json array>]      (node test/run.js vscode [--changed])
+//                                 [--changed-files <json array>] [--explain]   (node test/run.js vscode [--changed])
 //
 // A scenario (test/vscode/scenario_list.js) is one VS Code instance that runs several cases from
 // test/vscode/cases one after another: before each, the test hook (src/extension.js, VPE_LOG only) sets
@@ -13,7 +13,9 @@
 //
 // --parallel N   instances at once (default 1; see docs/TESTING.md for the measured result), each with
 //                its own profile and hidden desktop
-// --changed-files the files changed (from test/run.js --changed): scenarios by test/vscode/scenario_map.js
+// --changed-files the files changed (from test/run.js --changed): scenarios by test/vscode/scenario_map.js,
+//                each printed with the reason it was picked; --explain prints that and runs nothing
+// A run ends with where the time went: launch / reset / exec / shutdown / retries (test/vscode/timing.js; also in the JSON).
 //
 // An instance whose pages get no WebGL2 is broken, not failing: it is named, its logs kept in out/nogl-*,
 // and the scenario runs once more in a fresh instance (the results say so). A page error ends a wait at once.
@@ -22,6 +24,7 @@ const os = require('os');
 const path = require('path');
 const H = require('./hidden');
 const lib = require('./lib');
+const T = require('./timing');
 const { BUDGETS, DEFAULT: DEFAULT_BUDGET } = require('./budgets');
 const TIMEOUT_RE = /TIMEOUT after|did not finish within/;
 
@@ -49,10 +52,18 @@ async function hook(vs, obj, timeout = 10000) { // a hook answers in well under 
   return line;
 }
 
-/** Runs one scenario in one instance; returns its results. */
-async function runScenario(sc, ctx, attempt = 1) {
+/**
+ * Runs one scenario in one instance; returns its results and timing (test/vscode/timing.js). `carry` is what a
+ * failed first instance cost (start time of the whole scenario, retry time so far): the returned `ms` is the
+ * scenario's total wall time, the failed attempt and the wait before the retry counted as retryMs.
+ */
+async function runScenario(sc, ctx, attempt = 1, carry = { t0: Date.now(), retryMs: 0 }) {
   const { code, ff, cases } = ctx;
   const t0 = Date.now();
+  const clock = T.phaseClock();
+  let clockClosed = false; // a step still running after the budget ended the scenario must not charge a phase
+  const phase = (p) => { if (!clockClosed) clock.to(p); };
+  phase('launchMs');
   const stripped = H.pathWithoutFfmpeg();
   const vs = new H.HiddenCode({ code, keep: flag('--keep'), tag: 'vpe3', env: { PATH: stripped, ...(sc.env || {}) }, settings: sc.settings });
   const results = [];
@@ -74,10 +85,12 @@ async function runScenario(sc, ctx, attempt = 1) {
     await Promise.race([budgetP, (async () => {
     await vs.start();
     await vs.waitLog(/activated: module load/, { timeout: 45000, what: 'the extension activating' });
+    phase('resetMs');
     let applied = {}; let envApplied = {};
     for (const step of sc.steps) {
       if (expired) break;
       where = `${sc.name}/${step.case}`;
+      phase('resetMs');
       const c = cases[step.case];
       const base = `${sc.name}/${step.case}`;
       if (!c) { add({ name: base, ok: false, problems: [`no case named ${step.case}`] }); continue; }
@@ -107,6 +120,7 @@ async function runScenario(sc, ctx, attempt = 1) {
         lib.setFilter((n) => (!keep || keep.test(n)) && (!drop || !drop.test(n)));
         const h = { MEDIA: H.MEDIA, sleep, fwd, esc: lib.esc, openClip: H.openClip, closeClip: H.closeClip, playClip: ctx.playClip, seconds: ctx.perf ? 5 : 2, quick: !ctx.perf, ffmpeg: ff, scenario: ctx.perf ? undefined : sc.name };
         const gl = brokenGl(vs);
+        phase('execMs');
         const rs = await withTimeout(Promise.race([c.run(vs, h), gl.promise]).finally(gl.stop), step.timeout || 15 * 60e3, `${base} did not finish`);
         for (const r of rs) {
           const name = r.name ? `${base}/${r.name}` : base;
@@ -115,7 +129,7 @@ async function runScenario(sc, ctx, attempt = 1) {
         }
       } catch (e) {
         add({ name: base, ok: false, problems: [e && e.message || String(e)] });
-      } finally { lib.setFilter(null); }
+      } finally { lib.setFilter(null); phase('resetMs'); }
       if (vs.lines.some((l) => H.NO_WEBGL.test(l))) { noGl = true; break; }
       console.log(`  ${base}: ${((Date.now() - ts) / 1000).toFixed(0)} s`);
     }
@@ -132,18 +146,21 @@ async function runScenario(sc, ctx, attempt = 1) {
   } finally {
     clearTimeout(budgetTimer);
     expired = true;
+    phase('shutdownMs');
     if (noGl) H.saveGpuLogs(vs, sc.name, attempt);
     await vs.stop();
+    phase(null);
+    clockClosed = true;
   }
   if (noGl) {
     if (attempt === 1) {
       console.log(`${sc.name}: this VS Code instance got no WebGL2 (GPU process): a broken instance, not a failed test; once more in a fresh one`);
       await sleep(10000);
-      return runScenario(sc, ctx, 2);
+      return runScenario(sc, ctx, 2, { t0: carry.t0, retryMs: carry.retryMs + (Date.now() - t0) });
     }
     results.push({ name: `${sc.name}/webgl2`, ok: false, problems: ['two instances in a row had no WebGL2 (GPU process): logs in test/vscode/out/nogl-*'] });
   }
-  return { name: sc.name, ms: Date.now() - t0, attempts: attempt, noGl, results };
+  return { name: sc.name, attempts: attempt, noGl, results, ...T.scenarioTiming({ wallMs: Date.now() - carry.t0, phases: clock.phases, attempts: attempt, retryMs: carry.retryMs }) };
 }
 
 /** Rejects as soon as this instance logs "no WebGL2": a broken instance ends the step now, not after each wait's timeout. */
@@ -172,10 +189,12 @@ async function main() {
   const grep = opt('--grep') ? new RegExp(opt('--grep')) : null;
   let todo = list.filter((s) => !grep || grep.test(s.name) || s.steps.some((st) => grep.test(`${s.name}/${st.case}`)));
   if (opt('--changed-files')) {
-    const pick = require('./scenario_map').scenariosFor(JSON.parse(opt('--changed-files')));
-    if (pick.unsure.length) console.log(`no scenario maps ${pick.unsure.slice(0, 5).join(', ')}: all scenarios`);
-    else todo = todo.filter((s) => pick.names.has(s.name));
+    const map = require('./scenario_map');
+    const pick = map.scenariosFor(JSON.parse(opt('--changed-files')));
+    for (const l of map.explain(pick, list)) console.log(l); // advisory: why each scenario is in
+    if (!pick.unsure.length) todo = todo.filter((s) => pick.names.has(s.name));
     if (!todo.length) { console.log('layer vscode: no scenario covers the changed files'); return 0; }
+    if (flag('--explain')) return 0;
   }
   if (flag('--list')) { for (const s of todo) console.log(`${s.name.padEnd(22)} ${s.steps.map((x) => x.case).join(', ')}`); return 0; }
   const code = H.findCode();
@@ -210,17 +229,26 @@ async function main() {
   const res = {
     started: new Date(t0).toISOString(), seconds: Math.round((Date.now() - t0) / 1000), parallel, code: code.exe, host: os.hostname(), cpus: os.cpus().length,
     loadBefore: loadBefore && Math.round(loadBefore.load), noWebGl: out.filter((s) => s.attempts > 1 || s.noGl).map((s) => s.name),
-    scenarios: out.map((s) => ({ name: s.name, ms: s.ms, attempts: s.attempts, failed: s.results.filter((x) => !x.ok).length, timeouts: s.results.filter((x) => x.timeout).length, results: s.results.length })),
+    phases: T.summarize(out).total,
+    scenarios: out.map((s) => ({ name: s.name, ms: s.ms, attempts: s.attempts, ...pickTiming(s), failed: s.results.filter((x) => !x.ok).length, timeouts: s.results.filter((x) => x.timeout).length, results: s.results.length })),
     tests: all,
   };
   const file = opt('--json') || path.join(H.OUT, `scenarios-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
   fs.writeFileSync(file, JSON.stringify(res, null, 1));
   console.log('\nscenario               s    results  failed');
   for (const s of res.scenarios.sort((a, b) => b.ms - a.ms)) console.log(`${s.name.padEnd(22)} ${String(Math.round(s.ms / 1000)).padStart(4)}  ${String(s.results).padStart(7)}  ${s.failed || ''}${s.attempts > 1 ? '  (no WebGL2 in the first instance)' : ''}`);
+  console.log(`
+${T.summaryLine(out, Date.now() - t0)}`);
   for (const r of failed) console.log(`${r.timeout ? 'TIMEOUT' : 'FAIL'} ${r.name}: ${(r.problems || []).join('; ')}`);
   const hung = failed.filter((r) => r.timeout);
   console.log(`\nlayer vscode: ${all.length - failed.length} passed, ${failed.length} failed${hung.length ? ` (${hung.length} TIMEOUT)` : ''} of ${all.length} in ${out.length} scenarios, ${res.seconds} s wall, ${parallel} at a time${res.noWebGl.length ? `; instances without WebGL2: ${res.noWebGl.join(', ')}` : ''}; ${file}`);
   return failed.length ? 1 : 0;
+}
+
+/** The phase timings of a scenario record, for the JSON. */
+function pickTiming(s) {
+  const { launchMs, resetMs, execMs, shutdownMs, retries, retryMs, otherMs } = s;
+  return { launchMs, resetMs, execMs, shutdownMs, retries, retryMs, otherMs };
 }
 
 function lastTimes() {

@@ -63,6 +63,15 @@ Times and result counts: the full run of 2026-11-20 (3 instances at once, while 
 **--changed:** `scenario_map.js` picks the scenarios whose `sources` (in `scenario_list.js`) contain a changed
 file, or that run a changed case file. A changed file under `src/` or `media/` that no scenario names, or the
 layer-3 machinery itself (`scenarios.js`, `lib.js`, `hidden.js`, ...), runs every scenario.
+A case file that fails to load is reported (not skipped) and also runs every scenario. `--changed` prints each picked
+scenario with its reason (a changed source, a changed case file, or a "Known dependencies" rule of docs/TESTING.md,
+mirrored in `DEPENDENCIES` in `scenario_map.js`); `node test/run.js --explain` prints that and runs nothing.
+
+**Where the time goes:** a run ends with one line splitting the instance time into launch (start to activated), reset
+(between cases), exec (the cases), shutdown and retries (a first instance without WebGL2: its whole run plus the wait
+before the fresh one). `ms` of a scenario is its total wall time including a retry. The same numbers are in the JSON
+(`phases`, and per scenario `launchMs`, `resetMs`, `execMs`, `shutdownMs`, `retries`, `retryMs`, `otherMs`). With
+`--parallel` the phase sums exceed the wall time.
 
 **Parallel:** `--parallel N` (or `VPE_PARALLEL`) runs N instances at once, each with its own profile and
 hidden desktop. The default is **1** (serial): a full run with 3 instances (2026-11-20, under load from a
