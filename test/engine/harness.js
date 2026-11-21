@@ -97,8 +97,7 @@ async function open(file, o = {}) {
   const gl = fakeGl((y, w, h, deep) => { P.shown = { y, w, h, deep }; P.uploads++; });
   const canvas = { getContext: () => gl, width: 0, height: 0, hidden: false, style: {}, getBoundingClientRect: () => ({ width: 640, height: 360 }) };
   if (o.pool === false) delete globalThis.DecoderPool; // eslint-disable-line no-param-reassign
-  let readyRes;
-  const ready = new Promise((r) => { readyRes = r; });
+  let ready = false;
   const engine = globalThis.createEngine({
     vscode: {
       postMessage: (m) => {
@@ -118,7 +117,7 @@ async function open(file, o = {}) {
     toast: (x) => logs.push(`TOAST ${x}`),
     getState: () => ({}),
     setMuteUi: () => {},
-    onReady: (p) => readyRes(p),
+    onReady: () => { ready = true; },
     onMeta: () => {},
     onTracks: () => {},
   });
@@ -145,14 +144,24 @@ async function open(file, o = {}) {
       await sleep(10);
     }
   };
-  const first = await Promise.race([ready.then(() => true), P.until(() => false, 'open', o.timeout || 30000)]);
-  if (!first) { P.close(); throw new Error(`${P.name}: not ready in ${(o.timeout || 30000) / 1000} s`); }
   const p = P.player;
-  if (!(await P.until(() => p.shownT !== null && P.shown, 'first frame', o.timeout || 30000))) { P.close(); throw new Error(`${P.name}: no first frame`); }
-  // Files whose container states no rate (MP4 H.264 here) get it from the first 24-40 timestamps
-  // (engine.js trackTs); until then n = 0 and End would go to frame 0. A user looks at the first
-  // picture for longer than that: wait for the rate, as the VS Code cases did by polling.
-  if (o.waitRate !== false) await P.until(() => p.eof || (p.fps > 0 && (!p.tsSeen || p.tsSeen.length >= 40)), 'the frame rate', o.timeout || 30000);
+  const timeout = o.timeout || 30000;
+  try {
+    if (!(await P.until(() => ready, 'open', timeout))) {
+      throw new Error(`${P.name}: not ready in ${timeout / 1000} s`);
+    }
+    if (!(await P.until(() => p.shownT !== null && P.shown, 'first frame', timeout))) {
+      throw new Error(`${P.name}: no first frame`);
+    }
+    // Files whose container states no rate get it from the first 24-40 timestamps (engine.js trackTs).
+    // Wait for the stable rate before frame-index checks unless the test specifically needs a cold open.
+    if (o.waitRate !== false) {
+      await P.until(() => p.eof || (p.fps > 0 && (!p.tsSeen || p.tsSeen.length >= 40)), 'the frame rate', timeout);
+    }
+  } catch (err) {
+    P.close();
+    throw err;
+  }
   // Live: the engine refines the rate and frame count from the timestamps it sees after the first frame.
   Object.defineProperty(P, 'fps', { get: () => p.fps || 30 });
   Object.defineProperty(P, 'n', { get: () => p.n });

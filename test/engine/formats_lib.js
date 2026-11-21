@@ -3,7 +3,7 @@
 // ffmpeg's first frame, a seek shows ffmpeg's frame there, and files with sound decode sound.
 // The VS Code side of opening (the host's decoder choice, messages) stays in layer 3 (scenario playback).
 const path = require('path');
-const { open, checks, sleep } = require('./harness');
+const { open, checks } = require('./harness');
 
 const assert = (c, m) => { if (!c) throw new Error(m); };
 
@@ -43,7 +43,6 @@ async function formats(title, files) {
         const bad = P.logs.filter((l) => /\berror\b|failed/i.test(l));
         assert(!bad.length, `engine log: ${bad.slice(0, 2).join(' | ')}`);
       } finally { P.close(); }
-      await sleep(50);
     }, o.known);
   }
   c.done();

@@ -20,10 +20,16 @@ async function runJobs(title, jobs) {
   c.done();
 }
 
-/** step/<clip> and seek/<clip> of seeking.js for each clip. */
-const stepSeek = (clips) => clips.flatMap((clip) => [
-  [`step/${clip}`, clip, J.steps],
-  [`seek/${clip}`, clip, J.seeks],
+/** Run the step journey from a fresh open and the seek journey from a paused, verified Home position. */
+const stepSeek = (clips) => clips.map((clip) => [
+  `step+seek/${clip}`, clip, async (P) => {
+    await J.steps(P);
+    // This backward seek clears the step buffers and waits for the decoder to show frame zero again.
+    P.pause();
+    P.home();
+    await P.expectFrame(0, 'reset to Home before seeks');
+    await J.seeks(P);
+  },
 ]);
 
 module.exports = { runJobs, stepSeek, J, path };
