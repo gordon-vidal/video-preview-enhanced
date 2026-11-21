@@ -14,6 +14,7 @@ const TIME_SCALE = Number(process.env.VPE_TIME_SCALE) || (process.env.CI ? 3 : 1
 //   --changed    only what covers the files changed against main (committed or not): layers 1-2 by
 //                the sources each test names, layer 3 by test/vscode/scenario_map.js; a changed file
 //                no map knows runs the whole layer
+//   --explain    like --changed, for layer 3 only prints which scenarios were picked and why, and runs nothing
 //   --grep re    only test files / scenarios whose name matches
 //   --jobs N     parallel processes for layers 1-2 (default: logical CPUs)
 //
@@ -232,11 +233,12 @@ async function main() {
     else if (valueOpts.has(a)) i++;
     else if (!['--changed', '--verbose'].includes(a)) rest.push(a);
   }
-  if (!layers.length) layers.push('unit', 'engine', 'vscode');
+  if (!layers.length) layers.push(...(flag('--explain') ? ['vscode'] : ['unit', 'engine', 'vscode']));
   const grep = opt('--grep') ? new RegExp(opt('--grep')) : null;
   const jobs = Math.max(1, Number(opt('--jobs', os.cpus().length)));
-  const changed = flag('--changed') ? changedFiles() : null;
-  if (flag('--changed')) console.log(changed ? `changed against ${process.env.VPE_BASE || 'main'}: ${changed.length} files` : 'git could not list the changed files: whole layers');
+  const wantChanged = flag('--changed') || flag('--explain');
+  const changed = wantChanged ? changedFiles() : null;
+  if (wantChanged) console.log(changed ? `changed against ${process.env.VPE_BASE || 'main'}: ${changed.length} files` : 'git could not list the changed files: whole layers');
   const { unit, engine } = require('./layers');
   const out = { started: new Date().toISOString(), host: os.hostname(), cpus: os.cpus().length, argv, layers: [] };
   const t0 = Date.now();

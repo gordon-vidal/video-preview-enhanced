@@ -8,7 +8,8 @@ const { open, checks, sleep } = require('./harness');
 const assert = (c, m) => { if (!c) throw new Error(m); };
 
 /**
- * files: [[file, { sound?: bool, pick?: picture index to seek to (default ~1/3 in, max 40; -1: no seek), timeout?: ms, known?: why }]]
+ * files: [[file, { sound?, play?, pick?, timeout?, known? }]]
+ * play: check picture progression during playback. pick: index to seek to (default ~1/3 in, max 40; -1: no seek).
  */
 async function formats(title, files) {
   const c = checks(title);
@@ -19,10 +20,18 @@ async function formats(title, files) {
         const slots = await P.slots();
         assert(slots.length > 1, `ffmpeg decoded ${slots.length} pictures`);
         await P.expectFrame(slots[0], 'first picture', o.timeout || 30000);
+        if (o.play) {
+          const uploads = P.uploads;
+          P.play();
+          const advanced = await P.until(() => P.uploads >= uploads + 3 && P.frame() > slots[0], 'pictures advancing');
+          assert(advanced, 'fewer than three new pictures while playing');
+          P.pause();
+          await P.expectFrame(P.frame(), 'picture reached during playback');
+        }
         if (o.pick !== -1) {
-        const i = Math.min(slots.length - 1, o.pick !== undefined ? o.pick : Math.min(40, Math.floor(slots.length / 3)));
-        P.seek((slots[i] + 0.5) / P.fps);
-        await P.expectFrame(slots[i], `seek to picture ${i} (frame ${slots[i]})`, o.timeout || 30000);
+          const i = Math.min(slots.length - 1, o.pick !== undefined ? o.pick : Math.min(40, Math.floor(slots.length / 3)));
+          P.seek((slots[i] + 0.5) / P.fps);
+          await P.expectFrame(slots[i], `seek to picture ${i} (frame ${slots[i]})`, o.timeout || 30000);
         }
         if (o.sound) {
           assert(P.player.amode && P.player.amode !== 'none', `no sound stream picked (${P.player.amode})`);

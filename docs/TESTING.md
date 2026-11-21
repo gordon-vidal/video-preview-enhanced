@@ -93,6 +93,23 @@ node test/run.js engine --grep frames_            # only matching files / scenar
 - Change base for `--changed`: `VPE_BASE` (default `main`). VS Code: `VPE_CODE` or the portable build of
   `node test/vscode/get_code.js`.
 
+## Playback and seeking coverage
+
+Layer 2's `formats_cases.js` covers the playback format matrix. For the WASM formats covered only there,
+it checks the first picture, an advancing playback picture and a seek against ffmpeg, and requires decoded
+audio. The `frames_*.js` suites cover WASM seek and step sequences, rounded timestamps and the last picture
+when audio outlasts video.
+
+Layer 3's `playback` exercises H.264 and VP8 WebCodecs, device-dependent High 10 and 4:4:4 H.264 decoding,
+odd-sized WebGL textures, WebCodecs video with AC-3 sound, video without audio and variable frame rates.
+It also checks audio-only playback, rate changes, neighbour navigation, rotation, the fully decoded status, saved positions,
+damaged and truncated files, and multichannel WebAudio. The separate `open-formats` scenario checks host
+routing and playback across containers in the webview.
+
+Layer 3's `seeking` keeps the exact-picture checks for H.264 WebCodecs and the MJPEG frame player, plus
+HEVC seeking and stepping across a GOP on the real WebGL canvas. It also checks open-GOP fallback,
+rounded H.264 timestamps, the End and Home keys, VP8 decoder flush and A-B loop controls.
+
 ## The layers as built
 
 Measured 2026-11-20 on the i7-9700K / RTX 4070 desktop **while a game was running** (other processes at

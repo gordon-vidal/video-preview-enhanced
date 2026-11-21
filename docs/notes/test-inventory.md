@@ -176,18 +176,18 @@ end of the file. Checks: `test/engine/frames_edges.js` `end-at-open/` and `short
 | `case/perf-invisible/loop-rest` | L3 `invisible/perf-invisible/loop-rest` | numbers: L4 perf-invisible |
 | `case/playback/open/fmt/h264_high10.mp4` | L3 `playback/playback/open/fmt/h264_high10.mp4` | also L2 formats_cases.js |
 | `case/playback/open/fmt/h264_444.mp4` | L3 `playback/playback/open/fmt/h264_444.mp4` | also L2 formats_cases.js |
-| `case/playback/open/fmt/hevc10.mp4` | L3 `playback/playback/open/fmt/hevc10.mp4` | also L2 formats_cases.js |
-| `case/playback/open/fmt/hevc10_opus.mkv` | L3 `playback/playback/open/fmt/hevc10_opus.mkv` | also L2 formats_cases.js |
+| `case/playback/open/fmt/hevc10.mp4` | L2 `test/engine/formats_cases.js` | First, advancing and sought pictures; decoded audio |
+| `case/playback/open/fmt/hevc10_opus.mkv` | L2 `test/engine/formats_cases.js` | First, advancing and sought pictures; decoded audio |
 | `case/playback/open/fmt/vp8_vorbis.webm` | L3 `playback/playback/open/fmt/vp8_vorbis.webm` | also L2 formats_cases.js |
-| `case/playback/open/fmt/av1_opus.mkv` | L3 `playback/playback/open/fmt/av1_opus.mkv` | also L2 formats_cases.js |
+| `case/playback/open/fmt/av1_opus.mkv` | L2 `test/engine/formats_cases.js` | First, advancing and sought pictures; decoded audio |
 | `case/playback/open/fmt/h264_ac3.mts` | L3 `playback/playback/open/fmt/h264_ac3.mts` | also L2 formats_cases.js |
-| `case/playback/open/fmt/mpeg2_ac3.vob` | L3 `playback/playback/open/fmt/mpeg2_ac3.vob` | also L2 formats_cases.js |
-| `case/playback/open/fmt/mpeg2_interlaced.mpg` | L3 `playback/playback/open/fmt/mpeg2_interlaced.mpg` | also L2 formats_cases.js |
-| `case/playback/open/fmt/wmv2_wma.wmv` | L3 `playback/playback/open/fmt/wmv2_wma.wmv` | also L2 formats_cases.js |
-| `case/playback/open/fmt/wmv2_wma.asf` | L3 `playback/playback/open/fmt/wmv2_wma.asf` | also L2 formats_cases.js |
-| `case/playback/open/fmt/dnxhr_pcm.mxf` | L3 `playback/playback/open/fmt/dnxhr_pcm.mxf` | also L2 formats_cases.js |
-| `case/playback/open/fmt/theora_vorbis.ogv` | L3 `playback/playback/open/fmt/theora_vorbis.ogv` | also L2 formats_cases.js |
-| `case/playback/open/fmt/flv1_mp3.flv` | L3 `playback/playback/open/fmt/flv1_mp3.flv` | also L2 formats_cases.js |
+| `case/playback/open/fmt/mpeg2_ac3.vob` | L2 `test/engine/formats_cases.js` | First, advancing and sought pictures; decoded audio |
+| `case/playback/open/fmt/mpeg2_interlaced.mpg` | L2 `test/engine/formats_cases.js` | First, advancing and sought pictures; decoded audio |
+| `case/playback/open/fmt/wmv2_wma.wmv` | L2 `test/engine/formats_cases.js` | First, advancing and sought pictures; decoded audio |
+| `case/playback/open/fmt/wmv2_wma.asf` | L2 `test/engine/formats_cases.js` | First, advancing and sought pictures; decoded audio |
+| `case/playback/open/fmt/dnxhr_pcm.mxf` | L2 `test/engine/formats_cases.js` | First, advancing and sought pictures; decoded audio |
+| `case/playback/open/fmt/theora_vorbis.ogv` | L2 `test/engine/formats_cases.js` | First, advancing and sought pictures; decoded audio |
+| `case/playback/open/fmt/flv1_mp3.flv` | L2 `test/engine/formats_cases.js` | First, advancing and sought pictures; decoded audio |
 | `case/playback/open/fmt/odd_853x479.mkv` | L3 `playback/playback/open/fmt/odd_853x479.mkv` | also L2 formats_cases.js |
 | `case/playback/open/fmt/h264_ac3_51.mkv` | L3 `playback/playback/open/fmt/h264_ac3_51.mkv` | also L2 formats_cases.js |
 | `case/playback/open/fmt/h264_noaudio.mp4` | L3 `playback/playback/open/fmt/h264_noaudio.mp4` | also L2 formats_cases.js |
@@ -234,7 +234,7 @@ end of the file. Checks: `test/engine/frames_edges.js` `end-at-open/` and `short
 | `case/seek_preview/wasm` | L3 `seek-preview/seek_preview/wasm` |  |
 | `case/seek_preview_native/native` | L3 `seek-preview/seek_preview_native/native` |  |
 | `case/seeking/step/s_h264.mp4` | L3 `seeking/seeking/step/s_h264.mp4` | also L2 frames_mpeg4_h264.js (H.264 on the WebAssembly path) |
-| `case/seeking/step/s_hevc.mp4` | L3 `seeking/seeking/step/s_hevc.mp4` | also L2 frames_hevc_vp9.js |
+| `case/seeking/step/s_hevc.mp4` | L3 `seeking/seeking/step/s_hevc.mp4` across a GOP; full sweep in L2 `test/engine/frames_hevc_vp9.js` | |
 | `case/seeking/step/s_vp9.webm` | L2 `test/engine/frames_hevc_vp9.js (step/s_vp9.webm)` |  |
 | `case/seeking/step/s_mpeg2.mpg` | L2 `test/engine/frames_mpeg2_prores.js (step/s_mpeg2.mpg)` |  |
 | `case/seeking/step/s_prores.mov` | L2 `test/engine/frames_mpeg2_prores.js (step/s_prores.mov)` |  |
