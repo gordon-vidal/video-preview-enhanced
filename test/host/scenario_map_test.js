@@ -74,6 +74,39 @@ for (const d of map.DEPENDENCIES) for (const n of d.run) {
   assert.ok(doc.includes(`\`${n}\``), `docs/TESTING.md no longer names ${n}`);
 }
 
+// --smoke preset: selects only known scenarios, carries reasons, and stays in sync with scenario_list and docs.
+const sp = map.smokeScenarios({
+  list,
+  smoke: [{ name: 'seeking', why: 'decoders' }, { name: 'ui', why: 'bar' }, { name: 'missing', why: 'ignored' }],
+});
+assert.deepStrictEqual([...sp.names].sort(), ['seeking', 'ui']);
+assert.deepStrictEqual(sp.reasons.get('seeking'), ['smoke preset: decoders']);
+assert.ok(!sp.reasons.has('missing'), 'unknown smoke entry is ignored');
+const smokeLines = map.explainSmoke(sp, list);
+assert.strictEqual(smokeLines[0], 'smoke preset (2 of 5 scenarios):');
+assert.strictEqual(smokeLines.length, 3);
+assert.match(smokeLines[1], /^ {2}ui +smoke preset: bar$/);
+assert.match(smokeLines[2], /^ {2}seeking +smoke preset: decoders$/);
+
+const realSmoke = map.smokeScenarios();
+assert.ok(map.SMOKE.length >= 3 && map.SMOKE.length < real.length, 'smoke preset is a strict subset of layer 3');
+assert.strictEqual(realSmoke.names.size, map.SMOKE.length, 'no duplicate or unknown scenarios in SMOKE');
+for (const entry of map.SMOKE) {
+  assert.ok(real.includes(entry.name), `SMOKE names unknown scenario ${entry.name}`);
+  assert.ok(doc.includes(`\`${entry.name}\``), `docs/TESTING.md no longer names smoke scenario ${entry.name}`);
+}
+
+// End-to-end CLI check: `node test/run.js vscode --smoke --explain` prints the smoke preset without launching VS Code.
+const { spawnSync } = require('child_process');
+const cli = spawnSync(process.execPath, [path.join(__dirname, '..', 'run.js'), 'vscode', '--smoke', '--explain'], {
+  cwd: path.join(__dirname, '..', '..'),
+  encoding: 'utf8',
+  windowsHide: true,
+});
+assert.strictEqual(cli.status, 0, `run.js vscode --smoke --explain failed: ${cli.stderr || cli.stdout}`);
+assert.match(cli.stdout, new RegExp(`smoke preset \\(${map.SMOKE.length} of ${real.length} scenarios\\):`));
+for (const entry of map.SMOKE) assert.ok(cli.stdout.includes(entry.name), `--smoke --explain missing ${entry.name}`);
+
 // Timing: the clock charges the phase it is in; the record adds retries and what no phase claims.
 let now = 1000;
 const clock = T.phaseClock(() => now);

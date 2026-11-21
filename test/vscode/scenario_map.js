@@ -95,4 +95,39 @@ function explain(pick, all) {
   return lines;
 }
 
-module.exports = { scenariosFor, caseFiles, explain, MACHINERY, DEPENDENCIES };
+// Fast-merge layer-3 smoke preset (`node test/run.js vscode --smoke`): a tight ~3-4 min set covering
+// every real-VS-Code boundary (WebCodecs/WASM/WebGL/frame player, native ffmpeg/frame server/fallback/
+// multi-view, drawn picture size/zoom/pan/compare-follows, and UI bar/panels/keys/a11y/context menu).
+// A test (test/host/scenario_map_test.js) checks every scenario named here exists and docs/TESTING.md names it.
+const SMOKE = [
+  { name: 'seeking', why: 'WebCodecs (H.264/VP8), WASM (HEVC on WebGL), MJPEG frame player, open-GOP fallback, A-B loop' },
+  { name: 'multiview-native', why: 'native ffmpeg decoding, frame server, tile sizing, resize, message fallback, multi-view' },
+  { name: 'picture-size', why: 'drawn picture size (Fit/Fill/Stretch/100%), zoom, pan, settings, compare-follows' },
+  { name: 'ui', why: 'player bar, accessibility, keys, panels, jump sizes, About, context menu' },
+];
+
+/** -> { names: Set of scenario names, reasons: Map name -> [string] } for the --smoke preset. */
+function smokeScenarios(opts = {}) {
+  const list = opts.list || require('./scenario_list');
+  const smoke = opts.smoke || SMOKE;
+  const names = new Set();
+  const reasons = new Map();
+  for (const entry of smoke) {
+    if (!list.some((s) => s.name === entry.name)) continue;
+    names.add(entry.name);
+    reasons.set(entry.name, [`smoke preset: ${entry.why}`]);
+  }
+  return { names, reasons };
+}
+
+/** Advisory report lines for --smoke. */
+function explainSmoke(pick, all) {
+  const lines = [`smoke preset (${pick.names.size} of ${all.length} scenarios):`];
+  for (const s of all) {
+    const why = pick.reasons.get(s.name);
+    if (why) lines.push(`  ${s.name.padEnd(22)} ${why.join('; ')}`);
+  }
+  return lines;
+}
+
+module.exports = { scenariosFor, caseFiles, explain, smokeScenarios, explainSmoke, MACHINERY, DEPENDENCIES, SMOKE };

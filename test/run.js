@@ -3,7 +3,7 @@
 const TIME_SCALE = Number(process.env.VPE_TIME_SCALE) || (process.env.CI ? 3 : 1);
 // One entry point for the four test layers (docs/TESTING.md).
 //
-//   node test/run.js [layer...] [--changed] [--grep re] [--jobs N] [--verbose] [--json file]
+//   node test/run.js [layer...] [--changed] [--smoke] [--grep re] [--jobs N] [--verbose] [--json file]
 //
 //   unit   | 1   pure logic in Node (test/layers.js), all files in parallel
 //   engine | 2   the WebAssembly decoders in Node: frame-exact seeking, every format (test/layers.js)
@@ -14,7 +14,9 @@ const TIME_SCALE = Number(process.env.VPE_TIME_SCALE) || (process.env.CI ? 3 : 1
 //   --changed    only what covers the files changed against main (committed or not): layers 1-2 by
 //                the sources each test names, layer 3 by test/vscode/scenario_map.js; a changed file
 //                no map knows runs the whole layer
-//   --explain    like --changed, for layer 3 only prints which scenarios were picked and why, and runs nothing
+//   --smoke      fast-merge layer-3 preset (~3-4 min: representative scenarios covering every real-VS-Code
+//                boundary, defined in test/vscode/scenario_map.js); combines with --changed or --explain
+//   --explain    like --changed (or --smoke), for layer 3 only prints which scenarios were picked and why, and runs nothing
 //   --grep re    only test files / scenarios whose name matches
 //   --jobs N     parallel processes for layers 1-2 (default: logical CPUs)
 //
@@ -231,12 +233,12 @@ async function main() {
     const a = argv[i];
     if (passValue.has(a)) { rest.push(a, argv[i + 1]); i++; } else if (ALIAS[a]) layers.push(ALIAS[a]);
     else if (valueOpts.has(a)) i++;
-    else if (!['--changed', '--verbose'].includes(a)) rest.push(a);
+    else if (!['--changed', '--verbose', '--smoke'].includes(a)) rest.push(a);
   }
   if (!layers.length) layers.push(...(flag('--explain') ? ['vscode'] : ['unit', 'engine', 'vscode']));
   const grep = opt('--grep') ? new RegExp(opt('--grep')) : null;
   const jobs = Math.max(1, Number(opt('--jobs', os.cpus().length)));
-  const wantChanged = flag('--changed') || flag('--explain');
+  const wantChanged = flag('--changed') || (flag('--explain') && !flag('--smoke'));
   const changed = wantChanged ? changedFiles() : null;
   if (wantChanged) console.log(changed ? `changed against ${process.env.VPE_BASE || 'main'}: ${changed.length} files` : 'git could not list the changed files: whole layers');
   const { unit, engine } = require('./layers');
@@ -266,6 +268,7 @@ async function main() {
       if (layer === 'vscode') await waitPerfLock();
       const a = [...rest];
       if (grep) a.push('--grep', grep.source);
+      if (flag('--smoke') && layer === 'vscode') a.push('--smoke');
       if (changed && layer === 'vscode') a.push('--changed-files', JSON.stringify(changed));
       const ts = Date.now();
       const r = spawnSync(process.execPath, [script, ...a], { cwd: ROOT, stdio: 'inherit', windowsHide: true });

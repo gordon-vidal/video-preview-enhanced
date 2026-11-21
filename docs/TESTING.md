@@ -14,8 +14,11 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 - **While working** (everyone): layers 1-2, plus the layer-3 scenarios that cover what you changed. Run only what fails until it passes.
 - **Before a merge:** layers 1-2 (as CI runs them: `CI=true node test/run.js unit engine`) and **the layer-3 scenarios
   you choose** for what you changed and what depends on it, about 10 minutes at most. Name each chosen scenario with a
-  one-line reason in your report or PR, so a reviewer can see what was left out. `--changed` is only a hint: it selects by
-  file name, and the core player files are in nearly every scenario, so it usually picks the whole layer.
+  one-line reason in your report or PR, so a reviewer can see what was left out. For a fast real-editor smoke pass
+  (~3-4 min covering every real-VS-Code boundary: `seeking`, `multiview-native`, `picture-size`, `ui`), run
+  `node test/run.js vscode --smoke` (and pair with affected scenarios or `--changed`); keep the full layer-3 run for
+  releases. `--changed` is only a hint: it selects by file name, and the core player files are in nearly every
+  scenario, so it usually picks the whole layer.
 - **Before a release:** everything, including layer 4 against the last release's numbers. Only a release must have
   everything working (maintainer, 2026-11-21): a side effect missed between releases is acceptable, the full run before
   the release catches it.
@@ -76,6 +79,7 @@ was waited for.
 node test/run.js                     # layers 1-3 (npm test)
 node test/run.js unit engine         # layers 1-2 (npm run test:unit, test:engine): what CI runs
 node test/run.js vscode              # layer 3 (npm run test:vscode)
+node test/run.js vscode --smoke      # fast-merge layer-3 preset (~3-4 min, every real-VS-Code boundary)
 node test/run.js perf                # layer 4 (npm run test:perf)
 node test/run.js unit engine vscode --changed     # only what covers the files changed against main
 node test/run.js engine --grep frames_            # only matching files / scenarios
@@ -87,7 +91,9 @@ node test/run.js engine --grep frames_            # only matching files / scenar
   `test/layers.js`, else read from the test file) contain a changed file; a changed `src/` or `media/` file
   that no test names runs the whole layer.
 - **Layer 3** (`test/vscode/scenarios.js`, `test/vscode/README.md`): the scenarios of
-  `test/vscode/scenario_list.js`; `--changed` picks them by `test/vscode/scenario_map.js`.
+  `test/vscode/scenario_list.js`; `--changed` picks them by `test/vscode/scenario_map.js`, and `--smoke` runs
+  the fast-merge preset (`SMOKE` in `test/vscode/scenario_map.js`; `--smoke --explain` prints what it picks
+  without starting VS Code).
 - **Layer 4** (`test/perf/run.js`): benches of `test/perf/benches.js`, compared with `test/perf/results/`.
 - CI (`.github/workflows/ci.yml`) and the Publish workflow run `node test/run.js unit engine`.
 - Change base for `--changed`: `VPE_BASE` (default `main`). VS Code: `VPE_CODE` or the portable build of

@@ -3,7 +3,8 @@
 // Layer 3 (docs/TESTING.md): user scenarios in real VS Code on hidden desktops, correctness only.
 //
 //   node test/vscode/scenarios.js [--grep re] [--parallel N] [--list] [--keep] [--json file]
-//                                 [--changed-files <json array>] [--explain]   (node test/run.js vscode [--changed])
+//                                 [--smoke] [--changed-files <json array>] [--explain]
+//                                 (node test/run.js vscode [--smoke] [--changed])
 //
 // A scenario (test/vscode/scenario_list.js) is one VS Code instance that runs several cases from
 // test/vscode/cases one after another: before each, the test hook (src/extension.js, VPE_LOG only) sets
@@ -205,20 +206,33 @@ function withTimeout(p, ms, what) {
 }
 
 async function main() {
-  if (process.platform !== 'win32') { console.error('layer 3 runs on Windows only (hidden desktops)'); return 2; }
   const list = require('./scenario_list');
   const cases = loadCases();
   const grep = opt('--grep') ? new RegExp(opt('--grep')) : null;
   let todo = list.filter((s) => !grep || grep.test(s.name) || s.steps.some((st) => grep.test(`${s.name}/${st.case}`)));
-  if (opt('--changed-files')) {
+  const wantSmoke = flag('--smoke');
+  const changedArg = opt('--changed-files');
+  if (wantSmoke || changedArg) {
     const map = require('./scenario_map');
-    const pick = map.scenariosFor(JSON.parse(opt('--changed-files')));
-    for (const l of map.explain(pick, list)) console.log(l); // advisory: why each scenario is in
-    if (!pick.unsure.length) todo = todo.filter((s) => pick.names.has(s.name));
+    const keep = new Set();
+    let wholeLayer = false;
+    if (wantSmoke) {
+      const sp = map.smokeScenarios({ list });
+      for (const l of map.explainSmoke(sp, list)) console.log(l);
+      for (const n of sp.names) keep.add(n);
+    }
+    if (changedArg) {
+      const pick = map.scenariosFor(JSON.parse(changedArg));
+      for (const l of map.explain(pick, list)) console.log(l); // advisory: why each scenario is in
+      if (pick.unsure.length) wholeLayer = true;
+      else for (const n of pick.names) keep.add(n);
+    }
+    if (!wholeLayer) todo = todo.filter((s) => keep.has(s.name));
     if (!todo.length) { console.log('layer vscode: no scenario covers the changed files'); return 0; }
     if (flag('--explain')) return 0;
   }
   if (flag('--list')) { for (const s of todo) console.log(`${s.name.padEnd(22)} ${s.steps.map((x) => x.case).join(', ')}`); return 0; }
+  if (process.platform !== 'win32') { console.error('layer 3 runs on Windows only (hidden desktops)'); return 2; }
   const code = H.findCode();
   const ff = H.findFfmpeg();
   const parallel = Math.max(1, Number(opt('--parallel', process.env.VPE_PARALLEL || 1)));
