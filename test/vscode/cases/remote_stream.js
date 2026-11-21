@@ -151,7 +151,7 @@ module.exports = [{
       try {
         // Encoder probing plus a 4K software decode can wait behind other agents' CPU work.
         const r = await h.playClip(vs, { file, expect: 'webcodecs' }, {
-          seconds: h.seconds, firstFrameTimeout: file.includes('2160p') ? 120000 : 45000,
+          seconds: h.seconds, slow: true, firstFrameTimeout: file.includes('2160p') ? 120000 : 45000,
         });
         if (!/^remote stream/.test(r.decision || '')) { r.ok = false; r.problems.push(`decision: ${r.decision || 'none logged'}`); }
         const stats = vs.lines.filter((l) => l.includes(`[${file}] remote stream stats:`)).map((l) => l.replace(/^.*stats: /, ''));

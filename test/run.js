@@ -115,17 +115,27 @@ function runFile(entry) {
     const child = spawn(cmd[0], cmd.slice(1), { cwd: ROOT, windowsHide: true, detached: process.platform !== 'win32', env: { ...process.env, VPE_TEST_PARALLEL: '1' } });
     running.add(child);
     let out = '';
-    child.stdout.on('data', (d) => { out += d; });
-    child.stderr.on('data', (d) => { out += d; });
+    let lastAt = Date.now();
+    let gapMs = 0; // longest silence so far (recorded: test/tune_timeouts.js derives the stall limit from it)
+    const onData = (d) => { const now = Date.now(); gapMs = Math.max(gapMs, now - lastAt); lastAt = now; out += d; };
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    const lastLine = () => { const l = out.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).pop(); return l ? (l.length > 140 ? `${l.slice(0, 140)}...` : l) : '(no output yet)'; };
     const timeout = entry.timeout || 60000;
-    let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; killChild(child); }, timeout);
+    const stall = entry.stall || 30000;
+    let kind = null; // 'timeout' | 'stalled'
+    let reason = '';
+    const stop = (k, r) => { if (kind) return; kind = k; reason = r; killChild(child); };
+    const timer = setTimeout(() => stop('timeout', `TIMEOUT after ${timeout / 1000} s (limit ${timeout / 1000} s); last output: ${lastLine()}`), timeout);
+    const watch = setInterval(() => { if (Date.now() - lastAt > stall) stop('stalled', `STALLED: no output for ${Math.round((Date.now() - lastAt) / 1000)} s (limit ${stall / 1000} s) after: ${lastLine()}`); }, 1000);
     const done = (code, why) => {
       clearTimeout(timer);
+      clearInterval(watch);
       running.delete(child);
       const ms = Date.now() - t0;
-      const skipped = code === 0 && /^SKIP(PED)?\b/m.test(out) && !/^(ok|PASS)\b/m.test(out) ? (/^SKIP(?:PED)?:?\s*(.*)$/m.exec(out) || [])[1] : null;
-      resolve({ file: entry.file, ok: !timedOut && code === 0, code, ms, out, why: timedOut ? `timed out after ${timeout / 1000} s` : why, skipped });
+      const skipped = !kind && code === 0 && /^SKIP(PED)?\b/m.test(out) && !/^(ok|PASS)\b/m.test(out) ? (/^SKIP(?:PED)?:?\s*(.*)$/m.exec(out) || [])[1] : null;
+      gapMs = Math.max(gapMs, Date.now() - lastAt);
+      resolve({ file: entry.file, ok: !kind && code === 0, code, ms, out, kind, gapMs: kind ? undefined : gapMs, why: kind ? reason : why, skipped });
     };
     child.on('error', (e) => done(1, e.message));
     child.on('close', (code, signal) => done(code === null ? 1 : code, signal ? `signal ${signal}` : code ? `exit ${code}` : ''));
@@ -165,7 +175,7 @@ async function nodeLayer(name, entries, o) {
   console.log(`layer ${name}: ${todo.length} files, ${o.jobs} at a time${results.length ? `, ${results.length} skipped` : ''}`);
   const done = await pool(todo, o.jobs, async (e) => {
     const r = await runFile(e);
-    const tag = r.ok ? (r.skipped ? 'skip' : 'ok  ') : 'FAIL';
+    const tag = r.ok ? (r.skipped ? 'skip' : 'ok  ') : r.kind === 'timeout' ? 'TIMEOUT' : r.kind === 'stalled' ? 'STALLED' : 'FAIL';
     console.log(`${tag} ${(r.ms / 1000).toFixed(1).padStart(6)} s  ${r.file}${r.ok ? (r.skipped ? `: ${r.skipped}` : '') : `: ${r.why}`}`);
     if (!r.ok || o.verbose) console.log(r.out.replace(/^/gm, '    | ').trimEnd());
     return r;
@@ -173,7 +183,9 @@ async function nodeLayer(name, entries, o) {
   results.push(...done);
   const wall = Date.now() - t0;
   const failed = results.filter((r) => !r.ok);
-  console.log(`layer ${name}: ${results.length - failed.length} passed${results.some((r) => r.skipped) ? ` (${results.filter((r) => r.skipped).length} skipped)` : ''}, ${failed.length} failed, ${(wall / 1000).toFixed(1)} s wall${failed.length ? `\n  failed: ${failed.map((r) => r.file).join(', ')}` : ''}`);
+  const hung = failed.filter((r) => r.kind);
+  const stuck = `${hung.length ? ` (${hung.filter((r) => r.kind === 'timeout').length} TIMEOUT, ${hung.filter((r) => r.kind === 'stalled').length} STALLED)` : ''}`;
+  console.log(`layer ${name}: ${results.length - failed.length} passed${results.some((r) => r.skipped) ? ` (${results.filter((r) => r.skipped).length} skipped)` : ''}, ${failed.length} failed${stuck}, ${(wall / 1000).toFixed(1)} s wall${failed.length ? `\n  failed: ${failed.map((r) => r.file).join(', ')}` : ''}`);
   return { layer: name, ok: !failed.length, wallMs: wall, results: results.map(({ out, ...r }) => ({ ...r, tail: r.ok ? undefined : out.slice(-4000) })) };
 }
 
@@ -265,4 +277,4 @@ async function main() {
 }
 
 if (require.main === module) main().then((c) => process.exit(c), (e) => { console.error(e); process.exit(1); });
-module.exports = { changedFiles, sourcesOf, pickChanged, under };
+module.exports = { runFile, changedFiles, sourcesOf, pickChanged, under };

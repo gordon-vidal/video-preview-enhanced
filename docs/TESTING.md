@@ -22,12 +22,32 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 - A VS Code instance without WebGL2 is a broken instance, not a failed test: it is named and retried.
 - A page error ends a wait at once; no test waits out a timeout after an error was reported.
 - Flaky scenarios are fixed or quarantined (listed, skipped, tracked), never retried silently.
-- Tests wait for the event or state they need, with a generous deadline as a safety net only (tens of
-  seconds); a short wall-clock budget fails on a busy CI machine. Heavy files get their own `timeout` in
-  `test/layers.js` (default 60 s per file).
+- Tests wait for the event or state they need; the deadline is a safety net sized from measured times, not a
+  speed check (see "Time limits": tight enough that a hang shows in seconds to a minute, loose enough that a
+  busy machine does not fail a good run).
 - Generated test media must come out the same on every run and every ffmpeg version, or be checked after
   making it: ffmpeg 7+ runs its steps in threads, so how it interleaves streams can vary between runs
   (`test/bitmapsubs/make_media.js` forces time order and checks it).
+
+## Time limits
+
+A hang must show within seconds to a minute, not after minutes. Timeouts and stalls are counted apart from
+failures (`TIMEOUT` / `STALLED` in the lines and the summary), and every message names the elapsed time and what
+was waited for.
+
+- **Layers 1-2** (`test/layers.js`): each file has an explicit `timeout`: max(20 s, 3 x its median time, 1.5 x
+  its slowest passed run), from the history in `test/out/*.json`. A file that prints nothing for its `stall`
+  limit (default 30 s) is killed and reported `STALLED: no output for N s after: <last line>`; past the timeout,
+  `TIMEOUT after N s; last output: <last line>`. Both kill the process tree (Windows job object).
+- **Layer 3** (`test/vscode/budgets.js`): each scenario has a time budget, about 2.5 x its typical time + 30 s
+  (3.5 x for native, remote, URL, HDR and many-video scenarios; min 90 s). Past it the scenario ends and reports
+  `TIMEOUT after N s in <scenario>/<case>; waiting for <thing>`. Waits: a hook answer 10 s, the extension
+  activating 45 s, the first frame of an ordinary clip 15 s (4K, native, remote, URL and HDR keep their longer
+  waits), other waits as the case sets them. A page error still ends a wait at once; an instance without WebGL2 is
+  retried, not failed. `VPE_BUDGET_SCALE=2` doubles every budget on a slow machine.
+- **After a layer got slower or faster on purpose**, or a new test was added: `node test/tune_timeouts.js`
+  rewrites the numbers from the recorded runs (a file with no history gets 60 s / 30 s stall until then).
+  A test that fails only on a tight timeout in a normal run needs its number raised, not a retry.
 
 ## Commands
 
