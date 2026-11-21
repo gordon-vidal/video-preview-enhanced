@@ -119,7 +119,7 @@ async function probeFake() {
     const recovered = await rsm.encoderFor(tools, run, store);
     rsm.encoderFailed(tools, recovered);
     const both = ' V....D h264_nvenc x\n V....D h264_qsv x\n';
-    assert.strictEqual((await rsm.encoderFor(tools, fake({ list: both, ok: ['h264_qsv'] }), store)).encoder, 'h264_qsv');
+    assert.strictEqual((await rsm.encoderFor(tools, fake({ list: both, ok: ['h264_qsv'] }), store, () => {}, { platform: 'win32' })).encoder, 'h264_qsv');
     // A failed listing, including partial stdout, must be retried on the next open.
     const other = { ...tools, version: 'ffmpeg version test-2' };
     assert.strictEqual((await rsm.encoderFor(other, fake({ list, listCode: 1, ok: [] }), store)).encoder, null);
