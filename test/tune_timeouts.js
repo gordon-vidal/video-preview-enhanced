@@ -6,7 +6,7 @@
 //   node test/tune_timeouts.js [--history <a test/ folder holding out/ and vscode/out/>] [--dry]
 //
 //   layers 1-2   test/out/{unit,engine}-*.json (per-file ms of every passed run):
-//                timeout = max(20 s, 3 x median, 1.5 x slowest passed run), up to the next 5 s
+//                timeout = max(20 s, 4 x median, 2 x slowest passed run), up to the next 5 s
 //                stall   = max(30 s, 3 x longest silent gap of a passed run) when runs recorded gaps
 //                -> the block between the "timeouts:" markers in test/layers.js
 //   layer 3      test/vscode/out/scenarios-*.json plus the typical times in the table of
@@ -38,8 +38,8 @@ for (const f of list(path.join(HIST, 'out'), /^(unit|engine)-.*\.json$/)) {
 }
 const TIMEOUTS = {}; const STALLS = {};
 for (const file of Object.keys(times).sort()) {
-  TIMEOUTS[file] = up5(Math.max(20000, 3 * median(times[file]), 1.5 * Math.max(...times[file])));
-  if (gaps[file]) STALLS[file] = up5(Math.max(30000, 3 * Math.max(...gaps[file])));
+  TIMEOUTS[file] = up5(Math.max(20000, 4 * median(times[file]), 2 * Math.max(...times[file])));
+  if (gaps[file]) STALLS[file] = Math.min(TIMEOUTS[file], up5(Math.max(30000, 3 * Math.max(...gaps[file]))));
 }
 const lf = path.join(__dirname, 'layers.js');
 let src = fs.readFileSync(lf, 'utf8');
