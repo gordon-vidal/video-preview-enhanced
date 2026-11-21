@@ -91,8 +91,10 @@ playback and open-formats (2.5-3 min each, the slowest instance sets the pace wi
 **Parallel instances (layer 3):** in the full run with 3 instances, 2 of 21 scenarios started in an instance
 whose pages got no WebGL2; a single instance lost WebGL2 the same day too, and the game was using the GPU, so
 the cause is not settled. Following the rule above (parallel only after a full run without WebGL2 losses), the
-default is serial; `--parallel 3` (or `VPE_PARALLEL=3`) runs three. To settle it: a full run with
-`--parallel 3` on an idle machine; with no losses, make 3 the default.
+default is serial; `--parallel 3` (or `VPE_PARALLEL=3`) runs three.
+**Settled 2026-11-21: serial stays the default.** A full `--parallel 3` run (25 scenarios) lost WebGL2 in 3
+instances (`playback` and `scopes-export` twice in a row, `file-icons` once); run serially, those scenarios passed
+42/42, and a full serial run passed 246/246 in about 33 minutes. `--parallel 3` remains available but is not trusted.
 
 ## Known issues (quarantined)
 
