@@ -73,7 +73,7 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
   (remembered per ffmpeg and stream class). No decoding is needed to choose.
 - **Nothing decodes in the background on its own** (2026-11-20: a CPU/GPU spike right after installing looks like
   malware). No automatic GPU test after install, after setup or after an ffmpeg/driver change. The test is only
-  offered (a popup with "Run test" / "Not now" / "Don't remind me") when a video plays slower than real time and this
+  offered (a popup with "Run test" / "Not now" / "Don't Show Again") when a video plays slower than real time and this
   ffmpeg/GPU has no test result, and runs from "Video Preview: Re-test ffmpeg". ffmpeg stays the recommended setup: the
   first video recommends setting it up, and it is used whenever it plays a file better than the built-in decoder.
   Seek-bar thumbnails follow the same rule: they decode only while the pointer hovers or drags on the seek bar (picture under the
@@ -82,14 +82,14 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 ## Onboarding
 
 - **The first video of each session while no ffmpeg is found** (2026-11-20): "Video Preview works best with
-  ffmpeg …" with **Set up ffmpeg** / **Not now** / **Don't remind me (use built-in player)**. Say "set up" (download
+  ffmpeg …" with **Set up ffmpeg** / **Not now** / **Don't Show Again**. Say "set up" (download
   portable ffmpeg or use a local copy), and "download portable ffmpeg" when the download is meant. "Not now" asks
-  again next session; "Don't remind me" is final and also silences the slow-playback reminder. Not in remote or
+  again next session; "Don't Show Again" is final and also silences the slow-playback reminder. Not in remote or
   restricted windows.
 - **When the built-in decoder falls behind** and ffmpeg isn't set up: a reminder with measured
   numbers for this kind of file (no guessed gain table).
 - **When playback falls behind with ffmpeg installed** and no GPU test has run for this ffmpeg and GPU: the GPU
-  test offer (Decoder rule above), once per session, "Don't remind me" kept.
+  test offer (Decoder rule above), once per session, "Don't Show Again" kept.
 
 ## The player (2026-11-19: one layout, the approved mock-up)
 

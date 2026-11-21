@@ -3,6 +3,7 @@
 ## Unreleased
 
 - New (experimental): setting `videoPreviewEnhanced.compare.maxVideos` (default 4, up to 16) lets compare play more videos at once, in a plain grid (3×2, 3×3, 4×3, 4×4). From 5 videos on, all tiles share one renderer and the memory and transfer budgets of 4, and native ffmpeg tiles use WebSocket channels. 2–4 videos are unchanged. With ffmpeg on the test PC, 9 and 16 1080p HEVC videos each play at about 24 fps (measured 23.5-24.0). How more than 4 videos get into compare, and free placement of tiles, come later.
+- Fixed: notification buttons that stop future prompts now all say "Don't Show Again".
 - Fixed: stale texts in settings (`whenSlow`, `advancedMode`) and the FAQ.
 
 ## 0.7.2 (2026-11-20)

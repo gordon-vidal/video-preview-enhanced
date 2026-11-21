@@ -2,7 +2,7 @@
 // node test/host/gpu_offer_test.js: the GPU test offer (src/extension.js maybeOfferProbe, decide.shouldOfferProbe)
 // with the mock vscode and a real ffmpeg (on PATH, or VPE_FFMPEG). The test never runs by itself:
 // playback below real time with ffmpeg installed (the built-in decoder, or native ffmpeg) and no GPU test
-// record brings one notification per session; "Run test" runs the probe (withProgress), "Don't remind me"
+// record brings one notification per session; "Run test" runs the probe (withProgress), "Don't Show Again"
 // is kept; nothing with a fitting record, in remote or untrusted windows, or while another popup is up.
 // Skipped without ffmpeg.
 const assert = require('assert');
@@ -25,7 +25,7 @@ const isOffer = (a) => a[0] === decide.PROBE_OFFER_TEXT;
   for (const [k, v] of [['shownThisSession', true], ['toolsInstalled', false], ['probeRecord', true], ['gpu', false], ['remote', 'wsl'], ['trusted', false], ['pending', true], ['running', true], ['offer', { never: true }]]) {
     assert.strictEqual(decide.shouldOfferProbe({ ...base, [k]: v }), false, k);
   }
-  assert.deepStrictEqual(decide.afterProbeOffer(undefined, decide.PROBE_OFFER_NEVER, 5), { shownAt: 5, answer: "Don't remind me", never: true });
+  assert.deepStrictEqual(decide.afterProbeOffer(undefined, decide.PROBE_OFFER_NEVER, 5), { shownAt: 5, answer: "Don't Show Again", never: true });
   assert.strictEqual(decide.afterProbeOffer(undefined, undefined, 5).never, undefined, 'dismissed: asked again next session');
 }
 
@@ -60,7 +60,7 @@ const isOffer = (a) => a[0] === decide.PROBE_OFFER_TEXT;
   await x.s.send(slow);
   await until(() => x.offers().length);
   assert.strictEqual(x.offers().length, 1, 'offered after two slow samples');
-  assert.deepStrictEqual(x.offers()[0].slice(1), ['Run test', 'Not now', "Don't remind me"]);
+  assert.deepStrictEqual(x.offers()[0].slice(1), ['Run test', 'Not now', "Don't Show Again"]);
   await wait(50);
   assert.strictEqual(x.probes.length, 0, 'Not now: no test');
   assert.strictEqual(x.shown.length, 1, 'no setup hint beside it (ffmpeg is installed)');
@@ -96,9 +96,9 @@ const isOffer = (a) => a[0] === decide.PROBE_OFFER_TEXT;
     x.s.panel.dispose(); x.h.dispose();
   }
 
-  // "Don't remind me" is kept across sessions.
+  // "Don't Show Again" is kept across sessions.
   const state = new Map();
-  x = await session({ answer: "Don't remind me", state });
+  x = await session({ answer: "Don't Show Again", state });
   await x.s.send(slow); await x.s.send(slow);
   await until(() => x.offers().length);
   await wait(50);
@@ -107,7 +107,7 @@ const isOffer = (a) => a[0] === decide.PROBE_OFFER_TEXT;
   x.s.panel.dispose(); x.h.dispose();
   x = await session({ answer: 'Run test', state });
   await x.s.send(slow); await x.s.send(slow); await wait(200);
-  assert.strictEqual(x.offers().length + x.probes.length, 0, "Don't remind me respected");
+  assert.strictEqual(x.offers().length + x.probes.length, 0, "Don't Show Again respected");
   x.s.panel.dispose(); x.h.dispose();
 
   // Native ffmpeg behind real time (no record: the vendor's method): offered too; a built-in sample

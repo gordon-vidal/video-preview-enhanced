@@ -1,7 +1,7 @@
 'use strict';
 // node test/host/speed_hint_test.js: the extension side of the built-in speed samples
 // (src/extension.js with the mock vscode): speeds stored per class, the "set up
-// ffmpeg" hint after sustained slow decoding only, its buttons and "Don't ask again",
+// ffmpeg" hint after sustained slow decoding only, its buttons and "Don't Show Again",
 // and no hint in remote windows or when ffmpeg is there.
 const assert = require('assert');
 const path = require('path');
@@ -35,7 +35,7 @@ async function session({ answer, remote, before } = {}) {
   for (let i = 0; i < 100 && !shown.length; i++) await wait(10);
   assert.strictEqual(shown.length, 1);
   assert.match(shown[0][0], /^HEVC 10-bit 4K decodes at 0\.7× here \(21 of 30 fps\)\. Set up ffmpeg \(≈\d+ MB, no admin needed\): on an 8-core test PC it decoded this kind of video about \d+× faster with the GPU, [\d.]+× on the CPU alone, likely real time here\.$/);
-  assert.deepStrictEqual(shown[0].slice(1), ['Set up', 'Not now', "Don't ask again"]);
+  assert.deepStrictEqual(shown[0].slice(1), ['Set up', 'Not now', "Don't Show Again"]);
   await wait(30);
   const hint = h.context.globalState.get('videoPreviewEnhanced.setupHint');
   assert.ok(hint.snoozedUntil > Date.now(), 'Not now snoozes');
@@ -60,8 +60,8 @@ async function session({ answer, remote, before } = {}) {
   assert.strictEqual(shown.length, 0, 'hopeless: snooze respected');
   s.panel.dispose(); h.dispose();
 
-  // "Don't ask again" is kept.
-  ({ h, s, shown } = await session({ answer: "Don't ask again" }));
+  // "Don't Show Again" is kept.
+  ({ h, s, shown } = await session({ answer: "Don't Show Again" }));
   await s.send(slow); await s.send(slow);
   for (let i = 0; i < 100 && !shown.length; i++) await wait(10);
   await wait(30);
@@ -69,7 +69,7 @@ async function session({ answer, remote, before } = {}) {
   s.panel.dispose(); h.dispose();
   ({ h, s, shown } = await session({ before: (x) => x.context.globalState.update('videoPreviewEnhanced.setupHint', { never: true }) }));
   await s.send(slow); await s.send(slow); await wait(100);
-  assert.strictEqual(shown.length, 0, "Don't ask again respected");
+  assert.strictEqual(shown.length, 0, "Don't Show Again respected");
   s.panel.dispose(); h.dispose();
 
   // Remote window: no hint (native ffmpeg wouldn't be used there anyway).

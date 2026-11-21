@@ -239,7 +239,7 @@ through" fallback as the local setup command — `downloadManaged()` is now shar
   native). The host asks only if: a remote window other than WSL (WSL keeps the first-open popup,
   native ffmpeg plays there), trusted workspace, `remoteStream` lets this window stream, decoder
   not `builtin`, remote is Linux x64 or arm64, and `tools()` finds no ffmpeg. Once per remote and
-  session; "Don't ask again" is kept per remote (`remoteFfmpegOffer` in globalState, key
+  session; "Don't Show Again" is kept per remote (`remoteFfmpegOffer` in globalState, key
   `<remoteName>:<hostname>`, newest 20). "Not now" asks again next session. Not while the
   first-open popup shows.
 - **Where:** `context.globalStorageUri` of the remote extension host, `ffmpeg-builds/<id>/`, new folder

@@ -265,8 +265,9 @@ and presentation stalls need different diagnostics. Require a high-resolution vi
 1440p would lose useful detail; do not spend GPU power making 4K for a small picture.
 
 Suggested text: "Playback is falling behind. Use a smooth 4K preview? The picture is re-encoded
-locally to H.264, 8-bit." Actions: **Use smooth preview**, **Keep current path**, **Don't ask
-again for this file**. Preserve the original file. Never claim lossless pixels or overwrite it.
+locally to H.264, 8-bit. Choose 'Don't Show Again' to stop this prompt for this file."
+Actions: **Use smooth preview**, **Keep current path**, **Don't Show Again**.
+Preserve the original file. Never claim lossless pixels or overwrite it.
 Use the existing notice and About this video surfaces; no player rearrangement is proposed.
 This is a text design proposal for review, not a UI change on this branch.
 Use the visible action labels as their accessible names. Keep the existing Tab order and
