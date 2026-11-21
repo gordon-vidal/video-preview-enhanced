@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed: notification buttons that stop future prompts now all say "Don't Show Again".
+
 - Fixed: stale texts in settings (`whenSlow`, `advancedMode`) and the FAQ.
 
 ## 0.7.2 (2026-11-20)

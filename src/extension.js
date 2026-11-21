@@ -329,7 +329,7 @@ function flushSpeeds() {
 
 /**
  * The first video of a session while no ffmpeg is found: "Set up ffmpeg",
- * "Not now" / "Don't remind me". Once per session until "Don't remind me"; never in SSH/container or untrusted windows.
+ * "Not now" / "Don't Show Again". Once per session until "Don't Show Again"; never in SSH/container or untrusted windows.
  */
 async function maybeOnboard() {
   const base = { state: globalState.get(decide.ONBOARD_KEY), remote: vscode.env.remoteName, trusted: vscode.workspace.isTrusted, pending: onboardPending, shownThisSession: onboardShown };
@@ -339,7 +339,7 @@ async function maybeOnboard() {
     const t = await tools();
     if (t) { await globalState.update(decide.ONBOARD_KEY, decide.afterOnboard('had-ffmpeg')); return; }
     const st0 = globalState.get(decide.ONBOARD_KEY);
-    if (st0 && st0.choice === 'builtin') return; // "Don't remind me"
+    if (st0 && st0.choice === 'builtin') return; // "Don't Show Again"
     onboardShown = true;
     log('onboarding: first video, asking about ffmpeg');
     const answer = await vscode.window.showInformationMessage(decide.ONBOARD_TEXT.replace('{mb}', setup.downloadSizeMB()), decide.ONBOARD_SETUP, decide.ONBOARD_LATER, decide.ONBOARD_BUILTIN);
@@ -368,7 +368,7 @@ async function maybeHint(sess, sample) {
   log(`[${sess.name}] built-in decoding at ${sample.ratio.toFixed(2)}x (sample ${sess.slowRun}); suggesting ffmpeg: ${text}`);
   hintPending = true;
   let answer;
-  try { answer = await vscode.window.showInformationMessage(text, 'Set up', 'Not now', "Don't ask again"); } finally { hintPending = false; }
+  try { answer = await vscode.window.showInformationMessage(text, 'Set up', 'Not now', "Don't Show Again"); } finally { hintPending = false; }
   await globalState.update(decide.HINT_KEY, decide.afterHint(globalState.get(decide.HINT_KEY), answer));
   if (answer === 'Set up') setupFfmpeg();
 }
@@ -569,7 +569,7 @@ async function downloadManaged(build) {
 /**
  * Remote windows (SSH, containers, tunnels): the picture of this file decodes in WebAssembly, the
  * remote stream would take it, and the remote has no ffmpeg. Offers BtbN's static Linux build
- * (x64, arm64) in the extension's folder there: once per remote and session, "Don't ask again" per
+ * (x64, arm64) in the extension's folder there: once per remote and session, "Don't Show Again" per
  * remote (docs/notes/remote-stream.md).
  */
 async function maybeOfferRemoteFfmpeg(sess, m) {
@@ -2625,7 +2625,7 @@ ${barHtml()}
 
   /**
    * Whether the page may offer the ffmpeg setup (status pill) and mention ffmpeg (toast):
-   * offered when it isn't installed, in a local trusted window, unless "Don't ask again".
+   * offered when it isn't installed, in a local trusted window, unless "Don't Show Again".
    */
   sendFfmpegState() {
     // Restricted Mode runs no ffmpeg at all, not even `-version` (security review 2026-11-19 #6).

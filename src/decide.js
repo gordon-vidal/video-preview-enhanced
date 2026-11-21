@@ -243,7 +243,7 @@ function shouldHint(ctx) {
   if (h.never) return false;
   if (h.snoozedUntil && ctx.now < h.snoozedUntil) return false;
   if (ctx.shownThisSession || ctx.toolsInstalled || ctx.remote || !ctx.trusted) return false;
-  // "Don't remind me (use built-in player)" in the first-video popup is final (2026-11-20).
+  // "Don't Show Again" in the first-video popup is final (2026-11-20).
   const o = ctx.onboard;
   if (o && o.choice === 'builtin') return false;
   return ctx.slowRun >= HINT_SLOW_SAMPLES || (ctx.slowRun >= 1 && ctx.ratio > 0 && ctx.ratio < HINT_HOPELESS);
@@ -326,10 +326,10 @@ function hintText(sample, { mb, probeRecord } = {}) {
   return `${head} Set up ffmpeg ${size}: on an 8-core test PC it decoded this kind of video ${how}${rt}.`;
 }
 
-/** The hint state after the user's answer ('Set up', 'Not now', "Don't ask again" or nothing). */
+/** The hint state after the user's answer ('Set up', 'Not now', "Don't Show Again" or nothing). */
 function afterHint(hint, answer, now = Date.now()) {
   const h = { ...(hint || {}), shownAt: now };
-  if (answer === "Don't ask again") h.never = true;
+  if (answer === "Don't Show Again") h.never = true;
   else if (answer === 'Not now' || !answer) h.snoozedUntil = now + SNOOZE_MS;
   return h;
 }
@@ -341,7 +341,7 @@ const PROBE_OFFER_KEY = 'videoPreviewEnhanced.gpuTestOffer';
 const PROBE_OFFER_TEXT = 'Video Preview: this video plays slower than real time. Test ffmpeg on this computer (about 20 seconds) to find the fastest way to decode on your GPU?';
 const PROBE_OFFER_RUN = 'Run test';
 const PROBE_OFFER_LATER = 'Not now';
-const PROBE_OFFER_NEVER = "Don't remind me";
+const PROBE_OFFER_NEVER = "Don't Show Again";
 
 /**
  * Whether to offer the GPU test now. ctx: { offer: stored {never}, shownThisSession, toolsInstalled,
@@ -355,7 +355,7 @@ function shouldOfferProbe(ctx) {
   return ctx.slowRun >= HINT_SLOW_SAMPLES || (ctx.slowRun >= 1 && ctx.ratio > 0 && ctx.ratio < HINT_HOPELESS);
 }
 
-/** The stored offer state after an answer: "Don't remind me" is kept; anything else waits for the next session. */
+/** The stored offer state after an answer: "Don't Show Again" is kept; anything else waits for the next session. */
 function afterProbeOffer(offer, answer, now = Date.now()) {
   const o = { ...(offer || {}), shownAt: now, answer: answer || 'dismissed' };
   if (answer === PROBE_OFFER_NEVER) o.never = true;
@@ -375,12 +375,13 @@ function describe(s) {
 const ONBOARD_KEY = 'videoPreviewEnhanced.onboarding';
 const ONBOARD_SETUP = 'Set up ffmpeg';
 const ONBOARD_LATER = 'Not now';
-const ONBOARD_BUILTIN = "Don't remind me (use built-in player)";
-const ONBOARD_TEXT = 'Video Preview works best with ffmpeg: 4K, HDR, HEVC, AV1 and ProRes play smoothly on your GPU. Set it up now?';
+const ONBOARD_BUILTIN = "Don't Show Again";
+const ONBOARD_TEXT = 'Video Preview works best with ffmpeg: 4K, HDR, HEVC, AV1 and ProRes play smoothly on your GPU. ' +
+  `Choose "Don't Show Again" to keep using the built-in player and stop setup and slow-playback reminders. Set it up now?`;
 
 /**
  * Whether to offer "Set up ffmpeg" now (2026-11-20): the first video of every session while
- * no ffmpeg is found, until "Don't remind me" (choice 'builtin'); "Not now", closing it, or a setup
+ * no ffmpeg is found, until "Don't Show Again" (choice 'builtin'); "Not now", closing it, or a setup
  * that ended without ffmpeg ask again next session. Local (or WSL) trusted windows only.
  * ctx: { state: stored answer or undefined, shownThisSession, toolsInstalled, remote, trusted, pending }.
  */
