@@ -3,6 +3,11 @@
 Research only: no playback code or defaults change. Smooth playback is the owner's priority;
 the proposed action is to **offer** a local H.264 preview when native playback falls behind.
 
+**Update 2026-11-21: the managed LGPL build was downloaded and measured; see
+[the update section](#update-2026-11-21-managed-lgpl-build-nvenc-and-driver). It supersedes the
+"unmeasured" statements below: NVENC fails on the newest line (n9.0, needs driver 610+) and works
+on the n8.1 line with the same driver (581.15).**
+
 ## Finding
 
 GPU encoding does not require libx264. The published Windows LGPL build recipes enable NVIDIA,
@@ -15,6 +20,100 @@ checksum request with `connect EACCES ...:443`. No alternate executable was down
 driver or system setting was changed. Its version, archive SHA-256, runtime availability,
 encode speed, quality and live WebCodecs playback therefore remain **unmeasured**. Do not turn
 this note into a claim that the managed build sustains 4K60.
+
+## Update 2026-11-21: managed LGPL build, NVENC and driver
+
+The maintainer allowed downloading FFmpeg for this research. Builds went to a scratch folder, never
+the repo. Same machine as above (i7-9700K, RTX 4070, driver 581.15), Windows, other agents active.
+
+**Build the installer picks today.** `checksums.sha256` of the BtbN `latest` release listed three
+LGPL shared Windows archives: `ffmpeg-master-latest-...`, `ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip`
+and `ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip`. The installer takes the highest, n9.0:
+
+| Archive | SHA-256 (matches manifest) | `-version` |
+|---|---|---|
+| `ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip` (77.7 MB) | `d7a2cdb8da5231913d617d3c75f8d00c36cfbcecb43719556aa081fc51f64abe` | n9.0.2-61-gd59078794d-20261120, gcc 16.2.0, libavutil 61.1.102 |
+| `ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip` | `e1c4f811c3ce5b71a2dd4283d16debd6b9a3d3e7adced82d39c814d3d60e6540` | n8.1.3-39-g660b5aa7db-20261120 |
+
+Both are LGPL (`--enable-version3`, no GPL, no libx264/libx265). In n9.0 `-encoders` lists
+`h264_nvenc`, `hevc_nvenc`, `av1_nvenc`, `h264_qsv`, `hevc_qsv`, `h264_amf`, `hevc_amf` (plus
+av1/vp9/mpeg2/mjpeg QSV and AMF variants). The URL floats: the hashes above are only valid for that
+day's files.
+
+**Why NVENC failed.** An NVENC session compares the NVENC API version the FFmpeg build was compiled
+against (the `nv-codec-headers`) with what the driver exports. BtbN's
+[`50-ffnvcodec.sh`](https://github.com/BtbN/FFmpeg-Builds/blob/master/scripts.d/50-ffnvcodec.sh)
+pins the headers per FFmpeg version:
+
+| FFmpeg | Headers | NVENC API | Minimum driver (Windows) |
+|---|---|---|---|
+| n9.0 and master | master (Video Codec SDK 13.1) | 13.1 | **610.0** |
+| n8.0 / n8.1 | `sdk/13.0` | 13.0 | 570.0 |
+| before 8.0 (n7.1 ...) | `sdk/11.1` | 11.1 | 471.41 |
+
+(Minimums from each branch's README in FFmpeg/nv-codec-headers.) Driver 581.15 exports NVENC API
+13.0, so n9.0 (and the Gyan 9.0.2 build used last night) refuse with `Driver does not support the
+required nvenc API version. Required: 13.1 Found: 13.0`. This is not a broken GPU or a missing
+setting. An older line n7.1 was not needed: n8.1 opens NVENC at once on the same driver. In n9.0,
+CUDA decode and `scale_cuda` work (720 frames of the 4K source at about 8x real time); only the
+encoder open fails, for `h264_nvenc` and `hevc_nvenc` alike. QSV and AMF still fail on this PC in
+the LGPL build (QSV: MFX session creation error -9; AMF: no runtime), as in the Gyan build; this
+machine gives no data for them.
+
+**Measured, n8.1, NVENC.** Method as above (CUDA decode, `scale_cuda=format=nv12`, p4, `-tune ll`,
+VBR, no lookahead, no B frames, GOP 60, peak 1.5x, 720 frames of the generated 4K60 source), 3
+repeats per rate through `test/benchq.js`. "First VCL" is first slice bytes at the pipe. CPU is
+percent of one core (800 = whole CPU). GPU is the whole-device mean of encoder / decoder engine use.
+
+| Target Mb/s | Encode fps, repeats | Actual Mb/s | First VCL, ms | CPU, % one core | GPU encoder / decoder, % |
+|---|---|---:|---|---|---|
+| 12 | 131.2, 142.4, 144.0 | 18.1 | 225-333 | 11-15 | 76-88 / 21-25 |
+| 24 | 141.3, 137.9, 144.0 | 26.5 | 220-423 | 10-17 | 76-84 / 19-26 |
+| 40 | 142.4, 142.9, 142.1 | 39.3 | 233-275 | 9-14 | 76-79 / 19-22 |
+
+`hevc_nvenc` at 24 Mb/s (one run): 91.8 fps, 26.0 Mb/s, first VCL 755 ms. Every H.264 run was
+about 2.3 times real time. Noise: 131-144 fps overall (the 131 coincided with 92% CPU load from
+other agents; the rest sit within 2-4%). First-packet latency spread is wider (220-423 ms), so
+read it as roughly 0.2-0.4 s including startup. The encoder engine reads 76-88% busy, so headroom
+beyond about 2x real time is not shown. The 12 Mb/s target produced 18.1 Mb/s: in this
+configuration VBR does not go lower on this content, so the lowest rate is not really selectable;
+24 and 40 land within 10% of target.
+
+Quality, first encode per rate versus the generated 8-bit source (all 720 frames; excludes the
+10-to-8-bit loss; repeated, easy content; FFmpeg default VMAF model at 4K):
+
+| Target Mb/s | PSNR avg, dB | SSIM All | VMAF |
+|---|---:|---:|---:|
+| 12 (18.1 actual) | 50.57 | 0.99446 | 94.07 |
+| 24 (26.5 actual) | 51.29 | 0.99500 | 95.45 |
+| 40 (39.3 actual) | 51.48 | 0.99527 | 96.01 |
+
+**WebCodecs in hidden VS Code 1.147.0**, same script on the NVENC files, three fresh profiles, 8.5 s
+each, nine valid runs, no retries; every run reported `v=webcodecs fps=60 canvas=3840x2160`.
+Retained 2 s windows were 59.5-60.5 fps except the opening window (48-60; below 57 in four of nine
+runs: 48, 51.5, 56.5, 57). Whole-run presented fps 53.3-56.2, playhead/wall 0.889-0.937: the same
+startup-included behaviour as with the libx264 files. CPU load before runs 5-68%. NVENC output is
+therefore decoded and presented at 60 fps in the production player. As before, this does not
+measure a live encode beside the player, transport or audio.
+
+**Consequences for the extension.**
+
+- The installer's "highest n<major>.<minor>" rule currently selects the line that needs driver 610
+  for NVENC, while this PC's driver (581.15) works with n8.1. A GPU-preview feature built on the
+  managed build would silently never start on such drivers.
+- Do not trust `-encoders`. Probe by opening the encoder on a tiny frame
+  (`-f lavfi -i color=s=256x256 -frames:v 3 -c:v h264_nvenc -f null -`, about 0.2 s) and read
+  stderr. `Required: <x> Found: <y>` and `minimum required Nvidia driver ... <n> or newer` identify
+  this case and give the driver number to show.
+- On an API mismatch: (1) if an older LGPL line is available, use it for the preview (needs setup to
+  keep a second line, or to fetch n8.1 on demand from the same manifest with the same SHA-256
+  check; BtbN drops old lines, so tolerate absence); (2) otherwise tell the user once, in the
+  existing notice, that the GPU smooth preview needs NVIDIA driver `<number from stderr>` or newer
+  (link to NVIDIA's driver page), and stay on the existing raw 1440p path. No automatic driver
+  action and no repeat prompts; cache the failure per binary and driver version and re-probe when
+  either changes. No libx264 fallback (not in LGPL).
+- The live-encode half (encode beside the player, audio, seek) is still unbuilt. Nothing here
+  changes player behaviour.
 
 ## Why compress
 
@@ -240,10 +339,11 @@ measure concurrent live encoding, packet transport or audio.
 The separate whole-run presented-fps and playhead-rate fields include the play command,
 startup/prebuffering and pause/state round trips; they are not steady-state decoder rates.
 
-Open work: obtain and checksum the managed archive when network policy permits; repeat with
-a driver/build pair whose NVENC APIs agree; run Intel and AMD machines; use real 60 fps motion
+Open work (archive and a matching driver/build pair are done, see the 2026-11-21 update): run
+Intel and AMD machines (QSV and AMF did not open here); use real 60 fps motion
 and grain/text; measure first *presented* frame and a concurrent live encoded path in VS Code.
-A compatible driver/build pair remains a prerequisite, not a change made by this branch.
+A compatible driver/build pair (n8.1 line with driver 570+, or n9.0 with driver 610+) is a
+prerequisite, not a change made by this branch.
 
 ## Validation of this research branch
 
