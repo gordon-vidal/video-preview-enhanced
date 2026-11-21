@@ -157,8 +157,8 @@
         "category": "Video Preview"
       },
       {
-        "command": "videoPreviewEnhanced.compare",
-        "title": "Compare Videos",
+        "command": "videoPreviewEnhanced.addToCompare",
+        "title": "Add to Compare",
         "category": "Video Preview",
         "icon": "$(diff)"
       },
@@ -177,12 +177,6 @@
         "command": "videoPreviewEnhanced.stopAddFromExplorer",
         "title": "Compare: Stop Adding from the Explorer",
         "category": "Video Preview"
-      },
-      {
-        "command": "videoPreviewEnhanced.compareFolder",
-        "title": "Compare Videos in Folder",
-        "category": "Video Preview",
-        "icon": "$(diff)"
       },
       {
         "command": "videoPreviewEnhanced.loadSubtitles",
@@ -273,13 +267,8 @@
           "group": "navigation@20"
         },
         {
-          "command": "videoPreviewEnhanced.compare",
-          "when": "listMultiSelection && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
-          "group": "3_compare@20"
-        },
-        {
-          "command": "videoPreviewEnhanced.compareFolder",
-          "when": "explorerResourceIsFolder",
+          "command": "videoPreviewEnhanced.addToCompare",
+          "when": "explorerResourceIsFolder || resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
           "group": "3_compare@20"
         }
       ],
@@ -361,7 +350,7 @@
           "when": "videoPreviewEnhanced.addMode"
         },
         {
-          "command": "videoPreviewEnhanced.compareFolder",
+          "command": "videoPreviewEnhanced.addToCompare",
           "when": "false"
         }
       ],

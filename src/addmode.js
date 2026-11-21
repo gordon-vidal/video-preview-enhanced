@@ -1,9 +1,8 @@
 'use strict';
 // "Add from the Explorer" (docs/notes/compare-ui.md "Add mode"): while it is on, the next video VS Code opens
-// (an Explorer click, a drop on the editor, Quick Open ...) goes into compare instead of its own tab. Started from
-// a player (Shift+D, or the quick pick's row): one video, then compare takes the player's tab. Started in compare
-// (Shift+D, or the Compare panel's row): every video opened is added, until Esc, the same control again, or the
-// compare is full. Pure (no VS Code), so a Node test checks the rules; src/compare.js does the opening.
+// (an Explorer click, a drop on the editor, Quick Open ...) goes into compare instead of its own tab.
+// A player explicitly armed with Shift+D becomes compare on the first open. Compare starts armed and stays
+// armed until Esc, Shift+D, capacity, or switching editor. Pure state; src/compare.js handles the editors.
 
 const { VIDEO_EXT } = require('./comparepick');
 
@@ -12,19 +11,25 @@ const { VIDEO_EXT } = require('./comparepick');
  */
 function createAddMode({ max: maxOpt }) {
   const maxNow = () => (typeof maxOpt === 'function' ? maxOpt() : maxOpt);
-  /** @type {null | { target: any, multi: boolean, uris: Set<string> }} */
+  /** @type {null | { target: any, multi: boolean, uris: Set<string>, count: number }} */
   let st = null;
+  const start = (target, { multi = false, uris = [] } = {}) => {
+    if (uris.length >= maxNow()) { st = null; return 'full'; }
+    st = { target, multi, uris: new Set(uris), count: uris.length };
+    return 'on';
+  };
   const hint = () => {
     if (!st) return { type: 'addMode', on: false };
     const max = maxNow();
-    const room = Math.max(0, max - st.uris.size);
-    return { type: 'addMode', on: true, multi: st.multi, n: st.uris.size, max, room };
+    const room = Math.max(0, max - st.count);
+    return { type: 'addMode', on: true, multi: st.multi, n: st.count, max, room };
   };
   return {
     get active() { return !!st; },
     get target() { return st ? st.target : null; },
     /** The page's hint for the target (`{ type: 'addMode', on, multi, n, max, room }`). */
     hint,
+    start,
     /**
      * Turns the mode on for `target` (a player or a compare), which shows `uris` (strings) now.
      * Already on for the same target: turns it off (the same key or control toggles).
@@ -32,19 +37,25 @@ function createAddMode({ max: maxOpt }) {
      */
     toggle(target, { multi = false, uris = [] } = {}) {
       if (st && st.target === target) { st = null; return 'off'; }
-      if (new Set(uris).size >= maxNow()) { st = null; return 'full'; }
-      st = { target, multi: !!multi, uris: new Set(uris) };
-      return 'on';
+      return start(target, { multi, uris });
     },
     stop() { const was = !!st; st = null; return was; },
     /** The target closed (its tab, or a player that became compare without the mode moving on). */
     gone(target) { if (st && st.target === target) { st = null; return true; } return false; },
-    /** A player became compare while the mode goes on (several videos): the compare is the target now. */
-    retarget(from, to, uris) { if (st && st.target === from) { st.target = to; if (uris) st.uris = new Set(uris); } },
+    /** Files can also change via the Compare controls (replace, remove, or add). */
+    sync(target, uris) {
+      if (!st || st.target !== target) return false;
+      return start(target, { multi: st.multi, uris }) === 'full';
+    },
+    /** A newly opened video can briefly become active before its tab closes. */
+    editorChanged({ isTarget, openingVideo }) {
+      if (!st || !st.multi || isTarget || openingVideo) return false;
+      st = null;
+      return true;
+    },
     /**
      * A video was opened while the mode may be on. `null`: not ours, VS Code opens it as usual.
-     * Else close its tab, and: `dup` it is shown already (nothing added), or add `uri` to `target`; `stop` the
-     * mode ends with it (one video from a player, or compare full).
+     * Else close its tab and add it to `target`, unless it is shown already. Capacity counts tiles.
      * @param {string} uri  the opened file, as a uri string
      * @param {string} [path]  its path (the uri's), to test the extension
      */
@@ -53,12 +64,13 @@ function createAddMode({ max: maxOpt }) {
       const p = path || uri.split(/[?#]/)[0];
       if (!VIDEO_EXT.test(p)) return null;
       const target = st.target;
+      if (st.count >= maxNow()) { st = null; return null; }
       if (st.uris.has(uri)) return { target, uri, dup: true, stop: false };
       st.uris.add(uri);
-      const full = st.uris.size >= maxNow();
-      const stop = full || !st.multi;
-      const d = { target, uri, dup: false, stop, full, n: st.uris.size };
-      if (stop) st = null;
+      const n = ++st.count;
+      const full = n >= maxNow();
+      const d = { target, uri, dup: false, stop: full, full, n };
+      if (full) st = null;
       return d;
     },
   };
