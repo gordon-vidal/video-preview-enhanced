@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const TIME_SCALE = Number(process.env.VPE_TIME_SCALE) || (process.env.CI ? 3 : 1);
 // One entry point for the four test layers (docs/TESTING.md).
 //
 //   node test/run.js [layer...] [--changed] [--grep re] [--jobs N] [--verbose] [--json file]
@@ -121,8 +122,10 @@ function runFile(entry) {
     child.stdout.on('data', onData);
     child.stderr.on('data', onData);
     const lastLine = () => { const l = out.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).pop(); return l ? (l.length > 140 ? `${l.slice(0, 140)}...` : l) : '(no output yet)'; };
-    const timeout = entry.timeout || 60000;
-    const stall = entry.stall || 30000;
+    // Limits are measured on the maintainer's desktop; slower machines (GitHub's runners take 2-3x as long,
+    // running 4 files at once) scale them: VPE_TIME_SCALE, else 3 on CI.
+    const timeout = (entry.timeout || 60000) * TIME_SCALE;
+    const stall = (entry.stall || 30000) * TIME_SCALE;
     let kind = null; // 'timeout' | 'stalled'
     let reason = '';
     const stop = (k, r) => { if (kind) return; kind = k; reason = r; killChild(child); };

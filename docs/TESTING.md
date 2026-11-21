@@ -45,6 +45,9 @@ was waited for.
   activating 45 s, the first frame of an ordinary clip 15 s (4K, native, remote, URL and HDR keep their longer
   waits), other waits as the case sets them. A page error still ends a wait at once; an instance without WebGL2 is
   retried, not failed. `VPE_BUDGET_SCALE=2` doubles every budget on a slow machine.
+- The limits are measured on the maintainer's desktop. On CI (`CI` set) every timeout, stall limit and budget is
+  multiplied by 3: GitHub's Windows runners take 2-3x as long per file (4 files at once). `VPE_TIME_SCALE=<n>`
+  sets the factor anywhere.
 - **After a layer got slower or faster on purpose**, or a new test was added: `node test/tune_timeouts.js`
   rewrites the numbers from the recorded runs (a file with no history gets 60 s / 30 s stall until then).
   A test that fails only on a tight timeout in a normal run needs its number raised, not a retry.

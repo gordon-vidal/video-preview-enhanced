@@ -1,6 +1,7 @@
 'use strict';
 // The layer 1-2 runner's limits: a silent hang is reported as STALLED with its last line, a long one as TIMEOUT.
 const assert = require('assert');
+process.env.VPE_TIME_SCALE = '1'; // exact limits here, also on CI (where the runner scales them by 3)
 const { runFile } = require('../run');
 
 (async () => {

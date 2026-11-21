@@ -57,7 +57,7 @@ async function runScenario(sc, ctx, attempt = 1) {
   const vs = new H.HiddenCode({ code, keep: flag('--keep'), tag: 'vpe3', env: { PATH: stripped, ...(sc.env || {}) }, settings: sc.settings });
   const results = [];
   // The scenario's time budget (test/vscode/budgets.js): past it the scenario is ended and reported as TIMEOUT.
-  const budget = Math.round((BUDGETS[sc.name] || DEFAULT_BUDGET) * Number(process.env.VPE_BUDGET_SCALE || 1));
+  const budget = Math.round((BUDGETS[sc.name] || DEFAULT_BUDGET) * Number(process.env.VPE_BUDGET_SCALE || process.env.VPE_TIME_SCALE || (process.env.CI ? 3 : 1)));
   let expired = false;
   let where = 'starting VS Code';
   let budgetTimer;
