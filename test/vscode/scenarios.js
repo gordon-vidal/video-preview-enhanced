@@ -106,7 +106,8 @@ async function runScenario(sc, ctx, attempt = 1) {
         const drop = step.skip ? new RegExp(step.skip) : null;
         lib.setFilter((n) => (!keep || keep.test(n)) && (!drop || !drop.test(n)));
         const h = { MEDIA: H.MEDIA, sleep, fwd, esc: lib.esc, openClip: H.openClip, closeClip: H.closeClip, playClip: ctx.playClip, seconds: ctx.perf ? 5 : 2, quick: !ctx.perf, ffmpeg: ff, scenario: ctx.perf ? undefined : sc.name };
-        const rs = await withTimeout(c.run(vs, h), step.timeout || 15 * 60e3, `${base} did not finish`);
+        const gl = brokenGl(vs);
+        const rs = await withTimeout(Promise.race([c.run(vs, h), gl.promise]).finally(gl.stop), step.timeout || 15 * 60e3, `${base} did not finish`);
         for (const r of rs) {
           const name = r.name ? `${base}/${r.name}` : base;
           if ((keep || drop) && r.name && !((!keep || keep.test(r.name)) && (!drop || !drop.test(r.name)))) continue; // moved to another layer
@@ -143,6 +144,20 @@ async function runScenario(sc, ctx, attempt = 1) {
     results.push({ name: `${sc.name}/webgl2`, ok: false, problems: ['two instances in a row had no WebGL2 (GPU process): logs in test/vscode/out/nogl-*'] });
   }
   return { name: sc.name, ms: Date.now() - t0, attempts: attempt, noGl, results };
+}
+
+/** Rejects as soon as this instance logs "no WebGL2": a broken instance ends the step now, not after each wait's timeout. */
+function brokenGl(vs) {
+  let timer;
+  const promise = new Promise((_, rej) => {
+    timer = setInterval(() => {
+      vs.mark();
+      const l = vs.lines.find((x) => H.NO_WEBGL.test(x));
+      if (l) rej(new Error(`no WebGL2 in this VS Code instance: ${l.replace(/^.*?webview: /, '')}`));
+    }, 300);
+  });
+  promise.catch(() => {});
+  return { promise, stop: () => clearInterval(timer) };
 }
 
 function withTimeout(p, ms, what) {

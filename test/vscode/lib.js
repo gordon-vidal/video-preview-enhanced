@@ -242,7 +242,7 @@ async function open(vs, h, file, { until = pictureOrError, timeout = 40000 } = {
     const t0 = Date.now();
     for (;;) {
       let s = null;
-      try { s = await P.ask('state', {}, 4000); } catch { /* not up yet */ }
+      try { s = await P.ask('state', {}, 4000); } catch (e) { if (/no WebGL2/.test(e.message)) throw e; /* else: not up yet */ }
       if (s && until(s)) { P.first = s; break; }
       if (Date.now() - t0 > timeout) throw new Error(`${P.name}: TIMEOUT after ${timeout / 1000} s waiting for the page to open${s ? ` (${JSON.stringify(brief(s))})` : ' (no answer from the page)'}`);
       await sleep(300);
