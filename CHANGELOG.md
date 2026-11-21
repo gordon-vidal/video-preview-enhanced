@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Fixed: stale texts in settings (`whenSlow`, `advancedMode`) and the FAQ.
+- Fixed: closing a web video that is still downloading (server without range support) left pending reads hanging; closing now cancels the requests and settles them.
 
 ## 0.7.2 (2026-11-20)
 
