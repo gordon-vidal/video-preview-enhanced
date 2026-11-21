@@ -376,8 +376,7 @@ const ONBOARD_KEY = 'videoPreviewEnhanced.onboarding';
 const ONBOARD_SETUP = 'Set up ffmpeg';
 const ONBOARD_LATER = 'Not now';
 const ONBOARD_BUILTIN = "Don't Show Again";
-const ONBOARD_TEXT = 'Video Preview works best with ffmpeg: 4K, HDR, HEVC, AV1 and ProRes play smoothly on your GPU. ' +
-  `Choose "Don't Show Again" to keep using the built-in player and stop setup and slow-playback reminders. Set it up now?`;
+const ONBOARD_TEXT = 'Video Preview works best with ffmpeg: 4K, HDR, HEVC, AV1 and ProRes play smoothly on your GPU. Set it up now?';
 
 /**
  * Whether to offer "Set up ffmpeg" now (2026-11-20): the first video of every session while

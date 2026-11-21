@@ -54,7 +54,6 @@ async function start({ answer, remote, trusted = true, settings = none, state } 
   assert.match(q[0], /^Video Preview works best with ffmpeg: .*Set it up now\?$/);
   assert.doesNotMatch(q[0], /download|MB/i, 'the first popup never mentions a download');
   assert.deepStrictEqual(q.slice(1), ['Set up ffmpeg', 'Not now', "Don't Show Again"]);
-  assert.match(q[0], /keep using the built-in player and stop setup and slow-playback reminders/);
   assert.strictEqual(x.h.context.globalState.get(d.ONBOARD_KEY).choice, 'builtin');
   s.panel.dispose();
   s = await x.openOne();
