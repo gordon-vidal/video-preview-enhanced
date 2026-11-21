@@ -54,6 +54,9 @@ const JOBS = {
   'sine_only.mkv': [...tone(5, 1000), '-c:a', 'aac'],
   'vp8_2s.webm': [...pic(S, 2), '-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '300k', '-g', '30'],
   'long_20s.mp4': [...pic(S, 20), ...tone(20), ...X264, '-crf', '34', '-c:a', 'aac'],
+  // 24 s of the 1080p clips (copied 12 times, no re-encode) for the 9- and 16-video grids (test/vscode/cases/multiview.js).
+  'multiview_hevc.mp4': ['-stream_loop', '11', '-i', path.join(__dirname, 'hevc_8_1080p.mp4'), '-an', '-c:v', 'copy'],
+  'multiview_h264.mp4': ['-stream_loop', '11', '-i', path.join(__dirname, 'h264_8_1080p.mp4'), '-an', '-c:v', 'copy'],
   'rotated.mp4': (out) => ff(['-display_rotation', '90', '-i', clip('s_h264.mp4'), '-c', 'copy', out]),
   // Damaged and cut files.
   'damaged_h264.mkv': (out) => damageH264(out, 'garbage'),

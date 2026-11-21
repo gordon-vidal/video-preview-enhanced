@@ -519,6 +519,16 @@
           "default": "fit",
           "markdownDescription": "How the picture sits in the player for **new** tabs, in the player and in compare: `\"fit\"`, `\"fill\"`, `\"stretch\"` or `\"actual\"` (100 %). The button beside the keyboard shortcuts and the **Z** key change the current tab only."
         },
+        "videoPreviewEnhanced.compare.maxVideos": {
+          "type": "integer",
+          "default": 4,
+          "minimum": 2,
+          "maximum": 16,
+          "tags": [
+            "experimental"
+          ],
+          "markdownDescription": "**Experimental.** How many videos one compare view takes (2-16). From 5 videos on they are shown in a plain grid (3×2, 3×3, 4×3, 4×4) and share the memory and transfer budgets of 4, so each picture gets less. Applies to the next compare you open or a video you add."
+        },
         "videoPreviewEnhanced.loop": {
           "type": "boolean",
           "default": true,
