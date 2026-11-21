@@ -42,4 +42,28 @@ function createBurst({ windowMs = 400, max, onBurst, setTimer = setTimeout, clea
   };
 }
 
-module.exports = { createBurst };
+/**
+ * Tabs of our player (a single click's preview tab, say) that still show one of `uris` (strings): once those
+ * videos are in a compare they are duplicates. `groups` is vscode.window.tabGroups.all; with `viewColumn`
+ * only that editor group is looked at.
+ */
+function leftoverTabs(groups, uris, viewColumn) {
+  const want = new Set(uris);
+  const out = [];
+  for (const g of groups || []) {
+    if (viewColumn !== undefined && g.viewColumn !== undefined && g.viewColumn !== viewColumn) continue;
+    for (const tab of g.tabs || []) {
+      const inp = tab.input || {};
+      if (!inp.uri || typeof inp.viewType !== 'string' || !inp.viewType.startsWith('videoPreviewEnhanced.')) continue;
+      if (want.has(inp.uri.toString())) out.push(tab);
+    }
+  }
+  return out;
+}
+
+/** The one-time message after the first "open together". */
+function togetherNotice(n) {
+  return `Video Preview: opened ${n} videos together in Compare. You can turn this off in Settings (compare.openTogether).`;
+}
+
+module.exports = { createBurst, leftoverTabs, togetherNotice };

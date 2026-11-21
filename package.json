@@ -158,7 +158,7 @@
       },
       {
         "command": "videoPreviewEnhanced.compare",
-        "title": "Compare / Play Together",
+        "title": "Compare Videos",
         "category": "Video Preview",
         "icon": "$(diff)"
       },
@@ -179,9 +179,10 @@
         "category": "Video Preview"
       },
       {
-        "command": "videoPreviewEnhanced.compareSelected",
-        "title": "Compare Selected Videos",
-        "category": "Video Preview"
+        "command": "videoPreviewEnhanced.compareFolder",
+        "title": "Compare Videos in Folder",
+        "category": "Video Preview",
+        "icon": "$(diff)"
       },
       {
         "command": "videoPreviewEnhanced.loadSubtitles",
@@ -272,19 +273,14 @@
           "group": "navigation@20"
         },
         {
-          "command": "videoPreviewEnhanced.playSequence",
-          "when": "explorerResourceIsFolder || resourceExtname =~ /^\\.(png|jpe?g|webp|bmp|gif|avif)$/i",
-          "group": "navigation@21"
-        },
-        {
           "command": "videoPreviewEnhanced.compare",
           "when": "listMultiSelection && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
           "group": "3_compare@20"
         },
         {
-          "command": "videoPreviewEnhanced.compareWith",
-          "when": "!listMultiSelection && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
-          "group": "3_compare@21"
+          "command": "videoPreviewEnhanced.compareFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "3_compare@20"
         }
       ],
       "commandPalette": [
@@ -365,7 +361,7 @@
           "when": "videoPreviewEnhanced.addMode"
         },
         {
-          "command": "videoPreviewEnhanced.compareSelected",
+          "command": "videoPreviewEnhanced.compareFolder",
           "when": "false"
         }
       ],
@@ -445,11 +441,6 @@
       ]
     },
     "keybindings": [
-      {
-        "command": "videoPreviewEnhanced.compareSelected",
-        "key": "alt+d",
-        "when": "explorerViewletFocus && !inputFocus"
-      },
       {
         "command": "videoPreviewEnhanced.stopAddFromExplorer",
         "key": "escape",

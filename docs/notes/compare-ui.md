@@ -108,7 +108,7 @@ the VS Code API.** Read in VS Code 1.147.0's own code (the portable build in `te
 ## Add mode: add videos by clicking them in the Explorer (2026-11-20, branch `feat/compare-gesture`, for review)
 
 The fallback Gordon asked for. Logic in `src/addmode.js` (pure), the host side in `src/compare.js`
-(`registerCompare`: `toggleAddMode`, `claimOpen`, `stopAddMode`, `compareSelected`), the open interception in
+(`registerCompare`: `toggleAddMode`, `claimOpen`, `stopAddMode`), the open interception in
 `src/extension.js` (`resolveCustomEditor`).
 
 - **Start:** Shift+D in the player or compare; in the D quick pick the row "Click videos in the Explorer…"; in the
@@ -131,11 +131,9 @@ The fallback Gordon asked for. Logic in `src/addmode.js` (pure), the host side i
   `when: videoPreviewEnhanced.addMode && !inputFocus && !inQuickOpen`), plus the page's own Esc. Known: while the mode
   is on, Esc in the Explorer only stops the mode, and an Esc that closes a player panel also stops it (the page
   forwards Esc to the workbench).
-- **Alt+D in the Explorer** ("Compare Selected Videos", `when: explorerViewletFocus && !inputFocus`; Alt+D is free
-  in VS Code's defaults): 2-4 selected videos open compare in a new tab; one video joins the compare in add mode, or
-  else the visible player in its place. A keybinding gets no Explorer selection, so it runs VS Code's "Copy Path" and
-  reads the clipboard; the clipboard's text is put back after (a picture on the clipboard would be lost: Gordon to
-  decide if that is acceptable, or drop Alt+D and keep the context menu's Compare / Play Together).
+- **Alt+D in the Explorer: dropped** (maintainer, 2026-11-21). The command `compareSelected`, its keybinding and its
+  Copy Path / clipboard trick are gone; the Explorer's **Compare Videos** (multi-select) and **Compare Videos in
+  Folder** (folder) remain.
 
 ### Maintainer feedback 2026-11-21: "Shift+D is good"
 
@@ -162,8 +160,9 @@ player); a status bar item instead of the in-picture hint; time out the mode aft
 dropped on a player's group joins compare" (accepts the double-click ambiguity above).
 
 Tests: `test/host/addmode_test.js` (the rules; with a fake VS Code: Shift+D in a player and an open become compare
-in place at its position, compare adds until full, duplicates, other editors' tabs closed, Esc, closing compare, Alt+D
-with the clipboard put back), `test/host/comparepick_test.js` (the new quick pick row, Copy Path parsing),
+in place at its position, compare adds until full, duplicates, other editors' tabs closed, Esc, closing compare),
+`test/host/comparepick_test.js` (the new quick pick row, folder videos, Compare Videos in Folder), `test/host/burst_test.js`
+(open together: leftover preview tab closed, one-time notice),
 `case/compare_addmode` (layer 3: the opens are `vscode.open` with a preview tab through the test hook `openFile`, since
 the hidden runner can't click the Explorer).
 

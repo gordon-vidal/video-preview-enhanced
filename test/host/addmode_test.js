@@ -1,7 +1,7 @@
 'use strict';
 // Add from the Explorer (src/addmode.js, docs/notes/compare-ui.md "Add mode"): the rules, then the host with a
 // fake VS Code: Shift+D in a player, a video opened meanwhile becomes compare in the player's place; in compare
-// every opened video is added until full; tabs of other editors close; Esc; Alt+D on an Explorer selection.
+// every opened video is added until full; tabs of other editors close; Esc.
 const assert = require('assert');
 const path = require('path');
 const { createAddMode } = require('../../src/addmode');
@@ -122,21 +122,7 @@ const { make } = require('../media/make_cases_media');
       cmp2.dispose();
       assert.strictEqual(ctx().pop(), false, 'closing compare: off');
       assert.notStrictEqual(resolve(c).r, undefined, 'then videos open as usual');
-
-      // Alt+D: the Explorer selection through Copy Path; the clipboard comes back.
-      W.env.clipboard.text = 'kept';
-      const exec = W.commands.executeCommand;
-      const calls = [];
-      W.commands.executeCommand = async (id, ...args) => {
-        if (id === 'copyFilePath') { W.env.clipboard.text = [a, path.join(dir, 'notes.txt'), b].join('\r\n'); return undefined; }
-        calls.push([id, ...args]);
-        return exec(id, ...args);
-      };
-      await W._commands['videoPreviewEnhanced.compareSelected']();
-      W.commands.executeCommand = exec;
-      const cmd = calls.find((x) => x[0] === 'videoPreviewEnhanced.compare');
-      assert.ok(cmd && cmd[2].length === 2 && cmd[2][1].fsPath === W.Uri.file(b).fsPath, `compare of the selection: ${JSON.stringify(calls.map((x) => x[0]))}`);
-      assert.strictEqual(W.env.clipboard.text, 'kept', 'clipboard restored');
+      assert.strictEqual(W._commands['videoPreviewEnhanced.compareSelected'], undefined, 'Alt+D command is gone');
     } finally { h2.dispose(); }
 // The players opened here keep file watchers: end the process.
 })().then(() => { console.log('addmode: ok'); process.exit(0); }, (e) => { console.error(e); process.exit(1); });

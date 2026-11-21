@@ -5,7 +5,20 @@
 // a moment apart, are untouched; the maximum follows compare.maxVideos; the setting turns it off.
 const assert = require('assert');
 const path = require('path');
-const { createBurst } = require('../../src/burst');
+const { createBurst, leftoverTabs, togetherNotice } = require('../../src/burst');
+
+// ---- leftover tabs: a preview tab still showing a compared video is a duplicate ----
+{
+  const T = (uri, viewType = 'videoPreviewEnhanced.player') => ({ input: { uri: { toString: () => uri }, viewType } });
+  const a = T('file:///v/a.mp4'); const b = T('file:///v/b.mp4'); const z = T('file:///v/z.mp4');
+  const txt = T('file:///v/a.mp4', 'default'); const other = T('file:///v/a.mp4');
+  const groups = [{ viewColumn: 1, tabs: [a, z, txt, { input: {} }] }, { viewColumn: 2, tabs: [other, b] }];
+  assert.deepStrictEqual(leftoverTabs(groups, ['file:///v/a.mp4', 'file:///v/b.mp4']), [a, other, b], 'players of compared videos');
+  assert.deepStrictEqual(leftoverTabs(groups, ['file:///v/a.mp4', 'file:///v/b.mp4'], 1), [a], 'one editor group only');
+  assert.deepStrictEqual(leftoverTabs(groups, ['file:///v/q.mp4']), [], 'others stay');
+  assert.deepStrictEqual(leftoverTabs(undefined, ['x']), []);
+  assert.ok(/3 videos together.*compare\.openTogether/.test(togetherNotice(3)), 'notice names the setting');
+}
 
 // ---- the rules ----
 {
@@ -74,7 +87,8 @@ const { make } = require('../media/make_cases_media');
   const closedTabs = [];
   const tabGroups = { onDidChangeTabs: (fn) => { tabListener = fn; return { dispose() {} }; }, close: async (t) => { closedTabs.push(t); }, all: [] };
   const settings = { 'videoPreviewEnhanced.decoder': 'builtin' };
-  const h2 = load({ settings, setup: (v) => { v.window.createWebviewPanel = fakePanel; v.window.tabGroups = tabGroups; } });
+  const infos = [];
+  const h2 = load({ settings, setup: (v) => { v.window.createWebviewPanel = fakePanel; v.window.tabGroups = tabGroups; v.window.showInformationMessage = async (m, ...b) => { infos.push([m, ...b]); return undefined; }; } });
   const W = h2.vscode;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const resolve = (file) => {
@@ -100,6 +114,26 @@ const { make } = require('../media/make_cases_media');
     assert.ok(/"names":\["s_h264\.mp4","rotated\.mp4"\]/.test(panels[0].webview.html), 'both videos, in order');
     assert.ok(p1.disposed && p2.disposed, 'the burst players close');
     assert.strictEqual(closedTabs.length, 1, 'the tab of the burst closes');
+    assert.strictEqual(infos.length, 1, 'first time: one notice');
+    assert.ok(/2 videos together/.test(infos[0][0]) && infos[0].slice(1).join() === 'Got it,Open Settings', 'notice text and buttons');
+    assert.strictEqual(h2.context.globalState.get('videoPreviewEnhanced.openTogetherNoticed'), true, 'noticed is remembered');
+    // A single click's preview tab of a compared video stays in the group: it closes with the compare.
+    const prev = { input: { uri: W.Uri.file(a), viewType: 'videoPreviewEnhanced.player' }, group: { viewColumn: 1 } };
+    const elsewhere = { input: { uri: W.Uri.file(a), viewType: 'videoPreviewEnhanced.player' }, group: { viewColumn: 2 } };
+    tabGroups.all = [{ viewColumn: 1, tabs: [prev] }, { viewColumn: 2, tabs: [elsewhere] }];
+    closedTabs.length = 0;
+    resolve(a); resolve(b);
+    await sleep(300);
+    assert.deepStrictEqual(closedTabs, [prev], 'the leftover preview tab closes, other groups stay');
+    assert.strictEqual(infos.length, 1, 'the notice never repeats');
+    tabGroups.all = [];
+    // Compare Videos (a multi-selection) closes the same duplicates.
+    tabGroups.all = [{ viewColumn: 1, tabs: [prev] }];
+    closedTabs.length = 0;
+    await W._commands['videoPreviewEnhanced.compare'](W.Uri.file(a), [W.Uri.file(a), W.Uri.file(b)]);
+    assert.deepStrictEqual(closedTabs, [prev], 'Compare Videos closes the duplicate tab');
+    tabGroups.all = [];
+    panels.length = 1;
     // The setting turns it off.
     settings['videoPreviewEnhanced.compare.openTogether'] = false; // read at each open
     const q1 = resolve(a); const q2 = resolve(b);

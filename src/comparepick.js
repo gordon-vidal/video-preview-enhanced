@@ -46,10 +46,15 @@ function droppedVideos(values) {
   return [...new Set(out)];
 }
 
-/** Video paths in VS Code's "Copy Path" text of an Explorer selection (one path per line), in order, no duplicates. */
-function selectedVideos(text) {
-  const out = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && VIDEO_EXT.test(l));
-  return [...new Set(out)];
+/**
+ * The video files among a folder's entry names, natural name order, at most `max` of them (Explorer "Compare
+ * Videos in Folder"). `total` counts all videos so the caller can say when some were left out.
+ * @returns {{ names: string[], total: number }}
+ */
+function folderVideos(names, max) {
+  const vids = [...new Set((names || []).filter((n) => VIDEO_EXT.test(n)))]
+    .sort((a, b) => coll.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0));
+  return { names: vids.slice(0, Math.max(2, max | 0)), total: vids.length };
 }
 
-module.exports = { pickRows, pushRecent, droppedVideos, selectedVideos, VIDEO_EXT, RECENT_MAX };
+module.exports = { pickRows, pushRecent, droppedVideos, folderVideos, VIDEO_EXT, RECENT_MAX };

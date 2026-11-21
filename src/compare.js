@@ -23,9 +23,9 @@ const { budgets } = require('../media/membudget');
 const Grid = require('../media/compare-grid');
 const frameserver = require('./frameserver');
 const { barHtml } = require('./bar');
-const { pickRows, pushRecent, droppedVideos, selectedVideos } = require('./comparepick');
+const { pickRows, pushRecent, droppedVideos, folderVideos } = require('./comparepick');
 const { createAddMode } = require('./addmode');
-const { createBurst } = require('./burst');
+const { createBurst, leftoverTabs, togetherNotice } = require('./burst');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
 
 const MAX_BLOCK = 8 * 1024 * 1024;
@@ -433,7 +433,7 @@ class CompareSession {
 }
 
 /**
- * Commands: Explorer "Compare / Play Together" (2-4 files selected; up to 16 with compare.maxVideos) and
+ * Commands: Explorer "Compare Videos" (2-4 files selected; up to 16 with compare.maxVideos), "Compare Videos in Folder" and
  * "Compare With…" (the open player's file against one picked in a dialog).
  * deps: { vscode, log, sessions (open player Sessions), engineCfg(webview), nativeFor?(file, transport), nativeQueue?() }
  */
@@ -527,6 +527,24 @@ function registerCompare(context, deps) {
     })().catch((e) => deps.log(`compare: add from the Explorer failed: ${e && e.stack || e}`));
     return true;
   };
+  /** A player tab (a single click's preview tab, say) that still shows a compared video: closed, no duplicate left. */
+  const closeLeftovers = (list, viewColumn) => {
+    try {
+      const tabs = leftoverTabs(vscode.window.tabGroups.all || [], list.map(String), viewColumn);
+      for (const tb of tabs) Promise.resolve(vscode.window.tabGroups.close(tb)).catch(() => {});
+    } catch { /* tab API missing */ }
+  };
+  /** The first time videos open together: say what happened and where to turn it off (never again after). */
+  const NOTICED = 'videoPreviewEnhanced.openTogetherNoticed';
+  const noticeTogether = (n) => {
+    const gs = context.globalState;
+    if (!gs || gs.get(NOTICED)) return;
+    Promise.resolve(gs.update(NOTICED, true)).catch(() => {});
+    Promise.resolve(vscode.window.showInformationMessage(togetherNotice(n), 'Got it', 'Open Settings')).then((c) => {
+      if (c === 'Open Settings') return vscode.commands.executeCommand('workbench.action.openSettings', 'videoPreviewEnhanced.compare.openTogether');
+      return undefined;
+    }).catch(() => {});
+  };
   // ---- Open together: videos that VS Code opens in one burst (an Explorer multi-selection: Open With…, Enter,
   // double-click) become one compare (src/burst.js). A single video, or videos opened apart, are untouched.
   const burst = createBurst({
@@ -546,6 +564,8 @@ function registerCompare(context, deps) {
           for (const pn of it.panels) { try { pn.dispose(); } catch { /* gone already */ } }
           for (const tb of it.tabs) Promise.resolve(vscode.window.tabGroups.close(tb)).catch(() => {});
         }
+        closeLeftovers(list, tabCol);
+        noticeTogether(list.length);
         if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
       })().catch((e) => deps.log(`compare: open together failed: ${e && e.stack || e}`));
     },
@@ -566,34 +586,6 @@ function registerCompare(context, deps) {
       }
     }));
   }
-  /**
-   * Alt+D in the Explorer: the selected videos into compare. A keybinding passes no selection, so VS Code's
-   * "Copy Path" reads it (the clipboard's text is put back after). 2-4 videos: compare in a new tab; one: added
-   * to the compare that is picking (add mode), else compared with the visible player.
-   */
-  const compareSelected = async () => {
-    const clip = vscode.env.clipboard;
-    let saved = '';
-    try { saved = await clip.readText(); } catch { /* nothing to restore */ }
-    let text = '';
-    try {
-      await clip.writeText('');
-      await vscode.commands.executeCommand('copyFilePath');
-      text = await clip.readText();
-    } finally { await clip.writeText(saved); }
-    const base = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0] && vscode.workspace.workspaceFolders[0].uri;
-    const toUri = (p) => (base && base.scheme !== 'file' ? base.with({ path: p.replace(/\\/g, '/') }) : vscode.Uri.file(p));
-    const list = selectedVideos(text).map(toUri);
-    deps.log(`compare: Explorer selection: ${list.length} video(s)`);
-    if (list.length >= 2) return vscode.commands.executeCommand('videoPreviewEnhanced.compare', list[0], list);
-    if (list.length === 1) {
-      if (claimOpen(list[0])) return undefined;
-      const player = [...deps.sessions].find((s) => s.panel && s.panel.visible && !s.url && !s.sequence && s.uri && s.uri.toString() !== list[0].toString());
-      if (player) return open([player.uri, list[0]], { from: player, t: player.pos && Number.isFinite(player.pos.t) ? player.pos.t : 0 });
-    }
-    vscode.window.showInformationMessage('Video Preview: select 2 to 4 videos in the Explorer to compare them.');
-    return undefined;
-  };
   const pickMany = async (label, defaultUri, many) => {
     const r = await vscode.window.showOpenDialog({
       canSelectMany: !!many, openLabel: label, defaultUri,
@@ -664,13 +656,33 @@ function registerCompare(context, deps) {
       return target ? toggleAddMode(target) : undefined;
     }),
     vscode.commands.registerCommand('videoPreviewEnhanced.stopAddFromExplorer', stopAddMode),
-    vscode.commands.registerCommand('videoPreviewEnhanced.compareSelected', compareSelected),
+    vscode.commands.registerCommand('videoPreviewEnhanced.compareFolder', async (folder) => {
+      if (!(folder instanceof vscode.Uri)) return undefined;
+      let names = [];
+      try { names = (await vscode.workspace.fs.readDirectory(folder)).filter(([, ty]) => ty !== 2).map(([n]) => n); } catch { /* unreadable */ }
+      const max = maxVideos();
+      const r = folderVideos(names, max);
+      if (r.names.length < 2) {
+        vscode.window.showInformationMessage(`Video Preview: ${r.total ? 'only 1 video' : 'no videos'} in ${path.basename(folder.fsPath || folder.path)}; compare needs at least 2.`);
+        return undefined;
+      }
+      if (r.total > max) vscode.window.showInformationMessage(`Video Preview: ${r.total} videos in the folder; compare shows the first ${max}.`);
+      const list = r.names.map((n) => vscode.Uri.joinPath(folder, n));
+      const s = await open(list, {});
+      closeLeftovers(list, s && s.panel ? s.panel.viewColumn : undefined);
+      return s;
+    }),
     vscode.commands.registerCommand('videoPreviewEnhanced.compare', async (uri, uris, opts) => {
       let list = Array.isArray(uris) && uris.length ? uris : uri ? [uri] : [];
       list = list.filter((u) => VIDEO_EXT.test(u.path));
       const max = maxVideos();
       if (list.length > max) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
-      if (list.length >= 2) return open(list.slice(0, max), opts && opts.from ? opts : {}); // opts: the test hook's in-place open
+      if (list.length >= 2) { // opts: the test hook's in-place open
+        const shown = list.slice(0, max);
+        const s = await open(shown, opts && opts.from ? opts : {});
+        if (!(opts && opts.from)) closeLeftovers(shown, s && s.panel ? s.panel.viewColumn : undefined);
+        return s;
+      }
       const a = list[0] || activePlayerUri() || await pick('Compare: video A');
       if (!a) return undefined;
       const b = await pick(`Compare with ${path.basename(a.fsPath)} (B)`, vscode.Uri.joinPath(a, '..'));

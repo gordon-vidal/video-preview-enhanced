@@ -11,15 +11,16 @@ All are under **Video Preview** in the Command Palette.
 | Use Video Preview Enhanced for MP4/WebM | Opens MP4 and WebM in this player by default |
 | Use VS Code's Preview for MP4/WebM | Undoes that |
 | Open with Video Preview Enhanced | Explorer context menu on an MP4 or WebM file (not in the Command Palette) |
-| Compare / Play Together | Shows the 2–4 videos selected in the Explorer together, in sync (up to 16 with the experimental `compare.maxVideos`) |
-| Compare With… | Compares the open video with 1–3 more files (in the player's place) |
+| Compare Videos | Shows the 2–4 videos selected in the Explorer together, in sync (up to 16 with the experimental `compare.maxVideos`) |
+| Compare Videos in Folder | Explorer context menu of a folder: compares the videos directly in it (natural name order, up to `compare.maxVideos`; needs at least 2). Not in the Command Palette |
+| Compare With… | Compares the open video with 1–3 more files (in the player's place); in the player's right-click menu and editor title, not in the Explorer menu |
 | Load Subtitles… | Opens a subtitle file for the current video (needs an open player) |
 | Export Frames (A–B)… | (needs an open player) Saves every frame of the A-B loop as PNG into a folder you pick |
 | Copy ffmpeg Command for A–B | (needs an open player) Copies an ffmpeg command that cuts the A-B loop (exact or `-c copy`) |
 | (right-click menu items) | The player's context menu runs commands named `videoPreviewEnhanced.ctx.*` (play, pause, loopOn, loopOff, setA, setB, clearAB, copyFrame, saveFrame, copyTime, keys, playerSettings). They are not in the Command Palette; [see Keys and mouse](keys.md#right-click-menu) |
 | Open Video URL… | Plays a video from an http(s) URL: a direct file link, an HLS (`.m3u8`) or DASH (`.mpd`) stream ([Network URLs](urls.md)). Also **Open video URL…** in the player's ⚙ panel |
 | Open Video URL to the Side… / Open Video URL in New Window… | The same, in the editor group beside the current one or in a new window |
-| Play Image Sequence | Plays a folder of numbered images (also in the Explorer context menu of a folder or an image) |
+| Play Image Sequence | Plays a folder of numbered images (Command Palette only) |
 | Show Log | Shows the extension's log, useful for bug reports |
 
 ## Settings
