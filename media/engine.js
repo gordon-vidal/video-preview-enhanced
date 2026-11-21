@@ -53,6 +53,8 @@ function createEngine(env) {
       const gl = cv.getContext('webgl2', { preserveDrawingBuffer: true, alpha: false, antialias: false });
       if (!gl) throw new Error('WebGL2 is not available');
       this.gl = gl;
+      this.cv = cv;
+      this.maxPixels = 0; // compare's shared large-grid renderer caps its output (media/compare-grid.js)
       const vs = `#version 300 es
         in vec2 p; out vec2 uv; uniform int rot;
         void main() {
@@ -163,7 +165,13 @@ function createEngine(env) {
 
     size(w, h) {
       if (this.rot === 90 || this.rot === 270) { const x = w; w = h; h = x; }
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      if (this.maxPixels && w * h > this.maxPixels) {
+        const s = Math.sqrt(this.maxPixels / (w * h));
+        w = Math.max(1, Math.floor(w * s));
+        h = Math.max(1, Math.floor(h * s));
+      }
+      const cv = this.cv;
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
       this.gl.viewport(0, 0, w, h);
     }
 
@@ -359,6 +367,14 @@ function createEngine(env) {
       const res = await get(url);
       return blobUrl(await res.arrayBuffer(), type);
     };
+    // The decoder's wasm as a blob URL (libav.js loads it by URL) and compiled once here for the workers.
+    const wasmAsset = async (url) => {
+      const buf = await (await get(url)).arrayBuffer();
+      const out = { url: blobUrl(buf, 'application/wasm'), module: null };
+      try { if (buf.byteLength) out.module = await WebAssembly.compile(buf); } catch (e) { log(`WebAssembly compile in the page failed: ${e && e.message || e}`); }
+      signal.throwIfAborted();
+      return out;
+    };
     const stem = cfg.loader.replace(/\.js$/, '');
     // Fetch all four at once, and start loading the worker while the wasm is still downloading.
     const startWorker = async () => {
@@ -378,11 +394,20 @@ function createEngine(env) {
       startWorker(),
       asset(cfg.loader, 'text/javascript'),
       asset(`${stem}.wasm.js`, 'text/javascript'),
-      asset(`${stem}.wasm.wasm`, 'application/wasm'),
-    ]).then(([d, loader, toImport, wasmurl]) => {
+      wasmAsset(`${stem}.wasm.wasm`),
+    ]).then(([d, loader, toImport, { url: wasmurl, module: wasmModule }]) => {
       signal.throwIfAborted();
       d.libav = { loader, toImport, wasmurl, variant: cfg.variant };
-      d.worker.postMessage({ type: 'init', ...d.libav, freeBytes: mem.freeBufs });
+      // One compiled module for every worker (pool, thumbnails): the compile happens once.
+      // A large compare grid shares one buffer budget among its tiles: no two-buffer floor per worker.
+      const strict = cfg.largeGrid ? { strictFreeBytes: true } : {};
+      try {
+        d.worker.postMessage({ type: 'init', ...d.libav, ...(wasmModule ? { wasmModule } : {}), freeBytes: mem.freeBufs, ...strict });
+        if (wasmModule) d.libav.wasmModule = wasmModule;
+      } catch (e) {
+        log(`shared WebAssembly module not sent: ${e && e.message || e}`);
+        d.worker.postMessage({ type: 'init', ...d.libav, freeBytes: mem.freeBufs, ...strict });
+      }
       return d;
     }).catch((err) => { drop(); throw err; });
     return { promise, drop };
@@ -509,7 +534,9 @@ function createEngine(env) {
       this.adec = null;
       this.outCount = 0;
       canvas.hidden = false;
-      this.gl = new GLRenderer(canvas);
+      if (cfg.noWebgl) throw new Error('WebGL2 is not available'); // test hook (VPE_NO_WEBGL, with VPE_LOG)
+      // Compare's large grid draws every tile with one shared renderer (Chromium keeps 16 WebGL contexts per page).
+      this.gl = env.createRenderer ? env.createRenderer(GLRenderer) : new GLRenderer(canvas);
       this.gl.setRotation(cfg.rotation || 0);
       // Uploaded buffers go back to the decoder unless the next loop still needs them.
       this.gl.onUploaded = (buf) => {
@@ -579,8 +606,10 @@ function createEngine(env) {
 
     initBlocks() {
       // Remote windows and URLs (each block is a round trip, or an HTTP range request): larger blocks, more ahead.
-      this.blockSize = this.cfg.remote || this.cfg.net ? 4 << 20 : 1 << 20;
-      this.readAhead = this.cfg.remote || this.cfg.net ? 4 : 1;
+      // A large compare grid: small blocks for every tile, or 16 remote tiles would hold 16 x 24 MB.
+      const big = (this.cfg.remote || this.cfg.net) && !this.cfg.largeGrid;
+      this.blockSize = big ? 4 << 20 : 1 << 20;
+      this.readAhead = big ? 4 : 1;
       this.blocks = new Map(); // aligned pos -> Uint8Array
       this.inflight = new Set();
       this.wantReads = new Map(); // reader id (pool worker, 0 for one worker) -> {pos, len} it waits for
@@ -977,6 +1006,8 @@ function createEngine(env) {
     ensureAudio() {
       if (!this.info.audio || this.ac) return;
       this.ac = new AudioContext({ latencyHint: 'playback' });
+      // Native ffmpeg resamples to the context's own rate (from its next start) instead of 48 kHz.
+      if (this.cfg.native && !this.remoteStream) this.worker.postMessage({ type: 'audioRate', rate: this.ac.sampleRate });
       this.gain = this.ac.createGain();
       this.gain.connect(this.ac.destination);
       this.applyVolume();
@@ -1267,7 +1298,13 @@ function createEngine(env) {
     onNativeAudio(m) {
       if (m.gen !== this.gen) return;
       this.requesting = false;
-      this.addAudio(m.t, 48000, [m.l, m.r]);
+      // Interleaved stereo f32 from the host (src/native.js sendAudio), at the rate the page asked for.
+      const raw = m.data.byteOffset % 4 ? m.data.slice() : m.data;
+      const f = new Float32Array(raw.buffer, raw.byteOffset, m.n * 2);
+      const l = new Float32Array(m.n);
+      const r = new Float32Array(m.n);
+      for (let i = 0, j = 0; i < m.n; i++, j += 2) { l[i] = f[j]; r[i] = f[j + 1]; }
+      this.addAudio(m.t, m.rate || 48000, [l, r]);
     }
 
     /** Frame rate from the spacing of the first presentation times. */
@@ -1514,7 +1551,8 @@ function createEngine(env) {
         // Until the first picture is shown, one packet per batch: the first frame comes back as soon
         // as it is decoded, not with the ~6 after it (1080p HEVC: ~220 -> ~135 ms from the streams to the first frame).
         // Paused WebCodecs reads ~1 s ahead (PAUSED_AHEAD_S): in smaller batches, or one batch of small packets overshoots by seconds.
-        const limit = this.vmode === 'soft' ? (this.firstShown ? 96 * 1024 : 1) : !this.playing && this.firstShown ? 64 * 1024 : 384 * 1024;
+        // A large compare grid: one packet per batch for the built-in decoder, whose batch becomes full-size frames in every tile.
+        const limit = this.vmode === 'soft' ? (this.firstShown && !this.cfg.largeGrid ? 96 * 1024 : 1) : !this.playing && this.firstShown ? 64 * 1024 : 384 * 1024;
         if (this.remoteStream) this.remoteReadAt = performance.now();
         this.worker.postMessage({ type: 'more', gen: this.gen, limit, ...(videoUntil !== undefined ? { videoUntil } : {}) });
       }

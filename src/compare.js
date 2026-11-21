@@ -1,6 +1,7 @@
 'use strict';
 // Compare / multi-view: 2-4 videos in one webview panel with the player's bar and panels (2: side by
-// side or split; 3-4: a 2x2 grid; docs/notes/compare-ui.md). Opened from a player, it takes that tab's
+// side or split; 3-4: a 2x2 grid; docs/notes/compare-ui.md). The experimental setting compare.maxVideos
+// allows up to 16 in a plain grid (docs/notes/multiview-engine.md). Opened from a player, it takes that tab's
 // place, and "Leave compare" puts the player back there. The extension host only reads file blocks, exactly as
 // for a single player; each decode engine in the webview asks for blocks with
 // its own key, so both files (and the background scan's own readers) are served
@@ -19,18 +20,23 @@ const crypto = require('crypto');
 const { rotationOf } = require('./rotation');
 const { NativeDecoder } = require('./native');
 const { budgets } = require('../media/membudget');
+const Grid = require('../media/compare-grid');
 const frameserver = require('./frameserver');
 const { barHtml } = require('./bar');
 const { pickRows, pushRecent, droppedVideos } = require('./comparepick');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
 
 const MAX_BLOCK = 8 * 1024 * 1024;
-/** Videos in one panel. The page and this file work with N tiles; the layouts stop at 4 for now. */
-const MAX_TILES = 4;
-const TILE_KEYS = 'ABCD';
+/** Videos in one panel at most (the setting compare.maxVideos picks 2-16; 4 by default). */
+const MAX_TILES = Grid.MAX_VIDEOS;
+const TILE_KEYS = Grid.TILE_KEYS;
+/** The setting compare.maxVideos (experimental): how many videos one compare panel takes. */
+function maxVideos() {
+  try { return Grid.clampMax(vscode.workspace.getConfiguration('videoPreviewEnhanced').get('compare.maxVideos')); } catch { return Grid.DEFAULT_MAX; }
+}
 const VIDEO_EXT = /\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i;
 
-/** Engine keys: 'A'-'D' for the tiles, 'sA' and 'sB' for the scan (of the first two). */
+/** Engine keys: 'A'-'P' for the tiles, 'sA' and 'sB' for the scan (of the first two). */
 const fileOfKey = (key) => Math.max(0, TILE_KEYS.indexOf(String(key).slice(-1)));
 // Like Session: fsPath is the real file for local files and, in SSH/WSL/container
 // windows, for files on the remote machine (this is a workspace extension).
@@ -41,6 +47,7 @@ const FS_SCHEMES = new Set(['file', 'vscode-remote']);
  * uri(...p) maps a media/ path to a webview URL.
  */
 function compareHtml({ uri, cspSource, nonce, cfg, frameSource }) {
+  const large = Grid.isLarge((cfg.names || []).length);
   const csp = [
     "default-src 'none'",
     `img-src ${cspSource} blob: data:`,
@@ -77,6 +84,8 @@ ${barHtml({ compare: true })}
 <script nonce="${nonce}" src="${uri('picture.js')}"></script>
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
+${large ? `<script nonce="${nonce}" src="${uri('membudget.js')}"></script>
+` : ''}<script nonce="${nonce}" src="${uri('compare-grid.js')}"></script>
 <script nonce="${nonce}" src="${uri('compare.js')}"></script>
 </body></html>`;
 }
@@ -84,7 +93,7 @@ ${barHtml({ compare: true })}
 class CompareSession {
   /**
    * @param {vscode.ExtensionContext} context
-   * @param {vscode.Uri[]} uris 2-4 files, A first
+   * @param {vscode.Uri[]} uris 2-16 files (the setting compare.maxVideos), A first
    */
   constructor(context, uris, { log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn, start, openPlayer, setPref, prefs, copyText }) {
     if (api) vscode = api;
@@ -169,6 +178,7 @@ class CompareSession {
       prefs: this.prefs(),
       start: this.start,
       replaced: this.replaced,
+      maxVideos: maxVideos(),
     };
     this.start = 0;
     this.replaced = undefined;
@@ -189,7 +199,8 @@ class CompareSession {
         const epoch = this.epoch;
         this.tile = m.tile;
         const origin = typeof m.origin === 'string' && /^vscode-webview:\/\/[a-z0-9-]+$/.test(m.origin) ? m.origin : null;
-        const transport = origin ? this.transport : 'message';
+        // Chromium keeps at most six HTTP/1.1 requests open to one origin: more native tiles use WebSockets.
+        const transport = !origin ? 'message' : this.transport === 'http' && Grid.isLarge(this.files.length) ? 'ws' : this.transport;
         this.liveTransport = transport;
         const [sizes, decisions] = await Promise.all([
           Promise.all(this.files.map((f) => fs.promises.stat(f).then((s) => s.size))),
@@ -198,7 +209,7 @@ class CompareSession {
         if (this.disposed || epoch !== this.epoch) return undefined;
         this.decisions = decisions;
         const heights = this.tileHeights();
-        const maxQueued = Math.max(1, Math.floor(this.nativeQueue() / this.files.length));
+        const maxQueued = Grid.nativeQueuePerTile(this.nativeQueue(), this.files.length);
         const native = decisions.map((d, i) => this.startNative(i, d, heights[i], transport, origin, epoch, maxQueued));
         this.log(`opened, ${sizes.join(' / ')} bytes, ${this.files.length} tiles`);
         this.post({ type: 'open', sizes, native });
@@ -258,31 +269,41 @@ class CompareSession {
 
   /** Fit the composited view to the stage, then scale all native outputs together to fit the link. */
   tileHeights() {
-    const { w, h, cols, rows, rate, actual } = this.tile || {};
+    const { w, h, cols, rows, aspect, rate, actual } = this.tile || {};
     // Fill, Stretch, 100 % and zoom show a picture larger (or smaller) than the plain Fit: the page says by how much (media/compare.js frameFactor).
     const factor = Number(this.tile && this.tile.factor) > 0 ? Math.max(0.1, Math.min(64, Number(this.tile.factor))) : 1;
-    let tw = !actual && w > 0 ? (w / (cols === 2 ? 2 : 1)) * factor : Infinity;
-    let th = !actual && h > 0 ? (h / (rows === 2 ? 2 : 1)) * factor : Infinity;
+    // The page's grid (2x1, 2x2, ... 4x4); older pages sent 1 or 2.
+    const nc = Math.max(1, Math.min(Grid.MAX_VIDEOS, Math.floor(Number(cols)) || 1));
+    const nr = Math.max(1, Math.min(Grid.MAX_VIDEOS, Math.floor(Number(rows)) || 1));
+    let tw = !actual && w > 0 ? (w / nc) * factor : Infinity;
+    let th = !actual && h > 0 ? (h / nr) * factor : Infinity;
     const rotated = (i) => this.rotation[i] % 180 !== 0;
     const first = this.decisions[0]?.probed?.video;
-    if (first && first.width && first.height) {
-      const aspect = rotated(0) ? first.height / first.width : first.width / first.height;
-      tw = Math.min(tw, th * aspect);
-      th = Math.min(th, tw / aspect);
+    // The first tile's shape: from ffprobe, else (a large grid whose first tile is built-in) the page's.
+    const firstAspect = first && first.width && first.height ? (rotated(0) ? first.height / first.width : first.width / first.height)
+      : Number(aspect) > 0.05 && Number(aspect) < 20 ? Number(aspect) : 0;
+    if (firstAspect) {
+      tw = Math.min(tw, th * firstAspect);
+      th = Math.min(th, tw / firstAspect);
     }
     let bytes = 0;
+    let rounding = 0;
+    const large = Grid.isLarge(this.decisions.length);
     const heights = this.decisions.map((d, i) => {
       const v = d?.probed?.video;
       if (!d?.tools || !v || !v.width || !v.height) return d?.maxHeight || FRAME_SERVER_HEIGHT;
       const [w, h] = rotated(i) ? [th, tw] : [tw, th];
       const height = Math.min(v.height, d.maxHeight, h, w * v.height / v.width);
       bytes += 1.5 * height * height * v.width / v.height * (v.fps || 30);
+      // ffmpeg rounds each width up to even: at 16 small tiles that adds up, so leave room for it.
+      if (large) rounding += 0.75 * height * (v.fps || 30);
       return height;
     });
     const speed = Number.isFinite(rate) ? Math.max(1, rate) : 1;
     // Messages carry far less than the frame server: once any tile is on them, all share that budget (review 2026-11-19-3 M2).
     const onMessages = this.liveTransport === 'message' || this.natives.some((n) => n && n.link === 'message');
-    const scale = Math.min(1, Math.sqrt((onMessages ? TRANSPORT_BPS : FRAME_SERVER_BPS) / (bytes * speed)));
+    const budget = (onMessages ? TRANSPORT_BPS : FRAME_SERVER_BPS) / speed;
+    const scale = Math.min(1, Math.sqrt(Math.max(0, budget - rounding) / bytes));
     return heights.map((h) => Math.max(2, Math.floor(h * scale / 2) * 2));
   }
 
@@ -297,6 +318,7 @@ class CompareSession {
     this.natives[i] = new NativeDecoder({
       tools: d.tools, file, maxHeight, messageMaxHeight: Math.min(maxHeight, d.messageMaxHeight),
       method: d.method, methodGuessed: !!d.methodGuessed, probed: d.probed, transport, origin, maxQueued,
+      largeGrid: Grid.isLarge(this.files.length),
       onMessages: () => { if (!this.disposed && epoch === this.epoch) this.resizeTiles(); },
       post: (msg) => this.post({ type: 'nd', key, m: msg }), postRaw: (msg) => this.post({ ...msg, key }),
       log: (msg) => this.log(`tile ${key}: ${msg}`),
@@ -310,23 +332,24 @@ class CompareSession {
     return true;
   }
 
-  /** "Add video…" in the page: up to MAX_TILES files. */
+  /** "Add video…" in the page: up to the setting's count (compare.maxVideos). */
   async addVideos() {
-    const room = MAX_TILES - this.uris.length;
+    const room = maxVideos() - this.uris.length;
     if (room <= 0 || !this.pick) return;
     const picked = await this.pick(`Add to ${this.title()}`, vscode.Uri.joinPath(this.uris[0], '..'), true);
     if (!picked || !picked.length || this.disposed) return;
     this.addUris(picked);
   }
 
-  /** Adds files after the ones shown (up to MAX_TILES); also the test hook's `compareAdd`. */
+  /** Adds files after the ones shown (up to the setting's count); also the test hook's `compareAdd`. */
   addUris(picked) {
     if (this.disposed) return;
     // The room is taken now, not before the dialog: the view can change while it is open.
-    const room = Math.max(0, MAX_TILES - this.uris.length);
+    const max = maxVideos();
+    const room = Math.max(0, max - this.uris.length);
     const files = picked.filter((u) => FS_SCHEMES.has(u.scheme));
     const add = files.slice(0, room);
-    if (files.length > room) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${MAX_TILES} videos; added ${add.length}.`);
+    if (files.length > room) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; added ${add.length}.`);
     if (!add.length) return;
     this.log(`add ${add.map((u) => path.basename(u.fsPath)).join(', ')}`);
     this.reload([...this.uris, ...add]);
@@ -388,14 +411,16 @@ class CompareSession {
   }
 
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
     if (compareSessions) compareSessions.delete(this);
     this.closeFiles();
+    this.log('closed');
   }
 }
 
 /**
- * Commands: Explorer "Compare / Play Together" (2-4 files selected) and
+ * Commands: Explorer "Compare / Play Together" (2-4 files selected; up to 16 with compare.maxVideos) and
  * "Compare With…" (the open player's file against one picked in a dialog).
  * deps: { vscode, log, sessions (open player Sessions), engineCfg(webview), nativeFor?(file, transport), nativeQueue?() }
  */
@@ -418,6 +443,8 @@ function registerCompare(context, deps) {
       try {
         await frameserver.start();
         frameSource = `${transport === 'ws' ? 'ws' : 'http'}://127.0.0.1:${frameserver.port}`;
+        // More than 4 native tiles go over WebSockets (CompareSession 'ready'); the page may connect both ways.
+        if (transport === 'http') frameSource += ` ws://127.0.0.1:${frameserver.port}`;
       } catch (e) {
         deps.log(`compare: frame server could not start: ${e.message}`);
         transport = 'message';
@@ -482,10 +509,11 @@ function registerCompare(context, deps) {
     const files = droppedVideos(dropped).map((s) => { try { return vscode.Uri.parse(s); } catch { return null; } })
       .filter((u) => u && FS_SCHEMES.has(u.scheme) && u.toString() !== a.toString());
     if (!files.length) return undefined;
-    if (files.length > MAX_TILES - 1) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${MAX_TILES} videos; showing the first ${MAX_TILES}.`);
+    const max = maxVideos();
+    if (files.length > max - 1) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
     const from = playerOf(a);
     const t = opts && Number.isFinite(opts.t) ? opts.t : from && from.pos ? from.pos.t : 0;
-    return open([a, ...files.slice(0, MAX_TILES - 1)], { from, t });
+    return open([a, ...files.slice(0, max - 1)], { from, t });
   };
   context.subscriptions.push(
     vscode.commands.registerCommand('videoPreviewEnhanced.comparePick', comparePick),
@@ -493,15 +521,16 @@ function registerCompare(context, deps) {
     vscode.commands.registerCommand('videoPreviewEnhanced.compare', async (uri, uris, opts) => {
       let list = Array.isArray(uris) && uris.length ? uris : uri ? [uri] : [];
       list = list.filter((u) => VIDEO_EXT.test(u.path));
-      if (list.length > MAX_TILES) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${MAX_TILES} videos; showing the first ${MAX_TILES}.`);
-      if (list.length >= 2) return open(list.slice(0, MAX_TILES), opts && opts.from ? opts : {}); // opts: the test hook's in-place open
+      const max = maxVideos();
+      if (list.length > max) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
+      if (list.length >= 2) return open(list.slice(0, max), opts && opts.from ? opts : {}); // opts: the test hook's in-place open
       const a = list[0] || activePlayerUri() || await pick('Compare: video A');
       if (!a) return undefined;
       const b = await pick(`Compare with ${path.basename(a.fsPath)} (B)`, vscode.Uri.joinPath(a, '..'));
       return b ? open([a, b]) : undefined;
     }),
     // From a player (Tools › Compare in its settings panel, its right-click "Compare With…", the editor title
-    // button): up to 3 more files, and compare takes the player's place. opts (from the page): { t } its position.
+    // button): up to 3 more files (more with compare.maxVideos), and compare takes the player's place. opts (from the page): { t } its position.
     vscode.commands.registerCommand('videoPreviewEnhanced.compareWith', async (uri, opts) => {
       const a = (uri instanceof vscode.Uri ? uri : null) || activePlayerUri() || await pick('Compare: video A');
       if (!a) return undefined;
@@ -509,12 +538,13 @@ function registerCompare(context, deps) {
       if (!more || !more.length) return undefined;
       const files = more.filter((u) => FS_SCHEMES.has(u.scheme) && u.toString() !== a.toString());
       if (!files.length) return undefined;
-      if (files.length > MAX_TILES - 1) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${MAX_TILES} videos; showing the first ${MAX_TILES}.`);
+      const max = maxVideos();
+      if (files.length > max - 1) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
       const from = playerOf(a);
       const t = opts && !Array.isArray(opts) && Number.isFinite(opts.t) ? opts.t : from && from.pos ? from.pos.t : 0;
-      return open([a, ...files.slice(0, MAX_TILES - 1)], { from, t });
+      return open([a, ...files.slice(0, max - 1)], { from, t });
     }),
   );
 }
 
-module.exports = { registerCompare, setPickHook, compareHtml, CompareSession, fileOfKey, MAX_TILES };
+module.exports = { registerCompare, setPickHook, compareHtml, CompareSession, fileOfKey, MAX_TILES, maxVideos };

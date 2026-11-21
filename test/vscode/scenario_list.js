@@ -15,7 +15,7 @@ const PLAYER = ['media/player.js', 'media/controls.js', 'media/modes.js', 'media
 const ENGINE = ['media/engine.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
 const HOST = ['src/extension.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
-const COMPARE = ['src/compare.js', 'media/compare.js', 'media/compare.css'];
+const COMPARE = ['src/compare.js', 'media/compare.js', 'media/compare.css', 'media/compare-grid.js'];
 
 module.exports = [
   {
@@ -95,6 +95,18 @@ module.exports = [
     journey: 'Play together with native ffmpeg: tile sizes, the frame server and its budget, resizing, the message fallback',
     sources: [...COMPARE, ...NATIVE, 'src/decide.js'],
     steps: [{ case: 'multiview-native' }, { case: 'multiview-native-fallback' }],
+  },
+  {
+    name: 'multiview-large',
+    journey: 'More than 4 videos (experimental setting compare.maxVideos): 9 then 16 tiles on the GPU and built-in decoders with one shared renderer; lockstep, offsets, clock, play, remove, add, close',
+    sources: [...COMPARE, ...ENGINE],
+    steps: [{ case: 'multiview-large' }],
+  },
+  {
+    name: 'multiview-large-native',
+    journey: '9 and 16 native ffmpeg tiles: frames at the cell size over WebSockets on one port, the shared budget, offsets, playing in step, a seek through a resize',
+    sources: [...COMPARE, ...NATIVE, 'src/decide.js'],
+    steps: [{ case: 'multiview-large-native' }],
   },
   {
     name: 'native',

@@ -4,7 +4,7 @@
 // 127.0.0.1 (checksums.sha256 and archives) and a fake Linux remote (mock vscode with
 // remoteName, VPE_TEST_PLATFORM / VPE_TEST_ARCH): x64 and arm64 builds, checksum failure,
 // unsafe archive members (../, absolute, links), only ffmpeg and ffprobe kept, and the offer
-// (once per remote and session, "Don't ask again", not in WSL, local, builtin or off windows).
+// (once per remote and session, "Don't Show Again", not in WSL, local, builtin or off windows).
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -110,7 +110,7 @@ function listAll(dir) {
       assert.strictEqual(rf.shouldOffer({ ...base0, ...over }), false, JSON.stringify(over, (k, v) => (v instanceof Set ? [...v] : v)));
     }
     assert.strictEqual(rf.shouldOffer({ ...base0, state: rf.afterOffer(undefined, key, rf.OFFER_LATER) }), true, '"Not now" asks again in a later session');
-    assert.strictEqual(rf.shouldOffer({ ...base0, state: rf.afterOffer(undefined, 'ssh-remote:other', rf.OFFER_NEVER) }), true, '"Don\'t ask again" is per remote');
+    assert.strictEqual(rf.shouldOffer({ ...base0, state: rf.afterOffer(undefined, 'ssh-remote:other', rf.OFFER_NEVER) }), true, '"Don\'t Show Again" is per remote');
 
     // ---- build choice: x64 and arm64 from the same checksums.sha256 --------------------------
     for (const arch of ['linux64', 'linuxarm64']) {
@@ -211,7 +211,7 @@ function listAll(dir) {
     assert.strictEqual(x.offers.length, 1, 'not again in this session');
     x.s.panel.dispose(); x.h.dispose();
 
-    // "Don't ask again" is stored for this remote.
+    // "Don't Show Again" is stored for this remote.
     x = await session({ answer: rf.OFFER_NEVER });
     await x.soft();
     assert.strictEqual(x.offers.length, 1);

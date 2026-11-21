@@ -107,13 +107,33 @@ self.onmessage = (e) => {
   });
 };
 
+/**
+ * The page compiled the decoder once and sent the WebAssembly.Module: V8 shares its compiled code between
+ * the workers, so each extra worker (pool, thumbnails) skips the compile. libav.js's own loader fetches
+ * and compiles the wasm by URL with instantiateStreaming; this answers that one call from the module
+ * (any failure falls back to the URL path).
+ */
+function useSharedModule(mod) {
+  if (!mod || typeof WebAssembly.instantiateStreaming !== 'function') return () => {};
+  const orig = WebAssembly.instantiateStreaming;
+  WebAssembly.instantiateStreaming = async function (source, imports) {
+    WebAssembly.instantiateStreaming = orig;
+    try { return { module: mod, instance: await WebAssembly.instantiate(mod, imports) }; } catch (e) { return orig.call(WebAssembly, source, imports); }
+  };
+  return () => { if (WebAssembly.instantiateStreaming !== orig) WebAssembly.instantiateStreaming = orig; };
+}
+
 async function init(m) {
   const t0 = performance.now();
   if (m.freeBytes > 0) FREE_BYTES = m.freeBytes;
+  if (m.strictFreeBytes) FREE_MIN = 0;
   self.LibAV = {};
   importScripts(m.loader);
-  libav = await self.LibAV.LibAV({ noworker: true, nothreads: true, toImport: m.toImport, wasmurl: m.wasmurl, variant: m.variant });
-  log(`init: libav ready (${libav.libavjsMode}) in ${Math.round(performance.now() - t0)} ms`);
+  const restore = useSharedModule(m.wasmModule);
+  try {
+    libav = await self.LibAV.LibAV({ noworker: true, nothreads: true, toImport: m.toImport, wasmurl: m.wasmurl, variant: m.variant });
+  } finally { restore(); }
+  log(`init: libav ready (${libav.libavjsMode}${m.wasmModule ? ", shared module" : ""}) in ${Math.round(performance.now() - t0)} ms`);
   post({ type: 'ready', mode: libav.libavjsMode });
 }
 
@@ -248,6 +268,7 @@ async function describe(format) {
 // ('recycle'), so steady playback allocates no new frame memory.
 const FREE = []; // returned ArrayBuffers, newest last
 let FREE_BYTES = 64e6; // keep at most this much (but two buffers at any size); 'init' sets it from the machine's memory
+let FREE_MIN = 2; // compare's large grid: 0, so 16 tiles of 4K frames still fit their shared budget
 
 function recycle(bufs) {
   for (const b of bufs || []) {
@@ -256,7 +277,7 @@ function recycle(bufs) {
     // Drop the oldest (e.g. a size no longer in use) beyond the cap.
     let bytes = 0;
     for (const x of FREE) bytes += x.byteLength;
-    while (FREE.length > 2 && bytes > FREE_BYTES) bytes -= FREE.shift().byteLength;
+    while (FREE.length > FREE_MIN && bytes > FREE_BYTES) bytes -= FREE.shift().byteLength;
   }
 }
 

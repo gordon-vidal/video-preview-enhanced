@@ -5,6 +5,8 @@
 // that frames come at the tile's size. The panel, menus and views are in compare_ui.js. Everything is read from compare's `compare report` line
 // (media/compare.js) through the VPE_LOG test hook.
 const path = require('path');
+const { TILE_KEYS } = require('../../../media/compare-grid');
+const { make } = require('../../media/make_cases_media');
 
 // A and B: 30 fps, 3 s, with sound (AAC, Opus). C and D: 24 fps, 2 s, no sound.
 const CLIPS = ['h264_aac_anim_1080p.mp4', 'vp9_opus_anim_1080p.webm', 'h264_8_1080p.mp4', 'vp9_1080p.webm'];
@@ -53,7 +55,16 @@ function helpers(vs, h, t) {
     const frames = nums(r.frames);
     for (let i = 0; i < frames.length; i++) {
       const [e, alt] = expect(r, offs, i);
-      ok(frames[i] === e || frames[i] === alt, `${what}: tile ${'ABCD'[i]} shows #${frames[i]}, expected #${e} (clock ${'ABCD'[r.clock]} #${frames[r.clock]}, fps ${r.fps}, offsets ${r.offsets})`);
+      ok(frames[i] === e || frames[i] === alt, `${what}: tile ${TILE_KEYS[i]} shows #${frames[i]}, expected #${e} (clock ${TILE_KEYS[r.clock]} #${frames[r.clock]}, fps ${r.fps}, offsets ${r.offsets})`);
+    }
+  };
+  /** While playing: every tile near its frame for the clock's (followers may trail a few frames; the clock holds beyond 120 ms). */
+  const checkPlaying = (ok, r, offs, what) => {
+    const fps = nums(r.fps);
+    const frames = nums(r.frames);
+    for (let i = 0; i < offs.length; i++) {
+      const [want] = expect(r, offs, i);
+      ok(Math.abs(frames[i] - want) <= Math.ceil(0.2 * fps[i]), `${what}: playing tile ${TILE_KEYS[i]} shows #${frames[i]}, expected near #${want} (frames ${r.frames})`);
     }
   };
   const stepAndWait = async (d) => {
@@ -63,7 +74,7 @@ function helpers(vs, h, t) {
     const want = nums(before.frames)[c] + d;
     return until((r) => r.synced === 'true' && nums(r.frames)[Number(r.clock)] === want, 15000);
   };
-  return { report, act, until, expect, checkFrames, stepAndWait };
+  return { report, act, until, expect, checkFrames, checkPlaying, stepAndWait };
 }
 
 /** The extension activates when a video opens; the test hook (compareFiles) needs it. */
@@ -433,4 +444,175 @@ module.exports = [{
     await h.closeClip(vs);
     return [{ name: 'native/frame-server-403', ok: !problems.length, problems }];
   },
+}, {
+  // More than 4 videos (the experimental setting compare.maxVideos, docs/notes/multiview-engine.md): 9 tiles on the
+  // GPU and built-in decoders in a 3x3 grid with one shared renderer; lockstep, offsets, another clock, play, remove,
+  // add up to 16 (4x4), close.
+  name: 'multiview-large',
+  settings: { 'videoPreviewEnhanced.compare.maxVideos': 16 },
+  async run(vs, h) {
+    const out = [];
+    const t = (name) => {
+      const r = { name, ok: true, problems: [] };
+      out.push(r);
+      return (cond, msg) => { if (!cond) { r.ok = false; r.problems.push(msg); } };
+    };
+    const { report, act, until, checkFrames, checkPlaying, stepAndWait } = helpers(vs, h);
+    const gpu = make('multiview_h264.mp4'); // H.264 1080p, 24 fps, 24 s: the GPU decoder
+    const soft = make('s_vp9.webm'); // VP9 320x180, 30 fps, 3 s: the built-in decoder
+    if (!gpu || !soft) throw new Error('missing multi-view clips (test/media/make_cases_media.js)');
+    // A B D E G H: GPU; C F I: built-in, so every row mixes both decoders and frame rates.
+    const nine = Array.from({ length: 9 }, (_, i) => (i % 3 === 2 ? soft : gpu));
+    const allShown = (r) => r && list(r.frames).length === Number(r.n) && !list(r.frames).includes('-');
+    await activate(vs, h, gpu);
+
+    let ok = t('large/nine-open');
+    let from = vs.mark();
+    vs.send({ compareFiles: nine });
+    await vs.waitLog(opened(9), { from, timeout: 45000, what: 'compare opened with 9' });
+    let r = await until(allShown, 60000);
+    ok(allShown(r), `9 tiles: not every tile shows a frame (${r && r.frames})`);
+    ok(r.n === '9' && r.grid === '3x3' && r.cells === '9' && r.add === 'false' && r.max === '16', `n=${r.n} grid=${r.grid} cells=${r.cells} add=${r.add} max=${r.max}`);
+    // One compositor and one shared renderer, not a WebGL context per tile (Chromium keeps 16 per page).
+    ok(r.contexts === '2', `WebGL contexts: ${r.contexts}`);
+    const [cw, ch] = r.canvas.split('x').map(Number);
+    const [sw, sh] = r.stage.split('x').map(Number);
+    ok(Math.abs(cw - sw) <= 1 && Math.abs(ch - sh) <= 1, `canvas ${r.canvas}, stage ${r.stage}`);
+    // Each tile's picture is at most a ninth of a 4K picture.
+    ok(nums(r.widths).every((w, i) => w > 0 && w * nums(r.heights)[i] <= 3840 * 2160 / 9), `tile pictures ${r.widths} x ${r.heights}`);
+
+    ok = t('large/lockstep-offsets');
+    const offs = nine.map(() => ({ unit: 'frames', v: 0 }));
+    act({ action: 'seek', t: 1 });
+    r = await until((x) => x.synced === 'true' && list(x.playing).every((p) => p === '0'), 20000);
+    checkFrames(ok, r, offs, 'paused seek');
+    r = await stepAndWait(1);
+    checkFrames(ok, r, offs, 'step +1');
+    offs[1] = { unit: 'frames', v: 3 };
+    offs[2] = { unit: 'ms', v: 200 };
+    offs[7] = { unit: 'frames', v: -2 };
+    for (const i of [1, 2, 7]) act({ action: 'offset', tile: i, v: offs[i].v, unit: offs[i].unit });
+    r = await stepAndWait(1);
+    checkFrames(ok, r, offs, 'step +1 with offsets');
+    r = await stepAndWait(-1);
+    checkFrames(ok, r, offs, 'step -1 with offsets');
+
+    ok = t('large/clock');
+    act({ action: 'clock', tile: 6 });
+    r = await until((x) => x.clock === '6' && x.synced === 'true', 15000);
+    ok(r.clock === '6' && r.seekMax === '575', `clock=${r.clock} seekMax=${r.seekMax} (G: 576 frames)`);
+    r = await stepAndWait(1);
+    checkFrames(ok, r, offs, 'step with clock G');
+
+    ok = t('large/play');
+    act({ action: 'seek', t: 0.2 });
+    r = await until((x) => x.synced === 'true', 20000);
+    const s0 = nums(r.shown);
+    act({ action: 'play' });
+    for (const w0 = Date.now(); Date.now() - w0 < 20000;) {
+      await h.sleep(300);
+      r = await report(20);
+      if (nums(r.shown).every((n, i) => n - s0[i] >= 5)) break;
+    }
+    // The 3 s built-in clips end before the clock: only those still in range must be playing.
+    ok(nums(r.shown).every((n, i) => n - s0[i] >= 5), `every tile draws while playing: ${s0} -> ${r.shown}`);
+    ok(list(r.playing)[6] === '1', `the clock plays: playing=${r.playing}`);
+    checkPlaying(ok, r, offs, 'nine playing');
+    act({ action: 'pause' });
+    r = await until((x) => x.synced === 'true' && list(x.playing).every((p) => p === '0'), 20000);
+    checkFrames(ok, r, offs, 'paused after playing');
+
+    ok = t('large/remove-add');
+    from = vs.mark();
+    act({ action: 'remove', tile: 4 });
+    await vs.waitLog(opened(8), { from, timeout: 45000, what: 'compare reopened with 8' });
+    r = await until((x) => x.n === '8' && allShown(x) && x.synced === 'true', 45000);
+    ok(r.n === '8' && r.grid === '3x3' && r.add === 'true' && r.cells === '8', `8 tiles: grid=${r.grid} add=${r.add} cells=${r.cells}`);
+    ok(r.clock === '5' && r.offsets === '0f,3f,200ms,0f,0f,0f,-2f,0f', `clock and offsets move with their videos: clock=${r.clock} offsets=${r.offsets}`);
+    from = vs.mark();
+    vs.send({ compareAdd: Array(10).fill(gpu) });
+    await vs.waitLog(opened(16), { from, timeout: 45000, what: 'compare reopened with 16' });
+    r = await until((x) => x.n === '16' && allShown(x) && x.synced === 'true', 60000);
+    ok(r.n === '16' && r.grid === '4x4' && r.add === 'false' && r.contexts === '2', `16 tiles: grid=${r.grid} add=${r.add} contexts=${r.contexts}`);
+    const offs16 = list(r.offsets).map((o) => (o.endsWith('ms') ? { unit: 'ms', v: Number(o.slice(0, -2)) } : { unit: 'frames', v: Number(o.slice(0, -1)) }));
+    // (The test hook adds files from the host, without the page saving its position first.)
+    act({ action: 'seek', t: 1 });
+    r = await until((x) => x.synced === 'true', 20000);
+    checkFrames(ok, r, offs16, '16 tiles: paused seek');
+    r = await stepAndWait(1);
+    checkFrames(ok, r, offs16, '16 tiles: step +1');
+
+    ok = t('large/close');
+    from = vs.mark();
+    await h.closeClip(vs);
+    await vs.waitLog(/\[compare [^\]]*\] closed/, { from, timeout: 15000, what: 'compare closed' });
+    ok(!vs.lines.slice(from).some((l) => /\[compare [^\]]*\] (error|webview: error)/.test(l)), 'errors while closing');
+    return out;
+  },
+}, {
+  // 9 and 16 native ffmpeg tiles (1080p HEVC) in a 1920x1080 device-pixel stage: frames at the cell size, WebSockets
+  // on one frame-server port (Chromium opens 6 HTTP streams per origin), the shared transfer budget, offsets with
+  // the last tile as the clock, playing in step, a seek through a resize. The frame rate is recorded, not judged.
+  name: 'multiview-large-native',
+  ffmpeg: true,
+  settings: { 'videoPreviewEnhanced.decoder': 'ffmpeg', 'videoPreviewEnhanced.compare.maxVideos': 16 },
+  async run(vs, h) {
+    const { report, act, until, checkFrames, checkPlaying } = helpers(vs, h);
+    const file = make('multiview_hevc.mp4');
+    if (!file) throw new Error('missing multiview_hevc.mp4 (test/media/make_cases_media.js)');
+    await activate(vs, h, path.join(h.MEDIA, CLIPS[0]));
+    const out = [];
+    for (const n of [9, 16]) {
+      const problems = [];
+      const ok = (cond, msg) => { if (!cond) problems.push(msg); };
+      const from = vs.mark();
+      vs.send({ compareFiles: Array(n).fill(file) });
+      await vs.waitLog(opened(n), { from, timeout: 60000, what: `compare opened with ${n}` });
+      act({ action: 'stageSize', w: 1920, h: 1080, physical: true });
+      const side = Math.sqrt(n);
+      const height = 1080 / side;
+      let r = await until((x) => x.synced === 'true' && list(x.frames).length === n && !list(x.frames).includes('-')
+        && nums(x.heights).every((v) => v === height), 60000);
+      ok(r.grid === `${side}x${side}` && r.contexts === '2', `grid=${r.grid} contexts=${r.contexts}`);
+      ok(nums(r.heights).length === n && nums(r.heights).every((v) => v === height), `native heights at ${r.stage}: ${r.heights}, want ${height}`);
+      ok(list(r.transport).every((v) => v === 'stream'), `transport=${r.transport}`);
+      const ports = vs.lines.slice(from).map((l) => /tile [A-P]: native transport: ws \(127\.0\.0\.1:(\d+)/.exec(l)?.[1]).filter(Boolean);
+      ok(ports.length === n && new Set(ports).size === 1, `expected ${n} WebSockets on one port, got ${ports.join(',') || 'none'}`);
+      const mbps = nums(r.heights).reduce((sum, v, i) => sum + 1.5 * v * nums(r.widths)[i] * nums(r.fps)[i], 0) / 1e6;
+
+      const offs = Array.from({ length: n }, (_, i) => ({ unit: i % 2 ? 'frames' : 'ms', v: i % 2 ? i % 7 : 25 * (i % 7) }));
+      act({ action: 'clock', tile: n - 1 });
+      offs.forEach((o, tile) => act({ action: 'offset', tile, v: o.v, unit: o.unit }));
+      act({ action: 'seek', t: 1 });
+      r = await until((x) => x.synced === 'true' && Number(x.clock) === n - 1 && nums(x.frames)[n - 1] === 25, 30000);
+      ok(Number(r.clock) === n - 1 && nums(r.frames)[n - 1] === 25, `seek: clock=${r.clock} frames=${r.frames}`);
+      checkFrames(ok, r, offs, `${n} native: seek`);
+
+      act({ action: 'play' });
+      await h.sleep(1500);
+      const before = await report(20);
+      await h.sleep(5000);
+      const after = await report(20);
+      const secs = (Number(after.now) - Number(before.now)) / 1000;
+      const fps = nums(after.shown).map((v, i) => Math.round((v - nums(before.shown)[i]) / secs * 10) / 10);
+      ok(list(after.playing).every((v) => v === '1') && fps.every((v) => v > 1), `${n} native play: playing=${after.playing} fps=${fps}`);
+      checkPlaying(ok, after, offs, `${n} native playing`);
+      act({ action: 'pause' });
+
+      if (n === 16) {
+        // A resize (new ffmpeg sizes) that lands while a seek is in flight must not send the tiles back.
+        act({ action: 'stageSize', w: 1280, h: 720, physical: true });
+        act({ action: 'seek', t: 2 });
+        r = await until((x) => x.synced === 'true' && nums(x.frames)[n - 1] === 49 && nums(x.heights).every((v) => v === 180), 30000);
+        ok(nums(r.heights).every((v) => v === 180) && nums(r.frames)[n - 1] === 49, `seek through resize: heights=${r.heights} frames=${r.frames}`);
+        checkFrames(ok, r, offs, '16 native: seek through resize');
+      }
+      const closing = vs.mark();
+      await h.closeClip(vs);
+      await vs.waitLog(/\[compare [^\]]*\] closed/, { from: closing, timeout: 15000, what: 'compare closed' });
+      out.push({ name: `large-native/${n}`, ok: !problems.length, problems, info: { fps, mbps: Math.round(mbps * 10) / 10, height } });
+    }
+    return out;
+  },
 }];
+
