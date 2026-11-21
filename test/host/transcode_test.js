@@ -204,6 +204,26 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
 
   // ---- Finding #6: Bitrate Auto consistency & 250 kb/s floor ----
   {
+    const source = { width: 3840, height: 2160, fps: 60 };
+    const highRate = { ...source, codec: 'hevc', pixFmt: 'yuv420p' };
+    const direct = { ...highRate, codec: 'h264' };
+    assert.strictEqual(policy.shouldTranscodeOnOpen({ compare: true, mode: 'auto', video: highRate }).action, 'stream');
+    assert.strictEqual(policy.shouldTranscodeOnOpen({ compare: true, mode: 'ask', video: highRate }).action, 'skip');
+    assert.strictEqual(policy.shouldTranscodeOnOpen({ compare: true, mode: 'auto', video: direct }).action, 'skip');
+    assert.strictEqual(policy.shouldTranscodeOnOpen({ compare: true, mode: 'always', video: direct }).action, 'stream');
+    const tile = { w: 1920, h: 1080, cols: 2, rows: 2 };
+    const small = policy.compareTileSize(source, 2160, tile);
+    assert.deepStrictEqual(small, { w: 960, h: 540, fps: 60 });
+    assert.deepStrictEqual(policy.compareTileSize({ ...source, width: 2160, height: 3840 }, 3840, tile, true),
+      { w: 540, h: 960, fps: 60 });
+    const tiles = [small, { w: 3840, h: 2160, fps: 60, remote: true }];
+    assert.deepStrictEqual(policy.compareCapsKbps(tiles, 10), [5000, 5000]);
+    assert.deepStrictEqual(policy.compareCapsKbps(tiles, 10, false), [10000, 10000]);
+    assert.deepStrictEqual(policy.compareCapsKbps(tiles, 0.3), [250, 250]);
+    assert.deepStrictEqual(policy.compareCapsKbps(tiles, 0.1, false), [250, 250]);
+    assert.deepStrictEqual(policy.compareCapsKbps(tiles, 0, true), [4000, 20000]);
+    assert.deepStrictEqual(policy.compareCapsKbps(tiles, 0, false), [4000, 20000]);
+    assert.deepStrictEqual(policy.compareCapsKbps([], 10), []);
     assert.strictEqual(policy.effectiveMaxKbps({ maxBitrateMbps: 0.1, w: 1280, h: 720, fps: 30, remote: false }), 250, 'floor 250 kb/s');
     const s = new EncodedStream({
       tools: {}, file: 'x.mkv', post: () => {}, log: () => {}, remote: false, encoder: 'h264_nvenc', cpuEncoder: null,
@@ -261,6 +281,7 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     assert.ok(s.startTimer, 'seek is deferred');
     assert.strictEqual(s.proc, null);
     s.setMaxBitrateMbps(5);
+    s.setCompareOutput(540, 5000);
     assert.strictEqual(launches.length, 0, 'setMaxBitrateMbps does not spawn video during deferred seek');
     assert.strictEqual(s.proc, null);
     // Fire deferred seek: both video (at new 5 Mb/s cap) and audio spawn together.
@@ -271,6 +292,7 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     assert.strictEqual(Boolean(launches[0].audio), false);
     assert.strictEqual(launches[0].cap, 5000);
     assert.strictEqual(launches[1].audio, true);
+    assert.strictEqual(s.h, 540);
 
     // Finding #8: first output after restart emits refreshed transcodeInfo for ⓘ.
     posts.length = 0;
@@ -282,6 +304,7 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     launches = [];
     s.setHidden(true);
     s.setMaxBitrateMbps(10);
+    s.setCompareOutput(360, 10000);
     assert.strictEqual(launches.length, 0, 'setMaxBitrateMbps does not restart while hidden');
     assert.strictEqual(s.activeCapKbps(), 10000, 'new cap stored for next unhide/seek');
 
@@ -289,9 +312,35 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     let failedWhy = null;
     s.onFail = (w) => { failedWhy = w; };
     s.spawnNow();
+    assert.strictEqual(s.h, 360);
     launches[0].proc.emit('close', 1, null);
     assert.ok(failedWhy, 'falls back via onFail when no CPU encoder is available');
     s.dispose();
+
+    // The GPU accepts one stream but refuses a concurrent session. Only that tile retries on CPU.
+    const live = [];
+    const makeTile = () => {
+      const tile = new EncodedStream({
+        tools: {}, file: 'x.mkv', post: () => {}, log: () => {}, probed: { ...s.pr, audio: null },
+        encoder: 'h264_nvenc', cpuEncoder: 'libx264',
+      });
+      tile.launch = () => {
+        const proc = mkFakeProc();
+        live.push({ encoder: tile.videoEncoder, proc });
+        return proc;
+      };
+      tile.open();
+      return tile;
+    };
+    const first = makeTile();
+    const second = makeTile();
+    live[1].proc.err.text = 'OpenEncodeSessionEx failed: out of memory';
+    live[1].proc.emit('close', 1, null);
+    assert.deepStrictEqual(live.map((p) => p.encoder), ['h264_nvenc', 'h264_nvenc', 'libx264']);
+    assert.strictEqual(first.proc, live[0].proc);
+    assert.strictEqual(second.proc, live[2].proc);
+    first.dispose();
+    second.dispose();
   }
 
   // ---- Finding #3: NativeDecoder.hostKeepsUp separates decode-bound 4K from transfer-limited 4K ----

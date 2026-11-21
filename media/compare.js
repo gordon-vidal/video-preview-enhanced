@@ -65,7 +65,11 @@
 
   const saved = vscode.getState() || {};
   const tileOr0 = (i) => (Number.isInteger(i) && i >= 0 && i < N ? i : 0);
-  const prefs = { jump: { arrow: 5, shift: 1, ctrl: 'frame', ...((cfg.prefs && cfg.prefs.jump) || {}) }, stepButtons: (cfg.prefs && cfg.prefs.stepButtons) || 'frame' };
+  const prefs = {
+    ...cfg.prefs,
+    jump: { arrow: 5, shift: 1, ctrl: 'frame', ...cfg.prefs?.jump },
+    stepButtons: cfg.prefs?.stepButtons || 'frame',
+  };
   const Pic = VpePicture;
   const st = {
     // The picture size, zoom and pan, one for every tile (media/picture.js): this tab starts as the setting and keeps its own choice.
@@ -299,6 +303,8 @@
 
   function onEngineReady(key) {
     if (key.length > 1) { scanner.onReady(key); return; }
+    const p = engines[key];
+    if (p?.remoteStream) p.setHidden(!panelVisible || document.hidden);
     if (tiles.length === N && tiles.every((p) => p.vmode !== undefined) && !begun) begin();
   }
   /** Frame rate each tile's frame offsets were last synced with (30 is assumed before the engine knows). */
@@ -306,6 +312,7 @@
   function onEngineMeta(key) {
     if (clock && key === clock.key) ui.seek.max = String(Math.max(0, (clock.n || 1) - 1));
     infoDirty = true;
+    if (controls.view() === 'info' && KEYS[st.infoSel] === key) controls.refresh();
     if (largeGrid && key === KEYS[0]) requestTileSize(); // the first tile's shape sizes the native tiles
     // A frame offset synced with the assumed 30 fps is redone with the real rate (review 2026-11-19 #7).
     const i = tiles.findIndex((p) => p.key === key);
@@ -818,7 +825,13 @@
     if (p && p.meta && p.meta.width && p.meta.height) return { w: p.meta.width, h: p.meta.height };
     return { w: 1600, h: 900 };
   }
-  const tileSrc = (i) => { const p = tiles[i]; return Pic.sourceSize(tileNat(i), p && p.meta && p.meta.width ? { w: p.meta.width, h: p.meta.height } : null); };
+  const tileSrc = (i) => {
+    const p = tiles[i];
+    const stream = p?.info?.remoteStream;
+    return Pic.sourceSize(tileNat(i), stream
+      ? { w: stream.sourceWidth, h: stream.sourceHeight }
+      : { w: p?.meta?.width, h: p?.meta?.height });
+  };
   const picOpts = () => ({ dpr: window.devicePixelRatio || 1 });
   /** Tile i in a cell (x, y, w, h): `full` is the whole picture with the shared view applied, `pic` the part of it inside the cell. */
   function placed(i, x, y, w, h) {
@@ -1381,7 +1394,7 @@
 
   // ---- copying -------------------------------------------------------------------------------
 
-  async function copyCanvas(src, what) {
+  async function copyCanvas(src, what, transcoded = false) {
     try {
       const c = document.createElement('canvas');
       c.width = src.width; c.height = src.height;
@@ -1390,21 +1403,24 @@
       const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
       // @ts-ignore
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-      toast(`${what} copied`);
+      toast(transcoded ? `${what} copied with transcoded pixels. For the original, see About.` : `${what} copied`, transcoded ? 4000 : 1500);
     } catch (e) {
       log(`clipboard refused: ${e}`);
       toast('Copy not allowed here');
     }
   }
   /** Ctrl+C: the whole view as shown (all tiles). */
-  function copyView() { pause(); if (comp) { draw(); copyCanvas(canvas, 'View'); } }
+  function copyView() {
+    pause();
+    if (comp) { draw(); copyCanvas(canvas, 'View', nativeTiles.includes('transcode')); }
+  }
   function copyTileFrame(i) {
     const p = tiles[i];
     if (!p) return;
     pause();
     // A large grid's engine canvases hold no picture (sharedRenderer): the tile as drawn in the view.
     if (largeGrid) { copyTileView(i); return; }
-    copyCanvas(p.snapshotSource ? p.snapshotSource() : p.cv, `Frame of ${KEYS[i]}`);
+    copyCanvas(p.snapshotSource ? p.snapshotSource() : p.cv, `Frame of ${KEYS[i]}`, p.remoteStream);
   }
   function copyTileView(i) {
     const c = cells.find((x) => !x.add && x.tiles[0] === i);
@@ -1415,7 +1431,7 @@
     out.width = Math.max(1, Math.round(c.pic.w * dpr));
     out.height = Math.max(1, Math.round(c.pic.h * dpr));
     out.getContext('2d').drawImage(canvas, Math.round(c.pic.x * dpr), Math.round(c.pic.y * dpr), out.width, out.height, 0, 0, out.width, out.height);
-    copyCanvas(out, `Frame of ${KEYS[i]}`);
+    copyCanvas(out, `Frame of ${KEYS[i]}`, tiles[i]?.remoteStream);
   }
   function copyTileTime(i) {
     const text = fmtTime(tileTime(i));
@@ -1431,7 +1447,7 @@
     return VpeControls.facts({
       name: names[i], size: sizes[i] || 0, duration: p && p.meta ? p.meta.duration : 0,
       width: p && p.meta ? p.meta.width : 0, height: p && p.meta ? p.meta.height : 0, fps: p ? p.fps || (p.meta && p.meta.fps) : 0,
-      info, vmode: p && p.vmode, amode: p && p.amode, native: !!(p && p.cfg && p.cfg.native),
+      info, vmode: p && p.vmode, amode: p && p.amode, native: !!(p && p.cfg && p.cfg.native), remoteStream: !!p?.remoteStream,
       hasSound: !!(p && (p.audio || info.audio)), tracks: { audio: info.audio ? 1 : 0, sub: 0 },
     });
   }
@@ -1527,6 +1543,11 @@
       tools: [{ label: 'Compare', note: `${N} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', ui.cmpBtn) }],
       facts: factsOf(Math.min(st.infoSel, N - 1)),
       infoTabs: { keys: names.map((_, i) => KEYS[i]), sel: Math.min(st.infoSel, N - 1), pick: (i) => { st.infoSel = i; } },
+      canUseOriginal: nativeTiles[st.infoSel] === 'transcode',
+      transcode: {
+        mode: prefs.transcode, maxBitrateMbps: prefs.transcodeMaxBitrate,
+        splitBitrate: prefs.transcodeSplitBitrate !== false,
+      },
       canExternal: false,
     }),
     act: {
@@ -1539,6 +1560,10 @@
       stepRate: (d) => bumpRate(d),
       setJump: (key, v) => { setJump(key, v); updateStepTips(); },
       setStepButtons: (v) => { prefs.stepButtons = v; updateStepTips(); vscode.postMessage({ type: 'pref', key: 'stepButtons', value: v }); },
+      setTranscode: (mode) => { saveNow(); vscode.postMessage({ type: 'transcodePref', mode }); },
+      setTranscodeMaxBitrate: (maxBitrateMbps) => vscode.postMessage({ type: 'transcodePref', maxBitrateMbps }),
+      setTranscodeSplitBitrate: (splitBitrate) => vscode.postMessage({ type: 'transcodePref', splitBitrate }),
+      useOriginal: () => vscode.postMessage({ type: 'originalTile', index: st.infoSel }),
       copyInfo: (d) => { vscode.postMessage({ type: 'copyText', text: [d.title, d.sub, ...d.rows.map(([a, b]) => `${a}: ${b}`)].join('\n') }); toast('Details copied'); },
       extSettings: () => vscode.postMessage({ type: 'openSettings' }),
     },
@@ -2000,7 +2025,13 @@
     if (clock && tiles.length === N) {
       try {
         clock.tick(now);
-        if (begun) {
+        if (restoreClock && clock.startT !== null && clock.vmode !== undefined && !document.hidden && panelVisible) {
+          const { time, playing } = restoreClock;
+          restoreClock = null;
+          if (time > 0) clock.seekTime(time);
+          if (playing) play();
+        }
+        if (begun && panelVisible && !document.hidden) {
           if (pendingStart && tiles.every((p) => p.startT !== null)) { clock.seekTime(pendingStart); pendingStart = 0; }
           if (clock.playing) syncPlaying(); else syncPaused();
         }
@@ -2018,11 +2049,42 @@
   }
   requestAnimationFrame(frameLoop);
 
-  // Hidden tab: pause.
+  let restoreClock = null;
+  let panelVisible = true;
   let resumeOnShow = false;
   function setVisible(visible) {
     if (!clock) return;
-    if (!visible) { resumeOnShow = resumeOnShow || clock.playing; pause(); } else if (resumeOnShow) { resumeOnShow = false; play(); }
+    if (!visible) { resumeOnShow = resumeOnShow || clock.playing; pause(); }
+    for (const p of tiles) if (p.remoteStream) p.setHidden(!visible);
+    if (visible && resumeOnShow) { resumeOnShow = false; play(); }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (nativeTiles.includes('transcode')) setVisible(panelVisible && !document.hidden);
+  });
+
+  function useOriginalTile(i, notice) {
+    const old = tiles[i];
+    if (!old || nativeTiles[i] !== 'transcode') return;
+    if (old === clock) {
+      restoreClock = { time: clock.currentTime(), playing: clock.playing };
+      pause();
+    }
+    old.dispose();
+    old.gl?.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    nativeTiles[i] = false;
+    const p = makeEngine(KEYS[i], { quiet: false, budget: memory.frames });
+    tiles[i] = p;
+    if (old === clock) { clock = p; p.setLoop(st.loop); lastGen = -1; }
+    else followClock(p, i);
+    p.setRate(st.rate);
+    applyVolume();
+    reqs = [];
+    upCount[i] = 0;
+    lastMetrics = null;
+    lastMetricsKey = '';
+    infoDirty = layoutDirty = true;
+    if (notice) toast(`${KEYS[i]}: ${notice}`);
+    controls.refresh();
   }
 
   window.addEventListener('message', (e) => {
@@ -2032,6 +2094,7 @@
       case 'toast': toast(String(m.text || ''), Math.min(10000, Number(m.ms) || 1500)); break;
       case 'addMode': showAddMode(m); break;
       case 'open':
+        panelVisible = m.visible !== false;
         sizes = m.sizes;
         nativeTiles = m.native || nativeTiles;
         try {
@@ -2069,20 +2132,30 @@
       // Native ffmpeg tiles (the host decodes; frames at the tile's size).
       case 'nd': {
         const p = engines[m.key];
-        if (!p) break;
+        if (!p?.cfg.native) break;
         if (m.m.type === 'size') {
           const { width, height } = m.m;
           Object.assign(p.info.video, { width, height });
           p.updateNativeSize();
-        } else p.onWorker(m.m);
+        } else if (m.m.type === 'remoteNotice') toast(`${m.key}: ${m.m.text}`, 6000);
+        else p.onWorker(m.m);
         break;
       }
       case 'ndv': { const p = engines[m.key]; if (p) p.onNativeVideo(m); break; }
       case 'nda': { const p = engines[m.key]; if (p) p.onNativeAudio(m); break; }
-      case 'visible': setVisible(m.visible); break;
+      case 'originalTile': useOriginalTile(m.index, m.notice); break;
+      case 'visible':
+        panelVisible = m.visible;
+        setVisible(panelVisible && !document.hidden);
+        break;
       case 'prefs':
         if (m.prefs && m.prefs.jump) Object.assign(prefs.jump, m.prefs.jump);
         if (m.prefs && m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons;
+        if (m.prefs) {
+          prefs.transcode = m.prefs.transcode;
+          prefs.transcodeMaxBitrate = m.prefs.transcodeMaxBitrate;
+          prefs.transcodeSplitBitrate = m.prefs.transcodeSplitBitrate;
+        }
         updateStepTips();
         controls.refresh();
         break;

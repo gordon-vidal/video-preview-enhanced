@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Compare can use Live transcode at each tile's size, share a max video bitrate, and show each tile's active encoder in About.
+
 ## 0.8.0 (2026-11-21)
 
 Live transcode for smooth 4K60 and remote playback, faster Explorer compare workflows (Add Mode, Open Together, Compare Videos in Folder), wheel step-back fixes, and a refreshed extension icon.

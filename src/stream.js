@@ -156,6 +156,22 @@ class EncodedStream {
     this.setMaxBitrateMbps(n);
   }
 
+  /** Compare owns the output size. Apply size and bitrate together, keeping the audio cursor. */
+  setCompareOutput(height, kbps) {
+    const mbps = kbps / 1000;
+    if (this.maxHeight === height && this.maxBitrateMbps === mbps) return;
+    this.maxHeight = height;
+    this.maxBitrateMbps = mbps;
+    this.takeStandby(NaN);
+    if (!this.fps || this.disposed) return;
+    if (!this.hidden && !this.startTimer && this.proc) {
+      this.sizeVideo();
+      this.restartVideo();
+    } else {
+      this.resizePending = true;
+    }
+  }
+
   /** Current pipeline metadata for ⓘ (About this video) and stats. */
   transcodeInfo() {
     const cap = this.activeCapKbps();
@@ -345,6 +361,7 @@ class EncodedStream {
     clearTimeout(this.startTimer);
     this.startTimer = null;
     this.deferredSince = null;
+    if (this.resizePending) this.sizeVideo();
     this.spawnVideo();
     if (!this.pr.audio) return;
     const proc = this.launch(this.base, true);

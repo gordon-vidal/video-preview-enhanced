@@ -87,6 +87,12 @@ module.exports = [
     steps: [{ case: 'multiview' }, { case: 'multiview-short-loop' }],
   },
   {
+    name: 'multiview-transcode',
+    journey: 'Compare streams two tiles, shares their bitrate cap, and switches one tile to its original video',
+    sources: [...COMPARE, 'src/stream.js', 'src/transcode_policy.js', 'media/controls.js'],
+    steps: [{ case: 'multiview-transcode' }],
+  },
+  {
     name: 'multiview-native',
     journey: 'Play together with native ffmpeg: tile sizes, the frame server and its budget, resizing, the message fallback',
     sources: [...COMPARE, ...NATIVE, 'src/decide.js'],
@@ -163,7 +169,7 @@ module.exports = [
   {
     name: 'remote-stream',
     journey: 'Remote windows: formats the GPU decoder can\'t play are re-encoded to H.264 by ffmpeg; seeks, scrubbing, the quality ladder, pixel tools',
-    sources: ['src/remotestream.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/player.js'],
+    sources: ['src/remotestream.js', 'src/stream.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/player.js'],
     steps: [{ case: 'remote_stream' }, { case: 'remote_stream_long' }, { case: 'remote_stream_size' }, { case: 'remote_stream_fallback' }],
   },
   {

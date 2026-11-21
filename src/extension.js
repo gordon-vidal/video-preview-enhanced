@@ -118,6 +118,7 @@ function prefsOf(c) {
     pictureSize: c.pictureSize,
     transcode: c.transcode,
     transcodeMaxBitrate: c.transcodeMaxBitrate,
+    transcodeSplitBitrate: c.transcodeSplitBitrate,
   };
 }
 
@@ -142,7 +143,12 @@ async function setSetting(key, value, target) {
     if (ok) delete fb[key]; else fb[key] = value;
     await globalState.update(FALLBACK_KEY, fb);
   } catch (e) { log(`setting ${key}: fallback save failed: ${e && e.message || e}`); }
-  if (!ok && PREFS[key]) { const msg = { type: 'prefs', prefs: prefsOf(config()) }; for (const sess of [...sessions, ...compareSessions]) sess.post(msg); }
+  if (!ok && (PREFS[key] || key.startsWith('transcode'))) {
+    const prefs = prefsOf(config());
+    const msg = { type: 'prefs', prefs };
+    for (const sess of [...sessions, ...compareSessions]) sess.post(msg);
+    if (key.startsWith('transcode')) for (const sess of compareSessions) sess.updateTranscode(prefs);
+  }
   return ok;
 }
 
@@ -190,6 +196,7 @@ function config() {
       });
     })(),
     transcodeMaxBitrate: Math.max(0, Number(settingOr(c, 'transcodeMaxBitrate', 0)) || 0),
+    transcodeSplitBitrate: settingOr(c, 'transcodeSplitBitrate', true),
     hdrOutput: c.get('hdrOutput', 'auto') === 'off' ? 'off' : 'auto',
     pictureSize: ['fit', 'fill', 'stretch', 'actual'].includes(c.get('pictureSize')) ? c.get('pictureSize') : 'fit',
   };
@@ -671,7 +678,7 @@ function maybeShowDriverNotice(t, notice, nvidiaDriver) {
 }
 
 /** First remote video when transcode is 'ask': let the user pick Live transcode vs original quality. */
-async function maybeOfferRemoteTranscode(sess, remote) {
+async function maybeOfferRemoteTranscode(sess, remote, onAccept) {
   if (transcodeOfferPending || sess.disposed) return;
   transcodeOfferPending = true;
   let answer;
@@ -684,10 +691,29 @@ async function maybeOfferRemoteTranscode(sess, remote) {
   } finally { transcodeOfferPending = false; }
   if (answer === transcodePolicy.REMOTE_PROMPT_YES) {
     await setSetting('transcode', 'auto', vscode.ConfigurationTarget.Global);
-    if (!sess.disposed) { sess.forceTranscode = true; sess.reload('live transcode accepted'); }
+    if (!sess.disposed && onAccept) onAccept();
   } else if (answer === transcodePolicy.REMOTE_PROMPT_NO) {
     await setSetting('transcode', 'off', vscode.ConfigurationTarget.Global);
   }
+}
+
+/** Shared hardware-first stream selection for the player and Compare. */
+async function transcodeOptions(t, pr, c, remote, reprobe = true) {
+  const hw = await machine().catch(() => null);
+  const nvidiaDriver = hw && hw.nvidiaDriver;
+  const [enc, audioEncoder] = await Promise.all([
+    transcodeProbe.encoderFor(t, ff.run, globalState, log, { nvidiaDriver }),
+    remote && pr.audio ? remotestream.audioEncoderFor(t) : null,
+  ]);
+  if (enc.driverNotice) maybeShowDriverNotice(t, enc.driverNotice, nvidiaDriver);
+  if (!enc.encoder) return null;
+  const decodeMethod = c.gpuDecoding === false ? 'none'
+    : decide.nativeMethod(remote ? null : probeRecordFor(t), pr.video, true, hw).method;
+  return {
+    encoder: enc.encoder, device: enc.device, cpuEncoder: enc.cpu, audioEncoder, decodeMethod, remote,
+    // Compare can exhaust simultaneous GPU sessions even when the cached open probe is valid.
+    onEncoderFail: reprobe ? () => transcodeProbe.encoderFailed(t, enc, nvidiaDriver) : undefined,
+  };
 }
 
 /** Local playback falling behind on raw frame transfer when transcode is 'ask': offer Live transcode. */
@@ -1205,6 +1231,7 @@ function activate(context) {
       if (Object.keys(PREFS).some((k) => e.affectsConfiguration(`videoPreviewEnhanced.${k}`))
         || e.affectsConfiguration('videoPreviewEnhanced.transcode')
         || e.affectsConfiguration('videoPreviewEnhanced.transcodeMaxBitrate')
+        || e.affectsConfiguration('videoPreviewEnhanced.transcodeSplitBitrate')
         || e.affectsConfiguration('videoPreviewEnhanced.remoteStream')) {
         const c = config();
         if (e.affectsConfiguration('videoPreviewEnhanced.transcodeMaxBitrate')) {
@@ -1216,6 +1243,7 @@ function activate(context) {
         }
         const msg = { type: 'prefs', prefs: prefsOf(c) };
         for (const sess of [...sessions, ...compareSessions]) sess.post(msg);
+        for (const sess of compareSessions) sess.updateTranscode(msg.prefs);
       }
     }),
     { dispose: flushSpeeds },
@@ -1237,6 +1265,8 @@ function activate(context) {
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
     // Compare's bar and panels are the player's: the same jump sizes, written the same way.
     prefs: () => prefsOf(config()),
+    setTranscodePref: (key, value) => setSetting(key, value, vscode.ConfigurationTarget.Global),
+    offerTranscode: (sess) => maybeOfferRemoteTranscode(sess, vscode.env.remoteName),
     setPref: (key, value) => (PREFS[key] && PREFS[key].values.includes(value) ? setSetting(key, value, prefTarget(key)) : undefined),
     // Leave compare: the player takes compare's place, at the kept video's moment.
     openPlayer: async (uri, t, viewColumn) => {
@@ -1256,20 +1286,36 @@ function activate(context) {
         mem: memBudgets(), // the whole machine's; media/compare.js shares it among the tiles (review 2026-11-19-3 M3)
       };
     },
-    // Compare uses the player's decoder rule. The panel sizes the native tiles together.
-    nativeFor: async (file, transport) => {
+    // Compare shares probe and decoder policy with the player, then sizes the tile in the panel.
+    nativeFor: async (file, transport, tile) => {
       const c = config();
       const remote = vscode.env.remoteName;
-      if (c.decoder === 'builtin' || !vscode.workspace.isTrusted || !nativeAllowedHere()) return null;
+      const rawAllowed = nativeAllowedHere();
+      if (c.decoder === 'builtin' || !vscode.workspace.isTrusted || (!rawAllowed && c.transcode === 'off')) return null;
       const t = await tools();
       if (!t) return null;
-      const [pr] = await Promise.all([ff.probe(t, file), gpusForMethod(t, c)]);
+      const [pr] = await Promise.all([ff.probe(t, file), rawAllowed ? gpusForMethod(t, c) : null]);
       const stat = await fs.promises.stat(file);
+      const failed = decide.failedBefore(globalState.get(decide.FAILED_KEY), file, stat);
+      const maxStreamHeight = c.nativeMaxAuto ? decide.FRAME_SERVER_HEIGHT : c.nativeMaxHeight;
+      if (!failed && c.transcode !== 'off' && pr.video) {
+        const remoteLink = !!remote && remote !== 'wsl';
+        const decision = transcodePolicy.shouldTranscodeOnOpen({
+          mode: c.transcode, remote, video: pr.video, compare: true,
+          maxBitrateMbps: c.transcodeMaxBitrate, viewHeight: tile && tile.h,
+        });
+        if (decision.action === 'prompt_remote') return { promptTranscode: true };
+        if (decision.action === 'stream') {
+          const stream = await transcodeOptions(t, pr, c, remoteLink, false);
+          if (stream) return { tools: t, probed: pr, maxHeight: maxStreamHeight, stream };
+        }
+      }
+      if (!rawAllowed) return null;
       const messageMaxHeight = nativeHeights(c).message;
       const maxHeight = transport === 'message' ? messageMaxHeight : c.nativeMaxAuto ? decide.FRAME_SERVER_HEIGHT : c.nativeMaxHeight;
       const d = decide.decide({
         setting: c.decoder, remote, trusted: true, tools: t, video: pr.video, probe: probeRecordFor(t), hw: hwKnown,
-        failed: decide.failedBefore(globalState.get(decide.FAILED_KEY), file, stat), gpu: c.gpuDecoding, maxHeight,
+        failed, gpu: c.gpuDecoding, maxHeight,
         transport: transport === 'message' ? 'message' : 'stream',
       });
       return { tools: d.use === 'native' ? t : null, probed: pr, method: d.method, methodGuessed: !!d.guessed, maxHeight, messageMaxHeight, reason: d.reason };
@@ -2435,34 +2481,26 @@ ${barHtml()}
     });
     if (decision.action === 'prompt_remote') {
       this.remoteTranscodePrompted = true;
-      maybeOfferRemoteTranscode(this, remote).catch((e) => log(`remote transcode prompt failed: ${e && e.message || e}`));
+      maybeOfferRemoteTranscode(this, remote, () => {
+        this.forceTranscode = true;
+        this.reload('live transcode accepted');
+      }).catch((e) => log(`remote transcode prompt failed: ${e && e.message || e}`));
       return false;
     }
     if (decision.action !== 'stream') return false;
     const isRemoteLink = (!!remote && remote !== 'wsl') || c.remoteStream === 'on';
-    const hw = await machine().catch(() => null);
+    const stream = await transcodeOptions(t, pr, c, isRemoteLink);
     if (this.stale(gen)) return false;
-    const [enc, audioEncoder] = await Promise.all([
-      transcodeProbe.encoderFor(t, ff.run, globalState, log, { nvidiaDriver: hw && hw.nvidiaDriver }),
-      isRemoteLink && pr.audio ? remotestream.audioEncoderFor(t) : null,
-    ]);
-    if (this.stale(gen)) return false;
-    if (enc.driverNotice) maybeShowDriverNotice(t, enc.driverNotice, hw && hw.nvidiaDriver);
-    if (!enc.encoder) {
+    if (!stream) {
       log(`[${this.name}] live transcode: no usable H.264 encoder available on this host; keeping original decoder`);
       return false;
     }
-    // Hardware-first decode method (works on both local and remote GPU machines).
-    const probeRec = !isRemoteLink ? probeRecord(t, hw) : null;
-    const decodeMethod = c.gpuDecoding === false ? 'none' : decide.nativeMethod(probeRec, pr.video, true, hw).method;
-    log(`[${this.name}] decoder: remote stream / live transcode (${enc.encoder}, decode=${decodeMethod}, ${remote || 'local'} window): ${pr.video.codec} ${pr.video.pixFmt} ${pr.video.width}x${pr.video.height}`);
+    log(`[${this.name}] decoder: remote stream / live transcode (${stream.encoder}, decode=${stream.decodeMethod}, ${remote || 'local'} window): ${pr.video.codec} ${pr.video.pixFmt} ${pr.video.width}x${pr.video.height}`);
     this.native = new remotestream.EncodedStream({
-      tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), audioEncoder, probed: pr,
-      stats: !!logFile, encoder: enc.encoder, device: enc.device, cpuEncoder: enc.cpu, decodeMethod,
-      maxBitrateMbps: c.transcodeMaxBitrate, allowLinkAdapt: isRemoteLink, remote: isRemoteLink, allowSoftwareFallback: true,
+      ...stream, tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), probed: pr,
+      stats: !!logFile, maxBitrateMbps: c.transcodeMaxBitrate, allowLinkAdapt: isRemoteLink,
       post: (msg) => this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg }),
       log: (msg) => log(`[${this.name}] ${msg}`),
-      onEncoderFail: () => transcodeProbe.encoderFailed(t, enc, hw && hw.nvidiaDriver),
       onFail: (err) => {
         log(`[${this.name}] remote stream failed (${err}); using the built-in decoder`);
         this.noRemoteStream = true;
