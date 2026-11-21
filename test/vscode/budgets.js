@@ -16,7 +16,7 @@ const BUDGETS = {
   native: 355000,
   onboarding: 95000,
   'open-formats': 410000,
-  'picture-size': 145000,
+  'picture-size': 190000,
   'picture-size-native': 95000,
   playback: 425000,
   'remote-stream': 525000,

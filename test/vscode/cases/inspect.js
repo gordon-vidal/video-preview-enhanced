@@ -175,7 +175,7 @@ module.exports = [{
         ok(!st2.playing && st2.frameText === frame, `drag pans without play/pause or stepping (${frame} -> ${st2.frameText}, playing ${st2.playing})`);
         P.key('z');
         await lib.sleep(400);
-        ok((await P.state()).stageClass === 'fit', `Z returns to fit (${(await P.state()).stageClass})`);
+        { const s = await P.state(); ok(s.picture.mode === 'fit' && s.picture.zoom === 1, `Z returns to fit (${JSON.stringify(s.picture)}, stage ${s.stageClass}: a small clip in Fit is enlarged, so the transform layout)`); }
       } finally { await P.close(); }
     });
 

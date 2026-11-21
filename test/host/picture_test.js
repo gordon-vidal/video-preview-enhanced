@@ -19,13 +19,15 @@ assert.strictEqual(P.parse('nonsense'), 'fit');
 assert.strictEqual(P.parse('stretch'), 'stretch');
 
 // Fit: the whole picture, bars on the short side (a 16:9 picture in a 1000x800 area: 1000x562.5).
-rect(P.rectOf(P.fresh('fit'), vid, vid, view, { enlarge: true }), 0, 118.75, 1000, 562.5, 'fit');
-// Fit never enlarges a small picture in the player, does in compare.
+rect(P.rectOf(P.fresh('fit'), vid, vid, view), 0, 118.75, 1000, 562.5, 'fit');
+// Fit enlarges a small picture as far as the area allows (object-fit: contain), in the player and in compare.
 const small = { w: 320, h: 240 };
-rect(P.rectOf(P.fresh('fit'), small, small, view), 340, 280, 320, 240, 'small fit');
-rect(P.rectOf(P.fresh('fit'), small, small, view, { enlarge: true }), 0, 25, 1000, 750, 'small fit enlarged');
+rect(P.rectOf(P.fresh('fit'), small, small, view), 0, 25, 1000, 750, 'small fit enlarged');
+rect(P.rectOf(P.fresh('fit'), { w: 640, h: 360 }, { w: 640, h: 360 }, { w: 1700, h: 1100 }), 0, 71.875, 1700, 956.25, 'a 640x360 clip fills the width of a 1700x1100 panel');
+// ... a downscaled native frame of a larger file gets the same rectangle.
+rect(P.rectOf(P.fresh('fit'), { w: 960, h: 540 }, { w: 3840, h: 2160 }, { w: 1700, h: 1100 }), 0, 71.875, 1700, 956.25, 'native frame in Fit');
 // A portrait picture in a wide area.
-rect(P.rectOf(P.fresh('fit'), { w: 1080, h: 1920 }, { w: 1080, h: 1920 }, view, { enlarge: true }), 275, 0, 450, 800, 'portrait fit');
+rect(P.rectOf(P.fresh('fit'), { w: 1080, h: 1920 }, { w: 1080, h: 1920 }, view), 275, 0, 450, 800, 'portrait fit');
 
 // Fill: covers the area, centred, the long side cropped.
 rect(P.rectOf(P.fresh('fill'), vid, vid, view), -(1422.2222222 - 1000) / 2, 0, 1422.2222222, 800, 'fill');
@@ -47,15 +49,15 @@ assert.deepStrictEqual(P.baseSize('fill', vid, vid, { w: 0, h: 0 }), { w: 0, h: 
 // Zoom and pan clamp: the picture's edges never come inside the area; smaller than the area stays centred.
 let v = { ...P.fresh('fit'), zoom: 3, cx: 0, cy: 0 };
 const nat = vid;
-let r = P.rectOf(v, nat, vid, view, { enlarge: true });
+let r = P.rectOf(v, nat, vid, view);
 near(r.x, 0, 'left edge pinned'); near(r.w, 3000, 'zoomed width');
 v = { ...v, cx: 1, cy: 1 };
-r = P.rectOf(v, nat, vid, view, { enlarge: true });
+r = P.rectOf(v, nat, vid, view);
 near(r.x + r.w, view.w, 'right edge pinned'); near(r.y + r.h, view.h, 'bottom edge pinned');
-r = P.rectOf({ ...P.fresh('fit'), cx: 0.1 }, nat, vid, view, { enlarge: true });
+r = P.rectOf({ ...P.fresh('fit'), cx: 0.1 }, nat, vid, view);
 near(r.x, 0, 'a picture that fits cannot be panned');
 // Zoom limits: not below the mode's size (except 100 %), not above 64 device pixels per video pixel.
-const o = { enlarge: true };
+const o = {};
 assert.strictEqual(P.zoomAt(P.fresh('fit'), 0.2, 500, 400, nat, vid, view, o).zoom, 1);
 near(P.zoomAt(P.fresh('actual'), 0.01, 500, 400, nat, vid, view, o).zoom, 1 / 16, 'actual min');
 near(P.zoomAt(P.fresh('actual'), 1000, 500, 400, nat, vid, view, o).zoom, 64, 'actual max 64x the video');

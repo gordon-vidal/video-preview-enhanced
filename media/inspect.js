@@ -151,8 +151,8 @@ const VpeInspect = (() => {
 
     // ---- picture size, zoom and pan -------------------------------------------
     // The picture's size and place come from media/picture.js (a mode: Fit, Fill, Stretch or 100 %, plus a zoom and
-    // a pan). The plain Fit keeps the CSS layout (shrink to fit, never enlarge); everything else places the canvas
-    // with a transform in the stage ('zoom' class). The canvas holds the picture at its own size (rotation
+    // a pan). The plain Fit keeps the CSS layout while the picture only shrinks or stays; once it must grow (a small video in
+    // a big area) and in every other view the canvas is placed with a transform in the stage ('zoom' class). The canvas holds the picture at its own size (rotation
     // included), so a CSS transform with image-rendering is exact and costs no extra GPU pass.
     let pic = Pic.fresh(env.picture);
     let forceNearest = false;
@@ -169,9 +169,11 @@ const VpeInspect = (() => {
     const opts = () => ({ dpr: dprOf() });
     const rectNow = () => Pic.rectOf(pic, natural(), source(), area(), opts());
     const isPlain = () => pic.mode === 'fit' && Pic.plain(pic);
+    /** The CSS layout does the plain Fit (max-width / max-height shrink, never enlarge); a picture that must grow needs the transform. */
+    const cssFit = () => isPlain() && !!canvas.width && rectNow().w <= canvas.width + 0.5;
     /** CSS px per canvas pixel as shown now. */
     function scale() {
-      if (!isPlain()) return canvas.width ? rectNow().w / canvas.width : 1;
+      if (!cssFit()) return canvas.width ? rectNow().w / canvas.width : 1;
       const r = canvas.getBoundingClientRect();
       return canvas.width ? r.width / canvas.width : 1;
     }
@@ -184,7 +186,7 @@ const VpeInspect = (() => {
       const v = area();
       if (canvas.width && canvas.height) pic = Pic.clamp(pic, natural(), source(), v, opts());
       let r = null;
-      if (isPlain() || !canvas.width) canvas.style.transform = '';
+      if (cssFit() || !canvas.width) canvas.style.transform = '';
       else {
         r = rectNow();
         // On whole device pixels: at 100 % every video pixel must land on one screen pixel (a half pixel blurs the picture).
