@@ -92,10 +92,10 @@ assert.deepStrictEqual(folderVideos(undefined, 4), { names: [], total: 0 });
     V.workspace.fs.readDirectory = async () => [];
     await V._commands['videoPreviewEnhanced.compareFolder'](folderUri);
     assert.ok(/no videos/.test(infos.pop()), 'none: said so');
-    V.workspace.fs.readDirectory = async () => ['a', 'b', 'c', 'd', 'e', 'f'].map((n) => [`${n}.mp4`, 1]);
+    V.workspace.fs.readDirectory = async () => Array.from({ length: 10 }, (_, i) => [`clip${i + 1}.mp4`, 1]);
     await V._commands['videoPreviewEnhanced.compareFolder'](folderUri);
     assert.strictEqual(panels.length, before + 2, 'more than max: the first max open');
-    assert.ok(/6 videos.*first 4/.test(infos.pop()), 'more than max: said so');
+    assert.ok(/10 videos.*first 8/.test(infos.pop()), 'more than max: said so');
 
     // A drop: videos only, not the file itself, files only.
     await V._commands['videoPreviewEnhanced.compareDrop'](uriA, ['file:///tmp/readme.md', uriA.toString(), 'http://h/a.mp4'], { t: 0 });

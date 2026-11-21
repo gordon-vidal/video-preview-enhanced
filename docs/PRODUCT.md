@@ -117,17 +117,16 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 
 One feature: compare becomes multi-view. The difference view is dropped.
 
-- **Now:** up to 4 videos in a sensible layout (2 side by side or split with a draggable divider, 3–4 in a 2×2 grid;
-  3 leave an "Add video" cell). The toggle (flip) view is dropped.
-- **Later, low priority:** a flexible layout system, up to 16 videos. The engine already takes 16 (Gordon, 2026-11-20):
-  the experimental setting `compare.maxVideos` (default 4) allows up to 16 in a plain automatic grid; free placement
-  and how more than 4 videos get in are still to be designed (docs/notes/multiview-engine.md).
+- **Now:** up to 8 videos by default (2–16 via `compare.maxVideos`). Two videos can sit side by side or split
+  with a draggable divider. Three or four use a 2×2 grid, and five or more use a larger static grid with
+  compact hover controls. A spare cell can add another video while below the limit.
+- **Later, low priority:** drag to reorder and free tile placement (docs/notes/multiview-engine.md).
 - **The player's UI (2026-11-20: the approved compare mock-up).** Compare is the player with more videos:
   the same bar drives all tiles (play, lockstep frame steps, seek, speed, loop, jumps); time and seek follow the
   clock video with its letter; mute / volume act on the sound video; CC is hidden. One new
   bar button opens the **Compare panel** (⚙-panel style): a row per video (letter, name, clock / sound, offset)
   with its own page (offset − / + in frames or ms, Reset, Clock and Sound switches, Replace video…, Remove), Add
-  video (n of 4), View (2 videos: Side by side | Split), Swap, Leave compare. Tiles are clean; hover shows the name
+  video (n of the set limit), View (2 videos: Side by side | Split), Swap, Leave compare. Tiles are clean; hover shows the name
   pill with the tile's own frame number and a ‹ offset › nudge; − / + nudge the tile under the pointer;
   right-click a tile for its actions. The old compare toolbar and sync panel are gone.
 - **Entering:** key **D** (quick pick of other videos, same folder first), Shift+drop of an Explorer video on the player, ⚙ › Tools › Compare (the same as **Shift+D**: add mode, click videos in the Explorer; from a player one click opens

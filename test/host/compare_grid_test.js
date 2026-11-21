@@ -1,6 +1,6 @@
 'use strict';
-// node test/host/compare_grid_test.js: compare with more than 4 videos (media/compare-grid.js, the
-// experimental setting compare.maxVideos): the grid, the per-tile memory, texture and native budgets,
+// Compare with more than 4 videos (media/compare-grid.js, compare.maxVideos):
+// the grid, the per-tile memory, texture and native budgets,
 // the host's native frame sizes for 9 and 16 tiles, and that 2-4 tiles keep the budgets they had.
 const assert = require('assert');
 const path = require('path');
@@ -27,8 +27,13 @@ const { FRAME_SERVER_BPS, TRANSPORT_BPS } = require('../../src/decide');
 // ---- the setting and the grid ----
 assert.strictEqual(Grid.TILE_KEYS, 'ABCDEFGHIJKLMNOP');
 assert.strictEqual(Grid.MAX_VIDEOS, 16);
-assert.strictEqual(Grid.clampMax(undefined), 4);
-assert.strictEqual(Grid.clampMax('x'), 4);
+const settingInfo = require('../../package.json').contributes.configuration.properties['videoPreviewEnhanced.compare.maxVideos'];
+assert.strictEqual(settingInfo.default, 8);
+assert.strictEqual(settingInfo.default, Grid.DEFAULT_MAX);
+assert.deepStrictEqual([settingInfo.minimum, settingInfo.maximum], [2, Grid.MAX_VIDEOS]);
+assert.ok(!settingInfo.tags?.includes('experimental'));
+assert.strictEqual(Grid.clampMax(undefined), 8);
+assert.strictEqual(Grid.clampMax('x'), 8);
 assert.strictEqual(Grid.clampMax(1), 2);
 assert.strictEqual(Grid.clampMax(9.7), 9);
 assert.strictEqual(Grid.clampMax(99), 16);
@@ -36,14 +41,14 @@ assert.ok(!Grid.isLarge(4) && Grid.isLarge(5));
 assert.deepStrictEqual(Grid.gridFor(2, 'side'), { cols: 2, rows: 1 });
 assert.deepStrictEqual(Grid.gridFor(2, 'split'), { cols: 1, rows: 1 });
 for (const n of [3, 4]) assert.deepStrictEqual(Grid.gridFor(n, 'grid'), { cols: 2, rows: 2 });
-const grids = { 5: '3x2', 6: '3x2', 7: '3x3', 9: '3x3', 10: '4x3', 12: '4x3', 13: '4x4', 16: '4x4' };
-for (const [n, g] of Object.entries(grids)) {
-  const { cols, rows } = Grid.gridFor(Number(n), 'grid');
-  assert.strictEqual(`${cols}x${rows}`, g, `${n} videos`);
-}
+const grids = ['2x1', '2x2', '2x2', '3x2', '3x2', '3x3', '3x3', '3x3', '4x3', '4x3', '4x3', '4x4', '4x4', '4x4', '4x4'];
 for (let n = 2; n <= 16; n++) {
   const { cols, rows } = Grid.gridFor(n, 'grid');
-  assert.ok(cols * rows >= n && cols * rows - n < cols, `${n}: ${cols}x${rows} has a whole empty row`);
+  assert.strictEqual(`${cols}x${rows}`, grids[n - 2], `${n} videos`);
+  for (const max of [8, 16]) {
+    const hasAdd = n < max && ![2, 4, 6, 9, 12, 16].includes(n);
+    assert.strictEqual(Grid.gridCellCount(n, max, cols, rows), n + Number(hasAdd), `${n} videos with limit ${max}`);
+  }
 }
 
 // ---- memory: 2-4 tiles exactly as before; 5-16 share fixed budgets ----
@@ -142,17 +147,18 @@ for (const n of [9, 16]) {
 // ---- the page: compare-grid.js always; membudget.js (remote windows' client memory) from 5 videos ----
 const uri = (...p) => `https://webview/${p.join('/')}`;
 const page = (n) => compareHtml({ uri, cspSource: 'x', nonce: 'n', cfg: { names: Array(n).fill('v.mp4') }, frameSource: '' });
-for (const n of [2, 4, 9]) {
+for (let n = 2; n <= 16; n++) {
   const html = page(n);
   assert.ok(html.indexOf('compare-grid.js') > 0 && html.indexOf('compare-grid.js') < html.indexOf('compare.js"'), `${n}: compare-grid.js before compare.js`);
   assert.strictEqual(html.includes('membudget.js'), n > 4, `${n}: membudget.js`);
+  assert.strictEqual(html.includes('id="cells" class="dense"'), n > 4, `${n}: dense layout`);
 }
 
 // ---- the setting caps what opens and what can be added ----
 (async () => {
   // Only the name matters here (nothing is read): the command keeps video files.
   const file = path.join(__dirname, '..', 'media', 'h264_8_1080p.mp4');
-  for (const [setting, want] of [[undefined, 4], [9, 9], [16, 16], [40, 16]]) {
+  for (const [setting, want] of [[undefined, 8], [4, 4], [9, 9], [16, 16], [40, 16]]) {
     const h = require('./mock_vscode').load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin', ...(setting === undefined ? {} : { 'videoPreviewEnhanced.compare.maxVideos': setting }) } });
     const warnings = [];
     h.vscode.window.showWarningMessage = async (w) => { warnings.push(w); };

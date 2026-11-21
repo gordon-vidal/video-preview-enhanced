@@ -1,7 +1,7 @@
 // @ts-check
 // Compare with many videos: the grid and the per-tile budgets, shared by the page (media/compare.js) and
 // the host (src/compare.js), small enough for a Node test (test/host/compare_grid_test.js).
-// Up to 4 videos everything stays as it was; from 5 on (an experimental setting, compare.maxVideos)
+// Up to 4 videos everything stays as it was; from 5 on
 // the tiles split fixed budgets, so 16 videos use about what 4 did (docs/notes/multiview-engine.md).
 'use strict';
 
@@ -9,11 +9,11 @@
   /** Tile letters: 'A'-'P'. Engine keys are these (the scan's 'sA' / 'sB' end in one). */
   const TILE_KEYS = 'ABCDEFGHIJKLMNOP';
   const MAX_VIDEOS = TILE_KEYS.length;
-  const DEFAULT_MAX = 4;
+  const DEFAULT_MAX = 8;
   /** From this many videos on, tiles share one renderer and the large-grid budgets below. */
   const LARGE = 5;
 
-  /** The setting compare.maxVideos as a count: 2-16, 4 when unset or not a number. */
+  /** The setting compare.maxVideos as a count: 2-16, 8 when unset or not a number. */
   function clampMax(v) {
     const n = Math.floor(Number(v));
     return Number.isFinite(n) ? Math.max(2, Math.min(MAX_VIDEOS, n)) : DEFAULT_MAX;
@@ -32,6 +32,9 @@
     const cols = Math.ceil(Math.sqrt(n));
     return { cols, rows: Math.ceil(n / cols) };
   }
+
+  /** Videos occupy the grid in order, followed by an Add cell if there is room. */
+  const gridCellCount = (n, max, cols, rows) => n + Number(n < max && n < cols * rows);
 
   /**
    * Each tile's engine budgets from the machine's (media/membudget.js; null: the 32 GB defaults).
@@ -91,7 +94,10 @@
     };
   }
 
-  const api = { TILE_KEYS, MAX_VIDEOS, DEFAULT_MAX, LARGE, GRID_PIXELS, clampMax, isLarge, gridFor, tileMemory, texturePixels, capSize, nativeCredits, nativeQueuePerTile, compareVisibility };
+  const api = {
+    TILE_KEYS, MAX_VIDEOS, DEFAULT_MAX, LARGE, GRID_PIXELS, clampMax, isLarge, gridFor, gridCellCount,
+    tileMemory, texturePixels, capSize, nativeCredits, nativeQueuePerTile, compareVisibility,
+  };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.CompareGrid = api;
 }(typeof self !== 'undefined' ? self : this));

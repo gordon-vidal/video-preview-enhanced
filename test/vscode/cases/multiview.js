@@ -486,7 +486,7 @@ module.exports = [{
     return [{ name: 'native/frame-server-403', ok: !problems.length, problems }];
   },
 }, {
-  // More than 4 videos (the experimental setting compare.maxVideos, docs/notes/multiview-engine.md): 9 tiles on the
+  // More than 4 videos (docs/notes/multiview-engine.md): 9 tiles on the
   // GPU and built-in decoders in a 3x3 grid with one shared renderer; lockstep, offsets, another clock, play, remove,
   // add up to 16 (4x4), close.
   name: 'multiview-large',
@@ -499,6 +499,12 @@ module.exports = [{
       return (cond, msg) => { if (!cond) { r.ok = false; r.problems.push(msg); } };
     };
     const { report, act, until, checkFrames, checkPlaying, stepAndWait } = helpers(vs, h);
+    const ui = async (id) => {
+      const from = vs.mark();
+      act({ action: 'ui', id });
+      const line = await vs.waitLog(new RegExp(`compare ui \\{"id":${id},`), { from, timeout: 10000 });
+      return JSON.parse(line.slice(line.indexOf('compare ui ') + 'compare ui '.length));
+    };
     const gpu = make('multiview_h264.mp4'); // H.264 1080p, 24 fps, 24 s: the GPU decoder
     const soft = make('s_vp9.webm'); // VP9 320x180, 30 fps, 3 s: the built-in decoder
     if (!gpu || !soft) throw new Error('missing multi-view clips (test/media/make_cases_media.js)');
@@ -569,6 +575,9 @@ module.exports = [{
     await vs.waitLog(opened(8), { from, timeout: 45000, what: 'compare reopened with 8' });
     r = await until((x) => x.n === '8' && allShown(x) && x.synced === 'true', 45000);
     ok(r.n === '8' && r.grid === '3x3' && r.add === 'true' && r.cells === '8', `8 tiles: grid=${r.grid} add=${r.add} cells=${r.cells}`);
+    const eight = (await ui(1)).cells;
+    ok(eight.length === 9 && eight[8].tile === 'add' && eight[8].rect[0] === eight[2].rect[0]
+      && eight[8].rect[1] === eight[6].rect[1], 'Add video belongs in the last slot of the 3x3 grid');
     ok(r.clock === '5' && r.offsets === '0f,3f,200ms,0f,0f,0f,-2f,0f', `clock and offsets move with their videos: clock=${r.clock} offsets=${r.offsets}`);
     from = vs.mark();
     vs.send({ compareAdd: Array(10).fill(gpu) });
@@ -582,6 +591,19 @@ module.exports = [{
     checkFrames(ok, r, offs16, '16 tiles: paused seek');
     r = await stepAndWait(1);
     checkFrames(ok, r, offs16, '16 tiles: step +1');
+
+    ok = t('large/compact-overlays');
+    act({ action: 'stageSize', w: 400, h: 240 });
+    const compact = await ui(2);
+    ok(compact.stage[2] === 400 && compact.stage[3] === 240, `compact stage: ${compact.stage}`);
+    for (const cell of compact.cells) {
+      const [x, y, w, h] = cell.rect;
+      const inside = ([left, top, width, height]) => width > 0 && height > 0
+        && left >= x && top >= y && left + width <= x + w && top + height <= y + h;
+      const [pill] = cell.pillRects, [nudge] = cell.nudgeRects;
+      ok(pill && nudge && inside(pill) && inside(nudge) && pill[1] + pill[3] <= nudge[1],
+        `tile ${cell.tile}: pill ${pill} and nudge ${nudge} must stack inside ${cell.rect}`);
+    }
 
     ok = t('large/close');
     from = vs.mark();

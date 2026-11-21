@@ -91,7 +91,7 @@ The player's keys, for all videos at once, plus:
 | ← / →, Shift+← / →, Ctrl+← / → | The player's jump sizes, on the clock video |
 | - / + | Offset of the video under the pointer, one frame (10 ms when its offset is in ms) |
 | X | Swap sides (2 videos) |
-| Shift+D | Add videos by clicking them in the Explorer; it stays on until Esc, Shift+D again or the maximum (4; `compare.maxVideos`). Also what ⚙ › Tools › Compare and **Add video…** in compare do |
+| Shift+D | Add videos by clicking them in the Explorer; it stays on until Esc, Shift+D again or the maximum (8 by default; `compare.maxVideos`). Also what ⚙ › Tools › Compare and **Add video…** in compare do |
 | ← / → on the focused split divider | Move it by 1 % (Shift: 10 %); Home / End |
 | Z | Picture size for all videos: Fit, Fill, Stretch, 100 %, then Fit; zoomed in, back to Fit first |
 | Ctrl+wheel, drag | Zoom and pan all videos together (the same part of every picture) |

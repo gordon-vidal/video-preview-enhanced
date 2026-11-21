@@ -4,6 +4,7 @@
 // the player's and compare's HTML (src/extension.js html(), src/compare.js compareHtml).
 // The pages themselves are checked in a real VS Code: test/vscode/cases/ui.js.
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 const VpeModes = require('../../media/modes');
 const { compareHtml } = require('../../src/compare');
@@ -72,6 +73,16 @@ assert.ok(cmp.indexOf('controls.js') > 0 && cmp.indexOf('controls.js') < cmp.ind
 assert.match(cmp, /<button id="picBtn"[^>]*aria-label="Picture size: Fit. Next: Fill"/, 'compare: the picture size button');
 assert.ok(cmp.indexOf('picture.js') > 0 && cmp.indexOf('picture.js') < cmp.indexOf('compare.js"'), 'compare: picture.js loads before compare.js');
 assert.ok(cmp.indexOf('modes.js') > 0 && cmp.indexOf('modes.js') < cmp.indexOf('compare.js"'), 'compare: modes.js (ownsKey) loads before compare.js');
+
+// Dense styling uses the same buttons and focus reveal as the regular tiles.
+const cmpScript = fs.readFileSync(path.join(__dirname, '../../media/compare.js'), 'utf8');
+const cmpStyles = fs.readFileSync(path.join(__dirname, '../../media/compare.css'), 'utf8');
+assert.match(cmpScript, /aria-label="\$\{k\} earlier"/);
+assert.match(cmpScript, /aria-label="\$\{k\} later"/);
+assert.match(cmpScript, /aria-label="Offset of \$\{k\}: \$\{offText\(i, true\)\}"/);
+assert.match(cmpScript, /setAttribute\('aria-label', 'Add video'\)/);
+assert.match(cmpStyles, /\.cell:focus-within \.ov \{ opacity: 1; \}/);
+assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: var\(--vscode-focusBorder\); \}/);
 
 (async () => {
   const h = load({});

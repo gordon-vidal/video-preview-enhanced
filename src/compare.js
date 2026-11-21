@@ -1,8 +1,8 @@
 'use strict';
-// Compare / multi-view: 2-4 videos in one webview panel with the player's bar and panels (2: side by
-// side or split; 3-4: a 2x2 grid; docs/notes/compare-ui.md). The experimental setting compare.maxVideos
-// allows up to 16 in a plain grid (docs/notes/multiview-engine.md). Opened from a player, it takes that tab's
-// place, and "Leave compare" puts the player back there. The extension host only reads file blocks, exactly as
+// Compare / multi-view: 2-16 videos in one webview panel with the player's bar and panels (2: side by
+// side or split; 3-4: a 2x2 grid; 5-16: a larger static grid, docs/notes/multiview-engine.md).
+// Opened from a player, it takes that tab's place, and "Leave compare" puts the player back there.
+// The extension host only reads file blocks, exactly as
 // for a single player; each decode engine in the webview asks for blocks with
 // its own key, so both files (and the background scan's own readers) are served
 // from here, also in remote windows.
@@ -31,10 +31,10 @@ const { createBurst, leftoverTabs, togetherNotice } = require('./burst');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
 
 const MAX_BLOCK = 8 * 1024 * 1024;
-/** Videos in one panel at most (the setting compare.maxVideos picks 2-16; 4 by default). */
+/** Videos in one panel at most (the setting compare.maxVideos picks 2-16; 8 by default). */
 const MAX_TILES = Grid.MAX_VIDEOS;
 const TILE_KEYS = Grid.TILE_KEYS;
-/** The setting compare.maxVideos (experimental): how many videos one compare panel takes. */
+/** The setting compare.maxVideos: how many videos one compare panel takes. */
 function maxVideos() {
   try { return Grid.clampMax(vscode.workspace.getConfiguration('videoPreviewEnhanced').get('compare.maxVideos')); } catch { return Grid.DEFAULT_MAX; }
 }
@@ -76,7 +76,7 @@ function compareHtml({ uri, cspSource, nonce, cfg, frameSource }) {
 <script type="application/json" id="cfg">${json}</script>
 <div id="stage">
   <canvas id="canvas" hidden role="img" aria-label="Videos compared"></canvas>
-  <div id="cells"></div>
+  <div id="cells"${large ? ' class="dense"' : ''}></div>
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div></div>
   <div id="toast" hidden aria-hidden="true"></div>
 </div>
@@ -528,7 +528,7 @@ class CompareSession {
 }
 
 /**
- * Commands: Explorer "Compare Videos" (2-4 files selected; up to 16 with compare.maxVideos), "Compare Videos in Folder" and
+ * Commands: Explorer "Compare Videos" (up to compare.maxVideos), "Compare Videos in Folder" and
  * "Compare With…" (the open player's file against one picked in a dialog).
  * deps: { vscode, log, sessions (open player Sessions), engineCfg(webview), nativeFor?(file, transport), nativeQueue?() }
  */
@@ -784,7 +784,7 @@ function registerCompare(context, deps) {
       return b ? open([a, b]) : undefined;
     }),
     // From a player (Tools › Compare in its settings panel, its right-click "Compare With…", the editor title
-    // button): up to 3 more files (more with compare.maxVideos), and compare takes the player's place. opts (from the page): { t } its position.
+    // button): add files up to compare.maxVideos. Compare takes the player's place at its position (opts.t).
     vscode.commands.registerCommand('videoPreviewEnhanced.compareWith', async (uri, opts) => {
       const a = (uri instanceof vscode.Uri ? uri : null) || activePlayerUri() || await pick('Compare: video A');
       if (!a) return undefined;

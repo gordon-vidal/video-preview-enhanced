@@ -100,7 +100,7 @@ module.exports = [
   },
   {
     name: 'multiview-large',
-    journey: 'More than 4 videos (experimental setting compare.maxVideos): 9 then 16 tiles on the GPU and built-in decoders with one shared renderer; lockstep, offsets, clock, play, remove, add, close',
+    journey: 'More than 4 videos: 9 then 16 tiles on the GPU and built-in decoders with one shared renderer; lockstep, offsets, clock, play, remove, add, close',
     sources: [...COMPARE, ...ENGINE],
     steps: [{ case: 'multiview-large' }],
   },

@@ -15,7 +15,10 @@ const { make } = require('../media/make_cases_media');
   assert.ok(rotated && upright, 'ffmpeg test clips');
   const rewritten = path.join(path.dirname(rotated), `vpe_compare_${process.pid}.mp4`);
   const { totalmem, freemem } = os;
-  const h = load({ settings: { 'videoPreviewEnhanced.decoder': 'ffmpeg' } });
+  const h = load({ settings: {
+    'videoPreviewEnhanced.decoder': 'ffmpeg',
+    'videoPreviewEnhanced.compare.maxVideos': 4,
+  } });
   let compare;
   try {
     fs.copyFileSync(upright, rewritten);

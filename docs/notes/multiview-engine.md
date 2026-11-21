@@ -2,19 +2,36 @@
 
 Gordon's decision: take the engine of the old 16-video multi-view (branch `codex/multiview-layout`,
 `90c9f54` and the review fixes `e381af4`, on the old history) into today's compare, not its UI. The
-bar, the Compare panel, the tiles and the 2 / 3 / 4 layouts stay. Free placement of tiles and how
-more than 4 videos get into compare are designed later.
+bar, the Compare panel, the tiles and the 2 / 3 / 4 layouts stay. Free tile placement is deferred.
 
 The fixes that also apply to 2-4 tiles (page ids, seek through resize, clock switch and clock removal,
 disposal) were already ported in `fix/compare-from-multiview`; they were not redone.
 
 ## What a user sees
 
-- Setting `videoPreviewEnhanced.compare.maxVideos` (default 4, 2-16, marked experimental). It caps the
-  Explorer command, Compare With…, dropped files and Add video. Nothing else changes at 4.
-- From 5 videos: a plain grid with the existing tiles (3×2, 3×3, 4×3, 4×4: `ceil(sqrt(n))` columns).
-  The first empty cell is the Add video cell while the setting allows more. Pills, nudges, the tile
-  menu and the Compare panel work as for 2×2.
+- Setting `videoPreviewEnhanced.compare.maxVideos` defaults to 8 and accepts 2–16. It caps Compare
+  Videos, Compare Videos in Folder, Open Together, Compare With…, dropped files and Add Mode.
+- From 5 videos, cells fill a static grid left to right and top to bottom (3×2, 3×3, 4×3, 4×4).
+  The first spare slot is the Add video cell while the setting allows more. When the current grid
+  has no spare slot, **Add video…** in the Compare panel and Shift+D can still add videos up to the limit.
+
+### Dense tile overlays
+
+A narrow panel or a letterboxed picture can leave too little room for two controls side by side.
+In grids of five or more, the hover controls use the full cell and stack in its upper left.
+
+```text
+┌───────────────────┐
+│ [A clip…    #123] │
+│ [‹    +3 f     ›] │
+│                   │
+└───────────────────┘
+```
+
+Hover or keyboard focus reveals the controls. Long filenames can truncate. The name pill opens
+the tile page. The offset buttons retain their accessible names (“A earlier”,
+“Offset of A: +3 frames”, “A later”). The Add cell is named “Add video”. The − / + keys still
+nudge the tile under the pointer. Two to four videos retain their existing overlays.
 
 ## What changed (5 videos or more only)
 
@@ -59,7 +76,6 @@ about 20-35 % CPU). Under heavy load (other agents near 100 % CPU) a run gave 23
 
 ## Open
 
-- How more than 4 videos get in (today: the setting, then the usual dialogs) and free tile placement.
+- Drag to reorder and free tile placement.
 - 16 tiles on the built-in (WebAssembly) decoder run 16 workers, each with its own heap; 1080p HEVC there
   is far below real time. With ffmpeg they play.
-- Pills and nudges in 4×4 cells of a small panel are cramped; no new styling was done (UI decision).

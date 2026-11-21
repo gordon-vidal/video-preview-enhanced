@@ -1,6 +1,6 @@
 /* global createEngine, VpeControls, VpeModes */
 // @ts-check
-// Compare / multi-view: 2-4 videos (up to 16 with the experimental setting compare.maxVideos) on one
+// Compare / multi-view: 2-16 videos (up to compare.maxVideos) on one
 // transport, frame accurate, with the player's own bar and panels (docs/notes/compare-ui.md, the approved
 // mock-up; docs/notes/multiview-engine.md for more than 4).
 //
@@ -49,7 +49,7 @@
   };
   const names = cfg.names || ['A', 'B'];
   const Grid = /** @type {any} */ (globalThis).CompareGrid;
-  /** Tiles in this panel (2-4; up to 16 with the experimental setting compare.maxVideos). */
+  /** Tiles in this panel (up to compare.maxVideos). */
   const N = names.length;
   const KEYS = Grid.TILE_KEYS;
   /** Videos this panel may show (the setting; the host enforces it too). */
@@ -868,10 +868,10 @@
     const w = (W - GAP * (cols - 1)) / cols, h = (H - GAP * (rows - 1)) / rows;
     const out = [];
     // The first empty cell adds a video (3 of 4; in a larger grid while the setting allows more).
-    for (let k = 0; k < cols * rows; k++) {
+    for (let k = 0, count = Grid.gridCellCount(N, MAX_TILES, cols, rows); k < count; k++) {
       const x = (k % cols) * (w + GAP), y = Math.floor(k / cols) * (h + GAP);
       if (k < N) out.push({ x, y, w, h, tiles: [k], ...placed(k, x, y, w, h) });
-      else if (k === N && N < MAX_TILES) out.push({ x, y, w, h, tiles: [], add: true, pic: { x, y, w, h }, full: { x, y, w, h } });
+      else out.push({ x, y, w, h, tiles: [], add: true, pic: { x, y, w, h }, full: { x, y, w, h } });
     }
     return out;
   }
@@ -936,7 +936,11 @@
       if (!c) return;
       Object.assign(d.style, { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` });
       for (const ov of d.querySelectorAll('.ov')) {
-        Object.assign(ov.style, { left: `${c.pic.x - c.x}px`, top: `${c.pic.y - c.y}px`, width: `${c.pic.w}px`, height: `${c.pic.h}px` });
+        // A narrow letterboxed picture still gets the whole cell's width for its controls.
+        const box = largeGrid ? c : c.pic;
+        Object.assign(ov.style, {
+          left: `${box.x - c.x}px`, top: `${box.y - c.y}px`, width: `${box.w}px`, height: `${box.h}px`,
+        });
       }
       if (c.split) placeDivider(d, c);
     });
@@ -2227,6 +2231,8 @@
       cells: [...cellsEl.children].map((d) => ({
         tile: d.dataset.tile === undefined ? (d.classList.contains('add') ? 'add' : '') : d.dataset.tile, rect: rect(d),
         pills: [...d.querySelectorAll('.pill')].map((p) => text(p)), nudges: [...d.querySelectorAll('.nudge')].map((n) => text(n)),
+        pillRects: [...d.querySelectorAll('.pill')].map(rect),
+        nudgeRects: [...d.querySelectorAll('.nudge')].map(rect),
         pics: [...d.querySelectorAll('.ov')].map((o) => rect(o)), oor: !!d.querySelector('.oor:not([hidden])'),
       })),
       divider: (() => { const dv = cellsEl.querySelector('#divider'); return dv ? { rect: rect(dv), value: dv.getAttribute('aria-valuenow') } : null; })(),
