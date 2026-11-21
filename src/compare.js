@@ -19,6 +19,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { rotationOf } = require('./rotation');
 const { NativeDecoder } = require('./native');
+const { EncodedStream } = require('./stream');
+const { MODES, compareCapsKbps, compareTileSize } = require('./transcode_policy');
 const { budgets } = require('../media/membudget');
 const Grid = require('../media/compare-grid');
 const frameserver = require('./frameserver');
@@ -101,7 +103,10 @@ class CompareSession {
    * @param {vscode.ExtensionContext} context
    * @param {vscode.Uri[]} uris 2-16 files (the setting compare.maxVideos), A first
    */
-  constructor(context, uris, { log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn, start, openPlayer, setPref, prefs, copyText, addMode }) {
+  constructor(context, uris, {
+    log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn,
+    start, openPlayer, setPref, prefs, copyText, addMode, setTranscodePref, offerTranscode,
+  }) {
     if (api) vscode = api;
     this.logRaw = log;
     this.engineCfg = engineCfg;
@@ -113,12 +118,15 @@ class CompareSession {
     this.openPlayer = openPlayer || null; // (uri, t, viewColumn): Leave compare
     this.setPref = setPref || null; // (key, value): the jump sizes, as in the player
     this.prefs = prefs || (() => null);
+    this.setTranscodePref = setTranscodePref;
+    this.offerTranscode = offerTranscode;
     // Add from the Explorer (src/addmode.js): { toggle(session), hint(session) } from registerCompare.
     this.addMode = addMode || null;
     this.copyText = copyText || ((t) => vscode.env.clipboard.writeText(t));
     this.start = start > 0 ? start : 0; // the player's position when it turned into compare (first page only)
     this.replaced = undefined; // the tile a "Replace video…" just changed (its offset starts at 0)
     this.noNative = new Set(); // files native ffmpeg failed on: built-in from then on
+    this.originalTiles = []; // indexed by tile occurrence, including duplicate URIs
     this.natives = [];
     this.disposed = false;
     this.setFiles(uris);
@@ -175,6 +183,7 @@ class CompareSession {
     const w = this.webview;
     const uri = (...p) => w.asWebviewUri(vscode.Uri.joinPath(this.media, ...p)).toString();
     const ec = this.engineCfg(w);
+    this.transcodePrefs = this.prefs();
     this.rotation = this.files.map(rotationOf);
     const cfg = {
       page: this.page = (this.page || 0) + 1,
@@ -183,7 +192,7 @@ class CompareSession {
       engine: ec,
       rotation: this.rotation,
       debug: ec.debug,
-      prefs: this.prefs(),
+      prefs: this.transcodePrefs,
       start: this.start,
       replaced: this.replaced,
       maxVideos: maxVideos(),
@@ -212,15 +221,22 @@ class CompareSession {
         this.liveTransport = transport;
         const [sizes, decisions] = await Promise.all([
           Promise.all(this.files.map((f) => fs.promises.stat(f).then((s) => s.size))),
-          Promise.all(this.files.map((f, i) => this.chooseNative(f, i, transport))),
+          Promise.all(this.files.map((f, i) => this.chooseNative(f, transport, i))),
         ]);
         if (this.disposed || epoch !== this.epoch) return undefined;
         this.decisions = decisions;
+        if (!this.transcodePrompted && decisions.some((d) => d?.promptTranscode) && this.offerTranscode) {
+          this.transcodePrompted = true;
+          this.offerTranscode(this).catch((e) => this.log(`live transcode prompt failed: ${e.message}`));
+        }
         const heights = this.tileHeights();
+        const outputs = this.transcodeOutputs();
         const maxQueued = Grid.nativeQueuePerTile(this.nativeQueue(), this.files.length);
-        const native = decisions.map((d, i) => this.startNative(i, d, heights[i], transport, origin, epoch, maxQueued));
+        const native = decisions.map((d, i) => outputs[i]
+          ? this.startTranscode(i, d, outputs[i], epoch)
+          : this.startNative(i, d, heights[i], transport, origin, epoch, maxQueued));
         this.log(`opened, ${sizes.join(' / ')} bytes, ${this.files.length} tiles`);
-        this.post({ type: 'open', sizes, native });
+        this.post({ type: 'open', sizes, native, visible: this.panel.visible !== false });
         // A video added from the Explorer reloads the page: the mode's hint shows again on the new one.
         const hint = this.addMode && this.addMode.hint(this);
         if (hint) this.post(hint);
@@ -233,13 +249,30 @@ class CompareSession {
       }
       case 'stop': this.closeFiles(); return undefined;
       case 'readBlock': return this.readBlock(m.key, m.pos, m.len);
-      case 'nd': { const n = this.natives[fileOfKey(m.key)]; return n ? n.handle(m.m) : undefined; }
+      case 'nd': {
+        const i = TILE_KEYS.indexOf(m.key);
+        const n = m.key?.length === 1 && this.natives[i];
+        if (!n || !m.m) return undefined;
+        // The panel can hide after the host sent the page its initial visibility.
+        if (m.m.type === 'open' && n instanceof EncodedStream && this.panel.visible === false) n.setHidden(true);
+        return n.handle(m.m);
+      }
       case 'add': return this.addVideos();
       case 'addMode': return this.addMode ? this.addMode.toggle(this) : undefined; // Shift+D, the Compare panel's row
       case 'stopAddMode': return this.addMode ? this.addMode.stop() : undefined; // Esc in the page
       case 'replace': return this.replaceVideo(Number(m.index));
       case 'leave': return this.leave(Number(m.keep), Number(m.t));
       case 'pref': return this.setPref ? this.setPref(m.key, m.value) : undefined;
+      case 'transcodePref': {
+        if (!this.setTranscodePref) return undefined;
+        if (MODES.includes(m.mode)) return this.setTranscodePref('transcode', m.mode);
+        if (Number.isFinite(m.maxBitrateMbps) && m.maxBitrateMbps >= 0) {
+          return this.setTranscodePref('transcodeMaxBitrate', m.maxBitrateMbps);
+        }
+        if (typeof m.splitBitrate === 'boolean') return this.setTranscodePref('transcodeSplitBitrate', m.splitBitrate);
+        return undefined;
+      }
+      case 'originalTile': return this.useOriginalTile(m.index);
       case 'copyText': return this.copyText(String(m.text || ''));
       case 'openSettings': return vscode.commands.executeCommand('workbench.action.openSettings', '@ext:gordon-vidal.video-preview-enhanced');
       case 'focusMode': return vscode.commands.executeCommand('workbench.action.toggleZenMode');
@@ -247,6 +280,7 @@ class CompareSession {
         const i = Number(m.index);
         if (!Number.isInteger(i) || i < 0 || i >= this.uris.length || this.uris.length <= 2) return undefined;
         this.log(`remove ${this.names[i]}`);
+        this.originalTiles.splice(i, 1);
         this.reload(this.uris.filter((_, j) => j !== i));
         return undefined;
       }
@@ -263,10 +297,13 @@ class CompareSession {
     }
   }
 
-  async chooseNative(file, i, transport) {
-    if (!this.nativeFor || this.noNative.has(file)) return null;
-    try { return await this.nativeFor(file, transport); }
-    catch (e) { this.log(`tile ${TILE_KEYS[i]}: native check failed: ${e.message}`); return null; }
+  async chooseNative(file, transport, i) {
+    if (!this.nativeFor || this.noNative.has(file) || this.originalTiles[i] === this.uris[i]) return null;
+    try {
+      const videoCell = { h: this.tile?.h / (this.tile?.rows || 1) };
+      return await this.nativeFor(file, transport, videoCell);
+    }
+    catch (e) { this.log(`native check failed for ${path.basename(file)}: ${e.message}`); return null; }
   }
 
   /** New output sizes for every native tile (stage resized, or a tile's link changed). */
@@ -275,9 +312,65 @@ class CompareSession {
     const tiles = [];
     this.tileHeights().forEach((h, i) => {
       const n = this.natives[i];
-      if (n && n.resize(h, Math.min(h, this.decisions[i].messageMaxHeight))) tiles.push(i);
+      if (n instanceof NativeDecoder && n.resize(h, Math.min(h, this.decisions[i].messageMaxHeight))) tiles.push(i);
     });
     if (tiles.length) this.post({ type: 'resize', tiles });
+    this.resizeTranscodes();
+  }
+
+  updateTranscode(prefs) {
+    const previous = this.transcodePrefs;
+    this.transcodePrefs = prefs;
+    if (previous?.transcode !== prefs.transcode) this.reload();
+    else if (previous?.transcodeMaxBitrate !== prefs.transcodeMaxBitrate
+      || previous?.transcodeSplitBitrate !== prefs.transcodeSplitBitrate) this.resizeTranscodes();
+  }
+
+  transcodeOutputs() {
+    const outputs = this.decisions.map((d, i) => d?.stream && {
+      ...compareTileSize(d.probed.video, d.maxHeight, this.tile || {}, this.rotation[i] % 180 !== 0),
+      remote: d.stream.remote,
+    });
+    const prefs = this.transcodePrefs || {};
+    const caps = compareCapsKbps(outputs.filter(Boolean), prefs.transcodeMaxBitrate, prefs.transcodeSplitBitrate);
+    let index = 0;
+    return outputs.map((o) => o && { height: o.h, kbps: caps[index++] });
+  }
+
+  resizeTranscodes() {
+    if (!this.decisions) return;
+    this.transcodeOutputs().forEach((o, i) => {
+      if (o) this.natives[i]?.setCompareOutput(o.height, o.kbps);
+    });
+  }
+
+  startTranscode(i, d, output, epoch) {
+    const key = TILE_KEYS[i];
+    const current = () => !this.disposed && epoch === this.epoch && this.natives[i] === stream;
+    const stream = new EncodedStream({
+      ...d.stream, tools: d.tools, file: this.files[i], probed: d.probed,
+      hidden: this.panel.visible === false,
+      maxHeight: output.height, maxKbps: output.kbps, fitView: false, allowLinkAdapt: d.stream.remote,
+      post: (m) => { if (current()) this.post({ type: 'nd', key, m }); },
+      log: (msg) => this.log(`tile ${key}: ${msg}`),
+      onFail: (err) => {
+        if (!current()) return;
+        this.log(`tile ${key}: live transcode failed (${err}); using the original decoder`);
+        this.useOriginalTile(i, 'Live transcode failed. Using the original video.');
+      },
+    });
+    this.natives[i] = stream;
+    return 'transcode';
+  }
+
+  useOriginalTile(i, notice) {
+    if (!Number.isInteger(i) || !(this.natives[i] instanceof EncodedStream)) return;
+    this.natives[i].dispose();
+    this.originalTiles[i] = this.uris[i];
+    this.natives[i] = null;
+    this.decisions[i] = null;
+    this.post({ type: 'originalTile', index: i, notice });
+    this.resizeTranscodes();
   }
 
   /** Fit the composited view to the stage, then scale all native outputs together to fit the link. */
@@ -304,7 +397,7 @@ class CompareSession {
     const large = Grid.isLarge(this.decisions.length);
     const heights = this.decisions.map((d, i) => {
       const v = d?.probed?.video;
-      if (!d?.tools || !v || !v.width || !v.height) return d?.maxHeight || FRAME_SERVER_HEIGHT;
+      if (d?.stream || !d?.tools || !v || !v.width || !v.height) return d?.maxHeight || FRAME_SERVER_HEIGHT;
       const [w, h] = rotated(i) ? [th, tw] : [tw, th];
       const height = Math.min(v.height, d.maxHeight, h, w * v.height / v.width);
       bytes += 1.5 * height * height * v.width / v.height * (v.fps || 30);
@@ -333,7 +426,8 @@ class CompareSession {
       method: d.method, methodGuessed: !!d.methodGuessed, probed: d.probed, transport, origin, maxQueued,
       largeGrid: Grid.isLarge(this.files.length),
       onMessages: () => { if (!this.disposed && epoch === this.epoch) this.resizeTiles(); },
-      post: (msg) => this.post({ type: 'nd', key, m: msg }), postRaw: (msg) => this.post({ ...msg, key }),
+      post: (msg) => { if (epoch === this.epoch) this.post({ type: 'nd', key, m: msg }); },
+      postRaw: (msg) => { if (epoch === this.epoch) this.post({ ...msg, key }); },
       log: (msg) => this.log(`tile ${key}: ${msg}`),
       onFail: (err) => {
         if (this.disposed || epoch !== this.epoch) return;
@@ -381,6 +475,7 @@ class CompareSession {
     if (this.disposed || !(i >= 0 && i < this.uris.length) || !uri || !FS_SCHEMES.has(uri.scheme)) return;
     this.log(`replace ${this.names[i]} with ${path.basename(uri.fsPath)}`);
     this.replaced = i;
+    delete this.originalTiles[i];
     this.reload(this.uris.map((u, j) => (j === i ? uri : u)));
   }
 

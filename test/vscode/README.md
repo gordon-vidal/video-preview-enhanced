@@ -43,6 +43,7 @@ results say `retried`); twice in a row is a failure.
 | `ui` | ui, ui_jumps, ui_jumps_settings, ui_info, ctxmenu | The bar and panels: accessibility, keys, panels, speed, time formats, jump sizes (panel and settings), About this video, the context menu | 132 s, 21 |
 | `compare` | modes, compare_ui, compare_metrics | Compare mode: entering and leaving, the bar, tiles, views, the Tools grid, PSNR / SSIM against ffmpeg | 90 s, 17 |
 | `multiview` | multiview, multiview-short-loop | Play together: grids of 2-4, lockstep, offsets, the sync clock and sound, a short loop | 68 s, 11 |
+| `multiview-transcode` | multiview-transcode | Live transcode in Compare, shared bitrate and returning one tile to original video | — |
 | `multiview-native` | multiview-native, multiview-native-fallback | Play together with native ffmpeg: tile sizes, the frame server and its budget, resizing, the message fallback | 38 s, 7 |
 | `multiview-large` | multiview-large | More than 4 videos (experimental `compare.maxVideos`): 9 then 16 GPU / built-in tiles with one shared renderer; lockstep, offsets, clock, play, remove, add, close | 36 s, 6 |
 | `multiview-large-native` | multiview-large-native | 9 and 16 native ffmpeg tiles: cell-sized frames over WebSockets on one port, the budget, offsets, playing in step, a seek through a resize | 44 s, 2 |

@@ -467,6 +467,14 @@ const VpeControls = (() => {
       }
       box.append(title, g);
       f.appendChild(box);
+      if (env.act.setTranscodeSplitBitrate) {
+        const split = !!tc.splitBitrate;
+        const row = btn('row', 'Split bitrate', () => env.act.setTranscodeSplitBitrate(!split), {
+          aria: { role: 'switch', 'aria-checked': String(split) },
+        });
+        row.appendChild(sw(split));
+        f.appendChild(row);
+      }
       const note = el('div', 'pnote', 'Uses GPU decode and encode when available, CPU as last resort. Exact-pixel tools warn while active and offer Use original video.');
       f.appendChild(note);
       return f;

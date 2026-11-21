@@ -92,6 +92,26 @@ function effectiveMaxKbps(o) {
   return autoMaxKbps(o);
 }
 
+/** Calculate caps for the encoded tiles only. Auto budgets each tile for its own output.
+ * @param {{w: number, h: number, fps?: number, remote?: boolean}[]} tiles
+ */
+function compareCapsKbps(tiles, maxBitrateMbps, split = true) {
+  if (!(maxBitrateMbps > 0)) return tiles.map(autoMaxKbps);
+  const share = maxBitrateMbps * 1000 / (split ? tiles.length : 1);
+  return tiles.map(() => Math.max(MIN_BITRATE_KBPS, Math.floor(share)));
+}
+
+/** Fit an encoded tile in source orientation, independently of the raw-frame transport budget. */
+function compareTileSize(video, maxHeight, { w, h, cols, rows, factor, actual } = {}, rotated = false) {
+  const scale = Math.max(0.1, Math.min(64, Number(factor) || 1));
+  const cellW = !actual && w > 0 ? w * scale / Math.max(1, Number(cols) || 1) : Infinity;
+  const cellH = !actual && h > 0 ? h * scale / Math.max(1, Number(rows) || 1) : Infinity;
+  const [width, height] = rotated ? [cellH, cellW] : [cellW, cellH];
+  const hOut = Math.max(2, Math.floor(Math.min(video.height, maxHeight, height, width * video.height / video.width) / 2) * 2);
+  const wOut = Math.max(2, Math.floor(Math.round(hOut * video.width / video.height) / 2) * 2);
+  return { w: wOut, h: hOut, fps: video.fps };
+}
+
 /**
  * Decides what to do when a video opens.
  * Returns { action: 'stream' | 'prompt_remote' | 'skip', reason }.
@@ -103,12 +123,13 @@ function effectiveMaxKbps(o) {
  *   maxBitrateMbps?: number,
  *   viewHeight?: number,
  *   forced?: boolean,
+ *   compare?: boolean,
  *   remotePrompted?: boolean,
  * }} o
  * @returns {{ action: 'stream'|'prompt_remote'|'skip', reason: string }}
  */
 function shouldTranscodeOnOpen(o) {
-  const { mode, remote, video, maxBitrateMbps = 0, viewHeight = 0, forced = false, remotePrompted = false } = o;
+  const { mode, remote, video, maxBitrateMbps = 0, viewHeight = 0, forced = false, compare = false, remotePrompted = false } = o;
   if (!video) return { action: 'skip', reason: 'no video stream' };
   if (isHdr(video)) return { action: 'skip', reason: 'HDR stays on exact/raw path in v1' };
   if (forced) return { action: 'stream', reason: 'enabled for this session' };
@@ -125,10 +146,14 @@ function shouldTranscodeOnOpen(o) {
     return { action: 'prompt_remote', reason: `first remote video (${remote}): ask user` };
   }
 
+  if (compare && mode === 'always') return { action: 'stream', reason: 'transcode always in Compare' };
   // Local or WSL window: 8-bit H.264 and VP8 play directly on WebCodecs at zero cost.
   if (webcodecsPlays(video)) return { action: 'skip', reason: 'WebCodecs plays this directly locally' };
   if (mode === 'always') {
     return { action: 'stream', reason: 'transcode always' };
+  }
+  if (compare && mode === 'auto' && exceedsRawTransfer(video)) {
+    return { action: 'stream', reason: 'Compare tile exceeds the raw frame transfer threshold' };
   }
   return { action: 'skip', reason: `local ${mode}: start on native raw path` };
 }
@@ -196,6 +221,8 @@ module.exports = {
   remoteQualifies,
   autoMaxKbps,
   effectiveMaxKbps,
+  compareCapsKbps,
+  compareTileSize,
   shouldTranscodeOnOpen,
   evaluateLocalStall,
   REMOTE_PROMPT_YES,

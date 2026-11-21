@@ -88,6 +88,47 @@ async function activate(vs, h, file) {
 const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] opened, .* ${n} tiles`);
 
 module.exports = [{
+  name: 'multiview-transcode',
+  ffmpeg: true,
+  settings: {
+    'videoPreviewEnhanced.transcode': 'always',
+    'videoPreviewEnhanced.transcodeMaxBitrate': 6,
+    'videoPreviewEnhanced.transcodeSplitBitrate': true,
+  },
+  async run(vs, h) {
+    const problems = [];
+    const ok = (condition, message) => { if (!condition) problems.push(message); };
+    const { act, until } = helpers(vs, h);
+    const from = vs.mark();
+    vs.send({ compareFiles: CLIPS.slice(0, 2).map((clip) => path.join(h.MEDIA, clip)) });
+    await vs.waitLog(opened(2), { from, timeout: 45000 });
+    const ready = (r) => r?.synced === 'true' && list(r.frames).length === 2 && !list(r.frames).includes('-');
+    const shown = await until(ready, 45000);
+    ok(ready(shown), `expected both tiles to show a synced picture, got ${JSON.stringify(shown)}`);
+    const decisions = vs.lines.slice(from).filter((line) => /\] tile [AB]:/.test(line));
+    const active = list(shown?.native);
+    ok(active.includes('1'), 'expected at least one tile to keep streaming');
+    for (const key of 'AB') {
+      const start = new RegExp(`tile ${key}: remote stream from .*3000 kb/s cap`);
+      ok(decisions.some((line) => start.test(line)), `tile ${key} did not start with half the cap`);
+      if (active['AB'.indexOf(key)] === '0') {
+        ok(decisions.some((line) => line.includes(`tile ${key}: live transcode failed`)),
+          `tile ${key} fell back without reporting an encoder failure`);
+      }
+    }
+    if (ready(shown) && shown.native === '1,1') {
+      const check = vs.mark();
+      act({ action: 'click', sel: '#infoBtn' });
+      act({ action: 'ui', id: 1 });
+      const info = await vs.waitLog(/compare ui \{"id":1,/, { from: check, timeout: 10000 });
+      ok(/Live transcode/i.test(info) && /Use original video/.test(info), 'About lacks the active pipeline or original action');
+      act({ action: 'click', text: 'Use original video' });
+      const original = await until((r) => ready(r) && r.native === '0,1', 30000);
+      ok(ready(original) && original.native === '0,1', 'switching the clock to original video disturbed the other tile');
+    }
+    return [{ name: 'tile-streams-and-original', ok: !problems.length, problems }];
+  },
+}, {
   name: 'multiview-short-loop',
   settings: { 'videoPreviewEnhanced.decoder': 'builtin', 'videoPreviewEnhanced.loop': true },
   async run(vs, h) {

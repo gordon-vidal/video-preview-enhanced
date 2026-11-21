@@ -82,7 +82,16 @@
   /** Frames the host queues per native tile before it pauses ffmpeg: the machine's queue shared, one at least. */
   const nativeQueuePerTile = (queue, n) => Math.max(1, Math.floor(queue / Math.max(1, n)));
 
-  const api = { TILE_KEYS, MAX_VIDEOS, DEFAULT_MAX, LARGE, GRID_PIXELS, clampMax, isLarge, gridFor, tileMemory, texturePixels, capSize, nativeCredits, nativeQueuePerTile };
+  /** Retain the last panel signal and sample the document on either event. */
+  function compareVisibility(apply) {
+    let panelVisible = true;
+    return (documentHidden, visible = panelVisible) => {
+      panelVisible = visible;
+      apply(panelVisible && !documentHidden);
+    };
+  }
+
+  const api = { TILE_KEYS, MAX_VIDEOS, DEFAULT_MAX, LARGE, GRID_PIXELS, clampMax, isLarge, gridFor, tileMemory, texturePixels, capSize, nativeCredits, nativeQueuePerTile, compareVisibility };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.CompareGrid = api;
 }(typeof self !== 'undefined' ? self : this));

@@ -81,7 +81,7 @@ class EncodedStream {
     tools, file, post, log, maxHeight, probed, onFail, stats, encoder, device,
     cpuEncoder: cpu, decodeMethod = 'none', onEncoderFail, audioEncoder = null,
     fitView = true, maxKbps = 0, maxBitrateMbps = 0, allowLinkAdapt = true, remote = true,
-    allowSoftwareFallback = true,
+    allowSoftwareFallback = true, hidden = false,
   }) {
     this.tools = tools;
     this.file = file;
@@ -103,7 +103,7 @@ class EncodedStream {
     this.remote = !!remote;
     this.allowSoftwareFallback = allowSoftwareFallback !== false;
     this.pipelineMode = CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode';
-    this.hidden = false;
+    this.hidden = hidden;
     this.tier = 0;
     this.topKbps = 0;
     this.topPeak = 0;
@@ -156,6 +156,22 @@ class EncodedStream {
     this.setMaxBitrateMbps(n);
   }
 
+  /** Compare owns the output size. Apply size and bitrate together, keeping the audio cursor. */
+  setCompareOutput(height, kbps) {
+    const mbps = kbps / 1000;
+    if (this.maxHeight === height && this.maxBitrateMbps === mbps) return;
+    this.maxHeight = height;
+    this.maxBitrateMbps = mbps;
+    this.takeStandby(NaN);
+    if (!this.fps || this.disposed) return;
+    if (!this.hidden && !this.startTimer && this.proc) {
+      this.sizeVideo();
+      this.restartVideo();
+    } else {
+      this.resizePending = true;
+    }
+  }
+
   /** Current pipeline metadata for ⓘ (About this video) and stats. */
   transcodeInfo() {
     const cap = this.activeCapKbps();
@@ -179,7 +195,10 @@ class EncodedStream {
   async handle(m) {
     if (this.disposed) return undefined;
     switch (m.type) {
-      case 'open': this.setView(m.view); return this.open();
+      case 'open':
+        if (m.hidden) this.setHidden(true);
+        this.setView(m.view);
+        return this.open();
       case 'view': return this.setView(m);
       case 'remoteAudioFailed': return this.audioFallback(m.message);
       case 'config':
@@ -198,8 +217,13 @@ class EncodedStream {
    * what was read goes. Showing the tab re-seeks the page (media/engine.js setHidden).
    */
   setHidden(on) {
+    const wasHidden = this.hidden;
     this.hidden = !!on;
-    if (!on || !this.fps) return;
+    if (!this.fps) return;
+    if (!on) {
+      if (wasHidden && !this.spawns && !this.startTimer) this.spawnNow();
+      return;
+    }
     const had = !!this.proc || !!this.audioProc || !!this.standby || !!this.startTimer;
     clearTimeout(this.startTimer);
     this.startTimer = null;
@@ -213,7 +237,7 @@ class EncodedStream {
     const v = this.pr.video;
     this.sizeVideo();
     this.fps = v.fps || 30;
-    this.startAt(0);
+    if (!this.hidden) this.startAt(0);
     const level = defaultCodecLevel(this.w, this.h, this.fps);
     this.post({
       type: 'streams',
@@ -345,6 +369,7 @@ class EncodedStream {
     clearTimeout(this.startTimer);
     this.startTimer = null;
     this.deferredSince = null;
+    if (this.resizePending) this.sizeVideo();
     this.spawnVideo();
     if (!this.pr.audio) return;
     const proc = this.launch(this.base, true);
@@ -692,7 +717,11 @@ class EncodedStream {
     const now = Date.now();
     const quiet = now - this.lastSeekAt >= SEEK_QUIET_MS;
     this.lastSeekAt = now;
-    if (!this.resizePending && this.reuse(t)) {
+    // The page re-seeks when shown. An encoder just started at that frame can satisfy it.
+    const startingHere = this.proc && this.proc.exitCode === null && !this.proc.signalCode
+      && !this.gotOutput && this.aNext === 0 && t === this.base && t === this.vBase;
+    if (!this.resizePending && (startingHere || this.reuse(t))) {
+      this.waiting = null;
       this.post({ type: 'seeked', gen: m.gen, t });
       return;
     }
@@ -706,6 +735,7 @@ class EncodedStream {
     this.post({ type: 'seeked', gen: m.gen, t });
     clearTimeout(this.startTimer);
     this.startTimer = null;
+    if (this.hidden && !this.spawns) return;
     const due = this.lastSpawnAt + SPAWN_GAP_MS;
     if (quiet && now >= due) { this.spawnNow(); return; }
     if (this.deferredSince === null) this.deferredSince = now;

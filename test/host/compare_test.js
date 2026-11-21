@@ -91,6 +91,65 @@ const { make } = require('../media/make_cases_media');
     await compare.onMessage({ type: 'remove', index: 1.5 });
     assert.strictEqual(cfg().names.length, 4, 'a fractional index removes nothing');
 
+    // Exercise the real session and stream ownership without requiring a GPU or encoder.
+    let prefs = { transcode: 'always', transcodeMaxBitrate: 12, transcodeSplitBitrate: true };
+    compare.prefs = () => prefs;
+    compare.nativeFor = async () => ({
+      tools: {}, maxHeight: 1080,
+      probed: { duration: 10, video: { width: 1920, height: 1080, fps: 30 } },
+      stream: { encoder: 'h264_nvenc', cpuEncoder: null, remote: false },
+    });
+    compare.reload(compare.uris.slice(0, 2));
+    compare.panel.visible = false;
+    const ready = () => compare.onMessage({ type: 'ready', tile: { w: 1280, h: 720, cols: 2, rows: 1 } });
+    const caps = () => compare.natives.filter(Boolean).map((n) => n.activeCapKbps());
+    await ready();
+    assert.ok(compare.natives.every((n) => n.hidden), 'host constructs streams hidden before the page configures them');
+    compare.panel.visible = true;
+    assert.deepStrictEqual(caps(), [6000, 6000]);
+    const pair = compare.natives.slice();
+    compare.addUris([h.vscode.Uri.file(upright)]);
+    assert.ok(pair.every((n) => n.disposed), 'add reload closes the old streams');
+    await ready();
+    assert.deepStrictEqual(caps(), [4000, 4000, 4000]);
+    compare.panel.visible = false;
+    await compare.onMessage({ type: 'nd', key: 'A', m: { type: 'open' } });
+    assert.strictEqual(compare.natives[0].spawns, 0, 'a panel hidden during page startup starts no encoder');
+    compare.panel.visible = true;
+    const trio = compare.natives.slice();
+    await compare.onMessage({ type: 'remove', index: 1 });
+    assert.ok(trio.every((n) => n.disposed), 'remove reload closes the old streams');
+    await ready();
+    assert.deepStrictEqual(caps(), [6000, 6000]);
+    compare.updateTranscode(prefs = { ...prefs, transcodeSplitBitrate: false });
+    assert.deepStrictEqual(caps(), [12000, 12000]);
+    compare.updateTranscode(prefs = { ...prefs, transcodeSplitBitrate: true, transcodeMaxBitrate: 10 });
+    assert.deepStrictEqual(caps(), [5000, 5000]);
+    const [failed, survivor] = compare.natives;
+    failed.onFail('no software encoder');
+    assert.ok(failed.disposed);
+    assert.strictEqual(compare.natives[1], survivor);
+    assert.deepStrictEqual(caps(), [10000]);
+    posts.length = 0;
+    failed.post({ type: 'batch' });
+    trio[1].post({ type: 'batch' });
+    assert.deepStrictEqual(posts, [], 'disposed streams cannot post to the current tile or page');
+
+    compare.addUris([compare.uris[1]]);
+    await ready();
+    const paths = () => Array.from(compare.uris, (_, i) => Boolean(compare.natives[i]));
+    assert.deepStrictEqual(paths(), [false, true, true], 'add keeps fallback on the original occurrence');
+    await compare.onMessage({ type: 'originalTile', index: 2 });
+    compare.replaceUri(1, h.vscode.Uri.file(upright));
+    await ready();
+    assert.deepStrictEqual(paths(), [false, true, false], 'unrelated replace keeps both original tiles');
+    await compare.onMessage({ type: 'remove', index: 0 });
+    await ready();
+    assert.deepStrictEqual(paths(), [true, false], 'remove shifts the surviving override with its tile');
+    compare.replaceUri(1, compare.uris[1]);
+    await ready();
+    assert.deepStrictEqual(paths(), [true, true], 'replacing the overridden occurrence allows transcode again');
+
     // Extension shutdown disposes open compare sessions (and their native tiles).
     await compare.onMessage({ type: 'ready' });
     const live = compare.natives.slice();
