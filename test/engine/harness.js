@@ -19,7 +19,7 @@ const frames = require('../lib/frames');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const MEDIA = path.join(ROOT, 'media');
-require('../tracks/driver'); // installs the Worker shim (worker_threads) and DecoderPool (media/pool.js)
+const { shutdownWorkers } = require('../tracks/driver'); // installs the Worker shim (worker_threads) and DecoderPool (media/pool.js)
 
 // ---- browser stubs (once per process) --------------------------------------------------------
 globalThis.self = globalThis;
@@ -215,7 +215,11 @@ function checks(title) {
       if (why) { known++; console.log(`KNOWN ${name}: ${why}: ${e && e.message || e}`); } else { failed++; console.log(`FAIL ${name}: ${e && e.message || e}`); }
     }
   };
-  const done = () => { console.log(`${passed} passed, ${failed} failed${known ? `, ${known} known issues` : ''}`); process.exit(failed ? 1 : 0); };
+  const done = async () => {
+    console.log(`${passed} passed, ${failed} failed${known ? `, ${known} known issues` : ''}`);
+    await shutdownWorkers(); // join the decoder threads first: exiting under a worker still tearing down has hung
+    process.exit(failed ? 1 : 0);
+  };
   return { run, done };
 }
 

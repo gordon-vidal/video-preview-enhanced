@@ -10,10 +10,15 @@ const media = path.join(root, 'media');
 const shim = path.join(root, 'test', 'pool', 'worker-shim.js');
 const workerScript = path.join(media, 'decoder-worker.js');
 
+// Every thread still running, so a test file can stop and join them before it exits (shutdownWorkers).
+const live = new Set();
+
 if (!globalThis.Worker) {
   globalThis.Worker = class {
     constructor() {
       this.w = new WT(shim, { workerData: { script: workerScript } });
+      live.add(this.w);
+      this.w.on('exit', () => live.delete(this.w));
       this.w.on('message', (d) => this.onmessage && this.onmessage({ data: d }));
       this.w.on('error', (e) => this.onerror && this.onerror(e));
     }
@@ -28,6 +33,23 @@ const initMsg = {
   type: 'init', loader: path.join(libdir, 'libav-6.11.9.0.2-vpe.js'), toImport: path.join(libdir, 'libav-6.11.9.0.2-vpe.wasm.js'),
   wasmurl: path.join(libdir, 'libav-6.11.9.0.2-vpe.wasm.wasm'), variant: 'vpe',
 };
+
+/**
+ * Terminates the decoder threads still alive and waits (at most `ms`) until each has really exited. A worker
+ * that engine.dispose() / pool.terminate() only asked to stop can still be tearing down its WebAssembly instance
+ * when the file calls process.exit(); exiting then has hung (STALLED after the summary line), so a file joins them
+ * first. Returns how many did not exit in time (their stop is then logged, and the caller exits anyway).
+ */
+async function shutdownWorkers(ms = 5000) {
+  const threads = [...live];
+  await Promise.race([
+    Promise.all(threads.map((w) => w.terminate())),
+    new Promise((r) => setTimeout(r, ms).unref()),
+  ]);
+  const left = threads.filter((w) => live.has(w)).length;
+  if (left) console.log(`warning: ${left} decoder thread(s) did not exit within ${ms} ms`);
+  return left;
+}
 
 /** Hash of the visible samples (as test/pool/harness.js). */
 function hashFrame(v) {
@@ -149,4 +171,4 @@ class Session {
   }
 }
 
-module.exports = { Session, hashFrame };
+module.exports = { Session, hashFrame, shutdownWorkers };
