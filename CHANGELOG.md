@@ -2,11 +2,16 @@
 
 ## Unreleased
 
+## 0.8.0 (2026-11-21)
+
+Live transcode for smooth 4K60 and remote playback, faster Explorer compare workflows (Add Mode, Open Together, Compare Videos in Folder), wheel step-back fixes, and a refreshed extension icon.
+
 - New: **Live transcode** (`videoPreviewEnhanced.transcode` and `videoPreviewEnhanced.transcodeMaxBitrate`, replacing `remoteStream`) unifies local high-rate playback (such as 4K60) and remote streaming (SSH, WSL, containers, tunnels) into one H.264 → WebCodecs stream engine with hardware-first, software-last GPU decode and encode, a strict max bitrate cap, ⚙ › Live transcode controls, pipeline details + **Use original video** in ⓘ, and driver-aware managed ffmpeg line selection for NVIDIA GPUs (ADR 0002).
 - New: **add videos to a compare by clicking them in the Explorer.** Press **Shift+D** in the player (or ⚙ › Tools › **Compare**, or **Add video…** in compare), then click a video in the Explorer. From a player one click opens compare in the player's tab and ends the mode; in compare it stays on until Esc, Shift+D again or the maximum (4; `compare.maxVideos`). The D quick pick has the same as a row. The file dialog stays under **Compare With…** and **Browse…**.
 - New: **several videos selected in the Explorer and opened together** (right-click › Open With… › Video Preview Enhanced, Enter, double-click) open in **one compare** instead of separate tabs, and a preview tab of one of those videos is closed instead of left beside it. A short notice explains it the first time. Videos opened apart are not affected. Turn it off with `compare.openTogether`.
 - New: right-click a folder › **Compare Videos in Folder** compares the videos directly in it (natural name order, up to `compare.maxVideos`).
-- Changed: Explorer menu cleaned up. **Compare / Play Together** is now **Compare Videos**; the single-video **Compare With…** is no longer in the Explorer menu (it stays in the player's right-click menu and editor title); **Play Image Sequence** is in the Command Palette only. The Explorer key Alt+D (from a pre-release build) is gone.
+- Changed: Explorer menu cleaned up. **Compare / Play Together** is now **Compare Videos**; the single-video **Compare With…** is no longer in the Explorer menu (it stays in the player's right-click menu and editor title); **Play Image Sequence** is in the Command Palette only.
+- Changed: refreshed extension icon.
 - Remote streams use compressed Opus sound when available, with s16 PCM as a fallback, so slow connections can keep the picture and sound playing. Remote pictures also follow the player size.
 - New (experimental): setting `videoPreviewEnhanced.compare.maxVideos` (default 4, up to 16) lets compare play more videos at once, in a plain grid (3×2, 3×3, 4×3, 4×4). From 5 videos on, all tiles share one renderer and the memory and transfer budgets of 4, and native ffmpeg tiles use WebSocket channels. 2–4 videos are unchanged. With ffmpeg on the test PC, 9 and 16 1080p HEVC videos each play at about 24 fps (measured 23.5-24.0). How more than 4 videos get into compare, and free placement of tiles, come later.
 - Fixed: Fit now enlarges a small video as far as the panel allows, keeping its shape (like mpv or VLC), also in the player; before, a 640x360 clip stayed small in a large panel. 100 % is unchanged (pixel for pixel).
