@@ -67,8 +67,10 @@ before releases or in performance work.
 
 - **Never open a visible VS Code window or a browser** in automated runs. Real-VS-Code tests go only
   through the hidden-desktop runner (`test/vscode/`). `review.cmd` is for a human.
-- **Fix with the smallest run**: while fixing, run only the failing test; run the full layer once at
-  the end. Do not retry flaky tests silently; report them.
+- **Fix with the smallest run**: while fixing, run only the failing test **through
+  `node test/run.js <layer> --grep <re>`** (never bare `node test/host/<file>.js`, which bypasses
+  the runner's timeout and stall kill); run the full layer once at the end. Do not retry flaky
+  tests silently; report them.
 - Do not run layer 4 or several VS Code instances while another run is active.
 - **No personal data in tracked files, commits, PRs or issues**: no e-mail addresses, home-directory
   paths (`C:\Users\<name>`, `/home/<name>`), machine names, tokens, private notes. CI scans for it.
