@@ -4,6 +4,8 @@
 
 - Remote streams use compressed Opus sound when available, with s16 PCM as a fallback, so slow connections can keep the picture and sound playing. Remote pictures also follow the player size.
 - New (experimental): setting `videoPreviewEnhanced.compare.maxVideos` (default 4, up to 16) lets compare play more videos at once, in a plain grid (3×2, 3×3, 4×3, 4×4). From 5 videos on, all tiles share one renderer and the memory and transfer budgets of 4, and native ffmpeg tiles use WebSocket channels. 2–4 videos are unchanged. With ffmpeg on the test PC, 9 and 16 1080p HEVC videos each play at about 24 fps (measured 23.5-24.0). How more than 4 videos get into compare, and free placement of tiles, come later.
+- Fixed: Fit now enlarges a small video as far as the panel allows, keeping its shape (like mpv or VLC), also in the player; before, a 640x360 clip stayed small in a large panel. 100 % is unchanged (pixel for pixel).
+- Fixed: in compare, a drag to pan a zoomed picture did nothing when it started on a video's name pill or offset buttons; it now pans (a click on them still opens them).
 - Fixed: notification buttons that stop future prompts now all say "Don't Show Again".
 - Fixed: stale texts in settings (`whenSlow`, `advancedMode`) and the FAQ.
 - Fixed: closing a web video that is still downloading (server without range support) left pending reads hanging; closing now cancels the requests and settles them.

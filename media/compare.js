@@ -818,7 +818,7 @@
     return { w: 1600, h: 900 };
   }
   const tileSrc = (i) => { const p = tiles[i]; return Pic.sourceSize(tileNat(i), p && p.meta && p.meta.width ? { w: p.meta.width, h: p.meta.height } : null); };
-  const picOpts = () => ({ enlarge: true, dpr: window.devicePixelRatio || 1 });
+  const picOpts = () => ({ dpr: window.devicePixelRatio || 1 });
   /** Tile i in a cell (x, y, w, h): `full` is the whole picture with the shared view applied, `pic` the part of it inside the cell. */
   function placed(i, x, y, w, h) {
     const r = Pic.rectOf(st.pic, tileNat(i), tileSrc(i), { w, h }, picOpts());
@@ -1663,8 +1663,10 @@
     if (c) toast(`Zoom ${cellPercent(hit.c)}%`);
   }, { passive: false });
   let panDrag = null;
+  // A drag may start on a name pill or an offset nudge too (they sit over the picture's corners and edges): the 4 px
+  // threshold keeps a plain click on them a click, and the click that ends a drag is swallowed below.
   stage.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || !clock || /** @type {any} */ (e.target).closest('button, #divider, .pill, .nudge, #menu')) return;
+    if (e.button !== 0 || !clock || /** @type {any} */ (e.target).closest('#divider, #menu')) return;
     const hit = cellAt(e.clientX, e.clientY);
     if (!hit || !overflows(hit.c)) return;
     panDrag = { x: e.clientX, y: e.clientY, pic: st.pic, hit, moved: false, id: e.pointerId };
@@ -1684,6 +1686,11 @@
     stage.classList.remove('panning');
   };
   stage.addEventListener('pointerup', endPan);
+  stage.addEventListener('click', (e) => {
+    if (performance.now() - dragEnded >= 300 || !(/** @type {any} */ (e.target).closest('.pill, .nudge'))) return;
+    e.stopPropagation(); // the end of a pan that started on a pill is not a click on it
+    e.preventDefault();
+  }, true);
   stage.addEventListener('pointercancel', endPan);
   stage.addEventListener('wheel', (e) => { if (e.ctrlKey) return; if (clock && !clock.playing) { e.preventDefault(); step(e.deltaY > 0 ? 1 : -1); } }, { passive: false });
 
@@ -2182,6 +2189,7 @@
         case 'dom': { // a mouse / pointer / wheel event at client (x, y)
           const target = document.elementFromPoint(m.x, m.y);
           if (!target) { log(`dom: nothing at ${m.x},${m.y}`); break; }
+          if (m.ev === 'pointerdown') log(`dom target ${target.tagName}.${target.className} #${target.id}`);
           const init = { bubbles: true, cancelable: true, clientX: m.x, clientY: m.y, button: m.button || 0, ctrlKey: !!m.ctrl, deltaY: m.deltaY || 0, pointerId: 1, isPrimary: true };
           target.dispatchEvent(new (/^wheel/.test(m.ev) ? WheelEvent : /^pointer/.test(m.ev) ? PointerEvent : MouseEvent)(m.ev, init));
           break;

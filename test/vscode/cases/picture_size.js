@@ -208,6 +208,54 @@ module.exports = [{
       [a, b] = u.picture.tiles.map(rel);
       ok(near(a[0], b[0], 0.01) && near(a[1], b[1], 0.01), `after a drag on A the tiles still match: ${a} vs ${b}`);
       ok(u.picture.tiles.some((t, i) => Math.abs(t.full[0] - before[i][0]) > 20), `the drag moved the pictures: ${JSON.stringify(before)} -> ${JSON.stringify(u.picture.tiles.map((t) => t.full))}`);
+      ok = R.t('compare/pan-paused');
+      act({ action: 'stageSize', w: 700, h: 450 }); // inside the hidden window: elementFromPoint is null outside the viewport
+      await h.sleep(500);
+      // A drag pans a zoomed picture also while paused, after a step and after a seek, at several zoom levels,
+      // starting from the middle of either tile and near its corners (regression: a paused drag was sometimes ignored).
+      act({ action: 'pause' });
+      const dragOnce = async (tile, fx, fy, dx, dy) => {
+        const t = (await ui(60)).picture.tiles[tile].box;
+        // fx 'pill': on the tile's name pill (a button over the picture's top corner); else a fraction of the tile
+        const x = u.stage[0] + t[0] + (fx === 'pill' ? (tile === 0 ? 30 : t[2] - 30) : t[2] * fx), y = u.stage[1] + t[1] + (fx === 'pill' ? 22 : t[3] * fy);
+        const mark0 = vs.mark();
+        act({ action: 'dom', ev: 'pointerdown', x, y });
+        act({ action: 'dom', ev: 'pointermove', x: x + dx / 2, y: y + dy / 2 });
+        act({ action: 'dom', ev: 'pointermove', x: x + dx, y: y + dy });
+        act({ action: 'dom', ev: 'pointerup', x: x + dx, y: y + dy });
+        await h.sleep(250);
+        if (fx === 'pill') {
+          await h.sleep(300);
+          const l = vs.lines.slice(mark0).filter((q) => /webview: dom target/.test(q))[0] || '';
+          if (!/dom target (BUTTON|SPAN)/.test(l)) ok(false, `the drag did not start on the name pill: ${l.replace(/^.*webview: /, '')}`);
+        }
+      };
+      const panWorks = async (label, tile, fx, fy) => {
+        for (const sign of [-1, 1]) { // one direction can be against the edge: the other must move
+          const b = (await ui(60)).picture.tiles.map((q) => q.full.slice());
+          await dragOnce(tile, fx, fy, 60 * sign, 30 * sign);
+          const n = (await ui(60)).picture.tiles.map((q) => q.full.slice());
+          if (n.some((q, i) => Math.abs(q[0] - b[i][0]) > 10)) return true;
+        }
+        ok(false, `${label}: the drag did not move the pictures`);
+        return false;
+      };
+      for (const zoomSteps of [2, 6]) {
+        act({ action: 'key', key: 'z' }); // back to Fit
+        await h.sleep(300);
+        u = await ui(60);
+        const c0 = u.picture.tiles[0].box;
+        for (let i = 0; i < zoomSteps; i++) { act({ action: 'dom', ev: 'wheel', x: u.stage[0] + c0[0] + c0[2] / 2, y: u.stage[1] + c0[1] + c0[3] / 2, ctrl: true, deltaY: -200 }); await h.sleep(120); }
+        u = await ui(60);
+        ok(u.picture.zoom > 1 && u.picture.pannable, `zoomed (${zoomSteps}): ${u.picture.zoom}`);
+        for (const phase of ['paused', 'after a step', 'after a seek']) {
+          if (phase === 'after a step') { act({ action: 'step', d: 1 }); await h.sleep(500); }
+          if (phase === 'after a seek') { act({ action: 'seek', t: 0.8 }); await h.sleep(800); }
+          for (const [tile, fx, fy] of [[0, 0.5, 0.5], [1, 0.5, 0.5], [0, 0.15, 0.85], [1, 0.9, 0.1], [0, 'pill', 0], [1, 'pill', 0]]) {
+            await panWorks(`zoom x${u.picture.zoom.toFixed(2)} ${phase}, tile ${tile} at ${fx},${fy}`, tile, fx, fy);
+          }
+        }
+      }
       act({ action: 'key', key: 'z' }); // zoomed: back to Fit
       u = await ui();
       ok(u.picture.mode === 'fit' && u.picture.zoom === 1 && u.picture.factor === 1, `Z when zoomed: back to Fit: ${JSON.stringify({ ...u.picture, tiles: undefined })}`);
@@ -228,6 +276,53 @@ module.exports = [{
       if (ok) ok(false, e.message); else R.out.push({ name: 'compare/error', ok: false, problems: [e.message] });
     }
     await h.closeClip(vs);
+    return R.out;
+  },
+}, {
+  // Fit enlarges a small video (like object-fit: contain): 640x360 in a 1000x800 and a 400x800 area fills the width.
+  name: 'picture_size_small',
+  settings: { 'videoPreviewEnhanced.autoplay': false, 'videoPreviewEnhanced.decoder': 'builtin' },
+  async run(vs, h) {
+    const R = lib.recorder();
+    const P = await lib.open(vs, h, path.join(h.MEDIA, 'cases', 'bars75_sd_709.mp4'));
+    try {
+      await P.waitFirstFrame();
+      P.pause();
+      const pic = async () => { await lib.sleep(450); return P.state(); };
+      await R.run('small/fit-fills', async (ok) => {
+        P.act({ action: 'stageSize', w: 1000, h: 800 });
+        await lib.sleep(700);
+        let s = await pic();
+        let [, , w, hh] = s.canvasRect;
+        ok(s.picture.mode === 'fit' && near(w, 1000, 2) && near(hh, 562.5, 2), `a 640x360 clip in Fit fills the width of a 1000x800 area: ${s.canvasRect} ${s.stageClass}`);
+        P.act({ action: 'stageSize', w: 1600, h: 400 });
+        await lib.sleep(700);
+        s = await pic();
+        [, , w, hh] = s.canvasRect;
+        ok(near(hh, 400, 2) && near(w, 711.1, 2), `... and the height of a wide, short area: ${s.canvasRect}`);
+        ok(s.picture.pct > 100 && s.picture.zoom === 1, `Fit shows it enlarged (${s.picture.pct} %), zoom 1: ${JSON.stringify(s.picture)}`);
+        P.act({ action: 'stageSize', w: 400, h: 800 });
+        await lib.sleep(700);
+        s = await pic();
+        ok(near(s.canvasRect[2], 400, 2) && near(s.canvasRect[3], 225, 2), `a small area shrinks it as before: ${s.canvasRect}`);
+      });
+      await R.run('small/actual-and-zoom', async (ok) => {
+        P.act({ action: 'stageSize', w: 1000, h: 800 });
+        await lib.sleep(500);
+        P.key('z'); P.key('z'); P.key('z'); // 100 %
+        let s = await pic();
+        const k = 1 / s.dpr;
+        ok(s.picture.mode === 'actual' && near(s.canvasRect[2], 640 * k, 2) && s.picture.pct === 100, `100 % stays pixel for pixel: ${s.canvasRect} ${JSON.stringify(s.picture)}`);
+        P.key('z'); // Fit
+        await pic();
+        P.key('+');
+        s = await pic();
+        ok(s.picture.zoom > 1 && s.canvasRect[2] > 1000, `+ zooms the enlarged Fit further: ${JSON.stringify(s.picture)} ${s.canvasRect}`);
+        P.key('z');
+        s = await pic();
+        ok(s.picture.mode === 'fit' && near(s.canvasRect[2], 1000, 2), `Z: back to the enlarged Fit: ${s.canvasRect}`);
+      });
+    } finally { await P.close(); }
     return R.out;
   },
 }, {

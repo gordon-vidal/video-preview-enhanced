@@ -70,7 +70,7 @@ module.exports = [
     name: 'picture-size',
     journey: 'Picture size: Fit / Fill / Stretch / 100 % from the bar button, Z, the settings page and Ctrl+wheel; a drag pans, a click still plays; compare follows together',
     sources: ['media/picture.js', 'media/inspect.js', ...PLAYER, ...COMPARE, 'src/bar.js', 'package.json'],
-    steps: [{ case: 'picture_size' }],
+    steps: [{ case: 'picture_size' }, { case: 'picture_size_small' }],
   },
   {
     name: 'picture-size-native',
