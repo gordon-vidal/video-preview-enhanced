@@ -2,7 +2,7 @@
 // The first-open checks of the old suite (test/vscode/run.js wcprobe, play/*, native/*) as cases for the scenarios:
 // WebCodecs in the real webview, each test/media clip opens on the expected decoder path (the listing's claim:
 // H.264 on the GPU in MP4, MKV, MOV, M2TS, FLV, AVI; VP8 in WebM), plays, and a paused seek lands on its frame.
-// Correctness only: the frame rates are recorded (layer 4 judges them, test/perf), never judged here.
+// Layer 3 checks playback and seeks. Layer 4 also records periodic FPS windows (test/perf).
 const path = require('path');
 
 const suite = () => require('../suite');
@@ -20,7 +20,7 @@ module.exports = [{
         try { out.push({ name: 'wcprobe', ...(await wcprobe(vs, n)) }); } catch (e) { out.push({ name: 'wcprobe', ok: false, problems: [e.message] }); }
       } : null;
       try {
-        const r = await playClip(vs, clip, { seconds: 2, onShown });
+        const r = await playClip(vs, clip, { seconds: 2, onShown, correctness: !!h.scenario });
         out.push({ name, ...r });
       } catch (e) { out.push({ name, ok: false, problems: [e.message] }); try { await h.closeClip(vs); } catch { /* gone */ } }
     }

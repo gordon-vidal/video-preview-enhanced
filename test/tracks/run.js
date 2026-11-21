@@ -82,13 +82,14 @@ const tests = {
 
   async audioSwitch() {
     for (const pool of [false, true]) {
+      // Reference: the picture from start to end without switching.
+      const ref = await new Session(F('tracks_multi.mkv'), { video: 'soft', pool, workers: pool ? 3 : undefined }).open();
+      const rs = newState();
+      await pull(ref, rs, (x) => lastVT(x) >= 12);
+      ref.close();
+      const rv = rs.video.filter((x) => x[0] <= 12);
       for (const audio of ['soft', 'webcodecs']) {
         const label = `${pool ? 'pool' : 'single'}, soft video, ${audio} audio`;
-        // Reference: the picture from start to end without switching.
-        const ref = await new Session(F('tracks_multi.mkv'), { video: 'soft', pool, workers: pool ? 3 : undefined }).open();
-        const rs = newState();
-        await pull(ref, rs, (x) => lastVT(x) >= 12);
-        ref.close();
         const s = await new Session(F('tracks_multi.mkv'), { video: 'soft', audio, pool, workers: pool ? 3 : undefined, log: LOG }).open();
         const st = newState();
         await pull(s, st, (x) => lastVT(x) >= 5);
@@ -101,7 +102,6 @@ const tests = {
         const stale = st.audio.slice(before).filter((a) => a.aid !== 2).length;
         const first = after.length ? after[0].t : null;
         const v = st.video.filter((x) => x[0] <= 12);
-        const rv = rs.video.filter((x) => x[0] <= 12);
         const same = v.length === rv.length && v.every((x, i) => x[0] === rv[i][0] && x[1] === rv[i][1]);
         check(r.audio === audio && r.rewound !== false, `${label}: switched (${JSON.stringify(r)})`);
         check(same, `${label}: picture unchanged by the switch (${v.length} vs ${rv.length} frames)`);
@@ -212,12 +212,12 @@ const tests = {
     const files = ['opengop_hevc.mkv', 'opengop_hevc.mp4', 'opengop_h264.mkv', 'hevc8_aac.mp4', 'mpeg2_mp2.mpg', 'mpeg2_ac3.vob'];
     for (const f of files) {
       if (!fs.existsSync(F(f))) { console.log(`  skip ${f} (missing)`); continue; }
+      const ref = await new Session(F(f), { video: 'soft' }).open();
+      const rs = newState();
+      await pull(ref, rs);
+      ref.close();
+      const byT = new Map(rs.video.map((x) => [x[0], x[1]]));
       for (const pool of [false, true]) {
-        const ref = await new Session(F(f), { video: 'soft' }).open();
-        const rs = newState();
-        await pull(ref, rs);
-        ref.close();
-        const byT = new Map(rs.video.map((x) => [x[0], x[1]]));
         const s = await new Session(F(f), { video: 'soft', pool, workers: pool ? 3 : undefined, log: LOG }).open();
         let bad = 0;
         let shown = 0;

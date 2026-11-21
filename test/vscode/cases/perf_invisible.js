@@ -96,50 +96,41 @@ const functional = {
   name: 'perf-invisible',
   ffmpeg: true,
   async run(vs, h) {
-    const out = [];
-    const step = async (name, fn) => {
-      const p = [];
-      const extra = {};
-      try { await fn(p, extra); } catch (e) { p.push(e.message); }
-      out.push(res(name, p, extra));
-    };
+    const { out, run } = lib.recorder();
     if (!h.ffmpeg) return [res('skipped', [], { note: 'no ffmpeg on PATH' })];
-    const sound = longClip(h, 'h264_aac_anim_1080p.mp4', 9); // WebCodecs + AAC, 30 s
-    const nat = longClip(h, 'hevc_10_2160p.mp4', 9); // native ffmpeg, 20 s
-    const wc = longClip(h, 'h264_8_2160p.mp4', 9); // WebCodecs 4K, 20 s
 
     // Hidden native tab: ffmpeg stops; shown again: the same frame, and it plays.
-    await step('hidden-native', async (p, x) => {
-      const A = await lib.open(vs, h, nat);
+    await run('hidden-native', async (ok, x) => {
+      const A = await lib.open(vs, h, longClip(h, 'hevc_10_2160p.mp4', 9));
       try {
         await A.waitFirstFrame(45000);
         A.pause();
         await lib.sleep(1500);
         const s0 = await A.state();
         x.before = memOf(sample(vs.dir));
-        if (!x.before.ffmpegCount) p.push('no ffmpeg running for the shown native tab');
+        if (!x.before.ffmpegCount) ok(false, 'no ffmpeg running for the shown native tab');
         const m = vs.mark();
-        const B = await lib.open(vs, h, sound); // in front: A is hidden
+        const B = await lib.open(vs, h, longClip(h, 'h264_aac_anim_1080p.mp4', 9)); // in front: A is hidden
         const hid = await vs.waitLog(new RegExp(`\\[${lib.esc(A.name)}\\] native: tab hidden, ffmpeg stopped`), { from: m, timeout: 8000 }).catch(() => null);
-        if (!hid) p.push('the hidden tab did not stop ffmpeg');
+        if (!hid) ok(false, 'the hidden tab did not stop ffmpeg');
         B.pause();
         await lib.sleep(1500);
         x.hidden = memOf(sample(vs.dir));
-        if (x.hidden.ffmpegCount) p.push(`${x.hidden.ffmpegCount} ffmpeg still running with the native tab hidden`);
+        if (x.hidden.ffmpegCount) ok(false, `${x.hidden.ffmpegCount} ffmpeg still running with the native tab hidden`);
         const m2 = vs.mark();
         vs.send({ command: 'workbench.action.closeActiveEditor' }); // A is shown again
         const back = await vs.waitLog(new RegExp(`\\[${lib.esc(A.name)}\\] native decode from`), { from: m2, timeout: 10000 }).catch(() => null);
-        if (!back) p.push('showing the tab again did not restart ffmpeg');
-        const s1 = await A.waitState((s) => s.firstShown && s.frame === s0.frame, { timeout: 8000, what: `frame ${s0.frame} again` }).catch((e) => { p.push(e.message); return null; });
+        if (!back) ok(false, 'showing the tab again did not restart ffmpeg');
+        const s1 = await A.waitState((s) => s.firstShown && s.frame === s0.frame, { timeout: 8000, what: `frame ${s0.frame} again` }).catch((e) => { ok(false, e.message); return null; });
         x.frames = [s0.frame, s1 && s1.frame];
         A.play();
-        await A.waitState((s) => s.playing && s.frame > s0.frame + 5, { timeout: 8000, what: 'playing after showing' }).catch((e) => p.push(e.message));
+        await A.waitState((s) => s.playing && s.frame > s0.frame + 5, { timeout: 8000, what: 'playing after showing' }).catch((e) => ok(false, e.message));
       } finally { await A.close(); }
     });
 
     // The AudioContext rests while paused; play brings the sound back as the clock, in sync.
-    await step('audio-rest', async (p, x) => {
-      const P = await lib.open(vs, h, sound);
+    await run('audio-rest', async (ok, x) => {
+      const P = await lib.open(vs, h, longClip(h, 'h264_aac_anim_1080p.mp4', 9));
       try {
         await P.waitFirstFrame(30000);
         P.play();
@@ -153,33 +144,33 @@ const functional = {
           P.pause();
           await lib.sleep(3500);
           P.play();
-          await P.waitState((s) => s.playing && s.frame > q.frame + 10, { timeout: 6000, what: 'playing after a pause' }).catch((e) => p.push(e.message));
+          await P.waitState((s) => s.playing && s.frame > q.frame + 10, { timeout: 6000, what: 'playing after a pause' }).catch((e) => ok(false, e.message));
           P.pause();
           return;
         }
         await lib.sleep(1000);
         P.pause();
-        const r = await P.waitState((s) => !s.playing && s.ac === 'suspended', { timeout: 8000, what: 'AudioContext suspended after the pause', interval: 500 }).catch((e) => { p.push(e.message); return null; });
+        const r = await P.waitState((s) => !s.playing && s.ac === 'suspended', { timeout: 8000, what: 'AudioContext suspended after the pause', interval: 500 }).catch((e) => { ok(false, e.message); return null; });
         x.restedAfterMs = r ? 'yes' : 'no';
         const t0 = Date.now();
         P.play();
-        const s = await P.waitState((q) => q.playing && q.ac === 'running' && q.audioMaster, { timeout: 5000, what: 'the sound as the clock after play', interval: 50 }).catch((e) => { p.push(e.message); return null; });
+        const s = await P.waitState((q) => q.playing && q.ac === 'running' && q.audioMaster, { timeout: 5000, what: 'the sound as the clock after play', interval: 50 }).catch((e) => { ok(false, e.message); return null; });
         x.resumeMs = s ? Date.now() - t0 : null;
         await lib.sleep(1500);
         const d = await P.sample(1500, (q) => q.drift);
         const drifts = d.map((q) => q.v).filter((v) => typeof v === 'number');
         x.driftMs = drifts.map((v) => Math.round(v * 1000));
-        if (!drifts.length) p.push('no drift readings (the sound is not the clock)');
+        if (!drifts.length) ok(false, 'no drift readings (the sound is not the clock)');
         // Layer 3 (h.scenario): only gross drift; the 100 ms figure is judged by layer 4 on a quiet machine.
-        else if (Math.max(...drifts.map(Math.abs)) > (h.scenario ? 0.5 : 0.1)) p.push(`picture and sound apart by up to ${Math.round(Math.max(...drifts.map(Math.abs)) * 1000)} ms after resuming`);
+        else if (Math.max(...drifts.map(Math.abs)) > (h.scenario ? 0.5 : 0.1)) ok(false, `picture and sound apart by up to ${Math.round(Math.max(...drifts.map(Math.abs)) * 1000)} ms after resuming`);
         P.pause();
       } finally { await P.close(); }
     });
 
     // Paused read-ahead: ~1 s for native ffmpeg and WebCodecs.
-    for (const [label, file] of [['native', nat], ['webcodecs', wc]]) {
-      await step(`paused-readahead/${label}`, async (p, x) => {
-        const P = await lib.open(vs, h, file);
+    for (const [label, file] of [['native', 'hevc_10_2160p.mp4'], ['webcodecs', 'h264_8_2160p.mp4']]) {
+      await run(`paused-readahead/${label}`, async (ok, x) => {
+        const P = await lib.open(vs, h, longClip(h, file, 9));
         try {
           shown(await P.waitFirstFrame(45000));
           P.pause();
@@ -191,25 +182,25 @@ const functional = {
           const st = statusOf(vs, P.name, m);
           x.ahead = Math.round(st.ahead * 100) / 100;
           x.queued = st.n;
-          if (st.n === null) p.push(`no status line (${st.line})`);
+          if (st.n === null) ok(false, `no status line (${st.line})`);
           // WebCodecs after a seek: the hardware decoder outputs frames only some packets later, and the reader
           // can't stop before the frames come out (a paused step would stall): ~3 s at 4K here; native ~1.5 s.
-          else if (st.ahead > (label === 'native' ? 2.2 : 4.5)) p.push(`paused read-ahead ${st.ahead.toFixed(2)} s (expected about ${label === 'native' ? 1 : 3} s)`);
-          else if (st.n < 1) p.push('nothing decoded ahead');
+          else if (st.ahead > (label === 'native' ? 2.2 : 4.5)) ok(false, `paused read-ahead ${st.ahead.toFixed(2)} s (expected about ${label === 'native' ? 1 : 3} s)`);
+          else if (st.n < 1) ok(false, 'nothing decoded ahead');
           // Steps forward past the read-ahead still land on each frame.
           const f0 = (await P.state()).frame;
           // (One at a time: two steps in one hook poll would both start from the same shown frame.)
-          for (let i = 1; i <= 3 && !p.length; i++) {
+          for (let i = 1; i <= 3 && x.ok; i++) {
             P.step(1);
-            await P.waitState((s) => s.frame === f0 + i, { timeout: 5000, what: `frame ${f0 + i} after ${i} steps` }).catch((e) => p.push(e.message));
+            await P.waitState((s) => s.frame === f0 + i, { timeout: 5000, what: `frame ${f0 + i} after ${i} steps` }).catch((e) => ok(false, e.message));
           }
         } finally { await P.close(); }
       });
     }
 
     // The frame loop rests while paused; stepping, the time label and the right-click context still follow.
-    await step('loop-rest', async (p, x) => {
-      const P = await lib.open(vs, h, sound);
+    await run('loop-rest', async (ok, x) => {
+      const P = await lib.open(vs, h, longClip(h, 'h264_aac_anim_1080p.mp4', 9));
       try {
         await P.waitFirstFrame(30000);
         P.play();
@@ -227,17 +218,17 @@ const functional = {
         x.framesIn4sPaused = d.loop.frames - c.loop.frames;
         x.rests = d.loop.rests;
         x.busy = [c.loop.busy, d.loop.busy];
-        if (!(d.loop.rests > c.loop.rests || d.loop.rests > 0)) p.push('the frame loop never rested while paused');
-        if (x.framesIn4sPaused > 0.5 * rate * 4) p.push(`${x.framesIn4sPaused} animation frames in 4 s paused (playing: ${rate}/s)`);
-        if (!/"vpePlaying":false/.test(d.vscodeContext)) p.push(`right-click context while paused: ${d.vscodeContext}`);
+        if (!(d.loop.rests > c.loop.rests || d.loop.rests > 0)) ok(false, 'the frame loop never rested while paused');
+        if (x.framesIn4sPaused > 0.5 * rate * 4) ok(false, `${x.framesIn4sPaused} animation frames in 4 s paused (playing: ${rate}/s)`);
+        if (!/"vpePlaying":false/.test(d.vscodeContext)) ok(false, `right-click context while paused: ${d.vscodeContext}`);
         // Stepping while resting: the frame, the time label and the bar follow.
         P.step(1);
-        const e = await P.waitState((s) => s.frame === d.frame + 1, { timeout: 4000, what: 'a step while resting' }).catch((err) => { p.push(err.message); return null; });
-        if (e && e.timeText === d.timeText) p.push(`the time label did not follow the step (${e.timeText})`);
+        const e = await P.waitState((s) => s.frame === d.frame + 1, { timeout: 4000, what: 'a step while resting' }).catch((err) => { ok(false, err.message); return null; });
+        if (e && e.timeText === d.timeText) ok(false, `the time label did not follow the step (${e.timeText})`);
         await lib.sleep(2500);
         P.play();
-        const f = await P.waitState((s) => s.playing && /"vpePlaying":true/.test(s.vscodeContext), { timeout: 4000, what: 'playing (context) after resting' }).catch((err) => { p.push(err.message); return null; });
-        if (f) await P.waitState((s) => s.frame > f.frame + 10, { timeout: 4000, what: 'frames advance after resting' }).catch((err) => p.push(err.message));
+        const f = await P.waitState((s) => s.playing && /"vpePlaying":true/.test(s.vscodeContext), { timeout: 4000, what: 'playing (context) after resting' }).catch((err) => { ok(false, err.message); return null; });
+        if (f) await P.waitState((s) => s.frame > f.frame + 10, { timeout: 4000, what: 'frames advance after resting' }).catch((err) => ok(false, err.message));
         P.pause();
       } finally { await P.close(); }
     });
