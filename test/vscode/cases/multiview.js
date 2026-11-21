@@ -733,9 +733,30 @@ module.exports = [{
       await results.run('reorder/commit', (ok) => {
         ok(order(u) === '2,0,1,add', `committed order: ${order(u)}`);
         ok(u.reorder.button === 'Reorder' && !u.reorder.hint, 'Escape should leave Reorder mode');
-        const rows = (u.panel?.rows || []).map((r) => r.label);
-        ok(rows.some((label) => label.startsWith(`A: ${CLIPS[2]}, clock`)), `clock did not follow the video: ${rows}`);
-        ok(rows.some((label) => label === `C: ${CLIPS[1]}, sound, offset +3 frames`), `sound or offset changed: ${rows}`);
+        const rows = (u.panel?.rows || []).map((r) => r.label).filter((label) => /^[A-C]:/.test(label));
+        ok(rows[0]?.startsWith(`A: ${CLIPS[2]}, clock`) && rows[1]?.startsWith(`B: ${CLIPS[0]}`),
+          `clock or panel order changed: ${rows}`);
+        ok(rows[2] === `C: ${CLIPS[1]}, sound, offset +3 frames`, `sound or offset changed: ${rows}`);
+      });
+      click('#reorderBtn');
+      pointer('pointerdown', grid[0].rect);
+      pointer('pointermove', grid[2].rect);
+      click('#reorderBtn');
+      u = await ui();
+      await results.run('reorder/done-cancels-drag', (ok) => {
+        ok(u.reorder.button === 'Reorder' && order(u) === '2,0,1,add', `Done during drag: ${order(u)}`);
+      });
+      click('#reorderBtn');
+      u = await ui();
+      await results.run('reorder/switch-tabs', async (ok) => {
+        ok(u.reorder.button === 'Done', 'Reorder mode was not active before switching tabs');
+        const opening = await h.openClip(vs, files[3]);
+        await vs.waitLog(/\[vp9_1080p\.webm\] webview: first frame shown/, { from: opening, timeout: 45000 });
+        const closing = vs.mark();
+        vs.send({ command: 'workbench.action.closeActiveEditor' });
+        await vs.waitLog(/\[vp9_1080p\.webm\] session closed/, { from: closing, timeout: 10000 });
+        const after = await ui();
+        ok(after.reorder.button === 'Reorder' && order(after) === '2,0,1,add', `after switching tabs: ${order(after)}`);
       });
       from = vs.mark();
       vs.send({ compareAdd: [files[3]] });

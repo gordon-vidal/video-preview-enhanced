@@ -1671,7 +1671,8 @@
     if (!reordering || reorderDrag || e.button !== 0 || e.target.closest('[data-act="move"]')) return;
     const r = stage.getBoundingClientRect(), c = cells[0];
     // Keep the target boundary fixed while previewing two videos of different shapes.
-    const splitX = c.split ? r.left + c.pic.x + c.pic.w * st.split : 0;
+    // A divider at either edge still leaves a target for each video.
+    const splitX = c.split ? r.left + Math.max(r.width * 0.1, Math.min(r.width * 0.9, c.pic.x + c.pic.w * st.split)) : 0;
     const from = reorderSlot(e, splitX);
     if (from < 0) return;
     reorderDrag = { id: e.pointerId, from, to: from, x: e.clientX, y: e.clientY, splitX, moved: false, preview: st.order };
@@ -1976,12 +1977,14 @@
   document.addEventListener('fullscreenchange', () => { poke(); layoutDirty = true; });
 
   document.addEventListener('keydown', (e) => {
-    if (reordering && e.key === 'Escape') {
-      e.preventDefault();
-      setReordering(false);
-      reorderBtn.focus();
-      return;
-    }
+    if (!reordering || e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    controls.closeAll(false);
+    setReordering(false);
+    reorderBtn.focus();
+  }, { capture: true });
+  document.addEventListener('keydown', (e) => {
     // Typing in a field, a list box, or Space / Enter on a button reached with the keyboard: not player keys.
     if (VpeModes.ownsKey(e)) return;
     const altGr = !!(e.getModifierState && e.getModifierState('AltGraph')); // AltGr types { } [ ] on many layouts
@@ -2233,7 +2236,10 @@
     if (!m || m.page !== cfg.page) return;
     switch (m.type) {
       case 'toast': toast(String(m.text || ''), Math.min(10000, Number(m.ms) || 1500)); break;
-      case 'addMode': showAddMode(m); break;
+      case 'addMode':
+        if (m.on) setReordering(false);
+        showAddMode(m);
+        break;
       case 'open':
         syncVisibility(document.hidden, m.visible !== false);
         sizes = m.sizes;

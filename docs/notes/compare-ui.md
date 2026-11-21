@@ -71,8 +71,8 @@ Drag over another tile to preview insertion into its slot. Release on a tile to 
 pause their pan, zoom, wheel stepping, divider and offset gestures.
 
 Hover or focus a tile to reveal its arrows in either mode. **Tab** reaches the enabled arrows and
-**Enter** or **Space** activates them. Their accessible names are “Move <name> earlier” and
-“Move <name> later”. An arrow at an end of the order is disabled. Focus follows the moved tile.
+**Enter** or **Space** activates them. Their accessible names are `Move <name> earlier` and
+`Move <name> later`. An arrow at an end of the order is disabled. Focus follows the moved tile.
 
 The letters, Compare panel, About tabs and editor title follow the new order. Decoders, clock, sound
 and offsets stay with their videos. The Add cell stays in the first spare slot, and a newly added video
