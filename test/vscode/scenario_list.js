@@ -7,10 +7,6 @@
 //
 // Step: { case, only?, skip?, settings?, env?, ffmpeg?, keepState?, timeout? }
 
-// seeking.js on the WebAssembly path is frame-checked in Node (test/engine/frames_*.js); here: the GPU decoder
-// (H.264, VP8), the frame player (MJPEG), and one WebAssembly clip through the real WebGL path (HEVC steps).
-const SEEKING_IN_NODE = '^(step|seek)/s_(vp9|mpeg2|prores|xvid)|^seek/s_hevc|^step-ms-rounded/vp9_60fps|^end-key/audio_longer_soft';
-
 const PLAYER = ['media/player.js', 'media/controls.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/player.css', 'src/bar.js'];
 const ENGINE = ['media/engine.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
 const HOST = ['src/extension.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
@@ -26,7 +22,7 @@ module.exports = [
   },
   {
     name: 'playback',
-    journey: 'Opening every container and codec, sound-only files, speed, next / previous file, rotation, resume, damaged and cut files, multichannel sound',
+    journey: 'GPU and WebAssembly playback, sound-only files, speed, next / previous file, rotation, resume, damaged and cut files, multichannel sound',
     sources: [...HOST, ...ENGINE, ...PLAYER],
     steps: [{ case: 'playback' }],
   },
@@ -40,7 +36,7 @@ module.exports = [
     name: 'seeking',
     journey: 'Frame stepping, seeking, the ends of a file and the A-B loop on the GPU decoder, the frame player and the WebGL picture',
     sources: [...ENGINE, ...PLAYER, 'src/avi.js', 'src/extension.js', 'media/inspect.js'],
-    steps: [{ case: 'seeking', skip: SEEKING_IN_NODE }],
+    steps: [{ case: 'seeking' }],
   },
   {
     name: 'inspect',

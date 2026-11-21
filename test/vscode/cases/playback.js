@@ -4,17 +4,21 @@
 //   playback        (autoplay off)  open/<fmt>, speed, neighbour files, rotation, pill, resume, damaged and cut files, sound
 //   playback_autoplay (autoplay on, loop off)  late first time stamp, sound longer than the picture
 //   playback_loop   (autoplay on, loop on)     sound-only loop point
-const fs = require('fs');
 const lib = require('../lib');
 
 const BASE = { 'videoPreviewEnhanced.advancedMode': true };
 
-// The open-and-play set (test/media/make_cases_media.js "fmt/"): [name, has sound].
+// Browser-specific extensions of the Node format matrix (test/engine/formats_cases.js).
+// Extended H.264 profiles can use either decoder depending on WebCodecs support.
 const FORMATS = [
-  ['fmt/h264_high10.mp4', 1], ['fmt/h264_444.mp4', 1], ['fmt/hevc10.mp4', 1], ['fmt/hevc10_opus.mkv', 1], ['fmt/vp8_vorbis.webm', 1],
-  ['fmt/av1_opus.mkv', 1], ['fmt/h264_ac3.mts', 1], ['fmt/mpeg2_ac3.vob', 1], ['fmt/mpeg2_interlaced.mpg', 1], ['fmt/wmv2_wma.wmv', 1],
-  ['fmt/wmv2_wma.asf', 1], ['fmt/dnxhr_pcm.mxf', 1], ['fmt/theora_vorbis.ogv', 1], ['fmt/flv1_mp3.flv', 1], ['fmt/odd_853x479.mkv', 1],
-  ['fmt/h264_ac3_51.mkv', 1], ['fmt/h264_noaudio.mp4', 0], ['fmt/h264_vfr.mkv', 0],
+  ['fmt/h264_high10.mp4', null, true],
+  ['fmt/h264_444.mp4', null, true],
+  ['fmt/odd_853x479.mkv', 'soft', true],
+  ['fmt/vp8_vorbis.webm', 'webcodecs', true],
+  ['fmt/h264_ac3.mts', 'webcodecs', true],
+  ['fmt/h264_ac3_51.mkv', 'webcodecs', true],
+  ['fmt/h264_noaudio.mp4', 'webcodecs', false],
+  ['fmt/h264_vfr.mkv', 'webcodecs', false],
 ];
 
 /** Media-time speed (media seconds per wall second) over samples [{t (wall ms), v (media s)}], loops unwrapped. */
@@ -30,12 +34,14 @@ module.exports = [{
   async run(vs, h) {
     const R = lib.recorder();
 
-    for (const [name, sound] of FORMATS) {
-      await R.run(`open/${name}`, async (ok) => {
+    for (const [name, decoder, sound] of FORMATS) {
+      await R.run(`open/${name}`, async (ok, result) => {
         const P = await lib.open(vs, h, lib.clip(name));
         try {
           const r = await P.waitFirstFrame();
           ok(!r.message, `overlay message: "${r.message}" ${r.hint}`);
+          result.vmode = r.vmode;
+          if (decoder) ok(r.vmode === decoder, `video decoded by ${r.vmode}, expected ${decoder}`);
           ok(r.canvas[0] > 0 && r.canvas[1] > 0 && !r.canvasHidden, `canvas ${r.canvas}`);
           if (r.engine) ok(r.firstShown, 'no frame shown');
           if (sound) ok(r.amode && r.amode !== 'none', `audio not decoded (amode ${r.amode})`);
@@ -54,7 +60,7 @@ module.exports = [{
         const r0 = await P.state();
         ok(r0.amode && r0.amode !== 'none' && !/could not|failed/i.test(r0.message), `audio mode ${r0.amode}, message "${r0.message}"`);
         P.play();
-        await lib.sleep(500);
+        await P.waitState((x) => x.playing && x.t > 0, { what: 'sound playing' });
         const smp = await P.sample(2200);
         const back = smp.filter((x, i) => i && x.v < smp[i - 1].v - 0.1 && !(smp[i - 1].v > 2 && x.v < 1)).length;
         ok(back === 0, `time jumped back ${back} times`);
@@ -69,7 +75,7 @@ module.exports = [{
       try {
         await P.waitFirstFrame();
         P.play();
-        await lib.sleep(500);
+        await P.waitState((x) => x.playing && x.t > 0, { what: 'playing before rate changes' });
         for (const rate of [2, 0.5, 1, 1.5]) {
           P.rate(rate);
           await lib.sleep(700);
@@ -298,4 +304,3 @@ module.exports = [{
 }];
 
 const ERR = lib.ERR;
-void fs;
