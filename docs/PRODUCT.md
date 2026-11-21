@@ -129,14 +129,18 @@ One feature: compare becomes multi-view. The difference view is dropped.
   video (n of the set limit), View (2 videos: Side by side | Split), Swap, Leave compare. Tiles are clean; hover shows the name
   pill with the tile's own frame number and a ‹ offset › nudge; − / + nudge the tile under the pointer;
   right-click a tile for its actions. The old compare toolbar and sync panel are gone.
-- **Entering:** key **D** (quick pick of other videos, same folder first), Shift+drop of an Explorer video on the player, ⚙ › Tools › Compare (the same as **Shift+D**: add mode, click videos in the Explorer; from a player one click opens
-  compare and ends the mode, in compare it stays on until Esc, Shift+D or `compare.maxVideos`) and "Compare With…"
-  in the player's right-click menu (VS Code's open dialog); from the Explorer: **Compare Videos** (a multi-selection),
-  **Compare Videos in Folder** (a folder's videos, natural order, up to `compare.maxVideos`) and opening several
-  selected videos at once (**open together**, setting `compare.openTogether`: a one-time notice, and a preview tab of
-  a compared video is closed, not left as a duplicate). There is no Explorer key (Alt+D was dropped); the Explorer menu
-  has no single-video "Compare With…" and no "Play Image Sequence" (Command Palette only). Compare takes the player's tab and starts at its position; Leave compare puts the player back there.
-  (It is a separate webview panel that replaces the player's tab, not the same webview: docs/notes/compare-ui.md.)
+- **Entering:** key **D** (quick pick of other videos, same folder first), Shift+drop from the Explorer,
+  **Shift+D** or ⚙ › Tools › **Compare** (wait for an Explorer open), and **Compare With…** in the player's
+  right-click menu (VS Code's open dialog). Compare takes the player's tab and starts at its position.
+  **Leave compare** restores the player at the kept video's position.
+- **Explorer:** **Add to Compare** handles files, folders and mixed selections. A folder contributes only its
+  direct video files, in natural name order. Append to the most recently active Compare, otherwise use the open
+  single-video player or start a Compare with the selection. One file can start a one-tile Compare. Skip duplicates,
+  add up to `compare.maxVideos` and report how many unique videos did not fit. **Open Together**
+  (`compare.openTogether`) also groups several videos opened at once, with a one-time notice.
+- **Add Mode:** Compare opens with Add Mode on when it has space. Opening videos from the Explorer adds tiles.
+  Playback, scrubbing and stepping keep the mode on. Esc, Shift+D, reaching the maximum or switching editors
+  turns it off. **Add video…** or Shift+D turns it back on. **Add to Compare** also works while the mode is off.
 - **Picture size in compare:** one mode for every tile (the same button, Z and ⚙ page), and zoom and pan in lockstep:
   the same relative zoom and position in each tile, like a magnifier over all videos.
 - Each video has its own offset, by **time or frame number** (hover nudge and the panel only).
