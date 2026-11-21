@@ -2,30 +2,36 @@
 
 **Play all major video formats with sound in VS Code, locally, over Remote‑SSH, or in WSL.**
 
-Double-click an **MP4, MKV, MOV, AVI, WebM, WMV or MXF** in Explorer. Play 1080p footage in major formats, including **HEVC, AV1 and ProRes**, without installing FFmpeg separately. Add optional FFmpeg from VS Code for GPU decoding of heavier footage.
+- **Every common format, with sound:** MP4, MKV, MOV, AVI, WebM, WMV, MXF and more, including HEVC, AV1 and ProRes at 1080p. Nothing else to install.
+- **Remote‑SSH and WSL:** play videos where they live, no downloading. Video URLs and HLS / DASH streams too.
+- **Frame‑accurate:** step one frame forward or back, jump to any frame or timecode.
+- **Compare up to eight videos** in sync: side by side, split or in a grid.
+- **Pro tools:** scopes, pixel inspector, Codec X‑ray (I / P / B frames and bitrate).
+- **Everyday comforts:** subtitles, audio tracks, 0.25× to 4× speed, A–B loops, seek‑bar thumbnails.
+- **Free, MIT licensed, no telemetry.**
+
+## Your videos stay where they are
+
+Open a video straight from a **Remote‑SSH or WSL workspace** with a double-click. Check a render, a test recording or a camera clip without copying it to your machine first. Run **Video Preview: Open Video URL…** to play a link or a stream.
 
 ![Playing a video from a Remote-SSH workspace, stepping a frame and comparing two encodes](media/marketing/hero-remote.gif)
 
-## Remote‑SSH, WSL and video URLs
+## Frame‑accurate
 
-Open videos directly from a **Remote‑SSH or WSL workspace**. Your files stay where they were generated, so you can check a test recording, render or camera clip without manually downloading it. Optional FFmpeg on the SSH host can stream a lighter version of heavy footage. In a loopback SSH test, a 4K 10-bit HEVC clip went from **7.5 to 29 fps**.
+Step one frame forward or back, and backward is exact too. Jump to a frame number or timecode, loop a section, and copy a link that opens the video at that exact frame for someone else.
 
-Run **Video Preview: Open Video URL…** to play a direct video link or an HLS or DASH stream. Live or encrypted HLS and DASH require FFmpeg.
+## Compare videos side by side
 
-## Frame‑accurate stepping and synchronized comparison
+Select up to **eight videos**, right-click and choose **Compare Videos**. They play on one timeline: play, pause and frame steps move every video together. Nudge a video's offset by single frames to line it up, and switch between side by side, split and grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
 
-Step forward or backward one frame. Jump to a frame number or timecode, preview a moment from the seek bar on supported files, or loop a section. Copy a link that opens at the exact frame so someone else can see what you saw.
+## And much more
 
-Select up to **eight videos by default** and choose **Compare Videos** (or right-click a folder: **Compare Videos in Folder**). Step through them on one timeline, adjust each clip’s offset, and switch between side-by-side, split or grid views.
-
-## Frame export and inspection
-
-- **PNG export.** Copy or save the current frame, or export an A–B range as numbered PNGs.
-- **Scopes and pixels.** Use the waveform, RGB parade, vectorscope and histogram. Zoom in and read RGB and source Y/U/V values under the cursor.
-- **Codec X‑ray.** See I, P and B frames, frame sizes and bitrate. Click a bar to jump to that frame.
-- **Playback details.** Inspect codecs, resolution, frame rate, bit depth, tracks and decode stats.
-
-Switch audio and subtitle tracks, load sidecar subtitles, or play a folder of numbered images as a video. Playback speed runs from **0.25× to 4×** with pitch preserved.
+- **Scopes:** waveform, RGB parade, vectorscope and histogram.
+- **Pixel inspector:** zoom in and read the RGB and Y / U / V values under the cursor.
+- **Codec X‑ray:** every frame as a bar, with its type (I, P, B), size and bitrate. Click one to go there.
+- **Subtitles and audio:** SRT, WebVTT, ASS and embedded tracks; switch audio tracks.
+- **Grab frames:** copy or save the current frame as PNG, or export a whole range.
+- **HDR10 and HLG**, upright phone videos, image sequences, and a live reload when a render rewrites the file.
 
 ## How it compares
 
@@ -33,16 +39,21 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 
 | Feature | **Video Preview Enhanced** | VS Code built-in | [MPEG‑4 Preview](https://marketplace.visualstudio.com/items?itemName=analytic-signal.preview-mp4) · 173k | [video player](https://marketplace.visualstudio.com/items?itemName=VMASPAD.video-player) · 30k | [BNPL](https://marketplace.visualstudio.com/items?itemName=BatchNepal.vscode-video-preview) · 23k |
 |---|---|---|---|---|---|
-| Major formats at 1080p with sound, without separate FFmpeg setup | **Yes** | No · MP4 and WebM only, with codec limits | No · MP4 only, no audio | Codec support varies | No · FFmpeg required for sound in several formats |
-| Optional FFmpeg download from the extension | **Yes** | — | — | — | Manual setup |
-| Remote workspace playback | **Yes · Remote‑SSH and WSL** | — | — | — | — |
-| Video URLs | **Yes** | — | — | — | — |
-| Synchronized comparison | **Yes · up to eight by default** | No | — | — | — |
-| Frame‑accurate stepping | **Yes · forward and backward** | No | — | — | — |
-| Frame and range export | **Yes · PNG** | — | — | — | — |
-| Scopes, pixel inspector and Codec X‑ray | **Yes** | No | — | — | — |
+| Major formats at 1080p with sound, no FFmpeg setup | ✅ | ❌ MP4 and WebM only | ❌ MP4 only, no sound | ➖ varies by codec | ❌ needs FFmpeg for sound |
+| Optional FFmpeg, set up from the extension | ✅ | — | — | — | ➖ manual setup |
+| Remote‑SSH and WSL | ✅ | — | — | — | — |
+| Video URLs and streams | ✅ | — | — | — | — |
+| Synchronized comparison | ✅ up to 8 videos | ❌ | — | — | — |
+| Frame‑accurate stepping | ✅ forward and back | ❌ | — | — | — |
+| Scopes, pixel inspector, Codec X‑ray | ✅ | ❌ | — | — | — |
 
-*Install counts are rounded. A dash means support wasn’t established in the sources reviewed.*
+*✅ yes · ❌ no · ➖ partly · — not established in the sources reviewed. Install counts are rounded.*
+
+## Under the hood
+
+- **Three decoders, picked per file:** VS Code's own, a built-in FFmpeg compiled to WebAssembly, and optional native FFmpeg for GPU decoding of heavy footage. **Video Preview: Set Up Optional ffmpeg** installs it from inside VS Code.
+- **Lighter streams over SSH:** with FFmpeg on the SSH host, heavy footage is re-encoded there for the trip. In a loopback SSH test a 4K 10-bit HEVC clip went from **7.5 to 29 fps**.
+- Live or encrypted HLS and DASH streams need FFmpeg.
 
 ## Quick start
 
@@ -51,4 +62,4 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 3. **Compare:** Select two or more videos, right-click, and choose **Compare Videos**.
 4. **Play heavier footage:** Run **Video Preview: Set Up Optional ffmpeg** from the Command Palette.
 
-**Free and MIT licensed. No telemetry.** Details: [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [FAQ](docs/faq.md) · [all docs](docs/) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md)
+Details: [features](docs/features.md) · [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [FAQ](docs/faq.md) · [all docs](docs/) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md)
