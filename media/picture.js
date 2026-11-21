@@ -35,10 +35,10 @@
   /**
    * The mode's picture size in CSS px at zoom 1.
    * @param {string} mode
-   * @param {{w:number,h:number}} nat the picture's drawn size (its canvas): the shape, and the size Fit never exceeds unless `enlarge`
+   * @param {{w:number,h:number}} nat the picture's drawn size (its canvas): the shape (native frames may be smaller than the source)
    * @param {{w:number,h:number}} src the video's own size (100 % shows this many device pixels)
    * @param {{w:number,h:number}} view the area
-   * @param {{enlarge?:boolean, dpr?:number}} [o] enlarge: Fit may scale a small picture up (compare); dpr: device pixels per CSS pixel
+   * @param {{dpr?:number}} [o] dpr: device pixels per CSS pixel
    */
   function baseSize(mode, nat, src, view, o = {}) {
     const dpr = o.dpr || 1;
@@ -52,7 +52,7 @@
       const s = src.w > 0 && src.h > 0 ? src.w / nat.w : 1; // the source's width: the canvas may hold a smaller native frame
       return { w: (nat.w * s) / dpr, h: (nat.h * s) / dpr };
     }
-    const s = Math.min(view.w / nat.w, view.h / nat.h, o.enlarge ? Infinity : 1);
+    const s = Math.min(view.w / nat.w, view.h / nat.h); // as large as fits, a small picture too (object-fit: contain)
     return { w: nat.w * s, h: nat.h * s };
   }
 
