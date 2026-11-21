@@ -11,7 +11,7 @@ const PLAYER = ['media/player.js', 'media/controls.js', 'media/modes.js', 'media
 const ENGINE = ['media/engine.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
 const HOST = ['src/extension.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
-const COMPARE = ['src/compare.js', 'media/compare.js', 'media/compare.css', 'media/compare-grid.js'];
+const COMPARE = ['src/compare.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js', 'media/compare.js', 'media/compare.css', 'media/compare-grid.js'];
 
 module.exports = [
   {
@@ -78,7 +78,7 @@ module.exports = [
     name: 'compare',
     journey: 'Compare mode: entering and leaving, the bar, tiles, views, the Tools grid, PSNR / SSIM against ffmpeg',
     sources: [...COMPARE, ...PLAYER, 'media/scopes.js'],
-    steps: [{ case: 'modes' }, { case: 'compare_ui' }, { case: 'compare_metrics' }],
+    steps: [{ case: 'modes' }, { case: 'compare_ui' }, { case: 'compare_addmode' }, { case: 'compare_burst' }, { case: 'compare_metrics' }],
   },
   {
     name: 'multiview',

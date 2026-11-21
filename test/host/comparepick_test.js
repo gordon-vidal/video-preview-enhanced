@@ -2,12 +2,12 @@
 // "Compare with…" quick pick (key D) and dropped videos: row order, recent list, drop parsing, and the commands.
 const assert = require('assert');
 const path = require('path');
-const { pickRows, pushRecent, droppedVideos, RECENT_MAX } = require('../../src/comparepick');
+const { pickRows, pushRecent, droppedVideos, selectedVideos, RECENT_MAX } = require('../../src/comparepick');
 const { load } = require('./mock_vscode');
 const { setPickHook } = require('../../src/compare');
 const { make } = require('../media/make_cases_media');
 
-// ---- order: same folder first, recent first, natural names, no duplicates, Browse… last ----
+// ---- order: same folder first, recent first, natural names, no duplicates, the Explorer row, Browse… last ----
 const d = 'file:///v/';
 const rows = pickRows({
   current: `${d}a.mp4`,
@@ -15,9 +15,9 @@ const rows = pickRows({
   workspace: [`${d}clip2.mkv`, 'file:///w/b.mov', 'file:///w/a.mov', 'file:///w/readme.md'],
   recent: ['file:///w/b.mov', `${d}z.webm`],
 });
-assert.deepStrictEqual(rows.map((r) => r.label), ['Same folder', 'z.webm', 'clip2.mkv', 'clip10.mkv', 'Workspace', 'b.mov', 'a.mov', '', 'Browse…']);
+assert.deepStrictEqual(rows.map((r) => r.label), ['Same folder', 'z.webm', 'clip2.mkv', 'clip10.mkv', 'Workspace', 'b.mov', 'a.mov', '', 'Click videos in the Explorer…', 'Browse…']);
 assert.strictEqual(rows[rows.length - 1].kind, 'browse');
-assert.deepStrictEqual(pickRows({ current: `${d}a.mp4`, folder: [], workspace: [] }).map((r) => r.kind), ['sep', 'browse'], 'only Browse… without candidates');
+assert.deepStrictEqual(pickRows({ current: `${d}a.mp4`, folder: [], workspace: [] }).map((r) => r.kind), ['sep', 'explorer', 'browse'], 'only the Explorer row and Browse… without candidates');
 assert.deepStrictEqual(pushRecent(['x', 'y', 'z'], 'y'), ['y', 'x', 'z']);
 assert.strictEqual(pushRecent(Array.from({ length: RECENT_MAX }, (_, i) => `u${i}`), 'new').length, RECENT_MAX);
 
@@ -25,6 +25,9 @@ assert.strictEqual(pushRecent(Array.from({ length: RECENT_MAX }, (_, i) => `u${i
 assert.deepStrictEqual(droppedVideos(['file:///v/a.mp4\r\nfile:///v/readme.md\r\n# comment\r\nfile:///v/b.MKV']), ['file:///v/a.mp4', 'file:///v/b.MKV']);
 assert.deepStrictEqual(droppedVideos(['["file:///v/a.mp4","file:///v/a.mp4"]', 'not json [', 5]), ['file:///v/a.mp4']);
 assert.deepStrictEqual(droppedVideos([]), []);
+// Copy Path of an Explorer selection (Alt+D): one path per line, videos only.
+assert.deepStrictEqual(selectedVideos('C:/v/a.mp4\r\nC:/v/notes.txt\r\n/h/b.MKV\n/h/b.MKV\n'), ['C:/v/a.mp4', '/h/b.MKV']);
+assert.deepStrictEqual(selectedVideos(''), []);
 
 // ---- the commands ----
 (async () => {
@@ -52,7 +55,7 @@ assert.deepStrictEqual(droppedVideos([]), []);
     let items = null;
     setPickHook(async (it) => { items = it; return it.find((i) => i.uri && i.label === path.basename(b)); });
     await pick(uriA, { t: 1 });
-    assert.deepStrictEqual(items.map((i) => i.label), ['Same folder', path.basename(b), 'Workspace', 'w.mp4', '', '$(folder-opened) Browse…'].map((l) => l), 'rows');
+    assert.deepStrictEqual(items.map((i) => i.label), ['Same folder', path.basename(b), 'Workspace', 'w.mp4', '', '$(list-tree) Click videos in the Explorer…', '$(folder-opened) Browse…'].map((l) => l), 'rows');
     assert.strictEqual(items[0].kind, -1, 'sections are separators');
     assert.strictEqual(panels.length, 1, 'picking a video opens compare');
     assert.deepStrictEqual(V.executed || [], [], 'no dialog command');

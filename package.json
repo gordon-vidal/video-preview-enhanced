@@ -169,6 +169,21 @@
         "icon": "$(diff)"
       },
       {
+        "command": "videoPreviewEnhanced.addFromExplorer",
+        "title": "Compare: Add Videos from the Explorer",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.stopAddFromExplorer",
+        "title": "Compare: Stop Adding from the Explorer",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.compareSelected",
+        "title": "Compare Selected Videos",
+        "category": "Video Preview"
+      },
+      {
         "command": "videoPreviewEnhanced.loadSubtitles",
         "title": "Load Subtitles…",
         "category": "Video Preview"
@@ -340,6 +355,18 @@
         {
           "command": "videoPreviewEnhanced.ctx.playerSettings",
           "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.addFromExplorer",
+          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/ || activeWebviewPanelId == 'videoPreviewEnhanced.compare'"
+        },
+        {
+          "command": "videoPreviewEnhanced.stopAddFromExplorer",
+          "when": "videoPreviewEnhanced.addMode"
+        },
+        {
+          "command": "videoPreviewEnhanced.compareSelected",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -417,6 +444,18 @@
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "videoPreviewEnhanced.compareSelected",
+        "key": "alt+d",
+        "when": "explorerViewletFocus && !inputFocus"
+      },
+      {
+        "command": "videoPreviewEnhanced.stopAddFromExplorer",
+        "key": "escape",
+        "when": "videoPreviewEnhanced.addMode && !inputFocus && !inQuickOpen"
+      }
+    ],
     "configuration": {
       "title": "Video Preview Enhanced",
       "properties": {
@@ -518,6 +557,11 @@
           ],
           "default": "fit",
           "markdownDescription": "How the picture sits in the player for **new** tabs, in the player and in compare: `\"fit\"`, `\"fill\"`, `\"stretch\"` or `\"actual\"` (100 %). The button beside the keyboard shortcuts and the **Z** key change the current tab only."
+        },
+        "videoPreviewEnhanced.compare.openTogether": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Videos that VS Code opens together (several files selected in the Explorer, then **Open With…**, Enter or double-click) open in **one compare view** instead of separate tabs. Opening one video, or videos a moment apart, is not affected. Up to `compare.maxVideos`."
         },
         "videoPreviewEnhanced.compare.maxVideos": {
           "type": "integer",

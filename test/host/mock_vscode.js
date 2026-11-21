@@ -36,7 +36,7 @@ function makeVscode(settings = {}) {
     ProgressLocation: { Notification: 15 },
     ViewColumn: { Active: -1, Beside: -2 },
     ThemeIcon: class {},
-    env: { remoteName: undefined, uriScheme: 'vscode', clipboard: { text: '', async writeText(t) { this.text = t; } }, openExternal: async () => true },
+    env: { remoteName: undefined, uriScheme: 'vscode', clipboard: { text: '', async writeText(t) { this.text = t; }, async readText() { return this.text; } }, openExternal: async () => true },
     window: {
       createOutputChannel: () => ({ lines: [], appendLine(l) { this.lines.push(l); }, show() {}, dispose() {} }),
       registerUriHandler: (h) => { vscode.uriHandler = h; return { dispose() {} }; },
@@ -105,10 +105,10 @@ function load({ settings, env, setup, state: sharedState } = {}) {
         postMessage: (m) => { posted.push(m); return Promise.resolve(true); },
         onDidReceiveMessage: (fn) => { listeners.msg = fn; },
       },
-      onDidDispose: (fn) => { listeners.dispose = fn; },
+      onDidDispose: (fn) => { (listeners.dispose = listeners.dispose || []).push(fn); },
       onDidChangeViewState: (fn) => { listeners.viewState = fn; },
       reveal() {},
-      dispose() { if (listeners.dispose) listeners.dispose(); },
+      dispose() { for (const fn of listeners.dispose || []) fn(); },
     };
     const uri = typeof file === 'string' ? vscode.Uri.file(file) : file;
     const shown = vscode._providers['videoPreviewEnhanced.player'].resolveCustomEditor({ uri }, panel);
