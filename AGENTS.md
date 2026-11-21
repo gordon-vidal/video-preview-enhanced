@@ -21,7 +21,7 @@ build dependencies, no build step. Works locally, in WSL and over Remote-SSH.
 | `test/vscode/` | Layers 3-4: real VS Code on a hidden desktop (Windows). `cases/` are the scenarios |
 | `test/subtitles`, `test/timestretch`, `test/inspect` | More Node unit tests that CI runs |
 | `test/media/` | Test clips (Git LFS) and generators; licences in `test/media/LICENSES.md` |
-| `docs/` | User docs, `PRODUCT.md` (product truth), `TESTING.md` (test truth), `RELEASING.md`, `REVIEW.md`, `notes/` (design notes) |
+| `docs/` | User docs, `PRODUCT.md` (product truth), `TESTING.md` (test truth), `RELEASING.md`, `REVIEW.md`, `adr/` (signed-off decisions), `notes/` (design notes) |
 | `tools/`, `review.cmd` | Maintainer helpers (`review.cmd` = visible review profile; humans only) |
 | `build/libav/` | Scripts that rebuild the WebAssembly decoder (Linux/WSL only; rarely needed) |
 | `.private-context/` | Git-ignored maintainer notes, local only (see below) |
@@ -109,8 +109,8 @@ what and why, which tests you ran, checklist. CI (host tests on Linux and Window
 
 ## Private context
 
-If `.private-context/` exists at the repo root, read its `README.md` first: it holds the
-maintainer's local notes (handover, roadmap, decisions, environment, marketing drafts). It is
+If `.private-context/` exists at the repo root, read its `README.md` and `AGENTS.md` (if present) first: it holds the
+maintainer's local notes (personal workflow rules, handover, roadmap, decisions, environment, marketing drafts). It is
 private: never copy, quote or summarise it into tracked files, commits, PRs, issues, logs or
 chat shared outside this machine. If it is absent, work from the public docs only. Layout:
 [docs/private-context.md](docs/private-context.md).
