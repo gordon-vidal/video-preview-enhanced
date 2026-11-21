@@ -3,11 +3,17 @@
 // pipeline args, capped VBR, SPS profile/level parsing, hardware-first/software-last probe,
 // NVIDIA driver mismatch detection, setting migration, remote H.264 rules, and local stall policy.
 const assert = require('assert');
+const { EventEmitter } = require('events');
+const path = require('path');
 const args = require('../../src/transcode_args');
 const probe = require('../../src/transcode_probe');
 const policy = require('../../src/transcode_policy');
 const setup = require('../../src/setup');
+const ff = require('../../src/ffmpeg');
+const { EncodedStream } = require('../../src/stream');
+const { NativeDecoder } = require('../../src/native');
 const controls = require('../../media/controls');
+const { load: loadMockVscode } = require('./mock_vscode');
 
 // ---- setup.nvidiaLineMax ----
 assert.strictEqual(setup.nvidiaLineMax(null), null);
@@ -144,6 +150,199 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
   const f = controls.facts({ name: 'a.mkv', remoteStream: true, native: true, info: { video: { codec: 'hevc' }, transcode: { label } } });
   const playedBy = (f.rows.find((row) => row[0] === 'Played by') || [])[1];
   assert.strictEqual(playedBy, label);
+
+  // ---- Finding #4: Linux VA-API scale_vaapi filter discovery -> buildVideoPipeline ----
+  {
+    const sampleFilters = [
+      'Filters:',
+      ' ... scale_cuda        V->V       GPU accelerated video resizer',
+      ' ... scale_vaapi       V->V       Scale to/from VAAPI surfaces.',
+      ' ... vpp_qsv           V->V       Quick Sync Video "VPP"',
+      ' ... volume            A->A       Change input volume.',
+    ].join('\n');
+    const found = ff.parseGpuFilters(sampleFilters);
+    assert.ok(found.has('scale_vaapi') && found.has('scale_cuda') && found.has('vpp_qsv'));
+    assert.ok(ff.TOOLS_CACHE_VER >= 2, 'tools cache version bumped to invalidate stale filter inventories');
+    const pipe = args.buildVideoPipeline({
+      encoder: 'h264_vaapi', device: '/dev/dri/renderD128', decodeMethod: 'vaapi', gpuFilters: found,
+      video: { codec: 'hevc', pixFmt: 'yuv420p10le' }, w: 1920, h: 1080, fps: 30, maxKbps: 8000,
+    });
+    assert.strictEqual(pipe.mode, 'gpu-full');
+    assert.strictEqual(pipe.vf, 'scale_vaapi=w=1920:h=1080:format=nv12');
+  }
+
+  // ---- Finding #5 & #9: LGPL no-CPU-encoder fallback + preserve NVENC driverNotice on fallback GPU ----
+  assert.strictEqual(probe.cpuEncoder(' V..... mpeg4\n'), null, 'cpuEncoder returns null when neither libx264 nor libopenh264 is present');
+  {
+    const none = await probe.probeEncoder('ffmpeg', async (_cmd, a) => {
+      if (a.includes('-encoders')) return { code: 0, stdout: ' V..... h264_nvenc\n', stderr: '' };
+      return { code: 1, stdout: '', stderr: '[h264_nvenc @ 0] No capable devices found' };
+    }, { platform: 'win32', nodes: [] });
+    assert.strictEqual(none.encoder, null);
+    assert.strictEqual(none.cpu, null);
+  }
+  {
+    const fallbackGpu = await probe.probeEncoder('ffmpeg', async (_cmd, a) => {
+      if (a.includes('-encoders')) return { code: 0, stdout: ' V..... h264_nvenc\n V..... h264_qsv\n', stderr: '' };
+      if (a.includes('h264_nvenc')) {
+        return { code: 1, stdout: '', stderr: '[h264_nvenc @ 0] Driver does not support the required nvenc API version. Required: 13.1 Found: 13.0\nThe minimum required Nvidia driver for nvenc is 610.00 or newer' };
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    }, { platform: 'win32', nodes: [] });
+    assert.strictEqual(fallbackGpu.encoder, 'h264_qsv');
+    assert.strictEqual(fallbackGpu.hw, true);
+    assert.strictEqual(fallbackGpu.driverNotice && fallbackGpu.driverNotice.minDriver, '610.00', 'driverNotice preserved when fallback GPU succeeds');
+  }
+
+  // ---- Finding #7: Dolby Vision HDR exclusion even without PQ/HLG transfer tags ----
+  {
+    const dvNoTrc = { codec: 'hevc', pixFmt: 'yuv420p10le', width: 3840, height: 2160, fps: 30, colorTransfer: '', colorTrc: 0, dv: { profile: 5 } };
+    assert.strictEqual(policy.isHdr(dvNoTrc), true);
+    assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'always', remote: 'ssh-remote', video: dvNoTrc }).action, 'skip');
+    assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'always', remote: undefined, video: dvNoTrc }).action, 'skip');
+  }
+
+  // ---- Finding #6: Bitrate Auto consistency & 250 kb/s floor ----
+  {
+    assert.strictEqual(policy.effectiveMaxKbps({ maxBitrateMbps: 0.1, w: 1280, h: 720, fps: 30, remote: false }), 250, 'floor 250 kb/s');
+    const s = new EncodedStream({
+      tools: {}, file: 'x.mkv', post: () => {}, log: () => {}, remote: false, encoder: 'h264_nvenc', cpuEncoder: null,
+      probed: { duration: 10, video: { codec: 'hevc', width: 1280, height: 720, fps: 30 }, audio: null },
+    });
+    s.fps = 30;
+    s.sizeVideo();
+    assert.strictEqual(s.activeCapKbps(), 4000, 'local 720p30 Auto cap = 4000 kb/s');
+    s.setMaxBitrateMbps(10);
+    assert.strictEqual(s.activeCapKbps(), 10000);
+    s.setMaxBitrateMbps(0);
+    assert.strictEqual(s.activeCapKbps(), 4000, 'returning to Auto restores 4000 kb/s, not 20000');
+    // Hardware encoder stays active across capped quality tiers (Finding #5).
+    s.tier = 2;
+    assert.strictEqual(s.videoEncoder, 'h264_nvenc');
+    s.dispose();
+  }
+
+  // ---- Finding #2 & #8: setMaxKbps during deferred seek & while hidden, plus transcodeInfo refresh ----
+  {
+    const posts = [];
+    let launches = [];
+    const mkFakeProc = () => {
+      const p = new EventEmitter();
+      p.stdout = new EventEmitter();
+      p.stdout.pause = () => {};
+      p.stdout.resume = () => {};
+      p.stdout.isPaused = () => false;
+      p.stdout.destroy = () => {};
+      p.stderr = new EventEmitter();
+      p.err = { text: '' };
+      p.kill = () => {};
+      p.exitCode = null;
+      p.signalCode = null;
+      return p;
+    };
+    const s = new EncodedStream({
+      tools: {}, file: 'x.mkv', post: (m) => posts.push(m), log: () => {}, remote: false,
+      encoder: 'h264_nvenc', cpuEncoder: null,
+      probed: { duration: 30, video: { index: 0, codec: 'hevc', width: 1920, height: 1080, fps: 30 }, audio: { index: 1, codec: 'aac' } },
+    });
+    s.launch = (t, audio) => {
+      const p = mkFakeProc();
+      launches.push({ t, audio, cap: s.activeCapKbps(), proc: p });
+      return p;
+    };
+    s.open();
+    assert.strictEqual(launches.length, 2, 'open starts video + audio');
+
+    // Deferred seek: rapid seek schedules startTimer; setMaxBitrateMbps must NOT spawn video alone.
+    launches = [];
+    s.lastSpawnAt = Date.now();
+    s.lastSeekAt = Date.now();
+    s.seek({ gen: 1, t: 10 });
+    assert.ok(s.startTimer, 'seek is deferred');
+    assert.strictEqual(s.proc, null);
+    s.setMaxBitrateMbps(5);
+    assert.strictEqual(launches.length, 0, 'setMaxBitrateMbps does not spawn video during deferred seek');
+    assert.strictEqual(s.proc, null);
+    // Fire deferred seek: both video (at new 5 Mb/s cap) and audio spawn together.
+    clearTimeout(s.startTimer);
+    s.startTimer = null;
+    s.spawnNow();
+    assert.strictEqual(launches.length, 2, 'deferred seek spawns both video and audio');
+    assert.strictEqual(Boolean(launches[0].audio), false);
+    assert.strictEqual(launches[0].cap, 5000);
+    assert.strictEqual(launches[1].audio, true);
+
+    // Finding #8: first output after restart emits refreshed transcodeInfo for ⓘ.
+    posts.length = 0;
+    launches[0].proc.stdout.emit('data', Buffer.from([0, 0, 1, 9, 0x10]));
+    const ti = posts.find((m) => m.type === 'transcodeInfo');
+    assert.ok(ti && ti.transcode && ti.transcode.maxKbps === 5000, 'transcodeInfo emitted on restart output');
+
+    // Hidden tab: setMaxBitrateMbps must NOT restart video while hidden.
+    launches = [];
+    s.setHidden(true);
+    s.setMaxBitrateMbps(10);
+    assert.strictEqual(launches.length, 0, 'setMaxBitrateMbps does not restart while hidden');
+    assert.strictEqual(s.activeCapKbps(), 10000, 'new cap stored for next unhide/seek');
+
+    // Finding #5: when GPU encoder fails and cpuEncoder is null, stream fails cleanly to original decoder.
+    let failedWhy = null;
+    s.onFail = (w) => { failedWhy = w; };
+    s.spawnNow();
+    launches[0].proc.emit('close', 1, null);
+    assert.ok(failedWhy, 'falls back via onFail when no CPU encoder is available');
+    s.dispose();
+  }
+
+  // ---- Finding #3: NativeDecoder.hostKeepsUp separates decode-bound 4K from transfer-limited 4K ----
+  {
+    const decodeBound = { frames: [], draining: false, proc: { stdout: { isPaused: () => false } }, lastBackpressureAt: 0 };
+    assert.strictEqual(NativeDecoder.prototype.hostKeepsUp.call(decodeBound, 10000), false, 'decode-bound 4K is not transfer-limited');
+    assert.strictEqual(policy.evaluateLocalStall({
+      mode: 'auto', slowWindows: 3, hostKeepsUp: false, playing: true, rate: 1, hidden: false,
+      sinceEventMs: 2000, video: { codec: 'hevc', width: 3840, height: 2160, fps: 60 },
+      alreadyTranscoding: false, promptedThisSession: false,
+    }), 'none');
+
+    const transferLimited = { frames: [[], []], draining: false, proc: { stdout: { isPaused: () => false } }, lastBackpressureAt: 0 };
+    assert.strictEqual(NativeDecoder.prototype.hostKeepsUp.call(transferLimited, 10000), true, 'queued frames => host keeps up');
+    const recentBp = { frames: [], draining: false, proc: { stdout: { isPaused: () => false } }, lastBackpressureAt: 9000 };
+    assert.strictEqual(NativeDecoder.prototype.hostKeepsUp.call(recentBp, 10000), true, 'recent backpressure => host keeps up');
+  }
+
+  // ---- Finding #10: Dispose during encoder probing installs no stream and posts nothing ----
+  {
+    const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mkv');
+    const tools = await ff.locateTools(process.env.VPE_FFMPEG || '', '');
+    if (tools) {
+      const hwMod = require('../../src/hardware');
+      const origDetect = hwMod.detect;
+      const origEncoderFor = probe.encoderFor;
+      let resolveProbe;
+      let probeCalled = false;
+      hwMod.detect = async () => ({ os: process.platform, arch: process.arch, gpus: [], nvidiaDriver: null, vaapi: false });
+      probe.encoderFor = () => new Promise((res) => { probeCalled = true; resolveProbe = res; });
+      try {
+        const h = loadMockVscode({ settings: { 'videoPreviewEnhanced.ffmpegPath': tools.ffmpeg, 'videoPreviewEnhanced.transcode': 'always' } });
+        h.vscode.window.withProgress = async () => null;
+        const s = h.open(clip);
+        // Do not await s.send('ready') yet: it awaits our deferred encoderFor promise.
+        const readyP = s.send({ type: 'ready' });
+        for (let i = 0; i < 500 && !probeCalled; i++) await new Promise((r) => setTimeout(r, 20));
+        assert.ok(probeCalled, 'encoderFor was invoked');
+        const beforeDispose = s.posted.length;
+        s.panel.dispose();
+        resolveProbe({ encoder: 'libx264', hw: false, cpu: 'libx264', driverNotice: null });
+        await readyP;
+        await new Promise((r) => setTimeout(r, 40));
+        assert.strictEqual(s.posted.length, beforeDispose, 'no messages posted after dispose');
+        h.dispose();
+      } finally {
+        hwMod.detect = origDetect;
+        probe.encoderFor = origEncoderFor;
+      }
+    }
+  }
 
   console.log('transcode_test: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

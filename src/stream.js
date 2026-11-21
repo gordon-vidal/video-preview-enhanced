@@ -21,6 +21,7 @@ const {
   pipelineLabel,
 } = require('./transcode_args');
 const { encoderCacheKey } = require('./transcode_probe');
+const { effectiveMaxKbps } = require('./transcode_policy');
 
 const AUDIO_RATE = 48000;
 const MAX_QUEUED_SECONDS = 2; // packets read ahead of the webview before ffmpeg is paused
@@ -79,7 +80,7 @@ class EncodedStream {
   constructor({
     tools, file, post, log, maxHeight, probed, onFail, stats, encoder, device,
     cpuEncoder: cpu, decodeMethod = 'none', onEncoderFail, audioEncoder = null,
-    fitView = true, maxKbps = 0, allowLinkAdapt = true, remote = true,
+    fitView = true, maxKbps = 0, maxBitrateMbps = 0, allowLinkAdapt = true, remote = true,
     allowSoftwareFallback = true,
   }) {
     this.tools = tools;
@@ -93,15 +94,16 @@ class EncodedStream {
     this.onFail = onFail || (() => {});
     this.onEncoderFail = onEncoderFail || (() => {});
     this.stats = !!stats;
-    this.cpuEncoder = CPU_ENCODERS.includes(cpu) ? cpu : 'libx264';
+    this.cpuEncoder = CPU_ENCODERS.includes(cpu) ? cpu : (cpu === null ? null : 'libx264');
     this.encoder = encoder || process.env.VPE_RS_ENCODER || this.cpuEncoder;
     this.device = device;
     this.decodeMethod = decodeMethod || 'none';
-    this.maxKbps = Number(maxKbps) > 0 ? Math.round(Number(maxKbps)) : 0;
+    this.maxBitrateMbps = Number(maxBitrateMbps) > 0 ? Number(maxBitrateMbps) : (Number(maxKbps) > 0 ? Number(maxKbps) / 1000 : 0);
     this.allowLinkAdapt = allowLinkAdapt !== false;
     this.remote = !!remote;
     this.allowSoftwareFallback = allowSoftwareFallback !== false;
     this.pipelineMode = CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode';
+    this.hidden = false;
     this.tier = 0;
     this.topKbps = 0;
     this.topPeak = 0;
@@ -124,23 +126,34 @@ class EncodedStream {
   /** Always: re-encoded, scaled, 8-bit. */
   lossy() { return true; }
 
-  // Capped slow-link tiers use the CPU encoder when stepped down, unless user set an explicit cap on top tier.
-  get videoEncoder() { return this.tier ? this.cpuEncoder : this.encoder; }
+  // Keep a working hardware encoder across capped quality tiers (encoderArgs applies VBV maxrate/bufsize).
+  get videoEncoder() { return this.encoder; }
 
-  /** Effective bitrate ceiling in kb/s for the current tier and user cap. */
+  /** Effective bitrate ceiling in kb/s for the current tier, output size, and user cap. */
   activeCapKbps() {
     const tierCap = LINK_TIERS[this.tier]?.kbps || 0;
-    if (tierCap > 0 && this.maxKbps > 0) return Math.min(tierCap, this.maxKbps);
-    return tierCap || this.maxKbps || 0;
+    const baseCap = (this.maxBitrateMbps > 0 || !this.remote)
+      ? effectiveMaxKbps({ maxBitrateMbps: this.maxBitrateMbps, w: this.w || this.pr.video.width, h: this.h || this.pr.video.height, fps: this.fps || this.pr.video.fps || 30, remote: this.remote })
+      : 0;
+    if (tierCap > 0 && baseCap > 0) return Math.min(tierCap, baseCap);
+    return tierCap || baseCap || 0;
   }
 
-  /** Live-update the max bitrate cap (0 = Auto) from settings or the ⚙ panel. */
+  /** Live-update the max bitrate cap in Mb/s (0 = Auto) from settings or the ⚙ panel. */
+  setMaxBitrateMbps(mbps) {
+    const next = Number(mbps) > 0 ? Number(mbps) : 0;
+    if (next === this.maxBitrateMbps) return;
+    this.maxBitrateMbps = next;
+    this.takeStandby(NaN);
+    this.log(`live transcode: max bitrate ${next > 0 ? `${next} Mb/s` : 'auto'}`);
+    // Only restart an actively running video pipeline; deferred seeks and hidden tabs pick up the new cap on spawn.
+    if (this.fps && !this.disposed && !this.hidden && !this.startTimer && this.proc) this.restartVideo();
+  }
+
+  /** Live-update the max bitrate cap in kb/s (0 = Auto). */
   setMaxKbps(kbps) {
-    const next = Number(kbps) > 0 ? Math.round(Number(kbps)) : 0;
-    if (next === this.maxKbps) return;
-    this.maxKbps = next;
-    this.log(`live transcode: max bitrate ${next ? `${next} kb/s` : 'auto'}`);
-    if (this.fps && !this.disposed) this.restartVideo();
+    const n = Number(kbps) > 0 ? Number(kbps) / 1000 : 0;
+    this.setMaxBitrateMbps(n);
   }
 
   /** Current pipeline metadata for ⓘ (About this video) and stats. */
@@ -185,6 +198,7 @@ class EncodedStream {
    * what was read goes. Showing the tab re-seeks the page (media/engine.js setHidden).
    */
   setHidden(on) {
+    this.hidden = !!on;
     if (!on || !this.fps) return;
     const had = !!this.proc || !!this.audioProc || !!this.standby || !!this.startTimer;
     clearTimeout(this.startTimer);
@@ -327,6 +341,7 @@ class EncodedStream {
   /** Starts ffmpeg for the current (reset) stream. */
   spawnNow() {
     if (this.disposed) return;
+    this.hidden = false;
     clearTimeout(this.startTimer);
     this.startTimer = null;
     this.deferredSince = null;
@@ -364,6 +379,7 @@ class EncodedStream {
       if (!this.gotOutput) {
         this.log(`live transcode: first bytes ${Date.now() - t0} ms after start${proc.adopted ? ' (prepared at the end)' : ''}`);
         this.settleAt = Date.now() + LINK_SETTLE_MS;
+        if (this.spawns > 1) this.post({ type: 'transcodeInfo', transcode: this.transcodeInfo() });
       }
       this.gotOutput = true;
       this.pending = this.pending.length ? Buffer.concat([this.pending, d]) : d;
@@ -383,8 +399,8 @@ class EncodedStream {
           this.restartVideo();
           return;
         }
-        // Step 2: if a GPU encoder failed, fall back to software as the last resort (when allowed).
-        if (!CPU_ENCODERS.includes(this.videoEncoder) && this.allowSoftwareFallback) this.encoderFallback(why);
+        // Step 2: if a GPU encoder failed, fall back to software as the last resort (when a CPU encoder is available).
+        if (!CPU_ENCODERS.includes(this.videoEncoder) && this.allowSoftwareFallback && this.cpuEncoder) this.encoderFallback(why);
         else this.fail(why);
         return;
       }

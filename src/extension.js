@@ -1202,7 +1202,7 @@ function activate(context) {
         if (e.affectsConfiguration('videoPreviewEnhanced.transcodeMaxBitrate')) {
           for (const s of sessions) {
             if (s.native instanceof remotestream.EncodedStream) {
-              s.native.setMaxKbps(c.transcodeMaxBitrate > 0 ? Math.round(c.transcodeMaxBitrate * 1000) : 0);
+              s.native.setMaxBitrateMbps(c.transcodeMaxBitrate);
             }
           }
         }
@@ -1862,7 +1862,7 @@ ${barHtml()}
           const mbps = Math.max(0, Number(m.maxBitrateMbps) || 0);
           await setSetting('transcodeMaxBitrate', mbps, vscode.ConfigurationTarget.Global);
           if (this.native instanceof remotestream.EncodedStream) {
-            this.native.setMaxKbps(mbps > 0 ? Math.round(mbps * 1000) : 0);
+            this.native.setMaxBitrateMbps(mbps);
           }
         }
         return undefined;
@@ -2426,17 +2426,18 @@ ${barHtml()}
     ]);
     if (this.stale(gen)) return false;
     if (enc.driverNotice) maybeShowDriverNotice(t, enc.driverNotice, hw && hw.nvidiaDriver);
+    if (!enc.encoder) {
+      log(`[${this.name}] live transcode: no usable H.264 encoder available on this host; keeping original decoder`);
+      return false;
+    }
     // Hardware-first decode method (works on both local and remote GPU machines).
     const probeRec = !isRemoteLink ? probeRecord(t, hw) : null;
     const decodeMethod = c.gpuDecoding === false ? 'none' : decide.nativeMethod(probeRec, pr.video, true, hw).method;
-    const maxKbps = c.transcodeMaxBitrate > 0
-      ? transcodePolicy.effectiveMaxKbps({ maxBitrateMbps: c.transcodeMaxBitrate, w: pr.video.width, h: pr.video.height, fps: pr.video.fps, remote: isRemoteLink })
-      : (isRemoteLink ? 0 : transcodePolicy.autoMaxKbps({ w: pr.video.width, h: pr.video.height, fps: pr.video.fps, remote: false }));
     log(`[${this.name}] decoder: remote stream / live transcode (${enc.encoder}, decode=${decodeMethod}, ${remote || 'local'} window): ${pr.video.codec} ${pr.video.pixFmt} ${pr.video.width}x${pr.video.height}`);
     this.native = new remotestream.EncodedStream({
       tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), audioEncoder, probed: pr,
       stats: !!logFile, encoder: enc.encoder, device: enc.device, cpuEncoder: enc.cpu, decodeMethod,
-      maxKbps, allowLinkAdapt: isRemoteLink, remote: isRemoteLink, allowSoftwareFallback: true,
+      maxBitrateMbps: c.transcodeMaxBitrate, allowLinkAdapt: isRemoteLink, remote: isRemoteLink, allowSoftwareFallback: true,
       post: (msg) => this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg }),
       log: (msg) => log(`[${this.name}] ${msg}`),
       onEncoderFail: () => transcodeProbe.encoderFailed(t, enc, hw && hw.nvidiaDriver),
@@ -2814,18 +2815,19 @@ ${barHtml()}
       if (!sample.realtime) {
         const c = config();
         const v = this.native.pr && this.native.pr.video;
-        // Distinguish raw transfer bottleneck from decode bottleneck: raw frame transfer is the bottleneck
-        // when the source pixel rate exceeds raw transport capacity or the host ffmpeg output is backpressured.
-        const hostKeepsUp = transcodePolicy.exceedsRawTransfer(v) || !!(this.native.proc && this.native.proc.stdout && this.native.proc.stdout.isPaused());
+        // Distinguish raw transfer bottleneck from decode bottleneck using measured producer backpressure
+        // rather than nominal source dimensions, so decode-bound files still trigger the GPU decode test.
+        const hostKeepsUp = typeof this.native.hostKeepsUp === 'function' ? this.native.hostKeepsUp() : false;
+        const outputVideo = v ? { ...v, width: this.native.w || v.width, height: this.native.h || v.height, fps: this.native.fps || v.fps } : null;
         const stallAction = transcodePolicy.evaluateLocalStall({
           mode: c.transcode,
           slowWindows: this.slowRun,
           hostKeepsUp,
-          playing: true,
-          rate: 1,
-          hidden: false,
-          sinceEventMs: transcodePolicy.STALL_SETTLE_MS,
-          video: v,
+          playing: m.playing !== undefined ? !!m.playing : true,
+          rate: m.rate !== undefined ? Number(m.rate) : 1,
+          hidden: !!m.hidden,
+          sinceEventMs: m.sinceEventMs !== undefined ? Number(m.sinceEventMs) : transcodePolicy.STALL_SETTLE_MS,
+          video: outputVideo,
           alreadyTranscoding: false,
           promptedThisSession: !!this.localTranscodePrompted,
         });

@@ -929,7 +929,7 @@
     getState: () => ({ rate, volume, muted, loop }),
     setMuteUi: (m) => setMute(m),
     onReady: (p) => { begin(p, p.meta); },
-    onMeta: (p) => { ui.seek.max = String(Math.max(0, p.n - 1)); setInfo(p.meta); },
+    onMeta: (p) => { ui.seek.max = String(Math.max(0, p.n - 1)); setInfo(p.meta); if (controls) controls.refresh(); },
     onTracks: (p) => subs.onTracks(p),
   });
 

@@ -607,14 +607,14 @@
             "Always start with Live transcode for non-HDR files that qualify (avoids startup stutter on 4K60 or fluctuating SSH links).",
             "Never use Live transcode."
           ],
-          "markdownDescription": "Live transcode (ADR 0002): let ffmpeg on this host (local or remote) transcode video on the fly to a low-latency H.264 stream for WebCodecs. Prefers GPU decode and GPU encode when available, with software encoding as the last resort. Pixel tools always use exact original pixels. Also set in the player's settings panel (⚙ › Live transcode)."
+          "markdownDescription": "Live transcode (ADR 0002): let ffmpeg on this host (local or remote) transcode video on the fly to a low-latency H.264 stream for WebCodecs. Prefers GPU decode and GPU encode when available, with software encoding as the last resort. While active, exact-pixel tools warn and offer **Use original video**. Also set in the player's settings panel (⚙ › Live transcode)."
         },
         "videoPreviewEnhanced.transcodeMaxBitrate": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "scope": "machine",
-          "markdownDescription": "Maximum bitrate in Mb/s for Live transcode (`0` = Auto). Uses best quality capped strictly at this ceiling (capped VBR) so the stream never exceeds your link budget while staying compact on easy or low-fps scenes. Also set in ⚙ › Live transcode."
+          "markdownDescription": "Maximum bitrate in Mb/s for Live transcode (`0` = Auto; non-zero values are clamped to at least `0.25` Mb/s / 250 kb/s). Uses best quality capped strictly at this ceiling (capped VBR) so the stream never exceeds your link budget while staying compact on easy or low-fps scenes. Also set in ⚙ › Live transcode."
         },
         "videoPreviewEnhanced.remoteStream": {
           "type": "string",

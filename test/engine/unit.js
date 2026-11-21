@@ -592,7 +592,7 @@ test('decode speed samples: sustained slow, real time, native marked; seeks and 
   let p = player({ info: { video }, playing: true, decodeRate: 12 });
   let got = run(p, 1000, 1000 + 1500 + 6100, () => true);
   assert.strictEqual(got.length, 2, 'two samples in ~7.5 s');
-  assert.deepStrictEqual({ ...got[0], type: undefined }, { type: undefined, codec: 'hevc', depth: 10, width: 3840, height: 2160, fps: 30, vmode: 'soft', realtime: false, ratio: 0.4 });
+  assert.deepStrictEqual({ ...got[0], type: undefined }, { type: undefined, codec: 'hevc', depth: 10, width: 3840, height: 2160, fps: 30, vmode: 'soft', playing: true, rate: 1, hidden: false, sinceEventMs: 4500, realtime: false, ratio: 0.4 });
   // Keeping up: real-time samples.
   p = player({ info: { video }, playing: true, decodeRate: 30 });
   got = run(p, 1000, 1000 + 1500 + 3100, () => false);

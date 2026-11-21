@@ -467,7 +467,7 @@ const VpeControls = (() => {
       }
       box.append(title, g);
       f.appendChild(box);
-      const note = el('div', 'pnote', 'Uses GPU decode and encode when available, CPU as last resort. Pixel tools always use exact original pixels.');
+      const note = el('div', 'pnote', 'Uses GPU decode and encode when available, CPU as last resort. Exact-pixel tools warn while active and offer Use original video.');
       f.appendChild(note);
       return f;
     }

@@ -25,7 +25,10 @@ async function fakeBinaries() {
   assert.strictEqual(store.sets, 0, 'a failed check is stored');
   const key = await ff.toolsKey(ffmpeg, ffprobe);
   assert.ok(key && key.includes(ffmpeg) && key.includes(ffprobe), key);
+  // Stale cache record (older filter inventory without current version): re-checked (and fails on fake binaries).
   store.rec = { key, version: 'ffmpeg version 9.0.2-full_build', legacy: false, gpuFilters: ['scale_cuda'] };
+  assert.strictEqual(await ff.locateTools(ffmpeg, '', cache), null, 'stale cache version is invalidated');
+  store.rec = { key, v: ff.TOOLS_CACHE_VER, version: 'ffmpeg version 9.0.2-full_build', legacy: false, gpuFilters: ['scale_cuda'] };
   const t = await ff.locateTools(ffmpeg, '', cache);
   assert.ok(t && t.cached && t.ffprobe === ffprobe && t.version === store.rec.version && t.gpuFilters.has('scale_cuda'), JSON.stringify(t));
   // Replaced (another time) or rebuilt (another size): checked again (and fails here).

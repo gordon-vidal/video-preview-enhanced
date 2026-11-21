@@ -383,7 +383,10 @@ class NativeDecoder {
           if (this.st) this.st.read++;
         }
         // Backpressure: stop reading so ffmpeg blocks instead of filling memory.
-        if (this.frames.length >= this.maxQueued) proc.stdout.pause();
+        if (this.frames.length >= this.maxQueued) {
+          this.lastBackpressureAt = Date.now();
+          proc.stdout.pause();
+        }
         if (this.st) this.st.readMs += Number(process.hrtime.bigint() - h0) / 1e6;
         this.flushWaiting();
       });
@@ -519,6 +522,16 @@ class NativeDecoder {
     return null;
   }
 
+  /**
+   * Whether the host ffmpeg producer is keeping up / backpressured by the webview consumer
+   * (transfer bottleneck rather than decode bottleneck).
+   */
+  hostKeepsUp(now = Date.now()) {
+    if (this.frames.length >= 2 || !!this.draining) return true;
+    if (this.proc && this.proc.stdout && this.proc.stdout.isPaused()) return true;
+    return !!(this.lastBackpressureAt && now - this.lastBackpressureAt < 3500);
+  }
+
   /** Each 'more' grants credits; frames are pushed as they arrive, up to the credits. */
   more(m) {
     if (this.recovering || m.gen !== this.gen) return;
@@ -539,6 +552,7 @@ class NativeDecoder {
       // for, not ones it has read. Hold back while two frames wait in the socket (else a webview
       // reading slower than ffmpeg decodes would queue seconds of 4K in this process).
       if (this.link === 'stream' && this.channel.buffered > 2 * this.frameBytes) {
+        this.lastBackpressureAt = Date.now();
         if (!this.draining) {
           this.draining = true;
           const ch = this.channel;

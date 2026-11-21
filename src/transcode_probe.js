@@ -30,10 +30,11 @@ function platformEncoders(platform = process.platform) {
   return ['h264_nvenc', 'h264_qsv', 'h264_amf', 'h264_vaapi'];
 }
 
-/** The CPU encoder in an `ffmpeg -encoders` listing: libx264, else libopenh264 (libx264 when neither). */
+/** The CPU encoder in an `ffmpeg -encoders` listing: libx264, else libopenh264, else null. */
 function cpuEncoder(listing) {
   if (/\slibx264\s/.test(listing || '')) return 'libx264';
-  return /\slibopenh264\s/.test(listing || '') ? 'libopenh264' : 'libx264';
+  if (/\slibopenh264\s/.test(listing || '')) return 'libopenh264';
+  return null;
 }
 
 /**
@@ -96,7 +97,8 @@ async function probeEncoder(ffmpeg, run, opts = {}) {
         if (parsed) driverNotice = parsed;
       }
       tried.push({ encoder: enc, device, ok, error: ok ? undefined : why.replace(/^\[[^\]]*\]\s*/, '') });
-      if (ok) return { encoder: enc, hw: true, device, tried, cpu, driverNotice: null };
+      // Preserve driverNotice if NVENC failed with a driver mismatch before a fallback GPU encoder succeeded.
+      if (ok) return { encoder: enc, hw: true, device, tried, cpu, driverNotice };
     }
   }
   return { encoder: cpu, hw: false, tried, cpu, driverNotice };
@@ -142,10 +144,10 @@ async function encoderFor(tools, run, store, log = () => {}, opts = {}) {
       entry.until = 0;
       return { encoder: 'libx264', hw: false, cpu: 'libx264', driverNotice: null };
     }
-    log(`remote stream encoder on ${os.hostname()}: ${r.encoder}${r.device ? ` (${r.device})` : ''}, tested in ${Date.now() - t0} ms${r.tried.length ? `: ${r.tried.map((x) => `${x.encoder}${x.device ? ` ${x.device}` : ''} ${x.ok ? 'ok' : `failed (${x.error})`}`).join('; ')}` : ''}`);
+    log(`remote stream encoder on ${os.hostname()}: ${r.encoder || 'none'}${r.device ? ` (${r.device})` : ''}, tested in ${Date.now() - t0} ms${r.tried.length ? `: ${r.tried.map((x) => `${x.encoder}${x.device ? ` ${x.device}` : ''} ${x.ok ? 'ok' : `failed (${x.error})`}`).join('; ')}` : ''}`);
     const rec = { encoder: r.encoder, hw: r.hw, device: r.device, cpu: r.cpu, driverNotice: r.driverNotice || null, at: Date.now() };
     entry.choice = rec;
-    if (CPU_ENCODERS.includes(r.encoder)) {
+    if (!r.encoder || CPU_ENCODERS.includes(r.encoder)) {
       if (r.tried.length) { entry.until = Date.now() + ENCODER_RETRY_MS; return rec; }
       rec.noGpu = true;
     }

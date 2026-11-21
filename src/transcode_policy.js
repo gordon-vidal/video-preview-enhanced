@@ -6,6 +6,7 @@ const { webcodecsPlays, FRAME_SERVER_BPS } = require('./decide');
 
 const MODES = ['ask', 'auto', 'always', 'off'];
 const BITRATE_PRESETS = [0, 2, 5, 10, 20, 40]; // 0 = Auto, else Mb/s cap
+const MIN_BITRATE_KBPS = 250; // 0.25 Mb/s floor for explicit bitrate caps
 const STALL_FPS_RATIO = 0.95;
 const STALL_WINDOWS = 3;
 const STALL_SETTLE_MS = 1500;
@@ -28,9 +29,10 @@ function resolveSetting(o = {}) {
   return MODES.includes(o.transcode) ? /** @type {any} */ (o.transcode) : 'ask';
 }
 
-/** Whether a probed video stream is HDR (PQ/HDR10 or HLG). Phase 1 keeps HDR on the exact/raw path. */
+/** Whether a probed video stream is HDR (PQ/HDR10, HLG, or Dolby Vision side data). Phase 1 keeps HDR on the exact/raw path. */
 function isHdr(v) {
   if (!v) return false;
+  if (v.dv) return true;
   if (v.colorTrc === 16 || v.colorTrc === 18) return true;
   return /^(smpte2084|arib-std-b67)$/i.test(String(v.colorTransfer || ''));
 }
@@ -79,13 +81,14 @@ function autoMaxKbps({ w, h, fps = 30, remote = false }) {
 }
 
 /**
- * Effective max bitrate cap in kb/s for a stream: explicit user cap if > 0, else autoMaxKbps.
+ * Effective max bitrate cap in kb/s for a stream: explicit user cap if > 0 (clamped to MIN_BITRATE_KBPS),
+ * else autoMaxKbps. Shared by initial open and live cap updates so Auto is always consistent.
  * @param {{ maxBitrateMbps?: number, w: number, h: number, fps?: number, remote?: boolean }} o
  * @returns {number}
  */
 function effectiveMaxKbps(o) {
   const mbps = Number(o.maxBitrateMbps) || 0;
-  if (mbps > 0) return Math.max(250, Math.round(mbps * 1000));
+  if (mbps > 0) return Math.max(MIN_BITRATE_KBPS, Math.round(mbps * 1000));
   return autoMaxKbps(o);
 }
 
@@ -171,7 +174,7 @@ const LOCAL_OFFER_KEEP = 'Keep current path';
 const LOCAL_OFFER_NEVER = "Don't Show Again";
 
 function localOfferText() {
-  return 'Playback is falling behind while sending raw frames. Use Live transcode? The video is re-encoded locally to H.264 (8-bit, lossy); pixel tools always use original pixels.';
+  return 'Playback is falling behind while sending raw frames. Use Live transcode? The video is re-encoded locally to H.264 (8-bit, lossy); pixel tools will warn and offer Use original video.';
 }
 
 function driverNoticeText(notice) {
@@ -183,6 +186,7 @@ function driverNoticeText(notice) {
 module.exports = {
   MODES,
   BITRATE_PRESETS,
+  MIN_BITRATE_KBPS,
   STALL_FPS_RATIO,
   STALL_WINDOWS,
   STALL_SETTLE_MS,

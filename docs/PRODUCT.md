@@ -147,7 +147,7 @@ One feature: compare becomes multi-view. The difference view is dropped.
 
 - **Unified Live transcode** (`videoPreviewEnhanced.transcode`: `ask | auto | always | off`, `videoPreviewEnhanced.transcodeMaxBitrate`: `0` = Auto or Mb/s; replaces deprecated `remoteStream`): one host-side H.264 → WebCodecs stream engine (`src/stream.js`) for local high-rate playback (e.g. 4K60) and remote windows (SSH, WSL, containers, tunnels).
 - **Hardware-first, software-last:** prefers GPU decode → GPU scale → GPU encode on both local and remote GPU hosts (Windows: NVENC → QSV → AMF → Media Foundation `-hw_encoding 1`; macOS: VideoToolbox; Linux: NVENC → VA-API), then CPU decode → GPU encode, then software (`libx264` / `libopenh264`) only as the last resort. Managed ffmpeg setup selects the highest BtbN LGPL line compatible with the detected NVIDIA driver.
-- **User control:** never silently degrades pixels on first use (prompts once when needed), configurable in ⚙ › Live transcode and shown with exact pipeline details + **Use original video** in ⓘ (no player-bar status pill). Remote sound uses Opus (96 kb/s) with s16 PCM fallback; local uses s16 PCM. Pixel Inspector, scopes, and exact frame export always use exact original pixels.
+- **User control:** never silently degrades pixels on first use (prompts once when needed), configurable in ⚙ › Live transcode and shown with exact pipeline details + **Use original video** in ⓘ (no player-bar status pill). Remote sound uses Opus (96 kb/s) with s16 PCM fallback; local uses s16 PCM. While Live transcode is active, Pixel Inspector, scopes, and frame copy/export warn that pixels are transcoded and offer **Use original video**.
 
 ## Testing
 

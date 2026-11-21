@@ -76,6 +76,18 @@ async function toolsKey(ffmpeg, ffprobe) {
  * pair of files, so a window or a reload doesn't start them again; a changed, moved or replaced binary
  * (path, size or time) checks again. Only working tools are cached.
  */
+// Bump when the set of discovered GPU filters changes so stale cached inventories re-probe.
+const TOOLS_CACHE_VER = 2;
+
+/** Parses GPU scale/VPP filter names from `ffmpeg -filters` stdout. */
+function parseGpuFilters(stdout) {
+  return new Set(Array.from(String(stdout || '').matchAll(/^\s*[.A-Z]+\s+(scale_cuda|vpp_qsv|scale_vaapi)\s+V->V\b/gm), (m) => m[1]));
+}
+
+/**
+ * Checks that ffmpeg and ffprobe run, and learns the version and GPU filters.
+ * ...
+ */
 async function locateTools(ffmpegSetting, ffprobeSetting, cache) {
   const ffmpeg = ffmpegSetting || 'ffmpeg';
   let ffprobe = ffprobeSetting;
@@ -90,7 +102,7 @@ async function locateTools(ffmpegSetting, ffprobeSetting, cache) {
   const stamp = key || '';
   if (key) {
     const c = cache.get();
-    if (c && c.key === key && typeof c.version === 'string') {
+    if (c && c.key === key && c.v === TOOLS_CACHE_VER && typeof c.version === 'string') {
       return { ffmpeg, ffprobe, version: c.version, legacy: !!c.legacy, gpuFilters: new Set(c.gpuFilters || []), stamp, cached: true };
     }
   }
@@ -105,11 +117,10 @@ async function locateTools(ffmpegSetting, ffprobeSetting, cache) {
   // -fps_mode arrived in ffmpeg 5.1; older builds use -vsync. Git builds (N-...) are new.
   const m = /version n?(\d+)\.(\d+)/.exec(version);
   const legacy = !!m && (Number(m[1]) < 5 || (Number(m[1]) === 5 && Number(m[2]) < 1));
-  const gpuFilters = new Set(filters.code === 0
-    ? Array.from(filters.stdout.matchAll(/^\s*[.A-Z]+\s+(scale_cuda|vpp_qsv)\s+V->V\b/gm), (m) => m[1]) : []);
+  const gpuFilters = filters.code === 0 ? parseGpuFilters(filters.stdout) : new Set();
   // A failed -filters run is not cached: it would hide the GPU filters until the binary changes.
   if (key && filters.code === 0) {
-    try { await cache.set({ key, version, legacy, gpuFilters: [...gpuFilters] }); } catch { /* not stored: checked again next time */ }
+    try { await cache.set({ key, v: TOOLS_CACHE_VER, version, legacy, gpuFilters: [...gpuFilters] }); } catch { /* not stored: checked again next time */ }
   }
   return { ffmpeg, ffprobe, version, legacy, gpuFilters, stamp };
 }
@@ -277,4 +288,4 @@ async function probeRun(tools, input, signal) {
   };
 }
 
-module.exports = { run, lowerPriority, locateTools, probe, whichFile, toolsKey, probeCache, looksLikePlaylist, isPlaylistFile, inputArgs, isUrlInput, URL_PROTOCOLS };
+module.exports = { run, lowerPriority, locateTools, parseGpuFilters, TOOLS_CACHE_VER, probe, whichFile, toolsKey, probeCache, looksLikePlaylist, isPlaylistFile, inputArgs, isUrlInput, URL_PROTOCOLS };
