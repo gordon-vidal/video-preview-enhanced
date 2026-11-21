@@ -163,7 +163,7 @@
     };
     const eng = createEngine(env);
     const p = new eng.LibavPlayer({ size: sizes[file], duration: 0, label: '', native: !quiet && !!nativeTiles[file] },
-      { ...cfg.engine, mem: memory.engine, rotation: (cfg.rotation || [])[file] || 0, ...(largeGrid ? { largeGrid: true } : {}) });
+      { ...cfg.engine, mem: memory.engine, rotation: (cfg.rotation || [])[file] || 0, noStepBack: true, ...(largeGrid ? { largeGrid: true } : {}) });
     p.cv = cv;
     p.key = key;
     p.budget = () => budget;

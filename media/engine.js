@@ -321,6 +321,11 @@ function createEngine(env) {
   /** Paused read-ahead (s) for decoders much faster than real time (native ffmpeg, WebCodecs); the built-in decoder fills its budget. */
   const PAUSED_AHEAD_S = 1.0;
   /**
+   * Paused steps that need a seek while the previous step's seek is still decoding start at most this often (ms):
+   * a quick turn of the wheel was one seek per notch (each a new ffmpeg process with native decoding).
+   */
+  const STEP_SEEK_MS = 80;
+  /**
    * Paused this long (or hidden), the AudioContext is suspended: a running one keeps the audio render
    * thread and the system's output stream busy (~100 callbacks/s, and Windows counts an open stream
    * against idle sleep). play() resumes it and holds the clock until it runs, AC_WAKE_MAX_MS at most.
@@ -529,6 +534,9 @@ function createEngine(env) {
       this.shownT = null;
       this.seekTarget = null;
       this.hold = null; // last frame before a seek target
+      this.back = []; // decoded frames just before the shown one, paused (keepBack): steps back are served from them
+      this.backBytes = 0;
+      this.keptBufs = new WeakSet(); // buffers of frames shown and kept for steps (not recycled after upload)
       this.tsSeen = [];
       this.vdec = null;
       this.adec = null;
@@ -540,7 +548,7 @@ function createEngine(env) {
       this.gl.setRotation(cfg.rotation || 0);
       // Uploaded buffers go back to the decoder unless the next loop still needs them.
       this.gl.onUploaded = (buf) => {
-        if (this.worker && buf.byteLength && !this.loopCache?.buffers.has(buf)) this.worker.postMessage({ type: 'recycle', bufs: [buf] }, [buf]);
+        if (this.worker && buf.byteLength && !this.loopCache?.buffers.has(buf) && !this.keptBufs.has(buf)) this.worker.postMessage({ type: 'recycle', bufs: [buf] }, [buf]);
       };
       this.ac = null;
       this.gain = null;
@@ -1367,14 +1375,17 @@ function createEngine(env) {
         // Seek targets sit mid-frame; anything starting 3/4 of a frame earlier is a previous frame.
         const f = 1 / (this.fps || 30);
         if (fr.t < this.seekTarget - 0.75 * f) {
-          if (this.hold) this.release(this.hold);
+          if (this.hold) this.keepBack(this.hold);
           this.hold = fr;
           return;
         }
-        if (this.hold && fr.t > this.seekTarget + 0.25 * f) this.insert(this.hold); else if (this.hold) this.release(this.hold);
+        if (this.hold && fr.t > this.seekTarget + 0.25 * f) this.insert(this.hold); else if (this.hold) this.keepBack(this.hold);
         this.hold = null;
         this.seekTarget = null;
-        if (this.seekStartMs !== undefined) this.lastSeekMs = performance.now() - this.seekStartMs; // seek to its frame decoded
+        if (this.seekStartMs !== undefined) {
+          this.lastSeekMs = performance.now() - this.seekStartMs; // seek to its frame decoded
+          log(`seek landed in ${Math.round(this.lastSeekMs)} ms (gen ${this.gen})`);
+        }
         // The clock waited for the seek (now()); start it at the target.
         if (this.playing) { this.stopAudio(); this.anchor(this.pauseT); }
       }
@@ -1524,7 +1535,8 @@ function createEngine(env) {
       const vAhead = this.queue.length ? this.queue[this.queue.length - 1].t - now : 0;
       const pending = (this.vdec ? this.vdec.decodeQueueSize : 0);
       // Frames kept for a short loop count too: the queue is a part of them (review 2026-11-19-4 #2).
-      const bytes = Math.max(this.queue.reduce((n, f) => n + f.bytes, 0), this.loopCache ? this.loopCache.bytes : 0);
+      // (And the frames kept for steps back.)
+      const bytes = Math.max(this.queue.reduce((n, f) => n + f.bytes, 0), this.loopCache ? this.loopCache.bytes : 0) + (this.backBytes || 0);
       const aEnd = this.audio.length ? this.audio[this.audio.length - 1].t + this.audio[this.audio.length - 1].dur : 0;
       // Playing: ~1 s ahead. Paused: the built-in (WebAssembly) decoder keeps decoding ahead up to the
       // memory budget, so steps and play are served from memory. Native ffmpeg and WebCodecs decode far
@@ -1624,6 +1636,7 @@ function createEngine(env) {
       const stopNative = this.cfg.native && !this.meta.live;
       if (!this.cfg.native || stopNative) this.worker.postMessage({ type: 'hidden', on: h });
       if (h && stopNative) this.resyncOnShow = true;
+      if (h) this.dropBack();
       if (h && (this.queue.length || this.loopCache)) {
         this.loopCache = null;
         for (const f of this.queue) this.release(f);
@@ -2030,6 +2043,7 @@ function createEngine(env) {
       if (this.lastShown && this.lastShown.vf) this.lastShown.vf.close();
       this.shownFmt = show.vf ? show.vf.format : null;
       this.lastShown = show.yuv ? { yuv: show.yuv } : show.vf ? { vf: show.vf.clone() } : null;
+      this.shownFrame = show.yuv && !show.vf ? show : null; // stepFrame can hand it back to the queue or keepBack
     }
 
     /** End of what was decoded: the last frame's end or the end of the sound, whichever is later. */
@@ -2089,6 +2103,7 @@ function createEngine(env) {
         if (this.ac.state === 'suspended' && !this.muted) setMuteUi(true);
       }
       this.playing = true;
+      this.endSteps();
       // At the end (loop off): play starts over.
       if (this.eof && !this.queue.length && this.seekTarget === null && this.pauseT >= this.endT() - 1e-6) { this.seekAbs(this.startT || 0, true); return; }
       this.anchor(this.pauseT);
@@ -2128,6 +2143,7 @@ function createEngine(env) {
       for (const f of this.queue) this.release(f);
       this.queue = [];
       if (this.hold) { this.release(this.hold); this.hold = null; }
+      this.dropBack(); // the frames decoded up to the new target are kept instead
       this.stopAudio();
       this.audio = [];
       this.audioKeepUntil = undefined;
@@ -2189,19 +2205,125 @@ function createEngine(env) {
       this.seekAbs(t);
     }
     seekFrame(i) { this.seekTime((Math.max(0, i) + 0.5) / (this.fps || 30)); }
-    /** Steps by actual frames: forward to the next decoded one, back to the last one before the shown one. */
+    /**
+     * Steps by actual frames: forward to the next decoded one, back to the last one before the shown one.
+     * A step that comes before the previous one is on screen counts from that step's frame, not from the one
+     * still shown: a step back on 4K decodes from the keyframe before (up to seconds), and wheel notches that
+     * came meanwhile all restarted from the shown frame, so 10 notches back moved one or two frames.
+     */
+    //
+    // Steps back are served from memory where they can be: the frames decoded on the way to a paused seek target
+    // (from the keyframe before it) and the frames a step forward passes are kept (this.back, up to half the frame
+    // budget, consecutive frames ending just before the shown one), so a step back on 4K HEVC shows the previous
+    // frame at once instead of decoding up to a GOP again (seconds in WebAssembly).
     stepFrame(d) {
       this.pause();
       const f = 1 / (this.fps || 30);
-      if (this.shownT === null || this.vmode === 'none') { this.seekFrame(this.currentFrame() + d); return; }
+      if (this.shownT === null || this.vmode === 'none') { this.endSteps(); this.seekFrame(this.currentFrame() + d); return; }
+      const st = this.stepTo;
+      // The previous step is still on its way: valid until a new frame is shown (shownCount) or another seek starts (gen).
+      const pending = !!st && st.gen === this.gen && (!!st.timer || this.seekTarget !== null || (this.shownCount || 0) === st.shown);
+      const waiting = pending && !!st.timer; // its seek waits (STEP_SEEK_MS): what is in memory belongs to an older target
+      const base = pending ? st.t : this.shownT;
+      const start = this.startT || 0;
+      const last = this.meta.duration ? start + this.meta.duration - f : Infinity;
+      let to;
+      let seek;
       if (d > 0) {
-        const next = this.queue.filter((x) => x.t > this.shownT + 1e-4)[d - 1];
-        if (next) this.seekTime(this.rel(next.t));
-        else if (!this.eof || this.queue.length) this.seekTime(this.rel(this.shownT) + d * f);
+        const next = waiting ? null : this.queue.filter((x) => x.t > base + 1e-4)[d - 1];
+        if (next) { to = next.t; this.keepPassed(to); this.showQueued(to); } // decoded already: at once
+        else if (!this.eof || this.queue.length) { to = Math.min(last, base + d * f); seek = this.rel(base) + d * f; }
+        else return;
+      } else {
+        to = Math.max(start, base + d * f);
+        // A seek target half a frame before the frame stepped from lands on the previous frame, whatever its spacing.
+        if (waiting || !this.stepBack(to, base, f)) seek = this.rel(base) + (d + 0.5) * f;
+      }
+      const now = performance.now();
+      if (seek === undefined) { this.stepTo = { t: to, gen: this.gen, shown: this.shownCount || 0, at: pending ? st.at : 0 }; return; }
+      if (waiting) { st.t = to; st.seek = seek; return; } // the waiting seek takes the new target
+      const wait = pending && this.seekTarget !== null ? STEP_SEEK_MS - (now - st.at) : 0;
+      if (wait > 0) {
+        const s = { t: to, gen: this.gen, shown: this.shownCount || 0, at: st.at, seek };
+        s.timer = setTimeout(() => this.flushStep(s), wait);
+        this.stepTo = s;
         return;
       }
-      // A seek target half a frame before the shown frame lands on the previous frame, whatever its spacing.
-      this.seekTime(this.rel(this.shownT) + (d + 0.5) * f);
+      this.seekTime(seek);
+      this.stepTo = { t: to, gen: this.gen, shown: this.shownCount || 0, at: now };
+    }
+
+    /** Paused: shows the queued frame at time t (frames before it leave the queue). */
+    showQueued(t) {
+      while (this.queue.length > 1 && this.queue[1].t <= t + 1e-3) this.release(this.queue.shift());
+      this.pauseT = t;
+      this.stopAudio();
+      this.anchor(t);
+    }
+
+    /** A step's seek that waited (STEP_SEEK_MS) starts now, unless something else moved the player meanwhile. */
+    flushStep(s) {
+      s.timer = null;
+      if (this.stepTo !== s || s.gen !== this.gen || this.playing) return;
+      this.seekTime(s.seek);
+      this.stepTo = { t: s.t, gen: this.gen, shown: this.shownCount || 0, at: performance.now() };
+    }
+
+    /** Playing or seeking elsewhere: no step on its way, no frames kept for steps back. */
+    endSteps() {
+      if (this.stepTo && this.stepTo.timer) clearTimeout(this.stepTo.timer);
+      this.stepTo = null;
+      this.dropBack();
+    }
+
+    /** Keeps a decoded frame (paused, in memory, consecutive with the kept ones) for steps back; else lets it go. */
+    keepBack(fr) {
+      const f = 1 / (this.fps || 30);
+      // (Compare steps its tiles by seeking them: no frames kept there.)
+      if (this.playing || this.hidden || this.cfg.noStepBack || !fr.yuv || fr.vf || fr.spilling) { this.release(fr); return; }
+      if (!this.back) this.dropBack();
+      const prev = this.back[this.back.length - 1];
+      if (prev && (fr.t <= prev.t + 1e-4 || fr.t - prev.t > 1.5 * f)) this.dropBack(); // a gap: start a new run
+      this.back.push(fr);
+      this.backBytes += fr.bytes;
+      const cap = this.budget() / 2;
+      while (this.back.length && this.backBytes > cap) this.backBytes -= this.back.shift().bytes;
+    }
+
+    dropBack() { this.back = []; this.backBytes = 0; }
+
+    /** Before a paused step forward to frame time t: the shown frame and the decoded ones passed are kept for steps back. */
+    keepPassed(t) {
+      if (this.vmode === 'webcodecs') return; // their frames hold the decoder's surfaces
+      const sf = this.shownFrame;
+      const passed = this.queue.filter((x) => x.t < t - 1e-4);
+      if (sf && sf.t === this.shownT && sf.t < t - 1e-4 && !this.queue.includes(sf)) {
+        this.keptBufs.add(sf.yuv.data.buffer); // shown: else its buffer goes back to the decoder after the next upload
+        passed.push(sf);
+      }
+      passed.sort((a, b) => a.t - b.t);
+      for (const x of passed) if (!this.back.length || x.t > this.back[this.back.length - 1].t + 1e-4) this.keepBack(x);
+    }
+
+    /** A paused step back to frame time `to` from the frame at `base`, from the kept frames: true when it was there. */
+    stepBack(to, base, f) {
+      const back = this.back;
+      if (!back || !back.length || this.seekTarget !== null) return false;
+      const gap = base - back[back.length - 1].t;
+      if (!(gap > 0 && gap < 1.5 * f)) return false; // they don't end just before the frame stepped from
+      const i = back.findIndex((x) => Math.abs(x.t - to) < 0.5 * f);
+      if (i < 0) return false;
+      const moved = back.splice(i);
+      for (const x of moved) this.backBytes -= x.bytes;
+      // The shown frame goes back into the queue too, so the next step forward is in memory as well.
+      const sf = this.shownFrame;
+      if (sf && sf.t === this.shownT && !this.queue.includes(sf)) { this.keptBufs.add(sf.yuv.data.buffer); moved.push(sf); }
+      for (const x of moved) this.insert(x);
+      if (this.cfg.debug || env.debug) log(`step back from memory to ${this.rel(moved[0].t).toFixed(3)} s (${back.length} more kept)`);
+      this.pauseT = moved[0].t;
+      this.stopAudio();
+      this.anchor(this.pauseT);
+      return true;
     }
     deferSeek(t) { if (this.startT === null) this.pendingSeek = t; else this.seekTime(t); }
     setRate(r) {

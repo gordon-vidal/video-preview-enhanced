@@ -8,6 +8,7 @@
 - Fixed: stale texts in settings (`whenSlow`, `advancedMode`) and the FAQ.
 - Fixed: closing a web video that is still downloading (server without range support) left pending reads hanging; closing now cancels the requests and settles them.
 - Fixed: when the decoder cannot start (for example no WebGL2), the message no longer sits on an empty black or white box; it shows on the plain stage in the theme colours, readable in the high-contrast themes.
+- Fixed: stepping back with the mouse wheel (or the arrow keys) while paused on heavy video such as 4K HEVC 10-bit or HDR lost steps: notches that came while the previous step back was still decoding started again from the frame on screen, so ten quick notches moved one or two frames. Every notch now counts and lands on exactly the frame it should, with the built-in decoder and with ffmpeg. Steps back are also much faster with the built-in decoder: the frames decoded on the way to a step (and those a step forward passes) stay in memory, so the next steps back show at once instead of decoding from the keyframe again (4K HEVC 10-bit: about 5-6 s per step back near the end of a 2 s keyframe interval before).
 
 ## 0.7.2 (2026-11-20)
 
