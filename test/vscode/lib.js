@@ -117,6 +117,7 @@ class Player {
     const from = this.vs.mark();
     let s;
     this.vs.polling = { what: `${this.name}: ${what}`, t0 };
+    const meter = this.vs.meter; // timing only (test/vscode/timing.js)
     try {
       for (;;) {
         s = await this.state();
@@ -125,7 +126,7 @@ class Player {
         if (Date.now() - t0 > timeout) throw new Error(`${this.name}: TIMEOUT after ${timeout / 1000} s waiting for ${what}; last: ${JSON.stringify(brief(s))}`);
         await sleep(interval);
       }
-    } finally { this.vs.polling = null; }
+    } finally { this.vs.polling = null; if (meter) meter.wait(Date.now() - t0); }
   }
 
   /** The picture is on screen (engine's first frame, a frame player's canvas) or an error message is up. */
@@ -247,6 +248,7 @@ async function open(vs, h, file, { until = pictureOrError, timeout = 40000 } = {
       if (Date.now() - t0 > timeout) throw new Error(`${P.name}: TIMEOUT after ${timeout / 1000} s waiting for the page to open${s ? ` (${JSON.stringify(brief(s))})` : ' (no answer from the page)'}`);
       await sleep(300);
     }
+    if (vs.meter) vs.meter.clipOpened();
   }
   return P;
 }

@@ -105,4 +105,30 @@ const line = T.summaryLine([rec], 95000);
 assert.match(line, /^phases of 95 s instance time \(95 s wall\): launch 4 s \(4 %\), reset 2 s \(2 %\), exec 20 s \(21 %\), shutdown 1 s \(1 %\), retries 1 costing 40 s \(42 %\), other 28 s$/);
 assert.match(T.summaryLine([], 0), /retries 0$/);
 
+// Per-case meter: waits and sleeps add up, a clip's open time ends at its first picture, its time at the next open/close/finish.
+let t = 0;
+const meter = T.caseMeter(() => t);
+meter.clipStart('C:\\media\\a.mp4'); t += 3000; meter.clipOpened(); t += 1000; meter.wait(2500); meter.sleep(500);
+meter.clipStart('/x/b.webm'); t += 700; meter.clipOpened(); t += 300; meter.clipEnd(); t += 50;
+const cr = meter.finish('ui/open', { attempts: 3 });
+assert.deepStrictEqual(cr, {
+  name: 'ui/open', ms: 5050, openMs: 3700, waitMs: 3000, sleepMs: 500, retries: 2,
+  clips: [{ file: 'a.mp4', ms: 4000, openMs: 3000 }, { file: 'b.webm', ms: 1000, openMs: 700 }],
+}, 'a clip is named without its folder');
+assert.strictEqual(T.caseMeter(() => 0).finish('x').retries, 0);
+
+const tc = [cr, { name: 'ui/slow', ms: 9000, openMs: 1000, waitMs: 8000, retries: 0, clips: [{ file: 'a.mp4', ms: 6000, openMs: 500 }] }];
+assert.deepStrictEqual(T.clipTotals(tc), [
+  { file: 'a.mp4', opens: 2, ms: 10000, openMs: 3500 }, { file: 'b.webm', opens: 1, ms: 1000, openMs: 700 }]);
+assert.deepStrictEqual(T.topCases(tc, 1).map((c) => c.name), ['ui/slow']);
+assert.strictEqual(T.topCases([{ name: 'a', ms: 1000 }, { name: 'a', ms: 2000 }])[0].ms, 3000, 'same name adds up');
+const many = Array.from({ length: 15 }, (_, i) => ({ name: `s/c${i}`, ms: i * 1000, openMs: 0, waitMs: 0 }));
+assert.strictEqual(T.topLines(many, 10).length, 11, 'heading plus 10 rows');
+assert.deepStrictEqual(T.topLines([], 10), []);
+const tl = T.topLines(tc);
+assert.match(tl[0], /^Top 2 slowest cases/);
+assert.match(tl[1], /^ {2}1\. ui\/slow +9\.0 total +1\.0 open +8\.0 wait$/);
+assert.match(tl[2], /^ {2}2\. ui\/open +5\.0 total +3\.7 open +3\.0 wait {2}\(2 retries\)$/);
+assert.match(T.topLines([{ name: 'a', ms: 1 }])[0], /^Top 1 slowest case /);
+
 console.log('ok scenario_map_test');
