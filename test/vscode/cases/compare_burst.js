@@ -26,7 +26,25 @@ module.exports = [{
       const line = await vs.waitLog(/ tabs \[\[/, { from, timeout: 10000 });
       return JSON.parse(/ tabs (\[\[.*\]\])/.exec(line)[1]).flat();
     };
-    const closeAll = async () => { vs.send({ command: 'workbench.action.closeAllEditors' }); await h.sleep(800); };
+    const closeAll = async () => {
+      vs.send({ command: 'workbench.action.closeAllEditors' });
+      const t0 = Date.now();
+      while ((await tabs()).length && Date.now() - t0 < 8000) await h.sleep(100);
+    };
+    // The tab list once pred(tabs) holds (bounded), confirmed by a second read 300 ms later; the last list is returned either way.
+    const tabsWhen = async (pred, timeout = 8000) => {
+      const t0 = Date.now();
+      let tb = await tabs();
+      for (;;) {
+        if (pred(tb)) { await h.sleep(300); const again = await tabs(); if (pred(again)) return again; tb = again; }
+        if (Date.now() - t0 > timeout) return tb;
+        await h.sleep(100);
+        tb = await tabs();
+      }
+    };
+    // A negative window: a second open within the 400 ms openTogether debounce would still turn into a compare, so
+    // wait twice that before asserting that none appeared.
+    const NO_COMPARE_MS = 800;
     let ok = null;
     try {
       await closeAll();
@@ -35,8 +53,7 @@ module.exports = [{
       vs.send({ openWithBurst: files });
       await vs.waitLog(/3 videos opened together -> one compare/, { from, timeout: 30000, what: 'the burst taken' });
       await vs.waitLog(opened(3), { from, timeout: 30000, what: 'compare opened with 3 tiles' });
-      await h.sleep(1500);
-      let tb = await tabs();
+      let tb = await tabsWhen((tb) => tb.length === 1 && /compare/i.test(tb[0].viewType));
       ok(tb.length === 1 && /compare/i.test(tb[0].viewType), `tabs after the burst: ${JSON.stringify(tb)}`);
 
       ok = t('one-video-alone');
@@ -44,7 +61,7 @@ module.exports = [{
       from = vs.mark();
       vs.send({ openWithBurst: [files[0]] });
       await vs.waitLog(new RegExp(`\\[${esc(CLIPS[0])}\\] session resolved`), { from, timeout: 15000, what: 'a player' });
-      await h.sleep(1200);
+      await h.sleep(NO_COMPARE_MS);
       tb = await tabs();
       ok(tb.length === 1 && !/compare/i.test(tb[0].viewType), `tabs after one video: ${JSON.stringify(tb)}`);
 
@@ -52,7 +69,7 @@ module.exports = [{
       from = vs.mark();
       vs.send({ openWithBurst: [files[1]] });
       await vs.waitLog(new RegExp(`\\[${esc(CLIPS[1])}\\] session resolved`), { from, timeout: 15000, what: 'the second player' });
-      await h.sleep(1200);
+      await h.sleep(NO_COMPARE_MS);
       tb = await tabs();
       ok(tb.length === 2 && tb.every((x) => !/compare/i.test(x.viewType)), `tabs after two videos apart: ${JSON.stringify(tb)}`);
 
@@ -64,7 +81,7 @@ module.exports = [{
       from = vs.mark();
       vs.send({ openWithBurst: [files[0], files[1]] });
       await vs.waitLog(new RegExp(`\\[${esc(CLIPS[1])}\\] session resolved`), { from, timeout: 15000, what: 'players' });
-      await h.sleep(1200);
+      await h.sleep(NO_COMPARE_MS);
       tb = await tabs();
       ok(tb.length === 2 && tb.every((x) => !/compare/i.test(x.viewType)), `tabs with the setting off: ${JSON.stringify(tb)}`);
       from = vs.mark();

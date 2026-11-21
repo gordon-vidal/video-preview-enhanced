@@ -27,6 +27,18 @@ module.exports = [{
       const line = await vs.waitLog(/ tabs \[\[/, { from, timeout: 10000 });
       return JSON.parse(/ tabs (\[\[.*\]\])/.exec(line)[1]).flat();
     };
+    // The tab list once pred(tabs) holds (bounded), confirmed by a second read 300 ms later so that a stray extra tab
+    // opening late still fails; the last list is returned either way for the assertion's message.
+    const tabsWhen = async (pred, timeout = 8000) => {
+      const t0 = Date.now();
+      let tb = await tabs();
+      for (;;) {
+        if (pred(tb)) { await h.sleep(300); const again = await tabs(); if (pred(again)) return again; tb = again; }
+        if (Date.now() - t0 > timeout) return tb;
+        await h.sleep(100);
+        tb = await tabs();
+      }
+    };
     let ok = null;
     try {
       ok = t('player/shift-d-then-open');
@@ -39,8 +51,7 @@ module.exports = [{
       vs.send({ openFile: files[1] });
       await vs.waitLog(new RegExp(`add from the Explorer: ${esc(CLIPS[1])}, mode off`), { from, timeout: 15000, what: 'the open taken' });
       await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened' });
-      await h.sleep(1000);
-      let tb = await tabs();
+      let tb = await tabsWhen((tb) => tb.length === 1 && /compare/i.test(tb[0].viewType));
       ok(tb.length === 1 && /compare/i.test(tb[0].viewType), `tabs after the click: ${JSON.stringify(tb)}`);
 
       ok = t('compare/shift-d-adds');
@@ -51,8 +62,7 @@ module.exports = [{
       vs.send({ openFile: files[2] });
       await vs.waitLog(opened(3), { from, timeout: 30000, what: 'the third video added' });
       await vs.waitLog(/\[compare [^\]]*\] webview: addMode on/, { from, timeout: 10000, what: 'the hint back on the new page' });
-      await h.sleep(1000);
-      tb = await tabs();
+      tb = await tabsWhen((tb) => tb.length === 1 && /compare/i.test(tb[0].viewType));
       ok(tb.length === 1 && /compare/i.test(tb[0].viewType), `tabs after adding: ${JSON.stringify(tb)}`);
 
       ok = t('compare/esc-stops');
@@ -62,8 +72,7 @@ module.exports = [{
       from = vs.mark();
       vs.send({ openFile: files[1] });
       await vs.waitLog(new RegExp(`\\[${esc(CLIPS[1])}\\] session resolved`), { from, timeout: 15000, what: 'a player of its own' });
-      await h.sleep(500);
-      tb = await tabs();
+      tb = await tabsWhen((x) => x.length === 2);
       ok(tb.length === 2, `tabs after Esc and another open: ${JSON.stringify(tb)}`);
     } catch (e) {
       if (ok) ok(false, String(e && e.message || e)); else out.push({ name: 'error', ok: false, problems: [String(e && e.message || e)] });

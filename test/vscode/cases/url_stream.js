@@ -95,13 +95,11 @@ async function quality(vs, h, ok, b, { native = false } = {}) {
     ok(s.quality.pick === 'auto' && cur && cur.height === 360, `auto plays 360p in this panel: ${JSON.stringify(s.quality)}`);
     ok(lib.lines(vs, /\[master_full\.m3u8\] url .*2 variants, auto: 640x360.*3 renditions, 1 I-frame playlists/, P.fromMark).length > 0, 'log: the master playlist with its renditions and I-frame playlist');
     await P.ask('click', { sel: '#cog' });
-    await lib.sleep(300);
-    s = await P.state();
+    s = await P.waitState((x) => x.panel && x.panel.view === 'main', { what: 'the ⚙ panel' });
     const row = s.panel && s.panel.rows.find((r) => /^Quality/.test(r.label));
     ok(row && /Auto \(360p\)/.test(row.label), `⚙ row: ${row && row.label}`);
     await P.ask('click', { sel: 'button.row', text: 'Quality' });
-    await lib.sleep(300);
-    s = await P.state();
+    s = await P.waitState((x) => x.panel && x.panel.view === 'quality', { what: 'the Quality page' });
     ok(s.panel && s.panel.view === 'quality' && JSON.stringify(s.tracksMenu.items) === JSON.stringify(['*Auto', '360p', '180p']), `Quality page: ${JSON.stringify(s.tracksMenu.items)} ${s.panel && s.panel.text}`);
     P.seek(120.5 / 30);
     await P.waitState((x) => x.frame === 120, { what: 'frame 120' });
@@ -120,9 +118,9 @@ async function quality(vs, h, ok, b, { native = false } = {}) {
     P.play();
     await P.waitState((x) => x.playing && x.t > 4.3, { what: 'playing at 180p' });
     await P.ask('click', { sel: '#cog' });
-    await lib.sleep(300);
+    await P.waitState((x) => x.panel && x.panel.view === 'main', { what: 'the ⚙ panel again' });
     await P.ask('click', { sel: 'button.row', text: 'Quality' });
-    await lib.sleep(300);
+    await P.waitState((x) => x.panel && x.panel.view === 'quality', { what: 'the Quality page again' });
     await P.ask('click', { sel: 'button.radio', text: 'Auto' });
     s = await waitReloaded(P, (x) => x.quality && x.quality.pick === 'auto', 'the Auto page');
     s = await P.waitState((x) => x.playing && x.t > 4.3, { timeout: 20000, what: 'plays on at Auto' });
@@ -142,16 +140,15 @@ async function hlsSubs(vs, h, ok, b) {
     ok(s.subsText.trim() === 'English cue 3', `default rendition at 3.5 s: ${JSON.stringify(s.subsText)}`);
     P.seek(3.95);
     s = await P.waitState((x) => Math.abs(x.t - 3.95) < 0.05, { what: 'at 3.95 s' });
-    await lib.sleep(300);
+    await lib.sleep(300); // a negative window: a late cue must not appear
     s = await P.state();
     ok(!s.subsText, `no cue between 3.9 and 4.1 s: ${JSON.stringify(s.subsText)}`);
     await P.ask('click', { sel: '#tracks' }); // CC: subtitles on -> off (it toggles)
-    await lib.sleep(200);
+    await P.waitState((x) => x.bar && x.bar.cc === 'Subtitles off', { what: 'subtitles toggled off' });
     await P.ask('click', { sel: '#cog' });
-    await lib.sleep(300);
+    await P.waitState((x) => x.panel && x.panel.view === 'main', { what: 'the ⚙ panel' });
     await P.ask('click', { sel: 'button.row', text: 'Subtitles' });
-    await lib.sleep(300);
-    s = await P.state();
+    s = await P.waitState((x) => x.panel && x.panel.view === 'subs' && x.tracksMenu.items.length > 1, { what: 'the Subtitles page' });
     ok(JSON.stringify(s.tracksMenu.items) === JSON.stringify(['*Off', 'English', 'Deutsch', 'Load subtitle file…']), `CC menu: ${JSON.stringify(s.tracksMenu.items)}`);
     ok(/German · stream/.test(s.panel.text), `labels name the language and the stream: ${s.panel.text}`);
     await P.ask('click', { sel: 'button.radio', text: 'Deutsch' });
@@ -184,14 +181,12 @@ module.exports = [{
         const P = await openUrl(vs, h, `${b}/media/src.mp4`, path.join(STREAMS, 'src.mp4'));
         try {
           await P.ask('click', { sel: '#cog' });
-          await lib.sleep(300);
-          let s = await P.state();
+          let s = await P.waitState((x) => x.panel && x.panel.view === 'main', { what: 'the ⚙ panel' });
           const labels = s.panel ? s.panel.rows.map((r) => r.label) : [];
           ok(labels.some((l) => l.includes('Open video URL')), `⚙ has Open video URL…: ${JSON.stringify(labels)}`);
           ok(!labels.includes('Compare') && labels.includes('Scopes') && labels.includes('Export A-B'), `⚙ tools for a URL: ${JSON.stringify(labels)}`);
           await P.ask('click', { sel: '#infoBtn' });
-          await lib.sleep(300);
-          s = await P.state();
+          s = await P.waitState((x) => x.panel && x.panel.view === 'info', { what: 'the ⓘ panel' });
           const host = new URL(b).host;
           ok(s.panel && s.panel.view === 'info' && s.panel.text.includes(`${host} · stream`) && !/MB/.test(s.panel.text.split('Picture')[0]), `ⓘ: ${s.panel && s.panel.text}`);
           await P.ask('click', { sel: '#infoBtn' });
@@ -274,7 +269,7 @@ module.exports = [{
           ok(/LIVE/.test(s.timeText || ''), `time shows LIVE: ${s.timeText}`);
           // The time button doesn't cycle to timecode / frame number for a live stream.
           await P.ask('click', { sel: '#time' });
-          await lib.sleep(300);
+          await lib.sleep(300); // a negative window: the time text must stay LIVE
           const s2 = await P.state();
           ok(/LIVE/.test(s2.timeText || '') && !/frame/.test(s2.timeText || ''), `after a click on the time: ${s2.timeText}`);
           ok(lib.lines(vs, /\[live\.m3u8\] url .*\(live\)/, P.fromMark).length > 0, 'detected as live');

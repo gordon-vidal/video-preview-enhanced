@@ -78,7 +78,7 @@ module.exports = [{
         await P.waitState((x) => x.playing && x.t > 0, { what: 'playing before rate changes' });
         for (const rate of [2, 0.5, 1, 1.5]) {
           P.rate(rate);
-          await lib.sleep(700);
+          await P.waitState((x) => x.rate === rate && x.playing, { what: `rate ${rate} applied` });
           const smp = await P.sample(2600);
           const sp = speed(smp);
           const last = smp[smp.length - 1].s;
@@ -148,7 +148,9 @@ module.exports = [{
       await P.waitFirstFrame();
       P.seek(12.25);
       await P.waitState((x) => Math.abs(x.t - 12.25) < 0.1, { timeout: 15000, what: 'seek to 12.25' });
-      await lib.sleep(2500); // the player posts its position once a second
+      // No observable signal: the page posts its position to the host at most once a second (and only when it changed),
+      // and the host keeps it on dispose. Wait out that tick plus margin.
+      await lib.sleep(2500);
       await P.close();
       P = await lib.open(vs, h, file);
       try {
@@ -269,8 +271,8 @@ module.exports = [{
         ok(!smp[smp.length - 1].s.playing, 'still playing after 30 s');
         ok(end > 4.4, `stopped at ${end.toFixed(3)} s, the sound runs to 5 s`);
         P.play();
-        await lib.sleep(900);
-        const r2 = await P.state();
+        // Playing and moving on for a moment (a re-pause right after the start must still show).
+        const r2 = await P.waitState((x) => x.playing && x.t > 0.3, { timeout: 10000, what: 'play after the end moving on' });
         ok(r2.playing, 'play after the end re-paused');
         ok(r2.t < 1.5, `play after the end continued at ${r2.t.toFixed(3)} s`);
       } finally { await P.close(); }

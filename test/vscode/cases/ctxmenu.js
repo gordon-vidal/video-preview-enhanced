@@ -32,8 +32,16 @@ module.exports = {
       return kv(await vs.waitLog(/webview: modes report /, { from, timeout: 10000 }));
     };
     const run = (id, c = {}) => vs.send({ ctxCommand: `videoPreviewEnhanced.ctx.${id}`, ctx: { vpe: true, ...c } });
+    // Polls read() until pred(value) holds (bounded); returns the last value either way so the assertion below names the miss.
+    const until = async (read, pred, timeout = 6000) => {
+      const t0 = Date.now();
+      let v = await read();
+      while (!pred(v) && Date.now() - t0 < timeout) { await h.sleep(100); v = await read(); }
+      return v;
+    };
+    const ctxObj = async () => JSON.parse(await ctx() || '{}');
     act({ action: 'pause' });
-    await h.sleep(700);
+    await until(report, (r) => r.playing === 'false');
 
     let ok = t('context/attribute');
     let c = JSON.parse(await ctx() || '{}');
@@ -43,17 +51,14 @@ module.exports = {
 
     ok = t('commands/transport');
     run('play');
-    await h.sleep(900);
-    ok((await report()).playing === 'true', 'ctx.play did not play');
-    c = JSON.parse(await ctx());
+    ok((await until(report, (r) => r.playing === 'true')).playing === 'true', 'ctx.play did not play');
+    c = await until(ctxObj, (o) => o.vpePlaying === true);
     ok(c.vpePlaying === true, 'vpePlaying not updated while playing');
     run('pause');
-    await h.sleep(700);
-    ok((await report()).playing === 'false', 'ctx.pause did not pause');
+    ok((await until(report, (r) => r.playing === 'false')).playing === 'false', 'ctx.pause did not pause');
     const loop0 = c.vpeLoop;
     run(loop0 ? 'loopOff' : 'loopOn');
-    await h.sleep(600);
-    c = JSON.parse(await ctx());
+    c = await until(ctxObj, (o) => o.vpeLoop === !loop0);
     ok(c.vpeLoop === !loop0, `loop did not flip (${loop0} -> ${c.vpeLoop})`);
     run(loop0 ? 'loopOn' : 'loopOff');
 
@@ -66,12 +71,10 @@ module.exports = {
       return JSON.parse(/webview: state ({.*})/.exec(line)[1]);
     };
     run('keys');
-    await h.sleep(600);
-    let st = await state();
+    let st = await until(state, (x) => !!x.sheet && /Keyboard shortcuts/.test(x.sheet));
     ok(!!st.sheet && /Keyboard shortcuts/.test(st.sheet), `keys: sheet ${String(st.sheet).slice(0, 60)}`);
     run('playerSettings');
-    await h.sleep(600);
-    st = await state();
+    st = await until(state, (x) => !x.sheet && x.panel && x.panel.view === 'main');
     ok(!st.sheet && st.panel && st.panel.view === 'main', `Settings…: panel ${JSON.stringify(st.panel && st.panel.view)}, sheet ${!!st.sheet}`);
     act({ action: 'panel' });
 
@@ -79,33 +82,29 @@ module.exports = {
     c = JSON.parse(await ctx());
     ok(c.vpeABSet === false, `vpeABSet before: ${JSON.stringify(c)}`);
     act({ action: 'seek', t: 0.5 });
-    await h.sleep(700);
+    await until(state, (x) => Math.abs(x.t - 0.5) < 0.1);
     run('setA');
-    await h.sleep(500);
-    c = JSON.parse(await ctx());
+    c = await until(ctxObj, (o) => o.vpeABSet === true);
     ok(c.vpeABSet === true && c.vpeAB === false, `after Set Loop Start: ${JSON.stringify(c)}`);
     run('setA'); // again: sets it again (the menu sets, the A key toggles)
-    await h.sleep(400);
+    await h.sleep(400); // a negative window: nothing may clear it
     ok(JSON.parse(await ctx()).vpeABSet === true, 'Set Loop Start twice cleared it');
     act({ action: 'seek', t: 1.2 });
-    await h.sleep(700);
+    await until(state, (x) => Math.abs(x.t - 1.2) < 0.1);
     run('setB');
-    await h.sleep(500);
-    st = await state();
+    st = await until(state, (x) => /"vpeAB":true/.test(x.vscodeContext) && !x.abMarks.hidden);
     c = JSON.parse(st.vscodeContext);
     ok(c.vpeAB === true && !st.abMarks.hidden, `after Set Loop End: ${JSON.stringify(c)}, marks ${JSON.stringify(st.abMarks)}`);
     run('clearAB');
-    await h.sleep(500);
-    st = await state();
+    st = await until(state, (x) => x.abMarks.hidden && /"vpeABSet":false/.test(x.vscodeContext));
     c = JSON.parse(st.vscodeContext);
     ok(c.vpeABSet === false && st.abMarks.hidden, `after Clear: ${JSON.stringify(c)}`);
 
     ok = t('commands/frame');
     act({ action: 'seek', t: 1.0 });
-    await h.sleep(800);
+    await until(state, (x) => Math.abs(x.t - 1.0) < 0.1);
     run('copyTime');
-    await h.sleep(600);
-    st = await state();
+    st = await until(state, (x) => /Timestamp copied/.test(x.toast));
     ok(/Timestamp copied/.test(st.toast), `copy timestamp toast: ${st.toast}`);
     return out;
   },

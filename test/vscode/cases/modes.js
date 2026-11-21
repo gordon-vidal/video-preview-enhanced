@@ -31,8 +31,15 @@ module.exports = {
       return kv(await vs.waitLog(/webview: modes report /, { from, timeout: 10000 }));
     };
     const act = (o) => vs.send({ name: CLIP, ...o });
+    // Reports until pred(report) holds (bounded) and returns the last one either way: the assertion names the miss.
+    const until = async (read, pred, timeout = 8000) => {
+      const t0 = Date.now();
+      let v = await read(150);
+      while (!pred(v) && Date.now() - t0 < timeout) { await h.sleep(100); v = await read(150); }
+      return v;
+    };
     act({ action: 'pause' });
-    await h.sleep(600);
+    await until(report, (x) => x.playing === 'false');
 
     // One layout (no simple / advanced switch): the bar of the mock-up, every button visible.
     let r = await report();
@@ -45,58 +52,47 @@ module.exports = {
     // Tool keys work without any mode: W opens the scopes, I the file facts.
     ok = t('layout/tool-keys');
     act({ action: 'key', key: 'w' });
-    await h.sleep(1200);
-    r = await report();
+    r = await until(report, (x) => x.scopes !== 'off' && x.scopesVisible === 'true');
     ok(r.scopes !== 'off' && r.scopesVisible === 'true', `W: scopes=${r.scopes} visible=${r.scopesVisible}`);
-    for (let i = 0; i < 4 && r.scopes !== 'off'; i++) { act({ action: 'key', key: 'w' }); await h.sleep(300); r = await report(); }
+    for (let i = 0; i < 4 && r.scopes !== 'off'; i++) { const prev = r.scopes; act({ action: 'key', key: 'w' }); r = await until(report, (x) => x.scopes !== prev); }
     ok(r.scopes === 'off', `W cycles back to off (${r.scopes})`);
     act({ action: 'key', key: 'i' });
-    await h.sleep(500);
-    r = await report();
+    r = await until(report, (x) => x.panel === 'info');
     ok(r.panel === 'info', `I: panel ${r.panel}`);
     act({ action: 'key', key: 'i' });
-    await h.sleep(400);
-    r = await report();
+    r = await until(report, (x) => x.panel === 'none');
     ok(r.panel === 'none', `I again: panel ${r.panel}`);
 
     // The basic controls: step, seek, play, pause.
     ok = t('layout/controls');
     const f0 = Number(r.frame);
     act({ action: 'step', d: 1 });
-    await h.sleep(900);
-    r = await report();
+    r = await until(report, (x) => Number(x.frame) === f0 + 1);
     ok(Number(r.frame) === f0 + 1, `step +1: frame ${f0} -> ${r.frame}`);
     act({ action: 'step', d: -1 });
-    await h.sleep(900);
-    r = await report();
+    r = await until(report, (x) => Number(x.frame) === f0);
     ok(Number(r.frame) === f0, `step -1: frame -> ${r.frame}, expected ${f0}`);
     act({ action: 'seek', t: 0.5 });
-    await h.sleep(1500);
-    r = await report();
+    r = await until(report, (x) => Number(x.t) > 0.3 && Number(x.t) < 0.8);
     ok(Number(r.t) > 0.3 && Number(r.t) < 0.8, `seek 0.5 s: t=${r.t}`);
     const tSeek = Number(r.t);
     act({ action: 'play' });
-    await h.sleep(600);
-    r = await report();
+    r = await until(report, (x) => x.playing === 'true' && Number(x.t) > tSeek);
     ok(r.playing === 'true' && Number(r.t) > tSeek, `play: playing=${r.playing} t=${r.t} (was ${tSeek})`);
     act({ action: 'pause' });
-    await h.sleep(600);
-    r = await report();
+    r = await until(report, (x) => x.playing === 'false');
     ok(r.playing === 'false', `pause: playing=${r.playing}`);
 
     // Tools run from the cog's grid (the test hook runs them by label), and the old details overlay.
     ok = t('layout/tools-grid');
     act({ action: 'tool', open: true });
-    await h.sleep(500);
-    r = await report();
+    r = await until(report, (x) => x.panel === 'main');
     ok(r.panel === 'main', `the settings panel did not open (${r.panel})`);
     act({ action: 'tool', label: 'Scopes' });
-    await h.sleep(1500);
-    r = await report();
+    r = await until(report, (x) => x.scopes !== 'off' && x.scopesVisible === 'true');
     ok(r.scopes !== 'off' && r.scopesVisible === 'true', `Scopes from the grid: scopes=${r.scopes} visible=${r.scopesVisible}`);
     act({ action: 'tool', label: 'Details' });
-    await h.sleep(500);
-    r = await report();
+    r = await until(report, (x) => x.info === 'true');
     ok(r.info === 'true', 'Details did not show');
     ok(flags(r.bar).play === '1' && flags(r.bar).full === '1', 'the basic controls went away');
     await h.closeClip(vs);
@@ -112,25 +108,24 @@ module.exports = {
       return kv(await vs.waitLog(/webview: compare report /, { from, timeout: 10000 }));
     };
     let c = null;
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 240; i++) { // up to ~60 s
       c = await creport(200);
       if (c.canvas && !/^0x/.test(c.canvas)) break;
-      await h.sleep(1000);
+      await h.sleep(250);
     }
     ok(c && c.canvas && !/^0x/.test(c.canvas), `compare never drew a frame (${c && c.canvas})`);
     ok(c && c.modes === 'side,split', `views: ${c && c.modes}, expected side,split`);
     for (const mode of ['side', 'split', 'toggle', 'wipe']) {
       vs.send({ compare: true, action: 'mode', mode });
-      await h.sleep(800);
-      c = await creport(300);
       // The toggle view is gone (it keeps the view); an older 'wipe' is the split.
       const want = mode === 'toggle' ? 'split' : mode === 'wipe' ? 'split' : mode;
+      c = await until(creport, (x) => x.mode === want && (want === 'split') === (x.divider === 'true') && x.cells === (want === 'split' ? '1' : '2'));
       ok(c.mode === want, `mode ${mode}: report says ${c.mode}, expected ${want}`);
       ok((want === 'split') === (c.divider === 'true') && c.cells === (want === 'split' ? '1' : '2'), `divider shown=${c.divider}, cells=${c.cells} in ${want}`);
     }
     // The difference view and the old view keys are gone: these keys do nothing.
     for (const key of ['4', 'g', 'y', 'h', '1', '2', '3', 't']) vs.send({ compare: true, action: 'key', key });
-    await h.sleep(600);
+    await h.sleep(600); // a negative window: the keys must change nothing
     c = await creport(300);
     ok(c.mode === 'split', `a removed view key changed the view to ${c.mode}`);
     await h.closeClip(vs);
