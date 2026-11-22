@@ -27,7 +27,7 @@ them all, with the jump sizes you chose. In the player and Compare, you can also
 | Shift+D | Wait for the next video you open from the Explorer. It opens Compare in the player's tab with Add Mode on if there is room. Esc cancels the wait. ⚙ › Tools › Compare does the same |
 | S / Ctrl+C | Save the frame as PNG / copy it |
 | ? | Keyboard shortcuts |
-| Esc | Close a panel, the shortcuts or the **Compare** confirmation |
+| Esc | Close a panel, the shortcuts, the **Compare** confirmation, a playback notice, the Pixel Inspector or Scopes |
 
 Alt+← / Alt+→ are VS Code's Go Back / Go Forward and Ctrl+K starts VS Code's key chords: the player
 leaves them alone (`docs/notes/ui-simple.md`).
@@ -80,7 +80,7 @@ leaves them alone (`docs/notes/ui-simple.md`).
 Right-clicking the player opens VS Code's own context menu (no Cut / Copy / Paste) with quick actions on this moment, like a browser's or YouTube's: **Play** / **Pause**, **Loop** (✓ when on), then **Set Loop Start (A)**, **Set Loop End (B)** and **Clear A-B Loop** (while a loop is set), then **Copy Frame**, **Save Frame as PNG…**, **Copy Timestamp**, then **Compare With…** (video files only), then **Keyboard Shortcuts** and **Settings…** (opens the ⚙ panel). The frame link is `Shift+C`. How it plays (speed, sound, subtitles, tools) is in the ⚙ panel. The entries only run on the player in focus; they are hidden from the Command Palette. Needs VS Code 1.82 or later (the extension's minimum); details in `docs/notes/context-menu.md`.
 
 Frame numbers are the ones the player shows: `#1` is the first frame.
-While stepping or dragging the seek bar, the bar shows the requested frame as the decoder catches up.
+While stepping or using the seek bar, the bar shows the requested frame until the decoder catches up.
 **A** and **B** still mark the picture on screen.
 
 ## Keys in compare

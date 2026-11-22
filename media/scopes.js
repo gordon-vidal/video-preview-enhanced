@@ -101,7 +101,7 @@ const VpeScopes = (() => {
   // ---- in the webview ---------------------------------------------------------
 
   /**
-   * @param {{stage: HTMLElement, canvas: HTMLCanvasElement, getPlayer: () => any, toast: Function, log: Function}} env
+   * @param {{stage: HTMLElement, canvas: HTMLCanvasElement, getPlayer: () => any, toast: Function, log: Function, returnFocus: () => void}} env
    */
   function create(env) {
     const { stage, canvas, getPlayer, toast, log } = env;
@@ -111,10 +111,18 @@ const VpeScopes = (() => {
     panel.hidden = true;
     const title = document.createElement('div');
     title.className = 'scopesTitle';
+    const header = document.createElement('div');
+    header.className = 'scopesHeader';
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.textContent = '×';
+    closeButton.setAttribute('aria-label', 'Close scopes');
+    closeButton.addEventListener('click', (e) => { e.stopPropagation(); close(); });
+    header.append(title, closeButton);
     const view = document.createElement('canvas');
     view.width = 512;
     view.height = 288;
-    panel.append(title, view);
+    panel.append(header, view);
     stage.appendChild(panel);
     const vctx = /** @type {CanvasRenderingContext2D} */ (view.getContext('2d'));
     const img = document.createElement('canvas'); // the binned picture, before scaling and graticule
@@ -411,6 +419,11 @@ const VpeScopes = (() => {
       toast(mode < 0 ? 'Scopes off' : NAMES[MODES[mode]]);
     }
     const cycle = () => setMode(mode + 1 >= MODES.length ? -1 : mode + 1);
+    const close = () => {
+      const hadFocus = document.activeElement === closeButton;
+      setMode(-1);
+      if (hadFocus) env.returnFocus();
+    };
 
     /** From the player's frame loop: ~10 Hz while playing, at once when a paused frame changes. */
     function tick(now) {
@@ -428,7 +441,7 @@ const VpeScopes = (() => {
     }
 
     return {
-      cycle, tick, setMode: (name) => setMode(name ? MODES.indexOf(name) : -1),
+      cycle, close, tick, setMode: (name) => setMode(name ? MODES.indexOf(name) : -1),
       mode: () => (mode < 0 ? null : MODES[mode]),
       analysis: () => last,
       perf: () => { const k = perf.n || 1; return { updates: perf.n, avgMs: perf.ms / k, maxMs: perf.max, sampleMs: perf.sample / k, binMs: perf.bin / k, drawMs: perf.draw / k }; },

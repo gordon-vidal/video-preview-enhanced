@@ -64,6 +64,10 @@ const playFlash = /<div id="playFlash" aria-hidden="true"><svg class="i-play"[\s
 const playerStyles = fs.readFileSync(path.join(__dirname, '../../media/player.css'), 'utf8');
 assert.match(playerStyles, /#seek:focus:not\(:focus-visible\), #volume:focus:not\(:focus-visible\) \{ outline: none; \}/);
 assert.match(playerStyles, /#seek:focus-visible, #volume:focus-visible \{ outline: 1px solid var\(--vscode-focusBorder\); outline-offset: 2px; \}/);
+const narrowStyles = /@media \(max-width: 520px\) \{([\s\S]*?)\n\}/.exec(playerStyles);
+assert.ok(narrowStyles, 'narrow editor styles');
+assert.doesNotMatch(narrowStyles[1], /#prev|#next/, 'narrow layouts retain both frame-step buttons');
+assert.match(playerStyles, /#notice \{[^}]*background: var\(--vscode-editorWidget-background\)/);
 
 const cmp = compareHtml({ uri: (...p) => `https://webview/${p.join('/')}`, cspSource: 'vscode-resource:', nonce: 'n', cfg: {}, frameSource: '' });
 checkButtons(cmp, 'compare');
@@ -87,6 +91,7 @@ assert.match(cmpScript, /aria-label="\$\{k\} earlier"/);
 assert.match(cmpScript, /aria-label="\$\{k\} later"/);
 assert.match(cmpScript, /aria-label="Offset of \$\{k\}: \$\{offText\(i, true\)\}"/);
 assert.match(cmpScript, /setAttribute\('aria-label', 'Add video'\)/);
+assert.match(cmpScript, /largeGrid \? `Copy tile as shown /, 'the large grid labels copies of rendered tiles');
 assert.match(cmpStyles, /\.cell:focus-within \.ov \{ opacity: 1; \}/);
 assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: var\(--vscode-focusBorder\); \}/);
 

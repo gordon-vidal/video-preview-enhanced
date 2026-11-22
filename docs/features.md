@@ -78,10 +78,10 @@ compressed pictures outside the visible interval when decoding the selected pict
 
 Exact clips work with marks set under the built-in decoders and under native ffmpeg: native ffmpeg reports each
 picture's own timestamp, also for variable-frame-rate video and files that start at a non-zero time. Live
-transcode re-times pictures, so marks set during it are refused when you set them or ask for the clip, with a
-**Use original video** button; set A and B again afterwards. An ffmpeg too old to report timestamps (before 5.1)
-asks for the built-in decoder the same way. A clip appears under its final name only once it is complete, and an
-existing file is never replaced.
+transcode re-times pictures. A and B still set the playback loop. If you try to export an exact clip from those
+marks, the player offers **Use original video** so you can switch and set A and B again. An ffmpeg too old to
+report timestamps (before 5.1) offers the built-in decoder at export. A clip appears under its final name once
+it is complete. Existing files are never replaced.
 
 **Export Compare clips.** **A** and **B** mark a shared loop on the Compare clock. Run **Export A–B Clips…**
 from the palette or **Settings → Tools** to save one clip per tile, named `<letter>_<video>_A-B.<ext>`.
@@ -92,6 +92,7 @@ their results and preserve existing files in the chosen folder.
 **File details** (`I`). Container, streams, codecs and which decoder plays the file.
 
 **Compare / play together (up to 8 videos by default).** Check an encoder, a shader, a renderer or a model against a reference, frame by frame. For example, the expected and actual output of a failing test, or four camera angles of one take.
+- **Copy a tile:** in large grids, **Copy tile as shown** copies the tile at its rendered size.
 - **From the Explorer:** right-click a video, folder or selection and choose **Start Compare**. When a Compare is already open, the menu shows **Add to Compare** and adds the selection to the most recently active Compare. Folders contribute their direct video files in natural name order. Duplicate files are skipped and a message counts any videos that exceed `compare.maxVideos`. **Open Together** (`compare.openTogether`) also groups multiple videos opened at once, such as a drop from the Explorer, and opens them as one Compare within a fraction of a second. A drop includes selected videos the editor already shows in a preview tab.
 - **From the player:** click the split-view **Compare** icon in the bar, then **Start comparison**: Compare opens with this video and Add Mode on (Cancel, Esc or a click elsewhere does nothing). With a Compare open the icon is labeled **Add to Compare** and adds the video to the most recently active Compare at once. The editor title shows **Start Compare** (pick more videos) or **Add to Compare** in the same way. Press **D** for a quick pick (same folder first, then workspace, with **Browse…** for the file dialog), hold **Shift** and drag a video from the Explorer onto the picture, or use **Compare With…** in the player's right-click menu. **Shift+D** or ⚙ › Tools › **Compare** waits for the next video you open. Compare takes the player's tab at its current position. **Leave compare** restores the player at the clock video's position.
 - **Add Mode:** click videos in the Explorer to add them to Compare. It turns on when you ask to add more: the bar's **Start comparison**, **Shift+D**, **Add video…**, the Compare panel's switch, or a right-click **Start / Add to Compare** on a single video that starts a one-video Compare. A Compare that starts from several videos at once (a drop or Open Together, a multi-selection or folder, **Compare Videos in Folder**, the **D** quick pick) opens with Add Mode off. Add Mode stays on during playback, scrubbing and stepping, and stops when you click **Stop** in the hint, press **Esc** or **Shift+D**, reach the maximum or switch editors. The Explorer's **Add to Compare** works either way.

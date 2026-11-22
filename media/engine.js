@@ -535,6 +535,7 @@ function createEngine(env) {
       this.pauseT = 0; // absolute media time while paused
       this.shownT = null;
       this.seekTarget = null;
+      this.seekGoalFrame = null;
       this.hold = null; // last frame before a seek target
       this.back = []; // decoded frames just before the shown one, paused (keepBack): steps back are served from them
       this.backBytes = 0;
@@ -2150,6 +2151,7 @@ function createEngine(env) {
 
     play() {
       wake();
+      this.seekGoalFrame = null;
       if (this.playing) return;
       clearTimeout(this.acTimer);
       if (this.ac && this.acRest) this.wakeAudio();
@@ -2283,6 +2285,7 @@ function createEngine(env) {
     // budget, consecutive frames ending just before the shown one), so a step back on 4K HEVC shows the previous
     // frame at once instead of decoding up to a GOP again (seconds in WebAssembly).
     stepFrame(d) {
+      this.seekGoalFrame = null;
       this.pause();
       const f = 1 / (this.fps || 30);
       if (this.shownT === null || this.vmode === 'none') { this.endSteps(); this.seekFrame(this.currentFrame() + d); return; }
@@ -2336,6 +2339,7 @@ function createEngine(env) {
     }
 
     clearStepGoal() {
+      this.seekGoalFrame = null;
       if (this.stepTo && this.stepTo.timer) clearTimeout(this.stepTo.timer);
       this.stepTo = null;
     }

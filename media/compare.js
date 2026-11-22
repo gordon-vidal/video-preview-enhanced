@@ -1592,7 +1592,7 @@
     out.width = Math.max(1, Math.round(c.pic.w * dpr));
     out.height = Math.max(1, Math.round(c.pic.h * dpr));
     out.getContext('2d').drawImage(canvas, Math.round(c.pic.x * dpr), Math.round(c.pic.y * dpr), out.width, out.height, 0, 0, out.width, out.height);
-    copyCanvas(out, `Frame of ${tileLabel(i)}`, tiles[i]?.remoteStream);
+    copyCanvas(out, `Display-size frame of ${tileLabel(i)}`, tiles[i]?.remoteStream);
   }
   function copyTileTime(i) {
     const text = fmtTime(tileTime(i));
@@ -1883,7 +1883,7 @@
     item(`${i === st.sound ? '✓ ' : ''}Sound from ${k}`, '', () => setSound(i));
     item(`Offset of ${k}…`, offText(i), () => { st.sel = i; controls.show('cmpVid', ui.cmpBtn); });
     sep();
-    item(`Copy frame (${k})`, '', () => copyTileFrame(i));
+    item(largeGrid ? `Copy tile as shown (${k})` : `Copy frame (${k})`, '', () => copyTileFrame(i));
     item(`Copy timestamp (${k})`, fmtTime(tileTime(i)), () => copyTileTime(i));
     sep();
     item(`Replace ${k}…`, '', () => replaceVideo(i));

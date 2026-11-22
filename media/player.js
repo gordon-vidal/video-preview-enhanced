@@ -87,6 +87,7 @@
     $('noticeClose').onclick = dismiss;
     notice.hidden = false;
   }
+  $('notice').addEventListener('click', (e) => e.stopPropagation());
   /**
    * Pixel tools (inspector, scopes, 1:1 zoom, frame save/copy/export) on a video that native
    * ffmpeg scaled down or reduced to 8-bit: offer the built-in decoder's exact pixels, once per page.
@@ -301,7 +302,8 @@
     const dur = player.meta.duration || 0;
     const step = scrubbing ? null : player.pendingStep?.();
     // The slider still holds the drag target after the frame loop consumes pendingSeekFrame.
-    const dragFrame = scrubbing ? pendingSeekFrame ?? Number(ui.seek.value) : null;
+    if (player.seekTarget == null) player.seekGoalFrame = null;
+    const dragFrame = scrubbing ? pendingSeekFrame ?? Number(ui.seek.value) : player.seekGoalFrame ?? null;
     const f = dragFrame ?? (step ? player.frameAt(step.t) : player.currentFrame());
     const t = dragFrame !== null ? Math.min(dur || Infinity, dragFrame / (player.frameNumberRate?.() || player.fps || 30))
       : step ? Math.max(0, Math.min(dur || Infinity, player.rel(step.t))) : player.currentTime();
@@ -489,7 +491,6 @@
     if (!player) return;
     ab.set(which, shownTime(), player.currentFrame(), abTime(), synthTimes());
     abChanged();
-    warnSynthetic();
   }
   function clearAB() { ab.clear(); abChanged(); }
   const shownTime = () => player.shownT != null ? player.rel(player.shownT) : player.currentTime();
@@ -504,18 +505,13 @@
     if (!player) return;
     ab.reset(which, shownTime(), player.currentFrame(), abTime(), synthTimes());
     abChanged();
-    warnSynthetic();
   }
   /** The settings panel's A-B row: start, then end, then off. */
   // Live transcode, and native ffmpeg that could not report a picture's timestamp, label pictures by count rather than
   // by source timestamp: exact export must refuse marks set on them.
   function synthTimes() { return !!(player.shownFrame?.nativeTimestamp || player.remoteStream); }
-  function cycleAB() { if (!player) return; ab.cycle(shownTime(), player.currentFrame(), abTime(), synthTimes()); abChanged(); warnSynthetic(); }
-  let syntheticNoted = false;
-  /**
-   * An exact A-B clip needs the file's own picture times. Say so as soon as a mark is set on a picture without
-   * them (Live transcode re-times pictures), or when export is asked for, and offer the switch in one click.
-   */
+  function cycleAB() { if (!player) return; ab.cycle(shownTime(), player.currentFrame(), abTime(), synthTimes()); abChanged(); }
+  // An exact A-B clip needs the file's own picture times.
   function refuseSynthetic() {
     const transcode = !!(player && player.remoteStream);
     showNotice({
@@ -524,11 +520,6 @@
         : "This ffmpeg cannot report the picture's own times, so A and B cannot be used for an exact clip. Switch to the built-in decoder and set A and B again.",
       action: { label: transcode ? 'Use original video' : 'Switch to built-in decoder', id: 'fullRes', close: true },
     });
-  }
-  function warnSynthetic() {
-    if (syntheticNoted || cfg.url || cfg.sequence || !player || !ab.isSet() || !synthTimes()) return;
-    syntheticNoted = true;
-    refuseSynthetic();
   }
   function abLabel() { return ab.label(fmtClock); }
   function drawAB() {
@@ -709,7 +700,9 @@
   const insp = VpeInspect.create({ vscode, stage, canvas, log, toast, getPlayer: () => player, fmtTime, cfg, getExact: () => exactShown(), exactCtx: (e) => exact.ctxOf(e), onZoom: () => scheduleView(), picture: startPicture, onPicture: () => { if (ui.picBtn) updatePicBtn(); if (controls) controls.refresh(); } });
   updatePicBtn();
   // Waveform, RGB parade, vectorscope, histogram (scopes.js; W cycles).
-  const scopes = VpeScopes.create({ stage, canvas, getPlayer: () => player, toast, log, getExact: () => exactShown() });
+  const scopes = VpeScopes.create({
+    stage, canvas, getPlayer: () => player, toast, log, getExact: () => exactShown(), returnFocus: () => ui.play.focus(),
+  });
   if (/** @type {any} */ (window).__vpe) /** @type {any} */ (window).__vpe.scopes = scopes; // test harness hook
 
   // ---- A-B export: the host asks for the range, then for each frame (src/extension.js exportRange) ----
@@ -842,7 +835,16 @@
   });
   ui.seek.addEventListener('change', () => {
     scrubbing = false;
-    if (player && pendingSeekFrame !== null) { player.seekFrame(pendingSeekFrame); pendingSeekFrame = null; lastSeekAt = performance.now(); }
+    if (!player) return;
+    const frame = pendingSeekFrame ?? Number(ui.seek.value);
+    if (pendingSeekFrame !== null) {
+      player.seekFrame(frame);
+      pendingSeekFrame = null;
+      lastSeekAt = performance.now();
+    }
+    // A seek sent during the drag may still be decoding when the thumb is released.
+    player.seekGoalFrame = player.seekTarget == null ? null : frame;
+    wakeLoop();
   });
   // Hover tip: time and frame, with a keyframe thumbnail above it (engine.js thumbnail(), thumbs.js).
   const thumbBox = document.createElement('div');
@@ -967,8 +969,10 @@
     // player used stops here, so only the player acts on it (docs/notes/ui-simple.md "Keys and VS Code").
     if (player && mod && !e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); e.stopPropagation(); poke(); jump(prefs.jump.ctrl, e.key === 'ArrowLeft' ? -1 : 1); return; }
     if (player && mod && !e.shiftKey && (e.key === 'c' || e.key === 'C')) { e.preventDefault(); e.stopPropagation(); exactTool(); copyFrame(); return; }
-    if (insp.onKey(e)) { e.preventDefault(); if (e.ctrlKey || e.metaKey) e.stopPropagation(); return; }
     if (e.key === 'Escape' && controls && controls.anyOpen()) { e.preventDefault(); controls.closeAll(true); return; }
+    if (e.key === 'Escape' && !$('notice').hidden) { e.preventDefault(); $('noticeClose').click(); return; }
+    if (insp.onKey(e)) { e.preventDefault(); if (e.ctrlKey || e.metaKey) e.stopPropagation(); return; }
+    if (e.key === 'Escape' && scopes.mode()) { e.preventDefault(); scopes.close(); return; }
     if (e.key === 'Escape' && !addHint.hidden) { e.preventDefault(); vscode.postMessage({ type: 'stopAddMode' }); return; }
     if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(); return; }
     if (!player || e.metaKey || (!altGr && (e.ctrlKey || e.altKey))) return;

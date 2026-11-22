@@ -183,8 +183,8 @@ body.idle { cursor: none; }
   padding: 4px 6px 4px 10px;
   border-radius: 4px;
   font-size: 12px;
-  background: var(--vscode-inputValidation-warningBackground, var(--vscode-editorWidget-background));
-  border: 1px solid var(--vscode-inputValidation-warningBorder, transparent);
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-editorWidget-border, transparent);
   z-index: 3;
 }
 #notice button {
@@ -391,6 +391,12 @@ body.idle { cursor: none; }
   font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.45;
 }
 #stage #scopes canvas { display: block; position: static; transform: none; width: min(384px, 45vw); height: auto; max-width: none; max-height: none; background: rgba(0, 0, 0, 0.55); border-radius: 2px; margin-top: 2px; }
+.scopesHeader { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.scopesHeader button {
+  pointer-events: auto; min-width: 20px; min-height: 20px; padding: 0 4px; border: 0; border-radius: 3px;
+  color: inherit; background: transparent; cursor: pointer; font: inherit; font-size: 14px;
+}
+.scopesHeader button:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.18)); }
 #info .infoAction {
   pointer-events: auto; margin: 4px 6px 0 0; font: inherit; font-size: 11px; cursor: pointer;
   color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
@@ -470,7 +476,12 @@ body.idle { cursor: none; }
 #cog.open svg { transform: rotate(45deg); }
 @media (max-width: 720px) { #volume { display: none; } }
 #seek, #volume, #speedSlider { touch-action: none; }
-@media (max-width: 520px) { #prev, #next, #infoBtn, #row #time #dur { display: none; } }
+@media (max-width: 520px) {
+  #infoBtn, #row #time #dur { display: none; }
+  #row { gap: 0; }
+  #row button { min-width: 28px; padding-inline: 3px; }
+  #row .gap { margin-left: 0; }
+}
 
 kbd {
   display: inline-block; min-width: 14px; padding: 0 5px; border-radius: 4px; text-align: center;

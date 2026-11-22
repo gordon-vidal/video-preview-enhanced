@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The seek bar and time readout hold the requested position after you release the thumb while the decoder catches up. Frame-step buttons stay visible in narrow splits.
+- Escape dismisses playback notices, Pixel Inspector and Scopes. Scopes also has a close button, and playback notice buttons leave playback alone.
+- Settings opens on the first click from another panel. Live transcode shows where its defaults apply and which tools fetch full-resolution frames.
+- A–B marks can be set quietly for looping. Exact clip export offers a decoder switch when the marks lack source timestamps.
+- Large Compare grids label tile copies as rendered-size images.
+
 - Frame stepping and dragging the seek bar update the position readout immediately. Compare combines rapid requests and starts seeking across the videos together.
 - The player’s Compare button uses a framed split-view icon with **Compare** and **Add to Compare** tooltips.
 - Fullscreen in the player and Compare uses the full editor width when it falls back to Zen Mode.

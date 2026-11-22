@@ -622,6 +622,11 @@ const VpeInspect = (() => {
         return false;
       }
       switch (e.key) {
+        case 'Escape':
+          if (!inspecting) return false;
+          setInspecting(false);
+          toast('Pixel inspector off');
+          return true;
         // X cycles: inspector with loupe, without loupe, off (Shift+X is the codec X-ray).
         case 'x': case 'X': if (e.shiftKey) return false; cycleInspector(); return true;
         case 'Z': if (e.shiftKey) { toggleNearest(); return true; } return false;

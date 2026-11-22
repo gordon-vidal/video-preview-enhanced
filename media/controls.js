@@ -517,6 +517,7 @@ const VpeControls = (() => {
     function renderTranscode(s) {
       const f = document.createDocumentFragment();
       f.appendChild(head('Live transcode'));
+      f.appendChild(el('div', 'pnote', 'Default for all videos on this machine. Switching can reload the current tab.'));
       const tc = s.transcode || { mode: 'ask', maxBitrateMbps: 0, active: false };
       f.appendChild(radios('Live transcode mode', [
         { label: 'Ask', sub: 'Prompt when needed', checked: tc.mode === 'ask', pick: () => env.act.setTranscode('ask') },
@@ -549,7 +550,9 @@ const VpeControls = (() => {
         row.appendChild(sw(split));
         f.appendChild(row);
       }
-      const note = el('div', 'pnote', 'Uses GPU decode and encode when available, CPU as last resort. Exact-pixel tools warn while active and offer Use original video.');
+      const note = el('div', 'pnote', 'Copy Frame, Save Frame, Pixel Inspector and Scopes automatically fetch '
+        + 'full-resolution source frames when available. The inspector and scopes fetch them while paused. '
+        + '100% live zoom uses the playback picture.');
       f.appendChild(note);
       return f;
     }
@@ -632,8 +635,7 @@ const VpeControls = (() => {
     }
     /** A bar button: opens its page, or closes it when it is the page shown. */
     function toggle(v, from) {
-      // The cog closes whatever is open (like the mock-up); the other buttons close their own page.
-      if (view === v || (from === buttons.cog && view)) { close(true); return; }
+      if (view === v) { close(true); return; }
       show(v, from);
     }
     function close(refocus) {
