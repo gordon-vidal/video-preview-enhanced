@@ -313,7 +313,7 @@ body.idle { cursor: none; }
 
 @media (prefers-reduced-motion: reduce) { #bar { transition: none; } }
 
-/* ---- The bar (src/extension.js html()) and the panels (media/controls.js), docs/notes/ui-simple.md ---- */
+/* ---- The bar (src/bar.js) and the panels (media/controls.js), docs/notes/ui-simple.md ---- */
 :root {
   --vpe-accent: var(--vscode-focusBorder, #3794ff);
   --vpe-panel-bg: var(--vscode-menu-background, var(--vscode-editorWidget-background));
@@ -338,6 +338,7 @@ body.idle { cursor: none; }
 }
 #row button:hover { background: var(--vpe-hover); }
 #row button.open { background: var(--vpe-hover); }
+#row button svg { flex: none; }
 #row .wide { min-width: 40px; }
 #row .gap { margin-left: 6px; }
 #play .i-pause, #play.playing .i-play { display: none; }
