@@ -175,10 +175,22 @@ plans a selection against the open editors. The host intercepts player opens in 
 temporary tab. It uses tab events for files opened through a different editor and distinguishes those new video tabs
 from switching to an existing editor. Only file and VS Code remote video URIs join.
 
-- **Open together.** A multi-selection opened through Open With…, Enter or a double-click is one editor per file
-  in quick succession. `src/burst.js` (pure, timers injected) groups videos that arrive within 400 ms of the one before
-  (`VPE_BURST_MS` overrides it for tests) and, once it is quiet, `src/compare.js` opens them as one compare (the first
-  tab's group, or in the first video's player's place) and closes the burst's tabs and panels. Reports come from two
+- **Open together.** A multi-selection opened through Open With…, Enter, a double-click or a drop is one editor per
+  file in quick succession. `src/burst.js` (pure, timers injected) groups videos that arrive within 120 ms of the one
+  before (`BURST_WINDOW_MS`; `VPE_BURST_MS` overrides it for tests) and, once it is quiet, `src/compare.js` opens
+  them as one compare (the first tab's group, or in the first video's player's place) and closes the burst's tabs and
+  panels. The opens of one gesture arrive within about 10 ms of each other (measured with 2 to 8 videos), so 120 ms
+  leaves a wide margin and was chosen over 400 ms to cut about 280 ms from every open together. A Compare opened by
+  a burst has Add Mode off (above).
+- **Speed (2026-11-22).** Time from the first player resolve to a picture in every tile (debug log, `compare-burst-startup`
+  bench): the burst window, the players, and two waits inside Compare were the cost. (1) The window 400 → 120 ms.
+  (2) A video that arrives while another is pending is **held**: the player's `show()` (page, decoder download, ffprobe,
+  native start) waits for the burst's verdict (`burst.wait`; `holdOpen` in `src/compare.js`, 10 s at most) and never
+  runs if compare takes it, so 2 to 8 players no longer compete with Compare's own start-up. A video opened alone
+  starts after one macrotask (setImmediate, sub-millisecond), so a single open is unchanged. (3) `syncPaused` no
+  longer re-seeks a follower that is still on its first frame and wanted there (a soft tile slower than the clock
+  decoded its first picture twice). (4) The first picture of every tile no longer waits for each tile's second frame
+  to be decoded (`atFirstFrame`). Reports come from two
   places so a lazily resolved editor still counts: `resolveCustomEditor` (`noteOpen`) and `tabGroups.onDidChangeTabs`
   for our view types (the same file from both is one entry). More than `compare.maxVideos`: the first ones are
   compared and the rest stay as their own tabs (warning). Not started: one video, the same file twice, add mode on,

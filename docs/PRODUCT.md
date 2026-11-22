@@ -139,7 +139,7 @@ One feature: compare becomes multi-view. The difference view is dropped.
   single-video player or start a Compare with the selection. One file can start a one-tile Compare. Skip duplicates,
   add up to `compare.maxVideos` and report how many unique videos did not fit. **Open Together**
   (`compare.openTogether`) also groups several videos opened at once (a drop or Open With… on a selection), with a
-  one-time notice.
+  one-time notice. Opening them is quick: the videos are taken in a moment and their players never start.
 - **Add Mode:** while it is on, opening videos from the Explorer adds tiles. It turns on only when the user asks to
   add more: **Shift+D**, **Add video…**, the Compare panel's switch, the toolbar Compare button's **Start comparison**
   and a right-click **Start / Add to Compare** on one video that makes a one-video Compare. A Compare started from
