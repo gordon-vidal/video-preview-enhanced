@@ -24,7 +24,7 @@ const Grid = require('../media/compare-grid');
 const frameserver = require('./frameserver');
 const { barHtml, playFlashHtml } = require('./bar');
 const { toggleFocusMode } = require('./focus-mode');
-const { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare } = require('./comparepick');
+const { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare, compareTargets } = require('./comparepick');
 const { createAddMode, startsInAddMode, addToCompareOrigin } = require('./addmode');
 const { createCompareMenu } = require('./comparemenu');
 const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('./burst');
@@ -907,7 +907,7 @@ function registerCompare(context, deps) {
     }
   };
   const addSelection = async (uri, uris, { from, t, confirmStart } = {}) => {
-    const selection = Array.isArray(uris) && uris.length ? uris : [uri];
+    const selection = compareTargets(uri, uris, vscode.window.tabGroups?.all, (u) => VIDEO_EXT.test(u.path), fileKey);
     const videos = (await Promise.all(selection.map(selectionVideos))).flat();
     if (!videos.length) {
       vscode.window.showInformationMessage('Video Preview: no videos in the selection.');

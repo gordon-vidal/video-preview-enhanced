@@ -33,6 +33,7 @@ assert.deepEqual(events.pop(), [COMPARE_OPEN, true], 'initial state reflects any
 const fullId = (name) => `videoPreviewEnhanced.${name}`;
 for (const [surface, start, add] of [
   ['explorer/context', 'startCompare', 'addToCompare'],
+  ['editor/title/context', 'startCompare', 'addToCompare'],
   ['editor/title', 'compareWith', 'addToCompareFromPlayer'],
 ]) {
   const startItem = menus[surface].find(({ command }) => command === fullId(start));
