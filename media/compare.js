@@ -74,7 +74,7 @@
   let reorderDrag = null;
   const prefs = {
     ...cfg.prefs,
-    jump: { arrow: 5, shift: 1, ctrl: 'frame', ...cfg.prefs?.jump },
+    jump: { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1, ...cfg.prefs?.jump },
     stepButtons: cfg.prefs?.stepButtons || 'frame',
   };
   const Pic = VpePicture;
@@ -1367,7 +1367,12 @@
   /** Z and the button: the next size for all tiles; zoomed in, back to Fit. */
   function cyclePic() {
     setPic(Pic.cycle(st.pic));
-    toast(Pic.name(st.pic.mode));
+    toastPicture();
+  }
+  /** The toast for the current size: the mode with its percent, or "Zoom N%" once zoomed (percent of the clock's cell). */
+  function toastPicture(cell) {
+    const c = cell || clockCell();
+    toast(Pic.pictureToast(st.pic.mode, c ? cellPercent(c) : null, Pic.isZoomed(st.pic)));
   }
   /** The cell under a point (client px) and the point inside it, or null. */
   function cellAt(clientX, clientY) {
@@ -1720,7 +1725,7 @@
       cycleAB: () => markAB(),
       loop: () => { setLoop(!st.loop); toast(st.loop ? 'Loop on' : 'Loop off'); },
       copyFrame: () => copyView(),
-      setPicture: (m) => { setPic(Pic.fresh(m)); toast(Pic.name(m)); },
+      setPicture: (m) => { setPic(Pic.fresh(m)); toastPicture(); },
       zoomPicture: (d) => zoomPic(st.pic.zoom * (d > 0 ? Pic.STEP : 1 / Pic.STEP)),
       resetPicture: () => setPic(Pic.fresh(st.pic.mode)),
       setRate, pickRate: changeRate,
@@ -1971,8 +1976,7 @@
     if (!hit) return;
     e.preventDefault();
     zoomPic(st.pic.zoom * Math.exp(-Math.max(-300, Math.min(300, e.deltaY)) * 0.002), hit);
-    const c = clockCell();
-    if (c) toast(`Zoom ${cellPercent(hit.c)}%`);
+    toastPicture(hit.c);
   }, { passive: false });
   let panDrag = null;
   // A drag may start on a name pill or an offset nudge too (they sit over the picture's corners and edges): the 4 px
@@ -2009,7 +2013,14 @@
   stage.addEventListener('pointercancel', endPan);
   // Prevent Chromium from starting a native text/element drag ghost when dragging across tiles or pills.
   stage.addEventListener('dragstart', (e) => e.preventDefault());
-  stage.addEventListener('wheel', (e) => { if (reordering || e.ctrlKey) return; if (clock && !clock.playing) { e.preventDefault(); step(e.deltaY > 0 ? 1 : -1); } }, { passive: false });
+  // Wheel while paused: jump.wheel; Shift+wheel: jump.wheelShift. Chromium on Windows reports Shift+wheel as deltaX.
+  stage.addEventListener('wheel', (e) => {
+    if (reordering || e.ctrlKey) return;
+    if (!clock || clock.playing) return;
+    e.preventDefault();
+    const delta = e.deltaY || (e.shiftKey ? e.deltaX : 0);
+    if (delta) jump(e.shiftKey ? prefs.jump.wheelShift : prefs.jump.wheel, delta > 0 ? 1 : -1);
+  }, { passive: false });
 
   // ---- the bar ------------------------------------------------------------------------------------
 

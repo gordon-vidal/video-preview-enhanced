@@ -41,6 +41,8 @@ natural name order. Existing keybindings for `videoPreviewEnhanced.addToCompare`
 | `videoPreviewEnhanced.jump.arrow` | `5` | How far ← / → jump: `"frame"` (one frame) or 1, 5, 10, 30 seconds. Also ⚙ › Jump sizes in the player. |
 | `videoPreviewEnhanced.jump.shift` | `1` | The same for Shift+← / Shift+→. |
 | `videoPreviewEnhanced.jump.ctrl` | `"frame"` | The same for Ctrl+← / Ctrl+→ (Cmd on macOS). |
+| `videoPreviewEnhanced.jump.wheel` | `"frame"` | How far the scroll wheel jumps while paused (same values). Ctrl+wheel zooms. |
+| `videoPreviewEnhanced.jump.wheelShift` | `1` | The same for Shift+wheel while paused. |
 | `videoPreviewEnhanced.stepButtons` | `"frame"` | What the two buttons beside Play do: `"frame"` steps one frame, `"jump"` jumps by the Ctrl+← / Ctrl+→ size (`jump.ctrl`). Also ⚙ › Jump sizes. |
 | `videoPreviewEnhanced.pictureSize` | `"fit"` | How the picture sits in the player (and in compare) for new tabs: `"fit"` (whole picture, bars where the shape differs), `"fill"` (no bars, edges cropped), `"stretch"` (fills the player, distorted) or `"actual"` (100 %: one video pixel per screen pixel). The bar button and `Z` change the current tab only. |
 | `videoPreviewEnhanced.compare.maxVideos` | `8` | How many videos one compare takes, 2 to 16. From 5 on they sit in a static grid (3×2, 3×3, 4×3, 4×4) and share the memory and transfer of 4 videos, so each picture gets fewer pixels. Applies to the next compare or the next video you add. |

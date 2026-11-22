@@ -142,6 +142,23 @@
     return src.w > 0 ? Math.round(((rect.w * dpr) / src.w) * 100) : 100;
   }
 
+  /** True when the zoom is past the mode's own size (100 % may also be zoomed out below it). */
+  function isZoomed(v) {
+    return v.mode === 'actual' ? Math.abs(v.zoom - 1) > 0.001 : v.zoom > 1.001;
+  }
+
+  /**
+   * The toast for a picture size change or a zoom: "Fit (67%)" at the mode's own size (so a zoom back out names the
+   * size it snapped to), "100%" for actual size, "Zoom 150%" once zoomed. pct = the picture's percent (percent()).
+   */
+  function pictureToast(mode, pct, zoomed) {
+    const m = parse(mode);
+    const has = typeof pct === 'number' && isFinite(pct);
+    if (zoomed) return has ? `Zoom ${pct}%` : 'Zoom';
+    if (m === 'actual' || !has) return NAMES[m];
+    return `${NAMES[m]} (${pct}%)`;
+  }
+
   /**
    * The picture size native frames should have (CSS px, the video's own shape), or null while the plain Fit
    * (the area decides). Stretch and a crop need the size that covers the whole rectangle at the video's shape.
@@ -164,7 +181,7 @@
     return turned ? { w: meta.h, h: meta.w } : { w: meta.w, h: meta.h };
   }
 
-  const api = { MODES, NAMES, WORDS, SHORT, STEP, parse, isMode, next, name, fresh, plain, baseSize, limits, rectOf, clamp, zoomAt, panBy, overflows, panCell, cycle, percent, frameNeed, sourceSize };
+  const api = { MODES, NAMES, WORDS, SHORT, STEP, parse, isMode, next, name, fresh, plain, baseSize, limits, rectOf, clamp, zoomAt, panBy, overflows, panCell, cycle, percent, isZoomed, pictureToast, frameNeed, sourceSize };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VpePicture = api;
 }(typeof self !== 'undefined' ? self : this));

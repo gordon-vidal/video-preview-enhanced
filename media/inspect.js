@@ -231,13 +231,17 @@ const VpeInspect = (() => {
     function setMode(m, quiet) {
       pic = Pic.fresh(m);
       apply();
-      if (!quiet) toast(Pic.name(pic.mode));
+      if (!quiet) toastPicture();
+    }
+    /** The toast for the current size: the mode with its percent, or "Zoom N%" once zoomed. */
+    function toastPicture() {
+      toast(Pic.pictureToast(pic.mode, canvas.width ? zoomPercent() : null, Pic.isZoomed(pic)));
     }
     /** Z: the next mode; zoomed in, back to Fit first. */
     function cycleMode() {
       pic = Pic.cycle(pic);
       apply();
-      toast(Pic.name(pic.mode));
+      toastPicture();
     }
     function resetZoom() {
       pic = Pic.fresh(pic.mode);
@@ -255,7 +259,7 @@ const VpeInspect = (() => {
     function zoomStep(dir) {
       if (!canvas.width) return;
       zoomTo(pic.zoom * (dir > 0 ? Pic.STEP : 1 / Pic.STEP));
-      toast(`Zoom ${zoomPercent()}%`);
+      toastPicture();
     }
 
     /** Ctrl+wheel (and trackpad pinch) zooms around the cursor. */
@@ -267,7 +271,7 @@ const VpeInspect = (() => {
       const k = zoomPercent() / 100;
       if ((k < 1 && k * f > 1) || (k > 1 && k * f < 1)) f = 1 / k;
       zoomTo(pic.zoom * f, e.clientX - sr.left, e.clientY - sr.top);
-      toast(`Zoom ${zoomPercent()}%`);
+      toastPicture();
       return true;
     }
 

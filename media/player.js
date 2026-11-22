@@ -35,7 +35,7 @@
   let rate = saved.rate || 1;
   // Jump sizes of the arrow keys ('frame' or seconds): settings videoPreviewEnhanced.jump.*, changed in the cog's Jump sizes page.
   const prefs = {
-    jump: { arrow: 5, shift: 1, ctrl: 'frame', ...((cfg.prefs && cfg.prefs.jump) || {}) },
+    jump: { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1, ...((cfg.prefs && cfg.prefs.jump) || {}) },
     stepButtons: (cfg.prefs && cfg.prefs.stepButtons) === 'jump' ? 'jump' : 'frame',
     transcode: (cfg.prefs && cfg.prefs.transcode) || 'ask',
     transcodeMaxBitrate: Number(cfg.prefs && cfg.prefs.transcodeMaxBitrate) || 0,
@@ -899,7 +899,14 @@
   // A click on the picture closes an open panel or the shortcuts sheet; otherwise it plays / pauses.
   stage.addEventListener('click', () => { if (controls && controls.anyOpen()) { controls.closeAll(false); return; } togglePlay(); });
   stage.addEventListener('dblclick', toggleFullscreen);
-  stage.addEventListener('wheel', (e) => { if (insp.onWheel(e)) { e.preventDefault(); return; } if (player && !player.isPlaying()) { e.preventDefault(); step(e.deltaY > 0 ? 1 : -1); } }, { passive: false });
+  // Wheel while paused: jump.wheel; Shift+wheel: jump.wheelShift. Chromium on Windows reports Shift+wheel as deltaX.
+  stage.addEventListener('wheel', (e) => {
+    if (insp.onWheel(e)) { e.preventDefault(); return; }
+    if (!player || player.isPlaying()) return;
+    e.preventDefault();
+    const delta = e.deltaY || (e.shiftKey ? e.deltaX : 0);
+    if (delta) jump(e.shiftKey ? prefs.jump.wheelShift : prefs.jump.wheel, delta > 0 ? 1 : -1);
+  }, { passive: false });
   setRate(rate);
   ui.volume.value = String(volume);
   setMute(muted);
