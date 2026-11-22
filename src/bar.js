@@ -28,6 +28,7 @@ const icons = {
     '<path d="M10 3h4l.7 2.6 2.1 1.2 2.6-.7 2 3.5-1.9 1.9v2.4l1.9 1.9-2 3.5-2.6-.7-2.1 1.2L14 22h-4l-.7-2.2-2.1-1.2-2.6.7-2-3.5 1.9-1.9v-2.4L2.6 9.6l2-3.5 2.6.7 2.1-1.2Z" transform="translate(0 -.5)"/>'),
   full: svg('<path d="M4 9V4h5m11 5V4h-5M4 15v5h5m11-5v5h-5"/>'),
 };
+const playFlashHtml = `<div id="playFlash" aria-hidden="true">${icons.play}${icons.pause}</div>`;
 const frame = '<rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/>';
 const pictures = [
   svg(frame + '<rect x="8" y="8" width="8" height="8" rx="1"/>', 'i-fit'),
@@ -52,7 +53,9 @@ function barHtml({ compare = false, canCompare = true, compareOpen = false } = {
   <div id="seekRow">
     <input id="seek" type="range" min="0" max="0" value="0" step="1" aria-label="Position">
     <div id="buffered"></div>
-    <div id="abMarks" hidden title="A-B loop (A / B keys)"></div>
+    <div id="abMarks" hidden title="A–B range (loop &amp; export · A / B keys)"></div>
+    <div id="abA" class="ab-pin" hidden aria-hidden="true"><span>A</span></div>
+    <div id="abB" class="ab-pin" hidden aria-hidden="true"><span>B</span></div>
     <div id="tip" hidden></div>
   </div>
   <div id="row">
@@ -75,4 +78,4 @@ ${compare ? compareButton : playerCompareButton(canCompare, compareOpen)}    <bu
 </div>`;
 }
 
-module.exports = { barHtml };
+module.exports = { barHtml, playFlashHtml };

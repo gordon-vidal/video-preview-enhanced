@@ -20,7 +20,7 @@ them all, with the jump sizes you chose. In the player and Compare, you can also
 | ↑ / ↓ | Volume ±5 % |
 | M | Mute. Playback starts muted until you click, because VS Code blocks autoplay with sound |
 | R | Loop on or off |
-| A / B | Set the A-B loop start / end (press again to clear) |
+| A / B | Set the start / end of the A–B range for looping and export (press again to clear) |
 | F | Fill the editor and switch to zen mode |
 | Shift+N / Shift+P | Next / previous video in the folder |
 | D | Compare with another video: a quick pick of the videos in this folder, then the workspace (**Browse…** opens the file dialog) |

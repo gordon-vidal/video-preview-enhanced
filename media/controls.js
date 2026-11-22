@@ -40,6 +40,39 @@ const VpeControls = (() => {
     };
   }
 
+  /** @param {HTMLElement} element @param {HTMLElement} stage */
+  function createPlayFlash(element, stage) {
+    /** @type {Animation | undefined} */
+    let flash;
+    return (/** @type {boolean} */ playing) => {
+      // Use the visible stage bounds so scrolling a 100% picture cannot move the flash offscreen.
+      const { left, top, width, height } = stage.getBoundingClientRect();
+      element.style.left = `${left + width / 2}px`;
+      element.style.top = `${top + height / 2}px`;
+      element.classList.toggle('playing', playing);
+      flash?.cancel();
+      flash = element.animate({
+        opacity: [1, 1, 0], scale: ['1', '1', 'var(--play-flash-scale)'], offset: [0, 0.15, 1],
+      }, { duration: 420, easing: 'ease-out' });
+    };
+  }
+
+  /**
+   * @param {HTMLElement} band @param {HTMLElement} pinA @param {HTMLElement} pinB
+   * @param {{hidden: boolean, left: number, width: number, aPct: number|null, bPct: number|null}} marks
+   */
+  function drawRangeMarks(band, pinA, pinB, marks) {
+    const { hidden, left, width, aPct, bPct } = marks;
+    band.hidden = hidden;
+    band.classList.toggle('has-range', aPct !== null && bPct !== null);
+    band.style.left = `${left}%`;
+    band.style.width = `${Math.min(100 - left, width)}%`;
+    pinA.hidden = aPct === null;
+    pinB.hidden = bPct === null;
+    if (aPct !== null) pinA.style.left = `${aPct}%`;
+    if (bPct !== null) pinB.style.left = `${bPct}%`;
+  }
+
   const SVG = (body, o = {}) => `<svg width="${o.size || 18}" height="${o.size || 18}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${o.sw || 1.6}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const ICON = {
     speed: SVG('<circle cx="12" cy="13" r="8"></circle><path d="M12 13l4-4M12 3v2"></path>'),
@@ -207,7 +240,7 @@ const VpeControls = (() => {
     if (p.compare) {
       // Compare (media/compare.js): one bar for all videos.
       return [
-        { title: 'Playback', rows: [['Play / pause (all)', 'Space', 'K'], ['Click a video', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A-B loop start / end', 'A', 'B']] },
+        { title: 'Playback', rows: [['Play / pause (all)', 'Space', 'K'], ['Click a video', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B']] },
         { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End']] },
         { title: 'Frames', rows: [['Previous / next frame (all videos)', ',', '.'], ['Copy view', `${ctrlName}+C`], ['Time / timecode / frames', 'click the time']] },
         { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M']] },
@@ -216,7 +249,7 @@ const VpeControls = (() => {
       ];
     }
     return [
-      { title: 'Playback', rows: [['Play / pause', 'Space', 'K'], ['Click the picture', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A-B loop start / end', 'A', 'B']] },
+      { title: 'Playback', rows: [['Play / pause', 'Space', 'K'], ['Click the picture', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B']] },
       { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End'], ['Jump to 0–90 %', '0…9']] },
       { title: 'Frames', rows: [['Previous / next frame', ',', '.'], ['Copy frame', `${ctrlName}+C`], ['Save frame as PNG', 'S'], ['Go to frame or time', `${ctrlName}+G`], ['Time / timecode / frames', 'click the time']] },
       { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M'], ['Next audio track', 'Shift+A']] },
@@ -276,7 +309,7 @@ const VpeControls = (() => {
       loop.appendChild(sw);
       f.appendChild(loop);
       if (env.act.cycleAB) {
-        const ab = btn('row', 'A-B loop', () => { env.act.cycleAB(); render(); }, { value: s.abLabel });
+        const ab = btn('row', 'A–B range', () => { env.act.cycleAB(); render(); }, { value: s.abLabel });
         ab.insertBefore(el('span', 'abicon', 'A-B'), ab.firstChild);
         /** @type {any} */ (ab.firstChild).setAttribute('aria-hidden', 'true');
         f.appendChild(ab);
@@ -703,7 +736,10 @@ const VpeControls = (() => {
     };
   }
 
-  return { create, createToast, facts, keyGroups, qualityRows, qualityLabel, clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV };
+  return {
+    create, createToast, createPlayFlash, drawRangeMarks, facts, keyGroups, qualityRows, qualityLabel,
+    clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
+  };
 })();
 
 if (typeof module !== 'undefined') module.exports = VpeControls;

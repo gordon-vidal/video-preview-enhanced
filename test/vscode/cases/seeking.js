@@ -98,7 +98,7 @@ module.exports = [{
             P.seek(60.5 / 30); await P.expectFrame(60, 'seek B');
             P.key('b');
             const s = await P.state();
-            ok(/^Loop 0:01\.\d{3} – 0:02\.\d{3}$/.test(s.toast), `toast "${s.toast}"`);
+            ok(/^A–B range 0:01\.\d{3} – 0:02\.\d{3} \(loop and export\)$/.test(s.toast), `toast "${s.toast}"`);
             ok(!s.abMarks.hidden, 'A-B marks hidden');
             P.seek(1.5);
             P.play();
@@ -117,7 +117,7 @@ module.exports = [{
             ok(hi < 2.0 + 0.25, `played past B: max ${hi.toFixed(3)} s`);
             ok(lo > 1.0 - 0.1, `went before A: min ${lo.toFixed(3)} s`);
             P.key('a'); P.key('b');
-            await P.waitState((x) => /A-B loop off/.test(x.toast), { what: 'A-B loop off toast' });
+            await P.waitState((x) => x.toast === 'A–B range cleared', { what: 'A–B range cleared toast' });
           });
         }
       } finally { if (P) await P.close(); }

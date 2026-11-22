@@ -22,7 +22,7 @@ const { MODES, compareCapsKbps, compareTileSize } = require('./transcode_policy'
 const { budgets } = require('../media/membudget');
 const Grid = require('../media/compare-grid');
 const frameserver = require('./frameserver');
-const { barHtml } = require('./bar');
+const { barHtml, playFlashHtml } = require('./bar');
 const { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare } = require('./comparepick');
 const { createAddMode, startsInAddMode, addToCompareOrigin } = require('./addmode');
 const { createCompareMenu } = require('./comparemenu');
@@ -83,6 +83,7 @@ function compareHtml({ uri, cspSource, nonce, cfg, frameSource }) {
     <button id="stopAddBtn" type="button" title="Stop Add Mode">Stop</button>
   </div>
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div></div>
+  ${playFlashHtml}
   <div id="toast" hidden aria-hidden="true"></div>
 </div>
 ${barHtml({ compare: true })}

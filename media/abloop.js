@@ -64,7 +64,10 @@
       },
       /** The toast after A or B. */
       toast(/** @type {(t: number) => string} */ fmtTime) {
-        return s.a !== null && s.b !== null ? `Loop ${fmtTime(s.a)} – ${fmtTime(s.b)}` : s.a !== null ? `Loop start ${fmtTime(s.a)} (B sets the end)` : s.b !== null ? `Loop end ${fmtTime(s.b)} (A sets the start)` : 'A-B loop off';
+        if (s.a !== null && s.b !== null) return `A–B range ${fmtTime(s.a)} – ${fmtTime(s.b)} (loop and export)`;
+        if (s.a !== null) return `Range start ${fmtTime(s.a)} (B sets the end)`;
+        if (s.b !== null) return `Range end ${fmtTime(s.b)} (A sets the start)`;
+        return 'A–B range cleared';
       },
       /** The settings panel's label. */
       label(/** @type {(t: number, ms?: boolean) => string} */ fmtClock) {
@@ -73,12 +76,17 @@
         if (s.a === null) return `End ${fmtClock(s.b, false)} · press A`;
         return `${fmtClock(s.a, false)} – ${fmtClock(s.b, false)}`;
       },
-      /** The marks on the seek bar for a file of `dur` s: hidden, or left and width in percent. */
+      /** Seek-bar span and individual endpoints in percent. An unset endpoint is null. */
       marks(/** @type {number} */ dur, offset = 0) {
-        if (!dur || (s.a === null && s.b === null)) return { hidden: true, left: 0, width: 0 };
+        if (!dur || (s.a === null && s.b === null)) {
+          return { hidden: true, left: 0, width: 0, aPct: null, bPct: null };
+        }
         const a = s.a === null ? 0 : Math.max(0, Math.min(1, (s.a + offset) / dur));
         const b = s.b === null ? 1 : Math.max(0, Math.min(1, (s.b + offset) / dur));
-        return { hidden: false, left: a * 100, width: Math.max(0.3, (b - a) * 100) };
+        return {
+          hidden: false, left: a * 100, width: Math.max(0.3, (b - a) * 100),
+          aPct: s.a === null ? null : a * 100, bPct: s.b === null ? null : b * 100,
+        };
       },
     };
     return s;

@@ -45,6 +45,7 @@
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), tip: $('tip'), time: $('time'), now: $('now'), dur: $('dur'),
     mute: $('mute'), volume: $('volume'), rate: $('rate'), cog: $('cog'), infoBtn: $('infoBtn'), picBtn: $('picBtn'), cmpBtn: $('cmpBtn'), full: $('full'),
     panel: $('panel'), sheet: $('sheet'), menu: $('menu'), toast: $('toast'), live: $('live'), abMarks: $('abMarks'),
+    abA: $('abA'), abB: $('abB'),
     overlay: $('overlay'), message: $('message'), hint: $('hint'),
   };
   const names = cfg.names || ['A', 'B'];
@@ -109,6 +110,7 @@
     liveTimer = setTimeout(() => { ui.live.textContent = text; }, 50);
   }
   const toast = VpeControls.createToast(ui.toast, announce);
+  const flashPlay = VpeControls.createPlayFlash($('playFlash'), stage);
   /** @type {Record<string, string>} */
   const msgs = { host: '' };
   names.forEach((_, i) => { msgs[KEYS[i]] = ''; });
@@ -452,7 +454,12 @@
     syncPlaying();
   }
   function pause() { for (const p of tiles) p.pause(); }
-  const togglePlay = () => (isPlaying() ? pause() : play());
+  const togglePlay = () => {
+    if (!clock) return;
+    if (isPlaying()) pause();
+    else play();
+    flashPlay(isPlaying());
+  };
 
   /** Seek the clock (relative seconds); the others follow at once when playing, after it settles when paused. */
   function seekClock(rel) {
@@ -1974,10 +1981,7 @@
       lastUi = key;
       infoDirty = false;
       const dur = clock.meta.duration || 0;
-      const marks = ab.marks(dur, offset);
-      ui.abMarks.hidden = marks.hidden;
-      ui.abMarks.style.left = `${marks.left}%`;
-      ui.abMarks.style.width = `${Math.min(100 - marks.left, marks.width)}%`;
+      VpeControls.drawRangeMarks(ui.abMarks, ui.abA, ui.abB, ab.marks(dur, offset));
       const fps = fpsOf(clock);
       const nFrames = clock.n || (fps && dur ? Math.round(dur * fps) : 0);
       who.textContent = tileLabel(st.clock);

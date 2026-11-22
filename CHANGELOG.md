@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Seek and volume sliders keep their focus rings for keyboard navigation and clear them after pointer interaction.
+- The player and Compare briefly show a centered Play or Pause icon when you toggle playback.
+- The seek bar labels A and B separately and highlights the range used for looping and export.
+
 ## 0.9.0 (2026-11-22)
 
 Lossless A–B clip export in the player and Compare (with native ffmpeg real timestamps), Compare tile reordering, unified Start/Add to Compare controls, larger action toasts, and faster multi-video drops.

@@ -35,7 +35,7 @@ const proxy = lazy('./proxy');
 const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
 const { registerCompare, setPickHook } = require('./compare'); // compare mode (src/compare.js)
-const { barHtml } = require('./bar'); // the bar's markup, shared with compare
+const { barHtml, playFlashHtml } = require('./bar');
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy('./rangecmd'); // A-B frame export and ffmpeg command
@@ -1959,6 +1959,7 @@ ${earlyJs}<link rel="stylesheet" href="${uri('player.css')}">
   <div id="subs" hidden></div>
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div><button id="action" hidden></button></div>
   <div id="info" hidden></div>
+  ${playFlashHtml}
   <div id="toast" hidden aria-hidden="true"></div>
   <div id="notice" role="status" hidden><span id="noticeText"></span><button id="noticeAction"></button><button id="noticeClose" title="Dismiss" aria-label="Dismiss">×</button></div>
 </div>

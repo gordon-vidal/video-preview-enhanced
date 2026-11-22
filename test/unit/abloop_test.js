@@ -11,26 +11,25 @@ test('A then B: a range, the toast and the panel label', () => {
   const ab = AB.create();
   assert.strictEqual(ab.label(T.fmtClock), 'Off · press A');
   ab.set('a', 1.0, 30);
-  assert.strictEqual(ab.toast(T.fmtTime), 'Loop start 0:01.000 (B sets the end)');
+  assert.strictEqual(ab.toast(T.fmtTime), 'Range start 0:01.000 (B sets the end)');
   assert.strictEqual(ab.label(T.fmtClock), 'Start 0:01 · press B');
   assert.ok(ab.isSet() && !ab.isRange());
   ab.set('b', 2.0, 60);
-  assert.strictEqual(ab.toast(T.fmtTime), 'Loop 0:01.000 – 0:02.000');
-  assert.ok(/^Loop 0:01\.\d{3} – 0:02\.\d{3}$/.test(ab.toast(T.fmtTime)), 'the toast the VS Code scenario reads');
+  assert.strictEqual(ab.toast(T.fmtTime), 'A–B range 0:01.000 – 0:02.000 (loop and export)');
   assert.strictEqual(ab.label(T.fmtClock), '0:01 – 0:02');
   assert.deepStrictEqual(ab.exportRange(30, 90), { fa: 30, fb: 60, fps: 30, n: 90, a: 1.0, b: 2.0 });
 });
 
-test('the same key again clears that end; both cleared: "A-B loop off"', () => {
+test('the same key again clears that end', () => {
   const ab = AB.create();
   ab.set('a', 1, 30); ab.set('b', 2, 60);
   ab.set('a', 5, 150);
   assert.strictEqual(ab.a, null); assert.strictEqual(ab.af, null); assert.strictEqual(ab.b, 2);
-  assert.strictEqual(ab.toast(T.fmtTime), 'Loop end 0:02.000 (A sets the start)');
+  assert.strictEqual(ab.toast(T.fmtTime), 'Range end 0:02.000 (A sets the start)');
   assert.strictEqual(ab.label(T.fmtClock), 'End 0:02 · press A');
   ab.set('b', 9, 9);
   assert.ok(!ab.isSet());
-  assert.strictEqual(ab.toast(T.fmtTime), 'A-B loop off');
+  assert.strictEqual(ab.toast(T.fmtTime), 'A–B range cleared');
   assert.strictEqual(ab.exportRange(30, 90), null);
 });
 
@@ -89,12 +88,22 @@ test('context menu "Set" always sets; the panel row cycles start, end, off', () 
 
 test('seek-bar marks', () => {
   const ab = AB.create();
-  assert.deepStrictEqual(ab.marks(10), { hidden: true, left: 0, width: 0 });
+  const hidden = { hidden: true, left: 0, width: 0, aPct: null, bPct: null };
+  assert.deepStrictEqual(ab.marks(10), hidden);
   ab.set('a', 2, 60);
-  assert.deepStrictEqual(ab.marks(10), { hidden: false, left: 20, width: 80 });
+  assert.deepStrictEqual(ab.marks(10), { hidden: false, left: 20, width: 80, aPct: 20, bPct: null });
+  assert.deepStrictEqual(ab.marks(0), hidden);
+  ab.set('b', 7, 210);
+  assert.deepStrictEqual(ab.marks(10, 1), { hidden: false, left: 30, width: 50, aPct: 30, bPct: 80 });
+  assert.deepStrictEqual(ab.marks(5, -2), { hidden: false, left: 0, width: 100, aPct: 0, bPct: 100 });
+  assert.strictEqual(ab.marks(5, -3).aPct, 0);
+  assert.strictEqual(ab.marks(5, 1).bPct, 100);
+  ab.set('a', 2, 60);
+  assert.deepStrictEqual(ab.marks(10, -2), { hidden: false, left: 0, width: 50, aPct: null, bPct: 50 });
+  ab.clear();
+  ab.set('a', 2, 60);
   ab.set('b', 2.01, 61);
   assert.strictEqual(ab.marks(10).width, 0.3, 'a minimum width stays visible');
-  assert.ok(ab.marks(0).hidden, 'no duration: no marks');
 });
 
 console.log(`${n} passed`);
