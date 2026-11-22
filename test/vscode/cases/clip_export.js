@@ -76,7 +76,9 @@ const nativeCase = {
         const mark = vs.mark();
         act({ action: 'report' });
         const line = await vs.waitLog(/webview: compare report /, { from: mark, timeout: 5000 });
-        return line.match(/\bsrcs=(\S+)/)[1].split(',').map(Number);
+        const srcs = line.match(/\bsrcs=(\S+)/)?.[1].split(',').map(Number);
+        if (!srcs || srcs.some((x) => !Number.isFinite(x))) throw new Error('compare report has no source times: ' + line.slice(-300));
+        return srcs;
       };
       const from = vs.mark();
       vs.send({ compareFiles: [vfr, cfr] });

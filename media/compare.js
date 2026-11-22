@@ -2428,7 +2428,7 @@
       + ` contexts=${[comp, renderer, metrics].filter(Boolean).length + tiles.filter((p) => p.gl && p.gl.gl).length}`
       + ` frame=${clock ? clock.currentFrame() + 1 : '-'} clock=${st.clock} sound=${st.sound} muted=${st.muted} split=${st.split.toFixed(3)} swap=${N === 2 && st.order[0] === 1}`
       + ` playing=${per((p) => (p.playing ? 1 : 0))} frames=${per((p) => (p.shownT === null ? '-' : frameOf(p) + 1))} shown=${per((p) => p.shownCount || 0)}`
-      + ` pts=${per((p) => p.shownT === null ? '-' : p.rel(p.shownT).toFixed(6))} srcs=${per((p) => (p.shownT === null ? '-' : p.shownMarkTime().toFixed(6)))} targets=${per((p) => p.startT === null ? '-' : p.rel(p.pauseT).toFixed(6))}`
+      + ` pts=${per((p) => p.shownT === null ? '-' : p.rel(p.shownT).toFixed(6))} srcs=${per((p) => (p.shownT === null || !p.shownMarkTime ? '-' : p.shownMarkTime().toFixed(6)))} targets=${per((p) => p.startT === null ? '-' : p.rel(p.pauseT).toFixed(6))}`
       + ` synced=${synced()} native=${per((p) => (p.cfg.native ? 1 : 0))} heights=${per((p) => p.cv.height || 0)} fps=${per((p) => fpsOf(p).toFixed(2))}`
       + ` widths=${per((p) => p.cv.width || 0)} stage=${tileSize().w}x${tileSize().h}`
       + ` transport=${per((p) => p.frameStream ? 'stream' : p.cfg.native ? 'message' : '-')}`
