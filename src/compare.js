@@ -116,7 +116,7 @@ class CompareSession {
    */
   constructor(context, uris, {
     log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn,
-    start, openPlayer, setPref, prefs, copyText, addMode, setTranscodePref, offerTranscode, menu, exportClips,
+    start, openPlayer, setPref, setPlaybackPrefs, prefs, copyText, addMode, setTranscodePref, offerTranscode, menu, exportClips,
   }) {
     if (api) vscode = api;
     this.logRaw = log;
@@ -128,6 +128,7 @@ class CompareSession {
     this.pick = pick || null;
     this.openPlayer = openPlayer || null; // (uri, t, viewColumn): Leave compare
     this.setPref = setPref || null; // (key, value): the jump sizes, as in the player
+    this.setPlaybackPrefs = setPlaybackPrefs || null;
     this.prefs = prefs || (() => null);
     this.setTranscodePref = setTranscodePref;
     this.offerTranscode = offerTranscode;
@@ -294,6 +295,7 @@ class CompareSession {
       case 'replace': return this.replaceVideo(Number(m.index));
       case 'leave': return this.leave(Number(m.keep), Number(m.t));
       case 'pref': return this.setPref ? this.setPref(m.key, m.value) : undefined;
+      case 'playbackPrefs': return this.setPlaybackPrefs ? this.setPlaybackPrefs(m) : undefined;
       case 'transcodePref': {
         if (!this.setTranscodePref) return undefined;
         if (MODES.includes(m.mode)) return this.setTranscodePref('transcode', m.mode);

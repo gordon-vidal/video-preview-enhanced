@@ -120,6 +120,35 @@ const PREFS = {
   // The buttons beside Play: 'frame' steps one frame, 'jump' jumps by the Ctrl+arrow size.
   stepButtons: { values: ['frame', 'jump'], dflt: 'frame' },
 };
+const PLAYBACK_PREFS_KEY = 'videoPreviewEnhanced.playbackPrefs';
+const DEFAULT_PLAYBACK_PREFS = { volume: 1, muted: false, rate: 1, timeMode: 0 };
+
+function sanitizePlaybackPrefs(raw, base = DEFAULT_PLAYBACK_PREFS) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const vol = Number(src.volume);
+  const volume = Number.isFinite(vol) && vol >= 0 && vol <= 1 ? Math.round(vol * 100) / 100 : base.volume;
+  const muted = typeof src.muted === 'boolean' ? src.muted : base.muted;
+  const r = Number(src.rate);
+  const rate = Number.isFinite(r) && r >= 0.25 && r <= 4 ? Math.round(r * 100) / 100 : base.rate;
+  const tm = Number(src.timeMode);
+  const timeMode = tm === 0 || tm === 1 || tm === 2 ? tm : base.timeMode;
+  return { volume, muted, rate, timeMode };
+}
+
+function storedPlaybackPrefs() {
+  return sanitizePlaybackPrefs(globalState && globalState.get(PLAYBACK_PREFS_KEY));
+}
+
+function rememberPlaybackPrefs(m) {
+  if (!globalState || !m || typeof m !== 'object') return undefined;
+  const prev = storedPlaybackPrefs();
+  const next = sanitizePlaybackPrefs(m, prev);
+  if (next.volume === prev.volume && next.muted === prev.muted && next.rate === prev.rate && next.timeMode === prev.timeMode) {
+    return undefined;
+  }
+  return globalState.update(PLAYBACK_PREFS_KEY, next);
+}
+
 function prefsOf(c) {
   const v = (k) => (PREFS[k].values.includes(c.jumps[k]) ? c.jumps[k] : PREFS[k].dflt);
   return {
@@ -129,6 +158,7 @@ function prefsOf(c) {
     transcode: c.transcode,
     transcodeMaxBitrate: c.transcodeMaxBitrate,
     transcodeSplitBitrate: c.transcodeSplitBitrate,
+    ...storedPlaybackPrefs(),
   };
 }
 
@@ -1322,6 +1352,7 @@ function activate(context) {
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
     // Compare's bar and panels are the player's: the same jump sizes, written the same way.
     prefs: () => prefsOf(config()),
+    setPlaybackPrefs: (m) => rememberPlaybackPrefs(m),
     setTranscodePref: (key, value) => setSetting(key, value, vscode.ConfigurationTarget.Global),
     offerTranscode: (sess) => maybeOfferRemoteTranscode(sess, vscode.env.remoteName),
     setPref: (key, value) => (PREFS[key] && PREFS[key].values.includes(value) ? setSetting(key, value, prefTarget(key)) : undefined),
@@ -2089,6 +2120,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
       case 'grabExactFrame': return this.sendExactFrame(m);
       // Jump sizes and speed step from the player's panels: only declared values.
       case 'pref': return PREFS[m.key] && PREFS[m.key].values.includes(m.value) ? setSetting(m.key, m.value, prefTarget(m.key)) : undefined;
+      case 'playbackPrefs': return rememberPlaybackPrefs(m);
       // Live transcode mode and max bitrate from the ⚙ panel (machine-scoped).
       case 'transcodePref': {
         if (m.mode !== undefined && transcodePolicy.MODES.includes(m.mode)) {

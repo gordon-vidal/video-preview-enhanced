@@ -1852,13 +1852,14 @@ function createEngine(env) {
       const t = performance.now();
       const covered = this.sources.size > 0 || this.audio.some((a) => a.t <= now + 0.1 && a.t + a.dur > now);
       if (covered) { this.audioLive = true; this.audioLiveAt = t; } else if (this.audioLive && t - this.audioLiveAt > AUDIO_DRY_MS) this.audioLive = false;
+      if (this.playing && this.anchoredOnAudio !== this.audioMaster()) this.anchor(now);
     }
 
     now() {
       if (!this.playing || this.acWaking) return this.pauseT;
       // An accurate seek holds the clock until its frame is decoded (a slow seek is not "behind").
       if (this.seekTarget !== null && this.vmode !== 'none') return this.pauseT;
-      if (this.audioMaster()) return this.anchorMedia + (this.ac.currentTime - this.anchorAc) * this.rate;
+      if (this.anchoredOnAudio) return this.anchorMedia + (this.ac.currentTime - this.anchorAc) * this.rate;
       return this.anchorMedia + ((performance.now() - this.anchorPerf) / 1000) * this.rate;
     }
 
@@ -2151,9 +2152,13 @@ function createEngine(env) {
       clearTimeout(this.acTimer);
       if (this.ac && this.acRest) this.wakeAudio();
       else if (this.ac && this.ac.state === 'suspended') {
-        this.ac.resume().catch(() => {});
+        const wasUnmuted = !this.muted;
+        this.ac.resume().then(() => {
+          if (wasUnmuted && !this.disposed && this.ac && this.ac.state === 'running') setMuteUi(false);
+          wake();
+        }, () => {});
         // Autoplay without a user gesture stays silent until one arrives.
-        if (this.ac.state === 'suspended' && !this.muted) setMuteUi(true);
+        if (this.ac.state === 'suspended' && wasUnmuted) setMuteUi(true);
       }
       this.playing = true;
       this.endSteps();
@@ -2409,7 +2414,7 @@ function createEngine(env) {
       this.volume = volume;
       this.muted = muted;
       // (Suspended while paused, restAudio: play() resumes it.)
-      if (!muted && this.ac && this.ac.state === 'suspended' && !this.acRest) this.ac.resume().catch(() => {});
+      if (!muted && this.ac && this.ac.state === 'suspended' && !this.acRest) this.ac.resume().then(() => wake(), () => {});
       this.applyVolume();
     }
     applyVolume() { if (this.gain) this.gain.gain.value = this.muted ? 0 : this.volume; }

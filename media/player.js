@@ -26,14 +26,18 @@
   window.addEventListener('error', (e) => log('error:', e.message, `${e.filename}:${e.lineno}`));
   window.addEventListener('unhandledrejection', (e) => log('unhandled rejection:', e.reason && e.reason.stack || e.reason));
 
-  // Restored after a reload (file changed on disk, window reload).
+  // Restored after a reload (file changed on disk, window reload), else inherited from persisted player prefs.
   const saved = vscode.getState() || {};
+  const initPrefs = cfg.prefs || {};
   /** @type {any} */
   let player = null;
   let loop = saved.loop !== undefined ? saved.loop : !!cfg.loop;
-  let muted = !!saved.muted;
-  let volume = saved.volume !== undefined ? saved.volume : 1;
-  let rate = saved.rate || 1;
+  let userMuted = saved.muted !== undefined ? !!saved.muted : !!initPrefs.muted;
+  let autoplayMuted = false;
+  let muted = userMuted;
+  const rawVol = saved.volume !== undefined ? Number(saved.volume) : initPrefs.volume !== undefined ? Number(initPrefs.volume) : 1;
+  let volume = Number.isFinite(rawVol) && rawVol >= 0 && rawVol <= 1 ? Math.round(rawVol * 100) / 100 : 1;
+  let rate = VpeControls.clampRate(saved.rate || initPrefs.rate || 1);
   // Jump sizes of the arrow keys ('frame' or seconds): settings videoPreviewEnhanced.jump.* (VS Code's Settings only).
   const prefs = {
     jump: { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1, ...((cfg.prefs && cfg.prefs.jump) || {}) },
@@ -46,7 +50,8 @@
   // Picture size for this tab (Fit, Fill, Stretch, 100 %): starts as the setting videoPreviewEnhanced.pictureSize; the button and Z change this tab only.
   const startPicture = VpePicture.parse(cfg.prefs && cfg.prefs.pictureSize);
   // The bar's time: 0 m:ss.mmm, 1 SMPTE timecode, 2 frame number (a click on it cycles).
-  let timeMode = Number(saved.timeMode) || 0;
+  let timeMode = [0, 1, 2].includes(Number(saved.timeMode)) ? Number(saved.timeMode)
+    : [0, 1, 2].includes(Number(initPrefs.timeMode)) ? Number(initPrefs.timeMode) : 0;
 
   const actionBtn = $('action');
   function showMessage(text, sub = '', action = null) {
@@ -198,7 +203,7 @@
       this.syncAudio(true);
     }
     setRate() { this.syncAudio(true); }
-    setVolume() { if (this.audio) { this.audio.muted = muted; this.audio.volume = volume; } }
+    setVolume() { if (this.audio) { this.audio.muted = muted; this.audio.volume = volume; if (this.playing) this.syncAudio(false); } }
     setLoop() {}
 
     syncAudio(force) {
@@ -213,7 +218,7 @@
         this.audioPending = true;
         a.play().catch((e) => {
           // Autoplay with sound needs a user gesture; continue muted.
-          if (e && e.name === 'NotAllowedError' && !muted) { setMute(true); this.syncAudio(true); }
+          if (e && e.name === 'NotAllowedError' && !muted) { autoplayMuted = true; setMute(true, false); this.syncAudio(true); }
         }).finally(() => { this.audioPending = false; });
       }
     }
@@ -441,7 +446,7 @@
       if (now - lastSave > 1000) {
         lastSave = now;
         // Only when something changed: a paused page wrote the same state and position every second.
-        const state = { t: player.currentTime(), rate, volume, muted, loop, subs: subs.state(), timeMode,
+        const state = { t: player.currentTime(), rate, volume, muted: userMuted, loop, subs: subs.state(), timeMode,
           reducedResDismissed, slowNoticeDismissed, stepSize: prefs.stepSize, ...(switchPlay !== null ? { play: switchPlay } : {}) };
         const json = JSON.stringify([state, player.meta.duration || 0]);
         if (json !== lastSaved) {
@@ -578,12 +583,16 @@
   const skip = (s) => { if (!player) return; player.seekTime(player.currentTime() + s); toast(`${s > 0 ? '+' : ''}${s} s`); };
   /** Arrow keys: one frame or seconds, from the jump-size settings. */
   const jump = (size, dir) => { if (size === 'frame') step(dir); else skip(dir * Number(size)); };
+  function postPlaybackPrefs() {
+    vscode.postMessage({ type: 'playbackPrefs', volume, muted: userMuted, rate, timeMode });
+  }
   // Speed: 0.25–4× in steps of 0.05 (VpeControls.clampRate), the range in which the sound keeps its pitch.
-  function setRate(r) {
+  function setRate(r, persist = true) {
     rate = VpeControls.clampRate(r);
     ui.rate.textContent = VpeControls.speedText(rate);
     ui.rate.setAttribute('aria-label', `Speed ${VpeControls.speedText(rate)}`);
     if (player) player.setRate(rate);
+    if (persist) postPlaybackPrefs();
   }
   /** Sets the speed with a toast; at the ends of the range it says so. */
   function changeRate(r) {
@@ -603,13 +612,18 @@
     toast(prefs.transcodeMaxBitrate > 0 ? `Max bitrate: ${prefs.transcodeMaxBitrate} Mb/s` : 'Max bitrate: Auto');
   }
   const setLoop = (l) => { loop = l; if (player && player.setLoop) player.setLoop(l); if (controls) controls.refresh(); };
-  function setMute(m) {
+  function setMute(m, byUser = true) {
+    if (byUser) {
+      autoplayMuted = false;
+      userMuted = m;
+    }
     muted = m;
     ui.mute.classList.toggle('muted', m || volume === 0);
     ui.mute.setAttribute('aria-pressed', String(m));
     ui.mute.setAttribute('aria-label', m ? 'Unmute' : 'Mute');
     ui.mute.title = m ? 'Unmute  M' : 'Mute  M';
     if (player) player.setVolume(volume, muted);
+    if (byUser) postPlaybackPrefs();
   }
   const setVolume = (v) => {
     volume = Math.max(0, Math.min(1, Math.round(v * 100) / 100));
@@ -842,7 +856,7 @@
   ui.time.onclick = () => {
     // A live stream shows only the time since it started (no timecode or frame count to cycle to).
     if (player && player.meta && player.meta.live) { toast('Live stream'); return; }
-    timeMode = (timeMode + 1) % 3; lastUi = ''; updateUi(); toast(['Time', 'Timecode', 'Frame number'][timeMode]); };
+    timeMode = (timeMode + 1) % 3; lastUi = ''; updateUi(); postPlaybackPrefs(); toast(['Time', 'Timecode', 'Frame number'][timeMode]); };
   ui.seek.addEventListener('input', () => {
     scrubbing = true;
     player?.clearStepGoal?.();
@@ -924,9 +938,9 @@
     const delta = e.deltaY || (e.shiftKey ? e.deltaX : 0);
     if (delta) jump(e.shiftKey ? prefs.jump.wheelShift : prefs.jump.wheel, delta > 0 ? 1 : -1);
   }, { passive: false });
-  setRate(rate);
+  setRate(rate, false);
   ui.volume.value = String(volume);
-  setMute(muted);
+  setMute(muted, false);
 
   // Controls hide after a moment in fullscreen.
   let hideTimer = 0;
@@ -1048,7 +1062,15 @@
     vscode, canvas, log, showMessage, toast, page: cfg.page, debug: !!cfg.debug,
     wake: () => wakeLoop(),
     getState: () => ({ rate, volume, muted, loop }),
-    setMuteUi: (m) => setMute(m),
+    setMuteUi: (m) => {
+      if (m) {
+        autoplayMuted = true;
+        setMute(true, false);
+      } else if (autoplayMuted) {
+        autoplayMuted = false;
+        setMute(userMuted, false);
+      }
+    },
     onReady: (p) => { begin(p, p.meta); },
     onMeta: (p) => { ui.seek.max = String(Math.max(0, p.n - 1)); if (controls) controls.refresh(); },
     onTracks: (p) => subs.onTracks(p),
@@ -1164,7 +1186,7 @@
     if (!streamQ || pick === streamQ.pick) return;
     if (player) {
       switchPlay = player.isPlaying();
-      vscode.setState({ ...(vscode.getState() || {}), t: player.currentTime(), play: switchPlay, rate, volume, muted, loop, subs: subs.state(), timeMode });
+      vscode.setState({ ...(vscode.getState() || {}), t: player.currentTime(), play: switchPlay, rate, volume, muted: userMuted, loop, subs: subs.state(), timeMode });
       player.pause();
     }
     streamQ = { ...streamQ, pick };
