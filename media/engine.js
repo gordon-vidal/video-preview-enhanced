@@ -43,7 +43,7 @@ function createEngine(env) {
   const SPEED_WARMUP_MS = 1500; // decode speed samples (sampleSpeed): ignore the start
   const SPEED_SAMPLE_MS = 3000;
   const FAST_CODECS = new Set(['hevc', 'h264']); // decoders that honour skip_loop_filter (fast preview)
-  const SETUP_PILL_RATIO = 0.5; // below this decode speed (x real time) the pill offers ffmpeg setup (see decide.js HINT_HOPELESS)
+  const SETUP_NOTICE_RATIO = 0.5; // below this decode speed (x real time), prioritize the ffmpeg setup notice
   const onTracks = env.onTracks || (() => {}); // (player) when the track list or a selection changes
   // Something arrived or changed outside the page's input events (a worker or host message, a decoder
   // output, a seek from code): the page's frame loop runs again if it was resting (Player.settled).
@@ -1766,22 +1766,18 @@ function createEngine(env) {
       }
       if (behind) {
         const r = ratio !== null ? speedText(ratio) : 'slow';
-        // Far below real time and no ffmpeg yet: the pill points at the setup (a click starts it).
-        const ff = this.ffmpeg;
         const mediaRatio = this.nonRef ? this.mediaRate : ratio;
-        if (!this.cfg.native && ff && ff.offer && mediaRatio !== null && mediaRatio < SETUP_PILL_RATIO) {
-          return {
-            text: `Decoding ${speedText(mediaRatio)} · Set up ffmpeg`, level: 'warn', action: 'setupFfmpeg',
-            title: `Decoding is far slower than real time here (WebAssembly, one core per decoder). Click to set up optional ffmpeg (≈${ff.mb || 80} MB, no admin needed): it decodes this many times faster, on the GPU where it can.`,
-          };
+        const offerSetup = !this.cfg.native && this.ffmpeg?.offer;
+        if (offerSetup && mediaRatio !== null && mediaRatio < SETUP_NOTICE_RATIO) {
+          return { text: `Decoding ${speedText(mediaRatio)} · Set up ffmpeg`, level: 'warn', slowNotice: 'setupFfmpeg' };
         }
         if (this.autoEvery && this.whenSlow === 'skip') {
-          return { text: `Decoding ${r} · slowed down`, level: 'warn', title: `Decoding is far slower than real time, so skipping frames can't keep up: playback slows down to show every frame.${this.cfg.native ? '' : ' Optional ffmpeg (Video Preview: Set Up Optional ffmpeg) decodes this on the GPU in real time.'}` };
+          return { text: `Decoding ${r} · slowed down`, level: 'warn', slowNotice: 'autoEvery' };
         }
-        if (this.fast) return { text: `Decoding ${r} · fast preview`, level: 'warn', title: 'Decoding is slower than real time: deblocking is left out while playing (setting videoPreviewEnhanced.fastPreviewWhenBehind). Paused and stepped frames are decoded exactly.' };
+        if (this.fast) return { text: `Decoding ${r} · fast preview`, level: 'warn', slowNotice: 'fast' };
         return this.whenSlow === 'every'
-          ? { text: `Decoding ${r} · every frame`, level: 'warn', title: 'Decoding is slower than real time; playback slows down to show every frame. Click to skip frames instead.' }
-          : { text: `Decoding ${r} · skipping`, level: 'warn', title: 'Decoding is slower than real time; frames are skipped to keep time with the sound. Click to show every frame instead (slower).' };
+          ? { text: `Decoding ${r} · every frame`, level: 'warn', slowNotice: 'every' }
+          : { text: `Decoding ${r} · skipping`, level: 'warn', slowNotice: 'skip' };
       }
       if (!this.playing && ahead > 0.5) return { text: `${ahead.toFixed(1)} s decoded ahead`, level: 'info', title: 'Decoding ahead while paused.' };
       // Keeping up: decoding only runs about a second ahead, so its speed reads ~1x and says nothing. Stay quiet.
@@ -1825,13 +1821,12 @@ function createEngine(env) {
       return sample;
     }
 
-    toggleWhenSlow() {
-      this.whenSlow = this.whenSlow === 'every' ? 'skip' : 'every';
+    setWhenSlow(value) {
+      this.whenSlow = value;
       this.autoEvery = false;
       if (this.nonRef) this.setNonRef(false);
       this.skipLog = [];
       toast(this.whenSlow === 'every' ? 'When slow: show every frame' : 'When slow: skip frames, keep time');
-      return this.whenSlow;
     }
 
     // ---- clock ------------------------------------------------------------

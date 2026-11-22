@@ -36,7 +36,7 @@ natural name order. Existing keybindings for `videoPreviewEnhanced.addToCompare`
 | Setting | Default | Meaning |
 |---|---|---|
 | `videoPreviewEnhanced.decoder` | `auto` | `auto`: native ffmpeg when it is installed, for everything except 8-bit H.264 and VP8 (those stay on VS Code's GPU decoder), in local and WSL windows; otherwise, and over SSH or in containers, the built-in decoder ([details](ffmpeg.md)). `builtin`: always the built-in decoder. `ffmpeg`: always native ffmpeg when it is installed (local and WSL windows). |
-| `videoPreviewEnhanced.whenSlow` | `every` | When decoding is slower than real time: `every` slows playback down and shows every frame; `skip` keeps real time by jumping to keyframes. The notice shown when decoding falls behind switches it too. |
+| `videoPreviewEnhanced.whenSlow` | `every` | When playback falls behind, `every` slows down to show every frame and `skip` drops frames to keep real-time speed when possible. The slow-playback notice can save either choice as your default for all videos. |
 | `videoPreviewEnhanced.overrideFileIcons` | `true` | Override file icons: give every format the player opens the same video icon in the Explorer (Seti, the default file icon theme, already does this for .avi, .mov, .mpg, .ogv, .mp4 and .webm; this adds .mkv, .flv, .mpeg, .m2ts, .wmv, .3gp, .m4v, .vob, .divx, .asf, .mxf and .y4m). It writes `"*.ext": "vpe-video"` entries to your user `files.associations` where you have none, and turning it off removes only those. Other icon themes may show their own icon instead. So the icons are there before you open a video, the extension loads when VS Code starts (about 30 ms per window). VS Code doesn't let a setting change that, so it still loads with this off, but does no file-icon work. |
 | `videoPreviewEnhanced.jump.arrow` | `5` | How far ← / → jump: `"frame"` (one frame) or 1, 5, 10, 30 seconds. Also ⚙ › Jump sizes in the player. |
 | `videoPreviewEnhanced.jump.shift` | `1` | The same for Shift+← / Shift+→. |
@@ -58,6 +58,8 @@ natural name order. Existing keybindings for `videoPreviewEnhanced.addToCompare`
 | `videoPreviewEnhanced.transcodeMaxBitrate` | `0` | Live transcode video bitrate ceiling in Mb/s. `0` is Auto. An explicit cap has a 0.25 Mb/s minimum per stream. |
 | `videoPreviewEnhanced.transcodeSplitBitrate` | `true` | Share an explicit cap among Compare tiles using Live transcode. If off, each transcoded tile gets the full cap. Auto sizes the cap for each tile in either mode. |
 | `videoPreviewEnhanced.remoteStream` | `auto` | Deprecated. Its explicit value migrates to Live transcode when `transcode` has no explicit value. See [remote playback](remote.md). |
+
+On a slow-playback notice, **Settings** opens the relevant setting. **Don't show again** hides slow-playback notices for all videos. **×** or **Escape** dismisses them for the current tab.
 
 ## Making it the default for MP4 and WebM
 

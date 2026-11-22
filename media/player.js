@@ -84,7 +84,11 @@
         if (action.close) dismiss();
       };
     }
-    $('noticeClose').onclick = dismiss;
+    notice.dataset.kind = n.kind || '';
+    $('noticeClose').onclick = () => {
+      n.onClose?.();
+      dismiss();
+    };
     notice.hidden = false;
   }
   $('notice').addEventListener('click', (e) => e.stopPropagation());
@@ -341,23 +345,31 @@
     return changed;
   }
 
-  // Decoder status (engine status()): no pill on the bar any more. A real problem (decoding falls behind)
-  // shows the notice once per page, with its action; the rest ("Fully decoded", "2.0 s decoded ahead")
-  // stays quiet (the stats overlay, Shift+I, has the numbers).
+  // Decoder status numbers stay in the stats overlay. Show slow-playback notices once per page.
   let ffmpegState = null; // from the host: {installed, offer, mb}
+  let slowNoticeDismissed = !!saved.slowNoticeDismissed;
   const warned = new Set();
   function updateStatus() {
-    const st = player && player.status ? player.status() : null;
-    if (!st || st.level !== 'warn') return;
-    const kind = st.action || 'slow';
+    if (cfg.hideSlowPlaybackNotice || slowNoticeDismissed) return;
+    const p = player;
+    const variant = p?.status?.()?.slowNotice;
+    if (!variant) return;
+    const kind = variant === 'setupFfmpeg' ? variant : 'slow';
     if (warned.has(kind)) return;
     warned.add(kind);
-    if (st.action === 'setupFfmpeg') { showNotice({ text: st.title.replace(/ Click to .*$/, ''), action: { label: 'Set up ffmpeg', id: 'setupFfmpeg', close: true } }); return; }
-    const p = player;
-    const every = /every frame|slowed down/.test(st.text);
+    const notice = VpeSlowNotice(variant, !p.cfg?.native && ffmpegState?.offer, ffmpegState?.mb);
+    const value = notice.whenSlow;
     showNotice({
-      text: st.title.replace(/ Click to .*$/, ''),
-      action: p && p.toggleWhenSlow && !p.fast ? { label: every ? 'Skip frames instead' : 'Show every frame', close: true, run: () => vscode.postMessage({ type: 'whenSlow', value: p.toggleWhenSlow() }) } : null,
+      ...notice,
+      kind: 'slowPlayback',
+      action: value ? { ...notice.action, run: () => {
+        if (player === p) p.setWhenSlow(value);
+        vscode.postMessage({ type: 'whenSlow', value });
+      } } : notice.action,
+      onClose: () => {
+        slowNoticeDismissed = true;
+        vscode.setState({ ...vscode.getState(), slowNoticeDismissed });
+      },
     });
   }
 
@@ -435,7 +447,8 @@
       if (now - lastSave > 1000) {
         lastSave = now;
         // Only when something changed: a paused page wrote the same state and position every second.
-        const state = { t: player.currentTime(), rate, volume, muted, loop, subs: subs.state(), timeMode, reducedResDismissed, ...(switchPlay !== null ? { play: switchPlay } : {}) };
+        const state = { t: player.currentTime(), rate, volume, muted, loop, subs: subs.state(), timeMode,
+          reducedResDismissed, slowNoticeDismissed, ...(switchPlay !== null ? { play: switchPlay } : {}) };
         const json = JSON.stringify([state, player.meta.duration || 0]);
         if (json !== lastSaved) {
           lastSaved = json;
@@ -1378,6 +1391,10 @@
       }
       case 'exactFrame': exact.onReply(m).then(wakeLoop, () => {}); break;
       case 'toast': toast(m.text, Math.min(10000, Number(m.ms)) || undefined); break;
+      case 'hideSlowPlaybackNotice':
+        cfg.hideSlowPlaybackNotice = true;
+        if (!$('notice').hidden && $('notice').dataset.kind === 'slowPlayback') $('noticeClose').click();
+        break;
       case 'hideReducedResNotice': cfg.hideReducedResNotice = true; break;
       case 'addMode': showAddMode(m); break;
       case 'compareOpen': setCompareOpen(!!m.open); break;
