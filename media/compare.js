@@ -307,6 +307,8 @@
     const rel = t + offSec(st.clock);
     return rel < 0 ? `−${fmtTime(-rel)}` : fmtTime(rel);
   }
+  /** Per mark (keyed by its time on the clock): what every tile showed then. Not kept across a reload. */
+  const marks = new Map();
   function markAB(end) {
     if (clock?.shownT == null) return;
     const t = clock.rel(clock.shownT) - offSec(st.clock);
@@ -314,8 +316,17 @@
     const own = clock.shownMarkTime ? clock.shownMarkTime() : null;
     const pts = (own !== null ? own : clock.rel(clock.shownT)) - offSec(st.clock);
     const native = !!(clock.shownFrame?.nativeTimestamp || clock.remoteStream);
+    // Each tile's own picture at this moment: a VFR clock holding 0.96 s at the 1.00 s slot must not put 0.96 s on
+    // a follower that shows its 1.00 s picture.
+    const clockRel = clock.rel(clock.shownT);
+    marks.set(pts, tiles.map((p, i) => (p.shownT == null ? null : VpeCompareRange.captureTile({
+      shownRel: p.rel(p.shownT), markRel: p.shownMarkTime ? p.shownMarkTime() : p.rel(p.shownT),
+      expectedRel: clockRel - offSec(st.clock) + offSec(i), fps: fpsOf(p),
+      native: p.shownFrame?.nativeTimestamp || p.remoteStream,
+    }))));
     if (end) ab.set(end, t, 0, pts, native);
     else ab.cycle(t, 0, pts, native);
+    for (const key of [...marks.keys()]) if (key !== ab.aPts && key !== ab.bPts) marks.delete(key);
     toast(ab.toast(fmtAB));
     controls.refresh();
     save();
@@ -323,7 +334,7 @@
   function exportAB() {
     const span = ab.presentationRange();
     const ranges = ab.isRange() && span && clock?.shownT != null
-      ? tiles.map((p, i) => ({
+      ? tiles.map((p, i) => VpeCompareRange.tileRange(marks.get(span.a)?.[i], marks.get(span.b)?.[i], {
         ...VpeCompareRange.mapRange(span.a, span.b, offSec(i), fpsOf(p), i === st.clock),
         // A native tile is exact once its pictures carry their own timestamps; before one shows, it is not known.
         native: ab.aNative || ab.bNative || !!p.remoteStream || !!(p.cfg.native && (!p.shownFrame || p.shownFrame.nativeTimestamp)),
@@ -2417,7 +2428,7 @@
       + ` contexts=${[comp, renderer, metrics].filter(Boolean).length + tiles.filter((p) => p.gl && p.gl.gl).length}`
       + ` frame=${clock ? clock.currentFrame() + 1 : '-'} clock=${st.clock} sound=${st.sound} muted=${st.muted} split=${st.split.toFixed(3)} swap=${N === 2 && st.order[0] === 1}`
       + ` playing=${per((p) => (p.playing ? 1 : 0))} frames=${per((p) => (p.shownT === null ? '-' : frameOf(p) + 1))} shown=${per((p) => p.shownCount || 0)}`
-      + ` pts=${per((p) => p.shownT === null ? '-' : p.rel(p.shownT).toFixed(6))} targets=${per((p) => p.startT === null ? '-' : p.rel(p.pauseT).toFixed(6))}`
+      + ` pts=${per((p) => p.shownT === null ? '-' : p.rel(p.shownT).toFixed(6))} srcs=${per((p) => (p.shownT === null ? '-' : p.shownMarkTime().toFixed(6)))} targets=${per((p) => p.startT === null ? '-' : p.rel(p.pauseT).toFixed(6))}`
       + ` synced=${synced()} native=${per((p) => (p.cfg.native ? 1 : 0))} heights=${per((p) => p.cv.height || 0)} fps=${per((p) => fpsOf(p).toFixed(2))}`
       + ` widths=${per((p) => p.cv.width || 0)} stage=${tileSize().w}x${tileSize().h}`
       + ` transport=${per((p) => p.frameStream ? 'stream' : p.cfg.native ? 'message' : '-')}`

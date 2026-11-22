@@ -40,3 +40,22 @@ for the old-ffmpeg case in the single player.
 
 Per picture: one 35-byte line on a pipe and two small queues; no extra copy of the picture. A held picture
 is the same buffer list sent again. Audio is unchanged (`-copyts` does not alter the sample count).
+
+## Failure handling
+
+- The pictures waiting for their stamp are bounded (16). If the side pipe goes silent or out of step while
+  ffmpeg keeps decoding, the run continues without source times (its marks are refused) and the decoder stops
+  asking for stamps, instead of queuing 12 MB pictures at 4K without limit.
+- An ffmpeg that refuses the stamp filter (no `metadata` filter, no fd 4) fails before any picture: one retry
+  without stamps, remembered per ffmpeg build, before any GPU-method or decoder fallback.
+- Source times are only reported once a run from 0 has shown its first picture (that picture is the origin the
+  exporter finds with ffprobe). A seek before that reports none, so such marks are refused rather than guessed
+  from a declared `start_time`.
+
+## Compare
+
+Each tile records the picture it shows when A or B is set (its own source time, and whether that is only a slot
+count), as long as the tile is within 1.5 frames of the clock's moment. The clip of a tile uses those times, so a
+VFR clock tile holding 0.96 s at the 1.00 s slot does not put 0.96 s on a follower showing its 1.00 s picture.
+A tile that was not there (still seeking, or marks restored after a reload) falls back to the clock time plus
+offset, as before.

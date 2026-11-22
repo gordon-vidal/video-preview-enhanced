@@ -105,19 +105,27 @@ async function real(tools, dir) {
   gen('vfr.mp4', ['-f', 'lavfi', '-i', 'testsrc2=s=160x96:r=25:d=2', '-vf', String.raw`select=not(eq(n\,25))`, '-fps_mode', 'passthrough', '-c:v', 'libx264']);
   gen('gap.mp4', ['-f', 'lavfi', '-i', 'testsrc2=s=160x96:r=25:d=2', '-vf', String.raw`select=not(between(n\,25\,27))`, '-fps_mode', 'passthrough', '-c:v', 'libx264']);
   gen('offset.mkv', ['-f', 'lavfi', '-i', 'testsrc2=s=160x96:r=25:d=2', '-f', 'lavfi', '-i', 'sine=d=2', '-c:v', 'libx264', '-c:a', 'aac', '-output_ts_offset', '3600']);
-  const run = async (file, seek) => {
+  const run = async (file, seek, noStamps = false) => {
     const pr = await ff.probe(tools, file);
     const frames = [];
     let done = false;
     const nd = new NativeDecoder({ tools, file, probed: pr, method: 'none', maxHeight: 96, maxQueued: 4, log() {}, post: (m) => { if (m.type === 'batch' && m.eof) done = true; },
       postRaw: (m) => { if (m.type === 'ndv') { frames.push(m); nd.handle({ type: 'more', gen: m.gen }); } } });
+    nd.noStamps = noStamps;
     await nd.handle({ type: 'open' });
-    if (seek !== undefined) nd.handle({ type: 'seek', gen: 1, t: seek });
-    nd.handle({ type: 'more', gen: seek === undefined ? 0 : 1 });
+    nd.handle({ type: 'more', gen: 0 });
+    if (seek !== undefined) {
+      // As in the player, the seek comes after the first picture (the origin of the source times) has shown.
+      const first = Date.now() + 10000;
+      while (!frames.length && Date.now() < first) await new Promise((r) => setTimeout(r, 20));
+      frames.length = 0;
+      nd.handle({ type: 'seek', gen: 1, t: seek });
+      nd.handle({ type: 'more', gen: 1 });
+    }
     const end = Date.now() + 20000;
     while (!done && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
     nd.dispose();
-    return { frames, pr };
+    return { frames: seek === undefined ? frames : frames.filter((f) => f.gen === 1), pr };
   };
 
   // Non-zero start: stamps are relative to the first picture, not the 3600 s container clock.
@@ -151,6 +159,101 @@ async function real(tools, dir) {
   near(source.end, 1.12, 1e-6, 'B is inclusive');
   assert.strictEqual(source.last - source.first, 1);
   await assert.rejects(() => inspectSource(tools, clips['vfr.mp4'], { a, b: a, early: 0, native: true }), /native playback or Live transcode/);
+  return clips;
+}
+
+/** The unstamped path (an ffmpeg without -fps_mode, or one that refused the filter): ffmpeg's own constant rate, no source times. */
+async function unstamped(tools, clip) {
+  const pr = await ff.probe(tools, clip);
+  const frames = [];
+  let done = false;
+  const nd = new NativeDecoder({ tools, file: clip, probed: pr, method: 'none', maxHeight: 96, maxQueued: 4, log() {}, post: (m) => { if (m.type === 'batch' && m.eof) done = true; },
+    postRaw: (m) => { if (m.type === 'ndv') { frames.push(m); nd.handle({ type: 'more', gen: m.gen }); } } });
+  nd.noStamps = true;
+  await nd.handle({ type: 'open' });
+  nd.handle({ type: 'more', gen: 0 });
+  const end = Date.now() + 20000;
+  while (!done && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+  nd.dispose();
+  assert.ok(frames.length >= 40, `${frames.length} pictures`);
+  assert.ok(frames.every((f, i) => f.src === undefined && Math.abs(f.t - i / pr.video.fps) < 1e-9), 'slots by count, no source time');
+  assert.ok(nd.proc === null || !nd.proc.stamped);
+}
+
+const PROBED = { duration: 4, video: { index: 0, codec: 'h264', pixFmt: 'yuv420p', width: 2, height: 2, fps: 25, timeBase: '1/90000', startTime: 3600 }, audio: null };
+const stampLine = (n, sec) => ({ n, pts: Math.round(sec * 90000), time: sec });
+const stampedProc = (t = 0) => ({ stamped: true, raw: [], stampQ: [], placed: 0, t, timeBase: [1, 90000], resampler: new np.Resampler(25),
+  stdout: { isPaused: () => false, pause() {} } });
+
+/** The stamp pipe goes silent while pictures keep coming and ffmpeg stays open: bounded memory, playback goes on. */
+function silentPipe() {
+  const nd = new NativeDecoder({ probed: PROBED, method: 'none', log() {}, post() {}, postRaw() {} });
+  const proc = stampedProc();
+  for (let i = 0; i < 100; i++) {
+    nd.picture(proc, [Buffer.from([i])]);
+    assert.ok(proc.raw.length <= 16, `at most 16 pictures wait for a stamp (${proc.raw.length} at picture ${i})`);
+  }
+  assert.ok(proc.untrusted && nd.noStamps, 'the run goes on without source times, and so does the next');
+  assert.strictEqual(nd.frames.length, 100, 'every picture was delivered');
+  assert.ok(nd.frames.every((e) => Number.isNaN(e.src)), 'unstamped: marks stay ineligible');
+  assert.deepStrictEqual(nd.frames.map((e) => e.parts[0][0]), [...Array(100).keys()], 'in order');
+  // Late stamps of the abandoned run are ignored.
+  nd.dispose();
+}
+
+/** Marks stay without source times until the first picture of a run from 0 has been seen. */
+function unverifiedOrigin() {
+  const nd = new NativeDecoder({ probed: PROBED, method: 'none', log() {}, post() {}, postRaw() {} });
+  const seek = stampedProc(1);
+  seek.stampQ.push(stampLine(0, 3601.04), stampLine(1, 3601.08));
+  nd.picture(seek, [Buffer.from([0])]);
+  nd.picture(seek, [Buffer.from([1])]);
+  assert.ok(nd.frames.every((e) => Number.isNaN(e.src)), 'a declared start_time (3600 s here) is not trusted as the origin');
+  const first = stampedProc(0);
+  first.stampQ.push(stampLine(0, 3600.04), stampLine(1, 3600.08));
+  nd.frames = [];
+  nd.picture(first, [Buffer.from([0])]);
+  nd.picture(first, [Buffer.from([1])]);
+  near(nd.frames[0].src, 0, 1e-9, 'the first picture of the run from 0 is the origin');
+  near(nd.frames[1].src, 0.04, 1e-9);
+  nd.frames = [];
+  const later = stampedProc(1);
+  later.stampQ.push(stampLine(0, 3601.04));
+  nd.picture(later, [Buffer.from([0])]);
+  near(nd.frames[0].src, 1.0, 1e-9, 'a later seek is relative to it');
+  nd.dispose();
+}
+
+/** A modern ffmpeg without the metadata filter: one retry without stamps, before any GPU or decoder fallback. */
+function filterRefused() {
+  const { EventEmitter } = require('events');
+  const launched = [];
+  const failures = [];
+  const nd = new NativeDecoder({ probed: PROBED, method: 'd3d11va', log() {}, post() {}, postRaw() {}, onFail: (e) => failures.push(e) });
+  nd.tools = { ffmpeg: 'fake' };
+  nd.w = 2; nd.h = 2; nd.fps = 25;
+  nd.launch = (t) => {
+    const stamped = !nd.noStamps;
+    const stdio = [null, null, null, new EventEmitter(), Object.assign(new EventEmitter(), { setEncoding() {} })];
+    const proc = Object.assign(new EventEmitter(), { t, stamped, method: nd.method, exitCode: null, err: { text: '' }, stdio,
+      stdout: Object.assign(new EventEmitter(), { isPaused: () => false }), stderr: new EventEmitter(), kill() {}, timeBase: [1, 90000] });
+    stdio[1] = proc.stdout;
+    launched.push(proc);
+    return proc;
+  };
+  nd.startAt(0);
+  assert.ok(launched[0].stamped);
+  launched[0].err.text = "[AVFilterGraph @ 0] No such filter: 'metadata'\nError parsing a filter description";
+  launched[0].emit('close', 1);
+  assert.strictEqual(launched.length, 2, 'retried once');
+  assert.ok(nd.noStamps && !launched[1].stamped, 'without the timestamp filter');
+  assert.strictEqual(nd.method, 'd3d11va', 'the GPU method was not blamed');
+  assert.deepStrictEqual(failures, []);
+  // A failure that has nothing to do with the filter keeps the old ladder.
+  launched[1].err.text = 'Device creation failed';
+  launched[1].emit('close', 1);
+  assert.strictEqual(nd.method, 'none', 'software next');
+  nd.dispose();
 }
 
 function refusal() {
@@ -175,10 +278,21 @@ function refusal() {
   slots();
   header();
   pairing();
+  silentPipe();
+  unverifiedOrigin();
+  filterRefused();
   refusal();
   const tools = await ff.locateTools('', '');
   if (!tools || spawnSync(tools.ffmpeg, ['-version'], { windowsHide: true }).status !== 0) { console.log('nativepts: ok (real ffmpeg part skipped)'); return; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-nativepts-'));
-  try { await real(tools, dir); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  // The stamped fixtures need `-fps_mode` and the metadata filter (ffmpeg 5.1+); older builds only run the unstamped path.
+  const help = spawnSync(tools.ffmpeg, ['-h', 'filter=metadata'], { encoding: 'utf8', windowsHide: true }).stdout || '';
+  const stampedOk = !tools.legacy && /direct/.test(help);
+  try {
+    if (stampedOk) await real(tools, dir); else console.log('nativepts: stamped real-ffmpeg checks skipped (ffmpeg without -fps_mode or the metadata filter)');
+    const clip = path.join(dir, 'plain.mp4');
+    execFileSync(tools.ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=160x96:r=25:d=2', '-c:v', 'libx264', clip], { windowsHide: true });
+    await unstamped(tools, clip);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   console.log('nativepts: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

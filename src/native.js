@@ -34,6 +34,11 @@ const failedGpuFilters = new WeakMap();
 // installation and class (same key shape as the filters): later files of that class start with
 // ffmpeg's own pick instead of failing once more.
 const failedMethods = new WeakMap();
+// ffmpeg builds (per tools) whose filter graph refused the timestamp filter: the next decoders skip it.
+const noStampTools = new WeakSet();
+// Pictures that may wait for their timestamp before the pipe is taken for silent (about two frames of skew are normal).
+const MAX_UNPAIRED = 16;
+const STAMP_FAILURE = /metadata|No such filter|No option name|Error (?:parsing|initializing|reinitializing) (?:a )?filter|Bad file descriptor|pipe:4/i;
 // Told when a guessed method fails (the extension detects the GPUs again: they may have changed).
 let guessFailed = () => {};
 function onGuessFailed(fn) { guessFailed = typeof fn === 'function' ? fn : () => {}; }
@@ -400,7 +405,7 @@ class NativeDecoder {
       const parser = new stamps.StampParser();
       proc.stdio[stamps.STAMP_FD].setEncoding('utf8');
       proc.stdio[stamps.STAMP_FD].on('data', (d) => {
-        if (proc !== this.proc) return;
+        if (proc !== this.proc || proc.untrusted) return;
         proc.stampQ.push(...parser.push(d));
         this.pair(proc);
         this.flushWaiting();
@@ -428,6 +433,16 @@ class NativeDecoder {
       const why = error ? exit : err.text.trim().split(/\r?\n/).slice(-2).join(' | ');
       if (error) this.log(`native ffmpeg spawn failed: ${why}`);
       else if (failed) this.log(`native ffmpeg exited ${signal || code}: ${why}`);
+      if (failed && !this.gotOutput && proc.stamped && STAMP_FAILURE.test(err.text)) {
+        // This build cannot run the timestamp filter (no metadata filter, no fd 4): one retry with ffmpeg's own
+        // constant-rate output, before any GPU or decoder fallback.
+        this.log(`ffmpeg refused the timestamp filter (${why}); decoding without source timestamps`);
+        this.noStamps = true;
+        noStampTools.add(this.tools);
+        this.takeStandby(NaN);
+        this.startAt(t, this.credits);
+        return;
+      }
       if (failed && !this.gotOutput) {
         if (proc.gpuFilter) {
           this.log(`${proc.gpuFilter} failed on this file; scaling in software with ${this.method} decoding`);
@@ -482,7 +497,7 @@ class NativeDecoder {
     // Source timestamps (src/nativepts.js): every picture passes unchanged, its timestamp comes on fd 4, and the
     // constant-rate slots are made here. Old ffmpeg builds (no -fps_mode) keep ffmpeg's own resampling.
     const timeBase = v ? stamps.parseTimeBase(v.timeBase) : null;
-    const stamped = !!timeBase && modern && !this.noStamps;
+    const stamped = !!timeBase && modern && !this.noStamps && !noStampTools.has(this.tools);
     if (stamped) args.push('-copyts');
     // Leave surfaces on the GPU when the build has a filter for this source format.
     if (v) args.push(...hw.inputArgs(this.method, gpuFilter));
@@ -521,7 +536,15 @@ class NativeDecoder {
   picture(proc, parts) {
     if (!proc.stamped) { this.frames.push({ parts, src: NaN, left: 1 }); return; }
     proc.raw.push(parts);
-    this.pair(proc);
+    // Stamps stopped coming (or stopped following the pictures) while pictures go on: waiting for them would
+    // fill memory (12 MB a picture at 4K) and stall playback. This run goes on without source times.
+    if (proc.raw.length > MAX_UNPAIRED && !proc.untrusted) {
+      proc.untrusted = true;
+      this.noStamps = true;
+      this.takeStandby(NaN);
+      this.log(`native: ${proc.raw.length} pictures without timestamps; continuing without source times`);
+    }
+    this.pair(proc, !!proc.untrusted);
   }
 
   /**
@@ -529,7 +552,7 @@ class NativeDecoder {
    * slots the player paces on. flush: ffmpeg is done, pictures still without a stamp go on with an unknown one.
    */
   pair(proc, flush = false) {
-    while (proc.raw.length && (proc.stampQ.length || flush)) {
+    while (proc.raw.length && (proc.stampQ.length || flush || proc.untrusted)) {
       const parts = proc.raw.shift();
       const stamp = proc.stampQ.shift();
       // The count printed with each stamp must follow the pictures; else this run's stamps are not trusted.
@@ -540,10 +563,10 @@ class NativeDecoder {
       if (!slot) continue; // on a slot already filled: dropped, as cfr did
       if (slot.hold && proc.last) this.frames.push({ ...proc.last, left: slot.hold });
       // The player's time starts at the first picture; a start at 0 is that picture.
-      if (Number.isFinite(seconds) && proc.t === 0 && proc.placed === 1) this.origin = seconds;
-      // Before any start at 0 has shown it, the stream's own start time stands in for that picture.
-      const origin = Number.isFinite(this.origin) ? this.origin : Number(this.pr.video.startTime ?? NaN);
-      const src = Number.isFinite(seconds) && Number.isFinite(origin) ? seconds - origin : NaN;
+      // The origin is the first picture of a run from 0, as ffprobe finds it for the exporter. Until one has been seen
+      // a declared start_time could disagree with it (AVI with B-frames), so marks stay without source times.
+      if (Number.isFinite(seconds) && proc.t === 0 && proc.placed === 1) this.stampOrigin = seconds;
+      const src = Number.isFinite(seconds) && Number.isFinite(this.stampOrigin) ? seconds - this.stampOrigin : NaN;
       const entry = { parts, src, left: 1 };
       proc.last = entry;
       this.frames.push(entry);

@@ -64,24 +64,45 @@ const nativeCase = {
         checkClip(ok, h, path.join(folder, 'vfr-native_A-B.mp4'), stamps.map((r) => r[5]), first, last, 1);
       } finally { await P.close(); }
     });
+    // A VFR clock (native, may hold its 0.96 s picture at the 1.00 s slot) next to a CFR follower: each tile's clip must
+    // start and end on the picture that tile showed at A and B, not on the clock tile's source time.
     await R.run('clip/native-compare', async (ok) => {
-      const twin = path.join(folder, 'vfr-native-twin.mp4');
-      fs.copyFileSync(vfr, twin);
+      const cfr = path.join(folder, 'cfr-follower.mp4');
+      for (const name of fs.readdirSync(folder)) if (/^[AB]_(?:vfr-native|cfr-follower)_A-B/.test(name)) fs.unlinkSync(path.join(folder, name));
+      run(h.ffmpeg, ['-y', '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=2', '-f', 'lavfi', '-i', 'sine=d=2',
+        '-c:v', 'libx264', '-g', '25', '-c:a', 'aac', cfr]);
       const act = (data) => vs.send({ compare: true, ...data });
+      const shown = async () => {
+        const mark = vs.mark();
+        act({ action: 'report' });
+        const line = await vs.waitLog(/webview: compare report /, { from: mark, timeout: 5000 });
+        return line.match(/\bsrcs=(\S+)/)[1].split(',').map(Number);
+      };
       const from = vs.mark();
-      vs.send({ compareFiles: [vfr, twin] });
+      vs.send({ compareFiles: [vfr, cfr] });
       await vs.waitLog(/first pictures shown/, { from, timeout: 45000 });
       await lib.sleep(1500);
       act({ action: 'seek', t: 1.0 }); await lib.sleep(2500);
+      const atA = await shown();
       act({ action: 'key', key: 'a' });
       act({ action: 'seek', t: 1.6 }); await lib.sleep(2500);
+      const atB = await shown();
       act({ action: 'key', key: 'b' });
       act({ action: 'pause' });
       const mark = vs.mark();
       vs.send({ command: 'videoPreviewEnhanced.exportCompareVideoRange' });
       await vs.waitLog(/A–B export to /, { from: mark, timeout: 45000 });
-      const clips = fs.readdirSync(folder).filter((f) => /^[AB]_vfr-native(-twin)?_A-B.mp4$/.test(f));
-      ok(clips.length === 2, `a native Compare exports both tiles exactly: ${clips.join(', ')}`);
+      const sources = [vfr, cfr].map((file) => run(h.ffmpeg, ['-i', file, '-map', '0:v:0', '-fps_mode', 'passthrough', '-f', 'framemd5', '-'])
+        .split(/\r?\n/).filter((line) => /^\d+,/.test(line)).map((line) => line.split(',').map((x) => x.trim())));
+      const exported = [path.join(folder, 'A_vfr-native_A-B.mp4'), path.join(folder, 'B_cfr-follower_A-B.mp4')];
+      for (let i = 0; i < 2; i++) {
+        const at = (pts) => sources[i].findIndex((r) => Number(r[2]) === Math.round(pts * 25));
+        const first = at(atA[i]);
+        const last = at(atB[i]);
+        ok(first >= 0 && last > first, 'tile ' + i + ' showed source pictures at A and B: ' + atA[i] + ', ' + atB[i]);
+        if (first >= 0 && last > first && fs.existsSync(exported[i])) checkClip(ok, h, exported[i], sources[i].map((r) => r[5]), first, last, 1);
+        else ok(false, 'tile ' + i + ' clip exists: ' + exported[i]);
+      }
     });
     return R.out;
   },
