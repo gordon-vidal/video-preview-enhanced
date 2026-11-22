@@ -113,10 +113,83 @@
     };
   }
 
+  /**
+   * A drag in Reorder mode: every preview starts from the order the drag began with, so moving back over the
+   * start slot (or off the tiles, `to` -1) restores it; commit keeps the preview, cancel the start order.
+   */
+  function reorderSession(order, from) {
+    let preview = order;
+    return {
+      get preview() { return preview; },
+      over(to) { preview = to < 0 ? order : moveTile(order, from, to); return preview; },
+      commit() { return preview; },
+      cancel() { preview = order; return order; },
+    };
+  }
+
+  /** The tile header's remove button: only from 3 videos on (with 2, Remove leaves Compare: src/compare.js `remove`). */
+  const canRemoveTile = (n) => n > 2;
+  /** `name` is already HTML-escaped; `icon` an SVG string. */
+  function removeButtonHtml(n, i, name, icon) {
+    if (!canRemoveTile(n)) return '';
+    return `<button class="rm" data-act="remove" data-i="${i}" aria-label="Remove ${name} from Compare" title="Remove from Compare">${icon}</button>`;
+  }
+
+  /** cubic-bezier(0.2, 0, 0, 1) (the tiles' glide) at progress p of 0-1: x solved by bisection, then y. */
+  function easeStandard(p) {
+    if (!(p > 0)) return 0;
+    if (p >= 1) return 1;
+    const bez = (t, a, b) => 3 * a * t * (1 - t) ** 2 + 3 * b * t * t * (1 - t) + t ** 3;
+    let lo = 0, hi = 1, t = p;
+    for (let k = 0; k < 24; k++) {
+      t = (lo + hi) / 2;
+      if (bez(t, 0.2, 0) < p) lo = t; else hi = t;
+    }
+    return bez(t, 0, 1);
+  }
+
+  /**
+   * Tiles gliding into new slots (FLIP): `retarget(shown, next, now)` takes where each video is drawn now
+   * (its slot plus any glide still running) and where its new slot is, and starts from the difference;
+   * `offset(v, now)` eases that to 0 in `duration` ms (a function: read on each retarget, 0 = jump).
+   * Positions are {video: {x, y}}; `skip` is a video that follows the pointer instead.
+   * @param {number | (() => number)} duration
+   */
+  function createGlide(duration = 180) {
+    /** @type {Map<number, {dx: number, dy: number, t0: number, ms: number}>} */
+    const moving = new Map();
+    function offset(v, now) {
+      const m = moving.get(v);
+      if (!m) return { dx: 0, dy: 0 };
+      const p = m.ms > 0 ? (now - m.t0) / m.ms : 1;
+      if (p >= 1) { moving.delete(v); return { dx: 0, dy: 0 }; }
+      const k = 1 - easeStandard(p);
+      return { dx: m.dx * k, dy: m.dy * k };
+    }
+    return {
+      offset,
+      retarget(shown, next, now, skip = -1) {
+        const ms = typeof duration === 'function' ? duration() : duration;
+        for (const key of Object.keys(next)) {
+          const v = Number(key), a = shown[key], b = next[key];
+          if (v === skip || !a || ms <= 0) { moving.delete(v); continue; }
+          const dx = a.x - b.x, dy = a.y - b.y;
+          if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) moving.delete(v);
+          else moving.set(v, { dx, dy, t0: now, ms });
+        }
+      },
+      active(now) {
+        for (const v of [...moving.keys()]) offset(v, now);
+        return moving.size > 0;
+      },
+      clear() { moving.clear(); },
+    };
+  }
+
   const api = {
     TILE_KEYS, MAX_VIDEOS, DEFAULT_MAX, LARGE, GRID_PIXELS, clampMax, isLarge, gridFor, gridCellCount,
     tileOrder, moveTile, orderAfterRemoval, tileMemory, texturePixels, capSize, nativeCredits, nativeQueuePerTile,
-    compareVisibility,
+    compareVisibility, reorderSession, canRemoveTile, removeButtonHtml, easeStandard, createGlide,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.CompareGrid = api;

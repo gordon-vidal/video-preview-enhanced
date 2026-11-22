@@ -68,7 +68,30 @@ Put matching camera angles or references next to each other while the videos kee
        └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
 ```
 
-Drag over another tile to preview insertion into its slot. Release on a tile to keep the change. **Done**,
+Drag over another tile to preview insertion into its slot. Release on a tile to keep the change.
+
+**Live drag (2026-11-22).** Past 4 px the tile lifts: its cell gets `.lifted` (shadow, above the other cells) and
+follows the pointer at `scale(1.02)`. Over another slot, the others glide to the order a drop would give
+(`Grid.reorderSession`, always from the start order). The glide is a FLIP tween in `Grid.createGlide`: 180 ms,
+`cubic-bezier(0.2, 0, 0, 1)`, and 0 ms with `prefers-reduced-motion: reduce`. It runs in JavaScript, not as a CSS
+transition, because the pictures are drawn on the WebGL canvas under the cells. Each frame, `draw()` shifts each
+tile's rectangle by the offset its cell has (`tileShift`) and draws the lifted tile last. A drop glides the lifted
+tile into its slot and commits through `commitOrder` (no reload, playback goes on). Esc, Done, a lost pointer or
+leaving the mode glide everything back. The arrows use the same glide. Split has one cell, so only the labels change.
+
+**Remove button (2026-11-22).** With 3 or more videos, each tile's hover / focus layer has a 26 px **×** in its
+top-right corner (22 px in dense grids). The single-tile offset nudge moves 34 px left to make room, and dense
+grids pad the layer's right edge. Its name is `Remove <name> from Compare` and its title `Remove from Compare`. It
+posts the host's `remove` (via `removeTile`), and the tiles' click handler stops the click before play / pause. With 2
+videos there is no ×: removing one leaves Compare, which stays in the tile menu and the video's page. Hidden in Reorder mode.
+
+```text
+  ┌───────────────────────────────────────┐
+  │ [A clip.mp4 #120]      [‹ 0 ›] [×]     │
+  │                                       │
+  │                               [↑ ↓]   │
+  └───────────────────────────────────────┘
+``` **Done**,
 **Esc** or switching editor tabs ends the mode and cancels an unfinished drag. While in the mode, the tiles
 pause their pan, zoom, wheel stepping, divider and offset gestures.
 

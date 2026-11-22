@@ -120,8 +120,8 @@ One feature: compare becomes multi-view. The difference view is dropped.
 - **Now:** up to 8 videos by default (2–16 via `compare.maxVideos`). Two videos can sit side by side or split
   with a draggable divider. Three or four use a 2×2 grid, and five or more use a larger static grid with
   compact hover controls. A spare cell can add another video while below the limit.
-- **Tile order** can be changed with the bar's **Reorder** button and a drag, or with the arrows on
-  each tile. The clock, sound and offsets follow their videos. Free tile placement is deferred.
+- **Tile order** can be changed with the bar's **Reorder** button and a drag (the tile follows the pointer and
+  the others glide into place), or with the arrows on each tile. The clock, sound and offsets follow their videos. Free tile placement is deferred.
 - **A–B loop and clips:** A and B mark the shared timeline. Native ffmpeg copies one clip per eligible tile
   with its offset applied. Compare asks before skipping tiles, and reports any frame rounding that affects sync.
   The single player can save one clip. MP4/MOV clips use presentation edits to show A through B inclusive.
@@ -131,7 +131,7 @@ One feature: compare becomes multi-view. The difference view is dropped.
   bar button opens the **Compare panel** (⚙-panel style): a row per video (letter, name, clock / sound, offset)
   with its own page (offset − / + in frames or ms, Reset, Clock and Sound switches, Replace video…, Remove), Add
   video (n of the set limit), View (2 videos: Side by side | Split), Swap, Leave compare. Tiles are clean; hover shows the name
-  pill with the tile's own frame number and a ‹ offset › nudge; − / + nudge the tile under the pointer;
+  pill with the tile's own frame number and a ‹ offset › nudge (from 3 videos also a × that removes the tile); − / + nudge the tile under the pointer;
   right-click a tile for its actions. The old compare toolbar and sync panel are gone.
 - **Entering:** the player's **Compare** button (2026-11-22) asks for confirmation before starting with this one video
   and Add Mode on. If a Compare is open, the button becomes **Add to Compare** and adds the video to the most recently
