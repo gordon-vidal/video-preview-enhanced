@@ -9,7 +9,7 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9a-z-]+(?:\.[0-9a-z-]+)*)?(?:\+[0-9a-z-]+(
 async function otherInstalledVersions(extensionDir, extensionId) {
   const dir = path.dirname(extensionDir);
   const mine = path.basename(extensionDir).toLowerCase();
-  if (!extensionId || path.basename(dir).toLowerCase() !== 'extensions') return [];
+  if (!extensionId) return [];
   const prefix = `${extensionId.toLowerCase()}-`;
   const matches = (name) => name.toLowerCase().startsWith(prefix) && VERSION.test(name.slice(prefix.length));
   if (!matches(mine)) return [];

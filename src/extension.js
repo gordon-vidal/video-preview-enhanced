@@ -1261,7 +1261,8 @@ function activate(context) {
   );
   autoDefault();
   fileIcons();
-  warnOldInstalls(context.extension && context.extension.id);
+  // A development extension can live beside identically named worktrees.
+  if (context.extensionMode === vscode.ExtensionMode.Production) warnOldInstalls(context.extension?.id);
 
   // ---- Compare and Add to Compare (src/compare.js) ----
   let testCompareFiles;
