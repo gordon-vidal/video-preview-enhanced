@@ -180,6 +180,7 @@ body.idle { cursor: none; }
   border-left: 2px solid var(--vscode-progressBar-background);
   border-right: 2px solid var(--vscode-progressBar-background);
   pointer-events: none;
+  z-index: 2;
 }
 
 /* ---- Inspection (inspect.js): zoom and pan, pixel grid and readout, go to, stats ---- */
