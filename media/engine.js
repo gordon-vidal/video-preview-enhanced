@@ -1046,7 +1046,7 @@ function createEngine(env) {
     onAudioRunning() {
       if (this.disposed || !this.ac || this.ac.state !== 'running') return;
       this.acUnlocked = true;
-      setMuteUi(false);
+      if (!this.muted) setMuteUi(false);
       if (!this.playing) this.restAudioLater(this.hidden ? 0 : AC_REST_MS);
       wake();
     }

@@ -71,6 +71,8 @@ const playFlash = /<div id="playFlash" aria-hidden="true"><svg class="i-play"[\s
 const playerStyles = fs.readFileSync(path.join(__dirname, '../../media/player.css'), 'utf8');
 assert.match(playerStyles, /#seek:focus:not\(:focus-visible\), #volume:focus:not\(:focus-visible\) \{ outline: none; \}/);
 assert.match(playerStyles, /#seek:focus-visible, #volume:focus-visible \{ outline: 1px solid var\(--vscode-focusBorder\); outline-offset: 2px; \}/);
+assert.match(playerStyles, /\.vol-wrap:not\(\.no-audio\):hover \.vol-slide/, 'no-audio keeps the volume slider folded');
+assert.match(playerStyles, /\.vol-wrap\.no-audio #mute \{ opacity: 0\.4;/, 'no-audio dims the disabled mute button');
 // Narrow panes shed bar buttons in steps (docs/notes/ui-simple.md, "Narrow bar"); the step buttons go only at the last one.
 const ladder = [...playerStyles.matchAll(/@media \(max-width: (\d+)px\) \{([\s\S]*?)\n\}/g)].map((m) => [Number(m[1]), m[2]]);
 assert.deepStrictEqual(ladder.map((m) => m[0]), [640, 500, 400, 320, 250], 'narrow bar steps');

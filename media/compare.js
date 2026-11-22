@@ -86,8 +86,6 @@
       : VpeControls.STEP_SIZES.includes(cfg.prefs?.stepSize) ? cfg.prefs.stepSize : null,
   };
   const initPrefs = cfg.prefs || {};
-  let userMuted = saved.muted !== undefined ? !!saved.muted : !!initPrefs.muted;
-  let autoplayMuted = false;
   const rawVol = saved.volume !== undefined ? Number(saved.volume) : initPrefs.volume !== undefined ? Number(initPrefs.volume) : 1;
   const Pic = VpePicture;
   const st = {
@@ -107,7 +105,7 @@
     clock: tileOr0(saved.clock), sound: tileOr0(saved.sound), sel: tileOr0(saved.sel ?? 1), infoSel: 0,
     rate: VpeControls.clampRate(saved.rate || initPrefs.rate || 1),
     volume: Number.isFinite(rawVol) && rawVol >= 0 && rawVol <= 1 ? Math.round(rawVol * 100) / 100 : 1,
-    muted: userMuted,
+    muted: saved.muted !== undefined ? !!saved.muted : true,
     loop: saved.loop !== undefined ? saved.loop : true, thresh: saved.thresh || 40, metrics: INTERNAL,
     timeMode: [0, 1, 2].includes(Number(saved.timeMode)) ? Number(saved.timeMode)
       : [0, 1, 2].includes(Number(initPrefs.timeMode)) ? Number(initPrefs.timeMode) : 0,
@@ -190,14 +188,7 @@
       toast: (t) => { if (!quiet) toast(`${key}: ${t}`); },
       getState: () => ({}),
       setMuteUi: (m) => {
-        if (key !== KEYS[st.sound]) return;
-        if (m) {
-          autoplayMuted = true;
-          setMute(true, false);
-        } else if (autoplayMuted) {
-          autoplayMuted = false;
-          setMute(userMuted, false);
-        }
+        if (key === KEYS[st.sound] && m !== st.muted) setMute(m, false);
       },
       onReady: () => onEngineReady(key),
       onMeta: () => onEngineMeta(key),
@@ -421,6 +412,7 @@
       if (visible && !p.hidden) p.worker.postMessage({ type: 'hidden', on: false });
       else p.setHidden(!visible);
     }
+    updateMuteUi();
     if (tiles.length === N && tiles.every((p) => p.vmode !== undefined) && !begun) begin();
   }
   /** Frame rate each tile's frame offsets were last synced with (30 is assumed before the engine knows). */
@@ -1509,12 +1501,6 @@
   /** Sound from tile i only; the others are muted. */
   function setSound(i, quiet) {
     st.sound = tileOr0(i);
-    const snd = tiles[st.sound];
-    if (!userMuted && snd && typeof snd.audioBlocked === 'function') {
-      autoplayMuted = snd.audioBlocked();
-      if (autoplayMuted && typeof snd.unlockAudio === 'function') snd.unlockAudio();
-      st.muted = userMuted || autoplayMuted;
-    }
     applyVolume();
     updateOverlays();
     updateMuteUi();
@@ -1522,8 +1508,24 @@
     save();
     if (!quiet) toast(`Sound from ${tileLabel(st.sound)}`);
   }
+  function hasAudio() {
+    if (tiles.some((p) => p && !!(p.audio || (p.info && p.info.audio)))) return true;
+    return !tiles.length || !tiles.every((p) => p && (p.info || p.vmode !== undefined));
+  }
   function applyVolume() { tiles.forEach((p, j) => p.setVolume(st.volume, st.muted || j !== st.sound)); }
   function updateMuteUi() {
+    const noAudio = !hasAudio();
+    ui.mute.disabled = noAudio;
+    ui.volume.disabled = noAudio;
+    if (ui.mute.parentElement) ui.mute.parentElement.classList.toggle('no-audio', noAudio);
+    if (noAudio) {
+      ui.mute.classList.toggle('muted', true);
+      ui.mute.classList.toggle('on', true);
+      if (ui.mute.removeAttribute) ui.mute.removeAttribute('aria-pressed');
+      ui.mute.setAttribute('aria-label', 'No audio track');
+      ui.mute.title = 'No audio track';
+      return;
+    }
     const m = st.muted;
     ui.mute.classList.toggle('muted', m || st.volume === 0);
     ui.mute.classList.toggle('on', m);
@@ -1532,55 +1534,43 @@
     ui.mute.title = `${m ? 'Unmute' : 'Mute'} (sound from ${tileLabel(st.sound)})  M`;
   }
   function postPlaybackPrefs() {
-    vscode.postMessage({ type: 'playbackPrefs', volume: st.volume, muted: userMuted, rate: st.rate, timeMode: st.timeMode,
+    vscode.postMessage({ type: 'playbackPrefs', volume: st.volume, rate: st.rate, timeMode: st.timeMode,
       stepSize: prefs.stepSize });
   }
   /** Another tab changed a shared playback preference (src/extension.js rememberPlaybackPrefs): follow it quietly. */
   function applyPlaybackPrefs(p) {
     if (!p) return;
-    if (Number.isFinite(p.volume)) { st.volume = p.volume; ui.volume.value = String(st.volume); }
-    const snd = tiles[st.sound];
-    if (typeof p.muted === 'boolean') {
-      userMuted = p.muted;
-      if (userMuted) autoplayMuted = false;
-      else if (snd && typeof snd.audioBlocked === 'function' && snd.audioBlocked()) autoplayMuted = true;
+    if (Number.isFinite(p.volume) && p.volume !== st.volume) {
+      st.volume = p.volume;
+      ui.volume.value = String(st.volume);
+      updateMuteUi();
+      applyVolume();
     }
-    setMute(userMuted || autoplayMuted, false);
-    if (!userMuted && autoplayMuted && snd && typeof snd.unlockAudio === 'function') snd.unlockAudio();
     if (Number.isFinite(p.rate) && p.rate !== st.rate) setRate(p.rate, false);
     if ([0, 1, 2].includes(p.timeMode) && p.timeMode !== st.timeMode) { st.timeMode = p.timeMode; lastUi = ''; updateUi(); }
     if (p.stepSize !== undefined && p.stepSize !== prefs.stepSize) { prefs.stepSize = p.stepSize; updateStepTips(); }
     save();
     if (controls) controls.refresh();
   }
-  // As in the player: the first click or key in the page is the gesture a new tab needs before it may play sound.
-  const endAutoplayMute = (e) => {
-    if (e && typeof e.button === 'number' && e.button !== 0) return;
-    if (e && typeof e.key === 'string' && /^(Shift|Control|Alt|Meta|AltGraph|CapsLock|NumLock|ScrollLock|Escape)$/.test(e.key)) return;
-    for (const p of tiles) if (p && typeof p.unlockAudio === 'function') p.unlockAudio();
-    if (e && (e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey) return;
-    if (!autoplayMuted || userMuted || (e && e.target instanceof Element && e.target.closest('#mute'))) return;
-    autoplayMuted = false;
-    setMute(false, false);
-  };
-  window.addEventListener('pointerdown', endAutoplayMute, true);
-  window.addEventListener('keydown', endAutoplayMute, true);
   function setMute(m, byUser = true) {
-    if (byUser) {
-      autoplayMuted = false;
-      userMuted = m;
-    }
+    if (byUser && !hasAudio()) { toast('No audio track'); return; }
     st.muted = m;
     updateMuteUi();
     applyVolume();
     updateOverlays();
     save();
-    if (byUser) postPlaybackPrefs();
   }
   function setVolume(v) {
     st.volume = Math.max(0, Math.min(1, Math.round(v * 100) / 100));
     ui.volume.value = String(st.volume);
-    if (st.volume > 0 && st.muted) setMute(false); else setMute(userMuted);
+    if (st.volume > 0 && st.muted && hasAudio()) setMute(false);
+    else {
+      updateMuteUi();
+      applyVolume();
+      updateOverlays();
+      save();
+    }
+    postPlaybackPrefs();
   }
   function setRate(r, persist = true) {
     st.rate = VpeControls.clampRate(r);
@@ -1664,7 +1654,7 @@
     clearTimeout(saveTimer);
     vscode.setState({
       pic: st.pic.mode, mode: st.mode, split: st.split, order: st.order, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
-      rate: st.rate, volume: st.volume, muted: userMuted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode, stepSize: prefs.stepSize,
+      rate: st.rate, volume: st.volume, muted: st.muted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode, stepSize: prefs.stepSize,
       ab: { a: ab.a, b: ab.b, aPts: ab.aPts, bPts: ab.bPts, aNative: ab.aNative, bNative: ab.bNative },
       t: t ?? (pendingStart || (clock && begun && clock.startT !== null ? clock.currentTime() : saved.t || 0)),
       ...changes,
@@ -2292,8 +2282,8 @@
   ui.mute.onclick = () => setMute(!st.muted);
   VpeRangeDrag.bind(ui.volume);
   VpeControls.holdVolumeOpen(ui.volume);
-  ui.volume.addEventListener('input', () => setVolume(Number(ui.volume.value)));
-  ui.volume.addEventListener('wheel', (e) => { e.preventDefault(); setVolume(st.volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(st.volume * 100)}%`); }, { passive: false });
+  ui.volume.addEventListener('input', () => { if (hasAudio()) setVolume(Number(ui.volume.value)); });
+  ui.volume.addEventListener('wheel', (e) => { if (!hasAudio()) return; e.preventDefault(); setVolume(st.volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(st.volume * 100)}%`); }, { passive: false });
   ui.time.onclick = () => { st.timeMode = (st.timeMode + 1) % 3; lastUi = ''; updateUi(); save(); postPlaybackPrefs(); toast(['Time', 'Timecode', 'Frame number'][st.timeMode]); };
   ui.rate.onclick = () => controls.toggle('speed', ui.rate);
   ui.rate.addEventListener('wheel', (e) => { e.preventDefault(); bumpRate(e.deltaY < 0 ? 1 : -1); }, { passive: false });
@@ -2396,8 +2386,12 @@
       case '.': step(1); break;
       case '<': case '[': bumpRate(-1); break;
       case '>': case ']': bumpRate(1); break;
-      case 'ArrowUp': setVolume(st.volume + 0.05); toast(`Volume ${Math.round(st.volume * 100)}%`); break;
-      case 'ArrowDown': setVolume(st.volume - 0.05); toast(`Volume ${Math.round(st.volume * 100)}%`); break;
+      case 'ArrowUp':
+        if (!hasAudio()) { toast('No audio track'); break; }
+        setVolume(st.volume + 0.05); toast(`Volume ${Math.round(st.volume * 100)}%`); break;
+      case 'ArrowDown':
+        if (!hasAudio()) { toast('No audio track'); break; }
+        setVolume(st.volume - 0.05); toast(`Volume ${Math.round(st.volume * 100)}%`); break;
       case 'Home': pause(); seekClock(0); break;
       case 'End': pause(); seekTile(st.clock, clock.n - 1); break;
       case 'm': case 'M': setMute(!st.muted); break;

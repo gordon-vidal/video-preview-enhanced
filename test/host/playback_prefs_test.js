@@ -1,7 +1,7 @@
 'use strict';
-// node test/host/playback_prefs_test.js: volume, muted, rate, and timeMode persist in globalState across
-// video tabs, Compare panels, and VS Code sessions, while transient autoplay-policy mutes never overwrite
-// the user's saved muted preference.
+// node test/host/playback_prefs_test.js: volume, rate, timeMode, and stepSize persist in globalState across
+// video tabs, Compare panels, and VS Code sessions (and broadcast live to open tabs), while every new tab
+// starts muted by default and videos without an audio track dim and disable the mute button.
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -30,22 +30,23 @@ function slice(src, from, to) {
 
     const settings = { 'videoPreviewEnhanced.compare.openTogether': false };
 
-    // 1. Fresh session starts with default playback prefs in cfg.prefs.
+    // 1. Fresh session starts with default playback prefs in cfg.prefs (no muted property in shared prefs).
     const h1 = load({ state, settings });
     const s1 = h1.open(fileA);
     await s1.shown;
     const cfg1 = webviewConfig(s1.panel.webview);
     assert.strictEqual(cfg1.prefs.volume, 1);
-    assert.strictEqual(cfg1.prefs.muted, false);
+    assert.strictEqual(cfg1.prefs.muted, undefined);
     assert.strictEqual(cfg1.prefs.rate, 1);
     assert.strictEqual(cfg1.prefs.timeMode, 0);
+    assert.strictEqual(cfg1.prefs.stepSize, null);
 
-    // 2. Explicit user changes persist to globalState; duplicate messages do not rewrite globalState.
+    // 2. Explicit user changes persist volume, rate, timeMode, stepSize to globalState; muted is not persisted.
     const writes0 = h1.context.stateWrites || 0;
-    await s1.send({ type: 'playbackPrefs', volume: 0.35, muted: true, rate: 1.75, timeMode: 2 });
+    await s1.send({ type: 'playbackPrefs', volume: 0.35, muted: false, rate: 1.75, timeMode: 2 });
     assert.strictEqual(h1.context.stateWrites, writes0 + 1);
-    assert.deepStrictEqual(state.get(KEY), { volume: 0.35, muted: true, rate: 1.75, timeMode: 2, stepSize: null });
-    await s1.send({ type: 'playbackPrefs', volume: 0.35, muted: true, rate: 1.75, timeMode: 2 });
+    assert.deepStrictEqual(state.get(KEY), { volume: 0.35, rate: 1.75, timeMode: 2, stepSize: null });
+    await s1.send({ type: 'playbackPrefs', volume: 0.35, rate: 1.75, timeMode: 2 });
     assert.strictEqual(h1.context.stateWrites, writes0 + 1, 'identical prefs do not rewrite globalState');
 
     // 3. A second video tab (and a fresh VS Code session sharing globalState) inherits the saved prefs.
@@ -53,7 +54,7 @@ function slice(src, from, to) {
     await s2.shown;
     const cfg2 = webviewConfig(s2.panel.webview);
     assert.strictEqual(cfg2.prefs.volume, 0.35);
-    assert.strictEqual(cfg2.prefs.muted, true);
+    assert.strictEqual(cfg2.prefs.muted, undefined);
     assert.strictEqual(cfg2.prefs.rate, 1.75);
     assert.strictEqual(cfg2.prefs.timeMode, 2);
 
@@ -61,25 +62,15 @@ function slice(src, from, to) {
     // step size is shared too.
     const before = s1.posted.length;
     const senderBefore = s2.posted.length;
-    await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 });
+    await s2.send({ type: 'playbackPrefs', volume: 0.45, rate: 1.75, timeMode: 2, stepSize: 5 });
     assert.ok(!s2.posted.slice(senderBefore).some((m) => m.type === 'playbackPrefs'),
       'the sender gets no echo (it would snap a slider back mid-drag)');
     const live = s1.posted.slice(before).find((m) => m.type === 'playbackPrefs');
-    assert.deepStrictEqual(live && live.prefs, { volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 },
+    assert.deepStrictEqual(live && live.prefs, { volume: 0.45, rate: 1.75, timeMode: 2, stepSize: 5 },
       'the other open tab receives the new prefs');
-    // Unmuting a tab that was only autoplay-muted sends muted: false when globalState already has muted: false;
-    // the host must still broadcast to other open tabs without rewriting globalState.
-    const writesBeforeReassert = h1.context.stateWrites;
-    const s1BeforeReassert = s1.posted.length;
-    await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 });
-    assert.strictEqual(h1.context.stateWrites, writesBeforeReassert, 'unchanged prefs do not rewrite globalState');
-    const reasserted = s1.posted.slice(s1BeforeReassert).find((m) => m.type === 'playbackPrefs');
-    assert.deepStrictEqual(reasserted && reasserted.prefs,
-      { volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 },
-      'other open tabs still receive the explicit unmute broadcast');
-    await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: true, rate: 1.75, timeMode: 2, stepSize: 'bogus' });
+    await s2.send({ type: 'playbackPrefs', volume: 0.35, rate: 1.75, timeMode: 2, stepSize: 'bogus' });
     assert.strictEqual(state.get(KEY).stepSize, 5, 'an unknown step size keeps the previous one');
-    await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: true, rate: 1.75, timeMode: 2, stepSize: null });
+    await s2.send({ type: 'playbackPrefs', volume: 0.35, rate: 1.75, timeMode: 2, stepSize: null });
     s1.panel.dispose();
     s2.panel.dispose();
     h1.dispose();
@@ -89,7 +80,7 @@ function slice(src, from, to) {
     await s3.shown;
     const cfg3 = webviewConfig(s3.panel.webview);
     assert.strictEqual(cfg3.prefs.volume, 0.35);
-    assert.strictEqual(cfg3.prefs.muted, true);
+    assert.strictEqual(cfg3.prefs.muted, undefined);
     assert.strictEqual(cfg3.prefs.rate, 1.75);
     assert.strictEqual(cfg3.prefs.timeMode, 2);
 
@@ -105,21 +96,21 @@ function slice(src, from, to) {
     const cmp = await h2.vscode._commands['videoPreviewEnhanced.compare'](null, [fileA, fileB].map(h2.vscode.Uri.file));
     const cmpCfg = webviewConfig(compareWebview);
     assert.strictEqual(cmpCfg.prefs.volume, 0.35);
-    assert.strictEqual(cmpCfg.prefs.muted, true);
+    assert.strictEqual(cmpCfg.prefs.muted, undefined);
     assert.strictEqual(cmpCfg.prefs.rate, 1.75);
     assert.strictEqual(cmpCfg.prefs.timeMode, 2);
-    await cmp.onMessage({ type: 'playbackPrefs', page: cmpCfg.page, volume: 0.8, muted: false, rate: 0.5, timeMode: 1 });
-    assert.deepStrictEqual(state.get(KEY), { volume: 0.8, muted: false, rate: 0.5, timeMode: 1, stepSize: null });
+    await cmp.onMessage({ type: 'playbackPrefs', page: cmpCfg.page, volume: 0.8, rate: 0.5, timeMode: 1 });
+    assert.deepStrictEqual(state.get(KEY), { volume: 0.8, rate: 0.5, timeMode: 1, stepSize: null });
 
     // 5. Invalid values are ignored in favour of previous or default values.
-    await s3.send({ type: 'playbackPrefs', volume: -2, muted: 'yes', rate: 99, timeMode: 7 });
-    assert.deepStrictEqual(state.get(KEY), { volume: 0.8, muted: false, rate: 0.5, timeMode: 1, stepSize: null });
-    state.set(KEY, { volume: 'bad', muted: 123, rate: 0, timeMode: -1 });
+    await s3.send({ type: 'playbackPrefs', volume: -2, rate: 99, timeMode: 7 });
+    assert.deepStrictEqual(state.get(KEY), { volume: 0.8, rate: 0.5, timeMode: 1, stepSize: null });
+    state.set(KEY, { volume: 'bad', rate: 0, timeMode: -1 });
     const s4 = h2.open(fileB);
     await s4.shown;
     const cfg4 = webviewConfig(s4.panel.webview);
     assert.strictEqual(cfg4.prefs.volume, 1);
-    assert.strictEqual(cfg4.prefs.muted, false);
+    assert.strictEqual(cfg4.prefs.muted, undefined);
     assert.strictEqual(cfg4.prefs.rate, 1);
     assert.strictEqual(cfg4.prefs.timeMode, 0);
     cmp.dispose();
@@ -127,36 +118,50 @@ function slice(src, from, to) {
     s4.panel.dispose();
     h2.dispose();
 
-    // 6. Player webview logic: inherits cfg.prefs, does NOT persist transient autoplay mute (setMuteUi(true)),
-    // and DOES persist explicit user mute/unmute, volume, rate, and timeMode changes.
+    // 6. Player webview logic: starts muted by default while inheriting volume, rate, timeMode;
+    // unmutes only explicitly (button, M, volume > 0); dims and disables #mute when there is no audio track.
     {
       const posted = [];
+      const toasts = [];
       let savedState = {};
       const noop = () => {};
-      const el = () => ({
-        value: '', textContent: '', title: '', attributes: {}, classList: { toggle: noop },
+      const makeClassList = () => {
+        const set = new Set();
+        return {
+          toggle(cls, force) {
+            const on = force === undefined ? !set.has(cls) : !!force;
+            if (on) set.add(cls); else set.delete(cls);
+            return on;
+          },
+          contains(cls) { return set.has(cls); },
+        };
+      };
+      const el = (parent = null) => ({
+        value: '', textContent: '', title: '', disabled: false, parentElement: parent,
+        attributes: {}, classList: makeClassList(),
         setAttribute(k, v) { this.attributes[k] = v; },
+        removeAttribute(k) { delete this.attributes[k]; },
       });
-      const ui = { rate: el(), mute: el(), volume: el(), time: el() };
+      const volWrap = el();
+      const ui = { rate: el(), mute: el(volWrap), volume: el(volWrap), time: el() };
       const playerCalls = [];
-      const listeners = {};
+      class FramePlayer {}
       const ctx = vm.createContext({
         vscode: {
           getState: () => savedState,
           setState: (st) => { savedState = st; },
           postMessage: (m) => posted.push({ ...m }),
         },
-        cfg: { loop: true, prefs: { volume: 0.65, muted: false, rate: 1.25, timeMode: 1 } },
+        cfg: { loop: true, prefs: { volume: 0.65, rate: 1.25, timeMode: 1 } },
         ui,
+        FramePlayer,
         VpeControls: require('../../media/controls'),
         VpePicture: require('../../media/picture'),
-        toast: noop,
+        toast: (msg) => toasts.push(msg),
         updateUi: noop,
         controls: null,
         lastUi: '',
         stepTips: () => {},
-        Element: class {},
-        window: { addEventListener: (type, fn) => { listeners[type] = fn; } },
       });
       vm.runInContext([
         slice(playerSrc, '  const saved = vscode.getState() || {};', '  const actionBtn ='),
@@ -164,127 +169,117 @@ function slice(src, from, to) {
         slice(playerSrc, '  ui.time.onclick = () => {', '  ui.seek.addEventListener(\'input\''),
         slice(playerSrc, '  setRate(rate, false);', '\n\n  // Controls hide'),
       ].join('\n'), ctx);
-      const setMuteUi = vm.runInContext(`(${slice(playerSrc, '(m) => {\n      if (m) {', '    onReady:').trim().replace(/,$/, '')})`, ctx);
-      let blocked = false;
       vm.runInContext(`player = {
         meta: { duration: 10 },
+        info: { audio: { codec: 'aac' } },
         setRate: (r) => playerCalls.push(['rate', r]),
         setVolume: (v, m) => playerCalls.push(['vol', v, m]),
-        audioBlocked: () => isBlocked(),
-        unlockAudio: () => playerCalls.push(['unlock']),
-      }`, Object.assign(ctx, { playerCalls, isBlocked: () => blocked }));
-      const stateOf = () => ({ ...vm.runInContext('({ volume, muted, userMuted, autoplayMuted, rate, timeMode })', ctx) });
+      }`, Object.assign(ctx, { playerCalls }));
+      const stateOf = () => ({ ...vm.runInContext('({ volume, muted, rate, timeMode })', ctx) });
 
+      // New tab starts muted by default, with remembered volume, rate, timeMode.
       assert.deepStrictEqual(stateOf(), {
-        volume: 0.65, muted: false, userMuted: false, autoplayMuted: false, rate: 1.25, timeMode: 1,
+        volume: 0.65, muted: true, rate: 1.25, timeMode: 1,
       });
+      assert.strictEqual(ui.mute.attributes['aria-pressed'], 'true');
+      assert.strictEqual(ui.mute.attributes['aria-label'], 'Unmute');
+      assert.strictEqual(ui.mute.disabled, false);
+      assert.strictEqual(volWrap.classList.contains('no-audio'), false);
       assert.strictEqual(posted.length, 0, 'initial setup posts no playbackPrefs message');
 
-      // Chromium autoplay policy suspends AudioContext -> engine calls setMuteUi(true).
-      setMuteUi(true);
-      assert.strictEqual(stateOf().muted, true, 'UI reflects transient autoplay mute');
-      assert.strictEqual(stateOf().userMuted, false, 'saved user mute preference remains false');
-      assert.strictEqual(stateOf().autoplayMuted, true);
-      assert.strictEqual(posted.length, 0, 'autoplay mute must never overwrite persisted muted preference');
-
-      // If AudioContext.resume() resolves right after play(), setMuteUi(false) restores unmuted state quietly.
-      setMuteUi(false);
-      assert.strictEqual(stateOf().muted, false);
-      assert.strictEqual(stateOf().autoplayMuted, false);
-      assert.strictEqual(posted.length, 0);
-
-      // Autoplay mute again, then user clicks Unmute explicitly.
-      setMuteUi(true);
-      assert.strictEqual(stateOf().muted, true);
+      // User clicks Unmute / presses M: unmutes this tab at the remembered volume without posting playbackPrefs.
       vm.runInContext('setMute(!muted)', ctx);
       assert.strictEqual(stateOf().muted, false);
-      assert.strictEqual(stateOf().userMuted, false);
-      assert.strictEqual(stateOf().autoplayMuted, false);
+      assert.strictEqual(ui.mute.attributes['aria-pressed'], 'false');
+      assert.strictEqual(ui.mute.attributes['aria-label'], 'Mute');
+      assert.deepStrictEqual([...playerCalls.pop()], ['vol', 0.65, false]);
+      assert.strictEqual(posted.length, 0, 'mute is per-tab and not broadcast in playbackPrefs');
+
+      // User mutes again, then adjusts volume > 0 -> unmutes and persists volume.
+      vm.runInContext('setMute(true)', ctx);
+      assert.strictEqual(stateOf().muted, true);
+      vm.runInContext('setVolume(0.4)', ctx);
+      assert.strictEqual(stateOf().muted, false);
       assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.65, muted: false, rate: 1.25, timeMode: 1, stepSize: null,
+        type: 'playbackPrefs', volume: 0.4, rate: 1.25, timeMode: 1, stepSize: null,
       });
 
-      // User explicitly mutes, changes volume, changes speed, and cycles timeMode.
-      vm.runInContext('setMute(true)', ctx);
-      assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.65, muted: true, rate: 1.25, timeMode: 1, stepSize: null,
-      });
-      vm.runInContext('setVolume(0.4)', ctx); // volume > 0 while muted also unmutes
-      assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.4, muted: false, rate: 1.25, timeMode: 1, stepSize: null,
-      });
+      // Speed and timeMode changes persist in playbackPrefs.
       vm.runInContext('changeRate(2)', ctx);
       assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.4, muted: false, rate: 2, timeMode: 1, stepSize: null,
+        type: 'playbackPrefs', volume: 0.4, rate: 2, timeMode: 1, stepSize: null,
       });
       ui.time.onclick();
       assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.4, muted: false, rate: 2, timeMode: 2, stepSize: null,
+        type: 'playbackPrefs', volume: 0.4, rate: 2, timeMode: 2, stepSize: null,
       });
-      // A new tab plays muted until the page gets a gesture; the first click there turns the sound on.
-      setMuteUi(true);
-      assert.strictEqual(stateOf().muted, true);
-      // Non-activating keys (Shift, Escape) and secondary mouse buttons do not unlock Web Audio in Chromium.
-      listeners.keydown({ key: 'Shift', target: null });
-      listeners.keydown({ key: 'Escape', target: null });
-      listeners.pointerdown({ button: 2, target: null });
-      assert.strictEqual(stateOf().muted, true, 'non-activating gestures must not clear autoplayMute prematurely');
-      // Pressing M while autoplay-muted must not unmute in capture and re-mute in bubble.
-      listeners.keydown({ key: 'm', target: null });
-      assert.strictEqual(stateOf().autoplayMuted, true, 'capture listener leaves M to the mute shortcut');
-      vm.runInContext('setMute(!muted)', ctx);
-      assert.strictEqual(stateOf().muted, false, 'M shortcut unmutes an autoplay-muted tab');
-      assert.strictEqual(stateOf().userMuted, false);
-      assert.strictEqual(stateOf().autoplayMuted, false);
-      assert.strictEqual(posted.pop().muted, false);
 
-      setMuteUi(true);
-      assert.strictEqual(stateOf().muted, true);
-      listeners.pointerdown({ button: 0, target: null });
-      assert.strictEqual(stateOf().muted, false, 'the first primary click ends the autoplay mute');
-      assert.strictEqual(posted.length, 0, 'ending the autoplay mute is not a preference change');
-
-      // Another tab's change arrives: follow it without echoing it back.
-      vm.runInContext('applyPlaybackPrefs({ volume: 0.2, muted: true, rate: 1.5, timeMode: 0, stepSize: 5 })', ctx);
+      // Another tab's volume/rate/timeMode/stepSize change arrives: updates volume without changing this tab's muted state.
+      vm.runInContext('setMute(true)', ctx);
+      vm.runInContext('applyPlaybackPrefs({ volume: 0.2, rate: 1.5, timeMode: 0, stepSize: 5 })', ctx);
       assert.deepStrictEqual(stateOf(), {
-        volume: 0.2, muted: true, userMuted: true, autoplayMuted: false, rate: 1.5, timeMode: 0,
+        volume: 0.2, muted: true, rate: 1.5, timeMode: 0,
       });
       assert.strictEqual(vm.runInContext('prefs.stepSize', ctx), 5);
       assert.strictEqual(posted.length, 0, 'a followed change is not posted back');
 
-      // If another tab unmutes while this tab's AudioContext is still blocked by autoplay policy, this tab must
-      // keep showing Muted (autoplayMuted: true) rather than lying that it is unmuted with silent audio, and must
-      // unmute on the first gesture here (or as soon as unlockAudio succeeds).
-      blocked = true;
-      playerCalls.length = 0;
-      vm.runInContext('applyPlaybackPrefs({ volume: 0.2, muted: false, rate: 1.5, timeMode: 0, stepSize: 5 })', ctx);
-      assert.deepStrictEqual(stateOf(), {
-        volume: 0.2, muted: true, userMuted: false, autoplayMuted: true, rate: 1.5, timeMode: 0,
-      }, 'blocked tab stays visibly autoplay-muted until unlocked');
-      assert.ok(playerCalls.some((c) => c[0] === 'unlock'), 'attempts to unlock AudioContext on unmute pref');
-      listeners.pointerdown({ button: 0, target: null });
-      assert.strictEqual(stateOf().muted, false, 'first gesture in the second tab finishes unmuting');
-      assert.strictEqual(stateOf().autoplayMuted, false);
-      blocked = false;
+      // Video without an audio track (!info.audio): dims and disables #mute, hides volume slider (.no-audio),
+      // and refuses unmute with a 'No audio track' toast.
+      vm.runInContext('player.info = { video: { codec: "h264" }, audio: null }; updateMuteUi();', ctx);
+      assert.strictEqual(ui.mute.disabled, true);
+      assert.strictEqual(ui.volume.disabled, true);
+      assert.strictEqual(ui.mute.title, 'No audio track');
+      assert.strictEqual(ui.mute.attributes['aria-label'], 'No audio track');
+      assert.strictEqual(ui.mute.attributes['aria-pressed'], undefined);
+      assert.strictEqual(ui.mute.classList.contains('muted'), true);
+      assert.strictEqual(volWrap.classList.contains('no-audio'), true);
+      toasts.length = 0;
+      vm.runInContext('setMute(!muted)', ctx);
+      assert.strictEqual(stateOf().muted, true, 'cannot unmute when there is no audio track');
+      assert.deepStrictEqual(toasts, ['No audio track']);
+
+      // Reloading/switching to a video with an audio track re-enables #mute and restores a11y attributes.
+      vm.runInContext('player.info = { video: { codec: "h264" }, audio: { codec: "aac" } }; updateMuteUi();', ctx);
+      assert.strictEqual(ui.mute.disabled, false);
+      assert.strictEqual(ui.volume.disabled, false);
+      assert.strictEqual(volWrap.classList.contains('no-audio'), false);
+      assert.strictEqual(ui.mute.attributes['aria-pressed'], 'true');
+      assert.strictEqual(ui.mute.attributes['aria-label'], 'Unmute');
+      assert.strictEqual(ui.mute.title, 'Unmute  M');
     }
 
-    // 7. Compare webview logic: inherits cfg.prefs, ignores autoplay mute for persisted prefs, persists user changes.
+    // 7. Compare webview logic: starts muted by default, inherits volume/rate/timeMode, dims/disables #mute when no tile has audio.
     {
       const posted = [];
+      const toasts = [];
       let savedState = {};
       const noop = () => {};
-      const el = () => ({
-        value: '', textContent: '', title: '', attributes: {}, classList: { toggle: noop },
+      const makeClassList = () => {
+        const set = new Set();
+        return {
+          toggle(cls, force) {
+            const on = force === undefined ? !set.has(cls) : !!force;
+            if (on) set.add(cls); else set.delete(cls);
+            return on;
+          },
+          contains(cls) { return set.has(cls); },
+        };
+      };
+      const el = (parent = null) => ({
+        value: '', textContent: '', title: '', disabled: false, parentElement: parent,
+        attributes: {}, classList: makeClassList(),
         setAttribute(k, v) { this.attributes[k] = v; },
+        removeAttribute(k) { delete this.attributes[k]; },
       });
-      const ui = { rate: el(), mute: el(), volume: el(), time: el() };
+      const volWrap = el();
+      const ui = { rate: el(), mute: el(volWrap), volume: el(volWrap), time: el() };
       const ctx = vm.createContext({
         vscode: {
           getState: () => savedState,
           setState: (st) => { savedState = st; },
           postMessage: (m) => posted.push({ ...m }),
         },
-        cfg: { names: ['a.mp4', 'b.mp4'], prefs: { volume: 0.5, muted: false, rate: 1.5, timeMode: 2 } },
+        cfg: { names: ['a.mp4', 'b.mp4'], prefs: { volume: 0.5, rate: 1.5, timeMode: 2 } },
         names: ['a.mp4', 'b.mp4'],
         N: 2,
         KEYS: ['A', 'B'],
@@ -297,9 +292,11 @@ function slice(src, from, to) {
         tileLabel: (i) => ['A', 'B'][i],
         $: () => el(),
         window: { addEventListener() {} },
-        Element: class {},
         ui,
-        tiles: [],
+        tiles: [
+          { info: { audio: { codec: 'aac' } }, setVolume: noop, setRate: noop },
+          { info: { audio: null }, setVolume: noop, setRate: noop },
+        ],
         clock: null,
         begun: false,
         pendingStart: 0,
@@ -309,38 +306,50 @@ function slice(src, from, to) {
         requestTileSize: noop,
         updateUi: noop,
         save: noop,
-        toast: noop,
+        toast: (msg) => toasts.push(msg),
       });
       vm.runInContext([
         slice(compareSrc, '  const saved = vscode.getState() || {};', '  // Decoder keys'),
-        slice(compareSrc, '  function applyVolume()', '  /** A jump:'),
+        slice(compareSrc, '  function hasAudio()', '  /** A jump:'),
       ].join('\n'), ctx);
-      const setMuteUiA = vm.runInContext(
-        `((key) => (${slice(compareSrc, '(m) => {\n        if (key !== KEYS[st.sound])', '      onReady:').trim().replace(/,$/, '')}))('A')`,
-        ctx,
-      );
-      const stOf = () => ({ ...vm.runInContext('({ ...st, userMuted, autoplayMuted })', ctx) });
+      const stOf = () => ({ ...vm.runInContext('({ ...st })', ctx) });
 
       assert.strictEqual(stOf().volume, 0.5);
-      assert.strictEqual(stOf().muted, false);
+      assert.strictEqual(stOf().muted, true, 'Compare starts muted by default');
       assert.strictEqual(stOf().rate, 1.5);
       assert.strictEqual(stOf().timeMode, 2);
 
-      // Autoplay mute on sound tile A updates UI state only, never posting playbackPrefs.
-      setMuteUiA(true);
-      assert.strictEqual(stOf().muted, true);
-      assert.strictEqual(stOf().userMuted, false);
-      assert.strictEqual(stOf().autoplayMuted, true);
-      assert.strictEqual(posted.length, 0);
-
-      // User unmutes explicitly in Compare.
+      // Unmuting in Compare when at least one tile has audio works and does not post playbackPrefs.
       vm.runInContext('setMute(!st.muted)', ctx);
       assert.strictEqual(stOf().muted, false);
-      assert.strictEqual(stOf().userMuted, false);
-      assert.strictEqual(stOf().autoplayMuted, false);
+      assert.strictEqual(ui.mute.disabled, false);
+      assert.strictEqual(posted.length, 0);
+
+      // Adjusting volume posts playbackPrefs without muted.
+      vm.runInContext('setVolume(0.75)', ctx);
       assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.5, muted: false, rate: 1.5, timeMode: 2, stepSize: null,
+        type: 'playbackPrefs', volume: 0.75, rate: 1.5, timeMode: 2, stepSize: null,
       });
+
+      // When none of the loaded tiles have an audio track, Compare dims and disables #mute.
+      vm.runInContext('tiles[0].info.audio = null; setMute(true, false);', ctx);
+      assert.strictEqual(ui.mute.disabled, true);
+      assert.strictEqual(ui.volume.disabled, true);
+      assert.strictEqual(ui.mute.title, 'No audio track');
+      assert.strictEqual(ui.mute.attributes['aria-label'], 'No audio track');
+      assert.strictEqual(ui.mute.attributes['aria-pressed'], undefined);
+      assert.strictEqual(volWrap.classList.contains('no-audio'), true);
+      toasts.length = 0;
+      vm.runInContext('setMute(!st.muted)', ctx);
+      assert.strictEqual(stOf().muted, true);
+      assert.deepStrictEqual(toasts, ['No audio track']);
+
+      // Re-enables as soon as any tile has audio.
+      vm.runInContext('tiles[1].info.audio = { codec: "opus" }; updateMuteUi();', ctx);
+      assert.strictEqual(ui.mute.disabled, false);
+      assert.strictEqual(ui.volume.disabled, false);
+      assert.strictEqual(volWrap.classList.contains('no-audio'), false);
+      assert.strictEqual(ui.mute.attributes['aria-pressed'], 'true');
     }
 
     console.log('playback prefs: ok');

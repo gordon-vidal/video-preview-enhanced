@@ -94,7 +94,7 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 ## The player (2026-11-19: one layout, the approved mock-up)
 
 - **One player, no modes.** The separate advanced layout is dropped; `advancedMode` is deprecated and ignored.
-- **Bar:** previous frame, play/pause, next frame, mute, volume (folded behind mute until hovered), time (click: time / timecode / frame number),
+- **Bar:** previous frame, play/pause, next frame, mute (new tabs start muted; dimmed and disabled when the video has no audio track), volume (folded behind mute until hovered), time (click: time / timecode / frame number),
   then CC (only when the video has a subtitle track, 2026-11-22), **Compare** (video files), ⓘ (about this video),
   speed, ⚙, picture size, fullscreen. No status pill: only real problems show (a notice, once).
 - **⚙ panel** (2026-11-22), in groups: **Playback** (repeat video, speed, subtitles (always there, also to load a file), audio
@@ -113,8 +113,8 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 - **Buttons beside Play** (2026-11-20): by default step one frame back / forward; setting `stepButtons`
   (`frame` | `jump`) makes them jump by the Ctrl+arrow size. Tooltips say which. A small badge on them (2026-11-22)
   shows the size and picks 1 frame / 5 frames / 1 s / 5 s / 10 s; it shows only on hover, keyboard focus or while
-  its menu is open. Volume, mute, speed, time display and step size are shared: every open player and Compare tab
-  follows a change at once, and new tabs start with them.
+  its menu is open. New tabs start muted by default; volume, speed, time display and step size are shared: every open
+  player and Compare tab follows a change at once, and new tabs start with them.
 - **Right-click:** quick actions on this moment only (play/pause, loop, copy/save frame, copy timestamp, frame
   link, shortcuts, settings).
 

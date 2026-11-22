@@ -426,9 +426,10 @@ body.idle { cursor: none; }
   max-width: 0; opacity: 0; pointer-events: none;
   transition: max-width 220ms cubic-bezier(0.2, 0, 0, 1), opacity 160ms ease;
 }
-.vol-wrap:hover .vol-slide, .vol-wrap:focus-within .vol-slide, .vol-wrap.dragging .vol-slide {
+.vol-wrap:not(.no-audio):hover .vol-slide, .vol-wrap:not(.no-audio):focus-within .vol-slide, .vol-wrap:not(.no-audio).dragging .vol-slide {
   max-width: 98px; opacity: 1; pointer-events: auto;
 }
+#row #mute:disabled, .vol-wrap.no-audio #mute { opacity: 0.4; cursor: default; background: transparent; outline: none; }
 #volume { width: 84px; margin: 0 10px 0 4px; accent-color: var(--vscode-foreground); flex: none; }
 @media (prefers-reduced-motion: reduce) { .vol-slide { transition: none; } }
 /* Step size badge on ◀| and |▶ (media/controls.js drawStepBadges): shown only on hover, keyboard focus or while its

@@ -27,14 +27,13 @@
   window.addEventListener('unhandledrejection', (e) => log('unhandled rejection:', e.reason && e.reason.stack || e.reason));
 
   // Restored after a reload (file changed on disk, window reload), else inherited from persisted player prefs.
+  // Every new tab starts muted (matching Chromium's per-webview autoplay policy); volume carries over.
   const saved = vscode.getState() || {};
   const initPrefs = cfg.prefs || {};
   /** @type {any} */
   let player = null;
   let loop = saved.loop !== undefined ? saved.loop : !!cfg.loop;
-  let userMuted = saved.muted !== undefined ? !!saved.muted : !!initPrefs.muted;
-  let autoplayMuted = false;
-  let muted = userMuted;
+  let muted = saved.muted !== undefined ? !!saved.muted : true;
   const rawVol = saved.volume !== undefined ? Number(saved.volume) : initPrefs.volume !== undefined ? Number(initPrefs.volume) : 1;
   let volume = Number.isFinite(rawVol) && rawVol >= 0 && rawVol <= 1 ? Math.round(rawVol * 100) / 100 : 1;
   let rate = VpeControls.clampRate(saved.rate || initPrefs.rate || 1);
@@ -206,8 +205,6 @@
     setRate() { this.syncAudio(true); }
     setVolume() { if (this.audio) { this.audio.muted = muted; this.audio.volume = volume; if (this.playing) this.syncAudio(false); } }
     setLoop() {}
-    audioBlocked() { return !!(this.audio && autoplayMuted); }
-    unlockAudio() { if (this.playing) this.syncAudio(false); }
 
     syncAudio(force) {
       const a = this.audio;
@@ -221,7 +218,7 @@
         this.audioPending = true;
         a.play().catch((e) => {
           // Autoplay with sound needs a user gesture; continue muted.
-          if (e && e.name === 'NotAllowedError' && !muted) { autoplayMuted = true; setMute(true, false); this.syncAudio(true); }
+          if (e && e.name === 'NotAllowedError' && !muted) { setMute(true, false); this.syncAudio(true); }
         }).finally(() => { this.audioPending = false; });
       }
     }
@@ -449,7 +446,7 @@
       if (now - lastSave > 1000) {
         lastSave = now;
         // Only when something changed: a paused page wrote the same state and position every second.
-        const state = { t: player.currentTime(), rate, volume, muted: userMuted, loop, subs: subs.state(), timeMode,
+        const state = { t: player.currentTime(), rate, volume, muted, loop, subs: subs.state(), timeMode,
           reducedResDismissed, slowNoticeDismissed, stepSize: prefs.stepSize, ...(switchPlay !== null ? { play: switchPlay } : {}) };
         const json = JSON.stringify([state, player.meta.duration || 0]);
         if (json !== lastSaved) {
@@ -475,6 +472,7 @@
     ui.seek.disabled = !!(meta && meta.live);
     if (meta && meta.live) ui.seek.title = 'Live stream: seeking is not available';
     p.setRate(rate);
+    updateMuteUi();
     p.setVolume(volume, muted);
     if (p.setLoop) p.setLoop(loop);
     const resume = saved.t > 0 ? saved.t : (cfg.resume || 0);
@@ -587,43 +585,27 @@
   /** Arrow keys: one frame or seconds, from the jump-size settings. */
   const jump = (size, dir) => { if (size === 'frame') step(dir); else skip(dir * Number(size)); };
   function postPlaybackPrefs() {
-    vscode.setState({ ...(vscode.getState() || {}), rate, volume, muted: userMuted, timeMode, stepSize: prefs.stepSize });
-    vscode.postMessage({ type: 'playbackPrefs', volume, muted: userMuted, rate, timeMode, stepSize: prefs.stepSize });
+    vscode.setState({ ...(vscode.getState() || {}), rate, volume, muted, timeMode, stepSize: prefs.stepSize });
+    vscode.postMessage({ type: 'playbackPrefs', volume, rate, timeMode, stepSize: prefs.stepSize });
   }
   /** Another tab changed a shared playback preference (src/extension.js rememberPlaybackPrefs): follow it quietly. */
   function applyPlaybackPrefs(p) {
     if (!p) return;
-    if (Number.isFinite(p.volume)) { volume = p.volume; ui.volume.value = String(volume); }
-    if (typeof p.muted === 'boolean') {
-      userMuted = p.muted;
-      if (userMuted) autoplayMuted = false;
-      else if (player && typeof player.audioBlocked === 'function' && player.audioBlocked()) autoplayMuted = true;
+    if (Number.isFinite(p.volume) && p.volume !== volume) {
+      volume = p.volume;
+      ui.volume.value = String(volume);
+      updateMuteUi();
+      if (player) player.setVolume(volume, muted);
     }
-    setMute(userMuted || autoplayMuted, false);
-    if (!userMuted && autoplayMuted && player && typeof player.unlockAudio === 'function') player.unlockAudio();
     if (Number.isFinite(p.rate) && p.rate !== rate) setRate(p.rate, false);
     if ([0, 1, 2].includes(p.timeMode) && p.timeMode !== timeMode) { timeMode = p.timeMode; lastUi = ''; updateUi(); }
     if (p.stepSize !== undefined && p.stepSize !== prefs.stepSize) {
       prefs.stepSize = p.stepSize;
       stepTips();
     }
-    vscode.setState({ ...(vscode.getState() || {}), rate, volume, muted: userMuted, timeMode, stepSize: prefs.stepSize });
+    vscode.setState({ ...(vscode.getState() || {}), rate, volume, muted, timeMode, stepSize: prefs.stepSize });
     if (controls) controls.refresh();
   }
-  // A new tab may not start sound until the user interacts with its page (Chromium's autoplay rule), so it plays muted
-  // although the user's choice is unmuted. The first click or key in the page is that gesture: turn the sound back on.
-  // The mute button and M key are left to their own handlers, which unmute.
-  const endAutoplayMute = (e) => {
-    if (e && typeof e.button === 'number' && e.button !== 0) return;
-    if (e && typeof e.key === 'string' && /^(Shift|Control|Alt|Meta|AltGraph|CapsLock|NumLock|ScrollLock|Escape)$/.test(e.key)) return;
-    if (player && typeof player.unlockAudio === 'function') player.unlockAudio();
-    if (e && (e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey) return;
-    if (!autoplayMuted || userMuted || (e && e.target instanceof Element && e.target.closest('#mute'))) return;
-    autoplayMuted = false;
-    setMute(false, false);
-  };
-  window.addEventListener('pointerdown', endAutoplayMute, true);
-  window.addEventListener('keydown', endAutoplayMute, true);
   // Speed: 0.25–4× in steps of 0.05 (VpeControls.clampRate), the range in which the sound keeps its pitch.
   function setRate(r, persist = true) {
     rate = VpeControls.clampRate(r);
@@ -650,23 +632,40 @@
     toast(prefs.transcodeMaxBitrate > 0 ? `Max bitrate: ${prefs.transcodeMaxBitrate} Mb/s` : 'Max bitrate: Auto');
   }
   const setLoop = (l) => { loop = l; if (player && player.setLoop) player.setLoop(l); if (controls) controls.refresh(); };
-  function setMute(m, byUser = true) {
-    if (byUser) {
-      autoplayMuted = false;
-      userMuted = m;
+  const hasAudio = () => !player || (player instanceof FramePlayer ? !!player.audio : !player.info || !!player.info.audio);
+  function updateMuteUi() {
+    const noAudio = !hasAudio();
+    ui.mute.disabled = noAudio;
+    ui.volume.disabled = noAudio;
+    if (ui.mute.parentElement) ui.mute.parentElement.classList.toggle('no-audio', noAudio);
+    if (noAudio) {
+      ui.mute.classList.toggle('muted', true);
+      if (ui.mute.removeAttribute) ui.mute.removeAttribute('aria-pressed');
+      ui.mute.setAttribute('aria-label', 'No audio track');
+      ui.mute.title = 'No audio track';
+      return;
     }
+    ui.mute.classList.toggle('muted', muted || volume === 0);
+    ui.mute.setAttribute('aria-pressed', String(muted));
+    ui.mute.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+    ui.mute.title = muted ? 'Unmute  M' : 'Mute  M';
+  }
+  function setMute(m, byUser = true) {
+    if (byUser && !hasAudio()) { toast('No audio track'); return; }
     muted = m;
-    ui.mute.classList.toggle('muted', m || volume === 0);
-    ui.mute.setAttribute('aria-pressed', String(m));
-    ui.mute.setAttribute('aria-label', m ? 'Unmute' : 'Mute');
-    ui.mute.title = m ? 'Unmute  M' : 'Mute  M';
+    updateMuteUi();
     if (player) player.setVolume(volume, muted);
-    if (byUser) postPlaybackPrefs();
+    vscode.setState({ ...(vscode.getState() || {}), rate, volume, muted, timeMode, stepSize: prefs.stepSize });
   }
   const setVolume = (v) => {
     volume = Math.max(0, Math.min(1, Math.round(v * 100) / 100));
     ui.volume.value = String(volume);
-    if (volume > 0 && muted) setMute(false); else setMute(userMuted);
+    if (volume > 0 && muted && hasAudio()) setMute(false);
+    else {
+      updateMuteUi();
+      if (player) player.setVolume(volume, muted);
+    }
+    postPlaybackPrefs();
   };
   /** Z (and the Picture size button): the next picture size; zoomed in, back to Fit. 100 % shows the file's own pixels. */
   const cyclePicture = () => { insp.cycleMode(); if (insp.picture().mode === 'actual') exactTool(true); };
@@ -887,8 +886,8 @@
   for (const b of [ui.prevSize, ui.nextSize]) b.addEventListener('click', (e) => { e.stopPropagation(); if (controls) controls.toggle('step', b); });
   stepTips();
   ui.mute.onclick = () => setMute(!muted);
-  ui.volume.addEventListener('input', () => setVolume(Number(ui.volume.value)));
-  ui.volume.addEventListener('wheel', (e) => { e.preventDefault(); setVolume(volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(volume * 100)}%`); }, { passive: false });
+  ui.volume.addEventListener('input', () => { if (hasAudio()) setVolume(Number(ui.volume.value)); });
+  ui.volume.addEventListener('wheel', (e) => { if (!hasAudio()) return; e.preventDefault(); setVolume(volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(volume * 100)}%`); }, { passive: false });
   const seekDragger = VpeRangeDrag.bind(ui.seek, (e) => {
     const r = ui.seek.getBoundingClientRect();
     if (e?.type !== 'pointerup' || e.clientX < r.left || e.clientX > r.right ||
@@ -1078,8 +1077,12 @@
       case '.': step(1); break;
       case '<': case '[': bumpRate(-1); break;
       case '>': case ']': bumpRate(1); break;
-      case 'ArrowUp': setVolume(volume + 0.05); toast(`Volume ${Math.round(volume * 100)}%`); break;
-      case 'ArrowDown': setVolume(volume - 0.05); toast(`Volume ${Math.round(volume * 100)}%`); break;
+      case 'ArrowUp':
+        if (!hasAudio()) { toast('No audio track'); break; }
+        setVolume(volume + 0.05); toast(`Volume ${Math.round(volume * 100)}%`); break;
+      case 'ArrowDown':
+        if (!hasAudio()) { toast('No audio track'); break; }
+        setVolume(volume - 0.05); toast(`Volume ${Math.round(volume * 100)}%`); break;
       case 'Home': player.seekFrame(0); break;
       case 'End': player.pause(); player.seekFrame(player.n - 1); break;
       case 'm': case 'M': setMute(!muted); break;
@@ -1112,17 +1115,9 @@
     vscode, canvas, log, showMessage, toast, page: cfg.page, debug: !!cfg.debug,
     wake: () => wakeLoop(),
     getState: () => ({ rate, volume, muted, loop }),
-    setMuteUi: (m) => {
-      if (m) {
-        autoplayMuted = true;
-        setMute(true, false);
-      } else if (autoplayMuted) {
-        autoplayMuted = false;
-        setMute(userMuted, false);
-      }
-    },
+    setMuteUi: (m) => { if (m !== muted) setMute(m, false); },
     onReady: (p) => { begin(p, p.meta); },
-    onMeta: (p) => { ui.seek.max = String(Math.max(0, p.n - 1)); if (controls) controls.refresh(); },
+    onMeta: (p) => { ui.seek.max = String(Math.max(0, p.n - 1)); updateMuteUi(); if (controls) controls.refresh(); },
     onTracks: (p) => subs.onTracks(p),
   });
 
@@ -1236,7 +1231,7 @@
     if (!streamQ || pick === streamQ.pick) return;
     if (player) {
       switchPlay = player.isPlaying();
-      vscode.setState({ ...(vscode.getState() || {}), t: player.currentTime(), play: switchPlay, rate, volume, muted: userMuted, loop, subs: subs.state(), timeMode });
+      vscode.setState({ ...(vscode.getState() || {}), t: player.currentTime(), play: switchPlay, rate, volume, muted, loop, subs: subs.state(), timeMode });
       player.pause();
     }
     streamQ = { ...streamQ, pick };
@@ -1405,6 +1400,7 @@
           if (m.meta && m.meta.native) engine.dropPreload();
           const p = new engine.LibavPlayer(m.meta, cfg.engine);
           player = p;
+          updateMuteUi();
           subs.attach(p);
           showMessage('Opening…');
         } catch (err) {

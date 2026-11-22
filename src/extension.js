@@ -121,7 +121,7 @@ const PREFS = {
   stepButtons: { values: ['frame', 'jump'], dflt: 'frame' },
 };
 const PLAYBACK_PREFS_KEY = 'videoPreviewEnhanced.playbackPrefs';
-const DEFAULT_PLAYBACK_PREFS = { volume: 1, muted: false, rate: 1, timeMode: 0, stepSize: null };
+const DEFAULT_PLAYBACK_PREFS = { volume: 1, rate: 1, timeMode: 0, stepSize: null };
 // The step buttons' size (media/controls.js STEP_SIZES); null follows the stepButtons setting.
 const STEP_SIZES = ['frame', 'frames5', 1, 5, 10];
 
@@ -129,13 +129,12 @@ function sanitizePlaybackPrefs(raw, base = DEFAULT_PLAYBACK_PREFS) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const vol = Number(src.volume);
   const volume = Number.isFinite(vol) && vol >= 0 && vol <= 1 ? Math.round(vol * 100) / 100 : base.volume;
-  const muted = typeof src.muted === 'boolean' ? src.muted : base.muted;
   const r = Number(src.rate);
   const rate = Number.isFinite(r) && r >= 0.25 && r <= 4 ? Math.round(r * 100) / 100 : base.rate;
   const tm = Number(src.timeMode);
   const timeMode = tm === 0 || tm === 1 || tm === 2 ? tm : base.timeMode;
   const stepSize = src.stepSize === null || STEP_SIZES.includes(src.stepSize) ? src.stepSize : base.stepSize;
-  return { volume, muted, rate, timeMode, stepSize };
+  return { volume, rate, timeMode, stepSize };
 }
 
 function storedPlaybackPrefs() {
@@ -146,11 +145,10 @@ function rememberPlaybackPrefs(m, from) {
   if (!globalState || !m || typeof m !== 'object') return undefined;
   const prev = storedPlaybackPrefs();
   const next = sanitizePlaybackPrefs(m, prev);
+  if (['volume', 'rate', 'timeMode', 'stepSize'].every((k) => next[k] === prev[k])) return undefined;
   // Every other player and Compare follows at once (their pages stay alive in the background), not only new tabs.
-  // Broadcast even when globalState already holds `next` (e.g. unmuting a tab that only had a transient autoplay mute).
   // Not the sender: an echo would snap its slider back mid-drag and redraw its open panel.
   for (const sess of [...sessions, ...compareSessions]) if (sess !== from) sess.post({ type: 'playbackPrefs', prefs: next });
-  if (['volume', 'muted', 'rate', 'timeMode', 'stepSize'].every((k) => next[k] === prev[k])) return undefined;
   return globalState.update(PLAYBACK_PREFS_KEY, next);
 }
 
