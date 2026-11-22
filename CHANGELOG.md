@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The player’s Compare button uses a framed split-view icon with **Compare** and **Add to Compare** tooltips.
+- Fullscreen in the player and Compare uses the full editor width when it falls back to Zen Mode.
+- The smooth-playback notice shows which picture the pixel tools use and offers full resolution for this tab, Settings, and a saved dismissal.
+
 ## 0.9.0 (2026-11-22)
 
 Lossless A–B clip export in the player and Compare (with native ffmpeg real timestamps), Compare tile reordering, unified Start/Add to Compare controls, larger action toasts, and faster multi-video drops.

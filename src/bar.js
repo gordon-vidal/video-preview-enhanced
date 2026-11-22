@@ -13,6 +13,7 @@ const svg = (body, cls = '', solid = false) => {
     body + '</svg>';
 };
 
+const frame = '<rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/>';
 const icons = {
   prev: svg('<path d="M6 6.5v11M18 6.5v11L9.5 12Z"/>', '', true),
   play: svg('<path d="M7.5 5v14L19 12Z"/>', 'i-play', true),
@@ -22,13 +23,12 @@ const icons = {
   muted: svg('<path d="M3.5 9.5H7l5-4v13l-5-4H3.5ZM15.5 9.5l5 5m0-5-5 5"/>', 'i-muted'),
   cc: svg('<rect x="3" y="5" width="18" height="14" rx="2"/>' +
     '<path d="M10.5 10h-2a1.5 1.5 0 0 0-1.5 1.5v1A1.5 1.5 0 0 0 8.5 14h2m6.5-4h-2a1.5 1.5 0 0 0-1.5 1.5v1A1.5 1.5 0 0 0 15 14h2"/>'),
-  compare: svg('<rect x="2.5" y="5" width="7" height="14" rx="1.5"/><rect x="14.5" y="5" width="7" height="14" rx="1.5"/>'),
+  compare: svg(frame + '<path d="M12 4.5v15"/>'),
   about: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-9.5v.01"/>'),
   settings: svg('<circle cx="12" cy="12" r="3"/>' +
     '<path d="M10 3h4l.7 2.6 2.1 1.2 2.6-.7 2 3.5-1.9 1.9v2.4l1.9 1.9-2 3.5-2.6-.7-2.1 1.2L14 22h-4l-.7-2.2-2.1-1.2-2.6.7-2-3.5 1.9-1.9v-2.4L2.6 9.6l2-3.5 2.6.7 2.1-1.2Z" transform="translate(0 -.5)"/>'),
   full: svg('<path d="M4 9V4h5m11 5V4h-5M4 15v5h5m11-5v5h-5"/>'),
 };
-const frame = '<rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/>';
 const pictures = [
   svg(frame + '<rect x="8" y="8" width="8" height="8" rx="1"/>', 'i-fit'),
   svg('<rect x="2.5" y="4.5" width="19" height="15" rx="1.5" fill="currentColor" fill-opacity="0.3"/>', 'i-fill'),
@@ -42,7 +42,7 @@ const playerCompareButton = (visible, open) => {
   const label = open ? 'Add to Compare' : 'Compare';
   const popup = open ? '' : ' aria-haspopup="dialog" aria-controls="startCompareDialog" aria-expanded="false"';
   return `    <button id="startCompareBtn" class="ib" title="${label}" aria-label="${label}"${popup} data-open="${open ? 1 : 0}"` +
-    `${visible ? '' : ' hidden'}>${icons.compare}<span id="startCompareLabel">${label}</span></button>
+    `${visible ? '' : ' hidden'}>${icons.compare}</button>
 `;
 };
 

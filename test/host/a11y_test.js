@@ -100,6 +100,8 @@ assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: va
   for (const id of ['tracks', 'infoBtn', 'rate', 'cog']) assert.match(html, new RegExp(`<button id="${id}"[^>]*aria-expanded="false" aria-controls="panel"`));
   assert.match(html, /<button id="tracks"[^>]* hidden/);
   assert.match(html, /<button id="startCompareBtn"[^>]*aria-label="Compare"[^>]*aria-haspopup="dialog"[^>]*aria-controls="startCompareDialog"/);
+  assert.match(html, /<button id="startCompareBtn" class="ib" title="Compare"[^>]*><svg[^>]*aria-hidden="true">.*<\/svg><\/button>/);
+  assert.doesNotMatch(html, /id="startCompareLabel"/);
   assert.match(html, /id="startCompareDialog"[^>]*role="dialog" aria-modal="true" aria-label="Start comparison"/);
   assert.doesNotMatch(html, /id="keysBtn"/);
   // The picture size button sits between the keyboard shortcuts and fullscreen; it names the mode and the next one.

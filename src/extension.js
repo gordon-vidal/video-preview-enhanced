@@ -23,6 +23,7 @@ const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
 const { decodeThumb } = require('./thumbhost');
 const { ExactFrameGrabber } = require('./exact_frame');
+const { toggleFocusMode } = require('./focus-mode');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
 const remotestream = lazy('./remotestream'); // unified Live transcode stream engine (ADR 0002)
 const transcodePolicy = lazy('./transcode_policy');
@@ -45,6 +46,7 @@ const ctxmenu = require('./ctxmenu'); // the player's right-click menu
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
 const urlsource = lazy('./urlsource'); // Open Video URL… (docs/notes/url-stream.md)
 
+const HIDE_REDUCED_RES_NOTICE = 'videoPreviewEnhanced.hideReducedResNotice';
 const VIEW_TYPES = ['videoPreviewEnhanced.player', 'videoPreviewEnhanced.playerOptional'];
 const MAX_WAV_BYTES = 512 * 1024 * 1024;
 const WAV_PART_BYTES = 8 * 1024 * 1024;
@@ -1909,6 +1911,7 @@ class Session {
       // A URL tab (Open Video URL…): file-only tools are off; the info panel names the host instead of a size.
       url: this.url ? { host: new URL(this.url).host } : null,
       sequence: !!this.sequence,
+      hideReducedResNotice: !!globalState.get(HIDE_REDUCED_RES_NOTICE),
       engine: {
         workerUrl: uri('decoder-worker.js'), xrayWorkerUrl: uri('xray-worker.js'), libavBase: base, loader: `${base}/${this.build.loader}`, variant: this.build.variant,
         remote: !!vscode.env.remoteName, whenSlow: c.whenSlow, fastWhenBehind: c.fastWhenBehind,
@@ -1960,7 +1963,13 @@ ${earlyJs}<link rel="stylesheet" href="${uri('player.css')}">
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div><button id="action" hidden></button></div>
   <div id="info" hidden></div>
   <div id="toast" hidden aria-hidden="true"></div>
-  <div id="notice" role="status" hidden><span id="noticeText"></span><button id="noticeAction"></button><button id="noticeClose" title="Dismiss" aria-label="Dismiss">×</button></div>
+  <div id="notice" hidden>
+    <span id="noticeText"></span>
+    <button id="noticeAction"></button>
+    <button id="noticeSettings" class="noticeSecondary" hidden></button>
+    <button id="noticeHide" class="noticeSecondary" hidden></button>
+    <button id="noticeClose" title="Dismiss" aria-label="Dismiss">×</button>
+  </div>
 </div>
 ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
 <div id="startCompareBackdrop" hidden>
@@ -1986,6 +1995,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
 <script nonce="${nonce}" src="${uri('inspect.js')}"></script>
 <script nonce="${nonce}" src="${uri('scopes.js')}"></script>
 <script nonce="${nonce}" src="${uri('exactframe.js')}"></script>
+<script nonce="${nonce}" src="${uri('reduced-res-notice.js')}"></script>
 <script nonce="${nonce}" src="${uri('subtitles.js')}"></script>
 <script nonce="${nonce}" src="${uri('tracks-menu.js')}"></script>
 <script nonce="${nonce}" src="${uri('xray.js')}"></script>
@@ -2063,6 +2073,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
         this.t.ready = this.t.ready || Date.now();
         this.sendSubtitles().catch((e) => log(`[${this.name}] subtitles: ${e && e.stack || e}`));
         this.sendFfmpegState();
+        if (globalState.get(HIDE_REDUCED_RES_NOTICE)) this.post({ type: 'hideReducedResNotice' });
         // The bar was rendered with the Compare state. A Compare that opened or closed while the page loaded is sent
         // after the video opened, so nothing comes before the first sound and frames (test/host/wav_parts_test.js).
         return Promise.resolve(this.sequence ? this.openSequence() : this.open())
@@ -2147,6 +2158,16 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
           setupFfmpeg().then(() => (this.url && !this.disposed ? tools() : null)).then((t) => { if (t && !this.disposed) this.reload('ffmpeg set up'); }, () => {});
         }
         if (m.id === 'fullRes') this.useFullRes();
+        if (m.id === 'nativeResolutionSettings') {
+          return vscode.commands.executeCommand('workbench.action.openSettings', '@id:videoPreviewEnhanced.nativeMaxHeight');
+        }
+        if (m.id === 'transcodeSettings') {
+          return vscode.commands.executeCommand('workbench.action.openSettings', '@id:videoPreviewEnhanced.transcode');
+        }
+        if (m.id === 'hideReducedResNotice') {
+          await globalState.update(HIDE_REDUCED_RES_NOTICE, true);
+          for (const session of sessions) session.post({ type: 'hideReducedResNotice' });
+        }
         return undefined;
       case 'decodeSpeed': return this.onSpeed(m);
       case 'softVideo': if (vscode.env.remoteName && !this.native && !this.fullRes) maybeOfferRemoteFfmpeg(this, m).catch((e) => log(`remote ffmpeg offer: ${e && e.stack || e}`)); return undefined;
@@ -2166,7 +2187,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
       case 'playing': return undefined;
       case 'pos': return this.rememberPos(m.t, m.d);
       case 'neighbour': return this.openNeighbour(m.d);
-      case 'focusMode': return vscode.commands.executeCommand('workbench.action.toggleZenMode');
+      case 'focusMode': return toggleFocusMode(vscode);
       case 'copyText': return vscode.env.clipboard.writeText(String(m.text || ''));
       case 'copyLink': {
         if (this.url) { this.post({ type: 'toast', text: 'Frame links work for video files only, not URLs', ms: 3000 }); return undefined; }
@@ -2965,11 +2986,12 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     }
     if (this.native && this.native.lossy()) {
       const n = this.native;
+      const fullResolution = 'Switch to Full Resolution (This Tab)';
       const ok = await vscode.window.showWarningMessage(
-        `Native ffmpeg decodes this video for display at ${n.w}×${n.h}, 8-bit 4:2:0: exported frames would be that, not the file's own pixels (${n.pr.video.width}×${n.pr.video.height} ${n.pr.video.pixFmt}).`,
-        { modal: true }, 'Switch to Full Resolution', 'Export Anyway');
+        `Native ffmpeg decodes this video at ${n.w}×${n.h} (${n.deep ? 10 : 8}-bit) for smooth playback. Exported PNGs will use this playback picture.`,
+        { modal: true }, fullResolution, 'Export Anyway');
       if (signal.aborted) return;
-      if (ok === 'Switch to Full Resolution') {
+      if (ok === fullResolution) {
         this.useFullRes();
         vscode.window.showInformationMessage('Video Preview: now on the built-in decoder at full resolution. Run the export again once the video shows.');
         return;
