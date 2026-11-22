@@ -44,8 +44,8 @@ function streamTick(stream) {
 async function inspectSource(tools, file, range, signal) {
   if (!validRange(range)) throw new Error('Set an A-B loop first with A and B');
   if (range.native) {
-    throw new Error('Exact clip export is unavailable for ranges marked or mapped with native playback. '
-      + 'Switch to a built-in decoder and set A and B again.');
+    throw new Error('Exact clip export is unavailable for ranges marked or mapped with native playback or Live transcode. '
+      + 'Switch to a built-in decoder (or turn off Live transcode) and set A and B again.');
   }
   if (!path.isAbsolute(file) || /^[/\\]{2}/.test(file) || !(await fs.stat(file)).isFile()
       || await ff.isPlaylistFile(file)) {

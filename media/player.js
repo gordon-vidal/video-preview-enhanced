@@ -463,7 +463,7 @@
   }
   function setAB(which) {
     if (!player) return;
-    ab.set(which, player.currentTime(), player.currentFrame(), abTime(), !!player.shownFrame?.nativeTimestamp);
+    ab.set(which, player.currentTime(), player.currentFrame(), abTime(), synthTimes());
     abChanged();
   }
   function clearAB() { ab.clear(); abChanged(); }
@@ -473,11 +473,13 @@
   }
   function resetAB(which) {
     if (!player) return;
-    ab.reset(which, player.currentTime(), player.currentFrame(), abTime(), !!player.shownFrame?.nativeTimestamp);
+    ab.reset(which, player.currentTime(), player.currentFrame(), abTime(), synthTimes());
     abChanged();
   }
   /** The settings panel's A-B row: start, then end, then off. */
-  function cycleAB() { if (!player) return; ab.cycle(player.currentTime(), player.currentFrame(), abTime(), !!player.shownFrame?.nativeTimestamp); abChanged(); }
+  // Native frames and Live transcode label pictures by count, not by source timestamp, so exact export must refuse them.
+  function synthTimes() { return !!(player.shownFrame?.nativeTimestamp || player.remoteStream); }
+  function cycleAB() { if (!player) return; ab.cycle(player.currentTime(), player.currentFrame(), abTime(), synthTimes()); abChanged(); }
   function abLabel() { return ab.label(fmtClock); }
   function drawAB() {
     const m = ab.marks(player && player.meta.duration);

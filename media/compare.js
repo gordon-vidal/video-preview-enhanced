@@ -310,7 +310,7 @@
   function markAB(end) {
     if (clock?.shownT == null) return;
     const t = clock.rel(clock.shownT) - offSec(st.clock);
-    const native = !!clock.shownFrame?.nativeTimestamp;
+    const native = !!(clock.shownFrame?.nativeTimestamp || clock.remoteStream);
     if (end) ab.set(end, t, 0, t, native);
     else ab.cycle(t, 0, t, native);
     toast(ab.toast(fmtAB));
@@ -321,7 +321,7 @@
     const ranges = ab.isRange() && clock?.shownT != null
       ? tiles.map((p, i) => ({
         ...VpeCompareRange.mapRange(ab.a, ab.b, offSec(i), fpsOf(p), i === st.clock),
-        native: ab.aNative || ab.bNative || !!p.shownFrame?.nativeTimestamp || !!p.cfg.native,
+        native: ab.aNative || ab.bNative || !!p.shownFrame?.nativeTimestamp || !!p.cfg.native || !!p.remoteStream,
       }))
       : null;
     vscode.postMessage({ type: 'clipRange', ranges, clock: st.clock, order: st.order });
