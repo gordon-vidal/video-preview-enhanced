@@ -7,6 +7,8 @@
 - Settings opens on the first click from another panel. Live transcode shows where its defaults apply and which tools fetch full-resolution frames.
 - A–B marks can be set quietly for looping. Exact clip export offers a decoder switch when the marks lack source timestamps.
 - Large Compare grids label tile copies as rendered-size images.
+- Compare tiles have a **×** button in their hover controls to remove that video when three or more are open.
+- Reorder drags lift the tile under the pointer while the other tiles glide into the order a drop would give. Esc snaps them back. Reduced motion turns the glide off.
 
 - Frame stepping and dragging the seek bar update the position readout immediately. Compare combines rapid requests and starts seeking across the videos together.
 - The player’s Compare button uses a framed split-view icon with **Compare** and **Add to Compare** tooltips.

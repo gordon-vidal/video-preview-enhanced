@@ -72,6 +72,11 @@
   const reorderBtn = $('reorderBtn'), reorderHint = $('reorderHint');
   let reordering = false;
   let reorderDrag = null;
+  /** Tiles were moved (glide or lifted) at the last placement: one more placement clears their transforms. */
+  let tilesMoving = false;
+  // Tiles glide into their new slots while a drag previews an order (none with reduced motion).
+  const reduceMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  const glide = Grid.createGlide(() => (reduceMotion && reduceMotion.matches ? 0 : 180));
   const prefs = {
     ...cfg.prefs,
     jump: { arrow: 5, shift: 1, ctrl: 'frame', ...cfg.prefs?.jump },
@@ -983,6 +988,7 @@
     leave: SVG('<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M9 12h8M13 8l4 4-4 4"></path>', 18),
     replace: SVG('<path d="M20 11a8 8 0 0 0-14.5-4.5M4 4v3h3M4 13a8 8 0 0 0 14.5 4.5M20 20v-3h-3"></path>', 18),
     remove: SVG('<path d="M6 6l12 12M18 6L6 18"></path>', 18),
+    close: SVG('<path d="M7 7l10 10M17 7L7 17"></path>', 14),
     split: SVG('<path d="M9 7l-5 5 5 5M15 7l5 5-5 5"></path>', 14),
   };
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -1016,7 +1022,7 @@
           d.innerHTML = `<div class="ov L" data-side="L"></div><div class="ov R" data-side="R"></div><div class="move L"></div><div class="move R"></div><div class="oor" hidden>One side has no picture at this moment</div>`
             + `<div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" title="Drag, or ← → (Shift: 10 %), Home / End"><span class="h">${ICONS.split}</span></div>`;
         } else {
-          d.innerHTML = '<div class="ov"></div><div class="move"></div><div class="oor" hidden>No picture at this moment (offset or length)</div>';
+          d.innerHTML = `<div class="ov${Grid.canRemoveTile(N) ? ' removable' : ''}"></div><div class="move"></div><div class="oor" hidden>No picture at this moment (offset or length)</div>`;
         }
         cellsEl.appendChild(d);
       }
@@ -1051,6 +1057,7 @@
     });
     stage.classList.toggle('pannable', cells.some(overflows));
     updateOverlays();
+    placeTileMotion(performance.now());
   }
 
   /** True when the picture is larger than its cell on some side (it can be dragged). */
@@ -1070,7 +1077,9 @@
       return `<button class="pill ${side === 'R' ? 'right' : 'left'}" data-act="openVid" data-i="${i}" title="${esc(names[i])}: offset, clock, sound, replace, remove"><span class="ltr">${k}</span><span class="nm">${esc(names[i])}</span>${clockI}${soundI}<span class="fr mono" data-fr="${i}"></span></button>`
         + `<div class="nudge ${side === 'R' ? 'right below' : side === 'L' ? 'left below' : 'right'}" role="group" aria-label="Offset of ${k}"><button data-act="nudge" data-i="${i}" data-d="-1" aria-label="${k} earlier" title="Earlier  −">‹</button>`
         + `<button class="offv mono" data-act="openVid" data-i="${i}" title="Offset of ${k}" aria-label="Offset of ${k}: ${offText(i, true)}">${offText(i)}</button>`
-        + `<button data-act="nudge" data-i="${i}" data-d="1" aria-label="${k} later" title="Later  +">›</button></div>`;
+        + `<button data-act="nudge" data-i="${i}" data-d="1" aria-label="${k} later" title="Later  +">›</button></div>`
+        // Split (2 videos) has sides and no remove button: removing one of 2 leaves Compare (the tile menu does that).
+        + (side ? '' : Grid.removeButtonHtml(N, i, esc(names[i]), ICONS.close));
     };
     const arrows = (i) => [-1, 1].map((d) => {
       const pos = order.indexOf(i) + d;
@@ -1247,11 +1256,15 @@
     const W = Math.max(1, Math.round(stage.clientWidth * dpr)), H = Math.max(1, Math.round(stage.clientHeight * dpr));
     const rects = [];
     // The visible part of the picture, and which part of the texture that is (zoomed in, the picture is larger than its cell).
+    const now = performance.now();
     const px = (c, slot) => {
       const p = c.pic, f = c.full;
       const src = tileSrc(slot);
+      // A tile gliding to its slot, or lifted under the pointer, is drawn where its cell is shown.
+      const m = c.split ? { dx: 0, dy: 0, s: 1 } : tileShift(slot, now);
+      const w = p.w * m.s, h = p.h * m.s;
       return {
-        x: p.x * dpr, y: p.y * dpr, w: p.w * dpr, h: p.h * dpr,
+        x: (p.x + m.dx - (w - p.w) / 2) * dpr, y: (p.y + m.dy - (h - p.h) / 2) * dpr, w: w * dpr, h: h * dpr,
         win: [(p.x - f.x) / f.w, (p.y - f.y) / f.h, p.w / f.w, p.h / f.h], nearest: src.w > 0 && (f.w * dpr) / src.w >= 2,
       };
     };
@@ -1263,6 +1276,9 @@
         if (!outs[r]) { const q = px(c, r); rects.push({ slot: r, ...q, clipX: q.x + q.w * st.split }); }
       } else if (!outs[c.tiles[0]]) rects.push({ slot: c.tiles[0], ...px(c, c.tiles[0]) });
     }
+    // The lifted tile is drawn last, over the tiles it passes.
+    const lifted = liftedTile();
+    if (lifted >= 0) rects.sort((a, b) => Number(a.slot === lifted) - Number(b.slot === lifted));
     comp.draw(W, H, rects);
     // Small grids may still be displaying older uploads while the engines decode the next set.
     // Large-grid textures are filled directly by the shared renderer.
@@ -1772,7 +1788,7 @@
     const from = st.order.indexOf(video);
     const focused = el === document.activeElement;
     finishReorderDrag();
-    commitOrder(Grid.moveTile(st.order, from, from + direction), video);
+    relayout(() => commitOrder(Grid.moveTile(st.order, from, from + direction), video));
     if (focused) {
       const buttons = `[data-act="move"][data-i="${video}"]:enabled`;
       (cellsEl.querySelector(`${buttons}[data-d="${direction}"]`) || cellsEl.querySelector(buttons))?.focus();
@@ -1803,6 +1819,67 @@
     if (!hit) return -1;
     return hit.c.split ? Number(e.clientX >= splitX) : cells.indexOf(hit.c);
   }
+
+  // Discord-style drag: past 4 px the tile lifts and follows the pointer; the others glide to the order a drop
+  // would give (Grid.reorderSession, always from the start order). The canvas draws each picture where its cell is
+  // shown (tileShift), so pictures and overlays move together. Split (one cell, two sides) only re-labels.
+  /** Each video's slot position (stage px) in the current layout. */
+  function slotPositions() {
+    /** @type {Record<string, {x: number, y: number}>} */
+    const m = {};
+    for (const c of cells) if (!c.add && !c.split) m[c.tiles[0]] = { x: c.x, y: c.y };
+    return m;
+  }
+  /** The video that follows the pointer, or -1. */
+  function liftedTile() { return reorderDrag && reorderDrag.lift ? reorderDrag.video : -1; }
+  /** How far video v is drawn from its slot now, and its scale (1.02 while lifted). */
+  function tileShift(v, now) {
+    const drag = reorderDrag;
+    if (drag && drag.lift && v === drag.video) {
+      const slot = slotPositions()[v];
+      if (slot) return { dx: drag.lift.x + drag.px - drag.x - slot.x, dy: drag.lift.y + drag.py - drag.y - slot.y, s: 1.02 };
+    }
+    return { ...glide.offset(v, now), s: 1 };
+  }
+  /** Where each video is shown now (its slot plus its shift). */
+  function shownPositions(now) {
+    const m = slotPositions();
+    for (const k of Object.keys(m)) {
+      const o = tileShift(Number(k), now);
+      m[k] = { x: m[k].x + o.dx, y: m[k].y + o.dy };
+    }
+    return m;
+  }
+  /** Runs a layout change; the tiles glide from where they were shown to their new slots. */
+  function relayout(change) {
+    const now = performance.now();
+    const shown = shownPositions(now);
+    change();
+    glide.retarget(shown, slotPositions(), now, liftedTile());
+    placeTileMotion(now);
+    viewDirty = true;
+    wakeLoop();
+  }
+  /** The cells' DOM at their shown positions; true while something moves (or just stopped). */
+  function placeTileMotion(now) {
+    const lifted = liftedTile();
+    const moving = lifted >= 0 || glide.active(now);
+    if (!moving && !tilesMoving) return false;
+    [...cellsEl.children].forEach((d, k) => {
+      const c = cells[k];
+      const v = c && !c.add && !c.split ? c.tiles[0] : -1;
+      const o = v >= 0 ? tileShift(v, now) : { dx: 0, dy: 0, s: 1 };
+      d.style.transform = o.dx || o.dy || o.s !== 1 ? `translate3d(${o.dx}px, ${o.dy}px, 0)${o.s !== 1 ? ` scale(${o.s})` : ''}` : '';
+      d.classList.toggle('lifted', v >= 0 && v === lifted);
+    });
+    tilesMoving = moving;
+    return true;
+  }
+  /** Per frame: move the cells and redraw the pictures while tiles glide or follow the pointer. */
+  function stepTileMotion(now) {
+    if (placeTileMotion(now)) viewDirty = true;
+  }
+
   stage.addEventListener('pointerdown', (e) => {
     if (!reordering || reorderDrag || e.button !== 0 || e.target.closest('[data-act="move"]')) return;
     const r = stage.getBoundingClientRect(), c = cells[0];
@@ -1811,31 +1888,43 @@
     const splitX = c.split ? r.left + Math.max(r.width * 0.1, Math.min(r.width * 0.9, c.pic.x + c.pic.w * st.split)) : 0;
     const from = reorderSlot(e, splitX);
     if (from < 0) return;
-    reorderDrag = { id: e.pointerId, from, to: from, x: e.clientX, y: e.clientY, splitX, moved: false, preview: st.order };
+    reorderDrag = {
+      id: e.pointerId, from, to: from, x: e.clientX, y: e.clientY, px: e.clientX, py: e.clientY, splitX, moved: false,
+      video: st.order[from], session: Grid.reorderSession(st.order, from), preview: st.order, lift: null,
+    };
     e.preventDefault();
     try { stage.setPointerCapture(e.pointerId); } catch { /* synthetic pointer (test hook) */ }
   });
   function previewReorder(e) {
     const drag = reorderDrag;
     if (!drag || e.pointerId !== drag.id) return;
+    drag.px = e.clientX;
+    drag.py = e.clientY;
     if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
-    drag.moved = true;
-    stage.classList.add('reorder-drag');
+    if (!drag.moved) {
+      drag.moved = true;
+      stage.classList.add('reorder-drag');
+      // The tile lifts from where it is shown now (a glide may still be running).
+      if (st.mode !== 'split') drag.lift = shownPositions(performance.now())[drag.video] || null;
+    }
     const to = reorderSlot(e, drag.splitX);
     if (to === drag.to) return;
     drag.to = to;
-    // Every preview starts from the committed order, so reversing direction is reversible.
-    drag.preview = Grid.moveTile(st.order, drag.from, to);
-    updateOrderLayout();
+    drag.preview = drag.session.over(to);
+    relayout(layoutCells);
   }
   function finishReorderDrag(commit = false) {
     const drag = reorderDrag;
     if (!drag) return;
-    reorderDrag = null;
-    stage.classList.remove('reorder-drag');
-    if (stage.hasPointerCapture(drag.id)) stage.releasePointerCapture(drag.id);
-    if (commit && drag.preview !== st.order) commitOrder(drag.preview, st.order[drag.from]);
-    else if (drag.preview !== st.order) updateOrderLayout();
+    const order = commit ? drag.session.commit() : drag.session.cancel();
+    // The lifted tile drops from where it is shown into its slot (its own slot again on cancel).
+    relayout(() => {
+      reorderDrag = null;
+      stage.classList.remove('reorder-drag');
+      if (stage.hasPointerCapture(drag.id)) stage.releasePointerCapture(drag.id);
+      if (order !== st.order) commitOrder(order, drag.video);
+      else if (drag.preview !== st.order) updateOrderLayout();
+    });
   }
   stage.addEventListener('pointermove', previewReorder);
   stage.addEventListener('pointerup', (e) => {
@@ -1951,6 +2040,7 @@
       else if (reordering) return;
       else if (el.dataset.act === 'openVid') { closeMenu(); st.sel = i; controls.show('cmpVid', ui.cmpBtn); }
       else if (el.dataset.act === 'nudge') nudge(i, Number(el.dataset.d));
+      else if (el.dataset.act === 'remove') removeTile(i);
       else if (el.dataset.act === 'add') addVideo();
     }
   });
@@ -1978,7 +2068,7 @@
   // A drag may start on a name pill or an offset nudge too (they sit over the picture's corners and edges): the 4 px
   // threshold keeps a plain click on them a click, and the click that ends a drag is swallowed below.
   stage.addEventListener('pointerdown', (e) => {
-    if (reordering || e.button !== 0 || !clock || /** @type {any} */ (e.target).closest('#divider, #menu, .move')) return;
+    if (reordering || e.button !== 0 || !clock || /** @type {any} */ (e.target).closest('#divider, #menu, .move, .rm')) return;
     const hit = cellAt(e.clientX, e.clientY);
     if (!hit) return;
     // One view for all tiles: a tile that fits its cell may start the drag when another one overflows.
@@ -2322,7 +2412,7 @@
   }
   function restful() {
     return !!clock && tiles.length === N && begun && !clock.playing && !pendingStart && !scanner.running && !waiting
-      && !waitSince && !viewDirty && !layoutDirty && !infoDirty && !scrubbing && tiles.every((p) => typeof p.settled === 'function' && p.settled());
+      && !waitSince && !viewDirty && !layoutDirty && !infoDirty && !scrubbing && !tilesMoving && tiles.every((p) => typeof p.settled === 'function' && p.settled());
   }
 
   function frameLoop(now) {
@@ -2348,6 +2438,7 @@
         }
         for (const p of tiles) if (p !== clock) p.tick(now);
         if (begun && visible && !clock.playing) syncPaused();
+        stepTileMotion(now);
         present(now);
         updateUi();
       } catch (e) {

@@ -67,6 +67,87 @@ for (let n = 2; n <= 16; n++) {
   assert.deepStrictEqual(Grid.orderAfterRemoval(moved, 1), [...initial.slice(1, -1), 0]);
 }
 
+// ---- Reorder drag: live preview from the start order, commit keeps it, cancel restores it ----
+{
+  const start = [0, 1, 2, 3, 4];
+  const drag = Grid.reorderSession(start, 1);
+  assert.strictEqual(drag.preview, start, 'nothing moves before the pointer reaches another slot');
+  assert.deepStrictEqual(drag.over(3), [0, 2, 3, 1, 4], 'over a later slot: the tiles in between shift up');
+  assert.deepStrictEqual(drag.over(0), [1, 0, 2, 3, 4], 'reversing direction previews from the start order');
+  assert.strictEqual(drag.over(1), start, 'back over its own slot: the start order');
+  assert.strictEqual(drag.over(-1), start, 'off the tiles (the Add cell or a gap): the start order');
+  drag.over(4);
+  assert.deepStrictEqual(drag.commit(), [0, 2, 3, 4, 1], 'a drop keeps the last preview');
+  assert.deepStrictEqual(start, [0, 1, 2, 3, 4], 'the start order is never mutated');
+  const cancelled = Grid.reorderSession(start, 4);
+  cancelled.over(0);
+  assert.strictEqual(cancelled.cancel(), start, 'Esc or leaving Reorder mode: back to the start order');
+  assert.strictEqual(cancelled.preview, start);
+  assert.strictEqual(Grid.reorderSession(start, 2).commit(), start, 'a click without a move commits nothing');
+}
+
+// ---- the tiles' glide: standard easing, FLIP offsets that ease to 0, retargeting mid-flight ----
+{
+  assert.strictEqual(Grid.easeStandard(0), 0);
+  assert.strictEqual(Grid.easeStandard(1), 1);
+  assert.strictEqual(Grid.easeStandard(-1), 0);
+  assert.strictEqual(Grid.easeStandard(2), 1);
+  let prev = 0;
+  for (let p = 0.05; p < 1; p += 0.05) {
+    const y = Grid.easeStandard(p);
+    assert.ok(y >= prev && y <= 1, `monotonic at ${p}`);
+    prev = y;
+  }
+  assert.ok(Grid.easeStandard(0.5) > 0.8, 'decelerating: most of the way by half time');
+
+  const g = Grid.createGlide(180);
+  // Tile 1 was shown at x 0 and its new slot is x 100: it starts 100 px left of the slot and eases in.
+  g.retarget({ 0: { x: 100, y: 0 }, 1: { x: 0, y: 0 } }, { 0: { x: 0, y: 0 }, 1: { x: 100, y: 0 } }, 1000);
+  assert.deepStrictEqual(g.offset(1, 1000), { dx: -100, dy: 0 });
+  assert.deepStrictEqual(g.offset(0, 1000), { dx: 100, dy: 0 });
+  assert.ok(g.active(1090));
+  const mid = g.offset(1, 1090).dx;
+  assert.ok(mid > -100 && mid < 0, 'half way in time, part of the way in space');
+  assert.deepStrictEqual(g.offset(1, 1180), { dx: 0, dy: 0 });
+  assert.ok(!g.active(1180), 'done after the duration');
+  // Retargeting from where a tile is shown keeps its motion continuous.
+  g.retarget({ 2: { x: 0, y: 0 } }, { 2: { x: 0, y: 50 } }, 0);
+  const shown = { x: 0, y: 50 + g.offset(2, 60).dy };
+  g.retarget({ 2: shown }, { 2: { x: 0, y: 0 } }, 60);
+  assert.strictEqual(g.offset(2, 60).dy, shown.y, 'a new target starts where the tile is shown');
+  // The tile under the pointer and tiles that stay put do not glide; clear drops everything.
+  g.retarget({ 3: { x: 0, y: 0 }, 4: { x: 5, y: 5 } }, { 3: { x: 40, y: 0 }, 4: { x: 5, y: 5.2 } }, 0, 3);
+  assert.deepStrictEqual(g.offset(3, 0), { dx: 0, dy: 0 });
+  assert.deepStrictEqual(g.offset(4, 0), { dx: 0, dy: 0 });
+  g.clear();
+  assert.ok(!g.active(60));
+  // Reduced motion (duration 0, read on each retarget): tiles jump to their slots.
+  let ms = 180;
+  const r = Grid.createGlide(() => ms);
+  ms = 0;
+  r.retarget({ 0: { x: 0, y: 0 } }, { 0: { x: 100, y: 0 } }, 0);
+  assert.deepStrictEqual(r.offset(0, 0), { dx: 0, dy: 0 });
+  assert.ok(!r.active(0));
+}
+
+// ---- the tile header's remove button: 3 videos or more ----
+assert.ok(!Grid.canRemoveTile(2) && Grid.canRemoveTile(3) && Grid.canRemoveTile(16));
+assert.strictEqual(Grid.removeButtonHtml(2, 1, 'b.mp4', '<svg></svg>'), '', '2 videos: no remove button (Remove leaves Compare)');
+for (const n of [3, 4, 9]) {
+  const html = Grid.removeButtonHtml(n, 2, 'clip &amp; co.mp4', '<svg></svg>');
+  assert.match(html, /^<button class="rm" data-act="remove" data-i="2" /, `${n} videos: a remove button for the tile's video`);
+  assert.match(html, /aria-label="Remove clip &amp; co\.mp4 from Compare" title="Remove from Compare"/);
+}
+{
+  const src = require('fs').readFileSync(path.join(__dirname, '../../media/compare.js'), 'utf8');
+  assert.match(src, /\(side \? '' : Grid\.removeButtonHtml\(N, i, esc\(names\[i\]\), ICONS\.close\)\)/, 'tile overlays use the remove button');
+  assert.match(src, /el\.dataset\.act === 'remove'\) removeTile\(i\)/, 'the button removes through removeTile (the host\'s remove message)');
+  // The tiles' click handler stops the click before the stage's play / pause handler sees it.
+  assert.match(src, /cellsEl\.addEventListener\('click', \(e\) => \{\s*const el = [^\n]*\n\s*if \(el\) \{\s*e\.stopPropagation\(\);/);
+  const css = require('fs').readFileSync(path.join(__dirname, '../../media/compare.css'), 'utf8');
+  assert.match(css, /#stage\.reordering \.rm \{ visibility: hidden; \}/);
+}
+
 // ---- memory: 2-4 tiles exactly as before; 5-16 share fixed budgets ----
 for (const gb of [null, 8, 16, 32]) {
   const mem = gb === null ? null : budgets(gb);
