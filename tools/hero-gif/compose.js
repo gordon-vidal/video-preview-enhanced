@@ -160,14 +160,14 @@ async function compose({ tmp, frames, out, width = 1280, fps = 15, name = 'hero-
   if (capCur) capSpans.push({ ...capCur, end: total / 1000 });
   const drawCaps = (wd) => {
     if (!capSpans.length) return '';
-    const fsPx = Math.round(24 * (wd / 1280));
-    const pad = Math.round(12 * (wd / 1280));
-    const yOff = Math.round(118 * (wd / 1280));
+    const fsPx = Math.round(68 * (wd / 1280));
+    const pad = Math.round(24 * (wd / 1280));
+    const yOff = Math.round(120 * (wd / 1280));
     const esc = (s) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:').replace(/%/g, '\\%');
     return ',' + capSpans.map(({ text, start, end }) =>
       `drawtext=fontfile='C\\:/Windows/Fonts/segoeuib.ttf':text='${esc(text)}':fontcolor=white:fontsize=${fsPx}`
-      + `:x=w*0.64-text_w/2:y=h-${yOff}-text_h:box=1:boxcolor=0x0d1117@0.86:boxborderw=${pad}`
-      + `:shadowcolor=black@0.5:shadowx=0:shadowy=1:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
+      + `:x=(w-text_w)/2:y=h-${yOff}-text_h:box=1:boxcolor=0x0d1117@0.90:boxborderw=${pad}`
+      + `:shadowcolor=black@0.6:shadowx=0:shadowy=2:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
     ).join(',');
   };
   const mp4 = path.join(out, `${name}.mp4`);
@@ -175,10 +175,10 @@ async function compose({ tmp, frames, out, width = 1280, fps = 15, name = 'hero-
   // 128 colours with Bayer scale 5 keep a 12 s, 1280 px take under 5 MB (256 / scale 4: about 6 MB);
   // if it is still bigger, 960 px.
   const gif = path.join(out, `${name}.gif`);
-  for (const wd of [width, 960]) {
-    await ffmpeg(['-i', master, '-vf', `scale=${wd}:-2:flags=lanczos${drawCaps(wd)},split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`, '-loop', '0', gif]);
+  for (const { wd, colors } of [{ wd: width, colors: 128 }, { wd: 960, colors: 128 }, { wd: 800, colors: 96 }, { wd: 720, colors: 64 }]) {
+    await ffmpeg(['-i', master, '-vf', `scale=${wd}:-2:flags=lanczos${drawCaps(wd)},split[a][b];[a]palettegen=max_colors=${colors}:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`, '-loop', '0', gif]);
     if (fs.statSync(gif).size < 5e6) break;
-    console.log(`GIF at ${wd} px is ${(fs.statSync(gif).size / 1e6).toFixed(2)} MB; trying 960 px`);
+    console.log(`GIF at ${wd} px (${colors} col) is ${(fs.statSync(gif).size / 1e6).toFixed(2)} MB; trying smaller`);
   }
   const stills = path.join(tmp, 'stills');
   fs.rmSync(stills, { recursive: true, force: true });

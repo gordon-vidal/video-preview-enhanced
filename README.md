@@ -13,9 +13,9 @@
 
 ## Remote video streaming
 
-Double-click a video in a **Remote‑SSH or WSL workspace** and it plays, with no download first. Heavy footage is no problem: with FFmpeg on the SSH host, it is transcoded there into a light H.264 stream sized to your player, which steps down on a slow connection. In a loopback SSH test, a 4K 10-bit HEVC clip went from **7.5 to 29 fps**. Run **Video Preview: Open Video URL…** to play a link or an HLS / DASH stream.
+Double-click a video in a **Remote‑SSH or WSL workspace** and it plays, with no download first. Heavy footage is no problem: with FFmpeg on the SSH host, it is transcoded there into a light H.264 stream sized to your player, which steps down on a slow connection—enabling real-time playback and instant seeking of 4K and high-bitrate video over the network. Run **Video Preview: Open Video URL…** to play a link or an HLS / DASH stream.
 
-![Playing a video from a Remote-SSH workspace, stepping a frame and comparing two encodes](media/marketing/hero-remote.gif)
+![Playing 4K 10-bit HEVC over Remote-SSH at 30 fps with instant seeking and frame-by-frame stepping](media/marketing/hero-remote.gif)
 
 ## Compare, frame by frame
 
@@ -27,7 +27,7 @@ Select up to **16 videos**, right-click and choose **Compare Videos**. They play
 
 Hover over the seek bar to see the picture at that moment, and drag to scrub through the video live. Release and you land on the exact frame. A separate decoder reads only the keyframes, starts when your pointer reaches the bar and stops when it leaves, so previews appear quickly and never slow playback down.
 
-![Hovering over the seek bar shows a live thumbnail preview and exact frame number](media/marketing/seek-preview.png)
+![Hovering along the seek bar shows a live thumbnail preview and exact frame number](media/marketing/seek-preview.gif)
 
 ## And much more
 

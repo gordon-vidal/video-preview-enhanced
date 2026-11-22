@@ -203,7 +203,7 @@ async function runTake(s) {
   });
 
   // Beat 2: 2x2 grid playing in sync (switch time readout to #frame so stepping is unmistakable)
-  await cap('Up to 16 videos, one timeline');
+  await cap('Up to 16 videos, synced');
   await click(AT.time, { ms: 240 });
   await sleep(90);
   await click(null);
@@ -213,7 +213,7 @@ async function runTake(s) {
   await mark('2-playing');
 
   // Beat 3: Pause, scroll wheel to step frame by frame in sync
-  await cap('Step frame by frame, all in sync');
+  await cap('Step frame by frame');
   await click(AT.play, { ms: 220 }); // pause
   await glide(AT.tileA, 220);
   await sleep(180);
@@ -228,7 +228,7 @@ async function runTake(s) {
   }
 
   // Beat 4: Ctrl+scroll to zoom in on all tiles, then drag to pan together
-  await cap('Zoom in on every video at once');
+  await cap('Zoom & pan all together');
   for (let i = 0; i < 5; i++) {
     await drv.send({ op: 'wheel', ...cur, delta: 120, mods: ['ctrl'] });
     await sleep(120);
@@ -243,7 +243,7 @@ async function runTake(s) {
   await mark('4-zoomed');
 
   // Beat 5: Reset zoom (0), hover late tile D and nudge offset +3f until frame numbers & picture match
-  await cap('Line them up, one frame at a time');
+  await cap('Sync one frame at a time');
   await drv.send({ op: 'key', vk: 0x30 }); // '0' resets zoom/fit
   await sleep(250);
   await glide(AT.tileD, 340);

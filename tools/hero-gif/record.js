@@ -58,8 +58,9 @@ const ZOOM = Math.log(96 / DPI) / Math.log(1.2);
 // The workspace: [name in /home/demo, source in test/media, low-bitrate re-encode?] // personal-data-ok
 const FILES = [
   ['big_buck_bunny_1080p.mp4', 'h264_aac_anim_1080p.mp4'],
-  ['tears_of_steel_1080p.mp4', 'h264_8_1080p.mp4'],
   ['meridian_2160p.mp4', 'h264_8_2160p.mp4'],
+  ['meridian_4k_hevc.mp4', 'hevc_10_2160p.mp4'],
+  ['tears_of_steel_1080p.mp4', 'h264_8_1080p.mp4'],
   ['tmp/big_buck_bunny_1080p_300k.mp4', 'h264_aac_anim_1080p.mp4', ['-c:v', 'libx264', '-b:v', '300k', '-maxrate', '360k', '-bufsize', '360k', '-preset', 'veryfast', '-g', '90', '-c:a', 'copy']],
 ];
 
@@ -84,7 +85,10 @@ function setupWsl(tmp) {
     fs.copyFileSync(local, to);
   }
   const d = `${home}/vpe-demo`;
-  wsl(`mkdir -p ${d}/sshd ${d}/server && cd ${d}/sshd && ([ -f host_ed25519 ] || ssh-keygen -q -t ed25519 -N "" -f host_ed25519)`);
+  wsl(`mkdir -p ${d}/sshd ${d}/server/.vscode-server/data/Machine && cd ${d}/sshd && ([ -f host_ed25519 ] || ssh-keygen -q -t ed25519 -N "" -f host_ed25519)`);
+  fs.writeFileSync(unc(`${d}/server/.vscode-server/data/Machine/settings.json`), JSON.stringify({
+    'videoPreviewEnhanced.transcode': 'always',
+  }, null, 2));
   fs.writeFileSync(unc(`${d}/sshd/sshd_config`), [
     `Port ${PORT}`, 'ListenAddress 127.0.0.1', `HostKey ${d}/sshd/host_ed25519`, `PidFile ${d}/sshd/sshd.pid`,
     `AuthorizedKeysFile ${d}/sshd/authorized_keys`, 'PasswordAuthentication no', 'KbdInteractiveAuthentication no', 'UsePAM no',
@@ -145,7 +149,7 @@ const HIDDEN = path.join(ROOT, 'test', 'vscode', 'hidden_launch.py');
 
 /** VS Code on a hidden desktop, connected to the workspace, with the extension on the remote and the driver beside it. */
 async function startSession({ cfg, w, vsix, tmp }) {
-  const { HiddenCode, findCode, run } = require('../../test/vscode/run');
+  const { HiddenCode, findCode, run } = require('../../test/vscode/hidden');
   const code = findCode();
   const data = `${w.d}/server/.vscode-server`;
   const vs = new HiddenCode({
@@ -169,6 +173,9 @@ async function startSession({ cfg, w, vsix, tmp }) {
       'git.enabled': false,
       'explorer.compactFolders': false,
       'workbench.tree.indent': 12,
+      'breadcrumbs.enabled': false,
+      'window.commandCenter': false,
+      'videoPreviewEnhanced.transcode': 'always',
     },
   });
   vs.log = unc(`${w.d}/vpe.log`); // the extension runs on the remote: its log and command file are there
@@ -226,25 +233,23 @@ class Driver {
 // ---- The scripted take ----
 // Client pixels of the 1280x800 window (see --interactive in the header). Explorer rows are 22 px apart.
 const AT = {
-  start: { x: 760, y: 430 },
-  rowTmp: { x: 100, y: 116 }, // collapsed tmp/ first, then the files
-  rowBbb: { x: 165, y: 138 }, // big_buck_bunny_1080p.mp4 with tmp/ collapsed
-  rowBbbBelowTmp: { x: 165, y: 160 }, // the same row once tmp/ is open
-  rowLow: { x: 200, y: 138 }, // tmp/big_buck_bunny_1080p_300k.mp4
-  menuCompare: { dx: 100, dy: 150 }, // "Compare / Play Together" in the Explorer's context menu, from where it opened
+  start: { x: 760, y: 420 },
+  row4kHevc: { x: 165, y: 160 }, // meridian_4k_hevc.mp4 (VS Code natural sort: 4 < 2160)
   play: { x: 426, y: 735 },
   stepBack: { x: 387, y: 735 },
-  time: { x: 662, y: 735 }, // click: time -> timecode -> frame number
-  cmpView: { x: 1049, y: 736 },
-  cmpSplit: { x: 1195, y: 570 },
-  divider: { x: 815, y: 385 },
+  stepFwd: { x: 465, y: 735 },
+  time: { x: 700, y: 735 }, // click twice: time -> timecode -> frame number
+  seekA: { x: 960, y: 707 },
+  seekB: { x: 560, y: 707 },
+  seekC: { x: 1090, y: 707 },
+  stage: { x: 820, y: 380 },
 };
 
 async function record(s) {
   const { vs, drv } = s;
   const cur = { ...AT.start };
   const ease = (k) => (k < 0.5 ? 2 * k * k : 1 - ((-2 * k + 2) ** 2) / 2);
-  const glide = async (to, ms = 600, held) => {
+  const glide = async (to, ms = 500, held) => {
     const from = { ...cur }, t0 = Date.now();
     for (;;) {
       const k = Math.min(1, (Date.now() - t0) / ms), e = ease(k);
@@ -255,83 +260,76 @@ async function record(s) {
     }
   };
   const click = async (p, extra = {}) => {
-    if (p) await glide(p, extra.ms || 450);
+    if (p) await glide(p, extra.ms || 380);
     await drv.send({ op: 'down', ...cur, ...extra });
-    await sleep(50);
+    await sleep(45);
     await drv.send({ op: 'up', ...cur, ...extra });
   };
   const cut = async (fn) => { await drv.send({ op: 'mark', cut: 'start' }); await fn(); await drv.send({ op: 'mark', cut: 'end' }); };
   const waitLog = (re, from, what) => vs.waitLog(re, { from, timeout: 60000, what });
   const mark = (still) => drv.send({ op: 'mark', still });
+  const cap = (caption) => drv.send({ op: 'mark', caption });
 
   await drv.send({ op: 'move', ...cur });
   await sleep(1500);
   await drv.send({ op: 'rec', on: true });
-  await sleep(250);
-  // 1. Double-click the video in the Explorer: it opens in the player and plays.
-  await glide(AT.rowBbb, 600);
+  await sleep(200);
+
+  // 1. Double-click 4K 10-bit HEVC in the Remote-SSH Explorer: opens and plays without downloading.
+  await cap('Play 4K over Remote-SSH');
+  await glide(AT.row4kHevc, 520);
   await sleep(120);
-  let from = vs.mark();
+  const from = vs.mark();
   await drv.send({ op: 'dbl', ...cur });
-  await cut(async () => { await waitLog(/\[big_buck_bunny_1080p\.mp4\] webview: first frame shown/, from, 'the player'); await sleep(150); });
-  await sleep(250);
-  // 2. While it plays: the time display to frame numbers (two clicks: timecode, then frame number).
-  await click(AT.time, { ms: 450 });
-  await mark('1-playing');
-  await sleep(300);
-  await click();
-  await sleep(350);
-  // 3. Pause, then one frame back.
-  await click(AT.play, { ms: 380 });
-  await sleep(450);
-  await mark('2-paused');
-  await click(AT.stepBack, { ms: 280 });
-  await sleep(650);
-  await mark('3-stepped-back');
-  // 4. Two encodes of the clip: open tmp/, select both, Compare / Play Together (pointer travel at 1.4x).
-  const fast = () => drv.send({ op: 'mark', speed: '1.4' });
-  const normal = () => drv.send({ op: 'mark', speed: 'end' });
-  await fast();
-  await click(AT.rowTmp, { ms: 550 });
-  await sleep(150);
-  await click(AT.rowBbbBelowTmp, { ms: 280 });
-  await sleep(100);
-  await click(AT.rowLow, { ms: 250, mods: ['ctrl'] });
-  await sleep(150);
-  await click(null, { button: 'right' });
-  await normal();
-  await sleep(350);
-  await mark('4-menu');
-  from = vs.mark();
-  await click({ x: cur.x + AT.menuCompare.dx, y: cur.y + AT.menuCompare.dy }, { ms: 380 });
   await cut(async () => {
-    for (const re of [/\[compare [^\]]*\] webview: \[A\] first frame shown/, /\[compare [^\]]*\] webview: \[B\] first frame shown/]) await waitLog(re, from, 'compare');
-    await sleep(500);
+    await waitLog(/\[meridian_4k_hevc\.mp4\] webview: first frame shown/, from, '4K remote player');
+    await sleep(300);
   });
-  // 5. Split view (the view menu: Split, Escape closes it), play both, drag the divider.
-  await fast();
-  await click(AT.cmpView, { ms: 480 });
-  await normal();
+  await sleep(350);
+
+  // 2. Smooth 4K 30 fps playback with Stats HUD (Shift+I) showing 3840x2160 + remote transcode.
+  await cap('4K 10-bit HEVC at 30 fps');
+  await glide(AT.stage, 350);
+  vs.send({ name: 'meridian_4k_hevc.mp4', action: 'key', key: 'I', shift: true });
+  await sleep(2200);
+  await mark('1-4k-playing');
+
+  // 3. Click around on the seek bar: instant seeking over SSH.
+  vs.send({ name: 'meridian_4k_hevc.mp4', action: 'key', key: 'I', shift: true }); // hide stats HUD
+  await cap('Instant seeking over SSH');
+  await click(AT.seekA, { ms: 340 });
+  await sleep(750);
+  await mark('2-seek-a');
+  await click(AT.seekB, { ms: 320 });
+  await sleep(750);
+  await click(AT.seekC, { ms: 340 });
+  await sleep(750);
+  await mark('3-seek-c');
+
+  // 4. Pause, switch time readout to frame numbers, and step frame by frame forward & back.
+  await cap('Step frame by frame');
+  await click(AT.play, { ms: 320 }); // pause
   await sleep(250);
-  await click(AT.cmpSplit, { ms: 280 });
+  await click(AT.time, { ms: 260 }); // timecode
+  await sleep(120);
+  await click(null); // frame number
   await sleep(250);
-  await drv.send({ op: 'key', vk: 0x1B });
-  await sleep(100);
-  await fast();
-  await glide(AT.play, 450);
-  await normal();
-  await click();
-  await glide(AT.divider, 420);
-  await drv.send({ op: 'down', ...cur });
-  await glide({ x: AT.divider.x - 210, y: AT.divider.y + 10 }, 500, 'left');
-  await sleep(100);
-  await glide({ x: AT.divider.x + 90, y: AT.divider.y + 5 }, 550, 'left');
-  await drv.send({ op: 'up', ...cur });
-  await sleep(300);
-  await mark('5-split');
-  await sleep(300);
+  await glide(AT.stepFwd, 260);
+  for (let i = 0; i < 4; i++) {
+    await click(null);
+    await sleep(340);
+  }
+  await mark('4-step-fwd');
+  await glide(AT.stepBack, 240);
+  for (let i = 0; i < 2; i++) {
+    await click(null);
+    await sleep(380);
+  }
+  await sleep(450);
+  await mark('5-step-back');
+
   await drv.send({ op: 'rec', on: false });
-  await sleep(500);
+  await sleep(400);
   fs.writeFileSync(path.join(s.tmp, 'events.json'), JSON.stringify(drv.events));
   return drv.events;
 }
