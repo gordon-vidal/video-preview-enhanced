@@ -108,8 +108,9 @@ async function real(tools, dir) {
   const run = async (file, seek, noStamps = false) => {
     const pr = await ff.probe(tools, file);
     const frames = [];
+    const logs = [];
     let done = false;
-    const nd = new NativeDecoder({ tools, file, probed: pr, method: 'none', maxHeight: 96, maxQueued: 4, log() {}, post: (m) => { if (m.type === 'batch' && m.eof && m.gen === (seek === undefined ? 0 : 1)) done = true; },
+    const nd = new NativeDecoder({ tools, file, probed: pr, method: 'none', maxHeight: 96, maxQueued: 4, log: (m) => logs.push(m), post: (m) => { if (m.type === 'batch' && m.eof && m.gen === (seek === undefined ? 0 : 1)) done = true; },
       postRaw: (m) => { if (m.type === 'ndv') { frames.push(m); nd.handle({ type: 'more', gen: m.gen }); } } });
     nd.noStamps = noStamps;
     await nd.handle({ type: 'open' });
@@ -125,12 +126,12 @@ async function real(tools, dir) {
     const end = Date.now() + 20000;
     while (!done && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
     nd.dispose();
-    return { frames: seek === undefined ? frames : frames.filter((f) => f.gen === 1), pr };
+    return { frames: seek === undefined ? frames : frames.filter((f) => f.gen === 1), pr, logs };
   };
 
   // Non-zero start: stamps are relative to the first picture, not the 3600 s container clock.
   const off = await run(clips['offset.mkv']);
-  near(off.frames[0].src, 0, 1e-6);
+  near(off.frames[0].src, 0, 1e-6, off.logs.join(' | '));
   near(off.frames[10].src, 0.4, 1e-6, 'tenth picture');
   assert.ok(off.frames.every((f, i) => Math.abs(f.t - i / 25) < 1e-9), 'slots keep the constant rate');
   const offSeek = await run(clips['offset.mkv'], 1.0);

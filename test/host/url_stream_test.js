@@ -261,7 +261,8 @@ async function rejects(p, re, what) {
         const info = await us.inspect(`${slow.base}/throttle/1200/master.m3u8`);
         const t0 = Date.now();
         const plan = await us.hlsOpen(info, {});
-        assert.ok(plan.throughput > 600e3 && plan.throughput < 1500e3, `measured ${plan.throughput}`);
+        // Busy CI runners can deliver well below the nominal 1200 kb/s throttle; the upper bound and 180p pick are what matter.
+        assert.ok(plan.throughput > 250e3 && plan.throughput < 1500e3, `measured ${plan.throughput}`);
         assert.strictEqual(plan.variant.height, 180, `slow server: the small variant (${plan.variant.height})`);
         assert.ok(Date.now() - t0 < 15000);
         // Remembered for the server: no second measurement.

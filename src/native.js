@@ -540,10 +540,13 @@ class NativeDecoder {
   picture(proc, parts) {
     if (!proc.stamped) { this.frames.push({ parts, src: NaN, left: 1 }); return; }
     proc.raw.push(parts);
+    this.pair(proc, !!proc.untrusted);
     // Stamps stopped coming (or stopped following the pictures) while pictures go on: waiting for them would
     // fill memory (12 MB a picture at 4K) and stall playback. This run goes on without source times.
-    if (proc.raw.length > MAX_UNPAIRED && !proc.untrusted) this.dropStamps(proc);
-    this.pair(proc, !!proc.untrusted);
+    if (proc.raw.length > MAX_UNPAIRED && !proc.untrusted) {
+      this.dropStamps(proc);
+      this.pair(proc, true);
+    }
     if (!proc.untrusted && proc.raw.length >= STAMP_SKEW && !proc.stampWait) {
       // The stamp pipe is read a little behind the pictures: let it catch up before reading more.
       proc.stampWait = true;
