@@ -282,7 +282,7 @@ class CompareSession {
       case 'clipRange': {
         if (!this.exportClips || !this.uris[m.clock]) return undefined;
         const order = Grid.tileOrder(this.uris.length, m.order);
-        const jobs = order.map((i, slot) => ({ uri: this.uris[i], letter: TILE_KEYS[slot], range: m.ranges?.[i] }));
+        const jobs = order.map((i, slot) => ({ uri: this.uris[i], letter: TILE_KEYS[slot], range: m.ranges?.[i], tile: i }));
         return this.exportClips(this, m.ranges ? jobs : [], this.uris[m.clock], true);
       }
       case 'addMode': return this.addMode?.toggle(this); // Shift+D, the Compare panel's switch
@@ -391,6 +391,11 @@ class CompareSession {
     this.natives[i] = stream;
     return 'transcode';
   }
+
+  /** Tile numbers playing through Live transcode, for the clip export's early refusal. */
+  liveTranscodeTiles() { return this.natives.flatMap((n, i) => (n instanceof EncodedStream ? [i] : [])); }
+
+  useOriginalForClips(tiles) { for (const i of tiles) this.useOriginalTile(i); }
 
   useOriginalTile(i, notice) {
     if (!Number.isInteger(i) || !(this.natives[i] instanceof EncodedStream)) return;

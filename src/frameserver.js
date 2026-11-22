@@ -13,6 +13,7 @@
 
 const http = require('http');
 const crypto = require('crypto');
+const { SRC_UNKNOWN, encodeSrc, decodeSrc } = require('./nativepts');
 
 const HEADER = 40;
 const MAGIC = 0x46455056; // 'VPEF' little-endian
@@ -54,8 +55,12 @@ function stop() {
   if (p) p.then((s) => s.close(), () => {});
 }
 
-/** The 40-byte record header: magic, kind, gen, w, h, ys (luma bytes), t (float64), payload length, reserved. */
-function frameHeader(kind, gen, t, w, h, ys, len) {
+/**
+ * The 40-byte record header: magic, kind, gen, w, h, ys (luma bytes), t (float64), payload length, src.
+ * src (int32): microseconds from t to the picture's own source timestamp (src/nativepts.js), the
+ * minimum int32 when unknown. It was reserved (0) before, so the size and every other field stay put.
+ */
+function frameHeader(kind, gen, t, w, h, ys, len, src = NaN) {
   const b = Buffer.alloc(HEADER);
   b.writeUInt32LE(MAGIC, 0);
   b.writeUInt32LE(kind, 4);
@@ -65,12 +70,13 @@ function frameHeader(kind, gen, t, w, h, ys, len) {
   b.writeUInt32LE(ys, 20);
   b.writeDoubleLE(t, 24);
   b.writeUInt32LE(len, 32);
+  b.writeInt32LE(encodeSrc(t, src), 36);
   return b;
 }
 
 function parseHeader(b) {
   if (b.length < HEADER || b.readUInt32LE(0) !== MAGIC) return null;
-  return { kind: b.readUInt32LE(4), gen: b.readUInt32LE(8), w: b.readUInt32LE(12), h: b.readUInt32LE(16), ys: b.readUInt32LE(20), t: b.readDoubleLE(24), len: b.readUInt32LE(32) };
+  return { kind: b.readUInt32LE(4), gen: b.readUInt32LE(8), w: b.readUInt32LE(12), h: b.readUInt32LE(16), ys: b.readUInt32LE(20), t: b.readDoubleLE(24), len: b.readUInt32LE(32), src: decodeSrc(b.readDoubleLE(24), b.readInt32LE(36)) };
 }
 
 /** WebSocket frame header for a server -> client binary message (unmasked) of n bytes. */
@@ -181,11 +187,11 @@ class Channel {
    * One record: header + payload (a Buffer, or a list of Buffers written as they are, or null).
    * Corked, so the pieces leave in one writev. False when not connected.
    */
-  send(kind, gen, t, w, h, ys, payload) {
+  send(kind, gen, t, w, h, ys, payload, src = NaN) {
     if (!this.connected) return false;
     const parts = !payload ? [] : Array.isArray(payload) ? payload : [payload];
     const len = parts.reduce((n, p) => n + p.length, 0);
-    const head = frameHeader(kind, gen, t, w, h, ys, len);
+    const head = frameHeader(kind, gen, t, w, h, ys, len, src);
     const c = this.conn;
     const out = c.kind === 'ws' ? c.sock : c.res;
     out.cork();
@@ -195,7 +201,8 @@ class Channel {
     return true;
   }
 
-  sendFrame(gen, t, w, h, ys, data) { return this.send(KIND_FRAME, gen, t, w, h, ys, data); }
+  /** src: the picture's own timestamp (s, same origin as t), when ffmpeg reported it. */
+  sendFrame(gen, t, w, h, ys, data, src = NaN) { return this.send(KIND_FRAME, gen, t, w, h, ys, data, src); }
 
   sendEnd(gen) { return this.send(KIND_END, gen, 0, 0, 0, 0, null); }
 
@@ -226,4 +233,4 @@ function end(conn) {
   setTimeout(() => conn.sock.destroy(), 200).unref();
 }
 
-module.exports = { start, stop, Channel, frameHeader, parseHeader, wsHeader, HEADER, MAGIC, KIND_FRAME, KIND_END, get port() { return port; } };
+module.exports = { start, stop, Channel, frameHeader, parseHeader, wsHeader, HEADER, MAGIC, SRC_UNKNOWN, KIND_FRAME, KIND_END, get port() { return port; } };

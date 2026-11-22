@@ -465,21 +465,46 @@
     if (!player) return;
     ab.set(which, player.currentTime(), player.currentFrame(), abTime(), synthTimes());
     abChanged();
+    warnSynthetic();
   }
   function clearAB() { ab.clear(); abChanged(); }
   // A clip uses the picture's timestamp even when the playback clock is between pictures.
   function abTime() {
+    // Native ffmpeg reports the picture's own timestamp (engine.shownMarkTime); the other decoders' times are that already.
+    const own = player.shownMarkTime ? player.shownMarkTime() : null;
+    if (own !== null) return own;
     return player.shownT != null ? player.rel(player.shownT) : player.currentTime();
   }
   function resetAB(which) {
     if (!player) return;
     ab.reset(which, player.currentTime(), player.currentFrame(), abTime(), synthTimes());
     abChanged();
+    warnSynthetic();
   }
   /** The settings panel's A-B row: start, then end, then off. */
-  // Native frames and Live transcode label pictures by count, not by source timestamp, so exact export must refuse them.
+  // Live transcode, and native ffmpeg that could not report a picture's timestamp, label pictures by count rather than
+  // by source timestamp: exact export must refuse marks set on them.
   function synthTimes() { return !!(player.shownFrame?.nativeTimestamp || player.remoteStream); }
-  function cycleAB() { if (!player) return; ab.cycle(player.currentTime(), player.currentFrame(), abTime(), synthTimes()); abChanged(); }
+  function cycleAB() { if (!player) return; ab.cycle(player.currentTime(), player.currentFrame(), abTime(), synthTimes()); abChanged(); warnSynthetic(); }
+  let syntheticNoted = false;
+  /**
+   * An exact A-B clip needs the file's own picture times. Say so as soon as a mark is set on a picture without
+   * them (Live transcode re-times pictures), or when export is asked for, and offer the switch in one click.
+   */
+  function refuseSynthetic() {
+    const transcode = !!(player && player.remoteStream);
+    showNotice({
+      text: transcode
+        ? 'Live transcode re-times the picture, so A and B cannot be used for an exact clip. Switch to the original video and set A and B again.'
+        : "This ffmpeg cannot report the picture's own times, so A and B cannot be used for an exact clip. Switch to the built-in decoder and set A and B again.",
+      action: { label: transcode ? 'Use original video' : 'Switch to built-in decoder', id: 'fullRes', close: true },
+    });
+  }
+  function warnSynthetic() {
+    if (syntheticNoted || cfg.url || cfg.sequence || !player || !ab.isSet() || !synthTimes()) return;
+    syntheticNoted = true;
+    refuseSynthetic();
+  }
   function abLabel() { return ab.label(fmtClock); }
   function drawAB() {
     const m = ab.marks(player && player.meta.duration);
@@ -664,6 +689,7 @@
   function sendRange(type, promptInHost = false) {
     const range = type === 'clipRange' ? ab.presentationRange() : abRange();
     if (!range && !promptInHost) { toast('Set an A-B loop first (A, B)'); return; }
+    if (type === 'clipRange' && range && range.native) { refuseSynthetic(); return; }
     vscode.postMessage({ type, range });
   }
   /**
@@ -1437,7 +1463,7 @@
             stageClass: stage.className, stageRect: rect(stage), picture: { ...insp.picture(), pct: pictureState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), btnTitle: ui.picBtn.title, need: insp.zoomedSize() }, imageRendering: canvas.style.imageRendering,
             pxgrid: !!byId('pxgrid') && !byId('pxgrid').hidden, pxread: byId('pxread') && !byId('pxread').hidden ? byId('pxread').innerText : '',
             goto: !!byId('goto') && !byId('goto').hidden, stats: byId('stats') && !byId('stats').hidden ? byId('stats').textContent : '',
-            infoShown: !ui.info.hidden, abMarks: { hidden: ui.abMarks.hidden, left: ui.abMarks.style.left, width: ui.abMarks.style.width },
+            infoShown: !ui.info.hidden, abRange: ab.presentationRange(), abMarks: { hidden: ui.abMarks.hidden, left: ui.abMarks.style.left, width: ui.abMarks.style.width },
             subsText: byId('subs') && !byId('subs').hidden ? byId('subs').textContent : '', muted: ui.mute.classList.contains('on'),
             dpr: globalThis.devicePixelRatio || 1, engine: !!(p && p.queue), loop: { ...loopStats, busy: loopBusy() }, vscodeContext: document.body.getAttribute('data-vscode-context') || '',
             seekRect: rect(ui.seek), quality: streamQ,

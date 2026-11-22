@@ -1248,7 +1248,8 @@ function createEngine(env) {
       const k = this.nativeColour && this.nativeColour.depth > 8 ? 2 : 1; // bytes per sample
       const half = (m.w / 2) * k;
       this.addFrame({
-        t: m.t, bytes: m.data.byteLength, nativeTimestamp: true,
+        // srcT: the picture's own timestamp from ffmpeg (src/nativepts.js); without it, t is only a slot count.
+        t: m.t, bytes: m.data.byteLength, srcT: Number.isFinite(m.src) ? m.src : undefined, nativeTimestamp: !Number.isFinite(m.src),
         yuv: { width: m.w, height: m.h, data: m.data, fullRange: false, recycle, layout: [{ offset: 0, stride: m.w * k }, { offset: m.ys, stride: half }, { offset: m.ys + m.ys / 4, stride: half }], ...this.nativeColour },
       });
     }
@@ -1269,7 +1270,7 @@ function createEngine(env) {
           onOpen: () => { if (this.frameStream === stream) log(`engine: native frames over ${tr.mode}`); },
           onRecord: (head, data, owned) => {
             if (this.disposed || this.frameStream !== stream) return;
-            if (head.kind === 1) this.onNativeVideo({ gen: head.gen, t: head.t, w: head.w, h: head.h, ys: head.ys, data }, owned);
+            if (head.kind === 1) this.onNativeVideo({ gen: head.gen, t: head.t, src: head.src, w: head.w, h: head.h, ys: head.ys, data }, owned);
             else if (head.kind === 2) this.onWorker({ type: 'batch', gen: head.gen, eof: true, video: [], audio: [] });
           },
           onClose: (err) => {
@@ -2120,6 +2121,15 @@ function createEngine(env) {
     // ---- controls ---------------------------------------------------------------
 
     rel(t) { return t - (this.startT || 0); }
+    /**
+     * The shown picture's time for an exact clip: native ffmpeg reports the file's own timestamp, the other
+     * decoders' picture times are those already. Null before a picture shows.
+     */
+    shownMarkTime() {
+      if (this.shownT === null) return null;
+      const own = this.shownFrame && this.shownFrame.srcT;
+      return this.rel(Number.isFinite(own) ? own : this.shownT);
+    }
     currentTime() { return this.rel(this.shownT !== null && !this.playing ? this.shownT : this.now()); }
     frameNumberRate() {
       // Snapping can accumulate frame-number drift. Use the source rate when it agrees with the

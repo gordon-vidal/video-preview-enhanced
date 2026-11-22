@@ -17,15 +17,75 @@ function hashes(ffmpeg, file) {
     .split(/\r?\n/).filter((line) => /^\d+,/.test(line)).map((line) => line.split(',').at(-1).trim());
 }
 
-function checkClip(ok, h, file, ref, a, b) {
+function checkClip(ok, h, file, ref, a, b, audioStreams = 2) {
   const ffprobe = path.join(path.dirname(h.ffmpeg), 'ffprobe.exe');
   const probe = JSON.parse(run(ffprobe, ['-count_frames', '-show_streams', '-of', 'json', file]));
   const video = probe.streams.find((s) => s.codec_type === 'video');
   ok(Number(video.nb_read_frames) === b - a + 1, `${path.basename(file)}: inclusive frame count`);
-  ok(probe.streams.filter((s) => s.codec_type === 'audio').length === 2, 'both audio streams copied');
+  ok(probe.streams.filter((s) => s.codec_type === 'audio').length === audioStreams, 'the audio streams were copied');
   ok(JSON.stringify(hashes(h.ffmpeg, file)) === JSON.stringify(ref.slice(a, b + 1)),
     `${path.basename(file)}: decoded pictures match the source from A to B`);
 }
+
+// Native ffmpeg reports each picture's own timestamp (src/nativepts.js), so marks set on it export exactly, also on
+// variable-frame-rate video: the clip's first and last pictures are the ones on screen at A and B.
+const nativeCase = {
+  name: 'clip_export_native',
+  ffmpeg: true,
+  settings: { 'videoPreviewEnhanced.autoplay': false, 'videoPreviewEnhanced.decoder': 'ffmpeg' },
+  env: { VPE_CLIP_EXPORT_DIR: folder, VPE_CLIP_EXPORT_CONFIRM: '1' },
+  async run(vs, h) {
+    const R = lib.recorder();
+    const vfr = path.join(folder, 'vfr-native.mp4');
+    for (const name of fs.readdirSync(folder)) if (/^(?:[AB]_)?vfr-native(?:-twin)?_A-B/.test(name)) fs.unlinkSync(path.join(folder, name));
+    // The picture at 1.00 s is missing: a seek to 1.000 s shows the one at 1.04 s.
+    run(h.ffmpeg, ['-y', '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=2', '-f', 'lavfi', '-i', 'sine=d=2',
+      '-vf', String.raw`select=not(eq(n\,25))`, '-fps_mode', 'passthrough', '-c:v', 'libx264', '-g', '25', '-c:a', 'aac', vfr]);
+    const stamps = run(h.ffmpeg, ['-i', vfr, '-map', '0:v:0', '-fps_mode', 'passthrough', '-f', 'framemd5', '-'])
+      .split(/\r?\n/).filter((line) => /^\d+,/.test(line)).map((line) => line.split(',').map((x) => x.trim()));
+    const at = (pts) => stamps.findIndex((r) => Number(r[2]) === Math.round(pts * 25)); // framemd5 counts in 1/25 s here
+    await R.run('clip/native-vfr', async (ok) => {
+      const P = await lib.open(vs, h, vfr);
+      try {
+        await P.waitFirstFrame(30000);
+        P.seek(1.0);
+        await lib.sleep(2500); // the picture of the accurate native seek is on screen
+        P.key('a');
+        P.seek(1.6); await lib.sleep(2500);
+        P.key('b');
+        const marks = (await P.state()).abRange;
+        const from = vs.mark();
+        vs.send({ command: 'videoPreviewEnhanced.exportVideoRange' });
+        await vs.waitLog(/A–B export to /, { from, timeout: 45000 });
+        // Marks are the file's own picture times (not the slot labels of native playback) and not flagged as estimated.
+        const first = at(marks.a);
+        const last = at(marks.b);
+        ok(!marks.native && first >= 0 && last > first, `A and B are source pictures: ${JSON.stringify(marks)}`);
+        checkClip(ok, h, path.join(folder, 'vfr-native_A-B.mp4'), stamps.map((r) => r[5]), first, last, 1);
+      } finally { await P.close(); }
+    });
+    await R.run('clip/native-compare', async (ok) => {
+      const twin = path.join(folder, 'vfr-native-twin.mp4');
+      fs.copyFileSync(vfr, twin);
+      const act = (data) => vs.send({ compare: true, ...data });
+      const from = vs.mark();
+      vs.send({ compareFiles: [vfr, twin] });
+      await vs.waitLog(/first pictures shown/, { from, timeout: 45000 });
+      await lib.sleep(1500);
+      act({ action: 'seek', t: 1.0 }); await lib.sleep(2500);
+      act({ action: 'key', key: 'a' });
+      act({ action: 'seek', t: 1.6 }); await lib.sleep(2500);
+      act({ action: 'key', key: 'b' });
+      act({ action: 'pause' });
+      const mark = vs.mark();
+      vs.send({ command: 'videoPreviewEnhanced.exportCompareVideoRange' });
+      await vs.waitLog(/A–B export to /, { from: mark, timeout: 45000 });
+      const clips = fs.readdirSync(folder).filter((f) => /^[AB]_vfr-native(-twin)?_A-B.mp4$/.test(f));
+      ok(clips.length === 2, `a native Compare exports both tiles exactly: ${clips.join(', ')}`);
+    });
+    return R.out;
+  },
+};
 
 module.exports = [{
   name: 'clip_export',
@@ -122,4 +182,4 @@ module.exports = [{
     });
     return R.out;
   },
-}];
+}, nativeCase];

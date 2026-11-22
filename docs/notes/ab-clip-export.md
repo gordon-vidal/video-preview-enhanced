@@ -143,6 +143,11 @@ The test fixture is generated with FFmpeg's `testsrc2` and `sine` filters.
   start at each tile's independently snapped picture and report the differences. The implementation
   currently snaps independently. The maintainer decision is pending.
 
-Native playback labels pictures with seek time and frame rate. Exact clip export requires source
-timestamps, so marks set with native playback and Compare tiles mapped with native playback are
-ineligible. Switch to built-in playback and set the markers again.
+Exact clip export requires the picture's source timestamp. The built-in decoders have it. Native ffmpeg
+reports it per picture ([native-source-pts.md](native-source-pts.md)), so its marks are exact too, in the
+single player and in Compare tiles. Live transcode re-times pictures; marks set during it are ineligible and
+are refused early: the page shows a notice with **Use original video** when A or B is set on such a picture and
+when the clip is asked for, and the host repeats the check (a warning with the same button, switching every
+transcoded tile in Compare) before any ffmpeg work. A native ffmpeg that cannot report timestamps (older than 5.1,
+or stamps that do not follow the pictures) falls back to counting slots; its marks are refused the same way with
+a **Switch to built-in decoder** button.

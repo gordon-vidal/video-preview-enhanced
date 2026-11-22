@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const ff = require('./ffmpeg');
 const hw = require('./hwaccel');
 const frameserver = require('./frameserver');
+const stamps = require('./nativepts');
 const Grid = require('../media/compare-grid');
 
 const MAX_QUEUED_FRAMES = 12; // on a 32 GB machine; less on smaller ones (opts.maxQueued, media/membudget.js)
@@ -375,7 +376,7 @@ class NativeDecoder {
           off += take;
           have += take;
           if (have < this.frameBytes) break;
-          this.frames.push(parts);
+          this.picture(proc, parts);
           parts = [];
           have = 0;
           if (!this.gotOutput && this.stats) this.log(`native: first frame ${Date.now() - this.spawnedAt} ms after start`);
@@ -388,6 +389,20 @@ class NativeDecoder {
           proc.stdout.pause();
         }
         if (this.st) this.st.readMs += Number(process.hrtime.bigint() - h0) / 1e6;
+        this.flushWaiting();
+      });
+    }
+    if (proc.stamped) {
+      proc.raw = []; // pictures waiting for their timestamp
+      proc.stampQ = [];
+      proc.placed = 0;
+      proc.resampler = new stamps.Resampler(this.fps);
+      const parser = new stamps.StampParser();
+      proc.stdio[stamps.STAMP_FD].setEncoding('utf8');
+      proc.stdio[stamps.STAMP_FD].on('data', (d) => {
+        if (proc !== this.proc) return;
+        proc.stampQ.push(...parser.push(d));
+        this.pair(proc);
         this.flushWaiting();
       });
     }
@@ -443,6 +458,7 @@ class NativeDecoder {
         this.onFail(why || exit);
         return;
       }
+      if (proc.stamped) this.pair(proc, true);
       this.ended = true;
       this.flushWaiting();
       // 16 waiting ffmpegs (one per tile) cost more than a loop's start-up saves.
@@ -463,6 +479,11 @@ class NativeDecoder {
     // HDR output (10-bit): the CPU scaler; the GPU filters here only produce 8-bit.
     const gpuFilter = this.deep || failedGpuFilters.get(this.tools)?.has(filterKey) ? '' : filter;
     const args = ['-hide_banner', '-nostdin', '-v', 'error'];
+    // Source timestamps (src/nativepts.js): every picture passes unchanged, its timestamp comes on fd 4, and the
+    // constant-rate slots are made here. Old ffmpeg builds (no -fps_mode) keep ffmpeg's own resampling.
+    const timeBase = v ? stamps.parseTimeBase(v.timeBase) : null;
+    const stamped = !!timeBase && modern && !this.noStamps;
+    if (stamped) args.push('-copyts');
     // Leave surfaces on the GPU when the build has a filter for this source format.
     if (v) args.push(...hw.inputArgs(this.method, gpuFilter));
     // -ss counts from the file's start; frame times from the picture's (lead: the sound starts first).
@@ -474,12 +495,16 @@ class NativeDecoder {
     if (v) args.push('-noautorotate');
     args.push(...ff.inputArgs(this.input));
     if (v) {
-      args.push('-map', `0:${v.index}`, '-vf', hw.videoFilter(this.method, this.w, this.h, gpuFilter, hw.depthOf(v.pixFmt, v.codec), this.deep ? 'yuv420p10le' : 'yuv420p'),
-        ...(modern ? ['-fps_mode', 'cfr'] : ['-vsync', 'cfr']), '-r', String(this.fps), '-f', 'rawvideo', 'pipe:1');
+      const filters = hw.videoFilter(this.method, this.w, this.h, gpuFilter, hw.depthOf(v.pixFmt, v.codec), this.deep ? 'yuv420p10le' : 'yuv420p');
+      args.push('-map', `0:${v.index}`, '-vf', stamped ? `${filters},${stamps.STAMP_FILTER}` : filters,
+        ...(stamped ? ['-fps_mode', 'passthrough'] : modern ? ['-fps_mode', 'cfr'] : ['-vsync', 'cfr']),
+        ...(stamped ? [] : ['-r', String(this.fps)]), '-f', 'rawvideo', 'pipe:1');
     }
     if (a) args.push('-map', `0:${a.index}`, '-ac', '2', '-ar', String(this.rate), '-f', 'f32le', 'pipe:3');
-    const proc = ff.lowerPriority(spawn(this.tools.ffmpeg, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'pipe'] }));
+    const proc = ff.lowerPriority(spawn(this.tools.ffmpeg, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'pipe', ...(stamped ? ['pipe'] : [])] }));
     proc.t = t;
+    proc.stamped = stamped;
+    proc.timeBase = timeBase;
     proc.method = this.method;
     proc.gpuFilter = gpuFilter;
     proc.gpuFilterKey = filterKey;
@@ -490,6 +515,40 @@ class NativeDecoder {
     proc.err = { text: '' };
     proc.stderr.on('data', (d) => { proc.err.text = (proc.err.text + d).slice(-2000); });
     return proc;
+  }
+
+  /** A decoded picture read from ffmpeg: queued as it is, or until its timestamp has arrived on the side pipe. */
+  picture(proc, parts) {
+    if (!proc.stamped) { this.frames.push({ parts, src: NaN, left: 1 }); return; }
+    proc.raw.push(parts);
+    this.pair(proc);
+  }
+
+  /**
+   * Pairs pictures with their timestamps (two pipes, both in decode order) and puts them on the constant-rate
+   * slots the player paces on. flush: ffmpeg is done, pictures still without a stamp go on with an unknown one.
+   */
+  pair(proc, flush = false) {
+    while (proc.raw.length && (proc.stampQ.length || flush)) {
+      const parts = proc.raw.shift();
+      const stamp = proc.stampQ.shift();
+      // The count printed with each stamp must follow the pictures; else this run's stamps are not trusted.
+      if (stamp && stamp.n !== proc.placed) proc.untrusted = true;
+      proc.placed++;
+      const seconds = stamp && !proc.untrusted ? stamps.stampSeconds(stamp, proc.timeBase) : NaN;
+      const slot = proc.resampler.place(seconds);
+      if (!slot) continue; // on a slot already filled: dropped, as cfr did
+      if (slot.hold && proc.last) this.frames.push({ ...proc.last, left: slot.hold });
+      // The player's time starts at the first picture; a start at 0 is that picture.
+      if (Number.isFinite(seconds) && proc.t === 0 && proc.placed === 1) this.origin = seconds;
+      // Before any start at 0 has shown it, the stream's own start time stands in for that picture.
+      const origin = Number.isFinite(this.origin) ? this.origin : Number(this.pr.video.startTime ?? NaN);
+      const src = Number.isFinite(seconds) && Number.isFinite(origin) ? seconds - origin : NaN;
+      const entry = { parts, src, left: 1 };
+      proc.last = entry;
+      this.frames.push(entry);
+    }
+    if (this.frames.length >= this.maxQueued && proc.stdout && !proc.stdout.isPaused()) { this.lastBackpressureAt = Date.now(); proc.stdout.pause(); }
   }
 
   /**
@@ -560,7 +619,9 @@ class NativeDecoder {
         }
         break;
       }
-      const f = this.frames.shift();
+      const entry = this.frames[0];
+      if (--entry.left <= 0) this.frames.shift();
+      const f = entry.parts;
       const t = this.base + this.frameIndex / this.fps;
       this.frameIndex++;
       this.credits--;
@@ -568,11 +629,11 @@ class NativeDecoder {
       this.sentAt = Date.now();
       const p0 = this.stats ? process.hrtime.bigint() : 0n;
       if (this.stats && gen === 0 && this.frameIndex === 1) this.log('native: first frame sent');
-      if (this.link === 'stream' && !this.channel.sendFrame(gen, t, this.w, this.h, ys, f)) { this.toMessages('connection gone'); return; }
+      if (this.link === 'stream' && !this.channel.sendFrame(gen, t, this.w, this.h, ys, f, entry.src)) { this.toMessages('connection gone'); return; }
       // Binary data at the top level of the message: VS Code transfers it efficiently there.
       if (this.link === 'message') {
         const b = f.length === 1 ? f[0] : Buffer.concat(f, this.frameBytes);
-        this.postRaw({ type: 'ndv', gen, t, w: this.w, h: this.h, ys, data: new Uint8Array(b.buffer, b.byteOffset, b.length) });
+        this.postRaw({ type: 'ndv', gen, t, ...(Number.isFinite(entry.src) ? { src: entry.src } : {}), w: this.w, h: this.h, ys, data: new Uint8Array(b.buffer, b.byteOffset, b.length) });
       }
       if (this.st) this.st.postMs += Number(process.hrtime.bigint() - p0) / 1e6;
     }

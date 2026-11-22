@@ -39,6 +39,7 @@ const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy('./rangecmd'); // A-B frame export and ffmpeg command
 const clipExport = lazy('./clipexport');
+const { syntheticRefusal } = require('./clipsource');
 const ctxmenu = require('./ctxmenu'); // the player's right-click menu
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
 const urlsource = lazy('./urlsource'); // Open Video URL… (docs/notes/url-stream.md)
@@ -1039,6 +1040,13 @@ async function exportClips(session, jobs, source, compare = false) {
   }
   if (!jobs.length) {
     vscode.window.showInformationMessage('Video Preview: set an A-B loop first with A and B.');
+    return;
+  }
+  const refusal = syntheticRefusal(jobs, session.liveTranscodeTiles ? session.liveTranscodeTiles() : [], compare);
+  if (refusal) {
+    // Marks without source timestamps: refuse before any ffmpeg work, and offer the switch in one click.
+    const answer = await vscode.window.showWarningMessage(refusal.message, ...(refusal.label ? [refusal.label] : []));
+    if (answer && answer === refusal.label && !session.disposed) session.useOriginalForClips(refusal.tiles);
     return;
   }
   if (!vscode.workspace.isTrusted) {
@@ -2951,6 +2959,12 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     await vscode.env.clipboard.writeText(pick.cmd);
     this.post({ type: 'toast', text: 'ffmpeg command copied' });
   }
+
+  /** Tile numbers playing through Live transcode (0 for this single player), for the clip export's early refusal. */
+  liveTranscodeTiles() { return this.native instanceof remotestream.EncodedStream ? [0] : []; }
+
+  /** The user took the early refusal's switch: the built-in decoder for this tab, so A and B are set again on exact times. */
+  useOriginalForClips() { this.useFullRes(); }
 
   /** Pixel tools asked for the file's own pixels: the built-in decoder for this tab (kept across reloads). */
   useFullRes() {

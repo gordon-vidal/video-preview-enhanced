@@ -17,7 +17,9 @@ the tables (shown as ranges where runs disagreed).
   `vscode-webview://…`: **403**. One connection per channel; a new one replaces the old.
   It speaks two ways: a streaming HTTP response (the default) and a WebSocket (handshake + unmasked
   binary frames written by hand, no dependency). Every record is a 40-byte header (magic `VPEF`,
-  kind 1 frame / 2 end of stream, gen, w, h, ys, t as float64, payload length) and the payload.
+  kind 1 frame / 2 end of stream, gen, w, h, ys, t as float64, payload length, src as int32) and the payload.
+  `src` is the picture's own source timestamp, in microseconds from `t` (minimum int32: unknown); it
+  was a reserved zero before ([native-source-pts.md](native-source-pts.md)).
 - **CSP:** local windows add `http://127.0.0.1:* ws://127.0.0.1:*` to `connect-src` (the port is
   random; the secret path is the protection). No `portMapping` needed: in a local window the
   webview reaches 127.0.0.1 directly (VS Code's webview service worker passes localhost requests

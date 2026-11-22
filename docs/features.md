@@ -76,9 +76,12 @@ offer a same-container keyframe cut or let you omit audio or subtitles. Review a
 before saving a keyframe cut. Use an edit-list-aware player to view exact clips. The file can still contain
 compressed pictures outside the visible interval when decoding the selected pictures requires them.
 
-For exact clip export, mark A and B with a built-in playback decoder. Native playback uses estimated frame
-times, which can differ from source timestamps on variable-frame-rate video. A clip appears under its final
-name only once it is complete, and an existing file is never replaced.
+Exact clips work with marks set under the built-in decoders and under native ffmpeg: native ffmpeg reports each
+picture's own timestamp, also for variable-frame-rate video and files that start at a non-zero time. Live
+transcode re-times pictures, so marks set during it are refused when you set them or ask for the clip, with a
+**Use original video** button; set A and B again afterwards. An ffmpeg too old to report timestamps (before 5.1)
+asks for the built-in decoder the same way. A clip appears under its final name only once it is complete, and an
+existing file is never replaced.
 
 **Export Compare clips.** **A** and **B** mark a shared loop on the Compare clock. Run **Export A–B Clips…**
 from the palette or **Settings → Tools** to save one clip per tile, named `<letter>_<video>_A-B.<ext>`.
