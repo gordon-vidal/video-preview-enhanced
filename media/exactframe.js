@@ -1,6 +1,6 @@
 // @ts-check
-// Exact frames for the pixel tools while Live transcode is active (src/exact_frame.js is the host half).
-// The transcoded canvas is not the file's own pixels, so Copy Frame, Save Frame as PNG, the pixel inspector and
+// Exact frames for the pixel tools during Live transcode or lossy native playback (src/exact_frame.js is the host half).
+// Copy Frame, Save Frame as PNG, the pixel inspector and
 // the scopes ask the host for one full-resolution PNG at the shown time. This module owns the request
 // (one at a time, a newer one supersedes the older, a reply for another page is ignored) and keeps the decoded
 // picture of the paused frame, so moving the mouse in the inspector or switching scopes costs nothing.
@@ -10,6 +10,21 @@
   const MATRIX = { bt709: 709, bt601: 601, bt2020: 2020, smpte240m: 709 };
   const SLOW_MS = 250; // a grab slower than this shows "Fetching exact frame…"
   const GIVE_UP_MS = 25000; // the host stops at 20 s; this one only frees the page if no answer ever comes
+
+  function available(player, cfg) {
+    return !!(player && (player.remoteStream || player.nativeLossy) && !cfg.url && !cfg.sequence);
+  }
+
+  function shownTime(player) {
+    // Native ffmpeg can report the actual source PTS of the shown picture.
+    const sourceTime = player.remoteStream ? null : player.shownMarkTime?.();
+    return sourceTime ?? player.currentTime();
+  }
+
+  function failureText(player, error) {
+    const pixels = player?.remoteStream ? 'live-transcode pixels' : 'reduced-resolution pixels';
+    return `Exact frame unavailable (${error}); showing ${pixels}`;
+  }
 
   /**
    * @param {{
@@ -103,7 +118,7 @@
     return { grab, onReply, peek, invalidate, ctxOf, failed: (key) => failedKey === key, inflight: (key) => !!pending && pending.key === key };
   }
 
-  const api = { create, SLOW_MS, GIVE_UP_MS };
+  const api = { create, available, shownTime, failureText, SLOW_MS, GIVE_UP_MS };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VpeExact = api;
 }(typeof self !== 'undefined' ? self : this));

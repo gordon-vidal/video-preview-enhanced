@@ -42,7 +42,8 @@ The 60 fps HEVC fixture also showed about 60 fps over VS Code messages at 1080p 
 | Feature | With native ffmpeg |
 |---|---|
 | Playback, seeking, frame stepping, A-B loop, speed, rotation | Same. Frame numbers follow the nominal frame rate (variable-frame-rate files are evened out). |
-| Pixel inspector, scopes, actual-size zoom, save/copy frame | Read the picture as shown. When it is scaled or deeper than 8-bit 4:2:0, a notice offers **Use full resolution**, which switches that tab to the built-in decoder. |
+| Pixel inspector, scopes, save/copy frame | When native playback reduces the source picture, these tools fetch a full-resolution PNG of the shown frame for video files. The inspector and scopes fetch it once per paused frame. If the grab fails, the tools use the playback picture and show a toast. |
+| Actual-size zoom | Uses the playback picture. When native playback reduces the source picture, a notice offers **Use full resolution**. |
 | A-B frame export | Asks first: switch to full resolution, or export the scaled frames. |
 | HDR (PQ/HLG) | Tone-mapped as usual, but from 8-bit frames, so gradients can band. With HDR output (an HDR display) ffmpeg sends 10-bit frames instead, at 1/√2 of the height above (the same bytes per frame: 4K at 1526p over the local connection). |
 | Sidecar subtitles, codec X-ray, chapters | Same. |

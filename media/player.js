@@ -84,8 +84,8 @@
   let exactOffered = false;
   function exactTool(zoom = false) {
     const p = player;
-    // Live transcode hands the pixel tools one exact frame from the host (exactFrame below); only 1:1 zoom has none.
-    if (exactOffered || !p || !p.nativeLossy || (p.remoteStream && !zoom)) return;
+    // Pixel tools can fetch one source frame. Actual-size zoom still uses the playback picture.
+    if (exactOffered || !p || !p.nativeLossy || (!zoom && VpeExact.available(p, cfg))) return;
     exactOffered = true;
     const { width, height } = (p.remoteStream ? p.meta : p.info?.video) || {};
     showNotice({
@@ -612,13 +612,12 @@
     c.getContext('2d').drawImage(src, 0, 0, w, h);
     return new Promise((res) => c.toBlob(res, 'image/png'));
   }
-  // ---- exact frames while Live transcode is active (media/exactframe.js, src/exact_frame.js) ----
+  // ---- exact frames during Live transcode or lossy native playback (media/exactframe.js, src/exact_frame.js) ----
   const exact = VpeExact.create({
     page: cfg.page, post: (m) => vscode.postMessage(m), toast, log,
-    // Said once per failed frame (it is not asked for again): the tools carry on with the transcoded picture.
-    onFail: (key, error) => toast(`Exact frame unavailable (${error}); showing live-transcode pixels`, 4500),
+    onFail: (key, error) => toast(VpeExact.failureText(player, error), 4500),
   });
-  const exactActive = () => !!(player && player.remoteStream && !cfg.url);
+  const exactActive = () => VpeExact.available(player, cfg);
   /** The shown frame: seek generation, frame number and picture count. */
   const exactKey = () => `${player.gen}|${player.currentFrame()}|${player.shownCount || 0}`;
   /** The exact picture of the paused frame, for the inspector and scopes; null while playing, not fetched yet or failed. */
@@ -634,21 +633,21 @@
     if (!exactNeeded()) return;
     const key = exactKey();
     if (exactSettle.key !== key) { exactSettle = { key, at: now }; return; }
-    if (now - exactSettle.at >= 150 && !exact.inflight(key)) exact.grab(key, player.currentTime(), { notify: false }).then((r) => {
+    if (now - exactSettle.at >= 150 && !exact.inflight(key)) exact.grab(key, VpeExact.shownTime(player), { notify: false }).then((r) => {
       if (cfg.debug && r && r.png) log(`exact frame ${r.w}x${r.h} for frame ${player.currentFrame() + 1}`); // test hook (layer 3)
       if (r) wakeLoop();
     });
   }
   /**
    * The PNG of the shown frame with its frame number, both taken before any await (stepping meanwhile must not
-   * label this frame's pixels with another number). Live transcode: the host's exact frame, or the canvas when
+   * label this frame's pixels with another number). Use the host's exact frame when available, or the canvas when
    * it fails (the notice comes from onFail). null: nothing to save, or cancelled (resumed, stepped away).
    */
   async function frameBlob(what) {
     const frame = player.currentFrame();
     if (!exactActive()) { const blob = await grabFrame(); return blob ? { blob, frame } : null; }
     const key = exactKey();
-    const r = await exact.grab(key, player.currentTime());
+    const r = await exact.grab(key, VpeExact.shownTime(player));
     if (r && r.png) return { blob: new Blob([r.png], { type: 'image/png' }), frame };
     if (!r || exactKey() !== key || player.isPlaying()) { toast(`${what} cancelled: the frame changed`, 2000); return null; }
     const blob = await grabFrame(); // the host could not give it: the canvas still shows this frame

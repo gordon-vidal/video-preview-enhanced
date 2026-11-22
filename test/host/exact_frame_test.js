@@ -1,5 +1,5 @@
 'use strict';
-// Exact frames for the pixel tools under Live transcode: src/exact_frame.js (host: ffmpeg arguments, one
+// Exact frames during reduced-quality playback: src/exact_frame.js (host: ffmpeg arguments, one
 // cancellable run, stale-page check) and media/exactframe.js (page: one request at a time, cache per frame).
 // A real ffmpeg is used for the picture itself when it is on PATH (the test skips that part otherwise).
 const assert = require('node:assert/strict');
@@ -11,6 +11,7 @@ const { EventEmitter } = require('events');
 const { spawnSync } = require('child_process');
 const { ExactFrameGrabber, exactFrameArgs, windows, rotationFilters, matrixFor, unsupported, pngSize } = require('../../src/exact_frame');
 const { exactPixel } = require('../../media/inspect.js');
+const { load, webviewConfig } = require('./mock_vscode');
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
@@ -162,6 +163,28 @@ function haveFfmpeg() {
   return !r.error && r.status === 0;
 }
 
+async function nativeSession(file, height) {
+  const h = load({ settings: {
+    'videoPreviewEnhanced.decoder': 'ffmpeg',
+    'videoPreviewEnhanced.gpuDecoding': false,
+    'videoPreviewEnhanced.transcode': 'off',
+    'videoPreviewEnhanced.nativeMaxHeight': height,
+  }, setup: (vscode) => { vscode.env.remoteName = 'wsl'; } });
+  const s = h.open(file);
+  try {
+    await s.send({ type: 'ready' });
+    assert.ok(s.posted.some((m) => m.type === 'libav' && m.meta.native && !m.meta.remoteStream));
+    await s.send({ type: 'nd', m: { type: 'open' } });
+    const streams = s.posted.find((m) => m.type === 'nd' && m.m.type === 'streams').m.info.video;
+    assert.equal(streams.height, height);
+    await s.send({ type: 'grabExactFrame', page: webviewConfig(s.panel.webview).page, reqId: 1, t: 1 });
+    return s.posted.find((m) => m.type === 'exactFrame' && m.reqId === 1);
+  } finally {
+    s.panel.dispose();
+    h.dispose();
+  }
+}
+
 async function real() {
   if (!haveFfmpeg()) { console.log('exact_frame: ffmpeg not on PATH, real extraction skipped'); return; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-exact-'));
@@ -179,6 +202,11 @@ async function real() {
     assert.ok(!a.png.equals(b.png), 'another time gives another picture');
     const again = await g.grab(opts({ tools: { ffmpeg: 'ffmpeg' }, file, t: 1.0, video }));
     assert.ok(again.png.equals(a.png), 'the same time gives the same picture');
+    const native = await nativeSession(file, 32);
+    assert.deepEqual([native.w, native.h], [96, 64], native.error);
+    assert.deepEqual(Buffer.from(native.png), a.png, 'downscaled playback grabs the original picture');
+    const fullSize = await nativeSession(file, 64);
+    assert.equal(fullSize.error, 'exact frames are for Live transcode or downscaled native ffmpeg of a video file');
     // VFR hold: frames at 0, .1, .2 then a gap to .7. Live transcode shows frame .2 at .3 to .6; not the one at .7.
     const vfr = path.join(dir, 'vfr.mp4');
     const mv = spawnSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=96x64:rate=10:duration=3', '-vf', "select='not(between(n,3,6))'", '-fps_mode', 'passthrough', '-c:v', 'libx264', '-g', '30', vfr], { windowsHide: true });
@@ -204,7 +232,21 @@ async function page() {
   const ctx = { setTimeout, clearTimeout, console, module: undefined };
   vm.createContext(ctx);
   vm.runInContext(`${src}\nthis.out = VpeExact;`, ctx);
-  const { create } = ctx.out;
+  const { create, available, shownTime, failureText } = ctx.out;
+  const native = { nativeLossy: true, currentTime: () => 1.5, shownMarkTime: () => 0 };
+  const live = { ...native, remoteStream: true };
+  for (const player of [native, live]) {
+    assert.ok(available(player, {}));
+    assert.ok(!available(player, { url: {} }));
+    assert.ok(!available(player, { sequence: true }));
+  }
+  assert.ok(!available({ nativeLossy: false }, {}));
+  assert.equal(shownTime(native), 0, 'zero is a valid source timestamp');
+  assert.equal(shownTime({ ...native, shownMarkTime: () => 1.4 }), 1.4);
+  assert.equal(shownTime({ ...native, shownMarkTime: () => null }), 1.5);
+  assert.equal(shownTime(live), 1.5, 'Live transcode uses its playback clock');
+  assert.equal(failureText(live, 'HDR'), 'Exact frame unavailable (HDR); showing live-transcode pixels');
+  assert.equal(failureText(native, 'HDR'), 'Exact frame unavailable (HDR); showing reduced-resolution pixels');
   const posted = [];
   const toasts = [];
   let closed = 0;
