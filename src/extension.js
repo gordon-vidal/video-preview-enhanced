@@ -2036,7 +2036,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
   }
 
   /**
-   * Live transcode only: one exact full-resolution PNG of the source at m.t for the pixel tools (src/exact_frame.js).
+   * One full-resolution PNG of the source at m.t for the pixel tools (src/exact_frame.js).
    * Answers {type: 'exactFrame', page, reqId, t, png | error}; a newer request, a reload or a closed tab ends this one,
    * and an answer for a replaced page is dropped.
    */
@@ -2049,8 +2049,12 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     if (m.page !== page || !Number.isSafeInteger(reqId)) return undefined; // a message of another page
     const reply = (r) => { if (!this.stale(gen)) this.post({ type: 'exactFrame', boot, page, reqId, t, ...r }); };
     const nd = this.native;
-    const video = nd instanceof remotestream.EncodedStream && nd.pr && nd.pr.video;
-    if (!video || this.url || this.sequence || !nd.file) { reply({ error: 'exact frames are for Live transcode of a video file' }); return undefined; }
+    const eligible = nd instanceof remotestream.EncodedStream || (nd instanceof NativeDecoder && nd.lossy());
+    const video = eligible && nd.pr && nd.pr.video;
+    if (!video || this.url || this.sequence || !nd.file || !nd.tools) {
+      reply({ error: 'exact frames are for Live transcode or downscaled native ffmpeg of a video file' });
+      return undefined;
+    }
     const r = await this.exact.grab({ tools: nd.tools, file: nd.file, t, video, rotation: rotationOf(nd.file), page, isCurrent: (p) => !this.stale(gen) && p === this.page });
     if (r.cancelled || r.stale) return undefined; // superseded or replaced: the newer request answers
     reply(r.png ? { png: new Uint8Array(r.png.buffer, r.png.byteOffset, r.png.length), w: r.w, h: r.h, matrix: r.matrix } : { error: r.error || 'failed' });

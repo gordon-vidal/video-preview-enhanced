@@ -1,5 +1,5 @@
 // @ts-check
-// One exact, full-resolution frame of the source file for the pixel tools while Live transcode is active
+// One exact, full-resolution frame of the source file for the pixel tools during reduced-quality playback
 // (docs/adr/0002-live-transcode.md, docs/PRODUCT.md "Exact frame"): Copy Frame, Save Frame as PNG, the pixel
 // inspector and the scopes ask the host for the picture at the current time instead of using the transcoded
 // canvas. One short ffmpeg per request, PNG out (lossless, about a third of raw RGB, and the same bytes the

@@ -5,7 +5,8 @@
 - Frame stepping updates the seek bar immediately. In Compare, fast wheel steps combine into one follow-up seek, and the videos start seeking together.
 - The player’s Compare button uses a framed split-view icon with **Compare** and **Add to Compare** tooltips.
 - Fullscreen in the player and Compare uses the full editor width when it falls back to Zen Mode.
-- The smooth-playback notice shows which picture the pixel tools use and offers full resolution for this tab, Settings, and a saved dismissal.
+- Copy Frame, Save Frame as PNG, Pixel Inspector and Scopes now fetch full-resolution source frames during reduced-quality Native ffmpeg playback without switching decoders.
+- The smooth-playback notice shows which picture 100% zoom uses and offers full resolution for this tab, Settings, and a saved dismissal.
 
 ## 0.9.0 (2026-11-22)
 
