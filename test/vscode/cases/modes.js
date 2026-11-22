@@ -49,7 +49,7 @@ module.exports = {
     const bar = flags(r.bar);
     for (const k of ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(bar[k] === '1', `${k} is not visible (${r.bar})`);
     ok(bar.tracks === '0', `CC is visible without subtitle tracks (${r.bar})`);
-    ok(Number(r.tools) === 7, `${r.tools} tools in the grid`);
+    ok(Number(r.tools) === 5, `${r.tools} tools (Compare + the four inspection tools; the A–B exports live on the A–B Range page)`);
 
     // Tool keys work without any mode: W opens the scopes, I the file facts.
     ok = t('layout/tool-keys');
@@ -95,7 +95,7 @@ module.exports = {
     ok(r.scopes !== 'off' && r.scopesVisible === 'true', `Scopes from the grid: scopes=${r.scopes} visible=${r.scopesVisible}`);
     act({ action: 'tool', label: 'Details' });
     r = await until(report, (x) => x.info === 'true');
-    ok(r.info === 'true', 'Details did not show');
+    ok(r.info === 'true', 'Details (the ⓘ panel) did not show');
     ok(flags(r.bar).play === '1' && flags(r.bar).full === '1', 'the basic controls went away');
     await h.closeClip(vs);
 

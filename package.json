@@ -513,7 +513,7 @@
             "30 s"
           ],
           "default": 5,
-          "markdownDescription": "How far **Left** / **Right** jump in the player: `\"frame\"` is one frame, a number is seconds. **,** and **.** always step one frame. Also set in the player's settings panel (cog › Jump sizes)."
+          "markdownDescription": "How far **Left** / **Right** jump in the player: `\"frame\"` is one frame, a number is seconds. **,** and **.** always step one frame. Set it here in VS Code's Settings (the player's ⚙ menu has no page for it)."
         },
         "videoPreviewEnhanced.jump.shift": {
           "enum": [
@@ -531,7 +531,7 @@
             "30 s"
           ],
           "default": 1,
-          "markdownDescription": "How far **Shift+Left** / **Shift+Right** jump in the player: `\"frame\"` is one frame, a number is seconds. **,** and **.** always step one frame. Also set in the player's settings panel (cog › Jump sizes)."
+          "markdownDescription": "How far **Shift+Left** / **Shift+Right** jump in the player: `\"frame\"` is one frame, a number is seconds. **,** and **.** always step one frame. Set it here in VS Code's Settings (the player's ⚙ menu has no page for it)."
         },
         "videoPreviewEnhanced.jump.ctrl": {
           "enum": [
@@ -549,7 +549,7 @@
             "30 s"
           ],
           "default": "frame",
-          "markdownDescription": "How far **Ctrl+Left** / **Ctrl+Right** (**Cmd** on macOS) jump in the player: `\"frame\"` is one frame, a number is seconds. **,** and **.** always step one frame. Also set in the player's settings panel (cog › Jump sizes)."
+          "markdownDescription": "How far **Ctrl+Left** / **Ctrl+Right** (**Cmd** on macOS) jump in the player: `\"frame\"` is one frame, a number is seconds. **,** and **.** always step one frame. Set it here in VS Code's Settings (the player's ⚙ menu has no page for it)."
         },
         "videoPreviewEnhanced.stepButtons": {
           "enum": [
@@ -561,7 +561,7 @@
             "Jump by the Ctrl+arrow size"
           ],
           "default": "frame",
-          "markdownDescription": "What the two buttons beside Play do in the player. `\"frame\"` (default): step one frame back / forward. `\"jump\"`: jump back / forward by the **Ctrl+Left** / **Ctrl+Right** size (`jump.ctrl`, 1 frame or 1-30 s). **,** and **.** always step one frame. Also set in the player's settings panel (cog › Jump sizes)."
+          "markdownDescription": "What the two buttons beside Play do in the player. `\"frame\"` (default): step one frame back / forward. `\"jump\"`: jump back / forward by the **Ctrl+Left** / **Ctrl+Right** size (`jump.ctrl`, 1 frame or 1-30 s). **,** and **.** always step one frame. Set it here in VS Code's Settings (the player's ⚙ menu has no page for it)."
         },
         "videoPreviewEnhanced.pictureSize": {
           "enum": [

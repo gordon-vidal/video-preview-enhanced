@@ -15,7 +15,7 @@
 - **Subtitles and audio tracks.** CC appears when a subtitle track is available and turns subtitles on and off. **Settings › Subtitles** is always available. **Settings › Audio track** lists the file's sound tracks.
 - **Seek-bar thumbnails.** Hover or drag the seek bar for a picture of that moment (built-in decoder and native ffmpeg). Pictures are decoded only while the pointer is on the bar, never in the background after a video opens; the one under the pointer first, then a few neighbours.
 - **Grab a frame.** `Ctrl+C` copies the current frame to the clipboard; `S` saves it as a full-size PNG.
-- **About this video (ⓘ, `I`).** The file in plain words: size and length, resolution (4K, 1080p…), frame rate, HDR and bit depth, video and sound codecs with bit rates, tracks, and what plays it (your GPU through ffmpeg, the built-in decoder, the remote stream). **Copy details** copies it; **Full technical details** shows the technical overlay.
+- **About this video (ⓘ, `I`).** The file in plain words: size and length, resolution (4K, 1080p…), frame rate, HDR and bit depth, video and sound codecs with bit rates, tracks, and what plays it (your GPU through ffmpeg, the built-in decoder, the remote stream). **Copy details** copies it; **Copy link to this frame** copies a frame link. There is no second details overlay: everything is in ⓘ.
 - **Fullscreen** (`F`) uses the full editor width in VS Code Zen Mode when the webview cannot enter fullscreen. Press `F` again to restore the workbench layout.
 - **Phone videos play upright.** Rotation metadata in MP4/MOV is applied.
 - **HDR10 and HLG in HDR on HDR displays.** When Windows reports an HDR display ("Use HDR" on) and VS Code's WebGPU can draw an extended-range canvas, HDR10 (PQ), HLG, HDR10+ and Dolby Vision profile 8 are shown as HDR: 203 nits is SDR white and brighter highlights go above it, up to what the display can show (`videoPreviewEnhanced.hdrOutput`). On SDR displays they are tone-mapped to SDR in the shader (BT.2390, 203 nits as SDR white), so they don't look flat and grey. The info and stats overlays (`I`, `Shift+I`) say which: "HDR output" or "HDR tone-mapped to SDR".
@@ -67,7 +67,7 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 **ffmpeg command for A–B.** **Copy ffmpeg Command for A–B** copies a command line for the same range: an exact cut that re-encodes, or a fast `-c copy` cut. The fast one starts at the keyframe at or before A, so it can begin a little early.
 
 **Export an A–B clip.** Mark the first and last pictures with **A** and **B**, then choose **Export A–B Clip…**
-from the Command Palette, the details overlay (`I` → **Full technical details**) or **Settings → Tools**. Pick a folder for
+from the Command Palette or **⚙ › A–B Range**. Pick a folder for
 `<video>_A-B.<ext>`. The export copies the original video, compressed audio and embedded subtitle payloads. PCM audio is
 trimmed sample by sample in its original format. The export requires native ffmpeg and ffprobe on the host
 that has the video. MP4 and MOV use edit lists to show A through B, inclusive.
@@ -132,13 +132,14 @@ button and fullscreen.
 - A click on the picture plays or pauses; with a panel open it closes the panel.
 - ⚙, ⓘ and the speed open their panel and close it when clicked again. CC turns subtitles on and off. `Esc` closes
   any panel or the Compare confirmation.
-- **⚙ Settings:** Speed ›, Loop (switch), A-B loop (start, end, off), Subtitles ›, Audio track ›, Copy frame,
-  **Keyboard shortcuts** (also opens with `?`), Jump sizes › and a **Tools** grid: Compare, Scopes, Inspector, Stats, Codec X-ray,
-  Export A-B, then **Open video URL…** ([network URLs](urls.md)) and last **Extension settings** (VS Code's Settings, filtered to this extension). The tools'
-  keys work at any time.
+- **⚙ Settings**, in groups. **Playback:** Repeat video (switch), Speed ›, Subtitles ›, Audio track ›, Picture size ›, Live transcode ›, Compare, Copy frame.
+  **Tools:** **A–B Range ›** (set A / B / clear, Export frames A–B…, Export A–B Clip…, Copy ffmpeg command for A–B) and **Inspection ›**
+  (Pixel inspector `X`, Scopes `W`, Stats `Shift+I`, Codec X-ray `Shift+X`). Then **Open video URL…** ([network URLs](urls.md)), **Open in system player**
+  (local files), **Keyboard shortcuts** (also opens with `?`) and last **Extension settings** (VS Code's Settings, filtered to this extension).
+  The tools' keys work at any time.
 - **Picture size:** how the picture sits in the player. **Fit** (default) shows the whole picture, with bars where its shape differs; **Fill** has no bars and crops the edges (centred); **Stretch** fills the player and distorts the picture; **100 %** shows one video pixel per screen pixel, and you drag to move a picture larger than the player. The picture size button cycles Fit → Fill → Stretch → 100 % → Fit (its icon shows the current size, the tooltip names the next one) and so does `Z`; ⚙ › **Picture size ›** picks one and has a zoom row (− value + Reset). Ctrl+wheel zoom works in every size. The setting `pictureSize` chooses the size for new tabs; the button and `Z` change the current tab only. Native ffmpeg frames follow the picture (a crop or 100 % gets larger frames).
-- **Jump sizes ›:** what ← →, Shift+← → and Ctrl+← → (Cmd on macOS) jump: 1 frame, 1 s, 5 s, 10 s or 30 s
-  each (defaults 5 s, 1 s, 1 frame). Saved as settings. `,` and `.` always step one frame.
+- **Jump sizes** (VS Code's Settings, `jump.arrow` / `jump.shift` / `jump.ctrl`): what ← →, Shift+← → and Ctrl+← → (Cmd on macOS) jump: 1 frame, 1 s, 5 s, 10 s or 30 s
+  each (defaults 5 s, 1 s, 1 frame). `,` and `.` always step one frame.
 - No status pill: when decoding falls behind, a notice says so once, with its action (set up ffmpeg, or
   skip frames / show every frame).
 - Colours follow the VS Code theme (light, dark and high contrast).

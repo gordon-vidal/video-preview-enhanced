@@ -87,7 +87,7 @@ const VpeControls = (() => {
     gear: SVG('<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="18" cy="18" r="2"></circle>'),
     external: SVG('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path>', { size: 16, sw: 1.8 }),
     globe: SVG('<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"></path>'),
-    jumps: SVG('<path d="M4 12h16M8 8l-4 4 4 4M16 8l4 4-4 4"></path>'),
+    inspect: SVG('<circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.5 4.5M11 8v6M8 11h6"></path>'),
     picture: SVG('<rect x="3" y="5" width="18" height="14" rx="1.5"></rect><rect x="8" y="9" width="8" height="6" rx="0.8"></rect>'),
     quality: SVG('<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 15v-3M11 15V9M15 15v-5M19 15V8" stroke-width="1.4"></path>'),
   };
@@ -268,7 +268,7 @@ const VpeControls = (() => {
    */
   function create(env) {
     const { panel, sheet, bar, buttons } = env;
-    /** @type {null|'main'|'speed'|'jumps'|'picture'|'transcode'|'subs'|'audio'|'quality'|'info'} */
+    /** @type {null|'main'|'speed'|'ab'|'inspect'|'picture'|'transcode'|'subs'|'audio'|'quality'|'info'} */
     let view = null;
     /** @type {HTMLElement|null} */
     let opener = null;
@@ -300,20 +300,17 @@ const VpeControls = (() => {
     const head = (title, to = 'main') => btn('row head', title, () => show(to), { icon: ICON.back, aria: { 'aria-label': `Back from ${title}` } });
     const heading = (t) => { const h = el('div', 'phead', t); h.setAttribute('aria-hidden', 'true'); return h; };
 
+    /**
+     * The main page, in three groups: Playback (everyday controls), Tools (two sub-pages: A–B Range, with its
+     * exports, and Inspection) and the footer links. The jump sizes live in VS Code's settings only.
+     */
     function renderMain(s) {
       const f = document.createDocumentFragment();
-      f.appendChild(btn('row', 'Speed', () => show('speed'), { icon: ICON.speed, value: speedText(s.rate), chev: true }));
-      const loop = btn('row', 'Loop', () => { env.act.loop(); render(); }, { icon: ICON.loop, aria: { role: 'switch', 'aria-checked': String(!!s.loop) } });
-      const sw = el('span', `switch${s.loop ? ' on' : ''}`);
-      sw.appendChild(el('span', 'knob'));
-      loop.appendChild(sw);
+      f.appendChild(heading('Playback'));
+      const loop = btn('row', 'Repeat video', () => { env.act.loop(); render(); }, { icon: ICON.loop, aria: { role: 'switch', 'aria-checked': String(!!s.loop) } });
+      loop.appendChild(sw(!!s.loop));
       f.appendChild(loop);
-      if (env.act.cycleAB) {
-        const ab = btn('row', 'A–B range', () => { env.act.cycleAB(); render(); }, { value: s.abLabel });
-        ab.insertBefore(el('span', 'abicon', 'A-B'), ab.firstChild);
-        /** @type {any} */ (ab.firstChild).setAttribute('aria-hidden', 'true');
-        f.appendChild(ab);
-      }
+      f.appendChild(btn('row', 'Speed', () => show('speed'), { icon: ICON.speed, value: speedText(s.rate), chev: true }));
       if (s.compare) {
         // Compare (media/compare.js): the sound comes from one video, chosen in the Compare panel.
         f.appendChild(btn('row', 'Sound', () => show('cmp', buttons.cmp), { icon: ICON.audio, value: s.compare.soundLabel, chev: true }));
@@ -330,28 +327,67 @@ const VpeControls = (() => {
         const modeName = tm === 'ask' ? 'Ask' : tm === 'auto' ? 'Auto' : tm === 'always' ? 'Always' : 'Off';
         f.appendChild(btn('row', 'Live transcode', () => show('transcode'), { icon: ICON.quality, value: `${modeName}${mbps}`, chev: true, aria: { 'aria-label': `Live transcode, ${modeName}${mbps}` } }));
       }
-      f.appendChild(btn('row', s.compare ? 'Copy view' : 'Copy frame', () => { close(false); env.act.copyFrame(); }, { icon: ICON.camera, kbd: 'Ctrl+C' }));
-      f.appendChild(btn('row', 'Keyboard shortcuts', () => openSheet(buttons.cog), { icon: ICON.keys, kbd: '?', aria: { 'aria-haspopup': 'dialog' } }));
-      f.appendChild(btn('row', 'Jump sizes', () => show('jumps'), { icon: ICON.jumps, value: [s.jump.arrow, s.jump.shift, s.jump.ctrl].map(navName).join(' · '), chev: true }));
-      f.append(el('div', 'sep'), heading('Tools'));
-      const grid = el('div', 'tools');
-      grid.setAttribute('role', 'group');
-      grid.setAttribute('aria-label', 'Tools');
-      for (const t of s.tools) {
-        const b = btn(`tool${t.on ? ' on' : ''}`, null, () => { if (!t.keepOpen) close(false); t.run(); }, { aria: { 'aria-label': t.ariaLabel || t.label, ...(t.key && !t.note ? { 'aria-keyshortcuts': t.key.replace('Ctrl', 'Control') } : {}) } });
+      // Tools that are neither inspection nor A–B (Compare): a row of their own.
+      for (const t of (s.tools || []).filter((x) => !x.group)) {
+        const b = btn('row', t.title || t.label, () => { if (!t.keepOpen) close(false); t.run(); }, { value: t.note, chev: !!t.keepOpen });
+        if (t.ariaLabel) b.setAttribute('aria-label', t.ariaLabel);
         b.dataset.tool = t.label;
-        const k = el('span', 'tkey', t.note || t.key || '·');
-        k.setAttribute('aria-hidden', 'true');
-        b.append(k, el('span', '', t.label));
-        grid.appendChild(b);
+        f.appendChild(b);
       }
-      f.appendChild(grid);
+      f.appendChild(btn('row', s.compare ? 'Copy view' : 'Copy frame', () => { close(false); env.act.copyFrame(); }, { icon: ICON.camera, kbd: 'Ctrl+C' }));
+      f.append(el('div', 'sep'), heading('Tools'));
+      if (env.act.cycleAB) {
+        const ab = btn('row', 'A–B Range', () => show('ab'), { value: s.abLabel, chev: true, aria: { 'aria-label': `A–B Range, ${s.abLabel}` } });
+        ab.insertBefore(el('span', 'abicon', 'A-B'), ab.firstChild);
+        /** @type {any} */ (ab.firstChild).setAttribute('aria-hidden', 'true');
+        f.appendChild(ab);
+      }
+      const insp = inspectTools(s);
+      if (insp.length) f.appendChild(btn('row', 'Inspection', () => show('inspect'), { icon: ICON.inspect, value: insp.map((t) => t.key).join(' '), chev: true, aria: { 'aria-label': 'Inspection: pixel inspector, scopes, stats, codec X-ray' } }));
       f.appendChild(el('div', 'sep'));
       // Plays an http(s) link or HLS / DASH stream in a new tab (docs/notes/url-stream.md); the URL is typed in VS Code's input box.
       if (env.act.openUrl) f.appendChild(btn('row', 'Open video URL…', () => { close(false); env.act.openUrl(); }, { icon: ICON.globe }));
+      if (s.canExternal && env.act.external) f.appendChild(btn('row', 'Open in system player', () => { close(false); env.act.external(); }, { icon: ICON.external }));
+      f.appendChild(btn('row', 'Keyboard shortcuts', () => openSheet(buttons.cog), { icon: ICON.keys, kbd: '?', aria: { 'aria-haspopup': 'dialog' } }));
       const xs = btn('row', 'Extension settings', () => { close(false); env.act.extSettings(); }, { icon: ICON.gear, aria: { 'aria-label': 'Extension settings (opens VS Code Settings)' } });
       xs.insertAdjacentHTML('beforeend', ICON.external);
       f.appendChild(xs);
+      return f;
+    }
+
+    const inspectTools = (s) => (s.tools || []).filter((t) => t.group === 'inspect');
+
+    /** A–B Range: the range itself and everything that uses it (exports), in one place. Keys A and B work anywhere. */
+    function renderAB(s) {
+      const f = document.createDocumentFragment();
+      f.appendChild(head('A–B Range'));
+      const ab = btn('row', 'Set A / B / clear', () => { env.act.cycleAB(); render(); }, { value: s.abLabel });
+      ab.insertBefore(el('span', 'abicon', 'A-B'), ab.firstChild);
+      /** @type {any} */ (ab.firstChild).setAttribute('aria-hidden', 'true');
+      f.appendChild(ab);
+      const items = (s.ab && s.ab.items) || [];
+      if (items.length) f.appendChild(el('div', 'sep'));
+      for (const it of items) {
+        const b = btn('row', it.label, () => { close(false); it.run(); });
+        if (it.ariaLabel) b.setAttribute('aria-label', it.ariaLabel);
+        b.dataset.tool = it.label;
+        f.appendChild(b);
+      }
+      const note = el('div', 'pnote');
+      note.append('Keys ', kbd('A'), ' and ', kbd('B'), ' mark the start and end; the range loops and is what the exports use.');
+      f.appendChild(note);
+      return f;
+    }
+
+    /** Inspection: the pixel and codec tools, each with its key (they stay one key away). */
+    function renderInspect(s) {
+      const f = document.createDocumentFragment();
+      f.appendChild(head('Inspection'));
+      for (const t of inspectTools(s)) {
+        const b = btn('row', t.title || t.label, () => { if (!t.keepOpen) close(false); t.run(); }, { kbd: t.key });
+        b.dataset.tool = t.label;
+        f.appendChild(b);
+      }
       return f;
     }
 
@@ -418,36 +454,6 @@ const VpeControls = (() => {
       f.appendChild(r);
       const note = el('div', 'pnote');
       note.append(kbd('Z'), ' cycles the sizes (zoomed in: back to Fit). Ctrl+wheel zooms, drag moves the picture', s.compare ? '. All videos follow together.' : '.');
-      f.appendChild(note);
-      return f;
-    }
-
-    function renderJumps(s) {
-      const f = document.createDocumentFragment();
-      f.appendChild(head('Jump sizes'));
-      const rows = [['arrow', '← →', 'Left and Right arrow'], ['shift', 'Shift + ← →', 'Shift with Left and Right arrow'], ['ctrl', `${ctrlName} + ← →`, `${ctrlName} with Left and Right arrow`]];
-      for (const [key, title, spoken] of rows) {
-        const box = el('div', 'jbox');
-        const t = el('div', 'jtitle', title);
-        t.setAttribute('aria-hidden', 'true');
-        const g = el('div', 'jopts');
-        g.setAttribute('role', 'radiogroup');
-        g.setAttribute('aria-label', `${spoken} jump`);
-        for (const v of NAV) g.appendChild(btn('chip', navName(v), () => { env.act.setJump(key, v); render(); }, { aria: { role: 'radio', 'aria-checked': String(s.jump[key] === v) } }));
-        box.append(t, g);
-        f.appendChild(box);
-      }
-      const sb = el('div', 'jbox');
-      const sbt = el('div', 'jtitle', 'Buttons beside Play');
-      sbt.setAttribute('aria-hidden', 'true');
-      const sbg = el('div', 'jopts');
-      sbg.setAttribute('role', 'radiogroup');
-      sbg.setAttribute('aria-label', 'Buttons beside Play');
-      for (const [v, label] of [['frame', '1 frame'], ['jump', `${ctrlName} jump`]]) sbg.appendChild(btn('chip', label, () => { env.act.setStepButtons(v); render(); }, { aria: { role: 'radio', 'aria-checked': String((s.stepButtons || 'frame') === v) } }));
-      sb.append(sbt, sbg);
-      f.appendChild(sb);
-      const note = el('div', 'pnote');
-      note.append(kbd(','), ' ', kbd('.'), ' always step one frame.');
       f.appendChild(note);
       return f;
     }
@@ -576,13 +582,12 @@ const VpeControls = (() => {
       const row = el('div', 'ibtns');
       row.append(btn('secondary', 'Copy details', () => env.act.copyInfo(d)));
       if (s.canUseOriginal && env.act.useOriginal) row.append(btn('secondary', 'Use original video', () => { close(false); env.act.useOriginal(); }));
-      if (env.act.moreInfo) row.append(btn('link', 'Full technical details', () => { close(false); env.act.moreInfo(); }));
-      if (s.canExternal) row.appendChild(btn('link', 'Open in system player', () => { close(false); env.act.external(); }));
+      if (env.act.copyLink) row.append(btn('secondary', 'Copy link to this frame', () => { close(false); env.act.copyLink(); }, { aria: { 'aria-keyshortcuts': 'Shift+C' } }));
       f.appendChild(row);
       return f;
     }
 
-    const LABEL = { main: 'Player settings', speed: 'Speed', jumps: 'Jump sizes', picture: 'Picture size', transcode: 'Live transcode', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video' };
+    const LABEL = { main: 'Player settings', speed: 'Speed', ab: 'A–B Range', inspect: 'Inspection', picture: 'Picture size', transcode: 'Live transcode', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video' };
     /**
      * Pages a page adds (compare's panel and its per-video page): { label, render(s, kit), parent?, button? }.
      * `button`: the bar button (env.buttons key) that shows it open; `parent`: where Esc goes.
@@ -601,7 +606,7 @@ const VpeControls = (() => {
       panel.className = `panel ${view}`;
       const custom = VIEWS[view];
       panel.setAttribute('aria-label', custom ? (typeof custom.label === 'function' ? custom.label(s) : custom.label) : view === 'info' && s.infoTabs ? 'About these videos' : LABEL[view]);
-      const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'speed' ? renderSpeed(s) : view === 'jumps' ? renderJumps(s) : view === 'picture' ? renderPicture(s) : view === 'transcode' ? renderTranscode(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : renderInfo(s);
+      const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'speed' ? renderSpeed(s) : view === 'ab' ? renderAB(s) : view === 'inspect' ? renderInspect(s) : view === 'picture' ? renderPicture(s) : view === 'transcode' ? renderTranscode(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : renderInfo(s);
       panel.appendChild(body);
       const after = /** @type {HTMLElement[]} */ ([...panel.querySelectorAll('[data-nav]')]);
       if (fi >= 0 && after.length) after[Math.min(fi, after.length - 1)].focus();
@@ -617,7 +622,7 @@ const VpeControls = (() => {
     function sync() {
       const set = (b, on) => { if (b) { b.setAttribute('aria-expanded', String(on)); b.classList.toggle('open', on); } };
       const own = view && VIEWS[view] ? VIEWS[view].button : null;
-      set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'jumps' || view === 'picture' || view === 'transcode' || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
+      set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'ab' || view === 'inspect' || view === 'picture' || view === 'transcode' || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
       for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks'].includes(k)) set(b, !!own && own === k);
       set(buttons.info, view === 'info');
       set(buttons.rate, view === 'speed' && opener === buttons.rate);

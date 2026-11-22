@@ -636,23 +636,13 @@ const VpeInspect = (() => {
       }
     }
 
-    /** Info overlay: a clickable "copy link" line under the file details. */
-    function decorateInfo(info) {
-      const b = document.createElement('button');
-      b.className = 'infolink';
-      b.textContent = 'Copy link to this frame (Shift+C)';
-      b.onclick = (e) => { e.stopPropagation(); copyLink(); };
-      info.appendChild(document.createElement('br'));
-      info.appendChild(b);
-    }
-
     apply();
     started = true;
     /** Nothing here needs the player's frame loop: no stats overlay, no pending go-to, no pick queued. */
     const idle = () => stats.hidden && !pendingGoto && !pickQueued;
     return {
       onKey, onWheel, tick, idle, cycleMode, setMode, resetZoom, zoomStep, zoomTo, zoomPercent, zoomedSize,
-      picture: () => ({ ...pic }), decorateInfo, goToLink, copyLink, inspecting: () => inspecting,
+      picture: () => ({ ...pic }), goToLink, copyLink, inspecting: () => inspecting,
     };
   }
 

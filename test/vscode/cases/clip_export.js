@@ -148,7 +148,8 @@ module.exports = [{
           if (file === mp4) vs.send({ command: 'videoPreviewEnhanced.exportVideoRange' });
           else {
             await P.ask('click', { sel: '#cog' });
-            await P.ask('click', { sel: '#panel button.tool', text: 'Export A–B Clip…' });
+            await P.ask('click', { sel: '#panel button', text: 'A–B Range' });
+            await P.ask('click', { sel: '#panel button[data-tool]', text: 'Export A–B Clip…' });
           }
           await vs.waitLog(/A–B export to /, { from, timeout: 45000 });
           checkClip(ok, h, exported, ref, 40, 69);

@@ -737,15 +737,6 @@ function createXray(env) {
     if (handled) e.preventDefault();
   });
 
-  // A switch in the details overlay (I), kept there when the details are rewritten.
-  const btn = document.createElement('button');
-  btn.id = 'xrayBtn';
-  btn.textContent = 'Codec X-ray (Shift+X)';
-  btn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
-  const keepBtn = () => { if (btn.parentElement !== ui.info) ui.info.append('\n', btn); };
-  new MutationObserver(keepBtn).observe(ui.info, { childList: true });
-  keepBtn();
-
   /** From the player's frame loop: chapter ticks on the seek bar (only redrawn when the chapters change). */
   const chapterTicks = () => { if (player()) renderChapters(); };
   return { toggle, stepKey, stepChapter, chapterTicks, isShown: () => shown, _state: () => st };

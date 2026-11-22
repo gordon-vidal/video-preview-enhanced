@@ -184,7 +184,13 @@ module.exports = [{
           let s = await P.waitState((x) => x.panel && x.panel.view === 'main', { what: 'the ⚙ panel' });
           const labels = s.panel ? s.panel.rows.map((r) => r.label) : [];
           ok(labels.some((l) => l.includes('Open video URL')), `⚙ has Open video URL…: ${JSON.stringify(labels)}`);
-          ok(!labels.includes('Compare') && labels.includes('Scopes') && labels.includes('Export A-B'), `⚙ tools for a URL: ${JSON.stringify(labels)}`);
+          ok(!labels.includes('Compare') && labels.some((l) => l.includes('Inspection')) && labels.some((l) => l.includes('A–B Range')), `⚙ tools for a URL: ${JSON.stringify(labels)}`);
+          // A URL has frames to export but no file to cut: no clip, no ffmpeg command.
+          await P.ask('click', { sel: '#panel button', text: 'A–B Range' });
+          s = await P.waitState((x) => x.panel && x.panel.view === 'ab', { what: 'the A–B Range page' });
+          const ab = s.panel.rows.map((r) => r.label);
+          ok(ab.includes('Export frames A–B…') && !ab.some((l) => /Clip|ffmpeg/.test(l)), `A–B Range for a URL: ${JSON.stringify(ab)}`);
+          await P.ask('click', { sel: '#cog' });
           await P.ask('click', { sel: '#infoBtn' });
           s = await P.waitState((x) => x.panel && x.panel.view === 'info', { what: 'the ⓘ panel' });
           const host = new URL(b).host;

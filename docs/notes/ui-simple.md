@@ -9,7 +9,7 @@ streamlined right-click menu). This branch builds it. Simple mode is the player 
 | Part | File |
 |---|---|
 | Bar markup (SVG icons, ids, aria) | `src/bar.js`, shared by the player and Compare |
-| Panels (⚙ main, Speed, Jump sizes, Subtitles, Audio track, About this video) and the shortcuts sheet | `media/controls.js` (`VpeControls.create`) |
+| Panels (⚙ main, A–B Range, Inspection, Speed, Subtitles, Audio track, About this video) and the shortcuts sheet | `media/controls.js` (`VpeControls.create`) |
 | Plain-language file facts, speed clamp, key groups (pure, host-tested) | `media/controls.js` (`facts`, `clampRate`, `keyGroups`) |
 | Wiring: keys, buttons, tools list, CC, status notice, time formats, test probes | `media/player.js` |
 | Subtitle / audio lists for the panels | `media/tracks-menu.js` (`panelData`, `ccToggle`, `select`, `selectAudio`; the old popup is gone) |
@@ -39,7 +39,7 @@ streamlined right-click menu). This branch builds it. Simple mode is the player 
   rounded frame rate) → `frame N / total`. The frame counter left the bar (Ctrl+G still opens go-to).
 - **Status pill removed.** A warning status (decoding behind) shows the notice once per kind per page, with
   its action (Set up ffmpeg, or Skip frames instead / Show every frame). The rest is in the stats overlay.
-- **"Open in the system player"** (was a hidden bar button) is a link in the About panel (local files only).
+- **"Open in system player"** (was a hidden bar button) is a row at the foot of the ⚙ menu (local files only; 2026-11-22: moved out of ⓘ, which is information only).
 - **Right-click menu** (later changes): Play/Pause · Loop (✓) · ─ · Set loop start (A) · Set loop end (B) ·
   Clear A-B loop (context key `vpeABSet`: a start or an end is set) · ─ · Copy frame · Save frame as PNG… · Copy
   timestamp · ─ · Keyboard shortcuts · Settings…. A native menu item can't draw its own check mark, so Loop is two
