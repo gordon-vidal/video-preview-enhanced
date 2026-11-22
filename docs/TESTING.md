@@ -49,6 +49,9 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 - Generated test media must come out the same on every run and every ffmpeg version, or be checked after
   making it: ffmpeg 7+ runs its steps in threads, so how it interleaves streams can vary between runs
   (`test/bitmapsubs/make_media.js` forces time order and checks it).
+- The engine runner prepares the shared track fixtures before starting parallel tests. The generator publishes
+  each clip after ffmpeg succeeds and records the complete set. A missing stamp or a changed clip size causes
+  regeneration.
 
 ## Time limits
 
