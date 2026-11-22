@@ -2106,10 +2106,19 @@ function createEngine(env) {
 
     rel(t) { return t - (this.startT || 0); }
     currentTime() { return this.rel(this.shownT !== null && !this.playing ? this.shownT : this.now()); }
+    frameNumberRate() {
+      // Snapping can accumulate frame-number drift. Use the source rate when it agrees with the
+      // measured cadence (unreliable metadata can report AVI timestamp ticks as the frame rate).
+      const rate = this.fps || 30;
+      const sourceFps = this.info?.video?.fps;
+      return sourceFps > 0 && Math.abs(sourceFps - rate) < rate * 0.005 ? sourceFps : rate;
+    }
     currentFrame() {
       const t = this.shownT !== null ? this.shownT : this.now();
-      // Rounded: container times are often millisecond-rounded (MKV, WebM, FLV), so frame i can sit just before i/fps.
-      return Math.max(0, Math.min(Math.max(0, this.n - 1), Math.round(this.rel(t) * (this.fps || 30))));
+      const fps = this.frameNumberRate();
+      // The relative time subtracts two PTS values, each of which can be rounded by half a millisecond.
+      const frame = Math.max(0, Math.floor(this.rel(t) * fps + Math.min(fps * 1e-3, 0.125) + 1e-6));
+      return this.n > 0 ? Math.min(this.n - 1, frame) : frame;
     }
     isPlaying() { return this.playing; }
 
@@ -2225,7 +2234,8 @@ function createEngine(env) {
       }
       this.seekAbs(t);
     }
-    seekFrame(i) { this.seekTime((Math.max(0, i) + 0.5) / (this.fps || 30)); }
+    frameSeekTime(i) { return (Math.max(0, i) + 0.5) / this.frameNumberRate(); }
+    seekFrame(i) { this.seekTime(this.frameSeekTime(i)); }
     /**
      * Steps by actual frames: forward to the next decoded one, back to the last one before the shown one.
      * A step that comes before the previous one is on screen counts from that step's frame, not from the one

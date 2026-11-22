@@ -28,6 +28,8 @@ In grids of five or more, the hover controls use the full cell and stack in its 
 └───────────────────┘
 ```
 
+Each tile shows the same frame number that the single player shows for that picture.
+
 Hover or keyboard focus reveals the controls. Long filenames can truncate. The name pill opens
 the tile page. The offset buttons retain their accessible names (“A earlier”,
 “Offset of A: +3 frames”, “A later”). The Add cell is named “Add video”. The − / + keys still

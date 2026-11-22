@@ -296,8 +296,7 @@
   /** Each tile's budgets (media/compare-grid.js): frames it keeps decoded, its engine's mem. */
   const memory = Grid.tileMemory(MEM, N);
   const fpsOf = (p) => (p && p.fps) || 30;
-  /** Index of the shown frame before the frame count is known. As in currentFrame(), round container PTS. */
-  const frameOf = (p) => (p.shownT === null ? 0 : Math.max(0, Math.round(p.rel(p.shownT) * fpsOf(p))));
+  const frameOf = (p) => (p.shownT === null ? 0 : p.currentFrame());
   /** Seconds a frame may be shown early in engine.tick(): a quarter frame. */
   const earlyOf = (p) => 0.25 / fpsOf(p);
   /** Tile i's offset in seconds: ms, or frames of that tile at its own frame rate. */
@@ -427,7 +426,7 @@
   function seekTile(i, frame) {
     if (!clock) return;
     if (i === st.clock) clock.seekFrame(frame);
-    else seekClock(Math.max(0, clockRelFor(i, (frame + 0.5) / fpsOf(tiles[i]))));
+    else seekClock(Math.max(0, clockRelFor(i, tiles[i].frameSeekTime(frame))));
   }
   /** Lockstep: the clock moves one frame, the others to their frame for it (syncPaused); shown once all are there. */
   function step(d) {

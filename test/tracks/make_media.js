@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+const DEFAULT_DIR = path.join(__dirname, '..', 'media', 'tracks');
 
 // Cues every 2 s (each 1.5 s long), plus a long one (8 s) every 20 s that starts 4 s
 // before a round number, so a seek to a round number lands inside it.
@@ -43,7 +44,7 @@ function ass(file, list) {
 }
 
 function ff(args) {
-  const r = spawnSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', ...args], { encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(process.env.VPE_FFMPEG || 'ffmpeg', ['-hide_banner', '-v', 'error', '-y', ...args], { encoding: 'utf8', windowsHide: true });
   if (r.status !== 0) throw new Error((r.stderr || r.error?.message || `ffmpeg exit ${r.status}`).trim());
 }
 const pic = (size, dur, rate = 30) => ['-f', 'lavfi', '-i', `testsrc2=size=${size}:rate=${rate}:duration=${dur}`];
@@ -64,18 +65,35 @@ function complete(dir) {
   }
 }
 
-/** The ignored fixture folder run.js and engine_smoke.js use when none is given. */
-function ensure(folder = path.join(__dirname, '..', 'media', 'tracks')) {
-  if (!complete(folder)) {
-    const r = spawnSync(process.execPath, [__filename, folder], { stdio: 'inherit' });
-    if (r.status !== 0) throw new Error('test/tracks/make_media.js failed (ffmpeg with libx264, libx265, libvpx-vp9, libopus, ac3 on PATH)');
+/** Find a complete set or generate one inside the calling test worker's timeout. */
+function ensure(folder = DEFAULT_DIR) {
+  if (complete(folder)) return folder; // A set generated explicitly into this folder.
+  fs.mkdirSync(folder, { recursive: true });
+  const cached = () => fs.readdirSync(folder).filter((name) => name.startsWith('.ready-'))
+    .map((name) => path.join(folder, name)).find(complete);
+  const existing = cached();
+  if (existing) return existing;
+
+  // Parallel workers never overwrite a set another worker may already be reading.
+  const tmp = fs.mkdtempSync(path.join(folder, '.pending-'));
+  try {
+    const r = spawnSync(process.execPath, [__filename, tmp], { stdio: 'inherit', windowsHide: true });
+    if (r.status !== 0) {
+      throw new Error('track fixture generation failed (ffmpeg needs libx264, libx265, libvpx-vp9, libopus and ac3)');
+    }
+    const published = cached();
+    if (published) return published;
+    const ready = path.join(folder, path.basename(tmp).replace('.pending-', '.ready-'));
+    fs.renameSync(tmp, ready);
+    return ready;
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
-  return folder;
 }
 
 module.exports = { cues, ensure };
 if (require.main !== module) return;
-const dir = path.resolve(process.argv[2] || '.');
+const dir = path.resolve(process.argv[2] || DEFAULT_DIR);
 if (complete(dir)) return;
 fs.mkdirSync(dir, { recursive: true });
 const tmp = fs.mkdtempSync(path.join(dir, '.generating-'));
@@ -144,9 +162,9 @@ try {
     ff([...args, out]);
     sizes[name] = fs.statSync(out).size;
     if (!sizes[name]) throw new Error(`ffmpeg produced an empty ${name}`);
-    fs.renameSync(out, path.join(dir, name));
   }
   fs.writeFileSync(path.join(tmp, STAMP), JSON.stringify(sizes));
+  for (const name of NAMES) fs.renameSync(path.join(tmp, name), path.join(dir, name));
   fs.renameSync(path.join(tmp, STAMP), path.join(dir, STAMP));
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
