@@ -224,6 +224,7 @@ async function probeKey(tools, input) {
 
 async function probe(tools, input, signal) {
   const key = await probeKey(tools, input);
+  signal?.throwIfAborted();
   if (key && probeCache.has(key)) {
     const hit = probeCache.get(key);
     probeCache.delete(key); // most recently used last
@@ -231,6 +232,7 @@ async function probe(tools, input, signal) {
     return structuredClone(hit);
   }
   const r = await probeRun(tools, input, signal);
+  signal?.throwIfAborted();
   if (key) {
     probeCache.set(key, structuredClone(r));
     while (probeCache.size > PROBE_CACHE_MAX) probeCache.delete(probeCache.keys().next().value);
@@ -243,6 +245,7 @@ async function probeRun(tools, input, signal) {
   // Local files only: a playlist-like file (HLS, concat) must not make ffprobe fetch URLs.
   // And no manifests at all: they would still open other local (or UNC) files.
   if (!url && await isPlaylistFile(input)) throw new Error('the file is a text playlist or manifest (DASH, HLS, ffconcat), not a video: native ffmpeg is not used for it');
+  signal?.throwIfAborted();
   const r = await run(tools.ffprobe, ['-v', 'error', ...inputArgs(input).slice(0, -2), '-print_format', 'json', '-show_format', '-show_streams', ...inputArgs(input).slice(-2)], url ? 60000 : 30000, signal);
   if (r.code !== 0) throw new Error(`ffprobe failed: ${r.stderr.trim() || r.code}`);
   const j = JSON.parse(r.stdout);

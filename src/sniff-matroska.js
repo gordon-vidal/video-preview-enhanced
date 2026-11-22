@@ -160,11 +160,12 @@ function parse(b) {
   return { video: { index, codec, width, height, fps, pixFmt }, audio: audio ? { index: audio.index } : null };
 }
 
-async function sniffNativeMatroska(file, stat) {
+async function sniffNativeMatroska(file, stat, signal) {
   if (!/\.(mkv|webm)$/i.test(file) || stat.size > 4 * 1024 * 1024) return null;
   let fd;
   try {
     fd = await fs.promises.open(file, 'r');
+    signal?.throwIfAborted();
     const st = await fd.stat();
     if (st.size !== stat.size || st.mtimeMs !== stat.mtimeMs) return null;
     // Read a small segment in one asynchronous operation. The walk skips packet payloads.

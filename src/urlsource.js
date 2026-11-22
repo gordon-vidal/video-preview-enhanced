@@ -126,6 +126,7 @@ function httpError(status, url) {
  */
 function open(url, opts = {}, hops = 0) {
   return new Promise((resolve, reject) => {
+    opts.signal?.throwIfAborted();
     let u;
     try { u = new URL(url); } catch { reject(new Error('bad URL')); return; }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') { reject(new Error(`redirected to a ${u.protocol} URL: refused`)); return; }
@@ -146,10 +147,9 @@ function open(url, opts = {}, hops = 0) {
     let done = false;
     const fail = (e) => { if (!done) { done = true; reject(e); } };
     req.setTimeout(timeoutMs, () => { const e = new Error('timeout'); e.code = 'TIMEOUT'; req.destroy(e); });
-    if (opts.signal) {
-      if (opts.signal.aborted) { req.destroy(); fail(new Error('aborted')); return; }
-      opts.signal.addEventListener('abort', () => { req.destroy(); fail(new Error('aborted')); }, { once: true });
-    }
+    const abort = () => { req.destroy(); fail(new Error('aborted')); };
+    opts.signal?.addEventListener('abort', abort, { once: true });
+    req.once('close', () => opts.signal?.removeEventListener('abort', abort));
     req.on('error', (e) => fail(new Error(describeError(e, url))));
     req.on('response', (res) => {
       if (done) { res.destroy(); return; }

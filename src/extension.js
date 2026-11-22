@@ -1,5 +1,6 @@
 'use strict';
 /** @import { ReadBlockRequest } from '../tools/read-block-contract.js' */
+/** @import { ExportGrab, ThumbReply, ThumbRequest } from '../tools/page-work-contract.js' */
 const T_LOAD = Date.now(); // start-up timeline (tests): when the extension's module started loading
 // Video Preview Enhanced: a decode-only video player for VS Code.
 // The extension host only reads files; all decoding happens in the webview
@@ -1614,6 +1615,7 @@ class Session {
     remoteAuthority(this.webview); // learn the host for frame links arriving later
     this.disposed = false;
     this.page = 0;
+    this.pageAbort = new AbortController();
     this.exact = new ExactFrameGrabber({ log: (m) => log(`[${this.name}] ${m}`) }); // single exact frames (src/exact_frame.js)
     this.benchChannels = new Set();
     this.fh = null;
@@ -1626,7 +1628,10 @@ class Session {
     // Only the extension's own media: video data, frames and images reach the page as messages.
     this.webview.options = { enableScripts: true, localResourceRoots: [media] };
     this.media = media;
-    this.webview.onDidReceiveMessage((m) => this.onMessage(m).catch((e) => this.fail(e)));
+    this.webview.onDidReceiveMessage((m) => {
+      const gen = this.loadGen;
+      return this.onMessage(m).catch((e) => { if (!this.stale(gen)) this.fail(e); });
+    });
     panel.onDidDispose(() => this.dispose());
     // VS Code does not fire visibilitychange in webviews; tell the player directly.
     panel.onDidChangeViewState(() => {
@@ -1750,6 +1755,11 @@ class Session {
     if (this.disposed) return;
     log(`[${this.name}] ${why}, reloading`);
     this.loadGen = (this.loadGen || 0) + 1;
+    this.pageAbort.abort();
+    this.pageAbort = new AbortController();
+    this.thumbChain = null;
+    this.exporting = null;
+    this.hlsPlan = null;
     this.exact.cancel();
     this.closeBenchChannels();
     this.webviewOrigin = null;
@@ -1867,15 +1877,29 @@ ${barHtml()}
 </body></html>`;
   }
 
-  /** Native ffmpeg seek-bar thumbnail (src/thumbhost.js); one at a time, answered with {type: 'thumb', id, ...}. */
+  /** Native ffmpeg seek-bar thumbnail (src/thumbhost.js); one at a time, answered with {type: 'thumb', id, ...}.
+   * @param {ThumbRequest} m
+   */
   sendThumb(m) {
+    const { signal } = this.pageAbort;
     const nd = this.native;
-    const reply = (r) => this.post({ type: 'thumb', id: m.id, ...(r ? { w: r.w, h: r.h, data: new Uint8Array(r.data) } : {}) });
+    const reply = (r) => {
+      // checkJs: start
+      const message = /** @satisfies {ThumbReply} */ ({
+        type: 'thumb', page: m.page, id: m.id,
+        ...(r ? { w: r.w, h: r.h, data: new Uint8Array(r.data) } : {}),
+      });
+      // checkJs: end
+      if (!signal.aborted) this.post(message);
+    };
     const v = nd && nd.pr && nd.pr.video;
     // Only the local native decoder (not the remote stream) and sane requests.
     if (!(nd instanceof NativeDecoder) || !v || !nd.file || !Number.isFinite(m.t) || !(m.w > 0 && m.w <= 640 && m.h > 0 && m.h <= 640)) { reply(null); return undefined; }
     const src = { w: v.sourceWidth || v.width, h: v.sourceHeight || v.height };
-    this.thumbChain = (this.thumbChain || Promise.resolve()).then(() => decodeThumb(nd.tools, nd.file, src, m.t, m.w, m.h, (x) => log(`[${this.name}] ${x}`))).then(reply, () => reply(null));
+    this.thumbChain = (this.thumbChain || Promise.resolve()).then(() => {
+      if (!signal.aborted) return decodeThumb(nd.tools, nd.file, src, m.t, m.w, m.h,
+        (x) => log(`[${this.name}] ${x}`), signal);
+    }).then(reply, () => reply(null));
     return undefined;
   }
 
@@ -1900,8 +1924,11 @@ ${barHtml()}
   }
 
   async onMessage(m) {
+    if (this.disposed) return undefined;
     switch (m.type) {
       case 'ready':
+        if (m.page !== this.page || this.readyPage === m.page) return undefined;
+        this.readyPage = m.page;
         // VS Code delivers this through the owning webview, whose origin isn't exposed by its host API.
         this.webviewOrigin = typeof m.origin === 'string' && /^vscode-webview:\/\/[a-z0-9-]+$/.test(m.origin) ? m.origin : null;
         // The picture area (device pixels) for the HLS "Auto" quality.
@@ -1929,7 +1956,7 @@ ${barHtml()}
         if (m.m && m.m.type === 'view' && !m.m.zoomed && m.m.w > 0 && m.m.h > 0) rememberView(m.m.w, m.m.h);
         else if (m.m && m.m.type === 'open' && m.m.view && m.m.view.w > 0 && m.m.view.h > 0) rememberView(m.m.view.w, m.m.view.h);
         return this.native ? this.native.handle(m.m) : undefined;
-      case 'thumb': return this.sendThumb(m);
+      case 'thumb': return m.page === this.page ? this.sendThumb(m) : undefined;
       case 'grabExactFrame': return this.sendExactFrame(m);
       // Jump sizes and speed step from the player's panels: only declared values.
       case 'pref': return PREFS[m.key] && PREFS[m.key].values.includes(m.value) ? setSetting(m.key, m.value, prefTarget(m.key)) : undefined;
@@ -1988,10 +2015,12 @@ ${barHtml()}
         return undefined;
       case 'decodeSpeed': return this.onSpeed(m);
       case 'softVideo': if (vscode.env.remoteName && !this.native && !this.fullRes) maybeOfferRemoteFfmpeg(this, m).catch((e) => log(`remote ffmpeg offer: ${e && e.stack || e}`)); return undefined;
-      case 'saveFrame': return this.saveFrame(m.data, m.frame);
-      case 'exportRange': return this.exportRange(m.range);
-      case 'ffmpegRange': return this.copyFfmpegRange(m.range);
-      case 'exportFrame': { const w = this.exportWait && this.exportWait.get(m.id); if (w) { this.exportWait.delete(m.id); w(m); } return undefined; }
+      case 'saveFrame': return m.page === this.page ? this.saveFrame(m.data, m.frame) : undefined;
+      case 'exportRange': return m.page === this.page ? this.exportRange(m.range) : undefined;
+      case 'ffmpegRange': return m.page === this.page ? this.copyFfmpegRange(m.range) : undefined;
+      case 'exportFrame':
+        if (m.page === this.page && this.exportWait) this.exportWait.get(m.id)?.(m);
+        return undefined;
       case 'external': if (!this.canOpenExternal()) return undefined; return vscode.env.openExternal(this.sequence ? vscode.Uri.file(this.sequence.files[0]) : this.uri);
       case 'log': log(`[${this.name}] webview: ${m.msg}`); return undefined;
       case 'wcFailed':
@@ -2031,23 +2060,31 @@ ${barHtml()}
     this.opened = true;
     // A reload while this runs (probe, AVI scan) starts a second open() for the new page.
     const gen = this.loadGen;
-    // Keep the claimed probe cancellable by reload() and dispose() while this page awaits it.
+    const { signal } = this.pageAbort;
+    // The page owns the claimed decoder while it waits for the probe.
     const r = { nd: this.earlyNd };
+    const discard = () => {
+      const nd = r.nd;
+      r.nd = null;
+      if (nd) { log(`[${this.name}] native: early ffmpeg stopped: not used`); nd.dispose(); }
+    };
+    signal.addEventListener('abort', discard, { once: true });
     this.earlyNd = null;
     clearTimeout(this.earlyTimer);
     try {
-      return await this.openPage(gen, early, r);
+      return await this.openPage(gen, early, r, signal);
     } finally {
       if (early) early.abort.abort();
       if (this.early === early) this.early = null;
-      if (r.nd) { log(`[${this.name}] native: early ffmpeg stopped: not used`); r.nd.dispose(); }
+      signal.removeEventListener('abort', discard);
+      discard();
     }
   }
 
   /** open() for page gen. early: the session's probe (or null); r.nd: the early native decoder (taken by clearing r.nd). */
-  async openPage(gen, early, r) {
+  async openPage(gen, early, r, signal) {
     // git:, vscode-vfs: and other virtual files: fsPath would name a different file (git: the working tree).
-    if (this.url) return this.openUrlPage(gen);
+    if (this.url) return this.openUrlPage(gen, signal);
     if (!FS_SCHEMES.has(this.uri.scheme)) return this.fail(new Error(`Can't play ${this.uri.scheme}: files`), 'Open the file from the Explorer instead.');
     maybeOnboard().catch((e) => log(`onboarding failed: ${e && e.message || e}`));
     const stat = await fs.promises.stat(this.file);
@@ -2055,10 +2092,10 @@ ${barHtml()}
     if (early && !sameFile(await early.stat, stat)) early.abort.abort();
     if (this.stale(gen)) return undefined;
     if (/\.avi$/i.test(this.file)) {
-      const info = await (early && !early.abort.signal.aborted ? early.avi : this.scanAvi());
+      const info = await (early && !early.abort.signal.aborted ? early.avi : this.scanAvi(signal));
       if (this.stale(gen)) return undefined;
       // MJPEG (with PCM sound) plays straight from the file: each frame is a JPEG.
-      if (this.playsMjpeg(info)) return this.startMjpeg(info, stat);
+      if (this.playsMjpeg(info)) return this.startMjpeg(info, stat, signal);
     }
     // Native ffmpeg when installed, except 8-bit H.264/VP8 and when there's a reason not to
     // (src/decide.js): an SSH/container window, a file it failed on, pixel tools.
@@ -2088,11 +2125,11 @@ ${barHtml()}
         let pr = null;
         if (e && e.t === t && !e.err) pr = e.pr;
         else {
-          try { pr = await ff.probe(t, this.file); } catch (err) { log(`[${this.name}] ffprobe failed: ${err.message}`); }
+          try { pr = await ff.probe(t, this.file, signal); } catch (err) { log(`[${this.name}] ffprobe failed: ${err.message}`); }
         }
         await gpus;
-        this.t.probed = Date.now();
         if (this.stale(gen)) return undefined;
+        this.t.probed = Date.now();
         if (pr) probed = { t, pr };
         const d = !pr ? { use: 'builtin', reason: 'ffprobe could not read the file' } : this.decideNative(c, t, pr, stat);
         log(`[${this.name}] decoder: ${d.use === 'native' ? `native ffmpeg (${d.method})` : 'built-in'}: ${d.reason}`);
@@ -2112,7 +2149,8 @@ ${barHtml()}
             nd = this.newNative(t, pr, d, c);
           }
           nd.attach({
-            post: (msg) => this.post({ type: 'nd', m: msg }), postRaw: (msg) => this.post(msg),
+            post: (msg) => { if (!signal.aborted) this.post({ type: 'nd', m: msg }); },
+            postRaw: (msg) => { if (!signal.aborted) this.post(msg); },
             onFail: (err) => this.nativeFailed(err, gen), origin: this.webviewOrigin,
           });
           this.native = nd;
@@ -2140,9 +2178,9 @@ ${barHtml()}
    * anything the decoder rule gives it (the URL goes to ffmpeg with the network protocol whitelist);
    * otherwise the built-in decoder reads blocks over HTTP (urlsource.HttpFile / HlsFile).
    */
-  async openUrlPage(gen) {
+  async openUrlPage(gen, signal) {
     const c = config();
-    const opts = netOpts();
+    const opts = { ...netOpts(), signal };
     const red = urlsource.redact(this.url);
     this.netFailed = false;
     let host = '';
@@ -2171,6 +2209,7 @@ ${barHtml()}
       if (info.kind === 'hls') {
         if (this.hlsPick !== 'auto' && !Number.isInteger(this.hlsPick)) this.hlsPick = 'auto';
         plan = await urlsource.hlsOpen(info, opts, { pick: this.hlsPick, view: this.pageView || lastView, maxHeight: t ? 4320 : 1080 });
+        if (this.stale(gen)) return undefined;
         this.live = plan.live;
       } else this.live = info.kind === 'dash' ? urlsource.dashLive(info.text) : false;
     } catch (e) {
@@ -2188,7 +2227,7 @@ ${barHtml()}
     let probeError = '';
     if (t) {
       this.post({ type: 'status', text: `Reading ${stream ? 'the stream' : 'the video'} with ffmpeg…` });
-      try { [pr] = await Promise.all([ff.probe(t, this.ffInput(info)), gpusForMethod(t, c)]); } catch (e) { probeError = e.message; log(`[${this.name}] ffprobe failed: ${e.message}`); }
+      try { [pr] = await Promise.all([ff.probe(t, this.ffInput(info), signal), gpusForMethod(t, c)]); } catch (e) { probeError = e.message; log(`[${this.name}] ffprobe failed: ${e.message}`); }
       if (this.stale(gen)) return undefined;
       if (pr && !pr.video && !pr.audio) pr = null;
     }
@@ -2196,7 +2235,8 @@ ${barHtml()}
       if (this.live) pr.duration = 0;
       const nd = this.newNative(t, pr, d, c, this.ffInput(info));
       nd.attach({
-        post: (msg) => this.post({ type: 'nd', m: msg }), postRaw: (msg) => this.post(msg),
+        post: (msg) => { if (!signal.aborted) this.post({ type: 'nd', m: msg }); },
+        postRaw: (msg) => { if (!signal.aborted) this.post(msg); },
         onFail: (err) => this.nativeFailed(err, gen), origin: this.webviewOrigin,
       });
       this.native = nd;
@@ -2223,14 +2263,21 @@ ${barHtml()}
         // Chosen for native ffmpeg (no height cap) but played here: "Auto" again with the built-in decoder's cap.
         if (plan.auto && plan.variant && plan.variant.height > 1080) {
           plan = await urlsource.hlsOpen(info, opts, { pick: 'auto', view: this.pageView || lastView, maxHeight: 1080 });
-          this.hlsPlan = plan;
           if (this.stale(gen)) return undefined;
+          this.hlsPlan = plan;
         }
         this.post({ type: 'status', text: 'Reading the HLS playlist…' });
         const hls = new urlsource.HlsFile(plan, opts);
-        await hls.open((n, all) => { if (!this.stale(gen)) this.post({ type: 'status', text: `Reading the HLS playlist… ${n} / ${all} segments` }); });
-        if (this.stale(gen)) { hls.close(); return undefined; }
-        this.net = hls;
+        const close = () => hls.close();
+        signal.addEventListener('abort', close, { once: true });
+        try {
+          await hls.open((n, all) => { if (!signal.aborted) this.post({ type: 'status', text: `Reading the HLS playlist… ${n} / ${all} segments` }); });
+          if (signal.aborted) return undefined;
+          this.net = hls;
+        } finally {
+          signal.removeEventListener('abort', close);
+          if (!signal.aborted && this.net !== hls) close();
+        }
         log(`[${this.name}] HLS for the built-in decoder: ${hls.segments} ${hls.fmp4 ? 'fMP4' : 'MPEG-TS'} segments${hls.encrypted ? ' (AES-128, decrypted here)' : ''}, ${hls.size} bytes, ${hls.duration.toFixed(1)} s${hls.variant ? `, variant ${hls.variant.width}x${hls.variant.height} ${hls.variant.bandwidth} b/s` : ''}`);
       } else {
         this.net = new urlsource.HttpFile(info, opts);
@@ -2284,6 +2331,7 @@ ${barHtml()}
    * file: the opened HlsFile (its first bytes give the timeline's start), else the start is read from the first segment.
    */
   async sendHlsSubs(gen, file) {
+    const opts = { ...netOpts(), signal: this.pageAbort.signal };
     const plan = this.hlsPlan;
     if (!plan || !plan.master || this.live || !plan.master.media.some((m) => m.type === 'SUBTITLES' && m.url)) return;
     try {
@@ -2292,10 +2340,12 @@ ${barHtml()}
       if (!subs) {
         let start = null;
         try {
-          const head = file ? await file.read(0, 256 * 1024) : await firstBytes(plan, netOpts());
+          const head = file ? await file.read(0, 256 * 1024) : await firstBytes(plan, opts);
           start = urlsource.streamStart(head);
         } catch (e) { log(`[${this.name}] HLS subtitles: no start time (${e.message})`); }
-        subs = await urlsource.hlsSubtitles(plan, netOpts(), { start });
+        if (this.stale(gen)) return;
+        subs = await urlsource.hlsSubtitles(plan, opts, { start });
+        if (this.stale(gen)) return;
         this.hlsSubs = { group, list: subs };
         for (const x of subs) log(`[${this.name}] HLS subtitles ${x.lang || '-'} "${x.name}": ${x.error ? `failed: ${x.error}` : `${x.text.length} bytes`}`);
       }
@@ -2339,8 +2389,9 @@ ${barHtml()}
     return undefined;
   }
 
-  scanAvi() {
-    return avi.parseAvi(this.file).catch((e) => {
+  scanAvi(signal) {
+    return avi.parseAvi(this.file, signal).catch((e) => {
+      if (signal.aborted) return null;
       log(`[${this.name}] AVI parse failed: ${e.message}`);
       return null;
     });
@@ -2361,7 +2412,7 @@ ${barHtml()}
     const abort = new AbortController();
     const stat = fs.promises.stat(this.file).catch(() => null);
     // The page reuses this scan, unless the file changed. Only probe AVI after ruling out the frame player.
-    const scan = /\.avi$/i.test(this.file) ? stat.then((st) => st && !abort.signal.aborted ? this.scanAvi() : null) : null;
+    const scan = /\.avi$/i.test(this.file) ? stat.then((st) => st && !abort.signal.aborted ? this.scanAvi(abort.signal) : null) : null;
     const result = Promise.all([stat, scan, scan ? null : tools()]).then(async ([st, info, found]) => {
       if (abort.signal.aborted || !st || (info && info.isMjpeg)) return null;
       if (decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, st)) return null;
@@ -2374,7 +2425,7 @@ ${barHtml()}
       if (!this.opened) {
         // The header is tentative. Run both reads at once so a slow sniff never delays ffprobe.
         const sniff = /\.(mkv|webm)$/i.test(this.file) ? sniffNativeMatroska : sniffNativeMp4;
-        Promise.all([sniff(this.file, st), gpus]).then(([pr]) => {
+        Promise.all([sniff(this.file, st, abort.signal), gpus]).then(([pr]) => {
           if (pr && probing && !this.opened && !abort.signal.aborted) this.tryStartNativeEarly(t, pr, st, true);
         }).catch((e) => log(`[${this.name}] early native start: ${e && e.stack || e}`));
       }
@@ -2382,6 +2433,7 @@ ${barHtml()}
       if (logFile) log(`[${this.name}] early ffprobe started`);
       try {
         const [pr] = await Promise.all([ff.probe(t, this.file, abort.signal), gpus]);
+        if (abort.signal.aborted) return null;
         this.t.probeDone = Date.now();
         return { t, pr, stat: st };
       }
@@ -2483,15 +2535,16 @@ ${barHtml()}
    * True when it took over playback.
    */
   async tryRemoteStream(gen, stat, probed, opts = {}) {
+    const { signal } = this.pageAbort;
     const c = config();
     const remote = vscode.env.remoteName;
     if (this.fullRes || this.noRemoteStream || !vscode.workspace.isTrusted) return false;
     if (c.decoder === 'builtin' || decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, stat)) return false;
     const t = probed ? probed.t : await tools();
-    if (!t) return false;
+    if (!t || this.stale(gen)) return false;
     let pr = probed ? probed.pr : null;
     if (!pr) {
-      try { pr = await ff.probe(t, this.file); } catch (e) { log(`[${this.name}] ffprobe failed: ${e.message}`); }
+      try { pr = await ff.probe(t, this.file, signal); } catch (e) { log(`[${this.name}] ffprobe failed: ${e.message}`); }
     }
     if (this.stale(gen) || !pr || !pr.video) return false;
     const lastView = globalState && globalState.get(LAST_VIEW_KEY);
@@ -2507,6 +2560,7 @@ ${barHtml()}
     if (decision.action === 'prompt_remote') {
       this.remoteTranscodePrompted = true;
       maybeOfferRemoteTranscode(this, remote, () => {
+        if (this.stale(gen)) return;
         this.forceTranscode = true;
         this.reload('live transcode accepted');
       }).catch((e) => log(`remote transcode prompt failed: ${e && e.message || e}`));
@@ -2524,9 +2578,12 @@ ${barHtml()}
     this.native = new remotestream.EncodedStream({
       ...stream, tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), probed: pr,
       stats: !!logFile, maxBitrateMbps: c.transcodeMaxBitrate, allowLinkAdapt: isRemoteLink,
-      post: (msg) => this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg }),
+      post: (msg) => {
+        if (!signal.aborted) this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg });
+      },
       log: (msg) => log(`[${this.name}] ${msg}`),
       onFail: (err) => {
+        if (signal.aborted) return;
         log(`[${this.name}] remote stream failed (${err}); using the built-in decoder`);
         this.noRemoteStream = true;
         this.forceTranscode = false;
@@ -2569,6 +2626,7 @@ ${barHtml()}
     }
     try {
       const { fh, size } = await this.blockFile();
+      if (!isCurrent()) return undefined;
       const n = Math.max(0, Math.min(len, MAX_BLOCK, size - pos));
       const buf = Buffer.alloc(n);
       const { bytesRead } = n ? await fh.read(buf, 0, n, pos) : { bytesRead: 0 };
@@ -2597,10 +2655,10 @@ ${barHtml()}
     this.post({ type: 'frames', meta, wav: null });
   }
 
-  async startMjpeg(info, stat) {
+  async startMjpeg(info, stat, signal) {
     const gen = this.loadGen;
     const fh = await fs.promises.open(this.file, 'r');
-    if (this.stale(gen)) { fh.close().catch(() => {}); return; }
+    if (this.stale(gen)) { await fh.close(); return; }
     this.frames = info.frames;
     this.fh = fh;
     let audioNote = 'no audio';
@@ -2608,9 +2666,17 @@ ${barHtml()}
       const bytes = info.audio.chunks.reduce((n, c) => n + c.size, 0);
       if (bytes > 0 && bytes <= MAX_WAV_BYTES) {
         // The sound goes ahead in parts of up to 8 MB ('wavPart'), not one message of up to 512 MB.
-        for await (const part of avi.pcmWavParts(this.file, info.audio, WAV_PART_BYTES)) {
-          if (this.stale(gen)) return;
-          await this.webview.postMessage({ type: 'wavPart', data: new Uint8Array(part.buffer, part.byteOffset, part.length) });
+        const parts = avi.pcmWavParts(this.file, info.audio, WAV_PART_BYTES, signal);
+        // The iterator can be suspended at a yield while the webview acknowledges the previous part.
+        const close = () => { parts.return().catch(() => {}); };
+        signal.addEventListener('abort', close, { once: true });
+        try {
+          for await (const part of parts) {
+            if (signal.aborted) return;
+            await this.webview.postMessage({ type: 'wavPart', data: new Uint8Array(part.buffer, part.byteOffset, part.length) });
+          }
+        } finally {
+          signal.removeEventListener('abort', close);
         }
         audioNote = `PCM ${info.audio.sampleRate / 1000} kHz`;
       } else if (bytes > 0) {
@@ -2654,12 +2720,14 @@ ${barHtml()}
 
   /** Sidecar subtitles next to the video, plus files loaded earlier in this tab. */
   async sendSubtitles() {
+    const gen = this.loadGen;
     const files = this.sequence || this.url ? [] : await findSidecars(vscode, this.uri, (msg) => log(`[${this.name}] ${msg}`));
     if (files.length) log(`[${this.name}] subtitles found: ${files.map((f) => f.name).join(', ')}`);
     const extra = [];
     for (const uri of this.extraSubs) {
       try { extra.push({ id: uri.toString(), name: uri.path.split('/').pop(), data:new Uint8Array(await vscode.workspace.fs.readFile(uri)) }); } catch { /* moved or deleted */ }
     }
+    if (this.stale(gen)) return;
     if (files.length) this.post({ type: 'subs', files });
     if (extra.length) this.post({ type: 'subs', files: extra, restore: true });
   }
@@ -2690,6 +2758,7 @@ ${barHtml()}
   // ---- frame export ------------------------------------------------------
 
   async saveFrame(data, frame) {
+    const { signal } = this.pageAbort;
     // From the page: PNG bytes and a frame index that names the default file (security review 2026-11-19 #7).
     if (!(data instanceof Uint8Array) || !Number.isInteger(frame) || frame < 0) return;
     const base = this.sequence ? this.sequence.name.replace(/#+/, '').replace(/\.[^.]+$/, '') : this.url ? urlBase(this.url) : path.parse(this.file).name;
@@ -2698,36 +2767,48 @@ ${barHtml()}
     // Tests (VPE_LOG with VPE_SAVE_DIR): no native dialog, the file goes to that folder.
     const target = logFile && process.env.VPE_SAVE_DIR ? vscode.Uri.file(path.join(process.env.VPE_SAVE_DIR, path.basename(defaultUri.fsPath)))
       : await vscode.window.showSaveDialog({ defaultUri, filters: { 'PNG image': ['png'] } });
-    if (!target) return;
+    if (!target || signal.aborted) return;
     await vscode.workspace.fs.writeFile(target, data);
+    if (signal.aborted) return;
     const pick = await vscode.window.showInformationMessage(`Saved ${path.basename(target.fsPath)}`, 'Open');
-    if (pick === 'Open') vscode.commands.executeCommand('vscode.open', target);
+    if (pick === 'Open' && !signal.aborted) vscode.commands.executeCommand('vscode.open', target);
   }
 
   // ---- A-B export (rangecmd.js) -------------------------------------------
 
   /** Asks the page for frame k (0-based) as PNG bytes; resolves with {data} or {error}. */
-  grabFrame(frame) {
+  grabFrame(frame, signal) {
+    if (signal.aborted) return Promise.resolve({ error: 'export cancelled' });
     if (!this.exportWait) { this.exportWait = new Map(); this.exportSeq = 0; }
     const id = ++this.exportSeq;
     return new Promise((resolve) => {
-      // The page draws nothing while hidden: only time it is shown counts.
       let timer;
+      const finish = (reply) => {
+        if (!this.exportWait.delete(id)) return;
+        clearTimeout(timer);
+        signal.removeEventListener('abort', cancel);
+        resolve(reply);
+      };
+      const cancel = () => finish({ error: 'export cancelled' });
+      // The page draws nothing while hidden: only time it is shown counts.
       const arm = () => {
         timer = setTimeout(() => {
-          if (!this.disposed && this.panel && !this.panel.visible) { arm(); return; }
-          this.exportWait.delete(id);
-          resolve({ error: 'the player did not answer within 30 s' });
+          if (!this.panel.visible) { arm(); return; }
+          finish({ error: 'the player did not answer within 30 s' });
         }, 30000);
       };
+      this.exportWait.set(id, finish);
+      signal.addEventListener('abort', cancel, { once: true });
       arm();
-      this.exportWait.set(id, (m) => { clearTimeout(timer); resolve(m); });
-      this.post({ type: 'exportGrab', id, frame });
+      // checkJs: start
+      this.post(/** @satisfies {ExportGrab} */ ({ type: 'exportGrab', page: this.page, id, frame }));
+      // checkJs: end
     });
   }
 
   /** Every frame of A-B as `<video>_f000123.png` in a folder the user picks (written through workspace.fs: remote too). */
   async exportRange(range) {
+    const { signal } = this.pageAbort;
     if (this.exporting) { vscode.window.showInformationMessage('Video Preview: an export is already running.'); return; }
     const problem = rangecmd.rangeProblem(range);
     if (problem) { vscode.window.showInformationMessage(`Video Preview: ${problem}`); return; }
@@ -2738,13 +2819,14 @@ ${barHtml()}
     }
     if (count > rangecmd.CONFIRM_FRAMES) {
       const ok = await vscode.window.showWarningMessage(`Export ${count} frames as PNG? This can take a while and use a lot of disk space.`, { modal: true }, 'Export');
-      if (ok !== 'Export') return;
+      if (signal.aborted || ok !== 'Export') return;
     }
     if (this.native && this.native.lossy()) {
       const n = this.native;
       const ok = await vscode.window.showWarningMessage(
         `Native ffmpeg decodes this video for display at ${n.w}×${n.h}, 8-bit 4:2:0: exported frames would be that, not the file's own pixels (${n.pr.video.width}×${n.pr.video.height} ${n.pr.video.pixFmt}).`,
         { modal: true }, 'Switch to Full Resolution', 'Export Anyway');
+      if (signal.aborted) return;
       if (ok === 'Switch to Full Resolution') {
         this.useFullRes();
         vscode.window.showInformationMessage('Video Preview: now on the built-in decoder at full resolution. Run the export again once the video shows.');
@@ -2758,7 +2840,7 @@ ${barHtml()}
       canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
       openLabel: `Export ${count} frames here`, defaultUri: this.url ? workspaceFolder() : vscode.Uri.joinPath(this.uri, '..'),
     });
-    if (!pick || !pick.length) return;
+    if (signal.aborted || !pick || !pick.length) return;
     const folder = pick[0];
     // Ask before writing over frames exported before.
     let existing = 0;
@@ -2766,58 +2848,71 @@ ${barHtml()}
       const names = new Set((await vscode.workspace.fs.readDirectory(folder)).map(([n]) => n));
       for (let k = range.fa; k <= range.fb; k++) if (names.has(rangecmd.frameFileName(base, k + 1))) existing++;
     } catch { /* unreadable: writing reports the problem */ }
+    if (signal.aborted) return;
     if (existing) {
       const ok = await vscode.window.showWarningMessage(`Overwrite ${existing} existing file${existing === 1 ? '' : 's'}?`, { modal: true, detail: `${folder.scheme === 'file' ? folder.fsPath : folder.toString()} already holds ${existing === 1 ? 'a frame' : 'frames'} of this range.` }, 'Overwrite');
       if (ok !== 'Overwrite') return;
     }
-    if (this.exporting) return; // another export started while the dialogs were open
-    this.exporting = true;
+    if (signal.aborted || this.exporting) return; // another export started while the dialogs were open
+    this.exporting = signal;
     // The page decodes and draws only while shown: bring it to the front.
     if (this.panel) this.panel.reveal(undefined, true);
     let done = 0;
     let failed = null;
     try {
       await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Exporting frames ${range.fa + 1}–${range.fb + 1}`, cancellable: true }, async (progress, token) => {
-        let last = -1; // the last frame written
-        for (let k = range.fa; k <= range.fb;) {
-          if (token && token.isCancellationRequested) break;
-          if (this.panel && !this.panel.visible && !this.disposed) {
-            // Hidden (another tab in front): wait until the player is shown again.
-            progress.report({ message: `${done} / ${count}, paused while the player is hidden` });
-            await new Promise((resolve) => {
-              let c = null;
-              let poll = null;
-              const go = () => { clearInterval(poll); if (c) c.dispose(); this.onShown = null; resolve(); };
-              this.onShown = go;
-              if (token && token.onCancellationRequested) c = token.onCancellationRequested(go);
-              poll = setInterval(() => { if (this.disposed || (this.panel && this.panel.visible)) go(); }, 1000);
-            });
-            continue;
+        const controller = new AbortController();
+        const work = controller.signal;
+        const cancel = () => controller.abort();
+        const sub = token?.onCancellationRequested(cancel);
+        signal.addEventListener('abort', cancel, { once: true });
+        if (signal.aborted || token?.isCancellationRequested) cancel();
+        try {
+          let last = -1; // the last frame written
+          for (let k = range.fa; k <= range.fb && !work.aborted;) {
+            if (!this.panel.visible) {
+              progress.report({ message: `${done} / ${count}, paused while the player is hidden` });
+              if (!work.aborted) await new Promise((resolve) => {
+                const go = () => {
+                  work.removeEventListener('abort', go);
+                  this.onShown = null;
+                  resolve();
+                };
+                this.onShown = go;
+                work.addEventListener('abort', go, { once: true });
+              });
+              continue;
+            }
+            const hiddenCount = this.hiddenCount;
+            const r = await this.grabFrame(k, work);
+            if (work.aborted) break;
+            // Showing the player again can re-seek to the last picture and supersede this grab's seek.
+            if (hiddenCount !== this.hiddenCount) continue;
+            if (!r || r.error || !r.data) { failed = r && r.error ? r.error : 'no picture'; break; }
+            // VFR or gapped video: the seek can settle on a neighbour. Name the file from the frame shown; skip repeats.
+            const shown = Number.isInteger(r.frame) ? r.frame : k;
+            if (shown > last && shown >= range.fa && shown <= range.fb) {
+              await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, rangecmd.frameFileName(base, shown + 1)), new Uint8Array(r.data));
+              done++;
+              if (work.aborted) break;
+              last = shown;
+            }
+            const next = Math.max(k + 1, shown + 1);
+            progress.report({ increment: (100 * (Math.min(next, range.fb + 1) - k)) / count, message: `${done} / ${count}` });
+            k = next;
           }
-          const hiddenCount = this.hiddenCount;
-          const r = await this.grabFrame(k);
-          if (this.disposed) { failed = 'the player was closed'; break; }
-          // Showing the player again can re-seek to the last picture and supersede this grab's seek.
-          if (hiddenCount !== this.hiddenCount) continue;
-          if (!r || r.error || !r.data) { failed = r && r.error ? r.error : 'no picture'; break; }
-          // VFR or gapped video: the seek can settle on a neighbour. Name the file from the frame shown; skip repeats.
-          const shown = Number.isInteger(r.frame) ? r.frame : k;
-          if (shown > last && shown >= range.fa && shown <= range.fb) {
-            await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, rangecmd.frameFileName(base, shown + 1)), new Uint8Array(r.data));
-            done++;
-            last = shown;
-          }
-          const next = Math.max(k + 1, shown + 1);
-          progress.report({ increment: (100 * (Math.min(next, range.fb + 1) - k)) / count, message: `${done} / ${count}` });
-          k = next;
+        } finally {
+          signal.removeEventListener('abort', cancel);
+          sub?.dispose();
         }
       });
     } catch (e) {
       failed = e && e.message ? e.message : String(e);
     } finally {
-      this.exporting = false;
-      this.post({ type: 'exportEnd' });
+      if (this.exporting === signal) this.exporting = null;
+      if (!signal.aborted) this.post({ type: 'exportEnd' });
     }
+    if (signal.aborted) return;
     log(`[${this.name}] exported ${done}/${count} frames to ${folder.toString()}${failed ? ` (stopped: ${failed})` : ''}`);
     if (failed) vscode.window.showErrorMessage(`Video Preview: exported ${done} of ${count} frames, then stopped: ${failed}`);
     else vscode.window.showInformationMessage(`Video Preview: exported ${done} of ${count} frames to ${folder.scheme === 'file' ? folder.fsPath : folder.toString()}`);
@@ -2825,6 +2920,7 @@ ${barHtml()}
 
   /** Copies an ffmpeg command that cuts A-B: exact (re-encode) or fast (-c copy, keyframe-aligned). */
   async copyFfmpegRange(range) {
+    const { signal } = this.pageAbort;
     if (this.url) { vscode.window.showInformationMessage('Video Preview: the ffmpeg command for A–B is for video files, not URLs.'); return; }
     const problem = rangecmd.rangeProblem(range);
     if (problem) { vscode.window.showInformationMessage(`Video Preview: ${problem}`); return; }
@@ -2834,8 +2930,9 @@ ${barHtml()}
       { label: 'Exact cut (re-encode)', detail: cmd.exact, cmd: cmd.exact },
       { label: 'Fast cut (-c copy)', description: 'keyframe-aligned: starts at the keyframe at or before A', detail: cmd.copy, cmd: cmd.copy },
     ], { placeHolder: `ffmpeg command for frames ${range.fa + 1}–${range.fb + 1} (${cmd.ss} s to ${cmd.to} s)` });
-    if (!pick) return;
+    if (!pick || signal.aborted) return;
     await vscode.env.clipboard.writeText(pick.cmd);
+    if (signal.aborted) return;
     this.post({ type: 'toast', text: 'ffmpeg command copied' });
   }
 
@@ -2871,9 +2968,10 @@ ${barHtml()}
    * offered when it isn't installed, in a local trusted window, unless "Don't Show Again".
    */
   sendFfmpegState() {
+    const gen = this.loadGen;
     // Restricted Mode runs no ffmpeg at all, not even `-version` (security review 2026-11-19 #6).
     (vscode.workspace.isTrusted ? tools() : Promise.resolve(null)).then((t) => {
-      if (this.disposed) return;
+      if (this.stale(gen)) return;
       const h = globalState.get(decide.HINT_KEY) || {};
       const offer = !t && !vscode.env.remoteName && vscode.workspace.isTrusted && !h.never;
       this.post({ type: 'ffmpegState', installed: !!t, offer, mb: setup.downloadSizeMB() });
@@ -2949,16 +3047,18 @@ ${barHtml()}
   }
 
   dispose() {
+    if (this.disposed) return;
     if (logFile) log(`[${this.name}] session closed`);
     sessions.delete(this);
     if (this.pos && this.pos !== this.savedPos) this.savePos();
     this.disposed = true;
+    this.pageAbort.abort();
     this.exact.dispose();
     this.closeBenchChannels();
     if (this.watcher) this.watcher.close();
     this.closeFile();
     this.dropEarly('closed');
-    if (this.native) this.native.dispose();
+    if (this.native) { this.native.dispose(); this.native = null; }
   }
 }
 

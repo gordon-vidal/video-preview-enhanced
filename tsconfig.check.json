@@ -9,6 +9,7 @@
   },
   "files": [
     "tools/read-block-contract.js",
+    "tools/page-work-contract.js",
     "src/read-block.js",
     "src/extension.js",
     "media/engine.js",

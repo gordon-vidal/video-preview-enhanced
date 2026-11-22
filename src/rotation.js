@@ -59,8 +59,9 @@ function readMoov(fd, fileSize) {
 }
 
 /** Bound speculative reads even when the box table or moov is large. */
-async function sniffMoov(fd, fileSize) {
+async function sniffMoov(fd, fileSize, signal) {
   const read = async (pos, len) => {
+    signal?.throwIfAborted();
     const b = Buffer.alloc(len);
     const { bytesRead } = await fd.read(b, 0, len, pos);
     return b.subarray(0, bytesRead);
@@ -168,18 +169,19 @@ function constantPresentation(buf, ctts, count, delta) {
  * Enough metadata to start decoding a simple MP4/MOV while ffprobe runs. The guess
  * is used only to launch ffmpeg: the probe still decides what reaches the player.
  */
-async function sniffNativeMp4(file, stat) {
+async function sniffNativeMp4(file, stat, signal) {
   if (!/\.(mp4|m4v|mov)$/i.test(file)) return null;
   let fd;
   try {
     fd = await fs.promises.open(file, 'r');
+    signal?.throwIfAborted();
     const st = await fd.stat();
     if (st.size !== stat.size || st.mtimeMs !== stat.mtimeMs) return null;
     // A manifest posing as MP4 must not start ffmpeg before ffprobe's check (src/ffmpeg.js).
     const head = Buffer.alloc(4096);
     const { bytesRead } = await fd.read(head, 0, head.length, 0);
     if (looksLikePlaylist(head.subarray(0, bytesRead))) return null;
-    const moov = await sniffMoov(fd, st.size);
+    const moov = await sniffMoov(fd, st.size, signal);
     if (!moov) return null;
     const children = (b) => [...boxes(moov, b.start, b.end, true)];
     const find = (b, type) => b && children(b).find((x) => x.type === type);

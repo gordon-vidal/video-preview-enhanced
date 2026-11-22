@@ -23,10 +23,11 @@ const WINDOW = 1 << 20;
 const MOVI_WINDOW = 16 << 10;
 
 /** read(pos, len): small reads served from a window of the file (shorter at EOF). */
-function windowReader(fh, size = WINDOW) {
+function windowReader(fh, size = WINDOW, signal) {
   let base = 0;
   let buf = Buffer.alloc(0);
   return async (pos, len) => {
+    signal?.throwIfAborted();
     if (pos < base || pos + len > base + buf.length) {
       buf = await readAt(fh, pos, Math.max(len, size));
       base = pos;
@@ -35,17 +36,18 @@ function windowReader(fh, size = WINDOW) {
   };
 }
 
-async function parseAvi(file) {
+async function parseAvi(file, signal) {
   const fh = await fs.promises.open(file, 'r');
   try {
+    signal?.throwIfAborted();
     const fileSize = (await fh.stat()).size;
     const head = await readAt(fh, 0, 12);
     if (head.length < 12 || fourcc(head, 0) !== 'RIFF' || fourcc(head, 8) !== 'AVI ') {
       throw new Error('not a RIFF AVI file');
     }
     const info = { fileSize, avih: null, streams: [] };
-    const state = { cur: null, moviRead: windowReader(fh, MOVI_WINDOW) };
-    const read = windowReader(fh);
+    const state = { cur: null, moviRead: windowReader(fh, MOVI_WINDOW, signal) };
+    const read = windowReader(fh, WINDOW, signal);
     let pos = 0;
     while (pos + 12 <= fileSize) {
       const h = await read(pos, 12);
@@ -280,7 +282,7 @@ async function readPcmAsWav(file, audio) {
  * The same WAV as readPcmAsWav, in parts of about partBytes (the header leads the
  * first part), so a long recording never sits in one buffer or one message.
  */
-async function* pcmWavParts(file, audio, partBytes) {
+async function* pcmWavParts(file, audio, partBytes, signal) {
   partBytes = Math.max(partBytes, 64); // the 44-byte header must fit the first part
   const total = audio.chunks.reduce((n, c) => n + c.size, 0);
   const fh = await fs.promises.open(file, 'r');
@@ -292,6 +294,7 @@ async function* pcmWavParts(file, audio, partBytes) {
     for (const c of audio.chunks) {
       let done = 0;
       while (done < c.size) {
+        signal?.throwIfAborted();
         if (fill === part.length) {
           yield part;
           part = Buffer.alloc(Math.min(partBytes, left));

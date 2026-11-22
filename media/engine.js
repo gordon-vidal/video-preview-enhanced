@@ -6,6 +6,7 @@
 // played with WebAudio, which is also the clock. Nothing is ever re-encoded.
 'use strict';
 /** @import { ReadBlockRequest } from '../tools/read-block-contract.js' */
+/** @import { ThumbRequest } from '../tools/page-work-contract.js' */
 
 /* exported createEngine, matrixBySize */
 const matrixBySize = (w, h) => w >= 1280 || h >= 720 ? 709 : 601;
@@ -2562,12 +2563,17 @@ function createEngine(env) {
       return new Promise((resolve) => {
         const timer = setTimeout(() => { this.hostThumbWait.delete(id); resolve(null); }, 10e3);
         this.hostThumbWait.set(id, (m) => { clearTimeout(timer); resolve(m); });
-        vscode.postMessage({ type: 'thumb', id, t: Math.max(0, rel), w, h, rot: this.cfg.rotation || 0 });
+        // checkJs: start
+        vscode.postMessage(/** @satisfies {ThumbRequest} */ ({
+          type: 'thumb', page: env.page, id, t: Math.max(0, rel), w, h,
+        }));
+        // checkJs: end
       });
     }
 
     /** player.js: the host's answer to hostThumb(). */
     onHostThumb(m) {
+      if (m.page !== env.page) return;
       const done = this.hostThumbWait && this.hostThumbWait.get(m.id);
       if (!done) return;
       this.hostThumbWait.delete(m.id);
@@ -2679,6 +2685,10 @@ function createEngine(env) {
       clearTimeout(this.acTimer);
       clearTimeout(this.acWakeTimer);
       if (this.thumbs) this.thumbs.dispose();
+      if (this.hostThumbWait) {
+        for (const done of this.hostThumbWait.values()) done(null);
+        this.hostThumbWait.clear();
+      }
       if (this.worker) this.worker.terminate();
       this.stopAudio();
       if (this.ac) this.ac.close().catch(() => {});

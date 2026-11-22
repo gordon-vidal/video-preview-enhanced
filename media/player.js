@@ -626,7 +626,7 @@
     player.pause();
     const got = await frameBlob('Save');
     if (!got) return;
-    vscode.postMessage({ type: 'saveFrame', frame: got.frame, data: new Uint8Array(await got.blob.arrayBuffer()) });
+    vscode.postMessage({ type: 'saveFrame', page: cfg.page, frame: got.frame, data: new Uint8Array(await got.blob.arrayBuffer()) });
   }
   async function copyFrame() {
     if (!player) return;
@@ -661,6 +661,9 @@
    * Shows frame k (0-based) paused; resolves with the index of the frame on the canvas once the
    * seek settles (VFR or gapped video can land on a neighbour: the host names files from it), or null.
    */
+  const exportPage = new AbortController();
+  window.addEventListener('pagehide', () => exportPage.abort(), { once: true });
+
   function showFrame(k) {
     const p = player;
     p.pause();
@@ -672,33 +675,50 @@
     let t0 = performance.now();
     let last = t0;
     return new Promise((resolve) => {
+      const { signal } = exportPage;
+      let raf;
+      const finish = (frame) => {
+        cancelAnimationFrame(raf);
+        signal.removeEventListener('abort', cancel);
+        resolve(frame);
+      };
+      const cancel = () => finish(null);
       const check = () => {
-        if (player !== p) { resolve(null); return; }
+        if (player !== p) { finish(null); return; }
         const now = performance.now();
         if (now - last > 1000) t0 += now - last; // hidden (no animation frames): that time does not count
         last = now;
-        if (p instanceof FramePlayer) { if (p.shown === k) { resolve(k); return; } } else if (p.seekTarget === null && p.shownT !== null && ((p.shownCount || 0) > before || now - t0 > 1000)) {
-          resolve(p.currentFrame());
+        if (p instanceof FramePlayer) {
+          if (p.shown === k) { finish(k); return; }
+        } else if (p.seekTarget === null && p.shownT !== null && ((p.shownCount || 0) > before || now - t0 > 1000)) {
+          finish(p.currentFrame());
           return;
         }
-        if (now - t0 > 20000) { resolve(null); return; }
-        requestAnimationFrame(check);
+        if (now - t0 > 20000) { finish(null); return; }
+        raf = requestAnimationFrame(check);
       };
-      requestAnimationFrame(check);
+      signal.addEventListener('abort', cancel, { once: true });
+      raf = requestAnimationFrame(check);
     });
   }
   let exportChain = Promise.resolve();
   function exportGrab(id, k) {
     exportChain = exportChain.then(async () => {
+      const { signal } = exportPage;
+      if (signal.aborted) return;
       try {
         if (!player) throw new Error('no video');
         const shown = await showFrame(k);
+        if (signal.aborted) return;
         if (shown === null) throw new Error(`frame ${k + 1} did not show`);
         const blob = await grabFrame();
         if (!blob) throw new Error('no picture');
-        vscode.postMessage({ type: 'exportFrame', id, frame: shown, asked: k, data: new Uint8Array(await blob.arrayBuffer()) });
+        const data = new Uint8Array(await blob.arrayBuffer());
+        if (!signal.aborted) vscode.postMessage({ type: 'exportFrame', page: cfg.page, id, frame: shown, data });
       } catch (e) {
-        vscode.postMessage({ type: 'exportFrame', id, frame: k, error: String(e && e.message || e) });
+        if (!signal.aborted) vscode.postMessage({
+          type: 'exportFrame', page: cfg.page, id, frame: k, error: String(e && e.message || e),
+        });
       }
     });
   }
@@ -713,7 +733,7 @@
       e.stopPropagation();
       const range = abRange();
       if (!range) { toast('Set an A-B loop first (A, B)'); return; }
-      vscode.postMessage({ type: then, range });
+      vscode.postMessage({ type: then, page: cfg.page, range });
     });
     exportBtns.appendChild(b);
   };
@@ -992,7 +1012,7 @@
   const sendRange = (type) => {
     const range = abRange();
     if (!range) { toast('Set an A-B loop first (A, B)'); return; }
-    vscode.postMessage({ type, range });
+    vscode.postMessage({ type, page: cfg.page, range });
   };
   const TOOLS = [
     // Compare needs a second file next to this one: not offered for a URL (Open Video URL…).
@@ -1278,8 +1298,8 @@
       case 'menu': if (MENU_ACTIONS[m.action]) { MENU_ACTIONS[m.action](m); updateMenuContext(); } break;
       case 'ffmpegState': ffmpegState = { installed: !!m.installed, offer: !!m.offer, mb: Number(m.mb) || 0 }; if (player) player.ffmpeg = ffmpegState; break;
       case 'goto': insp.goToLink(m); break;
-      case 'abQuery': vscode.postMessage({ type: m.then === 'ffmpeg' ? 'ffmpegRange' : 'exportRange', range: abRange() }); break;
-      case 'exportGrab': exportGrab(m.id, m.frame); break;
+      case 'abQuery': vscode.postMessage({ type: m.then === 'ffmpeg' ? 'ffmpegRange' : 'exportRange', page: cfg.page, range: abRange() }); break;
+      case 'exportGrab': if (m.page === cfg.page) exportGrab(m.id, m.frame); break;
       case 'exportEnd': break;
       case 'subs': try { subs.onSubs(m); } catch (err) { log(`subtitles failed: ${err && err.stack || err}`); } break;
       case 'stream': // HLS: the variants for the Quality page
@@ -1615,7 +1635,7 @@
   (self.vpeMarks || (self.vpeMarks = {})).ready = Math.round(performance.timeOrigin + performance.now());
   // The picture area in device pixels: the host's "Auto" quality for HLS picks a picture that covers it.
   const readyView = (() => { const r = stage.getBoundingClientRect(); const k = window.devicePixelRatio || 1; const w = Math.round(r.width * k), h = Math.round(r.height * k); return w >= 16 && h >= 16 ? { w, h } : null; })();
-  vscode.postMessage({ type: 'ready', origin: window.location.origin, view: readyView });
+  vscode.postMessage({ type: 'ready', page: cfg.page, origin: window.location.origin, view: readyView });
   // The WebAssembly decoder loads while the host decides how to play the file (ffprobe etc.):
   // the GPU (WebCodecs) and WebAssembly paths both need it; native ffmpeg drops it.
   if (cfg.engine && cfg.engine.preload !== false) engine.preload({ ...cfg.engine, debug: !!cfg.debug });

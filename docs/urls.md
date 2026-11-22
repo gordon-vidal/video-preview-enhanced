@@ -11,6 +11,7 @@
 
 - **Quality (HLS):** for a stream with several variants the ⚙ panel has **Quality ›**: **Auto** (the default) or a variant ("1080p", "720p", …). Auto picks once when the stream opens: the smallest picture that fills the player, at most 80 % of the download rate measured on the first segment. Picking a quality reopens the stream at that variant from the same moment. There is no switching while it plays.
 - **Subtitles from the stream (HLS):** WebVTT subtitle renditions are listed in the CC / Subtitles panel by name and language (marked "stream"); the default one is shown automatically.
+- Closing the URL tab cancels pending requests. Changing HLS quality cancels requests for the previous variant.
 - **Live streams** play from the live edge; the seek bar is off and the time shows `LIVE` (clicking it doesn't switch to timecode or frames). The ⓘ panel shows the host and "stream" instead of a file size.
 - Video pages (YouTube and similar) are not video URLs: the player says "This URL is a web page, not a video".
 - Errors are plain: not found (HTTP 404), access denied or an expired link (401/403), no answer within 20 s, an untrusted TLS certificate, a refused connection.

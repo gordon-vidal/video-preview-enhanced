@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed: closing or reloading the player cancels pending video opens, frame exports, and native seek-bar thumbnails.
+
 ## 0.8.1 (2026-11-22)
 
 Compare grows to 8 videos by default (up to 16), Live transcode inside Compare, and exact full-resolution frames for copy, save, inspector and scopes while Live transcode is on.

@@ -321,7 +321,8 @@ async function rejects(p, re, what) {
             onDidChangeViewState: () => {},
             reveal() {},
             dispose() { if (listeners.dispose) listeners.dispose(); },
-            send: (m) => listeners.msg(m),
+            send: (m) => listeners.msg(m.type === 'ready' && m.page === undefined
+                ? { ...m, page: webviewConfig(panel.webview).page } : m),
           };
           panels.push(panel);
           return panel;

@@ -115,7 +115,13 @@ function load({ settings, env, setup, state: sharedState } = {}) {
     return {
       panel, posted, shown,
       setVisible: (v) => { panel.visible = v; if (listeners.viewState) listeners.viewState(); },
-      send: (m) => listeners.msg(m),
+      send: async (m) => {
+        if (m.type === 'ready' && m.page === undefined) {
+          if (!panel.webview.html) await shown;
+          m = { ...m, page: webviewConfig(panel.webview).page };
+        }
+        return listeners.msg(m);
+      },
       /** Waits until pred(posted) is true. */
       until: async (pred, ms = 5000) => {
         const t0 = Date.now();

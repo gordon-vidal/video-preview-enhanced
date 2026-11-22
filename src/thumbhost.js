@@ -40,8 +40,10 @@ function thumbArgs(file, t, w, h, legacy) {
  * @param {number} bw box width
  * @param {number} bh box height
  * @param {(m: string) => void} [log]
+ * @param {AbortSignal} [signal]
  */
-function decodeThumb(tools, file, src, t, bw, bh, log) {
+function decodeThumb(tools, file, src, t, bw, bh, log, signal) {
+  if (signal?.aborted) return Promise.resolve(null);
   const { w, h } = fitBox(src.w, src.h, bw, bh);
   const want = w * h * 4;
   return new Promise((resolve) => {
@@ -49,14 +51,30 @@ function decodeThumb(tools, file, src, t, bw, bh, log) {
     const parts = [];
     let got = 0;
     let err = '';
-    const timer = setTimeout(() => { try { proc.kill(); } catch { /* gone */ } }, 8000);
+    let stopped = false;
+    let settled = false;
+    const kill = () => {
+      if (stopped) return;
+      stopped = true;
+      try { proc.kill(); } catch { /* gone */ }
+    };
+    const timer = setTimeout(kill, 8000);
+    signal?.addEventListener('abort', kill, { once: true });
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', kill);
+      resolve(result);
+    };
     proc.stdout.on('data', (d) => { parts.push(d); got += d.length; });
     proc.stderr.on('data', (d) => { if (err.length < 2000) err += d; });
-    proc.on('error', (e) => { clearTimeout(timer); if (log) log(`thumb ffmpeg: ${e.message}`); resolve(null); });
+    proc.on('error', (e) => { if (log && !signal?.aborted) log(`thumb ffmpeg: ${e.message}`); finish(null); });
     proc.on('close', () => {
-      clearTimeout(timer);
-      if (got < want) { if (log && err) log(`thumb at ${t.toFixed(2)} s: ${err.trim().slice(0, 300)}`); resolve(null); return; }
-      resolve({ w, h, data: Buffer.concat(parts, got).subarray(0, want) });
+      if (settled) return;
+      if (stopped) { finish(null); return; }
+      if (got < want) { if (log && err) log(`thumb at ${t.toFixed(2)} s: ${err.trim().slice(0, 300)}`); finish(null); return; }
+      finish({ w, h, data: Buffer.concat(parts, got).subarray(0, want) });
     });
   });
 }
