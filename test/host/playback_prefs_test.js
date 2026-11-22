@@ -44,7 +44,7 @@ function slice(src, from, to) {
     const writes0 = h1.context.stateWrites || 0;
     await s1.send({ type: 'playbackPrefs', volume: 0.35, muted: true, rate: 1.75, timeMode: 2 });
     assert.strictEqual(h1.context.stateWrites, writes0 + 1);
-    assert.deepStrictEqual(state.get(KEY), { volume: 0.35, muted: true, rate: 1.75, timeMode: 2 });
+    assert.deepStrictEqual(state.get(KEY), { volume: 0.35, muted: true, rate: 1.75, timeMode: 2, stepSize: null });
     await s1.send({ type: 'playbackPrefs', volume: 0.35, muted: true, rate: 1.75, timeMode: 2 });
     assert.strictEqual(h1.context.stateWrites, writes0 + 1, 'identical prefs do not rewrite globalState');
 
@@ -56,6 +56,17 @@ function slice(src, from, to) {
     assert.strictEqual(cfg2.prefs.muted, true);
     assert.strictEqual(cfg2.prefs.rate, 1.75);
     assert.strictEqual(cfg2.prefs.timeMode, 2);
+
+    // 3b. Open tabs follow a change made in another tab at once (their pages stay alive in the background), and the
+    // step size is shared too.
+    const before = s1.posted.length;
+    await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 });
+    const live = s1.posted.slice(before).find((m) => m.type === 'playbackPrefs');
+    assert.deepStrictEqual(live && live.prefs, { volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 },
+      'the other open tab receives the new prefs');
+    await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: true, rate: 1.75, timeMode: 2, stepSize: 'bogus' });
+    assert.strictEqual(state.get(KEY).stepSize, 5, 'an unknown step size keeps the previous one');
+    await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: true, rate: 1.75, timeMode: 2, stepSize: null });
     s1.panel.dispose();
     s2.panel.dispose();
     h1.dispose();
@@ -85,11 +96,11 @@ function slice(src, from, to) {
     assert.strictEqual(cmpCfg.prefs.rate, 1.75);
     assert.strictEqual(cmpCfg.prefs.timeMode, 2);
     await cmp.onMessage({ type: 'playbackPrefs', page: cmpCfg.page, volume: 0.8, muted: false, rate: 0.5, timeMode: 1 });
-    assert.deepStrictEqual(state.get(KEY), { volume: 0.8, muted: false, rate: 0.5, timeMode: 1 });
+    assert.deepStrictEqual(state.get(KEY), { volume: 0.8, muted: false, rate: 0.5, timeMode: 1, stepSize: null });
 
     // 5. Invalid values are ignored in favour of previous or default values.
     await s3.send({ type: 'playbackPrefs', volume: -2, muted: 'yes', rate: 99, timeMode: 7 });
-    assert.deepStrictEqual(state.get(KEY), { volume: 0.8, muted: false, rate: 0.5, timeMode: 1 });
+    assert.deepStrictEqual(state.get(KEY), { volume: 0.8, muted: false, rate: 0.5, timeMode: 1, stepSize: null });
     state.set(KEY, { volume: 'bad', muted: 123, rate: 0, timeMode: -1 });
     const s4 = h2.open(fileB);
     await s4.shown;
@@ -115,6 +126,7 @@ function slice(src, from, to) {
       });
       const ui = { rate: el(), mute: el(), volume: el(), time: el() };
       const playerCalls = [];
+      const listeners = {};
       const ctx = vm.createContext({
         vscode: {
           getState: () => savedState,
@@ -129,6 +141,9 @@ function slice(src, from, to) {
         updateUi: noop,
         controls: null,
         lastUi: '',
+        stepTips: () => {},
+        Element: class {},
+        window: { addEventListener: (type, fn) => { listeners[type] = fn; } },
       });
       vm.runInContext([
         slice(playerSrc, '  const saved = vscode.getState() || {};', '  const actionBtn ='),
@@ -170,26 +185,40 @@ function slice(src, from, to) {
       assert.strictEqual(stateOf().userMuted, false);
       assert.strictEqual(stateOf().autoplayMuted, false);
       assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.65, muted: false, rate: 1.25, timeMode: 1,
+        type: 'playbackPrefs', volume: 0.65, muted: false, rate: 1.25, timeMode: 1, stepSize: null,
       });
 
       // User explicitly mutes, changes volume, changes speed, and cycles timeMode.
       vm.runInContext('setMute(true)', ctx);
       assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.65, muted: true, rate: 1.25, timeMode: 1,
+        type: 'playbackPrefs', volume: 0.65, muted: true, rate: 1.25, timeMode: 1, stepSize: null,
       });
       vm.runInContext('setVolume(0.4)', ctx); // volume > 0 while muted also unmutes
       assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.4, muted: false, rate: 1.25, timeMode: 1,
+        type: 'playbackPrefs', volume: 0.4, muted: false, rate: 1.25, timeMode: 1, stepSize: null,
       });
       vm.runInContext('changeRate(2)', ctx);
       assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.4, muted: false, rate: 2, timeMode: 1,
+        type: 'playbackPrefs', volume: 0.4, muted: false, rate: 2, timeMode: 1, stepSize: null,
       });
       ui.time.onclick();
       assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.4, muted: false, rate: 2, timeMode: 2,
+        type: 'playbackPrefs', volume: 0.4, muted: false, rate: 2, timeMode: 2, stepSize: null,
       });
+      // A new tab plays muted until the page gets a gesture; the first click there turns the sound on.
+      setMuteUi(true);
+      assert.strictEqual(stateOf().muted, true);
+      listeners.pointerdown({ target: null });
+      assert.strictEqual(stateOf().muted, false, 'the first click ends the autoplay mute');
+      assert.strictEqual(posted.length, 0, 'ending the autoplay mute is not a preference change');
+
+      // Another tab's change arrives: follow it without echoing it back.
+      vm.runInContext('applyPlaybackPrefs({ volume: 0.2, muted: true, rate: 1.5, timeMode: 0, stepSize: 5 })', ctx);
+      assert.deepStrictEqual(stateOf(), {
+        volume: 0.2, muted: true, userMuted: true, autoplayMuted: false, rate: 1.5, timeMode: 0,
+      });
+      assert.strictEqual(vm.runInContext('prefs.stepSize', ctx), 5);
+      assert.strictEqual(posted.length, 0, 'a followed change is not posted back');
     }
 
     // 7. Compare webview logic: inherits cfg.prefs, ignores autoplay mute for persisted prefs, persists user changes.
@@ -220,7 +249,8 @@ function slice(src, from, to) {
         tileOr0: (i) => (Number.isInteger(i) && i >= 0 && i < 2 ? i : 0),
         tileLabel: (i) => ['A', 'B'][i],
         $: () => el(),
-        window: {},
+        window: { addEventListener() {} },
+        Element: class {},
         ui,
         tiles: [],
         clock: null,
@@ -262,7 +292,7 @@ function slice(src, from, to) {
       assert.strictEqual(stOf().userMuted, false);
       assert.strictEqual(stOf().autoplayMuted, false);
       assert.deepStrictEqual(posted.pop(), {
-        type: 'playbackPrefs', volume: 0.5, muted: false, rate: 1.5, timeMode: 2,
+        type: 'playbackPrefs', volume: 0.5, muted: false, rate: 1.5, timeMode: 2, stepSize: null,
       });
     }
 

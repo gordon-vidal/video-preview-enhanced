@@ -112,7 +112,9 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
   `,` `.` always one frame. Keys VS Code uses are avoided (Alt+← →, Ctrl+K, Ctrl+Shift+C).
 - **Buttons beside Play** (2026-11-20): by default step one frame back / forward; setting `stepButtons`
   (`frame` | `jump`) makes them jump by the Ctrl+arrow size. Tooltips say which. A small badge on them (2026-11-22)
-  shows the size and picks 1 frame / 5 frames / 1 s / 5 s / 10 s for the current tab (quiet at 1 frame).
+  shows the size and picks 1 frame / 5 frames / 1 s / 5 s / 10 s; it shows only on hover, keyboard focus or while
+  its menu is open. Volume, mute, speed, time display and step size are shared: every open player and Compare tab
+  follows a change at once, and new tabs start with them.
 - **Right-click:** quick actions on this moment only (play/pause, loop, copy/save frame, copy timestamp, frame
   link, shortcuts, settings).
 

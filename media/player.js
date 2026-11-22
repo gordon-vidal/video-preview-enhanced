@@ -42,8 +42,9 @@
   const prefs = {
     jump: { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1, ...((cfg.prefs && cfg.prefs.jump) || {}) },
     stepButtons: (cfg.prefs && cfg.prefs.stepButtons) === 'jump' ? 'jump' : 'frame',
-    // The step buttons' size picked with their badge (this tab, kept over a reload); null: the setting stepButtons.
-    stepSize: VpeControls.STEP_SIZES.includes(saved.stepSize) ? saved.stepSize : null,
+    // The step buttons' size picked with their badge (kept over a reload, shared by all tabs); null: the setting stepButtons.
+    stepSize: VpeControls.STEP_SIZES.includes(saved.stepSize) ? saved.stepSize
+      : VpeControls.STEP_SIZES.includes(initPrefs.stepSize) ? initPrefs.stepSize : null,
     transcode: (cfg.prefs && cfg.prefs.transcode) || 'ask',
     transcodeMaxBitrate: Number(cfg.prefs && cfg.prefs.transcodeMaxBitrate) || 0,
   };
@@ -584,8 +585,36 @@
   /** Arrow keys: one frame or seconds, from the jump-size settings. */
   const jump = (size, dir) => { if (size === 'frame') step(dir); else skip(dir * Number(size)); };
   function postPlaybackPrefs() {
-    vscode.postMessage({ type: 'playbackPrefs', volume, muted: userMuted, rate, timeMode });
+    vscode.postMessage({ type: 'playbackPrefs', volume, muted: userMuted, rate, timeMode, stepSize: prefs.stepSize });
   }
+  /** Another tab changed a shared playback preference (src/extension.js rememberPlaybackPrefs): follow it quietly. */
+  function applyPlaybackPrefs(p) {
+    if (!p) return;
+    if (Number.isFinite(p.volume)) { volume = p.volume; ui.volume.value = String(volume); }
+    if (typeof p.muted === 'boolean') {
+      userMuted = p.muted;
+      if (userMuted) autoplayMuted = false;
+    }
+    setMute(userMuted || autoplayMuted, false);
+    if (Number.isFinite(p.rate) && p.rate !== rate) setRate(p.rate, false);
+    if ([0, 1, 2].includes(p.timeMode) && p.timeMode !== timeMode) { timeMode = p.timeMode; lastUi = ''; updateUi(); }
+    if (p.stepSize !== undefined && p.stepSize !== prefs.stepSize) {
+      prefs.stepSize = p.stepSize;
+      stepTips();
+      vscode.setState({ ...(vscode.getState() || {}), stepSize: p.stepSize });
+    }
+    if (controls) controls.refresh();
+  }
+  // A new tab may not start sound until the user interacts with its page (Chromium's autoplay rule), so it plays muted
+  // although the user's choice is unmuted. The first click or key in the page is that gesture: turn the sound back on.
+  // The mute button is left to its own click, which unmutes.
+  const endAutoplayMute = (e) => {
+    if (!autoplayMuted || userMuted || (e.target instanceof Element && e.target.closest('#mute'))) return;
+    autoplayMuted = false;
+    setMute(false, false);
+  };
+  window.addEventListener('pointerdown', endAutoplayMute, true);
+  window.addEventListener('keydown', endAutoplayMute, true);
   // Speed: 0.25–4× in steps of 0.05 (VpeControls.clampRate), the range in which the sound keeps its pitch.
   function setRate(r, persist = true) {
     rate = VpeControls.clampRate(r);
@@ -835,6 +864,7 @@
     prefs.stepSize = v;
     stepTips();
     vscode.setState({ ...(vscode.getState() || {}), stepSize: v });
+    postPlaybackPrefs();
     toast(`Step buttons: ${VpeControls.stepName(v)}`);
   }
   ui.prev.onclick = () => stepButton(-1);
@@ -1428,6 +1458,7 @@
       case 'hideReducedResNotice': cfg.hideReducedResNotice = true; break;
       case 'addMode': showAddMode(m); break;
       case 'compareOpen': setCompareOpen(!!m.open); break;
+      case 'playbackPrefs': applyPlaybackPrefs(m.prefs); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
       case 'pauseForTest': if (player && player.isPlaying()) { player.pause(); toast('Paused while ffmpeg is tested', 3000); } break;
       case 'prefs': if (m.prefs && m.prefs.jump) { Object.assign(prefs.jump, m.prefs.jump); if (m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons === 'jump' ? 'jump' : 'frame'; if (m.prefs.transcode) prefs.transcode = m.prefs.transcode; if (m.prefs.transcodeMaxBitrate !== undefined) prefs.transcodeMaxBitrate = Number(m.prefs.transcodeMaxBitrate) || 0; stepTips(); controls.refresh(); } break;

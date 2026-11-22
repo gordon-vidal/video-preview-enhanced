@@ -81,8 +81,9 @@
     ...cfg.prefs,
     jump: { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1, ...cfg.prefs?.jump },
     stepButtons: cfg.prefs?.stepButtons || 'frame',
-    // The step buttons' size picked with their badge (this tab, kept over a reload); null: the setting stepButtons.
-    stepSize: VpeControls.STEP_SIZES.includes(saved.stepSize) ? saved.stepSize : null,
+    // The step buttons' size picked with their badge (kept over a reload, shared by all tabs); null: the setting stepButtons.
+    stepSize: VpeControls.STEP_SIZES.includes(saved.stepSize) ? saved.stepSize
+      : VpeControls.STEP_SIZES.includes(cfg.prefs?.stepSize) ? cfg.prefs.stepSize : null,
   };
   const initPrefs = cfg.prefs || {};
   let userMuted = saved.muted !== undefined ? !!saved.muted : !!initPrefs.muted;
@@ -1525,8 +1526,32 @@
     ui.mute.title = `${m ? 'Unmute' : 'Mute'} (sound from ${tileLabel(st.sound)})  M`;
   }
   function postPlaybackPrefs() {
-    vscode.postMessage({ type: 'playbackPrefs', volume: st.volume, muted: userMuted, rate: st.rate, timeMode: st.timeMode });
+    vscode.postMessage({ type: 'playbackPrefs', volume: st.volume, muted: userMuted, rate: st.rate, timeMode: st.timeMode,
+      stepSize: prefs.stepSize });
   }
+  /** Another tab changed a shared playback preference (src/extension.js rememberPlaybackPrefs): follow it quietly. */
+  function applyPlaybackPrefs(p) {
+    if (!p) return;
+    if (Number.isFinite(p.volume)) { st.volume = p.volume; ui.volume.value = String(st.volume); }
+    if (typeof p.muted === 'boolean') {
+      userMuted = p.muted;
+      if (userMuted) autoplayMuted = false;
+    }
+    setMute(userMuted || autoplayMuted, false);
+    if (Number.isFinite(p.rate) && p.rate !== st.rate) setRate(p.rate, false);
+    if ([0, 1, 2].includes(p.timeMode) && p.timeMode !== st.timeMode) { st.timeMode = p.timeMode; lastUi = ''; updateUi(); }
+    if (p.stepSize !== undefined && p.stepSize !== prefs.stepSize) { prefs.stepSize = p.stepSize; updateStepTips(); }
+    save();
+    if (controls) controls.refresh();
+  }
+  // As in the player: the first click or key in the page is the gesture a new tab needs before it may play sound.
+  const endAutoplayMute = (e) => {
+    if (!autoplayMuted || userMuted || (e.target instanceof Element && e.target.closest('#mute'))) return;
+    autoplayMuted = false;
+    setMute(false, false);
+  };
+  window.addEventListener('pointerdown', endAutoplayMute, true);
+  window.addEventListener('keydown', endAutoplayMute, true);
   function setMute(m, byUser = true) {
     if (byUser) {
       autoplayMuted = false;
@@ -1801,7 +1826,7 @@
       canExternal: false,
     }),
     act: {
-      stepSize: (v) => { prefs.stepSize = v; updateStepTips(); save(); toast(`Step buttons: ${VpeControls.stepName(v)}`); },
+      stepSize: (v) => { prefs.stepSize = v; updateStepTips(); save(); postPlaybackPrefs(); toast(`Step buttons: ${VpeControls.stepName(v)}`); },
       cycleAB: () => markAB(),
       loop: () => { setLoop(!st.loop); toast(st.loop ? 'Loop on' : 'Loop off'); },
       copyFrame: () => copyView(),
@@ -2649,6 +2674,7 @@
       case 'ndv': { const p = engines[m.key]; if (p) p.onNativeVideo(m); break; }
       case 'nda': { const p = engines[m.key]; if (p) p.onNativeAudio(m); break; }
       case 'originalTile': useOriginalTile(m.index, m.notice); break;
+      case 'playbackPrefs': applyPlaybackPrefs(m.prefs); break;
       case 'visible':
         if (m.active === false) setReordering(false);
         syncVisibility(document.hidden, m.visible);

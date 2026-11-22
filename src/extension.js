@@ -121,7 +121,9 @@ const PREFS = {
   stepButtons: { values: ['frame', 'jump'], dflt: 'frame' },
 };
 const PLAYBACK_PREFS_KEY = 'videoPreviewEnhanced.playbackPrefs';
-const DEFAULT_PLAYBACK_PREFS = { volume: 1, muted: false, rate: 1, timeMode: 0 };
+const DEFAULT_PLAYBACK_PREFS = { volume: 1, muted: false, rate: 1, timeMode: 0, stepSize: null };
+// The step buttons' size (media/controls.js STEP_SIZES); null follows the stepButtons setting.
+const STEP_SIZES = ['frame', 'frames5', 1, 5, 10];
 
 function sanitizePlaybackPrefs(raw, base = DEFAULT_PLAYBACK_PREFS) {
   const src = raw && typeof raw === 'object' ? raw : {};
@@ -132,7 +134,8 @@ function sanitizePlaybackPrefs(raw, base = DEFAULT_PLAYBACK_PREFS) {
   const rate = Number.isFinite(r) && r >= 0.25 && r <= 4 ? Math.round(r * 100) / 100 : base.rate;
   const tm = Number(src.timeMode);
   const timeMode = tm === 0 || tm === 1 || tm === 2 ? tm : base.timeMode;
-  return { volume, muted, rate, timeMode };
+  const stepSize = src.stepSize === null || STEP_SIZES.includes(src.stepSize) ? src.stepSize : base.stepSize;
+  return { volume, muted, rate, timeMode, stepSize };
 }
 
 function storedPlaybackPrefs() {
@@ -143,9 +146,9 @@ function rememberPlaybackPrefs(m) {
   if (!globalState || !m || typeof m !== 'object') return undefined;
   const prev = storedPlaybackPrefs();
   const next = sanitizePlaybackPrefs(m, prev);
-  if (next.volume === prev.volume && next.muted === prev.muted && next.rate === prev.rate && next.timeMode === prev.timeMode) {
-    return undefined;
-  }
+  if (['volume', 'muted', 'rate', 'timeMode', 'stepSize'].every((k) => next[k] === prev[k])) return undefined;
+  // Every open player and Compare follows at once (their pages stay alive in the background), not only new tabs.
+  for (const sess of [...sessions, ...compareSessions]) sess.post({ type: 'playbackPrefs', prefs: next });
   return globalState.update(PLAYBACK_PREFS_KEY, next);
 }
 

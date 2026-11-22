@@ -124,8 +124,8 @@ their results and preserve existing files in the chosen folder.
 ## The player
 
 One layout (the old simple / advanced switch is gone). The bar, left to right:
-previous frame, play / pause, next frame (a small badge on them picks how far they jump: 1 frame, 5 frames,
-1 s, 5 s or 10 s), mute, volume (opens when you point at mute), the time (click it: time → SMPTE timecode → frame
+previous frame, play / pause, next frame (a small badge that appears when you point at them picks how far they jump:
+1 frame, 5 frames, 1 s, 5 s or 10 s), mute, volume (opens when you point at mute), the time (click it: time → SMPTE timecode → frame
 number; the same detail while playing and paused), then CC (only when the video has subtitles), **Compare** (video
 files), ⓘ (about this video), the speed (click: speed panel; scroll: ±0.05), ⚙ (settings), the **picture size**
 button and fullscreen.

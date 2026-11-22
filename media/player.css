@@ -431,8 +431,9 @@ body.idle { cursor: none; }
 }
 #volume { width: 84px; margin: 0 10px 0 4px; accent-color: var(--vscode-foreground); flex: none; }
 @media (prefers-reduced-motion: reduce) { .vol-slide { transition: none; } }
-/* Step size badge on ◀| and |▶ (media/controls.js drawStepBadges): at the default 1 frame it shows only on hover or
-   focus; any other size stays visible, so the buttons always say how far they jump. A click opens the size popover. */
+/* Step size badge on ◀| and |▶ (media/controls.js drawStepBadges): shown only on hover, keyboard focus or while its
+   popover is open (maintainer, 2026-11-22), so the bar stays quiet; the buttons' tooltips still name the size.
+   :focus-visible, not :focus-within: a mouse click leaves focus on the step button and would pin the badge. */
 .stepw { position: relative; display: inline-flex; flex: none; }
 #row button.stepsz {
   position: absolute; top: -4px; left: 50%; transform: translateX(-50%); z-index: 1;
@@ -440,8 +441,8 @@ body.idle { cursor: none; }
   font: 600 9px/11px var(--vpe-mono); color: var(--vpe-dim); background: var(--vscode-editor-background, #1e1e1e);
   opacity: 0; pointer-events: none; transition: opacity 120ms ease-out;
 }
-#row button.stepsz[data-default="0"] { opacity: 0.85; pointer-events: auto; color: var(--vscode-foreground); }
-#row .stepw:hover button.stepsz, #row .stepw:focus-within button.stepsz, #row button.stepsz.open { opacity: 1; pointer-events: auto; }
+#row button.stepsz[data-default="0"] { color: var(--vscode-foreground); }
+#row .stepw:hover button.stepsz, #row .stepw:has(:focus-visible) button.stepsz, #row button.stepsz.open { opacity: 1; pointer-events: auto; }
 #row button.stepsz:hover, #row button.stepsz.open { color: var(--vscode-foreground); background: var(--vscode-editor-background, #1e1e1e); border-color: var(--vpe-accent); }
 @media (prefers-reduced-motion: reduce) { #row button.stepsz { transition: none; } }
 .panel.step { width: max-content; min-width: 112px; }
