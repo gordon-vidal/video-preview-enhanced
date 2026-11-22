@@ -39,6 +39,8 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 
 ## Rules
 
+- The player lifecycle suite exercises webview-only reloads by booting two documents from the same HTML. It uses controlled promises for outstanding reads and early probes.
+
 - A failure first runs alone; the full layer runs once when everything is believed fixed.
 - A VS Code instance without WebGL2 is a broken instance, not a failed test: it is named and retried.
 - A page error ends a wait at once; no test waits out a timeout after an error was reported.

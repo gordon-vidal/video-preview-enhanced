@@ -2,7 +2,13 @@
 'use strict';
 /** @import { BlockReply } from '../tools/read-block-contract.js' */
 (function () {
-  const vscode = acquireVsCodeApi();
+  const api = acquireVsCodeApi();
+  const boot = Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-');
+  const vscode = {
+    getState: () => api.getState(),
+    setState: (state) => api.setState(state),
+    postMessage: (message) => api.postMessage({ ...message, boot }),
+  };
   const cfg = JSON.parse(/** @type {HTMLElement} */ (document.getElementById('cfg')).textContent || '{}');
   const $ = (/** @type {string} */ id) => /** @type {any} */ (document.getElementById(id));
   const stage = $('stage'), canvas = $('canvas');
@@ -1204,6 +1210,7 @@
   let pendingWav = null;
   window.addEventListener('message', (e) => {
     const m = e.data;
+    if (m.boot !== undefined && m.boot !== boot) return;
     switch (m.type) {
       case 'wavPart': // MJPEG AVI sound, in parts before its 'frames' message
         (pendingWav = pendingWav || []).push(m.data);

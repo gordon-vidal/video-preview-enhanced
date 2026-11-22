@@ -24,6 +24,7 @@ const nativeSettings = { 'videoPreviewEnhanced.decoder': 'ffmpeg', 'videoPreview
 async function earlyHandoff(file, replace) {
   const prestarted = deferred();
   const pendingProbe = deferred();
+  const awaitingProbe = deferred();
   let signal;
   let kills = 0;
   rotation.sniffNativeMp4 = async () => probe;
@@ -33,12 +34,19 @@ async function earlyHandoff(file, replace) {
     prestarted.resolve();
   };
   const h = load({ settings: nativeSettings });
+  const output = h.context.subscriptions.find((sub) => Array.isArray(sub.lines));
+  const appendLine = output.appendLine.bind(output);
+  output.appendLine = (line) => {
+    appendLine(line);
+    if (line.endsWith('waiting for early ffprobe')) awaitingProbe.resolve();
+  };
   const s = h.open(file);
   try {
     await s.shown;
     await prestarted.promise;
     const oldPage = pageOf(s);
     const opening = s.send({ type: 'ready', page: oldPage });
+    await awaitingProbe.promise;
     await replace(s);
     s.posted.length = 0;
     assert.equal(signal.aborted, true, 'the claimed probe is cancelled');
@@ -49,6 +57,49 @@ async function earlyHandoff(file, replace) {
     assert.deepEqual(s.posted, []);
     assert.equal(kills, 1);
   } finally {
+    s.panel.dispose();
+    h.dispose();
+  }
+}
+
+async function reloadDocument(file) {
+  const h = load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin' } });
+  const s = h.open(file);
+  const originalOpen = fs.promises.open;
+  const reading = deferred();
+  const eof = deferred();
+  const closed = deferred();
+  try {
+    await s.shown;
+    const html = s.panel.webview.html;
+    const page = pageOf(s);
+    const first = { type: 'ready', page, boot: 'document-1' };
+    const second = { ...first, boot: 'document-2' };
+    const starts = () => s.posted.filter((m) => m.type === 'libav').length;
+    await s.send(first);
+    await s.send(first);
+    assert.equal(starts(), 1, 'duplicate ready starts one decoder');
+
+    fs.promises.open = (name, ...args) => name === file ? Promise.resolve({
+      stat: async () => ({ size: 1 }),
+      read: () => { reading.resolve(); return eof.promise; },
+      close: async () => { closed.resolve(); },
+    }) : originalOpen(name, ...args);
+    const read = s.send({ type: 'readBlock', page, boot: first.boot, pos: 0, len: 1 });
+    await reading.promise;
+    await s.send(second);
+    assert.equal(s.panel.webview.html, html, 'the second document boots from the original HTML');
+    assert.equal(starts(), 2, 'the recreated document reacquires playback');
+    await closed.promise;
+    eof.resolve({ bytesRead: 0 });
+    await read;
+    await s.send({ type: 'thumb', page, boot: first.boot, id: 1 });
+    await s.send(first);
+    await s.send(second);
+    assert.equal(starts(), 2, 'a retired or duplicate boot cannot restart playback');
+    assert.ok(!s.posted.some((m) => m.type === 'block' || m.type === 'thumb'));
+  } finally {
+    fs.promises.open = originalOpen;
     s.panel.dispose();
     h.dispose();
   }
@@ -120,7 +171,7 @@ async function inspectUrl() {
   });
   try {
     await h.vscode._commands['videoPreviewEnhanced.openUrl']();
-    const opening = receive({ type: 'ready', page: webviewConfig(panel.webview).page });
+    const opening = receive({ type: 'ready', page: webviewConfig(panel.webview).page, boot: 'url-document' });
     await connected.promise;
     posted.length = 0;
     dispose();
@@ -257,6 +308,7 @@ process.on('beforeExit', () => {
       await pendingFile(avi, replace);
       await exportAndThumb(file, replace);
     }
+    await reloadDocument(file);
     await inspectUrl();
     await killThumbnailProcess();
     complete = true;

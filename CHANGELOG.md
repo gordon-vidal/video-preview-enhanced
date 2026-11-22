@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Fixed: closing or reloading the player cancels pending video opens, frame exports, and native seek-bar thumbnails.
+- Fixed: the video player loads again after VS Code's **Developer: Reload Webviews** command.
 
 ## 0.8.1 (2026-11-22)
 

@@ -1615,6 +1615,7 @@ class Session {
     remoteAuthority(this.webview); // learn the host for frame links arriving later
     this.disposed = false;
     this.page = 0;
+    this.boots = new Set();
     this.pageAbort = new AbortController();
     this.exact = new ExactFrameGrabber({ log: (m) => log(`[${this.name}] ${m}`) }); // single exact frames (src/exact_frame.js)
     this.benchChannels = new Set();
@@ -1629,8 +1630,9 @@ class Session {
     this.webview.options = { enableScripts: true, localResourceRoots: [media] };
     this.media = media;
     this.webview.onDidReceiveMessage((m) => {
+      const pending = this.onMessage(m);
       const gen = this.loadGen;
-      return this.onMessage(m).catch((e) => { if (!this.stale(gen)) this.fail(e); });
+      return pending.catch((e) => { if (!this.stale(gen)) this.fail(e); });
     });
     panel.onDidDispose(() => this.dispose());
     // VS Code does not fire visibilitychange in webviews; tell the player directly.
@@ -1754,6 +1756,13 @@ class Session {
   reload(why = 'file changed on disk') {
     if (this.disposed) return;
     log(`[${this.name}] ${why}, reloading`);
+    this.resetPage();
+    this.boot = undefined;
+    this.boots.clear();
+    this.webview.html = `${this.html()}<!-- ${Date.now()} -->`;
+  }
+
+  resetPage() {
     this.loadGen = (this.loadGen || 0) + 1;
     this.pageAbort.abort();
     this.pageAbort = new AbortController();
@@ -1767,7 +1776,6 @@ class Session {
     this.dropEarly('reload'); // the new page probes the file again
     if (this.native) { this.native.dispose(); this.native = null; }
     this.frames = null;
-    this.webview.html = `${this.html()}<!-- ${Date.now()} -->`;
   }
 
   closeBenchChannels() {
@@ -1882,11 +1890,12 @@ ${barHtml()}
    */
   sendThumb(m) {
     const { signal } = this.pageAbort;
+    const boot = this.boot;
     const nd = this.native;
     const reply = (r) => {
       // checkJs: start
       const message = /** @satisfies {ThumbReply} */ ({
-        type: 'thumb', page: m.page, id: m.id,
+        type: 'thumb', boot, page: m.page, id: m.id,
         ...(r ? { w: r.w, h: r.h, data: new Uint8Array(r.data) } : {}),
       });
       // checkJs: end
@@ -1910,25 +1919,30 @@ ${barHtml()}
    */
   async sendExactFrame(m) {
     const page = this.page;
+    const gen = this.loadGen;
+    const boot = this.boot;
     const reqId = Number(m.reqId);
     const t = Number(m.t);
     if (m.page !== page || !Number.isSafeInteger(reqId)) return undefined; // a message of another page
-    const reply = (r) => { if (!this.disposed && page === this.page) this.post({ type: 'exactFrame', page, reqId, t, ...r }); };
+    const reply = (r) => { if (!this.stale(gen)) this.post({ type: 'exactFrame', boot, page, reqId, t, ...r }); };
     const nd = this.native;
     const video = nd instanceof remotestream.EncodedStream && nd.pr && nd.pr.video;
     if (!video || this.url || this.sequence || !nd.file) { reply({ error: 'exact frames are for Live transcode of a video file' }); return undefined; }
-    const r = await this.exact.grab({ tools: nd.tools, file: nd.file, t, video, rotation: rotationOf(nd.file), page, isCurrent: (p) => !this.disposed && p === this.page });
+    const r = await this.exact.grab({ tools: nd.tools, file: nd.file, t, video, rotation: rotationOf(nd.file), page, isCurrent: (p) => !this.stale(gen) && p === this.page });
     if (r.cancelled || r.stale) return undefined; // superseded or replaced: the newer request answers
     reply(r.png ? { png: new Uint8Array(r.png.buffer, r.png.byteOffset, r.png.length), w: r.w, h: r.h, matrix: r.matrix } : { error: r.error || 'failed' });
     return undefined;
   }
 
   async onMessage(m) {
-    if (this.disposed) return undefined;
+    if (this.disposed || (m.type !== 'ready' && m.boot !== undefined && m.boot !== this.boot)) return undefined;
     switch (m.type) {
       case 'ready':
-        if (m.page !== this.page || this.readyPage === m.page) return undefined;
-        this.readyPage = m.page;
+        if (m.page !== this.page || typeof m.boot !== 'string' || !m.boot || this.boots.has(m.boot)) return undefined;
+        // VS Code can recreate the document from the same HTML without asking the extension to reload.
+        if (this.boot !== undefined) this.resetPage();
+        this.boot = m.boot;
+        this.boots.add(m.boot);
         // VS Code delivers this through the owning webview, whose origin isn't exposed by its host API.
         this.webviewOrigin = typeof m.origin === 'string' && /^vscode-webview:\/\/[a-z0-9-]+$/.test(m.origin) ? m.origin : null;
         // The picture area (device pixels) for the HLS "Auto" quality.
@@ -1944,10 +1958,12 @@ ${barHtml()}
       // checkJs: start
       case /** @satisfies {ReadBlockRequest['type']} */ ('readBlock'): {
         const request = /** @type {ReadBlockRequest} */ (m);
-        const isCurrent = (/** @type {number} */ page) => !this.disposed && page === this.page;
+        const gen = this.loadGen;
+        const boot = this.boot;
+        const isCurrent = (/** @type {number} */ page) => !this.stale(gen) && page === this.page;
         return serveBlock(request, isCurrent,
           (pos, len) => this.readBlock(pos, len, () => isCurrent(request.page)),
-          (reply) => this.post(reply));
+          (reply) => this.post(m.boot === undefined ? reply : { ...reply, boot }));
       }
       // checkJs: end
       case 'nd':
@@ -2113,7 +2129,11 @@ ${barHtml()}
     if (nativePossible) {
       // The probe started with the session (probeEarly), for the first page only and only for the
       // same file (size and date): a reload or a rewritten file is probed again.
-      const e = early && !early.abort.signal.aborted ? await early.result.catch(() => null) : null;
+      let e = null;
+      if (early && !early.abort.signal.aborted) {
+        log(`[${this.name}] waiting for early ffprobe`);
+        e = await early.result.catch(() => null);
+      }
       if (this.stale(gen)) return undefined;
       const t = e ? e.t : await tools();
       if (this.stale(gen)) return undefined;
@@ -2801,7 +2821,7 @@ ${barHtml()}
       signal.addEventListener('abort', cancel, { once: true });
       arm();
       // checkJs: start
-      this.post(/** @satisfies {ExportGrab} */ ({ type: 'exportGrab', page: this.page, id, frame }));
+      this.post(/** @satisfies {ExportGrab} */ ({ type: 'exportGrab', boot: this.boot, page: this.page, id, frame }));
       // checkJs: end
     });
   }
