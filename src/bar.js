@@ -69,7 +69,7 @@ function barHtml({ compare = false, canCompare = true, compareOpen = false } = {
     ${stepButton('prev', 'Previous frame  ,', 'Previous frame', ',', icons.prev)}
     <button id="play" class="ib wide" title="Play  Space" aria-label="Play" aria-keyshortcuts="Space K">${icons.play}${icons.pause}</button>
     ${stepButton('next', 'Next frame  .', 'Next frame', '.', icons.next)}
-    <span class="vol-wrap gap"><button id="mute" class="ib" title="Mute  M" aria-label="Mute" aria-pressed="false" aria-keyshortcuts="M">${icons.sound}${icons.muted}</button><input id="volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume  ↑ ↓" aria-label="Volume"></span>
+    <span class="vol-wrap gap"><button id="mute" class="ib" title="Mute  M" aria-label="Mute" aria-pressed="false" aria-keyshortcuts="M">${icons.sound}${icons.muted}</button><span class="vol-slide"><input id="volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume  ↑ ↓" aria-label="Volume"></span></span>
     <button id="time" class="mono" title="Click: time / timecode / frames" aria-label="Position"><span id="now">0:00.000</span> <span id="dur">/ 0:00.000</span></button>
     <button id="setABtn" class="ib rng" title="Set range start (A)" aria-label="Set range start (A)" aria-pressed="false" aria-keyshortcuts="A">${rangeLabel('A')}</button>
     <button id="setBBtn" class="ib rng" title="Set range end (B)" aria-label="Set range end (B)" aria-pressed="false" aria-keyshortcuts="B">${rangeLabel('B')}</button>

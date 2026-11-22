@@ -418,16 +418,19 @@ body.idle { cursor: none; }
 #picBtn svg { display: none; }
 #picBtn[data-mode="fit"] .i-fit, #picBtn[data-mode="fill"] .i-fill, #picBtn[data-mode="stretch"] .i-stretch, #picBtn[data-mode="actual"] .i-actual { display: block; }
 /* Volume: folded behind Mute until the pointer or focus is on the pair, or a drag is under way (media/player.js and
-   media/compare.js set .dragging from pointerdown to pointerup / pointercancel, so leaving the slider mid-drag keeps it open). */
+   media/compare.js set .dragging from pointerdown to pointerup / pointercancel, so leaving the slider mid-drag keeps it open).
+   Keep #volume at its fixed width inside an overflow-clipped .vol-slide wrapper so the slider reveals smoothly without squishing. */
 .vol-wrap { display: inline-flex; align-items: center; flex: none; }
-#volume {
-  width: 0; margin: 0; opacity: 0; pointer-events: none; accent-color: var(--vscode-foreground); flex: none;
-  transition: width 150ms ease-out, margin 150ms ease-out, opacity 150ms ease-out;
+.vol-slide {
+  display: inline-flex; align-items: center; overflow: hidden; flex: none;
+  max-width: 0; opacity: 0; pointer-events: none;
+  transition: max-width 220ms cubic-bezier(0.2, 0, 0, 1), opacity 160ms ease;
 }
-.vol-wrap:hover #volume, .vol-wrap:focus-within #volume, .vol-wrap.dragging #volume {
-  width: 84px; margin: 0 12px 0 2px; opacity: 1; pointer-events: auto;
+.vol-wrap:hover .vol-slide, .vol-wrap:focus-within .vol-slide, .vol-wrap.dragging .vol-slide {
+  max-width: 98px; opacity: 1; pointer-events: auto;
 }
-@media (prefers-reduced-motion: reduce) { #volume { transition: none; } }
+#volume { width: 84px; margin: 0 10px 0 4px; accent-color: var(--vscode-foreground); flex: none; }
+@media (prefers-reduced-motion: reduce) { .vol-slide { transition: none; } }
 /* Step size badge on ◀| and |▶ (media/controls.js drawStepBadges): at the default 1 frame it shows only on hover or
    focus; any other size stays visible, so the buttons always say how far they jump. A click opens the size popover. */
 .stepw { position: relative; display: inline-flex; flex: none; }
@@ -441,7 +444,8 @@ body.idle { cursor: none; }
 #row .stepw:hover button.stepsz, #row .stepw:focus-within button.stepsz, #row button.stepsz.open { opacity: 1; pointer-events: auto; }
 #row button.stepsz:hover, #row button.stepsz.open { color: var(--vscode-foreground); background: var(--vscode-editor-background, #1e1e1e); border-color: var(--vpe-accent); }
 @media (prefers-reduced-motion: reduce) { #row button.stepsz { transition: none; } }
-.panel.step { width: 148px; }
+.panel.step { width: max-content; min-width: 112px; }
+.panel.step .row.radio { height: 30px; padding: 0 14px 0 10px; gap: 8px; }
 #row #time { font-family: var(--vpe-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 8px; }
 #row #time #dur { color: var(--vpe-dim); margin-left: 0.45em; }
 /* A / B range buttons beside the time: the key letters in a small box, like the pins on the seek bar; filled while that end is set. */
@@ -525,7 +529,7 @@ kbd {
 .panel.info { width: 360px; padding: 14px 16px; gap: 10px; }
 .panel button { font: inherit; color: inherit; cursor: pointer; }
 .panel .row {
-  display: flex; align-items: center; gap: 12px; height: 38px; flex: none; padding: 0 14px; text-align: left;
+  display: flex; align-items: center; gap: 12px; width: 100%; height: 38px; flex: none; padding: 0 14px; box-sizing: border-box; text-align: left;
   background: none; border: 1px solid transparent; border-radius: 0;
 }
 .panel .row:hover, .panel .row:focus-visible { background: var(--vpe-row-hover); }
