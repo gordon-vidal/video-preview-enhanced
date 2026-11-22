@@ -52,6 +52,50 @@ async function whichFile(cmd) {
   return i < 0 ? null : all[i];
 }
 
+/**
+ * Windows package-manager shims (Scoop `.shim` + .exe, Chocolatey ShimGen) wrap the real ffmpeg in a launcher
+ * that does not forward the extra stdio descriptors (pipe:3 audio, pipe:4 timestamps): "Bad file descriptor".
+ * Returns the real binary behind a shim, or `exe` itself when it is no shim or the target is missing.
+ * Pure and synchronous (only reads the disk) so a test can build the folders in a temp dir.
+ */
+function unwrapShim(exe, platform = process.platform) {
+  if (platform !== 'win32' || typeof exe !== 'string' || !/\.exe$/i.test(exe)) return exe;
+  const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch { return false; } };
+  const dir = path.dirname(exe);
+  const name = path.basename(exe);
+  // Scoop: ffmpeg.shim beside ffmpeg.exe holds `path = C:\...\ffmpeg.exe`.
+  try {
+    const shim = path.join(dir, name.replace(/\.exe$/i, '.shim'));
+    if (isFile(shim)) {
+      const m = /^\s*path\s*=\s*(.+?)\s*$/im.exec(fs.readFileSync(shim, 'utf8'));
+      const target = m && m[1].replace(/^(["'])(.*)\1$/, '$2').trim();
+      if (target && isFile(target)) return target;
+    }
+  } catch { /* unreadable shim: keep the launcher */ }
+  // Chocolatey: <root>\bin\ffmpeg.exe -> <root>\lib\ffmpeg\tools\[...]\bin\ffmpeg.exe
+  if (/(^|[\\/])chocolatey[\\/]bin$/i.test(dir)) {
+    const tools = path.join(dir, '..', 'lib', 'ffmpeg', 'tools');
+    const direct = path.join(tools, 'ffmpeg', 'bin', name);
+    if (isFile(direct)) return path.normalize(direct);
+    try {
+      const sub = (d) => fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(d, e.name));
+      const level1 = sub(tools);
+      const level2 = level1.flatMap((d) => { try { return sub(d); } catch { return []; } });
+      for (const d of [...level1, ...level2]) {
+        const f = path.join(d, 'bin', name);
+        if (isFile(f)) return path.normalize(f);
+      }
+    } catch { /* no tools folder: keep the launcher */ }
+  }
+  return exe;
+}
+
+/** whichFile, then the real binary behind a Windows shim (null when not found). */
+async function resolveTool(cmd) {
+  const f = await whichFile(cmd);
+  return f ? unwrapShim(f) : null;
+}
+
 /** size:mtime of a file (and of its folder: a shared build's DLLs added or removed), or null. */
 async function fileStamp(file) {
   try {
@@ -63,7 +107,7 @@ async function fileStamp(file) {
 /** What identifies an ffmpeg / ffprobe pair on disk (resolved paths, sizes, times), or null when either can't be found. */
 async function toolsKey(ffmpeg, ffprobe) {
   const parts = await Promise.all([ffmpeg, ffprobe].map(async (cmd) => {
-    const f = await whichFile(cmd);
+    const f = await resolveTool(cmd);
     const st = f && await fileStamp(f);
     return st ? `${f}|${st}` : null;
   }));
@@ -89,14 +133,23 @@ function parseGpuFilters(stdout) {
  * ...
  */
 async function locateTools(ffmpegSetting, ffprobeSetting, cache) {
-  const ffmpeg = ffmpegSetting || 'ffmpeg';
-  let ffprobe = ffprobeSetting;
+  // Spawn the real binary, not a Chocolatey / Scoop launcher (it drops pipe:3 / pipe:4).
+  // A command name or path stays as it is unless it really is a shim.
+  const unwrapped = async (cmd) => {
+    if (process.platform !== 'win32') return cmd;
+    const f = await whichFile(cmd);
+    const real = f && unwrapShim(f);
+    return real && real !== f ? real : cmd;
+  };
+  const ffmpeg = await unwrapped(ffmpegSetting || 'ffmpeg');
+  let ffprobe = ffprobeSetting && await unwrapped(ffprobeSetting);
   if (!ffprobe) {
     ffprobe = 'ffprobe';
     if (path.isAbsolute(ffmpeg)) {
       const sib = path.join(path.dirname(ffmpeg), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
       if (fs.existsSync(sib)) ffprobe = sib;
     }
+    if (ffprobe === 'ffprobe') ffprobe = await unwrapped(ffprobe);
   }
   const key = cache ? await toolsKey(ffmpeg, ffprobe) : null;
   const stamp = key || '';
@@ -210,7 +263,7 @@ async function probeKey(tools, input) {
   if (isUrlInput(input) || typeof input !== 'string' || !tools) return null;
   let stamp = tools.stamp || toolStamps.get(tools);
   if (stamp === undefined) {
-    const f = await whichFile(tools.ffprobe);
+    const f = await resolveTool(tools.ffprobe);
     stamp = (f && await fileStamp(f)) || '';
     toolStamps.set(tools, stamp);
   }
@@ -293,4 +346,4 @@ async function probeRun(tools, input, signal) {
   };
 }
 
-module.exports = { run, lowerPriority, locateTools, parseGpuFilters, TOOLS_CACHE_VER, probe, whichFile, toolsKey, probeCache, looksLikePlaylist, isPlaylistFile, inputArgs, isUrlInput, URL_PROTOCOLS };
+module.exports = { run, lowerPriority, locateTools, parseGpuFilters, TOOLS_CACHE_VER, probe, whichFile, unwrapShim, resolveTool, toolsKey, probeCache, looksLikePlaylist, isPlaylistFile, inputArgs, isUrlInput, URL_PROTOCOLS };

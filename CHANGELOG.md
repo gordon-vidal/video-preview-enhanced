@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Windows: ffmpeg installed with Chocolatey or Scoop now works with the native decoder (audio and exact timestamps). The extension runs the real ffmpeg behind the package manager's shim, which dropped the extra pipes.
 - The seek bar and time readout hold the requested position after you release the thumb while the decoder catches up. Frame-step buttons stay visible in narrow splits.
 - Escape dismisses playback notices, Pixel Inspector and Scopes. Scopes also has a close button, and playback notice buttons leave playback alone.
 - Settings opens on the first click from another panel. Live transcode shows where its defaults apply and which tools fetch full-resolution frames.
