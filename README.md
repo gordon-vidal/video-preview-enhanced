@@ -3,9 +3,8 @@
 **Play all major video formats with sound in VS Code, locally, over Remote‑SSH, or in WSL.**
 
 - **Every common format, with sound:** MP4, MKV, MOV, AVI, WebM, WMV, MXF and more, including HEVC, AV1 and ProRes.
-- **Nothing else to install:** plays right away, with no separate FFmpeg and no admin rights.
-- **4K on your GPU, if you want it:** one click sets up FFmpeg (still no admin rights), and 4K HEVC and AV1 play in real time.
-- **Remote‑SSH and WSL:** play videos where they live, no downloading. Video URLs and HLS / DASH streams too.
+- **Nothing else to install, no admin rights:** plays right away. Add portable FFmpeg with one click (still no admin rights) and 4K HEVC and AV1 play in real time on your GPU.
+- **Remote video streaming:** Remote‑SSH and WSL, with an efficient transcode on the SSH host for heavy footage. Video URLs and HLS / DASH streams too.
 - **Seek‑bar previews:** hover or drag the seek bar and see the picture at that moment.
 - **Frame‑accurate:** step one frame forward or back, jump to any frame or timecode.
 - **Compare up to 16 videos** in sync: side by side, split or in a grid.
@@ -13,9 +12,9 @@
 - **Everyday comforts:** subtitles, audio tracks, 0.25× to 4× speed, A–B loops.
 - **Free, MIT licensed, no telemetry.**
 
-## Your videos stay where they are
+## Remote video streaming
 
-Open a video straight from a **Remote‑SSH or WSL workspace** with a double-click. Check a render, a test recording or a camera clip without copying it to your machine first. Run **Video Preview: Open Video URL…** to play a link or a stream.
+Double-click a video in a **Remote‑SSH or WSL workspace** and it plays, with no download first. Heavy footage is no problem: with FFmpeg on the SSH host, it is transcoded there into a light H.264 stream sized to your player, which steps down on a slow connection. In a loopback SSH test, a 4K 10-bit HEVC clip went from **7.5 to 29 fps**. Run **Video Preview: Open Video URL…** to play a link or an HLS / DASH stream.
 
 ![Playing a video from a Remote-SSH workspace, stepping a frame and comparing two encodes](media/marketing/hero-remote.gif)
 
@@ -60,7 +59,6 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 ## Under the hood
 
 - **Three decoders, picked per file:** VS Code's own, a built-in FFmpeg compiled to WebAssembly, and optional native FFmpeg for GPU decoding of heavy footage. **Video Preview: Set Up Optional ffmpeg** installs it from inside VS Code.
-- **Lighter streams over SSH:** with FFmpeg on the SSH host, heavy footage is re-encoded there for the trip. In a loopback SSH test a 4K 10-bit HEVC clip went from **7.5 to 29 fps**.
 - Live or encrypted HLS and DASH streams need FFmpeg.
 
 ## Quick start
