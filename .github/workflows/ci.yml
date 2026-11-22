@@ -72,6 +72,14 @@ jobs:
             if ($i -gt 1) { Write-Host "ffmpeg not installed, try $i of 4"; Start-Sleep -Seconds (20 * $i) }
             choco install ffmpeg -y --no-progress
           }
+          # Chocolatey's ShimGen wrapper does not forward extra stdio fds (pipe:3 audio, pipe:4 timestamps).
+          # Prepend the real ffmpeg bin directory so Node spawns ffmpeg.exe directly.
+          $realBin = 'C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg\bin'
+          if (Test-Path "$realBin\ffmpeg.exe") {
+            Add-Content -Path $env:GITHUB_PATH -Value $realBin
+            $env:PATH = "$realBin;$env:PATH"
+          }
+          (Get-Command ffmpeg).Source
           ffmpeg -hide_banner -version | Select-Object -First 1
 
       - name: Install
