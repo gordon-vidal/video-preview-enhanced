@@ -46,7 +46,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const DISTRO = opt('--distro', 'Ubuntu');
 const OUT = path.resolve(ROOT, opt('--out', path.join('media', 'marketing')));
 const WIDTH = Number(opt('--width', 1280));
-const FPS = Number(opt('--fps', 15));
+const FPS = Number(opt('--fps', 12));
 const HOST = 'demo-server';
 const PORT = 2244;
 const WORKSPACE = '/home/demo'; // personal-data-ok (demo placeholder)
@@ -283,7 +283,7 @@ async function record(s) {
   await drv.send({ op: 'dbl', ...cur });
   await cut(async () => {
     await waitLog(/\[meridian_4k_hevc\.mp4\] webview: first frame shown/, from, '4K remote player');
-    await sleep(300);
+    await sleep(600);
   });
   await sleep(350);
 
