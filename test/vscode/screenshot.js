@@ -2,7 +2,7 @@
 // Screenshots of a real VS Code window on the hidden desktop (nothing appears on screen).
 //   node test/vscode/screenshot.js <out.png> <video file> [--wait seconds] [--theme name] [--code Code.exe] [--act '<json>' ...]
 // --act: a test-hook line for the player (README "Hooks"), e.g. '{"action":"panel","view":"main"}', sent after the
-// wait (VPE_LOG is set only then); the capture follows 2 s later.
+// wait. Set "waitMs" on an action to control the delay before the next action or the capture.
 // Starts the pinned portable VS Code (test/vscode/get_code.js) with this checkout as the
 // development extension and a throwaway profile, opens the file, waits, captures the window
 // with PrintWindow (capture_window.py, run on the same hidden desktop), converts it to PNG with
@@ -65,8 +65,10 @@ try {
   py('--wait', desk, envCli, code, cli, '--user-data-dir', prof, '--extensions-dir', ext, '--reuse-window', footage);
   sleep(wait);
   if (acts.length) {
-    for (const a of acts) { fs.appendFileSync(vpeLog + '.cmd', JSON.stringify({ name: path.basename(file), ...a }) + String.fromCharCode(10)); sleep(1); }
-    sleep(2);
+    for (const [i, { waitMs = i === acts.length - 1 ? 3000 : 1000, ...action }] of acts.entries()) {
+      fs.appendFileSync(vpeLog + '.cmd', JSON.stringify({ name: path.basename(file), ...action }) + '\n');
+      sleep(waitMs / 1000);
+    }
   }
   const raw = path.join(dir, 'w.raw');
   const r = py('--wait', desk, env, 'python.exe', '-I', path.join(__dirname, 'capture_window.py'), raw);
@@ -76,4 +78,8 @@ try {
   fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'bgra', '-video_size', `${w}x${h}`, '-i', raw + '.bgra', path.resolve(out)]);
   console.log('wrote', out, `${w}x${h}`);
-} finally { kill(); sleep(2); fs.rmSync(dir, { recursive: true, force: true }); }
+} finally {
+  kill();
+  sleep(2);
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
+}

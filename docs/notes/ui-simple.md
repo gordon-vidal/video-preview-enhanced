@@ -150,6 +150,25 @@ to every tile.
 - Tests: `test/host/picture_test.js`, `compare_factor_test.js`, `a11y_test.js`; real VS Code: `case/picture_size`
   (button, Z cycle, ⚙ page, drag vs click, compare lockstep, paused pan), `picture_size_small` (Fit enlarges a 640x360 clip) and `picture_size_native` (frames in Fill and 100 %).
 
+## Action toasts (maintainer-approved)
+
+The small feedback popup was easy to miss over footage. Actions such as **Z** or the
+**Picture size** button now show a larger, high-contrast toast at the top centre of the
+picture area in the player and Compare. The toast uses the theme's notification colours in
+high-contrast themes. It stays visible for 1.5 seconds by default, and a new message replaces
+it and restarts the timer. Reduced motion turns off the fades. The toast lets pointer input
+pass through and the existing polite live region announces its text.
+
+The hidden-desktop screenshot tool captured **Fill** over generated bright and dark frames
+in Dark Modern. The images show the top of the picture area.
+
+| View | Frame | Before | After |
+|---|---|---|---|
+| Player | Bright | [Before](img/toast-player-bright-before.png) | [After](img/toast-player-bright-after.png) |
+| Player | Dark | [Before](img/toast-player-dark-before.png) | [After](img/toast-player-dark-after.png) |
+| Compare | Bright | [Before](img/toast-compare-bright-before.png) | [After](img/toast-compare-bright-after.png) |
+| Compare | Dark | [Before](img/toast-compare-dark-before.png) | [After](img/toast-compare-dark-after.png) |
+
 ## Keys and VS Code
 
 VS Code's webview host (`out/vs/workbench/contrib/webview/browser/pre/index.html`, `handleInnerKeydown`) listens
