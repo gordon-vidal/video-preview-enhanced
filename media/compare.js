@@ -1493,11 +1493,6 @@
   }
   const bumpRate = (d) => changeRate(Math.round((st.rate + d * VpeControls.SPEED_STEP) * 100) / 100);
   function setLoop(l) { st.loop = l; if (clock) clock.setLoop(l); if (controls) controls.refresh(); save(); }
-  function setJump(key, value) {
-    prefs.jump[key] = value;
-    vscode.postMessage({ type: 'pref', key: `jump.${key}`, value });
-    toast(`${key === 'arrow' ? '' : key === 'shift' ? 'Shift + ' : 'Ctrl + '}← → jump ${VpeControls.navName(value)}`);
-  }
   /** A jump: one frame (lockstep) or seconds on the clock. */
   function jump(size, dir) {
     if (size === 'frame') step(dir);
@@ -1726,8 +1721,8 @@
       abLabel: ab.label(fmtAB),
       tools: [
         { label: 'Compare', note: `${N} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', ui.cmpBtn) },
-        { label: 'Export A–B Clips…', ariaLabel: 'Export A–B video for all Compare tiles', run: exportAB },
       ],
+      ab: { items: [{ label: 'Export A–B Clips…', ariaLabel: 'Export A–B video for all Compare tiles', run: exportAB }] },
       facts: factsOf(Math.min(st.infoSel, N - 1)),
       infoTabs: { keys: st.order.map(tileLabel), sel: st.order.indexOf(st.infoSel), pick: (slot) => { st.infoSel = st.order[slot]; } },
       canUseOriginal: nativeTiles[st.infoSel] === 'transcode',
@@ -1746,8 +1741,6 @@
       resetPicture: () => setPic(Pic.fresh(st.pic.mode)),
       setRate, pickRate: changeRate,
       stepRate: (d) => bumpRate(d),
-      setJump: (key, v) => { setJump(key, v); updateStepTips(); },
-      setStepButtons: (v) => { prefs.stepButtons = v; updateStepTips(); vscode.postMessage({ type: 'pref', key: 'stepButtons', value: v }); },
       setTranscode: (mode) => { saveNow(); vscode.postMessage({ type: 'transcodePref', mode }); },
       setTranscodeMaxBitrate: (maxBitrateMbps) => vscode.postMessage({ type: 'transcodePref', maxBitrateMbps }),
       setTranscodeSplitBitrate: (splitBitrate) => vscode.postMessage({ type: 'transcodePref', splitBitrate }),

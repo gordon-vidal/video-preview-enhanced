@@ -151,9 +151,9 @@ and extending `HlsFile` instead. Done for steps 1-4 of that plan:
 
 | Feature | For URLs |
 |---|---|
-| Compare / multi-view | Not in the ⚙ Tools grid; the message says "Compare works with video files, not URLs" |
+| Compare / multi-view | Not in the ⚙ menu; the message says "Compare works with video files, not URLs" |
 | Frame links (Shift+C) | Not in any menu; "Frame links work for video files only, not URLs" |
-| Copy ffmpeg command for A–B | Hidden (Full technical details); the command explains why |
+| Copy ffmpeg command for A–B | Hidden (⚙ › A–B Range); the command explains why |
 | Export frames A–B, save frame | Work (the page draws the frames); default folder: the first workspace folder, else the home folder |
 | Sidecar subtitles | Not searched (no folder); **Load Subtitles…** works with local files |
 | Resume position, reload on change, next/previous in folder, open in system player | Off |

@@ -1946,7 +1946,6 @@ ${earlyJs}<link rel="stylesheet" href="${uri('player.css')}">
   <canvas id="canvas" hidden role="img" aria-label="Video"></canvas>
   <div id="subs" hidden></div>
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div><button id="action" hidden></button></div>
-  <div id="info" hidden></div>
   ${playFlashHtml}
   <div id="toast" hidden aria-hidden="true"></div>
   <div id="notice" hidden>

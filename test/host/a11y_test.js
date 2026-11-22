@@ -106,6 +106,7 @@ assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: va
   assert.match(html, playFlash, 'player: decorative play/pause flash');
   assert.ok(pressed(html, 'mute'), 'player: #mute has aria-pressed');
   assert.ok(!html.includes('id="pip"'), 'player: no picture-in-picture button');
+  assert.ok(!html.includes('id="info"'), 'player: the old top-left details overlay is gone (ⓘ has everything)');
   // One layout: no mode switch, no Tools / CC popup menus; the bar's panel buttons say what they open.
   for (const id of ['modeBtn', 'toolsBtn', 'toolsMenu', 'tracksMenu', 'pill']) assert.ok(!html.includes(`id="${id}"`), `player: #${id} is gone`);
   for (const id of ['tracks', 'infoBtn', 'rate', 'cog']) assert.match(html, new RegExp(`<button id="${id}"[^>]*aria-expanded="false" aria-controls="panel"`));

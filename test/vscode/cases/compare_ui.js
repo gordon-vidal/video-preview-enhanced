@@ -169,9 +169,15 @@ module.exports = [{
     u = await ui();
     ok(u.panel && u.panel.view === 'main' && /Sound/.test(panelText(u)) && /from A/.test(panelText(u)) && /Copy view/.test(panelText(u)) && /Compare/.test(panelText(u)), `⚙ panel: ${panelText(u)}`);
     ok(!/Subtitles|Audio track/.test(panelText(u)), `⚙ panel shows player-only rows: ${panelText(u)}`);
-    ok(u.panel?.rows.some((r) => /A–B range/.test(r.label)), 'Compare Settings has the shared A–B range row');
-    ok(u.panel?.rows.some((r) => r.label === 'Export A–B video for all Compare tiles'), 'Compare clip export accessible name');
-    await click({ text: 'Compare' }); // the Tools grid's Compare opens the Compare panel
+    ok(u.panel?.rows.some((r) => /A–B Range/.test(r.label)), 'Compare Settings has the shared A–B Range row');
+    ok(!/Inspection/.test(panelText(u)), 'Compare has no Inspection row (no inspection tools there)');
+    await click({ text: 'A–B Range' });
+    u = await ui();
+    ok(u.panel?.view === 'ab' && u.panel.rows.some((r) => r.label === 'Export A–B video for all Compare tiles'), 'Compare clip export accessible name on the A–B Range page');
+    await click({ sel: '#cog' }); // the cog from a sub-page: back to the main page
+    u = await ui();
+    ok(u.panel?.view === 'main', `cog from the A–B Range page: ${u.panel && u.panel.view}`);
+    await click({ text: 'Compare' }); // the Compare row opens the Compare panel
     u = await ui();
     ok(u.panel && u.panel.view === 'cmp', `Tools › Compare: ${u.panel && u.panel.view}`);
 

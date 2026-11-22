@@ -38,7 +38,7 @@ leaves them alone (`docs/notes/ui-simple.md`).
 |---|---|
 | Ctrl+G | Go to a frame, time, percentage or step (or click the frame number) |
 | Shift+C | Copy a link to the current frame |
-| I | About this video (the ⓘ panel); its **Full technical details** shows the codec, pixel format and decoder overlay |
+| I | About this video (the ⓘ panel): picture, codec, bit depth, decoder |
 | Shift+I | Stats overlay |
 | W | Scopes: luma waveform, RGB parade, vectorscope, histogram, off |
 | Z | Picture size: Fit, Fill, Stretch, 100 %, then Fit again. Zoomed in (Ctrl+wheel, `+`), Z goes back to Fit first |

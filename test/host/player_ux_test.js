@@ -175,6 +175,44 @@ function element(parent) {
     const notes = panel.children.at(-1).children.filter((child) => child.className === 'pnote');
     assert.match(notes[0].textContent, /Default for all videos on this machine.*reload/);
     assert.match(notes[1].textContent, /automatically fetch full-resolution source frames/);
+
+    // The main page: Playback rows, then two sub-pages (A–B Range, Inspection), then the footer links.
+    // No Jump sizes row or page (those are VS Code settings), no tool grid, no "Open in system player" in ⓘ.
+    const ran = [];
+    const tool = (label, title, key) => ({ label, title, key, group: 'inspect', run: () => ran.push(label) });
+    const state = {
+      rate: 1, loop: false, jump: { arrow: 5, shift: 1, ctrl: 'frame' }, abLabel: 'Off', canExternal: true,
+      subsLabel: 'None in file', audioLabel: 'Only one', picture: { mode: 'fit', pct: null }, transcode: null,
+      tracks: { subs: [], audio: [] }, facts: { title: 'a.mp4', sub: '', rows: [] },
+      tools: [{ label: 'Compare', key: 'Shift+D', run: noop }, tool('Scopes', 'Scopes', 'W'), tool('Inspector', 'Pixel inspector', 'X'),
+        tool('Stats', 'Stats', 'Shift+I'), tool('Codec X-ray', 'Codec X-ray', 'Shift+X')],
+      ab: { items: [{ label: 'Export frames A–B…', run: () => ran.push('frames') }, { label: 'Export A–B Clip…', run: () => ran.push('clip') },
+        { label: 'Copy ffmpeg command for A–B', run: () => ran.push('ffmpeg') }] },
+    };
+    const full = Controls.create({
+      panel, sheet: element(), bar: element(), buttons: Object.fromEntries(['cog', 'info', 'rate', 'tracks'].map((k) => [k, element()])),
+      act: { loop: noop, cycleAB: noop, copyFrame: noop, openUrl: noop, extSettings: noop, external: () => ran.push('external'), copyInfo: noop, copyLink: noop },
+      get: () => state,
+    });
+    const labelOf = (b) => { const g = (b.children || []).find((c) => c.className === 'grow'); return g ? g.textContent : b.textContent; };
+    const labels = () => panel.children.at(-1).children.map(labelOf).filter(Boolean);
+    const rows = () => panel.children.at(-1).children;
+    full.show('main');
+    assert.deepStrictEqual(labels(), ['Playback', 'Repeat video', 'Speed', 'Subtitles', 'Audio track', 'Picture size', 'Compare', 'Copy frame',
+      'Tools', 'A–B Range', 'Inspection', 'Open video URL…', 'Open in system player', 'Keyboard shortcuts', 'Extension settings']);
+    full.show('ab');
+    assert.deepStrictEqual(labels().slice(0, 6), ['A–B Range', 'Set A / B / clear', 'Export frames A–B…', 'Export A–B Clip…', 'Copy ffmpeg command for A–B']);
+    rows().find((b) => labelOf(b) === 'Export A–B Clip…').dispatch('click');
+    assert.deepStrictEqual(ran.splice(0), ['clip']);
+    full.show('inspect');
+    assert.deepStrictEqual(labels(), ['Inspection', 'Scopes', 'Pixel inspector', 'Stats', 'Codec X-ray']);
+    rows().find((b) => labelOf(b) === 'Pixel inspector').dispatch('click');
+    assert.deepStrictEqual(ran.splice(0), ['Inspector'], 'the row runs the tool under its stable name');
+    full.show('info');
+    const flat = (e) => [e, ...(e.children || []).flatMap(flat)];
+    const info = flat(panel.children.at(-1)).map(labelOf).filter(Boolean).join('|');
+    assert.ok(!/Open in system player|Full technical details/.test(info), `ⓘ keeps to information: ${info}`);
+    assert.ok(/Copy details/.test(info) && /Copy link to this frame/.test(info), info);
   } finally {
     Object.assign(globalThis, originals);
   }

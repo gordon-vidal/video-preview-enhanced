@@ -97,8 +97,10 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 - **Bar:** previous frame, play/pause, next frame, mute, volume, time (click: time / timecode / frame number),
   then CC (only when the video has a subtitle track, 2026-11-22), **Compare** (video files), ⓘ (about this video),
   speed, ⚙, picture size, fullscreen. No status pill: only real problems show (a notice, once).
-- **⚙ panel:** speed, loop, A-B loop, subtitles (always there, also to load a file), audio track, copy frame, keyboard
-  shortcuts, jump sizes and a Tools grid (compare, scopes, inspector, stats, codec X-ray, export A-B frames and clip).
+- **⚙ panel** (2026-11-22), in groups: **Playback** (repeat video, speed, subtitles (always there, also to load a file), audio
+  track, picture size, live transcode, compare, copy frame), **Tools** (two sub-pages: **A–B Range**, with the range and
+  its exports, and **Inspection**: pixel inspector, scopes, stats, codec X-ray) and the links (open video URL, open in
+  system player, keyboard shortcuts, extension settings). No jump sizes there: they are VS Code settings.
 - **Picture size** (2026-11-20): **Fit** (default: whole picture, bars where the shape differs), **Fill** (no bars,
   edges cropped, centred), **Stretch** (fills the area, distorted), **100 %** (one video pixel = one device pixel,
   drag to pan when larger). A bar button between Settings and fullscreen and the key **Z** cycle them
@@ -109,7 +111,7 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 - **Jumps:** ← →, Shift+← →, Ctrl+← → each 1 frame / 1 s / 5 s / 10 s / 30 s (defaults 5 s, 1 s, 1 frame);
   `,` `.` always one frame. Keys VS Code uses are avoided (Alt+← →, Ctrl+K, Ctrl+Shift+C).
 - **Buttons beside Play** (2026-11-20): by default step one frame back / forward; setting `stepButtons`
-  (`frame` | `jump`, also ⚙ › Jump sizes) makes them jump by the Ctrl+arrow size. Tooltips say which.
+  (`frame` | `jump`) makes them jump by the Ctrl+arrow size. Tooltips say which.
 - **Right-click:** quick actions on this moment only (play/pause, loop, copy/save frame, copy timestamp, frame
   link, shortcuts, settings).
 

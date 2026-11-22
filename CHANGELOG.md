@@ -8,6 +8,7 @@
 - Right-clicking a video editor tab offers Start Compare or Add to Compare, like the Explorer menu. With several video tabs selected, all of them are used.
 - New settings `jump.wheel` (default one frame) and `jump.wheelShift` (default 1 s) set how far the scroll wheel and Shift+wheel jump while paused, in the player and Compare. Shift+wheel also works where Windows reports it sideways.
 - Picture size and zoom toasts name the size with its percent (`Fit (67%)`, `Fill (112%)`); zooming back out to the picture size shows that instead of a bare `Zoom 67%`.
+- ⚙ is grouped into Playback, Tools (**A–B Range ›** with the range and all its exports, **Inspection ›** with the pixel inspector, scopes, stats and codec X-ray) and links; Jump sizes are VS Code settings only; Loop is now Repeat video. ⓘ is information only: Open in system player moved to the foot of ⚙, and the top-left "Full technical details" overlay is gone (ⓘ has **Copy link to this frame**). Keys are unchanged.
 - The seek bar and time readout hold the requested position after you release the thumb while the decoder catches up. Frame-step buttons stay visible in narrow splits.
 - Escape dismisses playback notices, Pixel Inspector and Scopes. Scopes also has a close button, and playback notice buttons leave playback alone.
 - Settings opens on the first click from another panel. Live transcode shows where its defaults apply and which tools fetch full-resolution frames.

@@ -16,7 +16,7 @@
   const ui = {
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), buffered: $('buffered'), tip: $('tip'),
     time: $('time'), now: $('now'), dur: $('dur'), rate: $('rate'), mute: $('mute'), volume: $('volume'),
-    info: $('info'), infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), picBtn: $('picBtn'),
+    infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), picBtn: $('picBtn'),
     panel: $('panel'), sheet: $('sheet'), toast: $('toast'), abMarks: $('abMarks'), tracks: $('tracks'),
     abA: $('abA'), abB: $('abB'),
   };
@@ -33,7 +33,7 @@
   let muted = !!saved.muted;
   let volume = saved.volume !== undefined ? saved.volume : 1;
   let rate = saved.rate || 1;
-  // Jump sizes of the arrow keys ('frame' or seconds): settings videoPreviewEnhanced.jump.*, changed in the cog's Jump sizes page.
+  // Jump sizes of the arrow keys ('frame' or seconds): settings videoPreviewEnhanced.jump.* (VS Code's Settings only).
   const prefs = {
     jump: { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1, ...((cfg.prefs && cfg.prefs.jump) || {}) },
     stepButtons: (cfg.prefs && cfg.prefs.stepButtons) === 'jump' ? 'jump' : 'frame',
@@ -145,14 +145,6 @@
   // Labels: media/timefmt.js.
   const { fmtTime, fmtClock, fmtTimecode, fmtSize, frameText } = /** @type {any} */ (self).VpeTime;
 
-  function setInfo(meta) {
-    const fps = meta.fps ? `${Number(meta.fps).toFixed(3).replace(/\.?0+$/, '')} fps · ` : '';
-    const dims = meta.width ? `${meta.width}×${meta.height} · ` : '';
-    ui.info.textContent = `${cfg.name}\n${dims}${fps}${meta.frames ? `${meta.frames} frames · ` : ''}` +
-      `${fmtTime(meta.duration)}${meta.size ? ` · ${fmtSize(meta.size)}` : ''}\n${meta.label || ''}`;
-    insp.decorateInfo(ui.info);
-  }
-
   // ---- Frame player: JPEG/PNG frames decoded by the browser, on a canvas ---
   // Used for MJPEG AVI and image sequences. Frame accurate by construction.
 
@@ -241,7 +233,7 @@
           if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
             canvas.width = bmp.width;
             canvas.height = bmp.height;
-            if (!this.meta.width) { this.meta.width = bmp.width; this.meta.height = bmp.height; setInfo(this.meta); }
+            if (!this.meta.width) { this.meta.width = bmp.width; this.meta.height = bmp.height; }
           }
           this.ctx.drawImage(bmp, 0, 0);
           this.shown = target;
@@ -468,7 +460,6 @@
     player = p;
     p.ffmpeg = ffmpegState;
     subs.attach(p);
-    setInfo(meta);
     ui.seek.max = String(Math.max(0, (p.n || 1) - 1));
     // Live streams play from the live edge; seeking is off (docs/notes/url-stream.md).
     ui.seek.disabled = !!(meta && meta.live);
@@ -569,18 +560,6 @@
     if (controls) controls.refresh();
   }
   const bumpRate = (d) => changeRate(Math.round((rate + d * VpeControls.SPEED_STEP) * 100) / 100);
-  function setJump(key, value) {
-    prefs.jump[key] = value;
-    stepTips();
-    vscode.postMessage({ type: 'pref', key: `jump.${key}`, value });
-    toast(`${key === 'arrow' ? '' : key === 'shift' ? 'Shift + ' : 'Ctrl + '}← → jump ${VpeControls.navName(value)}`);
-  }
-  function setStepButtons(value) {
-    prefs.stepButtons = value;
-    stepTips();
-    vscode.postMessage({ type: 'pref', key: 'stepButtons', value });
-    toast(value === 'jump' ? `Buttons beside Play jump ${VpeControls.navName(prefs.jump.ctrl)}` : 'Buttons beside Play step one frame');
-  }
   function setTranscode(mode) {
     prefs.transcode = mode;
     vscode.postMessage({ type: 'transcodePref', mode });
@@ -615,8 +594,8 @@
     ui.picBtn.title = `Picture size: ${VpePicture.name(m)} (${VpePicture.WORDS[m]}). Click for ${VpePicture.name(nx)}  Z`;
     ui.picBtn.setAttribute('aria-label', `Picture size: ${VpePicture.name(m)}. Next: ${VpePicture.name(nx)}`);
   }
-  /** The technical details overlay (codec, pixel format, decoder; frame link, A-B export, X-ray): "Full technical details". */
-  const toggleInfo = () => { ui.info.hidden = !ui.info.hidden; };
+  /** The ⓘ panel (About this video): facts, decoder, Copy details, Copy link to this frame. */
+  const toggleInfo = () => controls.toggle('info', ui.infoBtn);
 
   async function toggleFullscreen() {
     try {
@@ -794,26 +773,6 @@
       }
     });
   }
-  // Buttons in the details overlay (I), kept there when the details are rewritten.
-  const exportBtns = document.createElement('span');
-  exportBtns.className = 'exportBtns';
-  const mkBtn = (text, then) => {
-    const b = document.createElement('button');
-    b.className = 'infoAction';
-    b.textContent = text;
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      sendRange(then);
-    });
-    exportBtns.appendChild(b);
-  };
-  mkBtn('Export frames A–B…', 'exportRange');
-  if (!cfg.url) mkBtn('Copy ffmpeg command for A–B', 'ffmpegRange'); // cuts a file: not for URLs
-  if (!cfg.url && !cfg.sequence) mkBtn('Export A–B Clip…', 'clipRange');
-  const keepExportBtns = () => { if (exportBtns.parentElement !== ui.info) ui.info.append('\n', exportBtns); };
-  new MutationObserver(keepExportBtns).observe(ui.info, { childList: true });
-  keepExportBtns();
-
   ui.play.onclick = togglePlay;
   // The buttons beside Play: one frame, or the Ctrl+arrow jump size (setting stepButtons).
   const stepButton = (dir) => (prefs.stepButtons === 'jump' ? jump(prefs.jump.ctrl, dir) : step(dir));
@@ -1044,7 +1003,7 @@
     getState: () => ({ rate, volume, muted, loop }),
     setMuteUi: (m) => setMute(m),
     onReady: (p) => { begin(p, p.meta); },
-    onMeta: (p) => { ui.seek.max = String(Math.max(0, p.n - 1)); setInfo(p.meta); if (controls) controls.refresh(); },
+    onMeta: (p) => { ui.seek.max = String(Math.max(0, p.n - 1)); if (controls) controls.refresh(); },
     onTracks: (p) => subs.onTracks(p),
   });
 
@@ -1060,16 +1019,23 @@
   const TOOLS = [
     // Compare needs a second file next to this one: not offered for a URL (Open Video URL…).
     ...(cfg.url ? [] : [{ label: 'Compare', key: 'Shift+D', run: () => addMode() }]),
-    { label: 'Scopes', key: 'W', run: () => { exactTool(); scopes.cycle(); } },
-    { label: 'Inspector', key: 'X', run: () => { exactTool(); press('x'); } },
-    { label: 'Stats', key: 'Shift+I', run: () => press('I', { shiftKey: true }) },
-    { label: 'Codec X-ray', key: 'Shift+X', run: () => press('X', { shiftKey: true }) },
-    { label: 'Export A-B', key: 'A, B', run: () => sendRange('exportRange') },
+    // The inspection group (⚙ › Inspection); `title` is what the row says, `label` the stable name.
+    { label: 'Scopes', title: 'Scopes', key: 'W', group: 'inspect', run: () => { exactTool(); scopes.cycle(); } },
+    { label: 'Inspector', title: 'Pixel inspector', key: 'X', group: 'inspect', run: () => { exactTool(); press('x'); } },
+    { label: 'Stats', title: 'Stats', key: 'Shift+I', group: 'inspect', run: () => press('I', { shiftKey: true }) },
+    { label: 'Codec X-ray', title: 'Codec X-ray', key: 'Shift+X', group: 'inspect', run: () => press('X', { shiftKey: true }) },
+  ];
+  // ⚙ › A–B Range: what uses the range (the range itself is set with A and B).
+  const AB_ITEMS = [
+    { label: 'Export frames A–B…', run: () => sendRange('exportRange') },
     ...(!cfg.url && !cfg.sequence ? [{ label: 'Export A–B Clip…', run: () => sendRange('clipRange') }] : []),
+    ...(!cfg.url ? [{ label: 'Copy ffmpeg command for A–B', run: () => sendRange('ffmpegRange') }] : []), // cuts a file: not for URLs
   ];
   // Older names (test hooks and the earlier Tools menu) for the same tools.
   const MORE_TOOLS = {
     'Pixel inspector': () => runTool('Inspector'), 'Stats overlay': () => runTool('Stats'), 'Codec X-ray strip': () => runTool('Codec X-ray'),
+    'Export A-B': () => sendRange('exportRange'),
+    ...(!cfg.url && !cfg.sequence ? { 'Export A–B Clip…': () => sendRange('clipRange') } : {}),
     // A URL tab has no Compare tool: the host answers with a toast that says why.
     'Compare with…': () => compareWith(),
     Details: () => toggleInfo(), 'Zoom: fit / actual size': () => cyclePicture(), 'Export frames A–B…': () => sendRange('exportRange'),
@@ -1165,7 +1131,7 @@
     get: () => {
       const d = subs.panelData();
       return {
-        rate, loop, jump: prefs.jump, stepButtons: prefs.stepButtons, abLabel: abLabel(), picture: pictureState(), tools: TOOLS,
+        rate, loop, jump: prefs.jump, stepButtons: prefs.stepButtons, abLabel: abLabel(), picture: pictureState(), tools: TOOLS, ab: { items: AB_ITEMS },
         subsLabel: d.subs.length ? d.label : 'None in file',
         audioLabel: d.audio.length ? (d.audio.find((a) => a.checked) || d.audio[0]).main : (player && player.info && player.info.audio) || (player && player.audio) ? 'Only one' : 'None',
         hasSound: !!(player && ((player.info && player.info.audio) || player.audio)),
@@ -1181,8 +1147,6 @@
       copyFrame: () => copyFrame(),
       setRate, pickRate: changeRate,
       stepRate: (d) => bumpRate(d),
-      setJump: (k, v) => setJump(k, v),
-      setStepButtons: (v) => setStepButtons(v),
       setTranscode: (m) => setTranscode(m),
       setTranscodeMaxBitrate: (r) => setTranscodeMaxBitrate(r),
       useOriginal: () => vscode.postMessage({ type: 'action', id: 'fullRes' }),
@@ -1195,7 +1159,7 @@
       subDelay: (d) => subs.delayBy(d),
       subSize: (d) => subs.sizeBy(d),
       copyInfo: (d) => { vscode.postMessage({ type: 'copyText', text: [d.title, d.sub, ...d.rows.map(([k, v]) => `${k}: ${v}`)].join('\n') }); toast('Details copied'); },
-      moreInfo: () => { ui.info.hidden = false; },
+      copyLink: () => insp.copyLink(),
       external: () => vscode.postMessage({ type: 'external' }),
       extSettings: () => vscode.postMessage({ type: 'openSettings' }),
       // Only opens VS Code's input box: the URL is typed there, never sent from this page.
@@ -1498,7 +1462,7 @@
           const xr = document.getElementById('xray');
           log(`modes report panel=${controls.view() || 'none'} sheet=${controls.sheetOpen()} tools=${TOOLS.length} ` +
             `bar=${['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'picBtn', 'full'].map((k) => `${k}:${vis(ui[k] || $(k)) ? 1 : 0}`).join(',')} ` +
-            `scopes=${scopes.mode() || 'off'} scopesVisible=${vis(sc)} info=${vis(ui.info)} xray=${vis(xr)} zoomed=${stage.classList.contains('zoom')} picture=${insp.picture().mode} ` +
+            `scopes=${scopes.mode() || 'off'} scopesVisible=${vis(sc)} info=${controls.view() === 'info'} xray=${vis(xr)} zoomed=${stage.classList.contains('zoom')} picture=${insp.picture().mode} ` +
             `frame=${player.currentFrame() + 1} t=${player.currentTime().toFixed(3)} playing=${player.isPlaying()}`);
         }, m.delay || 300);
       }
@@ -1549,7 +1513,7 @@
             stageClass: stage.className, stageRect: rect(stage), picture: { ...insp.picture(), pct: pictureState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), btnTitle: ui.picBtn.title, need: insp.zoomedSize() }, imageRendering: canvas.style.imageRendering,
             pxgrid: !!byId('pxgrid') && !byId('pxgrid').hidden, pxread: byId('pxread') && !byId('pxread').hidden ? byId('pxread').innerText : '',
             goto: !!byId('goto') && !byId('goto').hidden, stats: byId('stats') && !byId('stats').hidden ? byId('stats').textContent : '',
-            infoShown: !ui.info.hidden, abRange: ab.presentationRange(), abMarks: { hidden: ui.abMarks.hidden, left: ui.abMarks.style.left, width: ui.abMarks.style.width },
+            infoShown: controls.view() === 'info', abRange: ab.presentationRange(), abMarks: { hidden: ui.abMarks.hidden, left: ui.abMarks.style.left, width: ui.abMarks.style.width },
             subsText: byId('subs') && !byId('subs').hidden ? byId('subs').textContent : '', muted: ui.mute.classList.contains('on'),
             dpr: globalThis.devicePixelRatio || 1, engine: !!(p && p.queue), loop: { ...loopStats, busy: loopBusy() }, vscodeContext: document.body.getAttribute('data-vscode-context') || '',
             seekRect: rect(ui.seek), quality: streamQ,

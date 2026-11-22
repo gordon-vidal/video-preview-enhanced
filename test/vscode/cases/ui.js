@@ -152,13 +152,26 @@ module.exports = [{
       await settle(300);
       s = await P.state();
       const labels = s.panel.rows.map((r) => r.label);
-      for (const want of ['Speed', 'Loop', 'A–B range', 'Subtitles', 'Audio track', 'Copy frame', 'Keyboard shortcuts', 'Jump sizes', 'Compare', 'Scopes', 'Inspector', 'Stats', 'Codec X-ray', 'Export A-B', 'Open video URL…', 'Extension settings']) ok(labels.some((l) => l.includes(want)), `main page has no ${want}: ${JSON.stringify(labels)}`);
-      ok(/Jump sizes\s*5 s · 1 s · 1 frame/.test(s.panel.text), `jump summary: ${s.panel.text}`);
-      // A tool from the grid, without any mode switch: scopes.
-      await P.ask('click', { sel: '#panel button.tool', text: 'Scopes' });
+      for (const want of ['Repeat video', 'Speed', 'Subtitles', 'Audio track', 'Picture size', 'Copy frame', 'Compare', 'A–B Range', 'Inspection', 'Keyboard shortcuts', 'Open video URL…', 'Extension settings']) ok(labels.some((l) => l.includes(want)), `main page has no ${want}: ${JSON.stringify(labels)}`);
+      // Grouped: the exports and the four inspection tools sit on sub-pages; the jump sizes are VS Code settings only.
+      for (const gone of ['Jump sizes', 'Scopes', 'Inspector', 'Stats', 'Codec X-ray', 'Export']) ok(!labels.some((l) => l.includes(gone)), `main page still has ${gone}: ${JSON.stringify(labels)}`);
+      // A–B Range page: the range and every export together.
+      await P.ask('click', { sel: '#panel button', text: 'A–B Range' });
+      await settle(200);
+      s = await P.state();
+      const abLabels = s.panel.rows.map((r) => r.label);
+      for (const want of ['Set A / B / clear', 'Export frames A–B…', 'Export A–B Clip…', 'Copy ffmpeg command for A–B']) ok(abLabels.some((l) => l.includes(want)), `A–B Range page has no ${want}: ${JSON.stringify(abLabels)}`);
+      P.key('Escape');
+      await settle(200);
+      // A tool from the Inspection page, without any mode switch: scopes.
+      await P.ask('click', { sel: '#panel button', text: 'Inspection' });
+      await settle(200);
+      s = await P.state();
+      for (const want of ['Scopes', 'Pixel inspector', 'Stats', 'Codec X-ray']) ok(s.panel.rows.some((r) => r.label.includes(want)), `Inspection page has no ${want}: ${JSON.stringify(s.panel.rows)}`);
+      await P.ask('click', { sel: '#panel button[data-tool]', text: 'Scopes' });
       await settle(1200);
       const r = await P.ask('scopesDump');
-      ok(r.mode !== 'off' && !r.hidden, `Scopes from the grid: ${r.mode}`);
+      ok(r.mode !== 'off' && !r.hidden, `Scopes from the Inspection page: ${r.mode}`);
       ok(!(await P.state()).panel, 'running a tool leaves the panel open');
       P.key('w'); P.key('w'); P.key('w'); P.key('w');
       await settle(400);
@@ -374,9 +387,9 @@ module.exports = [{
       ok(/^1920 × 1080 \(1080p\), \d/.test(f.Picture || ''), `Picture: ${f.Picture}`);
       ok(/^H\.264 \(AVC\)/.test(f.Video || '') && /^AAC/.test(f.Sound || '') && /GPU/.test(f['Played by'] || ''), `facts: ${JSON.stringify(f)}`);
       ok(s.panel.text.includes(CLIP) && s.panel.rows.some((r) => r.label === 'Copy details'), 'name / Copy details');
-      await P.ask('click', { sel: '#panel button', text: 'Full technical details' });
-      await settle(300);
-      ok((await P.state()).infoShown, 'Full technical details did not show the details overlay');
+      // ⓘ is information only: no link to a second overlay, no actions.
+      ok(!s.panel.rows.some((r) => /Full technical details|Open in system player/.test(r.label)), `ⓘ lists actions: ${JSON.stringify(s.panel.rows.map((r) => r.label))}`);
+      ok(s.infoShown, 'ⓘ is the details panel (infoShown)');
       P.act({ action: 'panel' });
     });
     await P.close();
@@ -429,7 +442,7 @@ module.exports = [{
     return R.out;
   },
 }, {
-  // Jump sizes: the defaults, a change in the panel (saved as a setting), and values from the settings.
+  // Jump sizes: the defaults and values from the settings (VS Code's Settings only: the player's ⚙ has no page for them).
   name: 'ui_jumps',
   settings: { 'videoPreviewEnhanced.autoplay': false },
   async run(vs, h) {
@@ -437,37 +450,6 @@ module.exports = [{
     const P = await lib.open(vs, h, lib.clip('long_20s.mp4'));
     try {
       await R.run('defaults', async (ok) => jumpChecks(P, ok, { arrow: 5, shift: 1, ctrl: 'frame' }));
-      await R.run('panel-saves-setting', async (ok) => {
-        P.act({ action: 'panel', view: 'jumps' });
-        await lib.sleep(300);
-        let s = await P.state();
-        ok(s.panel && s.panel.view === 'jumps' && s.panel.rows.filter((r) => r.checked !== null).length === 17, `jump page: ${JSON.stringify(s.panel && s.panel.rows)}`);
-        await P.ask('click', { sel: '#panel [role=radiogroup] [role=radio]', text: '10 s' }); // the first group: ← →
-        await lib.sleep(300);
-        s = await P.state();
-        ok(s.prefs.jump.arrow === 10, `prefs after the click: ${JSON.stringify(s.prefs)}`);
-        const file = path.join(vs.user, 'User', 'settings.json');
-        let saved = false;
-        for (let i = 0; i < 20 && !saved; i++) {
-          try { saved = /"videoPreviewEnhanced\.jump\.arrow":\s*10/.test(fs.readFileSync(file, 'utf8')); } catch { /* not yet */ }
-          if (!saved) await lib.sleep(300);
-        }
-        ok(saved, 'videoPreviewEnhanced.jump.arrow was not written to the user settings');
-        // Buttons beside Play: one frame by default; the chip makes them follow the Ctrl jump size (saved as a setting).
-        ok(s.prefs.stepButtons === 'frame', `default stepButtons: ${JSON.stringify(s.prefs)}`);
-        await P.ask('click', { sel: '#panel [role=radiogroup] [role=radio]', text: 'Ctrl jump' });
-        await lib.sleep(300);
-        s = await P.state();
-        ok(s.prefs.stepButtons === 'jump', `prefs after the Ctrl jump chip: ${JSON.stringify(s.prefs)}`);
-        let savedStep = false;
-        for (let i = 0; i < 20 && !savedStep; i++) {
-          try { savedStep = /"videoPreviewEnhanced\.stepButtons":\s*"jump"/.test(fs.readFileSync(file, 'utf8')); } catch { /* not yet */ }
-          if (!savedStep) await lib.sleep(300);
-        }
-        ok(savedStep, 'videoPreviewEnhanced.stepButtons was not written to the user settings');
-        P.act({ action: 'panel' });
-        await jumpChecks(P, ok, { arrow: 10, shift: 1, ctrl: 'frame' });
-      });
     } finally { await P.close(); }
     return R.out;
   },

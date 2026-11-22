@@ -93,15 +93,6 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 #action:hover { background: var(--vscode-button-hoverBackground); }
 #action:disabled { opacity: 0.7; cursor: default; }
 
-#info {
-  position: absolute;
-  padding: 6px 10px;
-  border-radius: 4px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border, transparent);
-  pointer-events: none;
-}
-#info { top: 8px; left: 8px; white-space: pre-line; font-size: 12px; line-height: 1.5; max-width: calc(100% - 32px); }
 #toast {
   --toast-top: 12px;
   position: absolute;
@@ -281,18 +272,6 @@ body.idle { cursor: none; }
 }
 #goto input:focus { border-color: var(--vscode-focusBorder); }
 #goto.bad input { border-color: var(--vscode-inputValidation-errorBorder, #be1100); }
-#info .infolink {
-  pointer-events: auto;
-  margin-top: 2px;
-  padding: 0;
-  font: inherit;
-  color: var(--vscode-textLink-foreground);
-  background: none;
-  border: none;
-  cursor: pointer;
-}
-#info .infolink:hover { text-decoration: underline; }
-
 /* ---- Subtitles: a layer over the video's displayed rectangle (placed by tracks-menu.js) ---- */
 #subs {
   position: fixed;
@@ -373,12 +352,6 @@ body.idle { cursor: none; }
   position: absolute; top: 0; width: 3px; height: 10px; margin-left: -1px; border-radius: 1px;
   background: var(--vscode-foreground, #888); opacity: 0.6;
 }
-#info #xrayBtn {
-  pointer-events: auto; margin-top: 4px; font: inherit; font-size: 11px; cursor: pointer;
-  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
-  background: var(--vscode-button-secondaryBackground, transparent);
-  border: 1px solid var(--vscode-panel-border, transparent); border-radius: 3px; padding: 1px 6px;
-}
 /* ---- end xray ---- */
 
 /* ---- scopes (media/scopes.js) and A-B export buttons ---- */
@@ -397,12 +370,6 @@ body.idle { cursor: none; }
   color: inherit; background: transparent; cursor: pointer; font: inherit; font-size: 14px;
 }
 .scopesHeader button:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.18)); }
-#info .infoAction {
-  pointer-events: auto; margin: 4px 6px 0 0; font: inherit; font-size: 11px; cursor: pointer;
-  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
-  background: var(--vscode-button-secondaryBackground, transparent);
-  border: 1px solid var(--vscode-panel-border, transparent); border-radius: 3px; padding: 1px 6px;
-}
 /* ---- end scopes ---- */
 
 /* ---- High contrast and reduced motion ---- */
@@ -501,7 +468,6 @@ kbd {
   font-size: 13px;
 }
 .panel.speed { width: 280px; gap: 8px; padding-bottom: 10px; }
-.panel.jumps { gap: 10px; padding-bottom: 12px; }
 .panel.info { width: 360px; padding: 14px 16px; gap: 10px; }
 .panel button { font: inherit; color: inherit; cursor: pointer; }
 .panel .row {
@@ -523,13 +489,6 @@ kbd {
 .panel .switch.on .knob { left: 17px; background: var(--vpe-on-fg); }
 .panel .sep { height: 1px; margin: 6px 0; background: var(--vpe-sep); flex: none; }
 .panel .phead, #sheet .phead { padding: 2px 14px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vpe-dim); }
-.panel .tools { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 0 8px 4px; }
-.panel .tool {
-  height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-  background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid transparent; border-radius: 6px; font-size: 12px;
-}
-.panel .tool:hover, .panel .tool:focus-visible { background: var(--vpe-row-hover); }
-.panel .tool .tkey { font-family: var(--vpe-mono); font-size: 11px; color: var(--vpe-dim); }
 .panel .chip {
   height: 26px; padding: 0 7px; border-radius: 5px; font-size: 11.5px;
   background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border);
@@ -588,7 +547,7 @@ kbd {
 #sheet .srow kbd { white-space: nowrap; }
 
 body.vscode-high-contrast #row button:hover, body.vscode-high-contrast #row button.open, body.vscode-high-contrast #notice button:hover,
-body.vscode-high-contrast .panel .row:hover, body.vscode-high-contrast .panel .tool:hover { outline: 1px dashed var(--vscode-contrastActiveBorder, transparent); outline-offset: -1px; }
+body.vscode-high-contrast .panel .row:hover { outline: 1px dashed var(--vscode-contrastActiveBorder, transparent); outline-offset: -1px; }
 body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-contrast .panel .chip[aria-checked="true"], body.vscode-high-contrast .panel .mark[aria-pressed="true"] { outline: 1px solid var(--vscode-contrastActiveBorder, transparent); }
 @media (prefers-reduced-motion: reduce) { #cog svg { transition: none; } }
 #sheet .srow .grow { white-space: normal; }

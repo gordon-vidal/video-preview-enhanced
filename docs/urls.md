@@ -17,5 +17,5 @@
 - Errors are plain: not found (HTTP 404), access denied or an expired link (401/403), no answer within 20 s, an untrusted TLS certificate, a refused connection.
 - `http.proxy` / `HTTPS_PROXY` are honoured (as for the ffmpeg download), and VS Code's own proxy routing applies too.
 - **Remote windows:** the URL is fetched by the extension host, which runs on the remote machine (SSH, WSL, containers), not on your computer. Over SSH only the built-in decoder plays URLs, so live HLS and DASH need a local window.
-- Features that need a file are off for URLs: compare (not in the ⚙ Tools grid), frame links (`Shift+C` says why), the ffmpeg command for A–B, sidecar subtitles (Load Subtitles… still works), resume position, seek-bar thumbnails. Saving and exporting frames work.
+- Features that need a file are off for URLs: compare (not in the ⚙ menu), frame links (`Shift+C` says why), the ffmpeg command for A–B, sidecar subtitles (Load Subtitles… still works), resume position, seek-bar thumbnails. Saving and exporting frames work.
 - A URL only ever comes from what you type or paste into VS Code's input box: never from a file, a playlist or a link in a page. ffmpeg gets network access only for that URL; files keep the local-only rules ([Privacy and security](privacy-and-security.md)). Details: [docs/notes/url-stream.md](notes/url-stream.md).
