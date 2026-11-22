@@ -27,7 +27,7 @@ them all, with the jump sizes you chose. In the player and Compare, you can also
 | Shift+D | Wait for the next video you open from the Explorer. It opens Compare in the player's tab with Add Mode on if there is room. Esc cancels the wait. ⚙ › Tools › Compare does the same |
 | S / Ctrl+C | Save the frame as PNG / copy it |
 | ? | Keyboard shortcuts |
-| Esc | Close a panel or the shortcuts |
+| Esc | Close a panel, the shortcuts or the **Compare** confirmation |
 
 Alt+← / Alt+→ are VS Code's Go Back / Go Forward and Ctrl+K starts VS Code's key chords: the player
 leaves them alone (`docs/notes/ui-simple.md`).
@@ -53,7 +53,7 @@ leaves them alone (`docs/notes/ui-simple.md`).
 
 | Key | Action |
 |---|---|
-| C | Subtitles on / off (with none: the Subtitles panel, to load a file) |
+| C | Subtitles on / off. With none, ⚙ › **Subtitles** (to load a file) |
 | V | Next subtitle track, then off |
 | Shift+V | Subtitles off / on |
 | G / H | Subtitle delay −50 ms / +50 ms |
@@ -94,7 +94,7 @@ The player's keys, for all videos at once, plus:
 | X | Swap sides (2 videos) |
 | Tab, then Enter / Space on a tile's up or down arrow | Move the tile earlier or later |
 | Esc while reordering | Exit Reorder mode and discard any unfinished drag |
-| Shift+D | Toggle Add Mode. It starts on when Compare opens with room for more tiles. Click videos in the Explorer to add them. Esc, Shift+D, reaching the maximum or switching editors turns it off. **Add video…** turns it on |
+| Shift+D | Toggle Add Mode. It starts on when Compare opens with room for more tiles. Click videos in the Explorer to add them. **Stop** in the hint, Esc, Shift+D, reaching the maximum or switching editors turns it off. **Add video…** turns it on |
 | ← / → on the focused split divider | Move it by 1 % (Shift: 10 %); Home / End |
 | Z | Picture size for all videos: Fit, Fill, Stretch, 100 %, then Fit; zoomed in, back to Fit first |
 | Ctrl+wheel, drag | Zoom and pan all videos together (the same part of every picture) |

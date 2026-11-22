@@ -95,10 +95,10 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 
 - **One player, no modes.** The separate advanced layout is dropped; `advancedMode` is deprecated and ignored.
 - **Bar:** previous frame, play/pause, next frame, mute, volume, time (click: time / timecode / frame number),
-  then CC, ⓘ (about this video), speed, ⚙, picture size, fullscreen. No status pill:
-  only real problems show (a notice, once).
-- **⚙ panel:** speed, loop, A-B loop, subtitles, audio track, copy frame, keyboard shortcuts, jump sizes and a
-  Tools grid (compare, scopes, inspector, stats, codec X-ray, export A-B).
+  then CC (only when the video has a subtitle track, 2026-11-22), **Compare** (video files), ⓘ (about this video),
+  speed, ⚙, picture size, fullscreen. No status pill: only real problems show (a notice, once).
+- **⚙ panel:** speed, loop, A-B loop, subtitles (always there, also to load a file), audio track, copy frame, keyboard
+  shortcuts, jump sizes and a Tools grid (compare, scopes, inspector, stats, codec X-ray, export A-B).
 - **Picture size** (2026-11-20): **Fit** (default: whole picture, bars where the shape differs), **Fill** (no bars,
   edges cropped, centred), **Stretch** (fills the area, distorted), **100 %** (one video pixel = one device pixel,
   drag to pan when larger). A bar button between Settings and fullscreen and the key **Z** cycle them
@@ -124,13 +124,16 @@ One feature: compare becomes multi-view. The difference view is dropped.
   each tile. The clock, sound and offsets follow their videos. Free tile placement is deferred.
 - **The player's UI (2026-11-20: the approved compare mock-up).** Compare is the player with more videos:
   the same bar drives all tiles (play, lockstep frame steps, seek, speed, loop, jumps); time and seek follow the
-  clock video with its letter; mute / volume act on the sound video; CC is hidden. One new
+  clock video with its letter; mute / volume act on the sound video; no CC (Compare does not render subtitles). One
   bar button opens the **Compare panel** (⚙-panel style): a row per video (letter, name, clock / sound, offset)
   with its own page (offset − / + in frames or ms, Reset, Clock and Sound switches, Replace video…, Remove), Add
   video (n of the set limit), View (2 videos: Side by side | Split), Swap, Leave compare. Tiles are clean; hover shows the name
   pill with the tile's own frame number and a ‹ offset › nudge; − / + nudge the tile under the pointer;
   right-click a tile for its actions. The old compare toolbar and sync panel are gone.
-- **Entering:** key **D** (quick pick of other videos, same folder first), Shift+drop from the Explorer,
+- **Entering:** the player's **Compare** button (2026-11-22) asks for confirmation before starting with this one video
+  and Add Mode on. If a Compare is open, the button becomes **Add to Compare** and adds the video to the most recently
+  active Compare at once.
+  Other entry points are **D** (quick pick of other videos, same folder first), Shift+drop from the Explorer,
   **Shift+D** or ⚙ › Tools › **Compare** (wait for an Explorer open), and **Compare With…** in the player's
   right-click menu (VS Code's open dialog). Compare takes the player's tab and starts at its position.
   **Leave compare** restores the player at the kept video's position.
@@ -140,7 +143,7 @@ One feature: compare becomes multi-view. The difference view is dropped.
   add up to `compare.maxVideos` and report how many unique videos did not fit. **Open Together**
   (`compare.openTogether`) also groups several videos opened at once, with a one-time notice.
 - **Add Mode:** Compare opens with Add Mode on when it has space. Opening videos from the Explorer adds tiles.
-  Playback, scrubbing and stepping keep the mode on. Esc, Shift+D, reaching the maximum or switching editors
+  Playback, scrubbing and stepping keep the mode on. **Stop** in the hint, Esc, Shift+D, reaching the maximum or switching editors
   turns it off. **Add video…** or Shift+D turns it back on. **Add to Compare** also works while the mode is off.
 - **Picture size in compare:** one mode for every tile (the same button, Z and ⚙ page), and zoom and pan in lockstep:
   the same relative zoom and position in each tile, like a magnifier over all videos.

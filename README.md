@@ -48,7 +48,7 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 
 1. **Play:** Double-click a video in the VS Code Explorer.
 2. **Step:** Pause and press `,` or `.`. Press `?` for all shortcuts.
-3. **Compare:** Right-click a video, folder or selection and choose **Add to Compare**.
+3. **Compare:** Click **Compare** in the player's bar, or right-click a video, folder or selection and choose **Add to Compare**.
 4. **Play heavier footage:** Run **Video Preview: Set Up Optional ffmpeg** from the Command Palette.
 
 **Free and MIT licensed. No telemetry.** Details: [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [FAQ](docs/faq.md) · [all docs](docs/) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md)

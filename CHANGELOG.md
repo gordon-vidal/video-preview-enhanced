@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- New: a **Compare** button in the player's bar. It asks before starting Compare with the video; with a Compare open it reads **Add to Compare** and adds the video directly.
+- New: a **Stop** button in Compare's Add Mode hint.
+- Changed: the CC button shows only when the video has subtitles. ⚙ › **Subtitles** is always there to load a file.
+- Changed: the player and Compare bar icons share one size, stroke and alignment.
 - Changed: open **Keyboard shortcuts** from ⚙ Settings in the player and Compare, or press `?`.
 - Fixed: speed and volume sliders in the player and Compare keep tracking when dragged off the webview.
 - New: reorder Compare tiles by dragging in **Reorder** mode or using each tile's up and down arrows.

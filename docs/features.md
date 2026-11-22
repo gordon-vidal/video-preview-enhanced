@@ -9,10 +9,10 @@
 - **Picks up where you left off.** Reopening a video resumes at the last position.
 - **Subtitles.** SRT, WebVTT and ASS/SSA files.
   - Files next to the video load by themselves: `video.srt`, `video.en.srt`, `video.eng.forced.srt`, and `Subs/` folders.
-  - **Load Subtitles…** (command, or **Load subtitle file…** in the Subtitles panel) opens any other file. With no subtitles, the CC button opens that panel.
+  - **Load Subtitles…** (command, or **Load subtitle file…** under **Settings › Subtitles**) opens any other file.
   - Delay (`G` / `H`, 50 ms steps) and size, remembered per tab. Any text encoding (UTF-8, UTF-16, Windows-1252).
   - Subtitle tracks inside the file: text (SRT, ASS, WebVTT, mov_text) and picture-based (PGS from Blu-ray, DVB, DVD). Pictures stay in place on the video, also when zoomed.
-- **Subtitles and audio tracks.** CC turns subtitles on and off; ⚙ › Subtitles and ⚙ › Audio track list the sources and the file's sound tracks.
+- **Subtitles and audio tracks.** CC appears when a subtitle track is available and turns subtitles on and off. **Settings › Subtitles** is always available. **Settings › Audio track** lists the file's sound tracks.
 - **Seek-bar thumbnails.** Hover or drag the seek bar for a picture of that moment (built-in decoder and native ffmpeg). Pictures are decoded only while the pointer is on the bar, never in the background after a video opens; the one under the pointer first, then a few neighbours.
 - **Grab a frame.** `Ctrl+C` copies the current frame to the clipboard; `S` saves it as a full-size PNG.
 - **About this video (ⓘ, `I`).** The file in plain words: size and length, resolution (4K, 1080p…), frame rate, HDR and bit depth, video and sound codecs with bit rates, tracks, and what plays it (your GPU through ffmpeg, the built-in decoder, the remote stream). **Copy details** copies it; **Full technical details** shows the technical overlay.
@@ -70,8 +70,8 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 
 **Compare / play together (up to 8 videos by default).** Check an encoder, a shader, a renderer or a model against a reference, frame by frame. For example, the expected and actual output of a failing test, or four camera angles of one take.
 - **From the Explorer:** right-click a video, folder or selection and choose **Add to Compare**. It adds to the most recently active Compare, uses the open player's video as the first tile, or starts a new Compare. Folders contribute their direct video files in natural name order. Duplicate files are skipped and a message counts any videos that exceed `compare.maxVideos`. **Open Together** (`compare.openTogether`) also groups multiple videos opened at once.
-- **From the player:** press **D** for a quick pick (same folder first, then workspace, with **Browse…** for the file dialog), hold **Shift** and drag a video from the Explorer onto the picture, or use **Compare With…** in the player's right-click menu. **Shift+D** or ⚙ › Tools › **Compare** waits for the next video you open. Compare takes the player's tab at its current position. **Leave compare** restores the player at the clock video's position.
-- **Add Mode:** when Compare opens with room for more tiles, click videos in the Explorer to add them. Add Mode stays on during playback, scrubbing and stepping. It stops on **Esc**, **Shift+D**, reaching the maximum or switching editors. Use **Add video…** or **Shift+D** to turn it back on. The Explorer's **Add to Compare** works either way.
+- **From the player:** click **Compare** in the bar, then **Start comparison**: Compare opens with this video and Add Mode on (Cancel, Esc or a click elsewhere does nothing). With a Compare open the button reads **Add to Compare** and adds the video to the most recently active Compare at once. Press **D** for a quick pick (same folder first, then workspace, with **Browse…** for the file dialog), hold **Shift** and drag a video from the Explorer onto the picture, or use **Compare With…** in the player's right-click menu. **Shift+D** or ⚙ › Tools › **Compare** waits for the next video you open. Compare takes the player's tab at its current position. **Leave compare** restores the player at the clock video's position.
+- **Add Mode:** when Compare opens with room for more tiles, click videos in the Explorer to add them. Add Mode stays on during playback, scrubbing and stepping. It stops when you click **Stop** in the hint, press **Esc** or **Shift+D**, reach the maximum or switch editors. Use **Add video…** or **Shift+D** to turn it back on. The Explorer's **Add to Compare** works either way.
 - **The same bar for all videos:** play, frame steps (in lockstep), seek, speed, loop and the jump keys act on every video. The time and the seek bar follow the **clock** video (its letter shows before the time); mute and volume act on the **sound** video. CC is hidden while comparing; the bar's Compare button (two panes) opens the **Compare panel**.
 - **Compare panel:** one row per video (letter, name, ⏱ clock, 🔊 sound, offset) that opens its page; **Add video…** (starts add mode: click the videos in the Explorer; up to 8 by default, or 16 with `compare.maxVideos`); with 2 videos **View** (Side by side or Split) and **Swap sides**; **Leave compare**. A video's page: its **offset** (− / + in frames of that video or in ms, with Reset; positive shows a later moment), **Clock** (the seek bar, time and frame steps follow it), **Sound from this video**, **Replace video…** and **Remove**.
 - **Layout:** 2 videos side by side, or split (one picture, drag the divider); 3 videos in a 2×2 grid with an empty cell that adds a fourth; 4 in a 2×2 grid. From 5 on, videos fill a static grid in order (3×2, 3×3, 4×3 or 4×4). The first spare slot shows **Add video** on hover or keyboard focus while below the limit. Each video keeps its own shape in its cell. Hover a video for its name, its own frame number and a ‹ offset › nudge; click the name for its page. In larger grids the nudge sits below the name pill. `−` / `+` nudge the video under the pointer. Right-click a video for its actions: clock, sound, offset, copy its frame or timestamp, replace, remove, add, leave.
@@ -100,12 +100,13 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 
 One layout (the old simple / advanced switch is gone). The bar, left to right:
 previous frame, play / pause, next frame, mute, volume, the time (click it: time → SMPTE timecode → frame
-number; the same detail while playing and paused), then CC (subtitles), ⓘ (about this video), the speed
-(click: speed panel; scroll: ±0.05), ⚙ (settings), the **picture size** button and
-fullscreen.
+number; the same detail while playing and paused), then CC (only when the video has subtitles), **Compare** (video
+files), ⓘ (about this video), the speed (click: speed panel; scroll: ±0.05), ⚙ (settings), the **picture size**
+button and fullscreen.
 
 - A click on the picture plays or pauses; with a panel open it closes the panel.
-- Each bar button opens its panel and closes it when clicked again. `Esc` closes any panel.
+- ⚙, ⓘ and the speed open their panel and close it when clicked again. CC turns subtitles on and off. `Esc` closes
+  any panel or the Compare confirmation.
 - **⚙ Settings:** Speed ›, Loop (switch), A-B loop (start, end, off), Subtitles ›, Audio track ›, Copy frame,
   **Keyboard shortcuts** (also opens with `?`), Jump sizes › and a **Tools** grid: Compare, Scopes, Inspector, Stats, Codec X-ray,
   Export A-B, then **Open video URL…** ([network URLs](urls.md)) and last **Extension settings** (VS Code's Settings, filtered to this extension). The tools'

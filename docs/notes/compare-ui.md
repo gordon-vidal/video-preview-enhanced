@@ -158,6 +158,23 @@ Playback, scrubbing and stepping leave the mode on. Esc in the webview or the Ex
 (`videoPreviewEnhanced.stopAddFromExplorer`), Shift+D, hitting `compare.maxVideos`, or switching to another editor
 ends it. **Add to Compare** can append while the mode is off. Leaving Compare returns to the player and ends the mode.
 
+## Toolbar entry point and Add Mode hint (maintainer-approved, 2026-11-22)
+
+The single-video player's **Compare** button asks before it starts a one-video Compare with Add Mode on; with a
+Compare open it reads **Add to Compare** and adds the video to the most recently active Compare at once
+([player design note](ui-simple.md#compare-cc-and-toolbar-icons-maintainer-approved-2026-11-22)).
+
+The Add Mode hint ("Click videos in Explorer to add · Esc to stop") ends with a small **Stop** button. A click, or
+Enter / Space after Tab, ends Add Mode like Esc; focus then moves to the bar's Compare button. The hint stays
+click-through apart from the button. The hint text is the live status (`role="status"`).
+
+![The Add Mode hint with Stop](img/compare-addhint-stop.png)
+
+Compare's bar uses the same icon set as the player (`src/bar.js`); **Reorder**, speed and time stay text. Compare
+does not render subtitles, so its bar has no CC.
+
+[Compare bar before](img/toolbar-compare-before.png) · [after](img/toolbar-compare-after.png)
+
 `src/addmode.js` tracks the active target, video identities, capacity and editor-switch rule. `src/comparepick.js`
 plans a selection against the open editors. The host intercepts player opens in `resolveCustomEditor` and closes the
 temporary tab. It uses tab events for files opened through a different editor and distinguishes those new video tabs
