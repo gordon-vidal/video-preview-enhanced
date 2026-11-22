@@ -16,7 +16,7 @@ Run **Video Preview: Open Video URL…** to play a direct video link or an HLS o
 
 Step forward or backward one frame. Jump to a frame number or timecode, preview a moment from the seek bar on supported files, or loop a section. Copy a link that opens at the exact frame so someone else can see what you saw.
 
-Right-click videos or folders and choose **Add to Compare**. Step through up to **eight videos by default** on one timeline, adjust each clip’s offset, and switch between side-by-side, split or grid views.
+Right-click videos or folders and choose **Start Compare**. While a Compare is open, choose **Add to Compare**. Step through up to **eight videos by default** on one timeline, adjust each clip’s offset, and switch between side-by-side, split or grid views.
 
 ## Frame export and inspection
 
@@ -48,7 +48,7 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 
 1. **Play:** Double-click a video in the VS Code Explorer.
 2. **Step:** Pause and press `,` or `.`. Press `?` for all shortcuts.
-3. **Compare:** Right-click a video, folder or selection and choose **Add to Compare**.
+3. **Compare:** Right-click a video, folder or selection and choose **Start Compare**.
 4. **Play heavier footage:** Run **Video Preview: Set Up Optional ffmpeg** from the Command Palette.
 
 **Free and MIT licensed. No telemetry.** Details: [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [FAQ](docs/faq.md) · [all docs](docs/) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md)

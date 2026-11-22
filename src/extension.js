@@ -78,6 +78,7 @@ const debugPool = (() => { try { return logFile && process.env.VPE_POOL ? JSON.p
 // ones that change settings or install things (makeDefault, setupFfmpeg…).
 const DEBUG_COMMANDS = new Set([
   'videoPreviewEnhanced.openWith', 'videoPreviewEnhanced.playSequence', 'videoPreviewEnhanced.compareWith',
+  'videoPreviewEnhanced.addToCompareFromPlayer',
   'videoPreviewEnhanced.showLog', 'workbench.action.closeActiveEditor', 'workbench.action.closeAllEditors', 'workbench.action.reloadWindow',
   'notifications.clearAll', 'videoPreviewEnhanced.exportRange', 'videoPreviewEnhanced.addFromExplorer', 'videoPreviewEnhanced.stopAddFromExplorer', 'workbench.files.action.refreshFilesExplorer',
 ]);
@@ -1260,8 +1261,14 @@ function activate(context) {
   warnOldInstalls();
 
   // ---- Compare and Add to Compare (src/compare.js) ----
+  let testCompareFiles;
   compareApi = registerCompare(context, {
     vscode, log, sessions, compareSessions, nativeTransport, nativeQueue,
+    showOpenDialog: logFile ? (options) => {
+      const files = testCompareFiles;
+      testCompareFiles = undefined;
+      return files || vscode.window.showOpenDialog(options);
+    } : undefined,
     lastActivePlayer: () => lastActive,
     // Videos compared lately (uri strings): the quick pick on key D lists them first.
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
@@ -1352,10 +1359,11 @@ function activate(context) {
               vscode.commands.executeCommand('videoPreviewEnhanced.compare', list[0], list);
               continue;
             }
-            if (c.addToCompare) { // the context-menu arguments: primary resource, then the selection
-              const list = c.addToCompare.map((f) => vscode.Uri.file(f));
-              vscode.commands.executeCommand('videoPreviewEnhanced.addToCompare', list[0], list.length > 1 ? list : undefined)
-                .then(() => log(`debug done ${c.id || ''} addToCompare`), (e) => log(`debug addToCompare failed: ${e.message}`));
+            if (c.startCompare || c.addToCompare) { // primary resource, then the selection
+              const action = c.startCompare ? 'startCompare' : 'addToCompare';
+              const list = c[action].map((f) => vscode.Uri.file(f));
+              vscode.commands.executeCommand(`videoPreviewEnhanced.${action}`, list[0], list.length > 1 ? list : undefined)
+                .then(() => log(`debug done ${c.id || ''} ${action}`), (e) => log(`debug ${action} failed: ${e.message}`));
               continue;
             }
             if (c.pickCompare) { // tests: the next compare quick pick logs its rows and picks one (label part, or Browse…)
@@ -1403,9 +1411,13 @@ function activate(context) {
               continue;
             }
             if (c.compareReplace) { for (const s of compareSessions) s.replaceUri(Number(c.compareReplace.index), vscode.Uri.file(c.compareReplace.file)); continue; }
-            if (c.compareWith) { // the player's "Compare with…" without the dialog: its file plus these, in its place
+            if (c.compareWith) { // Start Compare from a player, with the open dialog's result supplied by the test
               const from = [...sessions].find((s) => !s.url && !s.sequence && (!c.name || s.name.includes(c.name)));
-              if (from) vscode.commands.executeCommand('videoPreviewEnhanced.compare', from.uri, [from.uri, ...c.compareWith.map((f) => vscode.Uri.file(f))], { from, t: Number(c.t) || 0 });
+              if (from) {
+                testCompareFiles = c.compareWith.map((f) => vscode.Uri.file(f));
+                vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', from.uri, { t: Number(c.t) || 0 })
+                  .catch((e) => log(`debug compareWith failed: ${e.message}`));
+              }
               continue;
             }
             if (c.compare) { for (const s of compareSessions) s.post({ ...c, type: 'debug' }); continue; }

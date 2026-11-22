@@ -7,6 +7,7 @@ const path = require('path');
 const CLIPS = ['h264_aac_anim_1080p.mp4', 'vp9_opus_anim_1080p.webm', 'h264_8_1080p.mp4'];
 const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] opened, .* ${n} tiles`);
 const hint = (on) => new RegExp(`\\[compare [^\\]]*\\] webview: addMode ${on ? 'on' : 'off'}`);
+const menuContext = (on) => new RegExp(`compare: videoPreviewEnhanced\\.compareOpen=${on}`);
 const isCompare = (tab) => /compare/i.test(tab.viewType);
 
 module.exports = [{
@@ -31,6 +32,7 @@ module.exports = [{
     const wait = (re, from, what) => vs.waitLog(re, { from, timeout: 15000, what });
     const send = (message) => { const from = vs.mark(); vs.send(message); return from; };
     const act = (action, extra) => send({ compare: true, action, ...extra });
+    const startCompare = (selection) => send({ startCompare: selection });
     const add = (selection) => send({ addToCompare: selection });
     const open = (openFile) => send({ openFile, preview: false, preserveFocus: false });
     const assert = (cond, problem) => { if (!cond) throw new Error(problem); };
@@ -53,27 +55,49 @@ module.exports = [{
       fs.copyFileSync(files[1], second);
       fs.writeFileSync(notes, 'Compare tab switching test\n');
       await run('single-file-start-and-explorer-add', async () => {
-        const start = add([files[0]]);
+        const start = startCompare([files[0]]);
+        await wait(menuContext(true), start, 'Compare menus switch to Add to Compare');
         await wait(opened(1), start, 'single-tile Compare');
         await wait(hint(true), start, 'single-tile Add Mode');
         const joined = open(files[1]);
         await wait(opened(2), joined, 'second tile from an Explorer open');
         await wait(hint(true), joined, 'the hint after adding a tile');
         await onlyCompare();
+        const closing = vs.mark();
+        await h.closeClip(vs);
+        await wait(menuContext(false), closing, 'Compare menus switch back to Start Compare');
       });
 
       await run('multi-select-mixed-and-folder', async () => {
-        const start = add(files.slice(0, 2));
+        const start = startCompare(files.slice(0, 2));
         await wait(opened(2), start, 'two selected files');
         await wait(hint(true), start, 'Add Mode on after multi-select');
         const append = add([dir, first, files[0]]);
         await wait(opened(4), append, 'mixed selection appends two unique folder files');
         await onlyCompare();
         await h.closeClip(vs);
-        const folder = add([dir]);
+        const folder = startCompare([dir]);
         const line = await wait(opened(2), folder, 'two files from a folder');
         assert(/clip2\.mp4.*clip10\.webm/.test(line), `folder order: ${line}`);
         await onlyCompare();
+      });
+
+      await run('player-title-start-and-add', async () => {
+        const player = await h.openClip(vs, files[0]);
+        await wait(/first frame shown/, player, 'the player');
+        const started = send({ name: CLIPS[0], compareWith: [files[1]] });
+        await wait(menuContext(true), started, 'the title action opens a Compare session');
+        await wait(opened(2), started, 'the picked file and player video are compared');
+        await onlyCompare();
+
+        const stopped = send({ command: 'videoPreviewEnhanced.stopAddFromExplorer' });
+        await wait(hint(false), stopped, 'turn off click-to-add before opening a second player');
+        const secondPlayer = open(files[2]);
+        await wait(/\[h264_8_1080p\.mp4\] session resolved/, secondPlayer, 'the second player opens separately');
+        const added = send({ command: 'videoPreviewEnhanced.addToCompareFromPlayer', arg: files[2] });
+        await wait(/\[compare [^\]]*\] add h264_8_1080p\.mp4/, added, 'the title action appends to the background Compare');
+        const tabs = await tabList();
+        assert(tabs.length === 2 && tabs.filter(isCompare).length === 1, `tabs after title action: ${JSON.stringify(tabs)}`);
       });
 
       await run('player-shift-d-and-playback', async () => {

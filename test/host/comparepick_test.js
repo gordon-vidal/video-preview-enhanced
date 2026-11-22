@@ -74,7 +74,11 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
     assert.deepStrictEqual(items.map((i) => i.label), ['Same folder', path.basename(b), 'Workspace', 'w.mp4', '', '$(list-tree) Click videos in the Explorer…', '$(folder-opened) Browse…'].map((l) => l), 'rows');
     assert.strictEqual(items[0].kind, -1, 'sections are separators');
     assert.strictEqual(panels.length, 1, 'picking a video opens compare');
-    assert.deepStrictEqual(V.executed.map(([id]) => id), ['setContext'], 'only Add Mode is enabled');
+    assert.deepStrictEqual(V.executed, [
+      ['setContext', 'videoPreviewEnhanced.compareOpen', false],
+      ['setContext', 'videoPreviewEnhanced.compareOpen', true],
+      ['setContext', 'videoPreviewEnhanced.addMode', true],
+    ], 'opening Compare enables the open and Add Mode contexts');
     const recent = h.context.globalState.get('videoPreviewEnhanced.compareRecent');
     assert.ok(recent[0] === uriA.toString() && recent[1].includes(path.basename(b)) || recent.length === 2, `recent: ${recent}`);
 

@@ -2,7 +2,7 @@
 
 ## Commands
 
-Palette commands are under **Video Preview**.
+Most palette commands are under **Video Preview**. The Compare actions below use **Video Preview Enhanced**.
 
 | Command | What it does |
 |---|---|
@@ -11,8 +11,9 @@ Palette commands are under **Video Preview**.
 | Use Video Preview Enhanced for MP4/WebM | Opens MP4 and WebM in this player by default |
 | Use VS Code's Preview for MP4/WebM | Undoes that |
 | Open with Video Preview Enhanced | Explorer context menu on an MP4 or WebM file (not in the Command Palette) |
-| Add to Compare | Explorer context menu for videos and folders. Adds the selection to the most recently active Compare, uses the open player, or starts a new Compare. Folders contribute their direct video files in natural name order. |
-| Compare With… | Compares the open video with more files, up to `compare.maxVideos` total (in the player's place); in the player's right-click menu and editor title, not in the Explorer menu |
+| Start Compare | When no Compare is open, starts one from the Explorer selection. From the player title or Command Palette, opens the file picker. |
+| Add to Compare | When a Compare is open, adds the Explorer selection or the player's video to the most recently active Compare. Available in the Command Palette while a file player is active. |
+| Compare With… | Opens the file picker from the player's right-click menu and starts Compare in the player's place. |
 | Compare: Add Videos from the Explorer | Toggles Add Mode for the active player or Compare. Open videos in the Explorer to add them. |
 | Compare: Stop Adding from the Explorer | Ends Add Mode. Esc does the same. |
 | Load Subtitles… | Opens a subtitle file for the current video (needs an open player) |
@@ -23,6 +24,10 @@ Palette commands are under **Video Preview**.
 | Open Video URL to the Side… / Open Video URL in New Window… | The same, in the editor group beside the current one or in a new window |
 | Play Image Sequence | Plays a folder of numbered images (Command Palette only) |
 | Show Log | Shows the extension's log, useful for bug reports |
+
+The Explorer commands accept videos, folders and mixed selections. Folders contribute their direct video files in
+natural name order. Existing keybindings for `videoPreviewEnhanced.addToCompare` still use the Explorer action, and
+`videoPreviewEnhanced.compareWith` still opens the picker.
 
 ## Settings
 

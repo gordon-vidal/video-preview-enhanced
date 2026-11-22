@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Changed: the Explorer menu and player title show **Start Compare** or **Add to Compare** based on whether a Compare is open.
 - New: reorder Compare tiles by dragging in **Reorder** mode or using each tile's up and down arrows.
 - Changed: **Add to Compare** works on videos, folders and mixed selections. Compare opens ready to add more videos from the Explorer and stays in Add Mode through playback and scrubbing.
 - Changed: Compare supports 8 videos by default and up to 16 through `compare.maxVideos`. Grids of 5 or more stack the name and offset controls to fit smaller tiles.
