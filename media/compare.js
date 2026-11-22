@@ -105,14 +105,7 @@
     clearTimeout(liveTimer);
     liveTimer = setTimeout(() => { ui.live.textContent = text; }, 50);
   }
-  let toastTimer = 0;
-  function toast(text, ms = 1500) {
-    announce(text);
-    ui.toast.textContent = text;
-    ui.toast.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { ui.toast.hidden = true; }, ms);
-  }
+  const toast = VpeControls.createToast(ui.toast, announce);
   /** @type {Record<string, string>} */
   const msgs = { host: '' };
   names.forEach((_, i) => { msgs[KEYS[i]] = ''; });
@@ -2270,7 +2263,7 @@
     const m = e.data;
     if (!m || m.page !== cfg.page) return;
     switch (m.type) {
-      case 'toast': toast(String(m.text || ''), Math.min(10000, Number(m.ms) || 1500)); break;
+      case 'toast': toast(String(m.text || ''), Math.min(10000, Number(m.ms)) || undefined); break;
       case 'addMode':
         if (m.on) setReordering(false);
         showAddMode(m);
@@ -2413,7 +2406,8 @@
         pics: [...d.querySelectorAll('.ov')].map((o) => rect(o)), oor: !!d.querySelector('.oor:not([hidden])'),
       })),
       divider: (() => { const dv = cellsEl.querySelector('#divider'); return dv ? { rect: rect(dv), value: dv.getAttribute('aria-valuenow') } : null; })(),
-      stage: rect(stage), toast: ui.toast.hidden ? '' : ui.toast.textContent, live: ui.live.textContent, hover,
+      stage: rect(stage), toast: ui.toast.hidden ? '' : ui.toast.textContent,
+      toastRect: ui.toast.hidden ? null : rect(ui.toast), live: ui.live.textContent, hover,
       reorder: { button: text(reorderBtn), hint: reorderHint.hidden ? '' : text(reorderHint) },
       picture: {
         ...st.pic, factor: frameFactor(), pct: picState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), pannable: stage.classList.contains('pannable'),

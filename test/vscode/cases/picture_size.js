@@ -11,6 +11,9 @@ const lib = require('../lib');
 const CLIP = 'h264_aac_anim_1080p.mp4'; // 1920x1080, 16:9
 const CLIP_B = 'vp9_opus_anim_1080p.webm';
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
+const toastAtTopCenter = (toast, stage) => toast && toast[2] > 0
+  && near(toast[0] + toast[2] / 2, stage[0] + stage[2] / 2, 1)
+  && toast[1] >= stage[1] && toast[1] - stage[1] <= 40 && toast[1] + toast[3] <= stage[1] + stage[3];
 
 /**
  * The player's picture-size waits: reads `state` until pred(state) holds (bounded) and returns the last state either
@@ -54,12 +57,14 @@ module.exports = [{
         await click('#picBtn');
         s = await pic(fillOk);
         ok(s.picture.mode === 'fill' && s.picture.btnLabel === 'Picture size: Fill. Next: Stretch', `Fill: ${JSON.stringify(s.picture)}`);
+        ok(s.toast === 'Fill' && toastAtTopCenter(s.toastRect, s.stageRect), `Fill toast at the top centre: ${s.toastRect}`);
         const r = s.canvasRect;
         ok(r[3] >= AREA[1] - 2 && r[2] > AREA[0] + 100 && near(r[2] / r[3], 16 / 9, 0.02), `Fill covers the area, shape kept, edges cropped: ${r}`);
 
         await click('#picBtn');
         s = await pic(stretchOk);
         ok(s.picture.mode === 'stretch' && s.picture.btnMode === 'stretch', `Stretch: ${JSON.stringify(s.picture)}`);
+        ok(s.toast === 'Stretch', `Stretch replaces the Fill toast: "${s.toast}"`);
         ok(near(s.canvasRect[2], AREA[0], 2) && near(s.canvasRect[3], AREA[1], 2), `Stretch fills the area exactly: ${s.canvasRect}`);
 
         await click('#picBtn');
@@ -199,8 +204,10 @@ module.exports = [{
       ok(u.picture.mode === 'fit' && u.picture.btnLabel === 'Picture size: Fit. Next: Fill' && u.bar.ids.includes('picBtn'), `starts in Fit with the button: ${JSON.stringify({ ...u.picture, tiles: undefined })} ${u.bar.ids}`);
       ok(u.picture.factor === 1, `Fit asks for the plain frame size: factor ${u.picture.factor}`);
       await click({ sel: '#picBtn' });
-      u = await ui((x) => fillU(x) && /Fill/.test(x.toast + x.live) && x.picture.factor >= 1);
-      ok(u.picture.mode === 'fill' && /Fill/.test(u.toast + u.live) && u.picture.factor >= 1, `button: Fill for both tiles, toast "${u.toast}": ${JSON.stringify({ ...u.picture, tiles: undefined })}`);
+      u = await ui((x) => fillU(x) && x.toast === 'Fill' && x.live === 'Fill' && x.picture.factor >= 1);
+      ok(u.picture.mode === 'fill' && u.picture.factor >= 1, `button: Fill for both tiles: ${JSON.stringify({ ...u.picture, tiles: undefined })}`);
+      ok(u.toast === 'Fill' && u.live === 'Fill' && toastAtTopCenter(u.toastRect, u.stage),
+        `Fill toast at the top centre and in the live region: "${u.toast}", "${u.live}", ${u.toastRect}`);
       ok(u.picture.tiles.length === 2 && u.picture.tiles.every((t) => t.full[2] >= t.box[2] - 1 && t.full[3] >= t.box[3] - 1), `every tile fills its cell: ${JSON.stringify(u.picture.tiles)}`);
       act({ action: 'key', key: 'z' });
       u = await ui((x) => x.picture.mode === 'stretch' && x.picture.tiles.every((t) => near(t.full[2], t.box[2], 1) && near(t.full[3], t.box[3], 1)));

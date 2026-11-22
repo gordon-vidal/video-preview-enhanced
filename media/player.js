@@ -97,14 +97,7 @@
     clearTimeout(liveTimer);
     liveTimer = setTimeout(() => { live.textContent = text; }, 50);
   }
-  let toastTimer = 0;
-  function toast(text, ms = 900) {
-    announce(text);
-    ui.toast.textContent = text;
-    ui.toast.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { ui.toast.hidden = true; }, ms);
-  }
+  const toast = VpeControls.createToast(ui.toast, announce);
 
   // Subtitles and audio/subtitle tracks (tracks-menu.js, subtitles.js).
   const subs = createTracksUi({
@@ -1286,7 +1279,7 @@
         break;
       }
       case 'exactFrame': exact.onReply(m).then(wakeLoop, () => {}); break;
-      case 'toast': toast(m.text, Math.min(10000, Number(m.ms) || 900)); break;
+      case 'toast': toast(m.text, Math.min(10000, Number(m.ms)) || undefined); break;
       case 'addMode': showAddMode(m); break;
       case 'compareOpen': setCompareOpen(!!m.open); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
@@ -1406,7 +1399,8 @@
           const vw = (() => { const r = canvas.getBoundingClientRect(); const k = Math.min(r.width / canvas.width, r.height / canvas.height); return [r.left + (r.width - canvas.width * k) / 2, r.top + (r.height - canvas.height * k) / 2, canvas.width * k, canvas.height * k]; })();
           const s = {
             id: m.id,
-            toast: ui.toast.hidden ? '' : ui.toast.textContent, status: p && p.status ? ((p.status() || {}).text || '') : '',
+            toast: ui.toast.hidden ? '' : ui.toast.textContent, toastRect: ui.toast.hidden ? null : rect(ui.toast),
+            status: p && p.status ? ((p.status() || {}).text || '') : '',
             notice: byId('notice').hidden ? '' : byId('noticeText').textContent,
             message: overlay.hidden ? '' : message.textContent, hint: overlay.hidden ? '' : hint.textContent,
             action: overlay.hidden || actionBtn.hidden ? '' : actionBtn.textContent, seekDisabled: ui.seek.disabled,

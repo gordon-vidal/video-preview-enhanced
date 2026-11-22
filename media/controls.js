@@ -9,6 +9,37 @@
 /* exported VpeControls */
 const VpeControls = (() => {
   const PIC = typeof VpePicture !== 'undefined' ? VpePicture : require('./picture');
+  /** @param {HTMLElement} element @param {(text: string) => void} announce */
+  function createToast(element, announce) {
+    let timer = 0;
+    /** @type {Animation | undefined} */
+    let fade;
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+    const fadeMs = 120;
+    return (text, ms = 1500) => {
+      clearTimeout(timer);
+      // An exit fade from the previous message must never hide its replacement.
+      if (fade) {
+        fade.onfinish = null;
+        fade.cancel();
+        fade = undefined;
+      }
+      announce(text);
+      element.textContent = text;
+      const wasHidden = element.hidden;
+      element.hidden = false;
+      if (wasHidden && !reducedMotion.matches) fade = element.animate({ opacity: [0, 1] }, fadeMs);
+      timer = setTimeout(() => {
+        if (reducedMotion.matches) element.hidden = true;
+        else {
+          const exit = element.animate({ opacity: [1, 0] }, { duration: fadeMs, fill: 'forwards' });
+          fade = exit;
+          exit.onfinish = () => { element.hidden = true; exit.cancel(); fade = undefined; };
+        }
+      }, ms);
+    };
+  }
+
   const SVG = (body, o = {}) => `<svg width="${o.size || 18}" height="${o.size || 18}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${o.sw || 1.6}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const ICON = {
     speed: SVG('<circle cx="12" cy="13" r="8"></circle><path d="M12 13l4-4M12 3v2"></path>'),
@@ -672,7 +703,7 @@ const VpeControls = (() => {
     };
   }
 
-  return { create, facts, keyGroups, qualityRows, qualityLabel, clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV };
+  return { create, createToast, facts, keyGroups, qualityRows, qualityLabel, clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV };
 })();
 
 if (typeof module !== 'undefined') module.exports = VpeControls;
