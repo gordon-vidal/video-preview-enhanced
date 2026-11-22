@@ -22,12 +22,13 @@ const TIME_SCALE = Number(process.env.VPE_TIME_SCALE) || (process.env.CI ? 3 : 1
 //
 // Layers 1-2 run every file in its own process (killed with its children after its timeout) and
 // print one line per file, the output of the failed ones, and one summary. Layer 3 and 4 get the
-// remaining arguments (see their files). A layer-4 run holds the benchmark lock (test/benchq.js);
-// layers 2 and 3 wait for it, so no benchmark runs against them.
+// remaining arguments (see their files). Layers 3 and 4 share a VS Code lock across worktrees.
+// A layer-4 run also holds the benchmark lock (test/benchq.js); layers 2 and 3 wait for it.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const { acquireVscodeLock } = require('./lib/vscode_lock');
 
 const ROOT = path.resolve(__dirname, '..');
 const argv = process.argv.slice(2);
@@ -221,6 +222,22 @@ async function waitPerfLock() {
   }
 }
 
+async function runLayerScript(script, args, lock) {
+  const child = spawn(process.execPath, [script, ...args], { cwd: ROOT, stdio: 'inherit', windowsHide: true });
+  const done = new Promise((resolve) => {
+    child.once('error', (error) => { console.error(error); });
+    child.once('close', resolve);
+  });
+  // The layer can outlive this runner if the runner is interrupted. Keep its PID on
+  // the lock as well so another checkout still waits for the active layer.
+  try {
+    if (child.pid && lock) lock.track(child.pid);
+  } finally {
+    await done;
+  }
+  return child.exitCode === 0;
+}
+
 // ---- main ---------------------------------------------------------------------------------
 
 async function main() {
@@ -265,14 +282,20 @@ async function main() {
       ok = ok && r.ok;
     } else {
       const script = layer === 'vscode' ? path.join(__dirname, 'vscode', 'scenarios.js') : path.join(__dirname, 'perf', 'run.js');
-      if (layer === 'vscode') await waitPerfLock();
       const a = [...rest];
       if (grep) a.push('--grep', grep.source);
       if (flag('--smoke') && layer === 'vscode') a.push('--smoke');
       if (changed && layer === 'vscode') a.push('--changed-files', JSON.stringify(changed));
       const ts = Date.now();
-      const r = spawnSync(process.execPath, [script, ...a], { cwd: ROOT, stdio: 'inherit', windowsHide: true });
-      const lok = r.status === 0;
+      const listing = flag('--list') || (layer === 'vscode' && flag('--explain') && (changed || flag('--smoke')));
+      const lock = listing ? null : await acquireVscodeLock(layer);
+      let lok;
+      try {
+        if (layer === 'vscode' && lock) await waitPerfLock();
+        lok = await runLayerScript(script, a, lock);
+      } finally {
+        if (lock) lock.release();
+      }
       out.layers.push({ layer, ok: lok, wallMs: Date.now() - ts });
       ok = ok && lok;
     }

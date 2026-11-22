@@ -3,8 +3,8 @@
 ```
 node test/run.js vscode                             # layer 3: every scenario (docs/TESTING.md)
 node test/run.js vscode --changed                   # the scenarios that cover your changes (scenario_map.js)
-node test/vscode/scenarios.js --grep '^seeking$'    # one scenario; --list shows them
-node test/vscode/scenarios.js --parallel 2          # instances side by side (see "Parallel" below)
+node test/run.js vscode --grep '^seeking$'          # one scenario; --list shows them
+node test/run.js vscode --parallel 2                # instances side by side (see "Parallel" below)
 node test/run.js perf                               # layer 4: start-up, CPU, memory, fps (test/perf/run.js)
 node test/vscode/get_code.js                        # once: a pinned portable VS Code in test/vscode/.code
 ```
@@ -13,6 +13,10 @@ node test/vscode/get_code.js                        # once: a pinned portable VS
   background updater makes new instances stall). `VPE_CODE=<Code.exe>` picks another one.
 - Windows only. Needs Python 3 on PATH (standard library only), ffmpeg on PATH (reference frames, test clips,
   and the native-ffmpeg scenarios), no admin rights. Nothing appears on the screen.
+- The layer 3 and 4 commands above acquire the same `%TEMP%\vpe-vscode-lock` directory across worktrees.
+  They print which runner holds the lock while waiting. Locks are cleared when their recorded processes
+  have exited. A lock created by hand, with or without an `owner.txt` note, is honored for 40 minutes
+  unless its holder removes it first. Listing scenarios or benchmarks does not acquire the lock.
 
 ## Scenarios (layer 3)
 
