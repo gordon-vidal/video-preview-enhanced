@@ -434,6 +434,7 @@
 
   // ---- transport ---------------------------------------------------------------
 
+  let scrubbing = false;
   const stepSeeks = new Map(); // the decoder generation of each follower seek for the latest dispatched step
   const stepGoal = VpeStepGoal.create({
     now: () => performance.now(),
@@ -442,12 +443,14 @@
     dispatch({ frame, time }) {
       stepSeeks.clear();
       clock.seekFrame(frame);
-      seekFollowers(time);
+      if (clock.playing) syncPlaying(true);
+      else seekFollowers(time);
       wakeLoop();
     },
   });
 
   function clearStep() {
+    scrubbing = false;
     stepGoal.clear();
     stepSeeks.clear();
   }
@@ -481,13 +484,12 @@
       if (clock.playing) syncPlaying(true);
     } else seekClock(Math.max(0, clockRelFor(i, tiles[i].frameSeekTime(frame))));
   }
+  const goalBounds = () => ({ totalFrames: clock.n, rate: clock.frameNumberRate(), duration: clock.meta.duration });
   /** The bar shows the requested frame while the tiles decode the matching pictures. */
   function step(d) {
     if (!clock || clock.vmode === undefined || clock.meta.live) return;
     pause();
-    stepGoal.step(d, {
-      frame: clock.currentFrame(), totalFrames: clock.n, rate: clock.frameNumberRate(), duration: clock.meta.duration,
-    });
+    stepGoal.step(d, { ...goalBounds(), frame: clock.currentFrame() });
     updateUi();
     wakeLoop();
   }
@@ -2007,16 +2009,17 @@
   who.className = 'who';
   ui.time.insertBefore(who, ui.time.firstChild);
 
-  let scrubbing = false;
   let lastUi = '';
   function updateUi() {
     if (!clock) return;
     const goal = stepGoal.goal;
-    const f = goal?.frame ?? clock.currentFrame();
+    const dragFrame = scrubbing ? Number(ui.seek.value) : null;
+    const f = goal?.frame ?? dragFrame ?? clock.currentFrame();
     if (!scrubbing) ui.seek.value = String(f);
     const playing = clock.playing;
     const fr = tiles.map((p, i) => (p === clock ? p.currentFrame() + 1 : p.shownT !== null && !outs[i] ? frameOf(p) + 1 : null));
-    const t = goal?.time ?? clock.currentTime();
+    const t = goal?.time ?? (dragFrame === null ? clock.currentTime()
+      : Math.min(clock.meta.duration || Infinity, dragFrame / clock.frameNumberRate()));
     const offset = offSec(st.clock);
     const key = `${fr.join(',')}|${f}|${playing}|${t.toFixed(3)}|${tiles.map((p) => p.n).join(',')}|${st.timeMode}|${st.clock}|${ab.a}|${ab.b}|${offset}`;
     if (key !== lastUi || infoDirty) {
@@ -2072,8 +2075,21 @@
   updatePicBtn();
   ui.cmpBtn.onclick = () => controls.toggle('cmp', ui.cmpBtn);
   ui.full.onclick = toggleFullscreen;
-  ui.seek.addEventListener('input', () => { scrubbing = true; seekTile(st.clock, Number(ui.seek.value)); });
-  ui.seek.addEventListener('change', () => { scrubbing = false; });
+  ui.seek.addEventListener('input', () => {
+    if (!clock || clock.vmode === undefined || clock.meta.live) return;
+    if (!scrubbing) clearStep();
+    scrubbing = true;
+    stepGoal.set(Number(ui.seek.value), goalBounds());
+    updateUi();
+    wakeLoop();
+  });
+  ui.seek.addEventListener('change', () => {
+    if (!scrubbing) return;
+    scrubbing = false;
+    stepGoal.flush();
+    updateUi();
+    wakeLoop();
+  });
   ui.seek.addEventListener('mousemove', (e) => {
     if (!clock || !clock.n) return;
     const r = ui.seek.getBoundingClientRect();

@@ -25,6 +25,7 @@ function harness(frame = 60, dispatch = () => {}) {
   return {
     controller, sent, position, timers,
     step: (delta) => controller.step(delta, position),
+    scrub: (frame) => controller.set(frame, position),
     advance(ms) {
       const end = now + ms;
       for (const [timer, { at, fn }] of timers) {
@@ -148,6 +149,47 @@ for (const action of ['play', 'manual scrub', 'clock switch', 'reorder']) {
 }
 
 {
+  const targets = [];
+  const h = harness(120, (time, at) => {
+    targets.push([at, followerTime(time, 0, 0.25, 25), followerTime(time, 0, -0.5, 25)]);
+  });
+  h.scrub(90);
+  assert.deepEqual(h.sent, [[90, 0]], 'dragging seeks immediately on the first input');
+  h.advance(30);
+  h.scrub(75);
+  assert.deepEqual(h.controller.goal, { frame: 75, time: 2.5 });
+  h.scrub(60);
+  assert.deepEqual(h.controller.goal, { frame: 60, time: 2 }, 'the readout follows each absolute target');
+  h.advance(59);
+  assert.deepEqual(h.sent, [[90, 0]], 'drag inputs share the burst window');
+  h.advance(1);
+  assert.deepEqual(h.sent, [[90, 0], [60, 90]], 'the last input replaces the unresolved seek');
+  assert.deepEqual(targets, [[0, 3.26, 2.51], [90, 2.26, 1.51]], 'followers receive the same dispatch times');
+
+  h.advance(15);
+  h.scrub(32);
+  h.scrub(30);
+  assert.equal(h.controller.goal.frame, 30);
+  h.controller.flush();
+  assert.deepEqual(h.sent, [[90, 0], [60, 90], [30, 105]], 'release seeks to the final slider value');
+  h.controller.flush();
+  h.advance(100);
+  assert.equal(h.sent.length, 3, 'release cancels the timer and sends the final target once');
+  h.controller.settle();
+  assert.equal(h.controller.goal, null);
+}
+
+{
+  const h = harness();
+  h.scrub(500);
+  assert.equal(h.controller.goal.frame, 299);
+  h.scrub(-1);
+  assert.deepEqual(h.controller.goal, { frame: 0, time: 0 });
+  h.controller.flush();
+  assert.deepEqual(h.sent, [[299, 0], [0, 0]]);
+}
+
+{
   const early = 0.25 / 25;
   const predicted = 1.01;
   const actual = 1.025; // A VFR correction of 15 ms still selects the same 25 fps follower picture.
@@ -162,4 +204,4 @@ for (const action of ['play', 'manual scrub', 'clock switch', 'reorder']) {
   assert.equal(followerSeekAction(tile, 0.98, early, 7), 'seek', 'a correction outside that picture still seeks');
 }
 
-console.log('step goals: immediate dispatch, coalescing, reversal, bounds, cancellation and follower offsets');
+console.log('step goals: immediate step and scrub, coalescing, release, bounds, cancellation and follower offsets');

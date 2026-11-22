@@ -4,11 +4,12 @@
 (function (root) {
   // checkJs: start
   /** @typedef {{frame: number, time: number}} Goal */
-  /** @typedef {{frame: number, totalFrames: number, rate: number, duration: number}} Position */
+  /** @typedef {{totalFrames: number, rate: number, duration: number}} Bounds */
+  /** @typedef {Bounds & {frame: number}} Position */
 
   /**
-   * The first step seeks immediately. While the clock is catching up, steps accumulate
-   * from the requested frame. After the burst window, the latest target supersedes an obsolete seek.
+   * The first request seeks immediately. After the burst window, the latest step or scrub
+   * target supersedes an obsolete seek.
    * @template Timer
    * @param {{dispatch: (goal: Goal) => void, now: () => number,
    *   schedule: (fn: () => void, ms: number) => Timer, cancel: (timer: Timer) => void}} deps
@@ -23,28 +24,50 @@
     let timer = null;
     let sentAt = -Infinity;
 
-    function flush() {
+    function dispatchPending() {
       if (!goal || goal.frame === inFlight || timer !== null) return;
       const delay = sentAt + coalesceMs - now();
       if (delay > 0) {
-        timer = schedule(() => { timer = null; flush(); }, delay);
+        timer = schedule(() => { timer = null; dispatchPending(); }, delay);
       } else {
-        inFlight = goal.frame;
-        sentAt = now();
-        dispatch(goal);
+        flush();
       }
+    }
+
+    function flush() {
+      if (timer !== null) cancel(timer);
+      timer = null;
+      if (!goal || goal.frame === inFlight) return;
+      inFlight = goal.frame;
+      sentAt = now();
+      dispatch(goal);
+    }
+
+    /** @param {number} frame @param {number} totalFrames */
+    function clampFrame(frame, totalFrames) {
+      return Math.max(0, Math.min(totalFrames > 0 ? totalFrames - 1 : Infinity, frame));
+    }
+
+    /** @param {number} frame @param {Bounds} bounds */
+    function aim(frame, { rate, duration }) {
+      goal = { frame, time: Math.min(duration > 0 ? duration : Infinity, frame / rate) };
+      dispatchPending();
     }
 
     return {
       get goal() { return goal; },
-      /** @param {number} delta @param {Position} position */
-      step(delta, { frame, totalFrames, rate, duration }) {
-        const base = goal?.frame ?? frame;
-        const target = Math.max(0, Math.min(totalFrames > 0 ? totalFrames - 1 : Infinity, base + delta));
-        if (target === base) return;
-        goal = { frame: target, time: Math.min(duration > 0 ? duration : Infinity, target / rate) };
-        flush();
+      /** @param {number} frame @param {Bounds} bounds */
+      set(frame, bounds) {
+        aim(clampFrame(frame, bounds.totalFrames), bounds);
       },
+      /** @param {number} delta @param {Position} position */
+      step(delta, position) {
+        const base = goal?.frame ?? position.frame;
+        const target = clampFrame(base + delta, position.totalFrames);
+        if (target !== base) aim(target, position);
+      },
+      /** Commit the last scrub target on release without waiting for the burst window. */
+      flush,
       /** Called after the clock has presented the picture for the dispatched seek. */
       settle() {
         if (inFlight === null) return;
@@ -54,7 +77,7 @@
           timer = null;
         }
         inFlight = null;
-        flush();
+        dispatchPending();
       },
       clear() {
         if (timer !== null) cancel(timer);

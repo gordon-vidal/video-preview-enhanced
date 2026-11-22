@@ -80,7 +80,7 @@ leaves them alone (`docs/notes/ui-simple.md`).
 Right-clicking the player opens VS Code's own context menu (no Cut / Copy / Paste) with quick actions on this moment, like a browser's or YouTube's: **Play** / **Pause**, **Loop** (✓ when on), then **Set Loop Start (A)**, **Set Loop End (B)** and **Clear A-B Loop** (while a loop is set), then **Copy Frame**, **Save Frame as PNG…**, **Copy Timestamp**, then **Compare With…** (video files only), then **Keyboard Shortcuts** and **Settings…** (opens the ⚙ panel). The frame link is `Shift+C`. How it plays (speed, sound, subtitles, tools) is in the ⚙ panel. The entries only run on the player in focus; they are hidden from the Command Palette. Needs VS Code 1.82 or later (the extension's minimum); details in `docs/notes/context-menu.md`.
 
 Frame numbers are the ones the player shows: `#1` is the first frame.
-While stepping, the seek bar shows the requested frame as the decoder catches up.
+While stepping or dragging the seek bar, the bar shows the requested frame as the decoder catches up.
 **A** and **B** still mark the picture on screen.
 
 ## Keys in compare

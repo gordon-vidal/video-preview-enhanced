@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Frame stepping updates the seek bar immediately. In Compare, fast wheel steps combine into one follow-up seek, and the videos start seeking together.
+- Frame stepping and dragging the seek bar update the position readout immediately. Compare combines rapid requests and starts seeking across the videos together.
 
 ## 0.9.0 (2026-11-22)
 
