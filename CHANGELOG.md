@@ -3,6 +3,7 @@
 ## Unreleased
 
 - New: **Export A–B Clip…** saves a lossless video excerpt with native ffmpeg. Compare shares an **A** / **B** loop and can save one clip per tile with its offset applied. Set marks during built-in playback to export exact clips.
+- Fixed: WebCodecs keeps visible frames and hides decode preroll when MP4 edit segments share timestamps.
 
 - New: a **Compare** button in the player's bar. It asks before starting Compare with the video; with a Compare open it reads **Add to Compare** and adds the video directly.
 - New: a **Stop** button in Compare's Add Mode hint.
