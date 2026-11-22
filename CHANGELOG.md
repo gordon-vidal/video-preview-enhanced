@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+## 0.9.0 (2026-11-22)
+
+Lossless A–B clip export in the player and Compare (with native ffmpeg real timestamps), Compare tile reordering, unified Start/Add to Compare controls, larger action toasts, and faster multi-video drops.
+
 - New: **Export A–B Clip…** saves a lossless video excerpt with native ffmpeg. Compare shares an **A** / **B** loop and can save one clip per tile with its offset applied. Marks set during built-in or native ffmpeg playback give exact clips (native ffmpeg now reports each picture's own timestamp, so HEVC, AV1, ProRes and variable-frame-rate files work without switching decoder). Marks set during Live transcode, whose pictures are re-timed, are refused at once with a **Use original video** button.
 - Fixed: dragging selected videos from the Explorer into the editor includes any video already open in a preview tab.
-- Fixed: Compare updates A–B timeline marks immediately when pressing A or B while paused.
+- Fixed: Compare updates A–B timeline marks immediately when pressing A or B while paused, and A–B marks draw above the seek track.
 - Fixed: closing or reloading the player cancels pending video opens, frame exports, and native seek-bar thumbnails.
 - Fixed: the video player loads again after VS Code's **Developer: Reload Webviews** command.
 - Fixed: WebCodecs keeps visible frames and hides decode preroll when MP4 edit segments share timestamps.
