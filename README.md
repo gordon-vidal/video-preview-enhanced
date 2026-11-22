@@ -5,9 +5,8 @@
 - **Every common format, with sound:** MP4, MKV, MOV, AVI, WebM, WMV, MXF and more, including HEVC, AV1 and ProRes.
 - **Nothing else to install, no admin rights:** plays right away. Add portable FFmpeg with one click (still no admin rights) and 4K HEVC and AV1 play in real time on your GPU.
 - **Remote video streaming:** Remote‑SSH and WSL, with an efficient transcode on the SSH host for heavy footage. Video URLs and HLS / DASH streams too.
+- **Compare up to 16 videos, frame‑accurately:** synced playback and frame steps, zoom and pan together, per-video offsets.
 - **Seek‑bar previews:** hover or drag the seek bar and see the picture at that moment.
-- **Frame‑accurate:** step one frame forward or back, jump to any frame or timecode.
-- **Compare up to 16 videos** in sync: side by side, split or in a grid.
 - **Pro tools:** scopes, pixel inspector, Codec X‑ray (I / P / B frames and bitrate).
 - **Everyday comforts:** subtitles, audio tracks, 0.25× to 4× speed, A–B loops.
 - **Free, MIT licensed, no telemetry.**
@@ -18,20 +17,17 @@ Double-click a video in a **Remote‑SSH or WSL workspace** and it plays, with n
 
 ![Playing a video from a Remote-SSH workspace, stepping a frame and comparing two encodes](media/marketing/hero-remote.gif)
 
+## Compare, frame by frame
+
+Select up to **eight videos** (16 with a setting), right-click and choose **Compare Videos**. They play on one timeline, and every step lands on matching frames in all of them, forward or backward. Pause and scroll to step through frames, Ctrl+scroll and drag to zoom and pan all videos together, and nudge a video's offset one frame at a time to bring it in sync. Side by side, split or grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
+
 ## Seek‑bar previews
 
 Hover over the seek bar to see the picture at that moment, and drag to scrub through the video live. Release and you land on the exact frame. A separate decoder reads only the keyframes, starts when your pointer reaches the bar and stops when it leaves, so previews appear quickly and never slow playback down.
 
-## Frame‑accurate
-
-Step one frame forward or back, and backward is exact too. Jump to a frame number or timecode, loop a section, and copy a link that opens the video at that exact frame for someone else.
-
-## Compare videos side by side
-
-Select up to **eight videos** (16 with a setting), right-click and choose **Compare Videos**. They play on one timeline: play, pause and frame steps move every video together. Nudge a video's offset by single frames to line it up, and switch between side by side, split and grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
-
 ## And much more
 
+- **Go to any frame:** step frame by frame in any video, jump to a frame number or timecode, and copy a link that opens the video at that exact frame.
 - **Scopes:** waveform, RGB parade, vectorscope and histogram.
 - **Pixel inspector:** zoom in and read the RGB and Y / U / V values under the cursor.
 - **Codec X‑ray:** every frame as a bar, with its type (I, P, B), size and bitrate. Click one to go there.
