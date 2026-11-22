@@ -137,7 +137,8 @@ module.exports = [{
         s = await P.state();
         ok(!s.panel && s.bar[exp] === 'false', `${sel} again: panel ${JSON.stringify(s.panel && s.panel.view)}, ${exp} ${s.bar[exp]}`);
       }
-      // Another button switches the page; the cog closes whatever is open.
+      // Another button switches the page; so does the cog (Settings opens on the first click from another panel,
+      // 9fa88d5), and a second click on it closes Settings.
       await P.ask('click', { sel: '#infoBtn' });
       await P.ask('click', { sel: '#rate' });
       await settle(300);
@@ -146,7 +147,12 @@ module.exports = [{
       await P.ask('click', { sel: '#cog' });
       await settle(300);
       s = await P.state();
-      ok(!s.panel, 'the cog did not close the speed panel');
+      ok(s.panel && s.panel.view === 'main' && s.bar.cogExpanded === 'true',
+        `the cog from the speed panel opens Settings: ${JSON.stringify(s.panel && s.panel.view)}`);
+      await P.ask('click', { sel: '#cog' });
+      await settle(300);
+      s = await P.state();
+      ok(!s.panel, 'a second cog click closes Settings');
       // The main page: rows of the mock-up, tools grid.
       await P.ask('click', { sel: '#cog' });
       await settle(300);
@@ -161,7 +167,8 @@ module.exports = [{
       s = await P.state();
       const abLabels = s.panel.rows.map((r) => r.label);
       for (const want of ['Set A / B / clear', 'Export frames A–B…', 'Export A–B Clip…', 'Copy ffmpeg command for A–B']) ok(abLabels.some((l) => l.includes(want)), `A–B Range page has no ${want}: ${JSON.stringify(abLabels)}`);
-      P.key('Escape');
+      // Escape in the panel (focus moved into the page) goes back to Settings; outside it, Escape closes every panel.
+      P.key('Escape', { target: ':focus' });
       await settle(200);
       // A tool from the Inspection page, without any mode switch: scopes.
       await P.ask('click', { sel: '#panel button', text: 'Inspection' });
@@ -183,7 +190,7 @@ module.exports = [{
       await P.ask('click', { sel: '#cog' });
       await settle(300);
       let s = await a11y();
-      ok(s.panel.view === 'main' && s.active !== 'cog' && s.activeRole === 'button', `focus in the open panel: ${s.active} (${s.activeRole})`);
+      ok(s.panel.view === 'main' && s.active !== 'cog' && ['button', 'switch'].includes(s.activeRole), `focus in the open panel: ${s.active} (${s.activeRole})`);
       const first = s.active;
       P.key('ArrowDown', { target: ':focus' });
       await settle(300);
