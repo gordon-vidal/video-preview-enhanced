@@ -329,6 +329,7 @@
     for (const key of [...marks.keys()]) if (key !== ab.aPts && key !== ab.bPts) marks.delete(key);
     toast(ab.toast(fmtAB));
     controls.refresh();
+    updateUi();
     save();
   }
   function exportAB() {
