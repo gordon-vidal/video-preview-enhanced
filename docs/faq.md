@@ -6,6 +6,9 @@ VS Code blocks sound until you interact with the page. Click the video or press 
 **MP4 files open in VS Code's own preview.**
 You may have undone the automatic default, or chosen another editor for them. See [Making it the default](commands-and-settings.md#making-it-the-default-for-mp4-and-webm), or right-click → **Open With…** → **Video Preview Enhanced**.
 
+**The extension says another version is installed.**
+Check the versioned Video Preview Enhanced folders in VS Code's extensions directory. An extension development checkout can sit beside other worktrees without triggering this warning.
+
 **A 4K video plays in slow motion.**
 The tested 4K HEVC, AV1 and VP9 clips played below their source rate in WebAssembly. See [Performance](performance.md) for frame rates. VS Code lets the player use the GPU decoder only for H.264 and VP8. ⓘ (About this video) says what plays the file and the stats overlay (`Shift+I`) shows the decoding speed; when playback falls behind, a notice offers to skip to keyframes. Or run **Set Up Optional ffmpeg** (no admin rights needed) to decode natively.
 

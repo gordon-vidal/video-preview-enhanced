@@ -10,6 +10,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { serveBlock } = require('./read-block');
+const { otherInstalledVersions } = require('./old-installs');
 // Modules a feature needs (URLs, ffmpeg setup and download, A-B export, AVI, the remote stream) load on first use:
 // a window start pays only for what it runs. The proxy forwards property reads to the real module.
 const lazy = (id) => { let m; return new Proxy({}, { get: (_, k) => (m || (m = require(id)))[k] }); };
@@ -996,13 +997,9 @@ async function fileIcons({ force = false } = {}) {
 // ---- end file icons ----
 
 /** Two installs of this extension (an old 0.2.0 beside the new one) leave a window with a stale manifest. Tell once. */
-async function warnOldInstalls() {
+async function warnOldInstalls(extensionId) {
   try {
-    const dir = path.dirname(extensionDir);
-    const mine = path.basename(extensionDir);
-    const base = mine.replace(/-\d[\w.+-]*$/, '');
-    if (base === mine) return;
-    const others = (await fs.promises.readdir(dir)).filter((n) => n !== mine && n.startsWith(`${base}-`) && /^\d/.test(n.slice(base.length + 1))).sort();
+    const others = await otherInstalledVersions(extensionDir, extensionId);
     const key = others.join(',');
     if (!others.length || globalState.get('videoPreviewEnhanced.warnedOld') === key) return;
     await globalState.update('videoPreviewEnhanced.warnedOld', key);
@@ -1264,7 +1261,7 @@ function activate(context) {
   );
   autoDefault();
   fileIcons();
-  warnOldInstalls();
+  warnOldInstalls(context.extension && context.extension.id);
 
   // ---- Compare and Add to Compare (src/compare.js) ----
   let testCompareFiles;
