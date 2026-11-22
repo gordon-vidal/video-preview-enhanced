@@ -9,6 +9,37 @@
 /* exported VpeControls */
 const VpeControls = (() => {
   const PIC = typeof VpePicture !== 'undefined' ? VpePicture : require('./picture');
+  /** @param {HTMLElement} element @param {(text: string) => void} announce */
+  function createToast(element, announce) {
+    let timer = 0;
+    /** @type {Animation | undefined} */
+    let fade;
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+    const fadeMs = 120;
+    return (text, ms = 1500) => {
+      clearTimeout(timer);
+      // An exit fade from the previous message must never hide its replacement.
+      if (fade) {
+        fade.onfinish = null;
+        fade.cancel();
+        fade = undefined;
+      }
+      announce(text);
+      element.textContent = text;
+      const wasHidden = element.hidden;
+      element.hidden = false;
+      if (wasHidden && !reducedMotion.matches) fade = element.animate({ opacity: [0, 1] }, fadeMs);
+      timer = setTimeout(() => {
+        if (reducedMotion.matches) element.hidden = true;
+        else {
+          const exit = element.animate({ opacity: [1, 0] }, { duration: fadeMs, fill: 'forwards' });
+          fade = exit;
+          exit.onfinish = () => { element.hidden = true; exit.cancel(); fade = undefined; };
+        }
+      }, ms);
+    };
+  }
+
   const SVG = (body, o = {}) => `<svg width="${o.size || 18}" height="${o.size || 18}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${o.sw || 1.6}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const ICON = {
     speed: SVG('<circle cx="12" cy="13" r="8"></circle><path d="M12 13l4-4M12 3v2"></path>'),
@@ -174,9 +205,9 @@ const VpeControls = (() => {
   const ctrlName = /Mac/i.test((typeof navigator !== 'undefined' && navigator.platform) || '') ? 'Cmd' : 'Ctrl';
   function keyGroups(p) {
     if (p.compare) {
-      // Compare (media/compare.js): one bar for all videos; no subtitles, tools or A-B loop.
+      // Compare (media/compare.js): one bar for all videos.
       return [
-        { title: 'Playback', rows: [['Play / pause (all)', 'Space', 'K'], ['Click a video', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R']] },
+        { title: 'Playback', rows: [['Play / pause (all)', 'Space', 'K'], ['Click a video', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A-B loop start / end', 'A', 'B']] },
         { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End']] },
         { title: 'Frames', rows: [['Previous / next frame (all videos)', ',', '.'], ['Copy view', `${ctrlName}+C`], ['Time / timecode / frames', 'click the time']] },
         { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M']] },
@@ -210,6 +241,7 @@ const VpeControls = (() => {
     let opener = null;
     /** @type {HTMLElement|null} */
     let sheetOpener = null;
+    let speedDrag = null;
 
     const el = (tag, cls, text) => {
       const e = document.createElement(tag);
@@ -266,14 +298,14 @@ const VpeControls = (() => {
         f.appendChild(btn('row', 'Live transcode', () => show('transcode'), { icon: ICON.quality, value: `${modeName}${mbps}`, chev: true, aria: { 'aria-label': `Live transcode, ${modeName}${mbps}` } }));
       }
       f.appendChild(btn('row', s.compare ? 'Copy view' : 'Copy frame', () => { close(false); env.act.copyFrame(); }, { icon: ICON.camera, kbd: 'Ctrl+C' }));
-      f.appendChild(btn('row', 'Keyboard shortcuts', () => openSheet(buttons.cog), { icon: ICON.keys, kbd: '?' }));
+      f.appendChild(btn('row', 'Keyboard shortcuts', () => openSheet(buttons.cog), { icon: ICON.keys, kbd: '?', aria: { 'aria-haspopup': 'dialog' } }));
       f.appendChild(btn('row', 'Jump sizes', () => show('jumps'), { icon: ICON.jumps, value: [s.jump.arrow, s.jump.shift, s.jump.ctrl].map(navName).join(' · '), chev: true }));
       f.append(el('div', 'sep'), heading('Tools'));
       const grid = el('div', 'tools');
       grid.setAttribute('role', 'group');
       grid.setAttribute('aria-label', 'Tools');
       for (const t of s.tools) {
-        const b = btn(`tool${t.on ? ' on' : ''}`, null, () => { if (!t.keepOpen) close(false); t.run(); }, { aria: { 'aria-label': t.label, ...(t.key && !t.note ? { 'aria-keyshortcuts': t.key.replace('Ctrl', 'Control') } : {}) } });
+        const b = btn(`tool${t.on ? ' on' : ''}`, null, () => { if (!t.keepOpen) close(false); t.run(); }, { aria: { 'aria-label': t.ariaLabel || t.label, ...(t.key && !t.note ? { 'aria-keyshortcuts': t.key.replace('Ctrl', 'Control') } : {}) } });
         b.dataset.tool = t.label;
         const k = el('span', 'tkey', t.note || t.key || '·');
         k.setAttribute('aria-hidden', 'true');
@@ -308,15 +340,24 @@ const VpeControls = (() => {
       input.setAttribute('aria-label', 'Speed');
       input.setAttribute('aria-valuetext', speedText(s.rate));
       input.dataset.nav = '1';
-      input.addEventListener('input', () => { env.act.setRate(Number(input.value)); read.textContent = speedText(env.get().rate); input.setAttribute('aria-valuetext', read.textContent); });
-      input.addEventListener('change', () => render());
       // Presets as labels on the slider's track, each at its speed.
       const marks = el('div', 'marks');
       for (const v of SPEEDS) {
-        const b = btn('mark', speedText(v), () => { env.act.setRate(v); render(); }, { aria: { 'aria-pressed': String(Math.abs(v - s.rate) < 1e-6), 'aria-label': `Speed ${speedText(v)}` } });
+        const b = btn('mark', speedText(v), () => env.act.pickRate(v), { aria: { 'aria-pressed': String(Math.abs(v - s.rate) < 1e-6), 'aria-label': `Speed ${speedText(v)}` } });
         b.style.left = `${((v - SPEED_MIN) / (SPEED_MAX - SPEED_MIN)) * 100}%`;
         marks.appendChild(b);
       }
+      // Apply the rate without rebuilding the panel while the slider owns the pointer.
+      speedDrag = VpeRangeDrag.bind(input);
+      input.addEventListener('input', () => {
+        const rate = clampRate(Number(input.value));
+        env.act.setRate(rate);
+        read.textContent = speedText(rate);
+        input.setAttribute('aria-valuetext', read.textContent);
+        for (const [i, b] of [...marks.children].entries()) {
+          b.setAttribute('aria-pressed', String(Math.abs(SPEEDS[i] - rate) < 1e-6));
+        }
+      });
       sl.append(input, marks);
       f.appendChild(sl);
       const note = el('div', 'pnote');
@@ -515,6 +556,8 @@ const VpeControls = (() => {
     const kit = { el, btn, kbd, head, heading, sw, ICON, show: (v) => show(v), close: (r) => close(r), render: () => render() };
     function render() {
       if (!view) return;
+      speedDrag?.stop();
+      speedDrag = null;
       const s = env.get();
       const nav = [...panel.querySelectorAll('[data-nav]')];
       const fi = nav.indexOf(/** @type {any} */ (document.activeElement));
@@ -539,11 +582,10 @@ const VpeControls = (() => {
       const set = (b, on) => { if (b) { b.setAttribute('aria-expanded', String(on)); b.classList.toggle('open', on); } };
       const own = view && VIEWS[view] ? VIEWS[view].button : null;
       set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'jumps' || view === 'picture' || view === 'transcode' || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
-      for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks', 'keys'].includes(k)) set(b, !!own && own === k);
+      for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks'].includes(k)) set(b, !!own && own === k);
       set(buttons.info, view === 'info');
       set(buttons.rate, view === 'speed' && opener === buttons.rate);
       set(buttons.tracks, view === 'subs' && opener === buttons.tracks);
-      set(buttons.keys, !sheet.hidden);
     }
     /** Opens (or switches to) a page; focus moves into it. */
     function show(v, from) {
@@ -551,7 +593,6 @@ const VpeControls = (() => {
       closeSheet(false);
       view = v;
       panel.hidden = false;
-      panel.textContent = '';
       render();
       const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' ? panel.querySelector('[aria-checked="true"]') : null) || panel.querySelector('[data-nav]'));
       if (first) first.focus();
@@ -566,14 +607,16 @@ const VpeControls = (() => {
       if (!view) return;
       const back = opener;
       view = null;
+      speedDrag?.stop();
+      speedDrag = null;
       panel.hidden = true;
       panel.textContent = '';
       sync();
       if (refocus && back) back.focus();
     }
-    function openSheet(from) {
+    function openSheet(from = view ? opener : document.activeElement) {
       close(false);
-      sheetOpener = from || null;
+      sheetOpener = from instanceof HTMLElement && from !== document.body ? from : buttons.cog;
       sheet.textContent = '';
       const dlg = el('div', 'sheet');
       dlg.setAttribute('role', 'dialog');
@@ -613,7 +656,8 @@ const VpeControls = (() => {
       sheet.hidden = true;
       sheet.textContent = '';
       sync();
-      if (refocus && sheetOpener) sheetOpener.focus();
+      if (refocus) (sheetOpener?.isConnected ? sheetOpener : buttons.cog).focus();
+      sheetOpener = null;
     }
     sheet.addEventListener('click', (e) => { e.stopPropagation(); closeSheet(true); });
     sheet.addEventListener('keydown', (e) => {
@@ -650,7 +694,7 @@ const VpeControls = (() => {
 
     return {
       toggle, show, close, render, openSheet, closeSheet,
-      toggleSheet: (from) => { if (sheet.hidden) openSheet(from); else closeSheet(true); },
+      toggleSheet: () => { if (sheet.hidden) openSheet(); else closeSheet(true); },
       view: () => view, sheetOpen: () => !sheet.hidden,
       anyOpen: () => !!view || !sheet.hidden,
       closeAll: (refocus) => { close(refocus); closeSheet(refocus); },
@@ -659,7 +703,7 @@ const VpeControls = (() => {
     };
   }
 
-  return { create, facts, keyGroups, qualityRows, qualityLabel, clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV };
+  return { create, createToast, facts, keyGroups, qualityRows, qualityLabel, clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV };
 })();
 
 if (typeof module !== 'undefined') module.exports = VpeControls;

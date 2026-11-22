@@ -7,7 +7,7 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 | 1. Unit | Pure logic: decoder choice, playlist/manifest parsing, time and frame math, settings, caches. Logic lives in small modules (not inside `player.js` / `engine.js`) so it can be tested alone. | Node | yes (all cores) | seconds |
 | 2. Engine | The WebAssembly decoders in Node, no browser: frame-exact seeking, stepping, end of file, A-B loop, every format. Engine correctness may be proven here (2026-11-20). | Node | yes (all cores) | about a minute |
 | 3. VS Code | 20-30 user scenarios in real VS Code on a hidden desktop (GPU decoding, WebGL, panels, icons, native ffmpeg, URLs, compare). Each scenario checks many things in one instance. Scenarios check correctness only, never speed, so load can't fail them. | real VS Code | 2-3 instances if WebGL2 stays stable (serial for now: see below) | minutes |
-| 4. Performance | CPU, memory, start-up and frame rates, compared with the previous numbers. Not a pass/fail gate; run before a release or during performance work. | real VS Code | **no: the only layer with a lock** | as long as it takes |
+| 4. Performance | CPU, memory, start-up and frame rates, compared with the previous numbers. Not a pass/fail gate; run before a release or during performance work. | real VS Code | no: shares the VS Code lock with layer 3 and also holds the benchmark lock | as long as it takes |
 
 ## When what runs
 
@@ -51,6 +51,9 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 - Generated test media must come out the same on every run and every ffmpeg version, or be checked after
   making it: ffmpeg 7+ runs its steps in threads, so how it interleaves streams can vary between runs
   (`test/bitmapsubs/make_media.js` forces time order and checks it).
+- The engine runner prepares the shared track fixtures before starting parallel tests. The generator publishes
+  each clip after ffmpeg succeeds and records the complete set. A missing stamp or a changed clip size causes
+  regeneration.
 
 ## Time limits
 
@@ -97,6 +100,8 @@ node test/run.js engine --grep frames_            # only matching files / scenar
   the fast-merge preset (`SMOKE` in `test/vscode/scenario_map.js`; `--smoke --explain` prints what it picks
   without starting VS Code).
 - **Layer 4** (`test/perf/run.js`): benches of `test/perf/benches.js`, compared with `test/perf/results/`.
+- Run layers 3 and 4 through `test/run.js`. They share `vpe-vscode-lock` in the system temp directory
+  across worktrees. A waiting runner prints the holder and starts after it releases the lock.
 - CI (`.github/workflows/ci.yml`) and the Publish workflow run `node test/run.js unit engine`.
 - Change base for `--changed`: `VPE_BASE` (default `main`). VS Code: `VPE_CODE` or the portable build of
   `node test/vscode/get_code.js`.
@@ -128,7 +133,7 @@ Measured 2026-11-20 on the i7-9700K / RTX 4070 desktop **while a game was runnin
 | 1. Unit | 65 files (`test/host`, `test/unit`, engine / inspect / subtitles / timestretch / AVI logic), 8 at a time | 65 passed | 28 s |
 | 2. Engine | 13 files: `test/engine` frame and format tests (the seeking checks of the WebAssembly path, every format of the test media), tracks, engine smoke, picture subtitles, X-ray index, pool, thumbnails | 13 passed | 74 s |
 | 3. VS Code | 21 scenarios, 225 results, 3 instances at once | 223 passed; the 2 failures (sampling speed, fixed) passed when run again; 2 instances without WebGL2, both passed in a fresh one | 12.7 min (33 min of scenarios) |
-| 4. Performance | 29 benches (26 VS Code, 3 Node; 4 more with `VPE_TRANSFER_CLIPS`; `--list`) | built and tried (2 benches, not saved); no stored numbers yet | as long as it takes |
+| 4. Performance | 30 benches (27 VS Code, 3 Node; 4 more with `VPE_TRANSFER_CLIPS`; `--list`) | built and tried (2 benches, not saved); no stored numbers yet | as long as it takes |
 
 Layers 1-3 together took about 14.5 minutes, over the 10-minute target. With layer 3 serial (the default
 until the parallel question is settled) layer 3 alone is about 33 minutes. The longest scenarios are seeking,

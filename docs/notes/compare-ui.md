@@ -43,6 +43,8 @@ Find diff button are gone from the UI.
   sizes, Tools with Compare only (n videos), Extension settings. The mock-up's A-B loop and the other tools
   (Scopes, Inspector, Stats, X-ray, Export A-B) are left out: compare has no A-B loop and those tools are the
   single player's.
+- **Shortcuts:** open **Settings › Keyboard shortcuts** or press **?**. Closing the sheet after opening it
+  from Settings returns focus to the Settings button.
 - **About (ⓘ / I):** "About these videos" with a tab per video (the player's facts for that tile).
 - **Keys:** the player's (Space/K, , ., arrows with the jump sizes, J/L, Home/End, Shift+< >, ↑↓, M, R, F, I, ?,
   Esc, Ctrl+C copies the view) plus − / + (the video under the pointer, else the last chosen) and X (swap, 2
@@ -52,6 +54,37 @@ Find diff button are gone from the UI.
   `computeMetrics`, `ssim`, the scanner (hidden engine pair). Debug builds (`VPE_LOG`) still compute and log the
   paused pair's metrics (`metrics frameA=… psnrY=…`, used by `case/compare_metrics`); the scanner runs only from
   `window.vpeCompare.scanner` or the test hook (`scan`).
+
+## Tile order
+
+Put matching camera angles or references next to each other while the videos keep playing. The bar shows
+**Reorder** beside the Compare button. In Reorder mode it shows **Done**, and the stage shows this cue.
+
+```text
+            Drag tiles to reorder · Esc or Done to finish
+       ┌╌╌ A clip.mp4 ╌╌┐ ┌╌╌ B clip.webm ╌┐ ┌╌╌ C clip.mov ╌╌┐
+       │                 │ │                 │ │                 │
+       │           [↑ ↓] │ │                 │ │                 │
+       └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘ └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
+```
+
+Drag over another tile to preview insertion into its slot. Release on a tile to keep the change. **Done**,
+**Esc** or switching editor tabs ends the mode and cancels an unfinished drag. While in the mode, the tiles
+pause their pan, zoom, wheel stepping, divider and offset gestures.
+
+Hover or focus a tile to reveal its arrows in either mode. They sit in the bottom corner of the tile's own picture
+(bottom-right; in Split, the left picture's arrows bottom-left), not in the cell: a letterboxed picture leaves black
+bars above and below, and arrows in the cell's corner floated in those bars, away from the picture and its name pill.
+`layoutCells` sets `--pic-l`, `--pic-r` and `--pic-b` (how far the picture's edges lie inside the cell) on each cell and
+`.move` uses them; the layer-3 check `reorder/arrows-on-picture` (a 5-tile 3x2 grid) asserts the arrows' box lies inside
+the picture, within 8 px of its corner. **Tab** reaches the enabled arrows and
+**Enter** or **Space** activates them. Their accessible names are `Move <name> earlier` and
+`Move <name> later`. An arrow at an end of the order is disabled. Focus follows the moved tile.
+
+The letters, Compare panel, About tabs and editor title follow the new order. Decoders, clock, sound
+and offsets stay with their videos. The Add cell stays in the first spare slot, and a newly added video
+goes last when the page reloads. For two videos, **X** and **Swap sides** apply the same order change as the
+arrows or drag, in Side by side and Split.
 
 ## Starting a compare (2026-11-20)
 
@@ -73,8 +106,8 @@ Added without changing the player's look except a drop hint (a dashed frame with
   is down. Not verified with a real Explorer drag (the hidden-desktop runner can't drag): the layer-3 case sends a
   synthetic drop with the same data types. If a VS Code version omits the URI lists, the player toasts "Drag a video
   from the Explorer".
-- **Left out:** Explorer "Select for Compare" / "Compare with Selected" (a stateful two-step; multi-select
-  Compare / Play Together and "Compare With…" already cover it); `DocumentDropEditProvider` (text editors only);
+- **Left out:** Explorer "Select for Compare" / "Compare with Selected" (a stateful two-step covered by
+  Add to Compare and "Compare With…"); `DocumentDropEditProvider` (text editors only);
   dropping onto the compare page to add a video (Add video… exists).
 
 ## A plain drag from the Explorer (investigated 2026-11-20)
@@ -105,47 +138,93 @@ the VS Code API.** Read in VS Code 1.147.0's own code (the portable build in `te
   works too, since it is just another open).
 - Not read: the discussion of microsoft/vscode#339036 (no web access in this run). Worth a look for a planned API.
 
-## Add mode: add videos by clicking them in the Explorer (2026-11-20, branch `feat/compare-gesture`, for review)
+## Add to Compare and sticky Add Mode (approved 2026-11-22)
 
-The fallback Gordon asked for. Logic in `src/addmode.js` (pure), the host side in `src/compare.js`
-(`registerCompare`: `toggleAddMode`, `claimOpen`, `stopAddMode`), the open interception in
-`src/extension.js` (`resolveCustomEditor`).
+Two Explorer commands required users to choose the workflow before selecting a file or folder. **Add to Compare**
+accepts both in one selection. Expand folders in natural name order without descending into subfolders, skip files
+already included and report how many unique videos were beyond the configured limit. Use the most recently active
+Compare, or the active or most recently used file player if no Compare is open. With neither, start a new Compare.
+A single selected file starts a one-tile Compare with the existing Add cell alongside it.
 
-- **Start:** Shift+D in the player or compare; in the D quick pick the row "Click videos in the Explorer…"; in the
-  Compare panel the row "Add from the Explorer" (a switch, Shift+D shown); the palette command "Compare: Add Videos
-  from the Explorer". The same key or row again turns it off.
-- **While on:** the next video VS Code opens (an Explorer click, a double-click, Quick Open, a plain drop on the
-  editor) does not get its own player: the host takes it in `resolveCustomEditor` before a Session starts and
-  closes that tab right after. A video opened in another editor (VS Code's own MP4 preview, a text tab) is taken
-  from the tab events and its tab closed. Only `file` / `vscode-remote` video files are taken.
-- **From a player:** one video. Compare opens with [player's video, clicked video] in the player's tab at the
-  player's position, and the mode ends. The player's tab is pinned first (`workbench.action.keepEditor`), because an
-  Explorer single click would otherwise replace a preview tab, the player with it.
-- **In compare:** every video clicked is added (the page reloads, as Add video… does), until Esc, Shift+D / the row
-  again, compare is full (4) or the compare tab closes. A video already shown is not added (toast). A full compare
-  does not start the mode (toast).
-- **Hint:** a small line at the top of the picture, dashed border in the focus colour, `role="status"` (read once):
-  "Click a video in the Explorer to compare with this one · Esc to stop" in the player, "Click videos in the
-  Explorer to add them (n of the set limit) · Esc to stop" in compare. It comes back after compare's page reloads.
-- **Esc:** the user is in the Explorer by then, so Esc is a keybinding (`videoPreviewEnhanced.stopAddFromExplorer`,
-  `when: videoPreviewEnhanced.addMode && !inputFocus && !inQuickOpen`), plus the page's own Esc. Known: while the mode
-  is on, Esc in the Explorer only stops the mode, and an Esc that closes a player panel also stops it (the page
-  forwards Esc to the workbench).
-- **Alt+D in the Explorer: dropped** (maintainer, 2026-11-21). The command `compareSelected`, its keybinding and its
-  Copy Path / clipboard trick are gone; the Explorer's **Compare Videos** (multi-select) and **Compare Videos in
-  Folder** (folder) remain.
+Add Mode turns on only on an explicit "add more" intent (maintainer decision 2026-11-22; `startsInAddMode` in
+`src/addmode.js`, unit-tested):
 
-### Maintainer feedback 2026-11-21: "Shift+D is good"
+| Starts the Compare in Add Mode | Opens with Add Mode off |
+|---|---|
+| the toolbar Compare button's **Start comparison** confirm (`origin: 'toolbar-start'`, built on another branch) | a drag and drop of several videos, **Open With…** on a selection (`'burst'`) |
+| a player armed by **Shift+D** or the D pick's Explorer row that took its next video (`'armed'`: the mode carries on) | **Add to Compare** on several files, a folder or a mix (`'selection'`), **Compare Videos in Folder** |
+| right-click **Start / Add to Compare** on one video that makes a one-video Compare (`'start-single'`) | the D quick pick, Shift+drop on a player, **Compare With…**; one file added to an open player (two videos) |
 
-- **Compare button = add mode.** ⚙ › Tools › Compare (the player; key hint Shift+D) and, in compare, **Add video…** (panel
-  row, tile menu, the Add cell) now start add mode instead of the open dialog. Unchanged: the D quick pick (its
-  **Browse…** row still opens the dialog), the player's right-click **Compare With…** and the palette command (all
-  named for the dialog), and the host's `add` message (the dialog, used by tests / the old path). The maximum follows
-  `compare.maxVideos` (`createAddMode({ max: maxVideos })` reads it at each use).
-- **Open together.** A multi-selection opened through Open With…, Enter or a double-click is one editor per file
-  in quick succession. `src/burst.js` (pure, timers injected) groups videos that arrive within 400 ms of the one before
-  (`VPE_BURST_MS` overrides it for tests) and, once it is quiet, `src/compare.js` opens them as one compare (the first
-  tab's group, or in the first video's player's place) and closes the burst's tabs and panels. Reports come from two
+Videos chosen at once are the whole set the user wanted, so nothing waits for more. Later, **Shift+D**, **Add video…**,
+the Compare panel's **Add from the Explorer** switch or the palette command toggle the mode. **Add video…** starts it. **Shift+D** in a file player and the **Click videos in the
+Explorer…** row in the D quick pick arm the player. The next video opens Compare at the player's position and the
+mode carries on. Pin the player while waiting so a preview open can leave the original tab in place until the
+transition.
+
+The hint uses the existing dashed border and `role="status"` above the pictures:
+
+    Click videos in Explorer to add · Esc to stop
+    ┌──────────────────┬──────────────────┐
+    │ Video A          │ Add video…       │
+    └──────────────────┴──────────────────┘
+
+Playback, scrubbing and stepping leave the mode on. Esc in the webview or the Explorer keybinding
+(`videoPreviewEnhanced.stopAddFromExplorer`), Shift+D, hitting `compare.maxVideos`, or switching to another editor
+ends it. **Add to Compare** can append while the mode is off. Leaving Compare returns to the player and ends the mode.
+
+## Toolbar entry point and Add Mode hint (maintainer-approved, 2026-11-22)
+
+The single-video player's **Compare** button asks before it starts a one-video Compare with Add Mode on; with a
+Compare open it reads **Add to Compare** and adds the video to the most recently active Compare at once
+([player design note](ui-simple.md#compare-cc-and-toolbar-icons-maintainer-approved-2026-11-22)).
+
+The Add Mode hint ("Click videos in Explorer to add · Esc to stop") ends with a small **Stop** button. A click, or
+Enter / Space after Tab, ends Add Mode like Esc; focus then moves to the bar's Compare button. The hint stays
+click-through apart from the button. The hint text is the live status (`role="status"`).
+
+![The Add Mode hint with Stop](img/compare-addhint-stop.png)
+
+Compare's bar uses the same icon set as the player (`src/bar.js`); **Reorder**, speed and time stay text. Compare
+does not render subtitles, so its bar has no CC.
+
+[Compare bar before](img/toolbar-compare-before.png) · [after](img/toolbar-compare-after.png)
+
+`src/addmode.js` tracks the active target, video identities, capacity and editor-switch rule. `src/comparepick.js`
+plans a selection against the open editors. The host intercepts player opens in `resolveCustomEditor` and closes the
+temporary tab. It uses tab events for files opened through a different editor and distinguishes those new video tabs
+from switching to an existing editor. Only file and VS Code remote video URIs join.
+
+### Contextual Compare commands (maintainer approved)
+
+Both the Explorer menu and the file player's editor title show **Video Preview Enhanced: Start Compare** until
+a Compare session opens, then **Video Preview Enhanced: Add to Compare**. The editor title keeps its diff icon.
+The Explorer variants run the same selection handler for videos, folders and mixed selections. In the player,
+Start Compare opens the file picker and Add to Compare sends the player's video to the most recently active
+Compare. The Command Palette shows the matching player command with the same name. The player's right-click
+**Compare With…** still opens the picker. Existing bindings to `videoPreviewEnhanced.compareWith` and
+`videoPreviewEnhanced.addToCompare` keep working.
+
+`videoPreviewEnhanced.compareOpen` is initialized from the window's live sessions and follows their lifecycle.
+A background Compare still counts. The last Compare closing switches the label back to Start Compare.
+`comparemenu_test.js` checks the context and menu contributions, and `compare_addmode` runs the Explorer and
+player commands in the hidden desktop.
+
+- **Open together.** A multi-selection opened through Open With…, Enter, a double-click or a drop is one editor per
+  file in quick succession. `src/burst.js` (pure, timers injected) groups videos that arrive within 120 ms of the one
+  before (`BURST_WINDOW_MS`; `VPE_BURST_MS` overrides it for tests) and, once it is quiet, `src/compare.js` opens
+  them as one compare (the first tab's group, or in the first video's player's place) and closes the burst's tabs and
+  panels. The opens of one gesture arrive within about 10 ms of each other (measured with 2 to 8 videos), so 120 ms
+  leaves a wide margin and was chosen over 400 ms to cut about 280 ms from every open together. A Compare opened by
+  a burst has Add Mode off (above).
+- **Speed (2026-11-22).** Time from the first player resolve to a picture in every tile (debug log, `compare-burst-startup`
+  bench): the burst window, the players, and two waits inside Compare were the cost. (1) The window 400 → 120 ms.
+  (2) A video that arrives while another is pending is **held**: the player's `show()` (page, decoder download, ffprobe,
+  native start) waits for the burst's verdict (`burst.wait`; `holdOpen` in `src/compare.js`, 10 s at most) and never
+  runs if compare takes it, so 2 to 8 players no longer compete with Compare's own start-up. A video opened alone
+  starts after one macrotask (setImmediate, sub-millisecond), so a single open is unchanged. (3) `syncPaused` no
+  longer re-seeks a follower that is still on its first frame and wanted there (a soft tile slower than the clock
+  decoded its first picture twice). (4) The first picture of every tile no longer waits for each tile's second frame
+  to be decoded (`atFirstFrame`). Reports come from two
   places so a lazily resolved editor still counts: `resolveCustomEditor` (`noteOpen`) and `tabGroups.onDidChangeTabs`
   for our view types (the same file from both is one entry). More than `compare.maxVideos`: the first ones are
   compared and the rest stay as their own tabs (warning). Not started: one video, the same file twice, add mode on,
@@ -153,23 +232,20 @@ The fallback Gordon asked for. Logic in `src/addmode.js` (pure), the host side i
   after compare opens: a short flash); a user who opens two videos within 400 ms by hand gets a compare; session
   restore at start-up does not report tab events after activation, but the resolves of restored editors that land
   within the window would (not seen, not tested: a real restart is not driven). Fallback if it misfires for someone:
-  the setting, and the Explorer's **Compare / Play Together**.
+  the setting, and the Explorer's **Add to Compare**.
 
-Options for Gordon (not built): a button on the bar instead of / beside Shift+D; add mode always multi (also from the
-player); a status bar item instead of the in-picture hint; time out the mode after a minute; a setting "a video
-dropped on a player's group joins compare" (accepts the double-click ambiguity above).
-
-Tests: `test/host/addmode_test.js` (the rules; with a fake VS Code: Shift+D in a player and an open become compare
-in place at its position, compare adds until full, duplicates, other editors' tabs closed, Esc, closing compare),
-`test/host/comparepick_test.js` (the new quick pick row, folder videos, Compare Videos in Folder), `test/host/burst_test.js`
-(open together: leftover preview tab closed, one-time notice),
-`case/compare_addmode` (layer 3: the opens are `vscode.open` with a preview tab through the test hook `openFile`, since
-the hidden runner can't click the Explorer).
+`test/host/addmode_test.js` and `test/host/comparepick_test.js` cover mode transitions, capacity, duplicate files,
+routing and which starts turn the mode on. The hidden VS Code `compare_addmode` case checks the context-menu
+arguments, tab switching and the hint through single-file, multi-file, folder and playback flows. `compare_burst`
+checks Open Together (one compare, Add Mode off, the next open a player of its own). `test/host/burst_test.js` covers
+the window, holding and releasing players. The layer-4 bench `compare-burst-startup` times 1, 2, 5 and 8 opened
+together.
 
 ## Deviations from the mock-up
 
 - The tab is swapped rather than the same webview turning into compare (above).
-- ⚙ panel: no A-B loop row, Tools has only Compare (above).
+- ⚙ panel: the shared A-B loop and **Export A–B Clips…** follow the
+  [clip export design](ab-clip-export.md).
 - The bar stays under the picture in the editor (as in the player), not over it.
 - Colours come from the VS Code theme (as the player), not the mock-up's Dark+ values.
 

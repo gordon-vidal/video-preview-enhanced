@@ -19,7 +19,7 @@ Double-click a video in a **Remote‑SSH or WSL workspace** and it plays, with n
 
 ## Compare, frame by frame
 
-Select up to **8 videos** (16 with `compare.maxVideos`), right-click and choose **Compare Videos**. They play on one timeline, and every step lands on matching frames in all of them, forward or backward. Pause and scroll to step through frames, Ctrl+scroll and drag to zoom and pan all videos together, and nudge a video's offset one frame at a time to bring it in sync. Side by side, split or grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
+Select up to **8 videos** (16 with `compare.maxVideos`), right-click and choose **Start Compare**, or click **Compare** in the player's bar. They play on one timeline, and every step lands on matching frames in all of them, forward or backward. Pause and scroll to step through frames, Ctrl+scroll and drag to zoom and pan all videos together, and nudge a video's offset one frame at a time to bring it in sync. Side by side, split or grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
 
 ![Comparing four encodes in a 2×2 grid, stepping frame by frame, zooming together and nudging one video into sync](media/marketing/compare-showcase.gif)
 
@@ -67,7 +67,7 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 
 1. **Play:** Double-click a video in the VS Code Explorer.
 2. **Step:** Pause and press `,` or `.`. Press `?` for all shortcuts.
-3. **Compare:** Select two or more videos, right-click, and choose **Compare Videos**.
+3. **Compare:** Click **Compare** in the player's bar, or right-click a video, folder or selection and choose **Start Compare**.
 4. **Play heavier footage:** Run **Video Preview: Set Up Optional ffmpeg** from the Command Palette.
 
 Details: [features](docs/features.md) · [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [FAQ](docs/faq.md) · [all docs](docs/) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md)

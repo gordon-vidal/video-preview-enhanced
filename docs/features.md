@@ -9,10 +9,10 @@
 - **Picks up where you left off.** Reopening a video resumes at the last position.
 - **Subtitles.** SRT, WebVTT and ASS/SSA files.
   - Files next to the video load by themselves: `video.srt`, `video.en.srt`, `video.eng.forced.srt`, and `Subs/` folders.
-  - **Load Subtitles…** (command, or **Load subtitle file…** in the Subtitles panel) opens any other file. With no subtitles, the CC button opens that panel.
+  - **Load Subtitles…** (command, or **Load subtitle file…** under **Settings › Subtitles**) opens any other file.
   - Delay (`G` / `H`, 50 ms steps) and size, remembered per tab. Any text encoding (UTF-8, UTF-16, Windows-1252).
   - Subtitle tracks inside the file: text (SRT, ASS, WebVTT, mov_text) and picture-based (PGS from Blu-ray, DVB, DVD). Pictures stay in place on the video, also when zoomed.
-- **Subtitles and audio tracks.** CC turns subtitles on and off; ⚙ › Subtitles and ⚙ › Audio track list the sources and the file's sound tracks.
+- **Subtitles and audio tracks.** CC appears when a subtitle track is available and turns subtitles on and off. **Settings › Subtitles** is always available. **Settings › Audio track** lists the file's sound tracks.
 - **Seek-bar thumbnails.** Hover or drag the seek bar for a picture of that moment (built-in decoder and native ffmpeg). Pictures are decoded only while the pointer is on the bar, never in the background after a video opens; the one under the pointer first, then a few neighbours.
 - **Grab a frame.** `Ctrl+C` copies the current frame to the clipboard; `S` saves it as a full-size PNG.
 - **About this video (ⓘ, `I`).** The file in plain words: size and length, resolution (4K, 1080p…), frame rate, HDR and bit depth, video and sound codecs with bit rates, tracks, and what plays it (your GPU through ffmpeg, the built-in decoder, the remote stream). **Copy details** copies it; **Full technical details** shows the technical overlay.
@@ -41,7 +41,7 @@ These are for checking encodes, renders, captures and test output.
 **Zoom and pixel inspector.**
 - `Ctrl`+wheel zooms around the cursor, from any picture size; drag to pan when the picture is larger than the player. `+` / `-` zoom around the middle. `Z` cycles the **picture size** (below); zoomed in, `Z` goes back to Fit first.
 - `Shift+Z` turns on nearest-neighbour pixels. They also turn on by themselves from 200 %, with a pixel grid from 800 %.
-- `X` shows the position, RGB and the source Y/U/V values under the cursor, with an 8× loupe. Click copies the values. Press `X` again for the inspector without the loupe, and a third time to turn it off.
+- `X` shows the position, RGB and the source Y/U/V values under the cursor, with an 8× loupe. At 100 %, the inspector can distinguish individual screen pixels on high-DPI displays. Click copies the values. Press `X` again for the inspector without the loupe, and a third time to turn it off.
 
 **Go to a frame or time.** `Ctrl+G`, or click the frame number. Type a frame (`1432`), a time (`1:23.456`, `83.5s`), a percentage (`50%`) or a step (`+10`, `-3`).
 
@@ -66,13 +66,40 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 
 **ffmpeg command for A–B.** **Copy ffmpeg Command for A–B** copies a command line for the same range: an exact cut that re-encodes, or a fast `-c copy` cut. The fast one starts at the keyframe at or before A, so it can begin a little early.
 
+**Export an A–B clip.** Mark the first and last pictures with **A** and **B**, then choose **Export A–B Clip…**
+from the Command Palette, the details overlay (`I` → **Full technical details**) or **Settings → Tools**. Pick a folder for
+`<video>_A-B.<ext>`. The export copies the original video, compressed audio and embedded subtitle payloads. PCM audio is
+trimmed sample by sample in its original format. The export requires native ffmpeg and ffprobe on the host
+that has the video. MP4 and MOV use edit lists to show A through B, inclusive.
+Other files use MP4 when their streams can be copied into it. If an exact clip cannot be made, the player can
+offer a same-container keyframe cut or let you omit audio or subtitles. Review any early start or shifted end
+before saving a keyframe cut. Use an edit-list-aware player to view exact clips. The file can still contain
+compressed pictures outside the visible interval when decoding the selected pictures requires them.
+
+Exact clips work with marks set under the built-in decoders and under native ffmpeg: native ffmpeg reports each
+picture's own timestamp, also for variable-frame-rate video and files that start at a non-zero time. Live
+transcode re-times pictures, so marks set during it are refused when you set them or ask for the clip, with a
+**Use original video** button; set A and B again afterwards. An ffmpeg too old to report timestamps (before 5.1)
+asks for the built-in decoder the same way. A clip appears under its final name only once it is complete, and an
+existing file is never replaced.
+
+**Export Compare clips.** **A** and **B** mark a shared loop on the Compare clock. Run **Export A–B Clips…**
+from the palette or **Settings → Tools** to save one clip per tile, named `<letter>_<video>_A-B.<ext>`.
+Export applies each tile's offset and reports when snapping to a source frame changes alignment. If some tiles
+cannot be exported exactly, Compare lists them and asks before saving the remaining clips. Both exports report
+their results and preserve existing files in the chosen folder.
+
 **File details** (`I`). Container, streams, codecs and which decoder plays the file.
 
 **Compare / play together (up to 8 videos by default).** Check an encoder, a shader, a renderer or a model against a reference, frame by frame. For example, the expected and actual output of a failing test, or four camera angles of one take.
-- **Open it:** in a player, press **D** (quick pick: videos of this folder first, then the workspace, recently compared first, **Browse…** for the open dialog), or hold **Shift** and drag a video from the Explorer onto the picture; or ⚙ › Tools › **Compare** (the same as **Shift+D**: click the videos to add in the Explorer, one by one; Esc stops), or right-click the picture › **Compare With…** and pick more videos in VS Code's open dialog, up to `compare.maxVideos` total. Compare takes the player's tab and starts where the player was. Or select at least two videos in the Explorer, right-click → **Compare Videos** (a new tab), or right-click a folder → **Compare Videos in Folder** (its videos in natural name order, up to `compare.maxVideos`); **Open With… › Video Preview Enhanced** (or Enter, or a double-click) on such a selection opens them together in one compare too (setting `compare.openTogether`; a short notice explains it the first time, and a preview tab of one of those videos is closed rather than left beside the compare). **Shift+D** adds videos one click at a time: from a player one click opens compare and ends the mode; in compare it stays on until Esc, Shift+D again or the maximum. **Leave compare** (in the Compare panel) puts the player back in that tab, at the moment of the clock video.
+- **From the Explorer:** right-click a video, folder or selection and choose **Start Compare**. When a Compare is already open, the menu shows **Add to Compare** and adds the selection to the most recently active Compare. Folders contribute their direct video files in natural name order. Duplicate files are skipped and a message counts any videos that exceed `compare.maxVideos`. **Open Together** (`compare.openTogether`) also groups multiple videos opened at once, such as a drop from the Explorer, and opens them as one Compare within a fraction of a second. A drop includes selected videos the editor already shows in a preview tab.
+- **From the player:** click **Compare** in the bar, then **Start comparison**: Compare opens with this video and Add Mode on (Cancel, Esc or a click elsewhere does nothing). With a Compare open the button reads **Add to Compare** and adds the video to the most recently active Compare at once. The editor title shows **Start Compare** (pick more videos) or **Add to Compare** in the same way. Press **D** for a quick pick (same folder first, then workspace, with **Browse…** for the file dialog), hold **Shift** and drag a video from the Explorer onto the picture, or use **Compare With…** in the player's right-click menu. **Shift+D** or ⚙ › Tools › **Compare** waits for the next video you open. Compare takes the player's tab at its current position. **Leave compare** restores the player at the clock video's position.
+- **Add Mode:** click videos in the Explorer to add them to Compare. It turns on when you ask to add more: the bar's **Start comparison**, **Shift+D**, **Add video…**, the Compare panel's switch, or a right-click **Start / Add to Compare** on a single video that starts a one-video Compare. A Compare that starts from several videos at once (a drop or Open Together, a multi-selection or folder, **Compare Videos in Folder**, the **D** quick pick) opens with Add Mode off. Add Mode stays on during playback, scrubbing and stepping, and stops when you click **Stop** in the hint, press **Esc** or **Shift+D**, reach the maximum or switch editors. The Explorer's **Add to Compare** works either way.
 - **The same bar for all videos:** play, frame steps (in lockstep), seek, speed, loop and the jump keys act on every video. The time and the seek bar follow the **clock** video (its letter shows before the time); mute and volume act on the **sound** video. CC is hidden while comparing; the bar's Compare button (two panes) opens the **Compare panel**.
+- Tile frame numbers use the same timestamp rounding as the player, including for formats that store timestamps in whole milliseconds.
 - **Compare panel:** one row per video (letter, name, ⏱ clock, 🔊 sound, offset) that opens its page; **Add video…** (starts add mode: click the videos in the Explorer; up to 8 by default, or 16 with `compare.maxVideos`); with 2 videos **View** (Side by side or Split) and **Swap sides**; **Leave compare**. A video's page: its **offset** (− / + in frames of that video or in ms, with Reset; positive shows a later moment), **Clock** (the seek bar, time and frame steps follow it), **Sound from this video**, **Replace video…** and **Remove**.
 - **Layout:** 2 videos side by side, or split (one picture, drag the divider); 3 videos in a 2×2 grid with an empty cell that adds a fourth; 4 in a 2×2 grid. From 5 on, videos fill a static grid in order (3×2, 3×3, 4×3 or 4×4). The first spare slot shows **Add video** on hover or keyboard focus while below the limit. Each video keeps its own shape in its cell. Hover a video for its name, its own frame number and a ‹ offset › nudge; click the name for its page. In larger grids the nudge sits below the name pill. `−` / `+` nudge the video under the pointer. Right-click a video for its actions: clock, sound, offset, copy its frame or timestamp, replace, remove, add, leave.
+- **Reorder tiles.** Click **Reorder** in the bar and drag a tile to its new position. Click **Done**, press **Esc** or switch tabs to exit. Hover or focus a tile to use its up and down arrows at any time. The clock, sound and offsets follow their videos.
 - **In sync:** the others follow the clock's time, and a paused view only updates once every video shows its frame, so a step always shows matching frames. Another frame rate is matched by time.
 - **Decoding:** every video is its own player. With native ffmpeg, each gets frames at its cell's size (e.g. about 960×540 per cell of a 2×2 grid in a 1080p panel), never above `nativeMaxHeight`, so four videos stay under the transfer limit between VS Code and the panel.
 - PSNR / SSIM and "find the first difference" are hidden for now (kept for a later advanced mode).
@@ -97,17 +124,18 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 
 One layout (the old simple / advanced switch is gone). The bar, left to right:
 previous frame, play / pause, next frame, mute, volume, the time (click it: time → SMPTE timecode → frame
-number; the same detail while playing and paused), then CC (subtitles), ⓘ (about this video), the speed
-(click: speed panel; scroll: ±0.05), ⚙ (settings), ⌨ (keyboard shortcuts), the **picture size** button and
-fullscreen.
+number; the same detail while playing and paused), then CC (only when the video has subtitles), **Compare** (video
+files), ⓘ (about this video), the speed (click: speed panel; scroll: ±0.05), ⚙ (settings), the **picture size**
+button and fullscreen.
 
 - A click on the picture plays or pauses; with a panel open it closes the panel.
-- Each bar button opens its panel and closes it when clicked again. `Esc` closes any panel.
+- ⚙, ⓘ and the speed open their panel and close it when clicked again. CC turns subtitles on and off. `Esc` closes
+  any panel or the Compare confirmation.
 - **⚙ Settings:** Speed ›, Loop (switch), A-B loop (start, end, off), Subtitles ›, Audio track ›, Copy frame,
-  Keyboard shortcuts, Jump sizes › and a **Tools** grid: Compare, Scopes, Inspector, Stats, Codec X-ray,
+  **Keyboard shortcuts** (also opens with `?`), Jump sizes › and a **Tools** grid: Compare, Scopes, Inspector, Stats, Codec X-ray,
   Export A-B, then **Open video URL…** ([network URLs](urls.md)) and last **Extension settings** (VS Code's Settings, filtered to this extension). The tools'
   keys work at any time.
-- **Picture size:** how the picture sits in the player. **Fit** (default) shows the whole picture, with bars where its shape differs; **Fill** has no bars and crops the edges (centred); **Stretch** fills the player and distorts the picture; **100 %** shows one video pixel per screen pixel, and you drag to move a picture larger than the player. The button beside the keyboard shortcuts cycles Fit → Fill → Stretch → 100 % → Fit (its icon shows the current size, the tooltip names the next one) and so does `Z`; ⚙ › **Picture size ›** picks one and has a zoom row (− value + Reset). Ctrl+wheel zoom works in every size. The setting `pictureSize` chooses the size for new tabs; the button and `Z` change the current tab only. Native ffmpeg frames follow the picture (a crop or 100 % gets larger frames).
+- **Picture size:** how the picture sits in the player. **Fit** (default) shows the whole picture, with bars where its shape differs; **Fill** has no bars and crops the edges (centred); **Stretch** fills the player and distorts the picture; **100 %** shows one video pixel per screen pixel, and you drag to move a picture larger than the player. The picture size button cycles Fit → Fill → Stretch → 100 % → Fit (its icon shows the current size, the tooltip names the next one) and so does `Z`; ⚙ › **Picture size ›** picks one and has a zoom row (− value + Reset). Ctrl+wheel zoom works in every size. The setting `pictureSize` chooses the size for new tabs; the button and `Z` change the current tab only. Native ffmpeg frames follow the picture (a crop or 100 % gets larger frames).
 - **Jump sizes ›:** what ← →, Shift+← → and Ctrl+← → (Cmd on macOS) jump: 1 frame, 1 s, 5 s, 10 s or 30 s
   each (defaults 5 s, 1 s, 1 frame). Saved as settings. `,` and `.` always step one frame.
 - No status pill: when decoding falls behind, a notice says so once, with its action (set up ffmpeg, or

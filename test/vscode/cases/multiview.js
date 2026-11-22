@@ -42,9 +42,9 @@ function helpers(vs, h, t) {
   const expect = (r, offs, i) => {
     const fps = nums(r.fps);
     const c = Number(r.clock);
-    const frames = nums(r.frames);
+    const clockPts = nums(r.pts)[c];
     const off = (j) => (offs[j].unit === 'ms' ? offs[j].v / 1000 : offs[j].v / fps[j]);
-    const x = ((frames[c] - 1) / fps[c] - off(c) + off(i)) * fps[i] + 0.5;
+    const x = (clockPts - off(c) + off(i)) * fps[i] + 0.5;
     const k = Math.floor(x);
     const alt = Math.abs(x - Math.round(x)) < 0.02 ? (x - k < 0.5 ? k - 1 : k + 1) : k;
     return [k + 1, alt + 1];
@@ -55,7 +55,8 @@ function helpers(vs, h, t) {
     const frames = nums(r.frames);
     for (let i = 0; i < frames.length; i++) {
       const [e, alt] = expect(r, offs, i);
-      ok(frames[i] === e || frames[i] === alt, `${what}: tile ${TILE_KEYS[i]} shows #${frames[i]}, expected #${e} (clock ${TILE_KEYS[r.clock]} #${frames[r.clock]}, fps ${r.fps}, offsets ${r.offsets})`);
+      ok(frames[i] === e || frames[i] === alt, `${what}: tile ${TILE_KEYS[i]} shows #${frames[i]}, expected #${e} `
+        + `(clock ${TILE_KEYS[r.clock]} #${frames[r.clock]}, fps ${r.fps}, offsets ${r.offsets}, PTS ${r.pts}, targets ${r.targets})`);
     }
   };
   /** While playing: every tile near its frame for the clock's (followers may trail a few frames; the clock holds beyond 120 ms). */
@@ -71,8 +72,12 @@ function helpers(vs, h, t) {
     const before = await report();
     act({ action: 'step', d });
     const c = Number(before.clock);
-    const want = nums(before.frames)[c] + d;
-    return until((r) => r.synced === 'true' && nums(r.frames)[Number(r.clock)] === want, 15000);
+    const fps = nums(before.fps)[c];
+    const want = nums(before.pts)[c] + d / fps;
+    const arrived = (r) => r.synced === 'true' && Number(r.clock) === c && Math.abs(nums(r.pts)[c] - want) < 0.1 / fps;
+    const after = await until(arrived, 15000);
+    if (!arrived(after)) throw new Error(`clock step ${d}: expected PTS near ${want}, got ${after.pts}`);
+    return after;
   };
   return { report, act, until, expect, checkFrames, checkPlaying, stepAndWait };
 }
@@ -676,6 +681,134 @@ module.exports = [{
       out.push({ name: `large-native/${n}`, ok: !problems.length, problems, info: { fps, mbps: Math.round(mbps * 10) / 10, height } });
     }
     return out;
+  },
+}, {
+  name: 'multiview-reorder',
+  settings: { 'videoPreviewEnhanced.autoplay': false },
+  async run(vs, h) {
+    const { act, until } = helpers(vs, h);
+    const results = require('../lib').recorder();
+    const files = CLIPS.map((clip) => path.join(h.MEDIA, clip));
+    let id = 0;
+    const ui = async () => {
+      const from = vs.mark(), next = ++id;
+      act({ action: 'ui', id: next });
+      const line = await vs.waitLog(new RegExp(`compare ui \\{"id":${next},`), { from, timeout: 10000 });
+      return JSON.parse(line.slice(line.indexOf('compare ui ') + 'compare ui '.length));
+    };
+    const order = (u) => u.cells.map((c) => c.tile).join(',');
+    const click = (sel) => act({ action: 'click', sel });
+    const pointer = (ev, [x, y, w, height]) => act({ action: 'dom', ev, x: x + w / 2, y: y + height / 2 });
+    await activate(vs, h, files[0]);
+    try {
+      let from = vs.mark();
+      vs.send({ compareFiles: files.slice(0, 3) });
+      await vs.waitLog(opened(3), { from, timeout: 30000 });
+      act({ action: 'offset', tile: 1, v: 3, unit: 'frames' });
+      act({ action: 'clock', tile: 2 });
+      act({ action: 'sound', tile: 1 });
+      act({ action: 'seek', t: 0.5 });
+      let u = await ui();
+      await results.run('reorder/arrows', (ok) => {
+        ok(order(u) === '0,1,2,add', `initial order: ${order(u)}`);
+        ok(u.cells[0].moves[0].disabled && u.cells[2].moves[1].disabled, 'the end arrows are disabled');
+      });
+      const earlier = '[data-act="move"][data-i="2"][data-d="-1"]';
+      act({ action: 'a11y', focus: earlier, click: earlier });
+      u = await ui();
+      await results.run('reorder/arrow-result', (ok) => {
+        ok(order(u) === '0,2,1,add', `after the arrow: ${order(u)}`);
+        const arrow = u.cells[1].moves.find((b) => b.focused);
+        ok(arrow?.label === `Move ${CLIPS[2]} earlier`, `focus did not follow the video: ${JSON.stringify(arrow)}`);
+      });
+      click('#reorderBtn');
+      const grid = u.cells;
+      pointer('pointerdown', grid[1].rect);
+      pointer('pointermove', grid[0].rect);
+      u = await ui();
+      await results.run('reorder/drag-preview', (ok) => {
+        ok(u.reorder.button === 'Done' && u.reorder.hint.includes('Drag tiles'), `mode: ${JSON.stringify(u.reorder)}`);
+        ok(order(u) === '2,0,1,add', `preview order: ${order(u)}`);
+      });
+      pointer('pointerup', grid[0].rect);
+      act({ action: 'key', key: '+' });
+      act({ action: 'key', key: 'Escape' });
+      act({ action: 'panel', view: 'cmp' });
+      u = await ui();
+      await results.run('reorder/commit', (ok) => {
+        ok(order(u) === '2,0,1,add', `committed order: ${order(u)}`);
+        ok(u.reorder.button === 'Reorder' && !u.reorder.hint, 'Escape should leave Reorder mode');
+        const rows = (u.panel?.rows || []).map((r) => r.label).filter((label) => /^[A-C]:/.test(label));
+        ok(rows[0]?.startsWith(`A: ${CLIPS[2]}, clock`) && rows[1]?.startsWith(`B: ${CLIPS[0]}`),
+          `clock or panel order changed: ${rows}`);
+        ok(rows[2] === `C: ${CLIPS[1]}, sound, offset +3 frames`, `sound or offset changed: ${rows}`);
+      });
+      click('#reorderBtn');
+      pointer('pointerdown', grid[0].rect);
+      pointer('pointermove', grid[2].rect);
+      click('#reorderBtn');
+      u = await ui();
+      await results.run('reorder/done-cancels-drag', (ok) => {
+        ok(u.reorder.button === 'Reorder' && order(u) === '2,0,1,add', `Done during drag: ${order(u)}`);
+      });
+      click('#reorderBtn');
+      u = await ui();
+      await results.run('reorder/switch-tabs', async (ok) => {
+        ok(u.reorder.button === 'Done', 'Reorder mode was not active before switching tabs');
+        const opening = await h.openClip(vs, files[3]);
+        await vs.waitLog(/\[vp9_1080p\.webm\] webview: first frame shown/, { from: opening, timeout: 45000 });
+        const closing = vs.mark();
+        vs.send({ command: 'workbench.action.closeActiveEditor' });
+        await vs.waitLog(/\[vp9_1080p\.webm\] session closed/, { from: closing, timeout: 10000 });
+        const after = await ui();
+        ok(after.reorder.button === 'Reorder' && order(after) === '2,0,1,add', `after switching tabs: ${order(after)}`);
+      });
+      from = vs.mark();
+      vs.send({ compareAdd: [files[3]] });
+      await vs.waitLog(opened(4), { from, timeout: 30000 });
+      u = await ui();
+      const addedOrder = order(u);
+      from = vs.mark();
+      act({ action: 'remove', tile: 0 });
+      await vs.waitLog(opened(3), { from, timeout: 30000 });
+      const r = await until((x) => x.synced === 'true');
+      u = await ui();
+      await results.run('reorder/restore', (ok) => {
+        ok(addedOrder === '2,0,1,3', `added video should go last: ${addedOrder}`);
+        ok(order(u) === '1,0,2,add', `removal should keep the other videos' order: ${order(u)}`);
+        ok(r.synced === 'true' && r.clock === '1' && r.sound === '0' && r.offsets === '3f,0f,0f',
+          `restored sync, clock, sound and offset: ${JSON.stringify(r)}`);
+      });
+      // A letterboxed grid (5 tiles, 3x2): each tile's arrows sit on its own picture, not in the black bars of the cell.
+      from = vs.mark();
+      vs.send({ compareAdd: [files[2], files[3]] });
+      await vs.waitLog(opened(5), { from, timeout: 30000 });
+      act({ action: 'stageSize', w: 1000, h: 700 });
+      await until((x) => x.n === '5' && x.grid === '3x2', 20000);
+      u = await ui();
+      await results.run('reorder/arrows-on-picture', (ok) => {
+        const tiles = u.cells.filter((c) => c.tile !== 'add');
+        ok(tiles.length === 5 && u.cells.length === 6, `5 tiles and the Add cell: ${order(u)}`);
+        for (const cell of tiles) {
+          const pic = cell.picRect;
+          const [cx, cy, cw, ch] = cell.rect;
+          ok(pic && pic[3] < ch - 20, `tile ${cell.tile} is letterboxed (picture ${pic}, cell ${cell.rect})`);
+          if (!pic || cell.moveRects.length !== 2) { ok(false, `tile ${cell.tile}: moves ${JSON.stringify(cell.moveRects)}`); continue; }
+          const [px, py, pw, ph] = pic;
+          // The arrows' box (both buttons) lies inside the picture, in its bottom-right corner (at most 8 px from the edges).
+          const left = Math.min(...cell.moveRects.map((r) => r[0])), top = Math.min(...cell.moveRects.map((r) => r[1]));
+          const right = Math.max(...cell.moveRects.map((r) => r[0] + r[2])), bottom = Math.max(...cell.moveRects.map((r) => r[1] + r[3]));
+          ok(left >= px - 1 && top >= py - 1 && right <= px + pw + 1 && bottom <= py + ph + 1,
+            `tile ${cell.tile}: arrows ${[left, top, right, bottom]} leave their picture ${pic}`);
+          ok(py + ph - bottom <= 8 && px + pw - right <= 8,
+            `tile ${cell.tile}: arrows ${[left, top, right, bottom]} are far from their picture's corner ${pic}`);
+          ok(cx <= px + 1 && cy <= py + 1 && cw >= pw - 1, `tile ${cell.tile}: picture ${pic} sits inside its cell ${cell.rect}`);
+        }
+      });
+    } finally {
+      await h.closeClip(vs);
+    }
+    return results.out;
   },
 }];
 

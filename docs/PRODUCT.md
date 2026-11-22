@@ -95,13 +95,13 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 
 - **One player, no modes.** The separate advanced layout is dropped; `advancedMode` is deprecated and ignored.
 - **Bar:** previous frame, play/pause, next frame, mute, volume, time (click: time / timecode / frame number),
-  then CC, ⓘ (about this video), speed, ⚙, keyboard shortcuts, picture size, fullscreen. No status pill:
-  only real problems show (a notice, once).
-- **⚙ panel:** speed, loop, A-B loop, subtitles, audio track, copy frame, keyboard shortcuts, jump sizes and a
-  Tools grid (compare, scopes, inspector, stats, codec X-ray, export A-B).
+  then CC (only when the video has a subtitle track, 2026-11-22), **Compare** (video files), ⓘ (about this video),
+  speed, ⚙, picture size, fullscreen. No status pill: only real problems show (a notice, once).
+- **⚙ panel:** speed, loop, A-B loop, subtitles (always there, also to load a file), audio track, copy frame, keyboard
+  shortcuts, jump sizes and a Tools grid (compare, scopes, inspector, stats, codec X-ray, export A-B frames and clip).
 - **Picture size** (2026-11-20): **Fit** (default: whole picture, bars where the shape differs), **Fill** (no bars,
   edges cropped, centred), **Stretch** (fills the area, distorted), **100 %** (one video pixel = one device pixel,
-  drag to pan when larger). A bar button between keyboard shortcuts and fullscreen and the key **Z** cycle them
+  drag to pan when larger). A bar button between Settings and fullscreen and the key **Z** cycle them
   (zoomed in, Z goes back to Fit first); ⚙ › Picture size has the four modes and a zoom row; Ctrl+wheel zoom and
   drag-to-pan work in every mode (`+` / `-` zoom in the player). Setting `pictureSize` is the default for new tabs;
   the button changes the current tab only. Native frames are sized to the picture, a crop or 100 % included.
@@ -120,23 +120,43 @@ One feature: compare becomes multi-view. The difference view is dropped.
 - **Now:** up to 8 videos by default (2–16 via `compare.maxVideos`). Two videos can sit side by side or split
   with a draggable divider. Three or four use a 2×2 grid, and five or more use a larger static grid with
   compact hover controls. A spare cell can add another video while below the limit.
-- **Later, low priority:** drag to reorder and free tile placement (docs/notes/multiview-engine.md).
+- **Tile order** can be changed with the bar's **Reorder** button and a drag, or with the arrows on
+  each tile. The clock, sound and offsets follow their videos. Free tile placement is deferred.
+- **A–B loop and clips:** A and B mark the shared timeline. Native ffmpeg copies one clip per eligible tile
+  with its offset applied. Compare asks before skipping tiles, and reports any frame rounding that affects sync.
+  The single player can save one clip. MP4/MOV clips use presentation edits to show A through B inclusive.
 - **The player's UI (2026-11-20: the approved compare mock-up).** Compare is the player with more videos:
   the same bar drives all tiles (play, lockstep frame steps, seek, speed, loop, jumps); time and seek follow the
-  clock video with its letter; mute / volume act on the sound video; CC is hidden. One new
+  clock video with its letter; mute / volume act on the sound video; no CC (Compare does not render subtitles). One
   bar button opens the **Compare panel** (⚙-panel style): a row per video (letter, name, clock / sound, offset)
   with its own page (offset − / + in frames or ms, Reset, Clock and Sound switches, Replace video…, Remove), Add
   video (n of the set limit), View (2 videos: Side by side | Split), Swap, Leave compare. Tiles are clean; hover shows the name
   pill with the tile's own frame number and a ‹ offset › nudge; − / + nudge the tile under the pointer;
   right-click a tile for its actions. The old compare toolbar and sync panel are gone.
-- **Entering:** key **D** (quick pick of other videos, same folder first), Shift+drop of an Explorer video on the player, ⚙ › Tools › Compare (the same as **Shift+D**: add mode, click videos in the Explorer; from a player one click opens
-  compare and ends the mode, in compare it stays on until Esc, Shift+D or `compare.maxVideos`) and "Compare With…"
-  in the player's right-click menu (VS Code's open dialog); from the Explorer: **Compare Videos** (a multi-selection),
-  **Compare Videos in Folder** (a folder's videos, natural order, up to `compare.maxVideos`) and opening several
-  selected videos at once (**open together**, setting `compare.openTogether`: a one-time notice, and a preview tab of
-  a compared video is closed, not left as a duplicate). There is no Explorer key (Alt+D was dropped); the Explorer menu
-  has no single-video "Compare With…" and no "Play Image Sequence" (Command Palette only). Compare takes the player's tab and starts at its position; Leave compare puts the player back there.
-  (It is a separate webview panel that replaces the player's tab, not the same webview: docs/notes/compare-ui.md.)
+- **Entering:** the player's **Compare** button (2026-11-22) asks for confirmation before starting with this one video
+  and Add Mode on. If a Compare is open, the button becomes **Add to Compare** and adds the video to the most recently
+  active Compare at once.
+  Other entry points are **D** (quick pick of other videos, same folder first), Shift+drop from the Explorer,
+  **Shift+D** or ⚙ › Tools › **Compare** (wait for an Explorer open), and **Compare With…** in the player's
+  right-click menu (VS Code's open dialog). Compare takes the player's tab and starts at its position.
+  **Leave compare** restores the player at the kept video's position.
+- **Explorer:** **Video Preview Enhanced: Start Compare** handles files, folders and mixed selections when no
+  Compare is open. It can use the open single-video player or start with the selection alone, including one file.
+  While any Compare is open, **Video Preview Enhanced: Add to Compare** appends to the most recently active one.
+  Folders contribute their direct video files in natural name order. Skip duplicates, add up to `compare.maxVideos`
+  and report how many unique videos did not fit. **Open Together** (`compare.openTogether`) also groups several
+  videos opened at once (a drop or Open With… on a selection), with a one-time notice. Opening them is quick: the
+  videos are taken in a moment and their players never start.
+- **Player editor title and Command Palette:** **Video Preview Enhanced: Start Compare** opens the file picker.
+  While any Compare is open, the player offers **Video Preview Enhanced: Add to Compare** to append its video to
+  the most recently active Compare.
+- **Add Mode:** while it is on, opening videos from the Explorer adds tiles. It turns on only when the user asks to
+  add more: **Shift+D**, **Add video…**, the Compare panel's switch, the toolbar Compare button's **Start comparison**
+  and a right-click **Start / Add to Compare** on one video that makes a one-video Compare. A Compare started from
+  several files at once (a drop or Open Together, a multi-selection or folder, **Compare Videos in Folder**, the D
+  quick pick, **Compare With…**) opens with Add Mode off: those videos are the whole set. Playback, scrubbing and
+  stepping keep the mode on. **Stop** in the hint, Esc, Shift+D, reaching the maximum or switching editors turns it
+  off. **Add to Compare** also works while the mode is off.
 - **Picture size in compare:** one mode for every tile (the same button, Z and ⚙ page), and zoom and pan in lockstep:
   the same relative zoom and position in each tile, like a magnifier over all videos.
 - Each video has its own offset, by **time or frame number** (hover nudge and the panel only).

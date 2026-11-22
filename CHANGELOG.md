@@ -2,8 +2,28 @@
 
 ## Unreleased
 
+- New: **Export A–B Clip…** saves a lossless video excerpt with native ffmpeg. Compare shares an **A** / **B** loop and can save one clip per tile with its offset applied. Marks set during built-in or native ffmpeg playback give exact clips (native ffmpeg now reports each picture's own timestamp, so HEVC, AV1, ProRes and variable-frame-rate files work without switching decoder). Marks set during Live transcode, whose pictures are re-timed, are refused at once with a **Use original video** button.
+- Fixed: dragging selected videos from the Explorer into the editor includes any video already open in a preview tab.
+- Fixed: Compare updates A–B timeline marks immediately when pressing A or B while paused.
 - Fixed: closing or reloading the player cancels pending video opens, frame exports, and native seek-bar thumbnails.
 - Fixed: the video player loads again after VS Code's **Developer: Reload Webviews** command.
+- Fixed: WebCodecs keeps visible frames and hides decode preroll when MP4 edit segments share timestamps.
+- Fixed: Compare and the single player agree on frame numbers for rounded timestamps and rates close to standard rates.
+- Fixed: the Pixel Inspector reads the pixel under the pointer at 100% on high-DPI displays.
+- Fixed: detect older installs in custom extensions directories and skip the warning in extension development sessions.
+- Changed: action messages are larger, easier to read, and appear at the top centre of the picture in the player and Compare.
+- New: a **Compare** button in the player's bar. It asks before starting Compare with the video; with a Compare open it reads **Add to Compare** and adds the video directly.
+- New: a **Stop** button in Compare's Add Mode hint.
+- Changed: the Explorer menu and player title show **Start Compare** or **Add to Compare** based on whether a Compare is open.
+- Changed: the CC button shows only when the video has subtitles. ⚙ › **Subtitles** is always there to load a file.
+- Changed: the player and Compare bar icons share one size, stroke and alignment.
+- Changed: open **Keyboard shortcuts** from ⚙ Settings in the player and Compare, or press `?`.
+- Fixed: speed and volume sliders in the player and Compare keep tracking when dragged off the webview.
+- New: reorder Compare tiles by dragging in **Reorder** mode or using each tile's up and down arrows.
+- Changed: **Add to Compare** works on videos, folders and mixed selections. Add Mode (click videos in the Explorer to add them) stays on through playback and scrubbing.
+- Changed: **Add Mode** turns on only when you ask to add more: Shift+D, **Add video…**, or right-clicking one video to start a Compare. A Compare that starts from several videos at once (a drag and drop from the Explorer, Open With… on a selection, a multi-selection or folder in **Add to Compare**, **Compare Videos in Folder**, the D quick pick) now opens with Add Mode off.
+- Changed: several videos dropped on the editor or opened together reach one Compare faster: the videos are taken in about a tenth of a second (was 0.4 s), their players no longer start while Compare opens, and a tile that is slower than the clock no longer decodes its first picture twice. Measured from the first open to a picture in every tile (medians of 9 runs, 1080p clips on the development machine): 1.1 s for 2 videos (was 1.4 s), 0.9 s for 5 (was 1.4 s) and 1.1 s for 8 (was 2.1 s). A single video opens as before.
+- Fixed: in a Compare grid with letterboxed pictures the tile's move up/down arrows sat in the black bar at the bottom of the cell; they now sit in the corner of their own picture.
 
 ## 0.8.1 (2026-11-22)
 

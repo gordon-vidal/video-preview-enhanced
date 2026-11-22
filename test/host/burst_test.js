@@ -5,7 +5,7 @@
 // a moment apart, are untouched; the maximum follows compare.maxVideos; the setting turns it off.
 const assert = require('assert');
 const path = require('path');
-const { createBurst, leftoverTabs, togetherNotice } = require('../../src/burst');
+const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('../../src/burst');
 
 // ---- leftover tabs: a preview tab still showing a compared video is a duplicate ----
 {
@@ -21,61 +21,155 @@ const { createBurst, leftoverTabs, togetherNotice } = require('../../src/burst')
 }
 
 // ---- the rules ----
-{
+const rules = async () => {
   let now = 0;
   let timers = [];
   const setTimer = (fn, ms) => { const t = { fn, at: now + ms }; timers.push(t); return t; };
   const clearTimer = (t) => { timers = timers.filter((x) => x !== t); };
-  const advance = (ms) => {
+  // A burst's end is async (compare opens, then the players are told): let the promises settle after each step.
+  const settle = () => new Promise((r) => setImmediate(r));
+  const advance = async (ms) => {
     now += ms;
     for (const t of timers.filter((x) => x.at <= now).sort((a, b) => a.at - b.at)) { timers = timers.filter((x) => x !== t); t.fn(); }
+    await settle();
   };
   const bursts = [];
   let max = 4;
-  const b = createBurst({ windowMs: 400, max: () => max, onBurst: (x) => bursts.push(x), setTimer, clearTimer });
+  const b = createBurst({ windowMs: 400, max: () => max, onBurst: (x) => { bursts.push(x); }, setTimer, clearTimer });
   const add = (n, o) => b.add(`file:///v/${n}.mp4`, { n }, o);
 
-  add('a'); advance(1000);
+  assert.strictEqual(BURST_WINDOW_MS, 120, 'the default window: opens VS Code makes for one gesture arrive within a few ms');
+  add('a'); await advance(1000);
   assert.strictEqual(bursts.length, 0, 'one video alone: nothing');
-  add('a'); advance(1000); add('b'); advance(1000);
+  add('a'); await advance(1000); add('b'); await advance(1000);
   assert.strictEqual(bursts.length, 0, 'two videos a second apart: two separate opens');
-  add('a'); advance(100); add('b'); advance(399);
+  add('a'); await advance(100); add('b'); await advance(399);
   assert.strictEqual(bursts.length, 0, 'the window is not over yet');
-  advance(1);
+  await advance(1);
   assert.strictEqual(bursts.length, 1, 'two videos 100 ms apart: one burst');
   assert.deepStrictEqual(bursts[0].items.map((i) => i.uri.n), ['a', 'b']);
   // A longer burst keeps going while each open is within the window of the one before.
-  add('a'); advance(300); add('b'); advance(300); add('c'); advance(300); add('d'); advance(400);
+  add('a'); await advance(300); add('b'); await advance(300); add('c'); await advance(300); add('d'); await advance(400);
   assert.deepStrictEqual(bursts[1].items.map((i) => i.uri.n), ['a', 'b', 'c', 'd'], 'a chain of opens');
-  // The same file reported twice (the editor and its tab) is one entry; panels and tabs are kept.
+  // The same file reported twice (the editor and its tab) is one entry; panels and tabs are kept. A repeat report
+  // does not extend the window.
   const p1 = { id: 'p' }; const t1 = { id: 't' };
-  add('a', { panel: p1 }); add('a', { tab: t1 }); add('b'); advance(400);
+  add('a', { panel: p1 }); await advance(300); add('a', { tab: t1 }); add('b'); await advance(400);
   assert.strictEqual(bursts[2].items.length, 2);
   assert.deepStrictEqual([bursts[2].items[0].panels, bursts[2].items[0].tabs], [[p1], [t1]]);
   // The same file twice alone is not a burst.
-  add('a'); add('a'); advance(400);
+  add('a'); add('a'); await advance(400);
   assert.strictEqual(bursts.length, 3, 'one file twice is not two videos');
   // The maximum (compare.maxVideos): the rest stay separate.
   max = 3;
   for (const n of ['a', 'b', 'c', 'd', 'e']) add(n);
-  advance(400);
+  await advance(400);
   assert.deepStrictEqual([bursts[3].items.length, bursts[3].extra.map((i) => i.uri.n)], [3, ['d', 'e']]);
-  add('a'); add('b'); b.cancel(); advance(400);
+  add('a'); add('b'); b.cancel(); await advance(400);
   assert.strictEqual(bursts.length, 4, 'cancel');
-}
+
+  const changed = { changed: true, tab: { group: { viewColumn: 1 } } };
+  const opened = { tab: { group: { viewColumn: 1 } } };
+  add('preview', changed); await advance(400);
+  add('preview', changed); add('other', changed); await advance(400);
+  assert.strictEqual(bursts.length, 4, 'preview changes alone cannot open Compare');
+
+  max = 6;
+  for (const count of [1, 5]) {
+    for (const changedFirst of [true, false]) {
+      const names = Array.from({ length: count }, (_, i) => `new-${i}`);
+      if (changedFirst) { add('preview', changed); await advance(399); }
+      for (const name of names) add(name, opened);
+      if (!changedFirst) { await advance(399); add('preview', changed); }
+      await advance(400);
+      const expected = changedFirst ? ['preview', ...names] : [...names, 'preview'];
+      assert.deepStrictEqual(bursts.at(-1).items.map((i) => i.uri.n), expected);
+    }
+  }
+
+  max = 2;
+  add('preview', changed); add('a', opened); add('b', opened); await advance(400);
+  assert.deepStrictEqual(bursts.at(-1).items.map((i) => i.uri.n), ['preview', 'a'], 'preview counts toward max');
+  assert.deepStrictEqual(bursts.at(-1).extra.map((i) => i.uri.n), ['b']);
+
+  add('elsewhere', { changed: true, tab: { group: { viewColumn: 2 } } });
+  add('a', opened); add('b', opened); await advance(400);
+  assert.deepStrictEqual(bursts.at(-1).items.map((i) => i.uri.n), ['a', 'b'], 'other groups stay out of the burst');
+  assert.strictEqual(bursts.at(-1).extra.length, 0, 'other groups do not count toward max');
+};
+
+// Holding players (wait): a video opened alone starts at once; with another pending it waits for the burst's verdict.
+const holds = async () => {
+  let now = 0;
+  let timers = [];
+  const setTimer = (fn, ms) => { const t = { fn, at: now + ms }; timers.push(t); return t; };
+  const clearTimer = (t) => { timers = timers.filter((x) => x !== t); };
+  const settle = () => new Promise((r) => setImmediate(r));
+  const advance = async (ms) => {
+    now += ms;
+    for (const t of timers.filter((x) => x.at <= now)) { timers = timers.filter((x) => x !== t); t.fn(); }
+    await settle();
+  };
+  let verdict = true;
+  let finish = null;
+  const opened = [];
+  const b = createBurst({
+    max: () => 2,
+    onBurst: (x) => { opened.push(x.items.map((i) => i.uri.n)); return new Promise((r) => { finish = () => r(verdict); }); },
+    setTimer, clearTimer,
+  });
+  const add = (n, o) => b.add(`file:///v/${n}.mp4`, { n }, o);
+  const key = (n) => `file:///v/${n}.mp4`;
+  const log = [];
+  const hold = (n) => { const p = b.wait(key(n)); if (p) p.then((taken) => log.push([n, taken])); return !!p; };
+
+  add('a');
+  assert.strictEqual(hold('a'), false, 'alone: nothing to wait for');
+  await advance(BURST_WINDOW_MS); // single: the timer ends it
+  assert.deepStrictEqual(log, [], 'a single video is never held');
+  add('a'); add('b'); add('c');
+  assert.ok(hold('a') && hold('b') && hold('c'), 'with others pending: held');
+  assert.strictEqual(hold('zz'), false, 'unknown video: not held');
+  await advance(BURST_WINDOW_MS);
+  assert.deepStrictEqual(opened, [['a', 'b']], 'the first two are taken (maximum 2)');
+  assert.deepStrictEqual(log, [['c', false]], 'the one past the maximum starts as its own player at once');
+  assert.ok(b.wait(key('a')), 'still held while compare opens');
+  add('a', { tab: { id: 'late' } }); // its tab reported late: part of the same entry, no new burst
+  assert.strictEqual(b.waiting, 0, 'a late report of a closing video starts no new burst');
+  finish(); await settle();
+  assert.deepStrictEqual(log.slice(1).map((x) => x.join()).sort(), ['a,true', 'b,true'], 'taken: the players never start');
+  assert.strictEqual(b.wait(key('a')), false, 'after the burst nothing is held');
+  // A burst that is not taken (compare could not open): the players start.
+  log.length = 0; verdict = false;
+  add('a'); add('b'); hold('a'); hold('b');
+  await advance(BURST_WINDOW_MS); finish(); await settle();
+  assert.deepStrictEqual(log.map((x) => x.join()).sort(), ['a,false', 'b,false']);
+  // cancel releases what waits.
+  log.length = 0;
+  add('a'); add('b'); hold('a'); hold('b'); b.cancel(); await settle();
+  assert.deepStrictEqual(log.map((x) => x.join()).sort(), ['a,false', 'b,false'], 'cancel: start as usual');
+  // A failing compare releases them too.
+  const bad = createBurst({ max: () => 4, onBurst: () => Promise.reject(new Error('x')), setTimer, clearTimer });
+  bad.add(key('a'), { n: 'a' }); bad.add(key('b'), { n: 'b' });
+  const w = bad.wait(key('a'));
+  now += BURST_WINDOW_MS; for (const t of timers.splice(0)) await t.fn();
+  assert.strictEqual(await w, false, 'rejected: not taken');
+};
 
 // ---- the host ----
 process.env.VPE_BURST_MS = '60';
 const { load } = require('./mock_vscode');
 const { make } = require('../media/make_cases_media');
 (async () => {
+  await rules();
+  await holds();
   const a = make('s_h264.mp4');
   const b = make('rotated.mp4');
   assert.ok(a && b, 'ffmpeg test clips');
   const panels = [];
-  const fakePanel = () => {
+  const fakePanel = (_viewType, _title, viewColumn) => {
     const p = {
-      active: true, visible: true, viewColumn: 1, title: '', disposed: false, fns: [], posted: [],
+      active: true, visible: true, viewColumn: viewColumn > 0 ? viewColumn : 1, title: '', disposed: false, fns: [], posted: [],
       webview: { cspSource: 'x:', html: '', asWebviewUri: (u) => u, postMessage(m) { p.posted.push(m); }, onDidReceiveMessage(fn) { p.msg = fn; } },
       onDidDispose(fn) { p.fns.push(fn); }, onDidChangeViewState() {},
       dispose() { p.disposed = true; for (const fn of p.fns) fn(); },
@@ -88,7 +182,18 @@ const { make } = require('../media/make_cases_media');
   const tabGroups = { onDidChangeTabs: (fn) => { tabListener = fn; return { dispose() {} }; }, close: async (t) => { closedTabs.push(t); }, all: [] };
   const settings = { 'videoPreviewEnhanced.decoder': 'builtin' };
   const infos = [];
-  const h2 = load({ settings, setup: (v) => { v.window.createWebviewPanel = fakePanel; v.window.tabGroups = tabGroups; v.window.showInformationMessage = async (m, ...b) => { infos.push([m, ...b]); return undefined; }; } });
+  const videoTab = (v, file, viewColumn, isPreview = false) => ({
+    input: { uri: v.Uri.file(file), viewType: 'videoPreviewEnhanced.player' },
+    group: { viewColumn }, isPreview,
+  });
+  let seeded;
+  const h2 = load({ settings, setup: (v) => {
+    seeded = videoTab(v, a, 2, true);
+    tabGroups.all = [{ viewColumn: 2, tabs: [seeded] }];
+    v.window.createWebviewPanel = fakePanel;
+    v.window.tabGroups = tabGroups;
+    v.window.showInformationMessage = async (m, ...buttons) => { infos.push([m, ...buttons]); return undefined; };
+  } });
   const W = h2.vscode;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const resolve = (file) => {
@@ -117,6 +222,51 @@ const { make } = require('../media/make_cases_media');
     assert.strictEqual(infos.length, 1, 'first time: one notice');
     assert.ok(/2 videos together/.test(infos[0][0]) && infos[0].slice(1).join() === 'Got it,Open Settings', 'notice text and buttons');
     assert.strictEqual(h2.context.globalState.get('videoPreviewEnhanced.openTogetherNoticed'), true, 'noticed is remembered');
+    // End Add Mode so subsequent opens exercise Open Together again.
+    await W._commands['videoPreviewEnhanced.stopAddFromExplorer']();
+    const dropped = videoTab(W, b, 2);
+    seeded.isPreview = false;
+    closedTabs.length = 0;
+    tabGroups.all[0].tabs.push(dropped);
+    tabListener({ opened: [dropped], changed: [seeded] });
+    await sleep(300);
+    assert.strictEqual(panels.length, 2, 'the preview present at activation joins a two-video drop');
+    assert.strictEqual(panels[1].viewColumn, 2);
+    assert.ok(/"names":\["s_h264\.mp4","rotated\.mp4"\]/.test(panels[1].webview.html));
+    assert.deepStrictEqual(closedTabs, [seeded, dropped], 'both tabs close once, including the reused preview');
+
+    const unrelated = videoTab(W, path.join(path.dirname(a), 'unrelated.mp4'), 1, true);
+    tabGroups.all = [{ viewColumn: 1, tabs: [unrelated] }];
+    tabListener({ opened: [unrelated] });
+    await sleep(250);
+    const newTabs = [videoTab(W, a, 1), videoTab(W, b, 1)];
+    tabGroups.all[0].tabs.push(...newTabs);
+    closedTabs.length = 0;
+    tabListener({ opened: newTabs, changed: [unrelated] });
+    await sleep(300);
+    assert.strictEqual(panels.length, 3, 'new tabs compare even when another video is still in preview');
+    assert.ok(/"names":\["s_h264\.mp4","rotated\.mp4"\]/.test(panels[2].webview.html));
+    assert.deepStrictEqual(closedTabs, newTabs, 'an unchanged preview stays open');
+
+    unrelated.isPreview = false;
+    tabListener({ closed: [unrelated] });
+    tabListener({ changed: [unrelated], opened: [videoTab(W, b, 1)] });
+    await sleep(250);
+    assert.strictEqual(panels.length, 3, 'closed tabs are forgotten');
+
+    const preview = videoTab(W, a, 1, true);
+    tabListener({ opened: [preview] });
+    await sleep(250);
+    preview.isPreview = false;
+    closedTabs.length = 0;
+    const second = videoTab(W, b, 1);
+    tabGroups.all = [{ viewColumn: 1, tabs: [preview, second] }];
+    tabListener({ opened: [second] });
+    tabListener({ changed: [preview] });
+    await sleep(300);
+    assert.strictEqual(panels.length, 4, 'a preview opened after activation joins the drop');
+    assert.deepStrictEqual(closedTabs, [second, preview]);
+
     // A single click's preview tab of a compared video stays in the group: it closes with the compare.
     const prev = { input: { uri: W.Uri.file(a), viewType: 'videoPreviewEnhanced.player' }, group: { viewColumn: 1 } };
     const elsewhere = { input: { uri: W.Uri.file(a), viewType: 'videoPreviewEnhanced.player' }, group: { viewColumn: 2 } };
@@ -127,17 +277,35 @@ const { make } = require('../media/make_cases_media');
     assert.deepStrictEqual(closedTabs, [prev], 'the leftover preview tab closes, other groups stay');
     assert.strictEqual(infos.length, 1, 'the notice never repeats');
     tabGroups.all = [];
-    // Compare Videos (a multi-selection) closes the same duplicates.
+    // The direct compare command closes the same duplicates.
     tabGroups.all = [{ viewColumn: 1, tabs: [prev] }];
     closedTabs.length = 0;
     await W._commands['videoPreviewEnhanced.compare'](W.Uri.file(a), [W.Uri.file(a), W.Uri.file(b)]);
     assert.deepStrictEqual(closedTabs, [prev], 'Compare Videos closes the duplicate tab');
     tabGroups.all = [];
+    const dropWithPreview = async () => {
+      const preview = videoTab(W, a, 1, true);
+      tabListener({ opened: [preview] });
+      await sleep(250);
+      preview.isPreview = false;
+      tabListener({ changed: [preview], opened: [videoTab(W, b, 1)] });
+      await sleep(250);
+    };
+    await W._commands['videoPreviewEnhanced.addFromExplorer']();
+    const count = panels.length;
+    closedTabs.length = 0;
+    await dropWithPreview();
+    assert.strictEqual(panels.length, count, 'Add Mode prevents a separate Compare');
+    assert.deepStrictEqual(closedTabs, [], 'the burst does not close tabs in Add Mode');
     panels.length = 1;
+    await W._commands['videoPreviewEnhanced.stopAddFromExplorer']();
     // The setting turns it off.
     settings['videoPreviewEnhanced.compare.openTogether'] = false; // read at each open
     const q1 = resolve(a); const q2 = resolve(b);
     await sleep(250);
     assert.ok(!q1.disposed && !q2.disposed && panels.length === 1, 'setting off: separate tabs');
+    await dropWithPreview();
+    assert.strictEqual(panels.length, 1, 'setting off: pinning a preview during the drop still leaves separate tabs');
+    assert.deepStrictEqual(closedTabs, [], 'setting off: the burst closes no tabs');
   } finally { h2.dispose(); }
 })().then(() => { console.log('burst: ok'); process.exit(0); }, (e) => { console.error(e); process.exit(1); });

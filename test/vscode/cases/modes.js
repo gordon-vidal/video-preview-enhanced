@@ -41,13 +41,15 @@ module.exports = {
     act({ action: 'pause' });
     await until(report, (x) => x.playing === 'false');
 
-    // One layout (no simple / advanced switch): the bar of the mock-up, every button visible.
+    // One layout (no simple / advanced switch): the bar of the mock-up, every button visible except CC, which
+    // waits for a subtitle track (this clip has none).
     let r = await report();
     let ok = t('layout/bar');
     ok(r.panel === 'none' && r.sheet === 'false', `panel ${r.panel}, sheet ${r.sheet} at start`);
     const bar = flags(r.bar);
-    for (const k of ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'full']) ok(bar[k] === '1', `${k} is not visible (${r.bar})`);
-    ok(Number(r.tools) === 6, `${r.tools} tools in the grid`);
+    for (const k of ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(bar[k] === '1', `${k} is not visible (${r.bar})`);
+    ok(bar.tracks === '0', `CC is visible without subtitle tracks (${r.bar})`);
+    ok(Number(r.tools) === 7, `${r.tools} tools in the grid`);
 
     // Tool keys work without any mode: W opens the scopes, I the file facts.
     ok = t('layout/tool-keys');

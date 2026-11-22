@@ -2,7 +2,7 @@
 
 ## Commands
 
-All are under **Video Preview** in the Command Palette.
+Most palette commands are under **Video Preview**. The Compare actions below use **Video Preview Enhanced**.
 
 | Command | What it does |
 |---|---|
@@ -11,17 +11,25 @@ All are under **Video Preview** in the Command Palette.
 | Use Video Preview Enhanced for MP4/WebM | Opens MP4 and WebM in this player by default |
 | Use VS Code's Preview for MP4/WebM | Undoes that |
 | Open with Video Preview Enhanced | Explorer context menu on an MP4 or WebM file (not in the Command Palette) |
-| Compare Videos | Shows the selected videos together, in sync (2–8 by default, up to 16 with `compare.maxVideos`) |
-| Compare Videos in Folder | Explorer context menu of a folder: compares the videos directly in it (natural name order, up to `compare.maxVideos`; needs at least 2). Not in the Command Palette |
-| Compare With… | Compares the open video with more files, up to `compare.maxVideos` total (in the player's place); in the player's right-click menu and editor title, not in the Explorer menu |
+| Start Compare | When no Compare is open, starts one from the Explorer selection. From the player title or Command Palette, opens the file picker. |
+| Add to Compare | When a Compare is open, adds the Explorer selection or the player's video to the most recently active Compare. Available in the Command Palette while a file player is active. |
+| Compare With… | Opens the file picker from the player's right-click menu and starts Compare in the player's place. |
+| Compare: Add Videos from the Explorer | Toggles Add Mode for the active player or Compare. Open videos in the Explorer to add them. |
+| Compare: Stop Adding from the Explorer | Ends Add Mode. Esc does the same. |
 | Load Subtitles… | Opens a subtitle file for the current video (needs an open player) |
 | Export Frames (A–B)… | (needs an open player) Saves every frame of the A-B loop as PNG into a folder you pick |
 | Copy ffmpeg Command for A–B | (needs an open player) Copies an ffmpeg command that cuts the A-B loop (exact or `-c copy`) |
+| Export A–B Clip… | (needs an open player and native ffmpeg) Copies the marked video interval and embedded audio and subtitles into a clip |
+| Export A–B Clips… | (needs an open Compare and native ffmpeg) Copies the shared A–B interval into a clip per eligible tile, applying each tile's offset |
 | (right-click menu items) | The player's context menu runs commands named `videoPreviewEnhanced.ctx.*` (play, pause, loopOn, loopOff, setA, setB, clearAB, copyFrame, saveFrame, copyTime, keys, playerSettings). They are not in the Command Palette; [see Keys and mouse](keys.md#right-click-menu) |
 | Open Video URL… | Plays a video from an http(s) URL: a direct file link, an HLS (`.m3u8`) or DASH (`.mpd`) stream ([Network URLs](urls.md)). Also **Open video URL…** in the player's ⚙ panel |
 | Open Video URL to the Side… / Open Video URL in New Window… | The same, in the editor group beside the current one or in a new window |
 | Play Image Sequence | Plays a folder of numbered images (Command Palette only) |
 | Show Log | Shows the extension's log, useful for bug reports |
+
+The Explorer commands accept videos, folders and mixed selections. Folders contribute their direct video files in
+natural name order. Existing keybindings for `videoPreviewEnhanced.addToCompare` still use the Explorer action, and
+`videoPreviewEnhanced.compareWith` still opens the picker.
 
 ## Settings
 

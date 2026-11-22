@@ -896,8 +896,8 @@ function createEngine(env) {
       this.vdec = new VideoDecoder({
         output: (vf) => {
           wake();
-          if (g !== this.gen) { vf.close(); return; }
-          let t = vf.timestamp / 1e6;
+          if (g !== this.gen || vf.timestamp % 2 !== 0) { vf.close(); return; }
+          let t = vf.timestamp / 2e6;
           if (this.noPts) t = (this.ptsBase || 0) + this.outCount / (this.fps || 30);
           this.outCount++;
           const fr = { t, vf, bytes: vf.displayWidth * vf.displayHeight * 1.5 };
@@ -1169,8 +1169,13 @@ function createEngine(env) {
           // No presentation times (H.264 in AVI): the decode times are frame-spaced, so they give the rate.
           this.trackTs(it.t === null ? (Number.isFinite(it.dts) ? it.dts : null) : it.t);
           try {
-            this.vdec.decode(new EncodedVideoChunk({ type: it.key ? 'key' : 'delta', timestamp: ts, data: it.data }));
-          } catch (e) { log(`decode: ${e.message}`); }
+            // Carry discard on the chunk itself. Multiple edits can put a visible
+            // packet and a decode-only dependency at the same presentation time.
+            const timestamp = ts * 2 + (it.discard ? 1 : 0);
+            this.vdec.decode(new EncodedVideoChunk({ type: it.key ? 'key' : 'delta', timestamp, data: it.data }));
+          } catch (e) {
+            log(`decode: ${e.message}`);
+          }
         } else if (it.kind === 'yuv') {
           const t = it.t === null ? (this.lastT || 0) + 1 / (this.fps || 30) : it.t;
           this.trackTs(t);
@@ -1244,7 +1249,8 @@ function createEngine(env) {
       const k = this.nativeColour && this.nativeColour.depth > 8 ? 2 : 1; // bytes per sample
       const half = (m.w / 2) * k;
       this.addFrame({
-        t: m.t, bytes: m.data.byteLength,
+        // srcT: the picture's own timestamp from ffmpeg (src/nativepts.js); without it, t is only a slot count.
+        t: m.t, bytes: m.data.byteLength, srcT: Number.isFinite(m.src) ? m.src : undefined, nativeTimestamp: !Number.isFinite(m.src),
         yuv: { width: m.w, height: m.h, data: m.data, fullRange: false, recycle, layout: [{ offset: 0, stride: m.w * k }, { offset: m.ys, stride: half }, { offset: m.ys + m.ys / 4, stride: half }], ...this.nativeColour },
       });
     }
@@ -1265,7 +1271,7 @@ function createEngine(env) {
           onOpen: () => { if (this.frameStream === stream) log(`engine: native frames over ${tr.mode}`); },
           onRecord: (head, data, owned) => {
             if (this.disposed || this.frameStream !== stream) return;
-            if (head.kind === 1) this.onNativeVideo({ gen: head.gen, t: head.t, w: head.w, h: head.h, ys: head.ys, data }, owned);
+            if (head.kind === 1) this.onNativeVideo({ gen: head.gen, t: head.t, src: head.src, w: head.w, h: head.h, ys: head.ys, data }, owned);
             else if (head.kind === 2) this.onWorker({ type: 'batch', gen: head.gen, eof: true, video: [], audio: [] });
           },
           onClose: (err) => {
@@ -1939,13 +1945,23 @@ function createEngine(env) {
 
     // ---- presentation ---------------------------------------------------------
 
-    tick() {
+    tick(_wallTime, loopRange) {
       if (this.vmode === undefined) return;
       this.updateAudioLive(this.now());
       this.checkAudioLag();
       let now = this.now();
       // Re-anchor when the clock source changes (audio started, rate changed).
       if (this.playing && this.anchoredOnAudio !== this.audioMaster()) { this.anchor(now); }
+      const limit = this.playing && this.seekTarget === null && loopRange ? loopRange.end + 1e-6 : Infinity;
+      if (limit !== Infinity && (!this.queue.length || this.queue[0].t > limit)) {
+        // Present B before wrapping, even when the next picture is already due after a delayed tick.
+        const next = this.queue[0]?.t ?? (this.eof && this.lastT !== undefined
+          ? Math.max(limit, this.lastT + 1 / (this.fps || 30)) : Infinity);
+        if (now >= next) {
+          this.seekAbs(loopRange.start, true);
+          return;
+        }
+      }
       const end = this.startT !== null && this.meta.duration ? this.startT + this.meta.duration : Infinity;
       if (this.playing && this.eof && !this.queue.length && now >= this.endT() && this.seekTarget === null) {
         if (this.loop && this.loopAgain()) now = this.restartLoop(now, this.endT()); else this.pause();
@@ -1974,7 +1990,7 @@ function createEngine(env) {
       // ...unless frames are decoded past the clock: then the display, not decoding, is slow (120 fps on 60 Hz), so drop to the newest due one.
       const decodedAhead = this.queue.length && this.queue[this.queue.length - 1].t > now + early;
       // A frame being copied waits for the shader to display it with the chosen matrix.
-      while (this.queue.length && this.queue[0].t <= now + early && !this.queue[0].spilling) {
+      while (this.queue.length && this.queue[0].t <= Math.min(now + early, limit) && !this.queue[0].spilling) {
         if (show) { this.release(show); this.dropped = (this.dropped || 0) + 1; }
         show = this.queue.shift();
         if (everyFrame && !decodedAhead) break;
@@ -2106,11 +2122,29 @@ function createEngine(env) {
     // ---- controls ---------------------------------------------------------------
 
     rel(t) { return t - (this.startT || 0); }
+    /**
+     * The shown picture's time for an exact clip: native ffmpeg reports the file's own timestamp, the other
+     * decoders' picture times are those already. Null before a picture shows.
+     */
+    shownMarkTime() {
+      if (this.shownT === null) return null;
+      const own = this.shownFrame && this.shownFrame.srcT;
+      return this.rel(Number.isFinite(own) ? own : this.shownT);
+    }
     currentTime() { return this.rel(this.shownT !== null && !this.playing ? this.shownT : this.now()); }
+    frameNumberRate() {
+      // Snapping can accumulate frame-number drift. Use the source rate when it agrees with the
+      // measured cadence (unreliable metadata can report AVI timestamp ticks as the frame rate).
+      const rate = this.fps || 30;
+      const sourceFps = this.info?.video?.fps;
+      return sourceFps > 0 && Math.abs(sourceFps - rate) < rate * 0.005 ? sourceFps : rate;
+    }
     currentFrame() {
       const t = this.shownT !== null ? this.shownT : this.now();
-      // Rounded: container times are often millisecond-rounded (MKV, WebM, FLV), so frame i can sit just before i/fps.
-      return Math.max(0, Math.min(Math.max(0, this.n - 1), Math.round(this.rel(t) * (this.fps || 30))));
+      const fps = this.frameNumberRate();
+      // The relative time subtracts two PTS values, each of which can be rounded by half a millisecond.
+      const frame = Math.max(0, Math.floor(this.rel(t) * fps + Math.min(fps * 1e-3, 0.125) + 1e-6));
+      return this.n > 0 ? Math.min(this.n - 1, frame) : frame;
     }
     isPlaying() { return this.playing; }
 
@@ -2226,7 +2260,8 @@ function createEngine(env) {
       }
       this.seekAbs(t);
     }
-    seekFrame(i) { this.seekTime((Math.max(0, i) + 0.5) / (this.fps || 30)); }
+    frameSeekTime(i) { return (Math.max(0, i) + 0.5) / this.frameNumberRate(); }
+    seekFrame(i) { this.seekTime(this.frameSeekTime(i)); }
     /**
      * Steps by actual frames: forward to the next decoded one, back to the last one before the shown one.
      * A step that comes before the previous one is on screen counts from that step's frame, not from the one

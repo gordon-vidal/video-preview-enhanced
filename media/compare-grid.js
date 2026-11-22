@@ -36,6 +36,25 @@
   /** Videos occupy the grid in order, followed by an Add cell if there is room. */
   const gridCellCount = (n, max, cols, rows) => n + Number(n < max && n < cols * rows);
 
+  /** Slot -> video index. Append any videos added since the order was saved; accept the old pair-swap flag. */
+  function tileOrder(n, saved, swap = false) {
+    const indices = Array.from({ length: n }, (_, i) => i);
+    const order = Array.isArray(saved) ? saved : swap && n >= 2 ? [1, 0] : [];
+    return [...new Set([...order.filter((i) => Number.isInteger(i) && i >= 0 && i < n), ...indices])];
+  }
+
+  /** Move one video to its final slot, shifting the videos in between. */
+  function moveTile(order, from, to) {
+    if (!Number.isInteger(from) || !Number.isInteger(to) ||
+        from < 0 || to < 0 || from >= order.length || to >= order.length || from === to) return order;
+    const next = order.slice();
+    next.splice(to, 0, next.splice(from, 1)[0]);
+    return next;
+  }
+
+  /** When the host removes a file, its page's remaining video indices close up too. */
+  const orderAfterRemoval = (order, i) => order.filter((j) => j !== i).map((j) => j > i ? j - 1 : j);
+
   /**
    * Each tile's engine budgets from the machine's (media/membudget.js; null: the 32 GB defaults).
    * frames: decoded pictures one tile keeps; engine: the engine's own mem (undefined: its defaults).
@@ -96,7 +115,8 @@
 
   const api = {
     TILE_KEYS, MAX_VIDEOS, DEFAULT_MAX, LARGE, GRID_PIXELS, clampMax, isLarge, gridFor, gridCellCount,
-    tileMemory, texturePixels, capSize, nativeCredits, nativeQueuePerTile, compareVisibility,
+    tileOrder, moveTile, orderAfterRemoval, tileMemory, texturePixels, capSize, nativeCredits, nativeQueuePerTile,
+    compareVisibility,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.CompareGrid = api;

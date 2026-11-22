@@ -1,7 +1,7 @@
 'use strict';
 // node test/tracks/make_media.js [media dir]   (default test/media/tracks)
 // Makes the multi-track and open-GOP test files (native ffmpeg with libx264/libx265
-// on PATH, e.g. the gyan.dev build). Existing files are kept. Never commit the output.
+// on PATH, e.g. the gyan.dev build). A completed set is kept. Never commit the output.
 //
 //   tracks_multi.mkv   1080p H.264, 60 s; audio: eng aac 440 Hz (default), ger ac3 5.1 660 Hz,
 //                      jpn opus 880 Hz; subs: eng srt (default), ger ass (forced)
@@ -11,10 +11,10 @@
 //   opengop_h264.mkv   x264 open GOP (non-IDR I-frames with recovery points)
 //   tracks_lossless.mkv  720p H.264 + three 5.1 PCM tracks (stream discard timing)
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+const DEFAULT_DIR = path.join(__dirname, '..', 'media', 'tracks');
 
 // Cues every 2 s (each 1.5 s long), plus a long one (8 s) every 20 s that starts 4 s
 // before a round number, so a seek to a round number lands inside it.
@@ -44,26 +44,59 @@ function ass(file, list) {
 }
 
 function ff(args) {
-  const r = spawnSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', ...args], { encoding: 'utf8' });
-  return r.status === 0 ? null : (r.stderr || `exit ${r.status}`).trim();
+  const r = spawnSync(process.env.VPE_FFMPEG || 'ffmpeg', ['-hide_banner', '-v', 'error', '-y', ...args], { encoding: 'utf8', windowsHide: true });
+  if (r.status !== 0) throw new Error((r.stderr || r.error?.message || `ffmpeg exit ${r.status}`).trim());
 }
 const pic = (size, dur, rate = 30) => ['-f', 'lavfi', '-i', `testsrc2=size=${size}:rate=${rate}:duration=${dur}`];
 const tone = (hz, dur) => ['-f', 'lavfi', '-i', `sine=frequency=${hz}:sample_rate=48000:duration=${dur}`];
 
-/** The folder run.js / engine_smoke.js use when none is given: test/media/tracks (not committed; made here on demand, a few minutes). */
-function ensure(folder = path.join(__dirname, '..', 'media', 'tracks')) {
-  if (!fs.existsSync(path.join(folder, 'h264_aac.m2ts'))) {
-    const r = spawnSync(process.execPath, [__filename, folder], { stdio: 'inherit' });
-    if (r.status !== 0) throw new Error('test/tracks/make_media.js failed (ffmpeg with libx264, libx265, libvpx-vp9, libopus, ac3 on PATH)');
+// Bump the marker when the recipes change. Sizes also detect a missing or truncated file after generation.
+const STAMP = '.tracks-v1.json';
+const NAMES = ['tracks_multi.mkv', 'tracks_multi.mp4', 'tracks_vtt.webm', 'tracks_lossless.mkv',
+  'opengop_hevc.mkv', 'opengop_hevc.mp4', 'opengop_h264.mkv', 'h264_aac.mkv', 'h264_aac.m2ts'];
+
+function complete(dir) {
+  try {
+    const sizes = JSON.parse(fs.readFileSync(path.join(dir, STAMP), 'utf8'));
+    return NAMES.every((name) => sizes[name] > 0 && fs.statSync(path.join(dir, name)).size === sizes[name]);
+  } catch (e) {
+    if (e.code !== 'ENOENT' && !(e instanceof SyntaxError)) throw e;
+    return false;
   }
-  return folder;
+}
+
+/** Find a complete set or generate one inside the calling test worker's timeout. */
+function ensure(folder = DEFAULT_DIR) {
+  if (complete(folder)) return folder; // A set generated explicitly into this folder.
+  fs.mkdirSync(folder, { recursive: true });
+  const cached = () => fs.readdirSync(folder).filter((name) => name.startsWith('.ready-'))
+    .map((name) => path.join(folder, name)).find(complete);
+  const existing = cached();
+  if (existing) return existing;
+
+  // Parallel workers never overwrite a set another worker may already be reading.
+  const tmp = fs.mkdtempSync(path.join(folder, '.pending-'));
+  try {
+    const r = spawnSync(process.execPath, [__filename, tmp], { stdio: 'inherit', windowsHide: true });
+    if (r.status !== 0) {
+      throw new Error('track fixture generation failed (ffmpeg needs libx264, libx265, libvpx-vp9, libopus and ac3)');
+    }
+    const published = cached();
+    if (published) return published;
+    const ready = path.join(folder, path.basename(tmp).replace('.pending-', '.ready-'));
+    fs.renameSync(tmp, ready);
+    return ready;
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 module.exports = { cues, ensure };
 if (require.main !== module) return;
-const dir = path.resolve(process.argv[2] || '.');
+const dir = path.resolve(process.argv[2] || DEFAULT_DIR);
+if (complete(dir)) return;
 fs.mkdirSync(dir, { recursive: true });
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-tracks-'));
+const tmp = fs.mkdtempSync(path.join(dir, '.generating-'));
 const jobs = [];
 {
   const D = 60;
@@ -121,10 +154,18 @@ for (const [name, extra] of [['h264_aac.mkv', []], ['h264_aac.m2ts', ['-f', 'mpe
   jobs.push([name, [...pic('640x360', 6), ...tone(440, 6), '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', ...extra]]);
 }
 
-for (const [name, args] of jobs) {
-  const out = path.join(dir, name);
-  if (fs.existsSync(out) && fs.statSync(out).size > 0) { console.log(`kept    ${name}`); continue; }
-  const err = ff([...args, out]);
-  console.log(`${err ? 'GENFAIL' : 'ok     '} ${name} ${err ? err.split('\n').slice(-3).join(' | ') : ''}`);
+try {
+  const sizes = {};
+  for (const [name, args] of jobs) {
+    const out = path.join(tmp, name);
+    console.log(`making  ${name}`);
+    ff([...args, out]);
+    sizes[name] = fs.statSync(out).size;
+    if (!sizes[name]) throw new Error(`ffmpeg produced an empty ${name}`);
+  }
+  fs.writeFileSync(path.join(tmp, STAMP), JSON.stringify(sizes));
+  for (const name of NAMES) fs.renameSync(path.join(tmp, name), path.join(dir, name));
+  fs.renameSync(path.join(tmp, STAMP), path.join(dir, STAMP));
+} finally {
+  fs.rmSync(tmp, { recursive: true, force: true });
 }
-fs.rmSync(tmp, { recursive: true, force: true });

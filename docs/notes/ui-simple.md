@@ -8,7 +8,7 @@ streamlined right-click menu). This branch builds it. Simple mode is the player 
 
 | Part | File |
 |---|---|
-| Bar markup (SVG icons, ids, aria) | `src/extension.js` `html()` |
+| Bar markup (SVG icons, ids, aria) | `src/bar.js`, shared by the player and Compare |
 | Panels (⚙ main, Speed, Jump sizes, Subtitles, Audio track, About this video) and the shortcuts sheet | `media/controls.js` (`VpeControls.create`) |
 | Plain-language file facts, speed clamp, key groups (pure, host-tested) | `media/controls.js` (`facts`, `clampRate`, `keyGroups`) |
 | Wiring: keys, buttons, tools list, CC, status notice, time formats, test probes | `media/player.js` |
@@ -32,7 +32,7 @@ streamlined right-click menu). This branch builds it. Simple mode is the player 
   Export E). Ctrl+K is VS Code's chord prefix and S / I / X already mean save frame / about / inspector, so the grid
   shows the existing keys: Scopes W, Inspector X, Stats Shift+I, Codec X-ray Shift+X, Export A-B (needs A and B),
   Compare (no key).
-- **Keys changed:** `C` = subtitles on / off (CC; with none it opens the Subtitles panel), `Ctrl+C` = copy frame (was
+- **Keys changed:** `C` = subtitles on / off (with none it opens the Subtitles panel), `Ctrl+C` = copy frame (was
   `C`), `I` = About this video (the old details overlay is "Full technical details"), `↑`/`↓` ±5 %, `?` = shortcuts,
   Ctrl+←/→ = third jump size. Alt+←/→ are not used.
 - **Time:** always `m:ss.mmm / total`, tabular digits; a click cycles time → SMPTE timecode (non-drop, at the
@@ -48,6 +48,72 @@ streamlined right-click menu). This branch builds it. Simple mode is the player 
   (docs/notes/url-stream.md). For a URL tab the Tools grid has no Compare.
 - **Extension settings** (last row of ⚙): the page posts `openSettings`; the host runs
   `workbench.action.openSettings` with `@ext:gordon-vidal.video-preview-enhanced`.
+
+## Compare, CC and toolbar icons (maintainer-approved, 2026-11-22)
+
+**Compare button.** Compare is a main feature, so the single-video player's bar has its own **Compare** button
+(icon and label; the label hides below 600 px, the icon, tooltip and accessible name stay). It shows for video
+files only (not URLs or image sequences), between CC and About.
+
+- **No Compare open:** a click opens a small confirmation above the button ("Start Compare with this video, then
+  click videos in the Explorer to add them." · **Cancel** · **Start comparison**). Nothing happens until
+  **Start comparison**: one stray click must never leave the user in Add Mode, which takes Esc to leave. Focus
+  starts on **Cancel**; Tab moves between the two buttons; Esc, **Cancel** or a click outside closes it and focus
+  returns to **Compare**. The button has `aria-haspopup="dialog"` and `aria-expanded`; the confirmation is a
+  modal `dialog` named "Start comparison", described by its text.
+- **Start comparison:** Compare takes the player's tab at its position with this one video, with Add Mode on.
+- **A Compare open:** the button reads **Add to Compare** (label, tooltip, accessible name) and a click adds the
+  video at once to the most recently active Compare (no confirmation); a toast says "Added to Compare (n videos)"
+  or "Already in Compare". It uses the Explorer's Add to Compare logic (`src/compare.js` `addSelection`).
+- **State:** the host renders the bar with the current state (`src/bar.js`, `data-open`) and posts
+  `{ type: 'compareOpen', open }` when a Compare opens or closes, when the player becomes visible and after the
+  video opened. The branch that adds the `videoPreviewEnhanced.compareOpen` context key can feed the same hook.
+
+![The Compare confirmation above the bar](img/toolbar-compare-confirm.png)
+
+**CC.** The CC button shows only when the video has a subtitle track (embedded, a sidecar file next to it, or a
+file loaded with **Load subtitle file…**); it appears as soon as one loads. ⚙ › **Subtitles** is always there
+(tracks, Off, delay and size, **Load subtitle file…**). **C** toggles subtitles, or with none opens ⚙ › Subtitles.
+Compare has no subtitle rendering, so none of this applies there (its bar never had CC).
+
+**Icons.** The inventory before: frame steps, play and pause were filled SVGs at 19–22 px; mute, CC, Compare,
+About, Settings (a different gear outline at stroke 1.6), picture size and fullscreen were outlined SVGs at 21–22 px,
+stroke 1.7; CC sat in a taller box; speed (`1×`), time and Reorder are text. The ⚙ and ⓘ in the docs are prose
+glyphs only; every bar button draws an SVG. Now every bar icon is built by one helper in `src/bar.js`: a 20 px box,
+24-unit viewBox, stroke 1.7 with round caps and joins, `currentColor` (the theme's foreground). Transport glyphs
+(frame steps, play, pause) stay solid, as in every player, but are the same outline filled, so corners and weight
+match the outlined tool icons. Hover and focus are unchanged and shared by both bars (`#row button:hover`, the
+global `:focus-visible` outline). Panel icons and Compare's tile overlays are not toolbar icons and are unchanged.
+
+| Bar | Before | After |
+|---|---|---|
+| Player | ![Player bar before](img/toolbar-player-before.png) | ![Player bar after](img/toolbar-player-after.png) (top: no subtitles; bottom: one loaded, CC on) |
+| Compare | ![Compare bar before](img/toolbar-compare-before.png) | ![Compare bar after](img/toolbar-compare-after.png) |
+
+Captured with `test/vscode/screenshot.js` (hidden desktop, Dark Modern, 1518 px window, bar only).
+
+## Keyboard shortcuts in Settings
+
+Removing the dedicated keyboard button frees space in narrow toolbars. The player and Compare use the
+same **Keyboard shortcuts** row in Settings. Arrow keys navigate to the row, which has the accessible
+name “Keyboard shortcuts” and announces that it opens a dialog.
+
+```text
+Toolbar          … [Settings] [Picture size] [Fullscreen]
+Settings         … [Keyboard shortcuts    ?] [Jump sizes ›] …
+```
+
+Enter or Space opens the sheet from the row. Focus moves to **Close** and returns to **Settings** on
+dismissal. **?** also opens the sheet and restores focus to the originating control when possible.
+
+## Speed and volume drags
+
+Speed and volume in both views use the same pointer capture as the single player's seek bar.
+The value follows horizontal motion past the webview edge while the button is held. Release,
+cancellation, lost capture, window blur and closing the Speed panel end the drag. A focused speed
+slider still uses the browser's arrow keys. The hidden-desktop cases dispatch synthetic pointer
+events at coordinates outside the webview to test the value and cleanup. Windows pointer capture
+itself requires real input.
 
 ## Picture size (2026-11-20)
 
@@ -84,6 +150,25 @@ to every tile.
 - Tests: `test/host/picture_test.js`, `compare_factor_test.js`, `a11y_test.js`; real VS Code: `case/picture_size`
   (button, Z cycle, ⚙ page, drag vs click, compare lockstep, paused pan), `picture_size_small` (Fit enlarges a 640x360 clip) and `picture_size_native` (frames in Fill and 100 %).
 
+## Action toasts (maintainer-approved)
+
+The small feedback popup was easy to miss over footage. Actions such as **Z** or the
+**Picture size** button now show a larger, high-contrast toast at the top centre of the
+picture area in the player and Compare. The toast uses the theme's notification colours in
+high-contrast themes. It stays visible for 1.5 seconds by default, and a new message replaces
+it and restarts the timer. Reduced motion turns off the fades. The toast lets pointer input
+pass through and the existing polite live region announces its text.
+
+The hidden-desktop screenshot tool captured **Fill** over generated bright and dark frames
+in Dark Modern. The images show the top of the picture area.
+
+| View | Frame | Before | After |
+|---|---|---|---|
+| Player | Bright | [Before](img/toast-player-bright-before.png) | [After](img/toast-player-bright-after.png) |
+| Player | Dark | [Before](img/toast-player-dark-before.png) | [After](img/toast-player-dark-after.png) |
+| Compare | Bright | [Before](img/toast-compare-bright-before.png) | [After](img/toast-compare-bright-after.png) |
+| Compare | Dark | [Before](img/toast-compare-dark-before.png) | [After](img/toast-compare-dark-after.png) |
+
 ## Keys and VS Code
 
 VS Code's webview host (`out/vs/workbench/contrib/webview/browser/pre/index.html`, `handleInnerKeydown`) listens
@@ -119,8 +204,8 @@ itself.
   undeclared values ignored), `ffmpeg_fake_test.js`, `remote_uri_test.js`.
 - Real VS Code: `case/ui` (names / states / live region, Space on a focused button, picture click plays / pauses
   and closes a panel, each panel button toggles, cog closes any panel, main page rows and Tools grid (Scopes runs),
-  panel keyboard (focus, arrows, Escape back to the cog), shortcuts sheet (modal, groups, jump sizes, no Alt), CC
-  with no subtitles opens the panel, speed ±0.05 / clamps 0.25 and 4 / wheel / slider range / presets / −,
+  panel keyboard (focus, arrows, Escape back to the cog), shortcuts sheet (modal, groups, jump sizes, no Alt),
+  CC appears after loading a subtitle, speed ±0.05 / clamps 0.25 and 4 / wheel / slider range / presets / −,
   time formats, About panel and Full technical details), `case/ui_jumps` (defaults; changing ← → in the panel
   writes `jump.arrow` and moves 10 s), `case/ui_jumps_settings` (frame / 5 s / 1 s from settings),
   `case/ui_info` (WebAssembly HEVC facts), `case/ui_info_native` (native HEVC 10-bit facts), `case/keyconflicts`,

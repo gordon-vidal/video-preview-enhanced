@@ -8,11 +8,19 @@
 //         once failed to connect within 3 s in playback. docs/notes/native-transfer.md)
 //   ws    a WebSocket, one binary message per record (the browser assembles it)
 // Every record starts with a 40-byte little-endian header: magic 'VPEF', kind (1 frame, 2 end
-// of stream), gen, w, h, ys, t (float64), payload length, reserved.
+// of stream), gen, w, h, ys, t (float64), payload length, src (int32: microseconds from t to the
+// picture's own source timestamp, -2^31 when unknown; src/nativepts.js).
 // eslint-disable-next-line no-unused-vars
 const FrameStream = (() => {
   const HEADER = 40;
   const MAX_POOL = 4;
+
+  /** One record header from a DataView at offset 0. src: the picture's own timestamp (s), or null. */
+  function parseHead(/** @type {DataView} */ dv) {
+    const t = dv.getFloat64(24, true);
+    const word = dv.getInt32(36, true);
+    return { kind: dv.getUint32(4, true), gen: dv.getUint32(8, true), w: dv.getUint32(12, true), h: dv.getUint32(16, true), ys: dv.getUint32(20, true), t, len: dv.getUint32(32, true), src: word === -0x80000000 ? null : t + word / 1e6 };
+  }
 
   /** Reads records from a fetch body: (url, take(len) -> reusable buffer or null, onOpen(), onRecord(head, buf), signal). */
   async function readHttp(url, take, onOpen, onRecord, signal) {
@@ -38,7 +46,7 @@ const FrameStream = (() => {
       hb = await fill(hb, HEADER);
       const dv = new DataView(hb);
       if (dv.getUint32(0, true) !== MAGIC) throw new Error('frame stream: bad record header');
-      const head = { kind: dv.getUint32(4, true), gen: dv.getUint32(8, true), w: dv.getUint32(12, true), h: dv.getUint32(16, true), ys: dv.getUint32(20, true), t: dv.getFloat64(24, true), len: dv.getUint32(32, true) };
+      const head = parseHead(dv);
       const buf = head.len ? await fill(take(head.len) || new ArrayBuffer(head.len), head.len) : new ArrayBuffer(0);
       onRecord(head, buf);
     }
@@ -63,7 +71,7 @@ const FrameStream = (() => {
           const ab = /** @type {ArrayBuffer} */ (e.data);
           const dv = new DataView(ab, 0, HEADER);
           if (dv.getUint32(0, true) !== 0x46455056) throw new Error('frame stream: bad record header');
-          const head = { kind: dv.getUint32(4, true), gen: dv.getUint32(8, true), w: dv.getUint32(12, true), h: dv.getUint32(16, true), ys: dv.getUint32(20, true), t: dv.getFloat64(24, true), len: dv.getUint32(32, true) };
+          const head = parseHead(dv);
           opts.onRecord(head, new Uint8Array(ab, HEADER, head.len), false);
         } catch (err) { ws.close(); done(err); }
       };

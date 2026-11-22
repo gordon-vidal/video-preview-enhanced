@@ -53,6 +53,25 @@ const frame = (t) => ({ t, yuv: {}, bytes: 1 });
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
+test('shown frame numbers tolerate rounded PTS without advancing for snapped rates', () => {
+  const rounded = player({ startT: 0.007, shownT: 0.073, fps: 30, info: { video: { fps: 30 } } });
+  assert.strictEqual(rounded.currentFrame(), 2);
+  const fractional = player({ meta: { duration: 11 }, info: { video: { fps: 29.9 } }, shownT: 300 / 29.9 });
+  fractional.setFrameRate(29.9);
+  assert.strictEqual(fractional.fps, 30000 / 1001);
+  assert.strictEqual(fractional.currentFrame(), 300);
+  // After the rates have drifted by multiple pictures, a step by label still advances.
+  fractional.meta.duration = 31;
+  fractional.setFrameRate(29.9);
+  fractional.shownT = 900 / 29.9;
+  let target;
+  fractional.seekTime = (t) => { target = t; };
+  fractional.seekFrame(fractional.currentFrame() + 1);
+  assert.strictEqual(target, 901.5 / 29.9);
+  assert.strictEqual(player({ shownT: 300.7 / 30, n: 400 }).currentFrame(), 300);
+  assert.strictEqual(player({ shownT: 12 / 30, info: { video: { fps: 600 } } }).currentFrame(), 12);
+});
+
 test('#5 ms-rounded audio chunks are placed back to back', () => {
   const p = player({ ac: fakeAc() });
   const n = 1024;
@@ -789,6 +808,107 @@ test('invisible: the AudioContext rests when paused and the clock waits for it o
   const q = player({ ac: Object.assign(fakeAc(), { state: 'suspended', suspend() { throw new Error('suspend'); } }) });
   P.restAudio.call(q);
   assert.ok(!q.acRest);
+});
+
+test('Compare A-B wraps before EOF can pause playback', () => {
+  const p = player({ eof: true, shownT: 3, lastT: 3, loop: false });
+  playingAt(p, 3.2);
+  p.tick(0, { start: 1, end: 3 });
+  assert.ok(p.playing, 'a delayed tick at the end stopped the clock');
+  assert.strictEqual(p.seekTarget, 1);
+});
+
+test('Compare A-B shows B but never shows the following close VFR picture', () => {
+  const p = player({ shownT: 1.96, queue: [frame(2), frame(2.004), frame(2.04)], loop: false });
+  playingAt(p, 2.002);
+  const range = { start: 1, end: 2 };
+  p.tick(0, range);
+  assert.strictEqual(p.shownT, 2, 'early presentation must stop at B');
+  assert.strictEqual(p.seekTarget, null, 'the next picture time has not arrived');
+  playingAt(p, 2.005);
+  p.tick(0, range);
+  assert.strictEqual(p.seekTarget, 1, 'wrapped at the actual next picture');
+  assert.strictEqual(p.shownT, 2);
+});
+
+test('WebCodecs keeps only visible packets in a generated two-edit MP4', async () => {
+  const os = require('os');
+  const { spawnSync, execFileSync } = require('child_process');
+  const { Session, shutdownWorkers } = require('../tracks/driver');
+  const ffmpeg = process.env.VPE_FFMPEG || 'ffmpeg';
+  if (spawnSync(ffmpeg, ['-version'], { windowsHide: true }).status !== 0) {
+    console.log('    ffmpeg unavailable, skipping generated two-edit media');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-two-edits-'));
+  let session;
+  const { VideoDecoder, EncodedVideoChunk } = ctx;
+  try {
+    const file = path.join(dir, 'two-edits.mp4');
+    execFileSync(ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=96x64:r=25:d=4',
+      '-c:v', 'libx264', '-g', '25', '-bf', '0', '-sc_threshold', '0', '-movie_timescale', '1000', file],
+    { windowsHide: true });
+    // The default muxer writes moov last. Growing its edit list keeps media offsets intact.
+    const movie = fs.readFileSync(file);
+    const typeAt = (type) => {
+      const at = movie.indexOf(type, movie.lastIndexOf('moov'));
+      assert(at > 0, `missing ${type} box`);
+      return at;
+    };
+    const elst = typeAt('elst');
+    const count = elst + 8;
+    assert.equal(movie.readUInt32BE(count), 1);
+    assert.equal(movie[elst + 4], 0, 'expected 32-bit edit entries');
+    const entries = Buffer.alloc(28);
+    entries.writeUInt32BE(2, 0);
+    entries.writeUInt32BE(1000, 4);
+    entries.writeUInt32BE(0x00010000, 12);
+    entries.writeUInt32BE(1000, 16);
+    const timescale = movie.readUInt32BE(typeAt('mdhd') + 16);
+    entries.writeUInt32BE(Math.round(2.6 * timescale), 20);
+    entries.writeUInt32BE(0x00010000, 24);
+    for (const name of ['moov', 'trak', 'edts', 'elst']) {
+      const size = typeAt(name) - 4;
+      movie.writeUInt32BE(movie.readUInt32BE(size) + 12, size);
+    }
+    fs.writeFileSync(file, Buffer.concat([movie.subarray(0, count), entries, movie.subarray(count + 16)]));
+
+    session = await new Session(file, { video: 'webcodecs' }).open();
+    const packets = [];
+    let eof;
+    do {
+      const batch = await session.more();
+      packets.push(...batch.video);
+      eof = batch.eof;
+    } while (!eof);
+    const visible = packets.filter((p) => !p.discard);
+    assert.equal(visible.length, 50, 'two seconds of visible video');
+    const discardedTimes = new Set(packets.filter((p) => p.discard).map((p) => p.t));
+    assert(visible.some((p) => discardedTimes.has(p.t)), 'fixture must contain a visible and a discard packet with the same PTS');
+
+    const decoded = [];
+    ctx.EncodedVideoChunk = class { constructor(init) { Object.assign(this, init); } };
+    ctx.VideoDecoder = class {
+      constructor({ output }) { this.output = output; }
+      configure() { this.state = 'configured'; }
+      decode(chunk) { decoded.push(chunk); }
+    };
+    const shown = [];
+    const p = player({ vmode: 'webcodecs', noSpill: true, addFrame: (f) => shown.push([f.t, f.vf.data]), pump: noop });
+    p.makeVideoDecoder();
+    p.onBatch({ gen: 0, audio: [], video: packets });
+    for (const chunk of decoded) p.vdec.output({ ...chunk, close: noop });
+    assert.equal(shown.length, visible.length);
+    visible.forEach((it, i) => {
+      assert.equal(shown[i][1], it.data, `wrong packet at visible picture ${i}`);
+      assert.equal(shown[i][0], Math.round(it.t * 1e6) / 1e6, 'original presentation time');
+    });
+  } finally {
+    Object.assign(ctx, { VideoDecoder, EncodedVideoChunk });
+    session?.close();
+    await shutdownWorkers();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 (async () => {

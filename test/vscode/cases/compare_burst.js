@@ -42,8 +42,8 @@ module.exports = [{
         tb = await tabs();
       }
     };
-    // A negative window: a second open within the 400 ms openTogether debounce would still turn into a compare, so
-    // wait twice that before asserting that none appeared.
+    // A negative window: a second open within the openTogether window (src/burst.js, 120 ms) would still turn into a
+    // compare, so wait well past it before asserting that none appeared.
     const NO_COMPARE_MS = 800;
     let ok = null;
     try {
@@ -55,6 +55,18 @@ module.exports = [{
       await vs.waitLog(opened(3), { from, timeout: 30000, what: 'compare opened with 3 tiles' });
       let tb = await tabsWhen((tb) => tb.length === 1 && /compare/i.test(tb[0].viewType));
       ok(tb.length === 1 && /compare/i.test(tb[0].viewType), `tabs after the burst: ${JSON.stringify(tb)}`);
+      // A burst is the whole set the user asked for: Add Mode stays off (src/addmode.js startsInAddMode), so the next
+      // video opens as a player of its own instead of joining the compare.
+      await vs.waitLog(/webview: begin:/, { from, timeout: 30000, what: 'compare ready' });
+      ok(!vs.lines.slice(from).some((l) => /compare: add from the Explorer on|webview: addMode on/.test(l)), 'a burst must open Compare with Add Mode off');
+      const after = vs.mark();
+      vs.send({ openWithBurst: [files[2]] });
+      // (files[2] is one of the compared videos: opened alone it is a player of its own, not added or deduplicated away.)
+      await vs.waitLog(new RegExp(`\\[${esc(CLIPS[2])}\\] session resolved`), { from: after, timeout: 15000, what: 'a player after the burst' });
+      await h.sleep(NO_COMPARE_MS);
+      tb = await tabs();
+      ok(tb.length === 2 && tb.some((x) => /compare/i.test(x.viewType)) && tb.some((x) => !/compare/i.test(x.viewType)),
+        `a video opened after the burst is a player beside the compare: ${JSON.stringify(tb)}`);
 
       ok = t('one-video-alone');
       await closeAll();

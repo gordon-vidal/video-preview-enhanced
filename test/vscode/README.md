@@ -3,8 +3,8 @@
 ```
 node test/run.js vscode                             # layer 3: every scenario (docs/TESTING.md)
 node test/run.js vscode --changed                   # the scenarios that cover your changes (scenario_map.js)
-node test/vscode/scenarios.js --grep '^seeking$'    # one scenario; --list shows them
-node test/vscode/scenarios.js --parallel 2          # instances side by side (see "Parallel" below)
+node test/run.js vscode --grep '^seeking$'          # one scenario; --list shows them
+node test/run.js vscode --parallel 2                # instances side by side (see "Parallel" below)
 node test/run.js perf                               # layer 4: start-up, CPU, memory, fps (test/perf/run.js)
 node test/vscode/get_code.js                        # once: a pinned portable VS Code in test/vscode/.code
 ```
@@ -13,6 +13,10 @@ node test/vscode/get_code.js                        # once: a pinned portable VS
   background updater makes new instances stall). `VPE_CODE=<Code.exe>` picks another one.
 - Windows only. Needs Python 3 on PATH (standard library only), ffmpeg on PATH (reference frames, test clips,
   and the native-ffmpeg scenarios), no admin rights. Nothing appears on the screen.
+- The layer 3 and 4 commands above acquire the same `%TEMP%\vpe-vscode-lock` directory across worktrees.
+  They print which runner holds the lock while waiting. The runner records the layer's process before
+  allowing it to start, and locks are cleared when the recorded processes have exited. A lock created by hand, with or without an `owner.txt` note, is honored for 40 minutes
+  unless its holder removes it first. Listing scenarios or benchmarks does not acquire the lock.
 
 ## Scenarios (layer 3)
 
@@ -145,8 +149,9 @@ started while other processes use more than 25 % CPU is marked "under load" and 
 - The extension's test hook (only with `VPE_LOG`) reads JSON lines appended to `<VPE_LOG>.cmd` once
   it has logged `activated:`. Everything the extension and its webviews log lands in `VPE_LOG`, which
   the runner tails.
-- Cleanup always runs: `taskkill /T /F` on the VS Code tree, then any `Code.exe` still using the
-  profile, then the profile is deleted (`--keep` keeps it).
+- Each launch and CLI call runs inside a Windows job. Closing the job terminates its entire process
+  tree, including descendants whose parent has already exited. The runner waits for the launchers
+  to exit before deleting the profile (`--keep` keeps it).
 
 ## Files on the first command line (activation)
 

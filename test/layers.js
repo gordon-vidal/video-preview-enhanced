@@ -209,6 +209,7 @@ const unit = [
   { file: 'test/subtitles/sidecars.js', sources: ['src/sidecars.js'] },
   { file: 'test/timestretch/run.js', sources: ['media/timestretch.js'] },
   { file: 'test/unit/abloop_test.js', sources: ['media/abloop.js', 'media/player.js'] },
+  { file: 'test/unit/comparerange_test.js', sources: ['media/comparerange.js', 'media/compare.js'] },
   { file: 'test/unit/timefmt_test.js', sources: ['media/timefmt.js', 'media/player.js'] },
   { file: 'test/avi_test.js', args: ['test/media/cases/s_mjpeg.avi'], media: ['s_mjpeg.avi'], needs: ['ffmpeg'], sources: ['src/avi.js'] },
 ].filter((e) => fs.existsSync(path.join(ROOT, e.file)));

@@ -9,8 +9,8 @@ disposal) were already ported in `fix/compare-from-multiview`; they were not red
 
 ## What a user sees
 
-- Setting `videoPreviewEnhanced.compare.maxVideos` defaults to 8 and accepts 2–16. It caps Compare
-  Videos, Compare Videos in Folder, Open Together, Compare With…, dropped files and Add Mode.
+- Setting `videoPreviewEnhanced.compare.maxVideos` defaults to 8 and accepts 2–16. It caps Add
+  to Compare, Open Together, Compare With…, dropped files and Add Mode.
 - From 5 videos, cells fill a static grid left to right and top to bottom (3×2, 3×3, 4×3, 4×4).
   The first spare slot is the Add video cell while the setting allows more. When the current grid
   has no spare slot, **Add video…** in the Compare panel and Shift+D can still add videos up to the limit.
@@ -27,6 +27,8 @@ In grids of five or more, the hover controls use the full cell and stack in its 
 │                   │
 └───────────────────┘
 ```
+
+Each tile shows the same frame number that the single player shows for that picture.
 
 Hover or keyboard focus reveals the controls. Long filenames can truncate. The name pill opens
 the tile page. The offset buttons retain their accessible names (“A earlier”,
@@ -76,6 +78,6 @@ about 20-35 % CPU). Under heavy load (other agents near 100 % CPU) a run gave 23
 
 ## Open
 
-- Drag to reorder and free tile placement.
+- Free tile placement. For ordering within the grid, see [Tile order](compare-ui.md#tile-order).
 - 16 tiles on the built-in (WebAssembly) decoder run 16 workers, each with its own heap; 1080p HEVC there
   is far below real time. With ffmpeg they play.

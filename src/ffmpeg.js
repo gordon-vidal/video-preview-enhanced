@@ -282,6 +282,8 @@ async function probeRun(tools, input, signal) {
       colorSpace: v.color_space || '', colorTransfer: v.color_transfer || '', colorPrimaries: v.color_primaries || '',
       // How much later the picture starts than the file (sound first, as in HLS/DASH without edit lists): a seek adds it (src/native.js launch).
       lead: leadOf(v, j.format),
+      // The stream's own clock for the source timestamps native playback reports (src/nativepts.js).
+      timeBase: v.time_base || '', startTime: Number.isFinite(Number(v.start_time)) ? Number(v.start_time) : null,
       dv: dolbyVision(v),
     } : null,
     audio: a ? { index: a.index, codec: a.codec_name, channels: a.channels, sampleRate: Number(a.sample_rate) || 0, bitRate: num(a.bit_rate) } : null,

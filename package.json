@@ -157,15 +157,22 @@
         "category": "Video Preview"
       },
       {
-        "command": "videoPreviewEnhanced.compare",
-        "title": "Compare Videos",
-        "category": "Video Preview",
+        "command": "videoPreviewEnhanced.startCompare",
+        "title": "Video Preview Enhanced: Start Compare"
+      },
+      {
+        "command": "videoPreviewEnhanced.addToCompare",
+        "title": "Video Preview Enhanced: Add to Compare",
         "icon": "$(diff)"
       },
       {
         "command": "videoPreviewEnhanced.compareWith",
-        "title": "Compare With…",
-        "category": "Video Preview",
+        "title": "Video Preview Enhanced: Start Compare",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "videoPreviewEnhanced.addToCompareFromPlayer",
+        "title": "Video Preview Enhanced: Add to Compare",
         "icon": "$(diff)"
       },
       {
@@ -177,12 +184,6 @@
         "command": "videoPreviewEnhanced.stopAddFromExplorer",
         "title": "Compare: Stop Adding from the Explorer",
         "category": "Video Preview"
-      },
-      {
-        "command": "videoPreviewEnhanced.compareFolder",
-        "title": "Compare Videos in Folder",
-        "category": "Video Preview",
-        "icon": "$(diff)"
       },
       {
         "command": "videoPreviewEnhanced.loadSubtitles",
@@ -197,6 +198,16 @@
       {
         "command": "videoPreviewEnhanced.copyFfmpegRange",
         "title": "Copy ffmpeg Command for A–B",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.exportVideoRange",
+        "title": "Export A–B Clip…",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.exportCompareVideoRange",
+        "title": "Export A–B Clips…",
         "category": "Video Preview"
       },
       {
@@ -273,13 +284,13 @@
           "group": "navigation@20"
         },
         {
-          "command": "videoPreviewEnhanced.compare",
-          "when": "listMultiSelection && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
+          "command": "videoPreviewEnhanced.startCompare",
+          "when": "!videoPreviewEnhanced.compareOpen && (explorerResourceIsFolder || resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i)",
           "group": "3_compare@20"
         },
         {
-          "command": "videoPreviewEnhanced.compareFolder",
-          "when": "explorerResourceIsFolder",
+          "command": "videoPreviewEnhanced.addToCompare",
+          "when": "videoPreviewEnhanced.compareOpen && (explorerResourceIsFolder || resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i)",
           "group": "3_compare@20"
         }
       ],
@@ -299,6 +310,14 @@
         {
           "command": "videoPreviewEnhanced.copyFfmpegRange",
           "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/"
+        },
+        {
+          "command": "videoPreviewEnhanced.exportVideoRange",
+          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/"
+        },
+        {
+          "command": "videoPreviewEnhanced.exportCompareVideoRange",
+          "when": "activeWebviewPanelId == 'videoPreviewEnhanced.compare'"
         },
         {
           "command": "videoPreviewEnhanced.ctx.play",
@@ -361,14 +380,31 @@
           "when": "videoPreviewEnhanced.addMode"
         },
         {
-          "command": "videoPreviewEnhanced.compareFolder",
+          "command": "videoPreviewEnhanced.startCompare",
           "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.addToCompare",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.compareWith",
+          "when": "!videoPreviewEnhanced.compareOpen"
+        },
+        {
+          "command": "videoPreviewEnhanced.addToCompareFromPlayer",
+          "when": "videoPreviewEnhanced.compareOpen && (activeCustomEditorId == videoPreviewEnhanced.player || activeCustomEditorId == videoPreviewEnhanced.playerOptional)"
         }
       ],
       "editor/title": [
         {
           "command": "videoPreviewEnhanced.compareWith",
-          "when": "activeCustomEditorId == videoPreviewEnhanced.player || activeCustomEditorId == videoPreviewEnhanced.playerOptional",
+          "when": "!videoPreviewEnhanced.compareOpen && (activeCustomEditorId == videoPreviewEnhanced.player || activeCustomEditorId == videoPreviewEnhanced.playerOptional)",
+          "group": "navigation@90"
+        },
+        {
+          "command": "videoPreviewEnhanced.addToCompareFromPlayer",
+          "when": "videoPreviewEnhanced.compareOpen && (activeCustomEditorId == videoPreviewEnhanced.player || activeCustomEditorId == videoPreviewEnhanced.playerOptional)",
           "group": "navigation@90"
         }
       ],

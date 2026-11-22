@@ -1,6 +1,6 @@
 # Release screenshots
 
-Both PNGs in `media/screenshots/` show the current simple player in portable VS Code 1.147.0.
+Both PNGs in `media/screenshots/` show an earlier player layout in portable VS Code 1.147.0.
 The hidden-desktop capture script disables breadcrumbs and opens a copy of each clip from its own
 temporary folder so the release images show the clip names without local paths or user names.
 The captures were trimmed at the outer window edges to keep the existing 1518×1009 dimensions
@@ -12,6 +12,9 @@ and saved as indexed PNGs under 500 KB each.
 | `hevc-builtin.png` | `test/media/hevc_10_1080p.mp4` remuxed to MKV with `ffmpeg -i test/media/hevc_10_1080p.mp4 -map 0:v:0 -c copy hevc_10_1080p.mkv`, the *Tears of Steel* HEVC Main 10 excerpt |
 
 Both excerpts are CC BY 3.0, Blender Foundation. See [test footage credits](../../test/media/LICENSES.md).
+
+The README’s Remote-SSH demo also shows an earlier toolbar. In the current player and Compare,
+open **Settings › Keyboard shortcuts** or press **?**. See the [keys guide](../keys.md).
 
 ## Manual captures
 

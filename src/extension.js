@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { serveBlock } = require('./read-block');
+const { otherInstalledVersions } = require('./old-installs');
 // Modules a feature needs (URLs, ffmpeg setup and download, A-B export, AVI, the remote stream) load on first use:
 // a window start pays only for what it runs. The proxy forwards property reads to the real module.
 const lazy = (id) => { let m; return new Proxy({}, { get: (_, k) => (m || (m = require(id)))[k] }); };
@@ -38,6 +39,8 @@ const { barHtml } = require('./bar'); // the bar's markup, shared with compare
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy('./rangecmd'); // A-B frame export and ffmpeg command
+const clipExport = lazy('./clipexport');
+const { syntheticRefusal } = require('./clipsource');
 const ctxmenu = require('./ctxmenu'); // the player's right-click menu
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
 const urlsource = lazy('./urlsource'); // Open Video URL… (docs/notes/url-stream.md)
@@ -79,11 +82,14 @@ const debugPool = (() => { try { return logFile && process.env.VPE_POOL ? JSON.p
 // ones that change settings or install things (makeDefault, setupFfmpeg…).
 const DEBUG_COMMANDS = new Set([
   'videoPreviewEnhanced.openWith', 'videoPreviewEnhanced.playSequence', 'videoPreviewEnhanced.compareWith',
+  'videoPreviewEnhanced.addToCompareFromPlayer',
   'videoPreviewEnhanced.showLog', 'workbench.action.closeActiveEditor', 'workbench.action.closeAllEditors', 'workbench.action.reloadWindow',
   'notifications.clearAll', 'videoPreviewEnhanced.exportRange', 'videoPreviewEnhanced.addFromExplorer', 'videoPreviewEnhanced.stopAddFromExplorer', 'workbench.files.action.refreshFilesExplorer',
+  'videoPreviewEnhanced.exportVideoRange', 'videoPreviewEnhanced.exportCompareVideoRange',
 ]);
 const sessions = new Set();
 const compareSessions = new Set(); // open compare panels (src/compare.js)
+const clipExports = new WeakSet();
 /** Sound codecs whose WebCodecs decoder lagged in this VS Code session ('audio-aac', ...): the built-in decoder plays them from then on. */
 const wcFailed = new Set();
 // Frame links (vscode://<id>/open?…) waiting for their player: file URI string -> {t, frame}.
@@ -996,13 +1002,9 @@ async function fileIcons({ force = false } = {}) {
 // ---- end file icons ----
 
 /** Two installs of this extension (an old 0.2.0 beside the new one) leave a window with a stale manifest. Tell once. */
-async function warnOldInstalls() {
+async function warnOldInstalls(extensionId) {
   try {
-    const dir = path.dirname(extensionDir);
-    const mine = path.basename(extensionDir);
-    const base = mine.replace(/-\d[\w.+-]*$/, '');
-    if (base === mine) return;
-    const others = (await fs.promises.readdir(dir)).filter((n) => n !== mine && n.startsWith(`${base}-`) && /^\d/.test(n.slice(base.length + 1))).sort();
+    const others = await otherInstalledVersions(extensionDir, extensionId);
     const key = others.join(',');
     if (!others.length || globalState.get('videoPreviewEnhanced.warnedOld') === key) return;
     await globalState.update('videoPreviewEnhanced.warnedOld', key);
@@ -1023,6 +1025,59 @@ function askRange(then) {
   }
   s.post({ type: 'abQuery', then });
   return undefined;
+}
+
+function askClipRange(compare) {
+  const target = [...(compare ? compareSessions : sessions)].find((s) => s.panel.active);
+  if (target) target.post({ type: 'abQuery', then: 'clip' });
+  else vscode.window.showInformationMessage('Video Preview: open a video or Compare and mark an A-B range first.');
+}
+
+async function exportClips(session, jobs, source, compare = false) {
+  if (clipExports.has(session)) return;
+  if (!source || session.url || session.sequence || !FS_SCHEMES.has(source.scheme)) {
+    vscode.window.showInformationMessage('Video Preview: clip export requires a video file on this host.');
+    return;
+  }
+  if (!jobs.length) {
+    vscode.window.showInformationMessage('Video Preview: set an A-B loop first with A and B.');
+    return;
+  }
+  const refusal = syntheticRefusal(jobs, session.liveTranscodeTiles ? session.liveTranscodeTiles() : [], compare);
+  if (refusal) {
+    // Marks without source timestamps: refuse before any ffmpeg work, and offer the switch in one click.
+    const answer = await vscode.window.showWarningMessage(refusal.message, ...(refusal.label ? [refusal.label] : []));
+    if (answer && answer === refusal.label && !session.disposed) session.useOriginalForClips(refusal.tiles);
+    return;
+  }
+  if (!vscode.workspace.isTrusted) {
+    vscode.window.showWarningMessage('Video Preview: clip export requires native ffmpeg in a trusted workspace.');
+    return;
+  }
+  clipExports.add(session);
+  try {
+    const native = await tools();
+    if (!native) {
+      const setup = 'Set Up Optional ffmpeg';
+      const answer = await vscode.window.showInformationMessage(
+        'Video Preview: A-B clip export requires native ffmpeg and ffprobe on this host.', setup,
+      );
+      if (answer === setup) await vscode.commands.executeCommand('videoPreviewEnhanced.setupFfmpeg');
+      return;
+    }
+    const testDir = logFile && process.env.VPE_CLIP_EXPORT_DIR;
+    await clipExport.exportClips({
+      vscode, tools: native, jobs, compare, defaultUri: vscode.Uri.joinPath(source, '..'), log,
+      announce: (message) => session.post({ type: 'toast', text: message, ms: 5000 }),
+      testFolder: testDir ? vscode.Uri.file(testDir) : undefined,
+      testConfirm: !!testDir && process.env.VPE_CLIP_EXPORT_CONFIRM === '1',
+    });
+  } catch (e) {
+    log(`A–B export failed: ${e.message}`);
+    vscode.window.showErrorMessage(`Video Preview: A–B export failed. ${e.message}`);
+  } finally {
+    clipExports.delete(session);
+  }
 }
 
 /**
@@ -1159,11 +1214,17 @@ function activate(context) {
   const provider = {
     openCustomDocument: (uri) => ({ uri, dispose() {} }),
     resolveCustomEditor: (doc, panel) => {
+      if (logFile) log(`[${path.basename(doc.uri.path)}] player resolve started`);
       // Add mode (docs/notes/compare-ui.md): the video goes into compare, and this new tab closes unused.
       if (compareApi && compareApi.claimOpen(doc.uri)) { setTimeout(() => panel.dispose(), 0); return undefined; }
       // Several videos opened at once (an Explorer multi-selection) become one compare (src/burst.js).
-      if (compareApi) compareApi.noteOpen(doc.uri, { panel });
-      return new Session(context, { uri: doc.uri }, panel).show();
+      const noted = !!compareApi && compareApi.noteOpen(doc.uri, { panel });
+      const session = new Session(context, { uri: doc.uri }, panel);
+      // Opened with others within a moment: compare takes these videos, so the heavy start-up (page, decoder, ffprobe) waits
+      // for its verdict and never happens for them. A video opened alone starts at once (one macrotask later).
+      const hold = noted ? compareApi.holdOpen(doc.uri) : null;
+      if (!hold) return session.show();
+      return hold.then((taken) => (taken ? undefined : session.show()));
     },
   };
   for (const viewType of VIEW_TYPES) {
@@ -1223,6 +1284,8 @@ function activate(context) {
     // ---- A-B export: the page answers 'abQuery' with its range, then the host runs it ----
     vscode.commands.registerCommand('videoPreviewEnhanced.exportRange', () => askRange('export')),
     vscode.commands.registerCommand('videoPreviewEnhanced.copyFfmpegRange', () => askRange('ffmpeg')),
+    vscode.commands.registerCommand('videoPreviewEnhanced.exportVideoRange', () => askClipRange(false)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.exportCompareVideoRange', () => askClipRange(true)),
     // ---- end A-B export ----
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('videoPreviewEnhanced.ffmpegPath')) toolsPromise = null;
@@ -1258,11 +1321,20 @@ function activate(context) {
   );
   autoDefault();
   fileIcons();
-  warnOldInstalls();
+  // A development extension can live beside identically named worktrees.
+  if (context.extensionMode === vscode.ExtensionMode.Production) warnOldInstalls(context.extension?.id);
 
-  // ---- compare mode (src/compare.js): Explorer "Compare Videos", "Compare With…" ----
+  // ---- Compare and Add to Compare (src/compare.js) ----
+  let testCompareFiles;
   compareApi = registerCompare(context, {
-    vscode, log, sessions, compareSessions, nativeTransport, nativeQueue,
+    vscode, log, sessions, compareSessions, nativeTransport, nativeQueue, exportClips,
+    compareOpenChanged: () => { for (const session of sessions) session.sendCompareOpen(); },
+    showOpenDialog: logFile ? (options) => {
+      const files = testCompareFiles;
+      testCompareFiles = undefined;
+      return files || vscode.window.showOpenDialog(options);
+    } : undefined,
+    lastActivePlayer: () => lastActive,
     // Videos compared lately (uri strings): the quick pick on key D lists them first.
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
     // Compare's bar and panels are the player's: the same jump sizes, written the same way.
@@ -1352,6 +1424,13 @@ function activate(context) {
               vscode.commands.executeCommand('videoPreviewEnhanced.compare', list[0], list);
               continue;
             }
+            if (c.startCompare || c.addToCompare) { // primary resource, then the selection
+              const action = c.startCompare ? 'startCompare' : 'addToCompare';
+              const list = c[action].map((f) => vscode.Uri.file(f));
+              vscode.commands.executeCommand(`videoPreviewEnhanced.${action}`, list[0], list.length > 1 ? list : undefined)
+                .then(() => log(`debug done ${c.id || ''} ${action}`), (e) => log(`debug ${action} failed: ${e.message}`));
+              continue;
+            }
             if (c.pickCompare) { // tests: the next compare quick pick logs its rows and picks one (label part, or Browse…)
               setPickHook(async (items) => {
                 setPickHook(null);
@@ -1361,7 +1440,7 @@ function activate(context) {
               continue;
             }
             if (c.openFile) { // tests: opens a file as an Explorer click would (a preview tab in the active group)
-              vscode.commands.executeCommand('vscode.open', vscode.Uri.file(c.openFile), { preview: c.preview !== false, preserveFocus: true })
+              vscode.commands.executeCommand('vscode.open', vscode.Uri.file(c.openFile), { preview: c.preview !== false, preserveFocus: c.preserveFocus !== false })
                 .then(() => log(`debug done ${c.id || ''} openFile`), (e) => log(`debug openFile failed: ${e && e.message || e}`));
               continue;
             }
@@ -1397,12 +1476,21 @@ function activate(context) {
               continue;
             }
             if (c.compareReplace) { for (const s of compareSessions) s.replaceUri(Number(c.compareReplace.index), vscode.Uri.file(c.compareReplace.file)); continue; }
-            if (c.compareWith) { // the player's "Compare with…" without the dialog: its file plus these, in its place
+            if (c.compareWith) { // Start Compare from a player, with the open dialog's result supplied by the test
               const from = [...sessions].find((s) => !s.url && !s.sequence && (!c.name || s.name.includes(c.name)));
-              if (from) vscode.commands.executeCommand('videoPreviewEnhanced.compare', from.uri, [from.uri, ...c.compareWith.map((f) => vscode.Uri.file(f))], { from, t: Number(c.t) || 0 });
+              if (from) {
+                testCompareFiles = c.compareWith.map((f) => vscode.Uri.file(f));
+                vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', from.uri, { t: Number(c.t) || 0 })
+                  .catch((e) => log(`debug compareWith failed: ${e.message}`));
+              }
               continue;
             }
             if (c.compare) { for (const s of compareSessions) s.post({ ...c, type: 'debug' }); continue; }
+            if (c.pickSubtitles) {
+              for (const s of sessions) if (s.name === c.name) s.testPickSubtitles = c.pickSubtitles.map((f) => vscode.Uri.file(f));
+              log('debug subtitles picker ready');
+              continue;
+            }
             if (c.bench) {
               // Throughput of extension host -> webview messages (raw-frame transport test).
               for (const sess of sessions) if (!c.name || sess.name.includes(c.name)) {
@@ -1641,6 +1729,7 @@ class Session {
       if (!panel.visible) this.hiddenCount++;
       if (panel.visible && this.shown) this.startEarly();
       this.post({ type: 'visible', visible: panel.visible });
+      if (panel.visible) this.sendCompareOpen();
       if (panel.visible && this.onShown) { const f = this.onShown; this.onShown = null; f(); }
     });
     this.extraSubs = []; // subtitle files the user loaded; sent again after a reload
@@ -1786,6 +1875,19 @@ class Session {
     if (!this.disposed) this.webview.postMessage(msg);
   }
 
+  canCompare() {
+    return !this.sequence && !this.url && FS_SCHEMES.has(this.uri.scheme);
+  }
+
+  /** Whether a Compare is open: the player's Compare button then adds to it (media/player.js setCompareOpen). */
+  compareOpen() {
+    return [...compareSessions].some((c) => !c.disposed);
+  }
+
+  sendCompareOpen() {
+    if (this.canCompare()) this.post({ type: 'compareOpen', open: this.compareOpen() });
+  }
+
   fail(err, hint) {
     log(`[${this.name}] error: ${err && err.stack ? err.stack : err}`);
     this.post({ type: 'error', message: String(err && err.message ? err.message : err), hint: hint || '' });
@@ -1806,6 +1908,7 @@ class Session {
       autoplay: c.autoplay, loop: c.loop, prefs: prefsOf(c), canOpenExternal: this.canOpenExternal(), name: this.name, debug: !!logFile, resume: this.resumeAt(), goto,
       // A URL tab (Open Video URL…): file-only tools are off; the info panel names the host instead of a size.
       url: this.url ? { host: new URL(this.url).host } : null,
+      sequence: !!this.sequence,
       engine: {
         workerUrl: uri('decoder-worker.js'), xrayWorkerUrl: uri('xray-worker.js'), libavBase: base, loader: `${base}/${this.build.loader}`, variant: this.build.variant,
         remote: !!vscode.env.remoteName, whenSlow: c.whenSlow, fastWhenBehind: c.fastWhenBehind,
@@ -1859,7 +1962,16 @@ ${earlyJs}<link rel="stylesheet" href="${uri('player.css')}">
   <div id="toast" hidden aria-hidden="true"></div>
   <div id="notice" role="status" hidden><span id="noticeText"></span><button id="noticeAction"></button><button id="noticeClose" title="Dismiss" aria-label="Dismiss">×</button></div>
 </div>
-${barHtml()}
+${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
+<div id="startCompareBackdrop" hidden>
+  <div id="startCompareDialog" tabindex="-1" role="dialog" aria-modal="true" aria-label="Start comparison" aria-describedby="startCompareHint">
+    <p id="startCompareHint">Start Compare with this video, then click videos in the Explorer to add them.</p>
+    <div class="compare-actions">
+      <button id="cancelCompareBtn" type="button">Cancel</button>
+      <button id="confirmCompareBtn" type="button">Start comparison</button>
+    </div>
+  </div>
+</div>
 <div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
 <div id="sheet" hidden></div>
 <div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -1878,6 +1990,7 @@ ${barHtml()}
 <script nonce="${nonce}" src="${uri('tracks-menu.js')}"></script>
 <script nonce="${nonce}" src="${uri('xray.js')}"></script>
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
+<script nonce="${nonce}" src="${uri('range-drag.js')}"></script>
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
 <script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
 <script nonce="${nonce}" src="${uri('abloop.js')}"></script>
@@ -1950,7 +2063,9 @@ ${barHtml()}
         this.t.ready = this.t.ready || Date.now();
         this.sendSubtitles().catch((e) => log(`[${this.name}] subtitles: ${e && e.stack || e}`));
         this.sendFfmpegState();
-        return this.sequence ? this.openSequence() : this.open();
+        // The bar was rendered with the Compare state. A Compare that opened or closed while the page loaded is sent
+        // after the video opened, so nothing comes before the first sound and frames (test/host/wav_parts_test.js).
+        return Promise.resolve(this.sequence ? this.openSequence() : this.open()).finally(() => this.sendCompareOpen());
       case 'loadSubs': return this.loadSubtitles();
       // The settings panel's "Extension settings" row: VS Code's Settings, filtered to this extension.
       case 'openSettings': return vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXT_ID}`);
@@ -2002,6 +2117,9 @@ ${barHtml()}
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         // Compare takes this tab's place and starts where the player is (src/compare.js).
         return vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', this.uri, { t: Number(m.t) || 0 });
+      case 'toolbarCompare':
+        if (!this.canCompare()) return;
+        return compareApi.addFromPlayer(this, Number(m.t) || 0, m.confirmStart === true);
       case 'comparePick': // key D: a quick pick of other videos
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         return vscode.commands.executeCommand('videoPreviewEnhanced.comparePick', this.uri, { t: Number(m.t) || 0 });
@@ -2034,6 +2152,7 @@ ${barHtml()}
       case 'saveFrame': return m.page === this.page ? this.saveFrame(m.data, m.frame) : undefined;
       case 'exportRange': return m.page === this.page ? this.exportRange(m.range) : undefined;
       case 'ffmpegRange': return m.page === this.page ? this.copyFfmpegRange(m.range) : undefined;
+      case 'clipRange': return m.page === this.page ? exportClips(this, m.range ? [{ uri: this.uri, range: m.range }] : [], this.uri) : undefined;
       case 'exportFrame':
         if (m.page === this.page && this.exportWait) this.exportWait.get(m.id)?.(m);
         return undefined;
@@ -2755,7 +2874,9 @@ ${barHtml()}
   /** "Load subtitles…": pick files (in remote windows, on the remote side) and show the first. */
   async loadSubtitles() {
     const folder = this.sequence ? vscode.Uri.file(this.sequence.dir) : this.url ? workspaceFolder() : vscode.Uri.joinPath(this.uri, '..');
-    const picked = await vscode.window.showOpenDialog({
+    const testPicked = this.testPickSubtitles;
+    this.testPickSubtitles = undefined;
+    const picked = testPicked || await vscode.window.showOpenDialog({
       defaultUri: folder, canSelectMany: true, openLabel: 'Load subtitles',
       filters: { Subtitles: ['srt', 'vtt', 'ass', 'ssa'], 'All files': ['*'] },
     });
@@ -2955,6 +3076,12 @@ ${barHtml()}
     if (signal.aborted) return;
     this.post({ type: 'toast', text: 'ffmpeg command copied' });
   }
+
+  /** Tile numbers playing through Live transcode (0 for this single player), for the clip export's early refusal. */
+  liveTranscodeTiles() { return this.native instanceof remotestream.EncodedStream ? [0] : []; }
+
+  /** The user took the early refusal's switch: the built-in decoder for this tab, so A and B are set again on exact times. */
+  useOriginalForClips() { this.useFullRes(); }
 
   /** Pixel tools asked for the file's own pixels: the built-in decoder for this tab (kept across reloads). */
   useFullRes() {

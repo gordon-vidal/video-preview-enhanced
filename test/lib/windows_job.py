@@ -1,7 +1,9 @@
 """Run a host test in a Windows job that cleans up its descendants on exit."""
 import ctypes
+import os
 import subprocess
 import sys
+import threading
 from ctypes import wintypes
 
 
@@ -23,6 +25,7 @@ class ExtendedLimits(ctypes.Structure):
 
 
 def main():
+    args = sys.argv[1:]
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
     kernel.CreateJobObjectW.restype = wintypes.HANDLE
@@ -38,9 +41,19 @@ def main():
         raise ctypes.WinError(ctypes.get_last_error())
     if not kernel.AssignProcessToJobObject(job, kernel.GetCurrentProcess()):
         raise ctypes.WinError(ctypes.get_last_error())
+    watch_stdin = args and args[0] == '--watch-stdin'
+    if watch_stdin:
+        args.pop(0)
+
+        def wait_for_parent():
+            # The control pipe carries no data. Avoid Python's buffered stdin lock at shutdown.
+            os.read(0, 1)
+            os._exit(1)
+
+        threading.Thread(target=wait_for_parent, daemon=True).start()
     # Join before spawning so even a child that immediately outlives its parent stays in the job.
     # Only this wrapper holds the job handle. Windows closes it when the wrapper exits or is killed.
-    return subprocess.call(sys.argv[1:])
+    return subprocess.call(args, stdin=subprocess.DEVNULL if watch_stdin else None)
 
 
 if __name__ == '__main__':
