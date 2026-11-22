@@ -38,7 +38,7 @@ streamlined right-click menu). This branch builds it. Simple mode is the player 
 - **Time:** always `m:ss.mmm / total`, tabular digits; a click cycles time → SMPTE timecode (non-drop, at the
   rounded frame rate) → `frame N / total`. The frame counter left the bar (Ctrl+G still opens go-to).
 - **Status pill removed.** A warning status (decoding behind) shows the notice once per kind per page, with
-  its action (Set up ffmpeg, or Skip frames instead / Show every frame). The rest is in the stats overlay.
+  its action (Set up ffmpeg, or a playback choice labeled for all videos). The rest is in the stats overlay.
 - **"Open in the system player"** (was a hidden bar button) is a link in the About panel (local files only).
 - **Right-click menu** (later changes): Play/Pause · Loop (✓) · ─ · Set loop start (A) · Set loop end (B) ·
   Clear A-B loop (context key `vpeABSet`: a start or an end is set) · ─ · Copy frame · Save frame as PNG… · Copy

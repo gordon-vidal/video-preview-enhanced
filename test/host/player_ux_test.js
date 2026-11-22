@@ -64,8 +64,9 @@ function element(parent) {
   const ctx = vm.createContext({
     ui, player, document, performance, timeMode: 0, pendingSeekFrame: null, lastSeekAt: 0, wakeLoop: noop,
     fmtClock: String, fmtTime: String, toast: noop, announce: noop, drawAB: noop,
-    vscode: { postMessage: (m) => posted.push(m.type) },
+    vscode: { postMessage: (m) => posted.push(m.type), getState: () => ({}), setState: noop },
     $: (id) => (elements[id] ||= element(notice)), self: { VpeAbLoop: require('../../media/abloop') },
+    saved: {}, VpeSlowNotice: require('../../media/slow-notice'),
     controls: { anyOpen: () => false, refresh: noop }, cfg: {},
     VpeModes: { ownsKey: () => false },
     scopes: { mode: () => scopesOpen, close() { scopesOpen = false; } },
@@ -75,6 +76,7 @@ function element(parent) {
   vm.runInContext([
     script('  function showNotice(n)', '  /**\n   * Pixel tools'),
     script('  let scrubbing = false;', '  // Decoder status'),
+    script('  // Decoder status', '  let wake ='),
     script("  ui.seek.addEventListener('input'", '  // Hover tip:'),
     script('  const ab = ', '  function abLabel()'),
     script('  function sendRange(', '  /**\n   * Shows frame'),
@@ -115,6 +117,23 @@ function element(parent) {
   assert.strictEqual(inspectorOpen, false);
   document.dispatch('keydown', { key: 'Escape' });
   assert.strictEqual(scopesOpen, false);
+
+  player.status = () => ({ slowNotice: 'every' });
+  const updateStatus = () => vm.runInContext('updateStatus()', ctx);
+  ctx.cfg.hideSlowPlaybackNotice = true;
+  updateStatus();
+  assert.strictEqual(notice.hidden, true);
+  ctx.cfg.hideSlowPlaybackNotice = false;
+  updateStatus();
+  assert.strictEqual(elements.noticeAction.textContent, 'Skip frames (all videos)');
+  assert.strictEqual(elements.noticeSettings.textContent, 'Settings');
+  assert.strictEqual(elements.noticeHide.textContent, "Don't show again");
+  document.dispatch('keydown', { key: 'Escape' });
+  assert.strictEqual(notice.hidden, true);
+  player.status = () => ({ slowNotice: 'setupFfmpeg' });
+  updateStatus();
+  assert.strictEqual(notice.hidden, true, 'Escape dismisses slow-playback notices for the tab');
+  assert.strictEqual(stageClicks, 0);
 }
 
 {

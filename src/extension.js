@@ -46,6 +46,7 @@ const ctxmenu = require('./ctxmenu'); // the player's right-click menu
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
 const urlsource = lazy('./urlsource'); // Open Video URL… (docs/notes/url-stream.md)
 
+const HIDE_SLOW_PLAYBACK_NOTICE = 'videoPreviewEnhanced.hideSlowPlaybackNotice';
 const HIDE_REDUCED_RES_NOTICE = 'videoPreviewEnhanced.hideReducedResNotice';
 const VIEW_TYPES = ['videoPreviewEnhanced.player', 'videoPreviewEnhanced.playerOptional'];
 const MAX_WAV_BYTES = 512 * 1024 * 1024;
@@ -1911,6 +1912,7 @@ class Session {
       // A URL tab (Open Video URL…): file-only tools are off; the info panel names the host instead of a size.
       url: this.url ? { host: new URL(this.url).host } : null,
       sequence: !!this.sequence,
+      hideSlowPlaybackNotice: !!globalState.get(HIDE_SLOW_PLAYBACK_NOTICE),
       hideReducedResNotice: !!globalState.get(HIDE_REDUCED_RES_NOTICE),
       engine: {
         workerUrl: uri('decoder-worker.js'), xrayWorkerUrl: uri('xray-worker.js'), libavBase: base, loader: `${base}/${this.build.loader}`, variant: this.build.variant,
@@ -1997,6 +1999,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
 <script nonce="${nonce}" src="${uri('scopes.js')}"></script>
 <script nonce="${nonce}" src="${uri('exactframe.js')}"></script>
 <script nonce="${nonce}" src="${uri('reduced-res-notice.js')}"></script>
+<script nonce="${nonce}" src="${uri('slow-notice.js')}"></script>
 <script nonce="${nonce}" src="${uri('subtitles.js')}"></script>
 <script nonce="${nonce}" src="${uri('tracks-menu.js')}"></script>
 <script nonce="${nonce}" src="${uri('xray.js')}"></script>
@@ -2078,6 +2081,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
         this.t.ready = this.t.ready || Date.now();
         this.sendSubtitles().catch((e) => log(`[${this.name}] subtitles: ${e && e.stack || e}`));
         this.sendFfmpegState();
+        if (globalState.get(HIDE_SLOW_PLAYBACK_NOTICE)) this.post({ type: 'hideSlowPlaybackNotice' });
         if (globalState.get(HIDE_REDUCED_RES_NOTICE)) this.post({ type: 'hideReducedResNotice' });
         // The bar was rendered with the Compare state. A Compare that opened or closed while the page loaded is sent
         // after the video opened, so nothing comes before the first sound and frames (test/host/wav_parts_test.js).
@@ -2168,6 +2172,14 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
         }
         if (m.id === 'transcodeSettings') {
           return vscode.commands.executeCommand('workbench.action.openSettings', '@id:videoPreviewEnhanced.transcode');
+        }
+        if (m.id === 'whenSlowSettings' || m.id === 'fastPreviewSettings') {
+          const setting = m.id === 'whenSlowSettings' ? 'whenSlow' : 'fastPreviewWhenBehind';
+          return vscode.commands.executeCommand('workbench.action.openSettings', `@id:videoPreviewEnhanced.${setting}`);
+        }
+        if (m.id === 'hideSlowPlaybackNotice') {
+          await globalState.update(HIDE_SLOW_PLAYBACK_NOTICE, true);
+          for (const session of sessions) session.post({ type: 'hideSlowPlaybackNotice' });
         }
         if (m.id === 'hideReducedResNotice') {
           await globalState.update(HIDE_REDUCED_RES_NOTICE, true);
