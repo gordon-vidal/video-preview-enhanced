@@ -1,7 +1,6 @@
 'use strict';
 // Native host only. Stage clips until the copied video has been checked and omissions confirmed.
 const fs = require('fs/promises');
-const { constants } = require('fs');
 const path = require('path');
 const ff = require('./ffmpeg');
 const { trimMovie } = require('./clipmovie');
@@ -141,12 +140,20 @@ function deviations(result, keyframe = false) {
     + (result.missing ? `, ${result.missing} intervening frame(s) omitted` : '');
 }
 
-async function publish(from, to) {
+async function publish(from, to, signal) {
+  signal.throwIfAborted();
   try {
     await fs.link(from, to);
   } catch (e) {
+    signal.throwIfAborted();
     if (!['EPERM', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP', 'EXDEV'].includes(e.code)) throw e;
-    await fs.copyFile(from, to, constants.COPYFILE_EXCL); // folders on filesystems without hard links
+    // Node has no portable no-replace rename. A copy could expose incomplete data,
+    // and an ordinary rename could overwrite a file created by another process.
+    throw new Error('This folder does not support atomic clip publication. Choose a folder that supports hard links.');
+  }
+  if (signal.aborted) {
+    await fs.unlink(to);
+    signal.throwIfAborted();
   }
 }
 
@@ -244,13 +251,15 @@ async function exportClips({ vscode, tools, jobs, compare, defaultUri, log, anno
       for (const clip of ready) {
         signal.throwIfAborted();
         try {
-          await publish(clip.tmp, path.join(folder.fsPath, clip.name));
+          await publish(clip.tmp, path.join(folder.fsPath, clip.name), signal);
           written.push(`${clip.name}: ${clip.detail}`);
           syncStarts.add(clip.syncStart);
         } catch (e) {
+          signal.throwIfAborted();
           skipped.push(`${clip.name}: ${e.code === 'EEXIST' ? 'a file with this name already exists' : e.message}`);
         }
       }
+      signal.throwIfAborted();
       const sync = compare && syncStarts.size > 1 ? ['Time zero differs across clips because of source frame rounding.'] : [];
       info([`A–B export to ${folder.fsPath}`, ...written, ...sync, ...skipped.map((s) => `Skipped ${s}`)].join('\n'));
     } catch (e) {
@@ -263,4 +272,4 @@ async function exportClips({ vscode, tools, jobs, compare, defaultUri, log, anno
   });
 }
 
-module.exports = { exportClips, inspectSource, makeClip };
+module.exports = { exportClips, inspectSource, makeClip, publish };
