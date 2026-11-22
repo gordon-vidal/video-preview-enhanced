@@ -95,7 +95,7 @@ async function start({ assoc = {}, pick, state, failKeys = [] } = {}) {
   // A new page reads the fallback back.
   const s2 = x.h.open(path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mkv'));
   await s2.shown;
-  assert.match(s2.panel.webview.html, /"prefs":{"jump":{"arrow":"frame","shift":1,"ctrl":"frame"},"stepButtons":"frame","pictureSize":"fit"/);
+  assert.match(s2.panel.webview.html, /"prefs":{"jump":{"arrow":"frame","shift":1,"ctrl":"frame","wheel":"frame","wheelShift":1},"stepButtons":"frame","pictureSize":"fit"/);
   console.log('auto_default_test: ok');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
