@@ -19,7 +19,7 @@ Double-click a video in a **Remote‑SSH or WSL workspace** and it plays, with n
 
 ## Compare, frame by frame
 
-Select up to **16 videos**, right-click and choose **Compare Videos**. They play on one timeline, and every step lands on matching frames in all of them, forward or backward. Pause and scroll to step through frames, Ctrl+scroll and drag to zoom and pan all videos together, and nudge a video's offset one frame at a time to bring it in sync. Side by side, split or grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
+Select up to **8 videos** (16 with `compare.maxVideos`), right-click and choose **Compare Videos**. They play on one timeline, and every step lands on matching frames in all of them, forward or backward. Pause and scroll to step through frames, Ctrl+scroll and drag to zoom and pan all videos together, and nudge a video's offset one frame at a time to bring it in sync. Side by side, split or grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
 
 ![Comparing four encodes in a 2×2 grid, stepping frame by frame, zooming together and nudging one video into sync](media/marketing/compare-showcase.gif)
 
