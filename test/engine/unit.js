@@ -53,6 +53,17 @@ const frame = (t) => ({ t, yuv: {}, bytes: 1 });
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
+test('shown frame numbers tolerate rounded PTS without advancing for snapped rates', () => {
+  const rounded = player({ startT: 0.007, shownT: 0.073, fps: 30, info: { video: { fps: 30 } } });
+  assert.strictEqual(rounded.currentFrame(), 2);
+  const fractional = player({ meta: { duration: 11 }, info: { video: { fps: 29.9 } }, shownT: 300 / 29.9 });
+  fractional.setFrameRate(29.9);
+  assert.strictEqual(fractional.fps, 30000 / 1001);
+  assert.strictEqual(fractional.currentFrame(), 300);
+  assert.strictEqual(player({ shownT: 300.7 / 30, n: 400 }).currentFrame(), 300);
+  assert.strictEqual(player({ shownT: 12 / 30, info: { video: { fps: 600 } } }).currentFrame(), 12);
+});
+
 test('#5 ms-rounded audio chunks are placed back to back', () => {
   const p = player({ ac: fakeAc() });
   const n = 1024;

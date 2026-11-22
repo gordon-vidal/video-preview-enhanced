@@ -2108,8 +2108,14 @@ function createEngine(env) {
     currentTime() { return this.rel(this.shownT !== null && !this.playing ? this.shownT : this.now()); }
     currentFrame() {
       const t = this.shownT !== null ? this.shownT : this.now();
-      // Rounded: container times are often millisecond-rounded (MKV, WebM, FLV), so frame i can sit just before i/fps.
-      return Math.max(0, Math.min(Math.max(0, this.n - 1), Math.round(this.rel(t) * (this.fps || 30))));
+      // Use the source rate when supplied: snapping a rate for playback can accumulate frame-number drift.
+      // The relative time subtracts two PTS values, each of which can be rounded by half a millisecond.
+      const rate = this.fps || 30;
+      // An unreliable container rate (such as AVI timestamp ticks) can disagree with the measured cadence.
+      const sourceFps = this.info?.video?.fps;
+      const fps = sourceFps > 0 && Math.abs(sourceFps - rate) < rate * 0.005 ? sourceFps : rate;
+      const frame = Math.max(0, Math.floor(this.rel(t) * fps + Math.min(fps * 1e-3, 0.125) + 1e-6));
+      return this.n > 0 ? Math.min(this.n - 1, frame) : frame;
     }
     isPlaying() { return this.playing; }
 

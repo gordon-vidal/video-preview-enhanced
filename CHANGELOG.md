@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Fixed: Compare reports the correct frame number for tiles with rounded container timestamps.
+- Fixed: Compare and the single player agree on frame numbers for rounded timestamps and rates close to standard rates.
 
 - Fixed: the Pixel Inspector reads the pixel under the pointer at 100% on high-DPI displays.
 

@@ -42,9 +42,9 @@ function helpers(vs, h, t) {
   const expect = (r, offs, i) => {
     const fps = nums(r.fps);
     const c = Number(r.clock);
-    const frames = nums(r.frames);
+    const clockPts = nums(r.pts)[c];
     const off = (j) => (offs[j].unit === 'ms' ? offs[j].v / 1000 : offs[j].v / fps[j]);
-    const x = ((frames[c] - 1) / fps[c] - off(c) + off(i)) * fps[i] + 0.5;
+    const x = (clockPts - off(c) + off(i)) * fps[i] + 0.5;
     const k = Math.floor(x);
     const alt = Math.abs(x - Math.round(x)) < 0.02 ? (x - k < 0.5 ? k - 1 : k + 1) : k;
     return [k + 1, alt + 1];
@@ -72,8 +72,12 @@ function helpers(vs, h, t) {
     const before = await report();
     act({ action: 'step', d });
     const c = Number(before.clock);
-    const want = nums(before.frames)[c] + d;
-    return until((r) => r.synced === 'true' && nums(r.frames)[Number(r.clock)] === want, 15000);
+    const fps = nums(before.fps)[c];
+    const want = nums(before.pts)[c] + d / fps;
+    const arrived = (r) => r.synced === 'true' && Number(r.clock) === c && Math.abs(nums(r.pts)[c] - want) < 0.1 / fps;
+    const after = await until(arrived, 15000);
+    if (!arrived(after)) throw new Error(`clock step ${d}: expected PTS near ${want}, got ${after.pts}`);
+    return after;
   };
   return { report, act, until, expect, checkFrames, checkPlaying, stepAndWait };
 }
