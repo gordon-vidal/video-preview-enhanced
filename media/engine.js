@@ -892,14 +892,11 @@ function createEngine(env) {
 
     makeVideoDecoder() {
       const g = this.gen;
-      // WebCodecs needs the dependency packets but does not see the container's discard flag.
-      const discard = new Set();
-      this.discardVideo = discard;
       this.vdec = new VideoDecoder({
         output: (vf) => {
           wake();
-          if (g !== this.gen || discard.delete(vf.timestamp)) { vf.close(); return; }
-          let t = vf.timestamp / 1e6;
+          if (g !== this.gen || vf.timestamp % 2 !== 0) { vf.close(); return; }
+          let t = vf.timestamp / 2e6;
           if (this.noPts) t = (this.ptsBase || 0) + this.outCount / (this.fps || 30);
           this.outCount++;
           const fr = { t, vf, bytes: vf.displayWidth * vf.displayHeight * 1.5 };
@@ -1171,10 +1168,11 @@ function createEngine(env) {
           // No presentation times (H.264 in AVI): the decode times are frame-spaced, so they give the rate.
           this.trackTs(it.t === null ? (Number.isFinite(it.dts) ? it.dts : null) : it.t);
           try {
-            if (it.discard) this.discardVideo.add(ts);
-            this.vdec.decode(new EncodedVideoChunk({ type: it.key ? 'key' : 'delta', timestamp: ts, data: it.data }));
+            // Carry discard on the chunk itself. Multiple edits can put a visible
+            // packet and a decode-only dependency at the same presentation time.
+            const timestamp = ts * 2 + (it.discard ? 1 : 0);
+            this.vdec.decode(new EncodedVideoChunk({ type: it.key ? 'key' : 'delta', timestamp, data: it.data }));
           } catch (e) {
-            if (it.discard) this.discardVideo.delete(ts);
             log(`decode: ${e.message}`);
           }
         } else if (it.kind === 'yuv') {
