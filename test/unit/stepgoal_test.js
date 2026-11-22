@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { create, followerTime } = require('../../media/stepgoal');
+const { create, followerTime, followerSeekAction } = require('../../media/stepgoal');
 const { offsetSeconds } = require('../../media/comparerange');
 
 function harness(frame = 60, dispatch = () => {}) {
@@ -51,11 +51,12 @@ for (const delta of [-1, 1]) {
   const h = harness();
   h.step(-1);
   for (let i = 0; i < 9; i++) h.step(-1);
-  h.advance(400);
+  h.advance(89);
   assert.equal(h.controller.goal.frame, 50);
-  assert.deepEqual(h.sent, [[59, 0]], 'a slow clock seek is allowed to finish');
-  h.controller.settle();
-  assert.deepEqual(h.sent, [[59, 0], [50, 400]], 'only the latest target is sent');
+  assert.deepEqual(h.sent, [[59, 0]], 'the first seek has the burst window');
+  h.advance(1);
+  assert.deepEqual(h.sent, [[59, 0], [50, 90]], 'the latest target supersedes the first unresolved seek');
+  assert.equal(h.controller.goal.frame, 50, 'the new goal stays visible while the replacement seek runs');
   h.controller.settle();
   h.advance(400);
   assert.equal(h.controller.goal, null);
@@ -144,6 +145,21 @@ for (const action of ['play', 'manual scrub', 'clock switch', 'reorder']) {
   assert.deepEqual(targets.map(([, at]) => at), [0, 0], 'both targets are available at clock dispatch');
   assert.ok(Math.abs(targets[0][0] - 2.21) < 1e-9);
   assert.ok(Math.abs(targets[1][0] - (1.4 + 0.25 / 24)) < 1e-9);
+}
+
+{
+  const early = 0.25 / 25;
+  const predicted = 1.01;
+  const actual = 1.025; // A VFR correction of 15 ms still selects the same 25 fps follower picture.
+  const tile = { gen: 7, seekTarget: predicted, pauseT: predicted, shownT: 0.96, queue: [], eof: false };
+  assert.equal(followerSeekAction(tile, actual, early, 7), 'wait', 'keep the current step seek in flight');
+  assert.equal(followerSeekAction(tile, actual, early, 6), 'seek', 'an unrelated seek can be replaced');
+  tile.seekTarget = null;
+  tile.queue = [{ t: 1 }, { t: 1.04 }];
+  assert.equal(followerSeekAction(tile, actual, early, 7), 'wait', 'let the due frame present first');
+  tile.shownT = tile.queue.shift().t;
+  assert.equal(followerSeekAction(tile, actual, early, 7), 'keep', 'the decoded picture covers the corrected goal');
+  assert.equal(followerSeekAction(tile, 0.98, early, 7), 'seek', 'a correction outside that picture still seeks');
 }
 
 console.log('step goals: immediate dispatch, coalescing, reversal, bounds, cancellation and follower offsets');

@@ -2306,6 +2306,7 @@ function createEngine(env) {
       }
       const now = performance.now();
       if (seek === undefined) { this.stepTo = { t: to, gen: this.gen, shown: this.shownCount || 0, at: pending ? st.at : 0 }; return; }
+      if (this.meta.live) return; // a step outside the retained frames would require a seek
       if (waiting) { st.t = to; st.seek = seek; return; } // the waiting seek takes the new target
       const wait = pending && this.seekTarget !== null ? STEP_SEEK_MS - (now - st.at) : 0;
       if (wait > 0) {

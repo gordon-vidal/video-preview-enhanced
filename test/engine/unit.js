@@ -700,6 +700,19 @@ test('a buffered seek clears a pending step even without a generation change', (
   assert.strictEqual(p.pendingStep(), null);
 });
 
+test('a paused live step uses retained pictures and rejects a step that needs a seek', () => {
+  const p = player({ meta: { live: true }, shownT: 1, pauseT: 1, shownCount: 1 });
+  p.stepFrame(-1);
+  p.stepFrame(-1);
+  assert.strictEqual(p.pendingStep(), null, 'an unreachable goal never appears on the bar');
+  assert.strictEqual(p.currentTime(), 1, 'the picture stays frozen');
+  assert.strictEqual(seeksOf(p).length, 0);
+
+  p.queue.push(yuvFrame(1 + 1 / 30));
+  p.stepFrame(1);
+  assert.strictEqual(p.pendingStep().t, 1 + 1 / 30, 'a buffered live step still works');
+});
+
 test('steps back are served from the frames decoded on the way to the target', () => {
   const p = player({ firstShown: true, shownT: 61 / 30, shownCount: 1, pauseT: 61 / 30, keptBufs: new WeakSet(), amode: 'none' });
   P.stepFrame.call(p, -1); // to frame 60 ... decoded from the keyframe at 50

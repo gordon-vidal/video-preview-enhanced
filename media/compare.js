@@ -310,20 +310,10 @@
   /** Per mark (keyed by its time on the clock): what every tile showed then. Not kept across a reload. */
   const marks = new Map();
   function markAB(end) {
-    if (clock?.shownT == null) return;
-    const t = clock.rel(clock.shownT) - offSec(st.clock);
-    // The picture's own timestamp, where native ffmpeg reports it (engine.shownMarkTime), is what an exact clip needs.
-    const own = clock.shownMarkTime ? clock.shownMarkTime() : null;
-    const pts = (own !== null ? own : clock.rel(clock.shownT)) - offSec(st.clock);
-    const native = !!(clock.shownFrame?.nativeTimestamp || clock.remoteStream);
-    // Each tile's own picture at this moment: a VFR clock holding 0.96 s at the 1.00 s slot must not put 0.96 s on
-    // a follower that shows its 1.00 s picture.
-    const clockRel = clock.rel(clock.shownT);
-    marks.set(pts, tiles.map((p, i) => (p.shownT == null ? null : VpeCompareRange.captureTile({
-      shownRel: p.rel(p.shownT), markRel: p.shownMarkTime ? p.shownMarkTime() : p.rel(p.shownT),
-      expectedRel: clockRel - offSec(st.clock) + offSec(i), fps: fpsOf(p),
-      native: p.shownFrame?.nativeTimestamp || p.remoteStream,
-    }))));
+    const mark = VpeCompareRange.captureMark(presentedMarks, st.clock, tiles.map((_, i) => offSec(i)));
+    if (!mark) return;
+    const { t, pts, native } = mark;
+    marks.set(pts, mark.tiles);
     if (end) ab.set(end, t, 0, pts, native);
     else ab.cycle(t, 0, pts, native);
     for (const key of [...marks.keys()]) if (key !== ab.aPts && key !== ab.bPts) marks.delete(key);
@@ -387,6 +377,7 @@
     if (was === fps || !begun) return;
     if (st.offsets.some((o) => o.unit === 'frames' && o.v)) {
       reqs = [];
+      stepSeeks.clear();
       if (isPlaying()) syncPlaying(true);
       refreshPanel();
     }
@@ -417,7 +408,7 @@
 
   /** Tile i becomes the clock: its own clock comes back, every other tile follows it. */
   function setClock(i, quiet) {
-    stepGoal.clear();
+    clearStep();
     const was = isPlaying();
     // Followers record their paused positions with the old clock's offset, so pause before it changes.
     pause();
@@ -443,21 +434,28 @@
 
   // ---- transport ---------------------------------------------------------------
 
+  const stepSeeks = new Map(); // the decoder generation of each follower seek for the latest dispatched step
   const stepGoal = VpeStepGoal.create({
     now: () => performance.now(),
     schedule: (fn, ms) => setTimeout(fn, ms),
     cancel: (timer) => clearTimeout(timer),
     dispatch({ frame, time }) {
+      stepSeeks.clear();
       clock.seekFrame(frame);
       seekFollowers(time);
       wakeLoop();
     },
   });
 
+  function clearStep() {
+    stepGoal.clear();
+    stepSeeks.clear();
+  }
+
   const isPlaying = () => !!clock && clock.playing;
   function play() {
     if (!clock) return;
-    stepGoal.clear();
+    clearStep();
     // Followers move while playing: the next pause sends each of them again, even to the same position.
     reqs = [];
     if (clock.eof && !clock.queue.length && clock.currentFrame() >= clock.n - 1) seekClock(0);
@@ -470,7 +468,7 @@
   /** Seek the clock (relative seconds); the others follow at once when playing, after it settles when paused. */
   function seekClock(rel) {
     if (!clock) return;
-    stepGoal.clear();
+    clearStep();
     clock.seekTime(rel);
     if (clock.playing) syncPlaying(true);
   }
@@ -478,7 +476,7 @@
   function seekTile(i, frame) {
     if (!clock) return;
     if (i === st.clock) {
-      stepGoal.clear();
+      clearStep();
       clock.seekFrame(frame);
       if (clock.playing) syncPlaying(true);
     } else seekClock(Math.max(0, clockRelFor(i, tiles[i].frameSeekTime(frame))));
@@ -545,18 +543,18 @@
       if (p.playing) p.pause();
       const rel = relFor(i, cRel);
       const key = rel.toFixed(6);
-      if (key === reqs[i]) return;
-      // Timestamp rounding can shift the target by a millisecond. Let the current seek land
-      // before checking whether its decoded picture already matches the adjusted target.
-      if (reconcile && p.seekTarget !== null && Math.abs(rel - Number(reqs[i])) <= 0.001001
-        && !outOfRange(p, rel)) return;
-      reqs[i] = key;
-      if (outOfRange(p, rel)) return;
+      if (key === reqs[i]) {
+        if (!reconcile && p.seekTarget !== null && !outOfRange(p, rel)) stepSeeks.set(p, p.gen);
+        return;
+      }
+      if (outOfRange(p, rel)) { reqs[i] = key; stepSeeks.delete(p); return; }
       const T = p.startT + Math.max(0, rel);
       const e = earlyOf(p);
-      // Already showing it (fewer frames than the clock): nothing to decode.
-      if (p.shownT !== null && p.shownT <= T + e + 1e-6 && p.seekTarget === null
-        && (p.queue.length ? p.queue[0].t > T + e : p.eof)) {
+      const action = VpeStepGoal.followerSeekAction(p, T, e, reconcile ? stepSeeks.get(p) : undefined);
+      if (action === 'wait') return;
+      reqs[i] = key;
+      stepSeeks.delete(p);
+      if (action === 'keep') {
         p.pauseT = T;
         return;
       }
@@ -564,6 +562,7 @@
       // throw that work away. A slow tile finishing its first frame after the clock's used to decode it all again.
       if (p.seekTarget === null && (p.shownT === null || p.shownT === p.startT) && rel <= 0.5 / fpsOf(p)) { p.pauseT = T; return; }
       p.seekTime(Math.max(0, rel));
+      if (!reconcile && p.seekTarget !== null) stepSeeks.set(p, p.gen);
     });
   }
 
@@ -1159,6 +1158,8 @@
 
   /** @type {number[]} the shownCount of each tile's picture in the compositor */
   let upCount = [];
+  let uploadedMarks = [];
+  let presentedMarks = [];
   let viewDirty = true;
   let layoutDirty = true;
   let infoDirty = true;
@@ -1193,7 +1194,13 @@
       tiles.forEach((p, i) => {
         const n = p.shownCount || 0;
         // A large grid's textures are filled by the shared renderer as each engine draws.
-        if (p.shownT !== null && n !== upCount[i]) { if (!largeGrid) comp.upload(i, p.cv); upCount[i] = n; viewDirty = true; }
+        if (p.shownT === null || n === upCount[i]) return;
+        if (!largeGrid) {
+          comp.upload(i, p.cv);
+          uploadedMarks[i] = VpeCompareRange.snapshotTile(p, fpsOf(p));
+        }
+        upCount[i] = n;
+        viewDirty = true;
       });
     }
     // A tile's picture size known (or changed): its picture rectangle changes.
@@ -1248,6 +1255,13 @@
       } else if (!outs[c.tiles[0]]) rects.push({ slot: c.tiles[0], ...px(c, c.tiles[0]) });
     }
     comp.draw(W, H, rects);
+    // Small grids may still be displaying older uploads while the engines decode the next set.
+    // Large-grid textures are filled directly by the shared renderer.
+    presentedMarks = [];
+    for (const { slot, w, h } of rects) {
+      if (w < 1 || h < 1 || !comp.size[slot][0]) continue;
+      presentedMarks[slot] = largeGrid ? VpeCompareRange.snapshotTile(tiles[slot], fpsOf(tiles[slot])) : uploadedMarks[slot];
+    }
   }
 
   async function runMetrics(key) {
@@ -1375,6 +1389,7 @@
     // ms stays fractional (rounded only for display), so frames → ms → frames is lossless at 23.976 / 29.97 (review 2026-11-19 #7).
     o.v = o.unit === 'ms' ? Math.round(v * 1000) / 1000 : Math.round(v);
     reqs = [];
+    stepSeeks.clear();
     if (isPlaying()) syncPlaying(true);
     infoDirty = true;
     updateOverlays();
@@ -1730,7 +1745,7 @@
   }
   function commitOrder(order, video) {
     if (order === st.order) return;
-    stepGoal.clear();
+    clearStep();
     st.order = order;
     hover = null;
     closeMenu();
@@ -1762,7 +1777,7 @@
     reorderBtn.textContent = on ? 'Done' : 'Reorder';
     reorderHint.hidden = !on;
     if (on) {
-      stepGoal.clear();
+      clearStep();
       closeMenu();
       controls.closeAll(false);
       if (!addHint.hidden) vscode.postMessage({ type: 'stopAddMode' });
@@ -2252,7 +2267,9 @@
 
   /** Page exit or failed setup: stop every engine and release the WebGL contexts now, not at garbage collection. */
   function disposeEngines() {
-    stepGoal.clear();
+    clearStep();
+    uploadedMarks = [];
+    presentedMarks = [];
     scanner.stop();
     for (const p of Object.values(engines)) {
       try {
@@ -2305,9 +2322,10 @@
           if (pendingStart && tiles.every((p) => p.startT !== null)) { seekClock(pendingStart); pendingStart = 0; }
           if (stepGoal.goal && clock.seekTarget === null
             && !(clock.queue[0]?.t <= clock.pauseT + earlyOf(clock))) stepGoal.settle();
-          if (clock.playing) syncPlaying(); else syncPaused();
+          if (clock.playing) syncPlaying();
         }
         for (const p of tiles) if (p !== clock) p.tick(now);
+        if (begun && visible && !clock.playing) syncPaused();
         present(now);
         updateUi();
       } catch (e) {
@@ -2328,7 +2346,7 @@
     visible = shown;
     if (!visible) setReordering(false);
     if (!clock) return;
-    if (!visible) { stepGoal.clear(); resumeOnShow = resumeOnShow || clock.playing; pause(); }
+    if (!visible) { clearStep(); resumeOnShow = resumeOnShow || clock.playing; pause(); }
     for (const p of tiles) if (p.remoteStream) p.setHidden(!visible);
     if (visible && resumeOnShow) { resumeOnShow = false; play(); }
   });
@@ -2338,7 +2356,7 @@
     const old = tiles[i];
     if (!old || nativeTiles[i] !== 'transcode') return;
     if (old === clock) {
-      stepGoal.clear();
+      clearStep();
       restoreClock = { time: clock.currentTime(), playing: clock.playing };
       pause();
     }
@@ -2352,6 +2370,7 @@
     p.setRate(st.rate);
     applyVolume();
     reqs = [];
+    stepSeeks.delete(old);
     upCount[i] = 0;
     lastMetrics = null;
     lastMetricsKey = '';

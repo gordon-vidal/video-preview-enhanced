@@ -8,7 +8,7 @@
 
   /**
    * The first step seeks immediately. While the clock is catching up, steps accumulate
-   * from the requested frame. Only the latest target goes out after that seek and the burst window.
+   * from the requested frame. After the burst window, the latest target supersedes an obsolete seek.
    * @template Timer
    * @param {{dispatch: (goal: Goal) => void, now: () => number,
    *   schedule: (fn: () => void, ms: number) => Timer, cancel: (timer: Timer) => void}} deps
@@ -24,7 +24,7 @@
     let sentAt = -Infinity;
 
     function flush() {
-      if (!goal || inFlight !== null || timer !== null) return;
+      if (!goal || goal.frame === inFlight || timer !== null) return;
       const delay = sentAt + coalesceMs - now();
       if (delay > 0) {
         timer = schedule(() => { timer = null; flush(); }, delay);
@@ -48,7 +48,11 @@
       /** Called after the clock has presented the picture for the dispatched seek. */
       settle() {
         if (inFlight === null) return;
-        if (goal?.frame === inFlight) goal = null;
+        if (goal?.frame === inFlight) {
+          goal = null;
+          if (timer !== null) cancel(timer);
+          timer = null;
+        }
         inFlight = null;
         flush();
       },
@@ -64,9 +68,24 @@
   function followerTime(clockTime, clockOffset, tileOffset, tileRate) {
     return clockTime - clockOffset + tileOffset + 0.25 / tileRate;
   }
+
+  /**
+   * A follower already decoding for this step gets to show its picture before a correction.
+   * @param {{gen: number, seekTarget: number | null, pauseT: number, shownT: number | null,
+   *   queue: {t: number}[], eof: boolean}} tile
+   * @param {number} target @param {number} early @param {number} [stepGen]
+   */
+  function followerSeekAction(tile, target, early, stepGen) {
+    const next = tile.queue[0];
+    const shownFits = tile.shownT !== null && tile.shownT <= target + early + 1e-6;
+    if (tile.gen === stepGen && (tile.seekTarget !== null
+      || (next ? next.t <= tile.pauseT + early : shownFits && !tile.eof))) return 'wait';
+    if (tile.seekTarget === null && shownFits && (next ? next.t > target + early : tile.eof)) return 'keep';
+    return 'seek';
+  }
   // checkJs: end
 
-  const api = { create, followerTime };
+  const api = { create, followerTime, followerSeekAction };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VpeStepGoal = api;
 }(typeof self !== 'undefined' ? self : this));
