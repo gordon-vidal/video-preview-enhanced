@@ -22,7 +22,7 @@ const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
 const { decodeThumb } = require('./thumbhost');
 const { ExactFrameGrabber } = require('./exact_frame');
-const { toggleFocusMode } = require('./focus-mode');
+const { toggleFocusMode, noteFocusModeExited, resetFocusMode, setFocusModeListener } = require('./focus-mode');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
 const remotestream = lazy('./remotestream'); // unified Live transcode stream engine (ADR 0002)
 const transcodePolicy = lazy('./transcode_policy');
@@ -153,6 +153,11 @@ function rememberPlaybackPrefs(m, from) {
   if (['volume', 'muted', 'rate', 'timeMode', 'stepSize'].every((k) => next[k] === prev[k])) return undefined;
   return globalState.update(PLAYBACK_PREFS_KEY, next);
 }
+
+function broadcastFocusMode(active) {
+  for (const sess of [...sessions, ...compareSessions]) sess.post({ type: 'focusMode', active: !!active });
+}
+setFocusModeListener(broadcastFocusMode);
 
 function prefsOf(c) {
   const v = (k) => (PREFS[k].values.includes(c.jumps[k]) ? c.jumps[k] : PREFS[k].dflt);
@@ -2219,6 +2224,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
       case 'pos': return this.rememberPos(m.t, m.d);
       case 'neighbour': return this.openNeighbour(m.d);
       case 'focusMode': return toggleFocusMode(vscode);
+      case 'focusModeExited': noteFocusModeExited(); return undefined;
       case 'copyText': return vscode.env.clipboard.writeText(String(m.text || ''));
       case 'copyLink': {
         if (this.url) { this.post({ type: 'toast', text: 'Frame links work for video files only, not URLs', ms: 3000 }); return undefined; }
@@ -3263,6 +3269,8 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
   }
 }
 
-function deactivate() {}
+function deactivate() {
+  resetFocusMode();
+}
 
 module.exports = { activate, deactivate };

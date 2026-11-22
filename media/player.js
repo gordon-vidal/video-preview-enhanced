@@ -681,15 +681,20 @@
   /** The ⓘ panel (About this video): facts, decoder, Copy details, Copy link to this frame. */
   const toggleInfo = () => controls.toggle('info', ui.infoBtn);
 
+  let fsBusy = false;
+  let lastEscAt = 0;
   async function toggleFullscreen() {
+    if (fsBusy) return;
+    fsBusy = true;
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
       else await document.documentElement.requestFullscreen();
     } catch (e) {
-      // Some hosts don't allow fullscreen in webviews; maximize the editor instead.
+      // Some hosts don't allow fullscreen in webviews; toggle Zen Mode on the host (which syncs body.maxi).
       log(`fullscreen refused: ${e}`);
-      document.body.classList.toggle('maxi');
       vscode.postMessage({ type: 'focusMode' });
+    } finally {
+      fsBusy = false;
     }
   }
   // Picture-in-picture was removed (it did not work): git history has the button, the P key and togglePip.
@@ -1051,6 +1056,12 @@
     if (insp.onKey(e)) { e.preventDefault(); if (e.ctrlKey || e.metaKey) e.stopPropagation(); return; }
     if (e.key === 'Escape' && scopes.mode()) { e.preventDefault(); scopes.close(); return; }
     if (e.key === 'Escape' && !addHint.hidden) { e.preventDefault(); vscode.postMessage({ type: 'stopAddMode' }); return; }
+    // VS Code exits Zen Mode on Esc Esc: keep the host's zenActive flag in sync when the user leaves that way.
+    if (e.key === 'Escape' && !e.repeat && document.body.classList.contains('maxi')) {
+      const now = Date.now();
+      if (now - lastEscAt <= 1000) { lastEscAt = 0; vscode.postMessage({ type: 'focusModeExited' }); }
+      else lastEscAt = now;
+    }
     if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(); return; }
     if (!player || e.metaKey || (!altGr && (e.ctrlKey || e.altKey))) return;
     poke();
@@ -1073,7 +1084,7 @@
       case 'End': player.pause(); player.seekFrame(player.n - 1); break;
       case 'm': case 'M': setMute(!muted); break;
       case 'r': case 'R': setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); break;
-      case 'f': case 'F': toggleFullscreen(); break;
+      case 'f': case 'F': if (!e.repeat) toggleFullscreen(); break;
       case 'N': if (e.shiftKey) vscode.postMessage({ type: 'neighbour', d: 1 }); else handled = false; break;
       case 'P': if (e.shiftKey) vscode.postMessage({ type: 'neighbour', d: -1 }); else handled = false; break;
       case 'a': case 'A': setAB('a'); break;
@@ -1468,6 +1479,7 @@
       case 'addMode': showAddMode(m); break;
       case 'compareOpen': setCompareOpen(!!m.open); break;
       case 'playbackPrefs': applyPlaybackPrefs(m.prefs); break;
+      case 'focusMode': document.body.classList.toggle('maxi', !!m.active); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
       case 'pauseForTest': if (player && player.isPlaying()) { player.pause(); toast('Paused while ffmpeg is tested', 3000); } break;
       case 'prefs': if (m.prefs && m.prefs.jump) { Object.assign(prefs.jump, m.prefs.jump); if (m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons === 'jump' ? 'jump' : 'frame'; if (m.prefs.transcode) prefs.transcode = m.prefs.transcode; if (m.prefs.transcodeMaxBitrate !== undefined) prefs.transcodeMaxBitrate = Number(m.prefs.transcodeMaxBitrate) || 0; stepTips(); controls.refresh(); } break;

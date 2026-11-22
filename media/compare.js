@@ -2333,15 +2333,20 @@
   // A click on the bar's empty space closes the menu.
   ui.bar.addEventListener('click', () => closeMenu());
 
+  let fsBusy = false;
+  let lastEscAt = 0;
   async function toggleFullscreen() {
+    if (fsBusy) return;
+    fsBusy = true;
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
       else await document.documentElement.requestFullscreen();
     } catch (e) {
-      // Some hosts don't allow fullscreen in webviews; maximize the editor instead.
+      // Some hosts don't allow fullscreen in webviews; toggle Zen Mode on the host (which syncs body.maxi).
       log(`fullscreen refused: ${e}`);
-      document.body.classList.toggle('maxi');
       vscode.postMessage({ type: 'focusMode' });
+    } finally {
+      fsBusy = false;
     }
   }
   // Controls hide after a moment in fullscreen.
@@ -2399,14 +2404,24 @@
       case 'r': case 'R': setLoop(!st.loop); toast(st.loop ? 'Loop on' : 'Loop off'); break;
       case 'a': case 'A': markAB('a'); break;
       case 'b': case 'B': markAB('b'); break;
-      case 'f': case 'F': toggleFullscreen(); break;
+      case 'f': case 'F': if (!e.repeat) toggleFullscreen(); break;
       case 'i': case 'I': controls.toggle('info', ui.infoBtn); break;
       case 'x': case 'X': if (pair) swapSides(); else handled = false; break;
       case 'z': case 'Z': if (e.shiftKey) handled = false; else cyclePic(); break;
       case 'D': if (e.shiftKey && N < MAX_TILES) toggleAddMode(); else handled = false; break;
       case '-': case '_': if (!reordering) nudge(target(), -1); break;
       case '+': case '=': if (!reordering) nudge(target(), 1); break;
-      case 'Escape': if (INTERNAL && scanner.running) scanner.stop('Stopped'); else handled = false; break;
+      case 'Escape':
+        if (INTERNAL && scanner.running) scanner.stop('Stopped');
+        else {
+          handled = false;
+          if (!e.repeat && document.body.classList.contains('maxi')) {
+            const now = Date.now();
+            if (now - lastEscAt <= 1000) { lastEscAt = 0; vscode.postMessage({ type: 'focusModeExited' }); }
+            else lastEscAt = now;
+          }
+        }
+        break;
       default: handled = false;
     }
     if (handled) e.preventDefault();
@@ -2688,6 +2703,7 @@
       case 'nda': { const p = engines[m.key]; if (p) p.onNativeAudio(m); break; }
       case 'originalTile': useOriginalTile(m.index, m.notice); break;
       case 'playbackPrefs': applyPlaybackPrefs(m.prefs); break;
+      case 'focusMode': document.body.classList.toggle('maxi', !!m.active); break;
       case 'visible':
         if (m.active === false) setReordering(false);
         syncVisibility(document.hidden, m.visible);

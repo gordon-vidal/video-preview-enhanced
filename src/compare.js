@@ -23,7 +23,7 @@ const { budgets } = require('../media/membudget');
 const Grid = require('../media/compare-grid');
 const frameserver = require('./frameserver');
 const { barHtml, playFlashHtml } = require('./bar');
-const { toggleFocusMode } = require('./focus-mode');
+const { toggleFocusMode, noteFocusModeExited } = require('./focus-mode');
 const { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare, compareTargets } = require('./comparepick');
 const { createAddMode, startsInAddMode, addToCompareOrigin } = require('./addmode');
 const { createCompareMenu } = require('./comparemenu');
@@ -309,6 +309,7 @@ class CompareSession {
       case 'copyText': return this.copyText(String(m.text || ''));
       case 'openSettings': return vscode.commands.executeCommand('workbench.action.openSettings', '@ext:gordon-vidal.video-preview-enhanced');
       case 'focusMode': return toggleFocusMode(vscode);
+      case 'focusModeExited': noteFocusModeExited(); return undefined;
       case 'remove': {
         const i = Number(m.index);
         if (!Number.isInteger(i) || i < 0 || i >= this.uris.length || this.uris.length <= 2) return undefined;

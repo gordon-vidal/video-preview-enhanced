@@ -10,7 +10,7 @@ html, body {
   font-size: var(--vscode-font-size);
 }
 body { display: flex; flex-direction: column; }
-body:fullscreen, body.maxi { background: #000; }
+:root:fullscreen body, body:fullscreen, body.maxi { background: #000; }
 
 #stage {
   position: relative;
@@ -136,7 +136,7 @@ body:has(#addHint:not([hidden]), #notice:not([hidden]), #goto:not([hidden])) #to
   background: var(--vscode-editorWidget-background);
   transition: opacity 0.2s;
 }
-body:fullscreen #bar, body.maxi #bar { position: absolute; left: 0; right: 0; bottom: 0; }
+:root:fullscreen #bar, body:fullscreen #bar, body.maxi #bar { position: absolute; left: 0; right: 0; bottom: 0; }
 body.idle #bar { opacity: 0; }
 body.idle { cursor: none; }
 

@@ -35,11 +35,28 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
     h.vscode.executed = [];
     const zen = ['workbench.action.toggleZenMode'];
     const centered = ['workbench.action.toggleCenteredLayout'];
+    // Overlapping second click during the OS fullscreen settle window is ignored.
+    const first = s.send({ type: 'focusMode' });
     await s.send({ type: 'focusMode' });
+    await first;
     assert.deepEqual(h.vscode.executed, centerLayout ? [zen, centered] : [zen]);
+    assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, true);
     h.vscode.executed = [];
     await s.send({ type: 'focusMode' });
     assert.deepEqual(h.vscode.executed, [zen]);
+    assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, false);
+    if (centerLayout) {
+      // Exiting Zen Mode outside the button (Esc Esc) resets zenActive so the next click still expands full-width.
+      h.vscode.executed = [];
+      await s.send({ type: 'focusMode' });
+      assert.deepEqual(h.vscode.executed, [zen, centered]);
+      await s.send({ type: 'focusModeExited' });
+      assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, false);
+      h.vscode.executed = [];
+      await s.send({ type: 'focusMode' });
+      assert.deepEqual(h.vscode.executed, [zen, centered]);
+      await s.send({ type: 'focusMode' });
+    }
 
     if (centerLayout) {
       assert.equal(webviewConfig(s.panel.webview).hideReducedResNotice, false);
