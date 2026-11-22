@@ -2245,7 +2245,12 @@
   function frameLoop(now) {
     if (clock && tiles.length === N) {
       try {
-        clock.tick(now);
+        const offset = offSec(st.clock);
+        const start = Math.max(0, ab.a === null ? 0 : ab.a + offset);
+        const end = ab.b === null ? -Infinity : ab.b + offset;
+        const range = begun && visible && clock.startT !== null && end >= start
+          ? { start: clock.startT + start, end: clock.startT + end } : undefined;
+        clock.tick(now, range);
         if (restoreClock && clock.startT !== null && clock.vmode !== undefined && visible) {
           const { time, playing } = restoreClock;
           restoreClock = null;
@@ -2254,12 +2259,6 @@
         }
         if (begun && visible) {
           if (pendingStart && tiles.every((p) => p.startT !== null)) { clock.seekTime(pendingStart); pendingStart = 0; }
-          if (ab.b !== null && clock.playing && clock.seekTarget === null) {
-            const offset = offSec(st.clock);
-            const start = Math.max(0, ab.a === null ? 0 : ab.a + offset);
-            const end = ab.b + offset;
-            if (end >= start && clock.rel(clock.now()) >= end + 0.5 / fpsOf(clock)) seekClock(start);
-          }
           if (clock.playing) syncPlaying(); else syncPaused();
         }
         for (const p of tiles) if (p !== clock) p.tick(now);

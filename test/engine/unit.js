@@ -791,6 +791,27 @@ test('invisible: the AudioContext rests when paused and the clock waits for it o
   assert.ok(!q.acRest);
 });
 
+test('Compare A-B wraps before EOF can pause playback', () => {
+  const p = player({ eof: true, shownT: 3, lastT: 3, loop: false });
+  playingAt(p, 3.2);
+  p.tick(0, { start: 1, end: 3 });
+  assert.ok(p.playing, 'a delayed tick at the end stopped the clock');
+  assert.strictEqual(p.seekTarget, 1);
+});
+
+test('Compare A-B shows B but never shows the following close VFR picture', () => {
+  const p = player({ shownT: 1.96, queue: [frame(2), frame(2.004), frame(2.04)], loop: false });
+  playingAt(p, 2.002);
+  const range = { start: 1, end: 2 };
+  p.tick(0, range);
+  assert.strictEqual(p.shownT, 2, 'early presentation must stop at B');
+  assert.strictEqual(p.seekTarget, null, 'the next picture time has not arrived');
+  playingAt(p, 2.005);
+  p.tick(0, range);
+  assert.strictEqual(p.seekTarget, 1, 'wrapped at the actual next picture');
+  assert.strictEqual(p.shownT, 2);
+});
+
 (async () => {
   // A pending promise alone doesn't keep Node alive. Require the suite to finish.
   process.exitCode = 1;

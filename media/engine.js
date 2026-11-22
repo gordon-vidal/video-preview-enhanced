@@ -1945,13 +1945,23 @@ function createEngine(env) {
 
     // ---- presentation ---------------------------------------------------------
 
-    tick() {
+    tick(_wallTime, loopRange) {
       if (this.vmode === undefined) return;
       this.updateAudioLive(this.now());
       this.checkAudioLag();
       let now = this.now();
       // Re-anchor when the clock source changes (audio started, rate changed).
       if (this.playing && this.anchoredOnAudio !== this.audioMaster()) { this.anchor(now); }
+      const limit = this.playing && this.seekTarget === null && loopRange ? loopRange.end + 1e-6 : Infinity;
+      if (limit !== Infinity && (!this.queue.length || this.queue[0].t > limit)) {
+        // Present B before wrapping, even when the next picture is already due after a delayed tick.
+        const next = this.queue[0]?.t ?? (this.eof && this.lastT !== undefined
+          ? Math.max(limit, this.lastT + 1 / (this.fps || 30)) : Infinity);
+        if (now >= next) {
+          this.seekAbs(loopRange.start, true);
+          return;
+        }
+      }
       const end = this.startT !== null && this.meta.duration ? this.startT + this.meta.duration : Infinity;
       if (this.playing && this.eof && !this.queue.length && now >= this.endT() && this.seekTarget === null) {
         if (this.loop && this.loopAgain()) now = this.restartLoop(now, this.endT()); else this.pause();
@@ -1980,7 +1990,7 @@ function createEngine(env) {
       // ...unless frames are decoded past the clock: then the display, not decoding, is slow (120 fps on 60 Hz), so drop to the newest due one.
       const decodedAhead = this.queue.length && this.queue[this.queue.length - 1].t > now + early;
       // A frame being copied waits for the shader to display it with the chosen matrix.
-      while (this.queue.length && this.queue[0].t <= now + early && !this.queue[0].spilling) {
+      while (this.queue.length && this.queue[0].t <= Math.min(now + early, limit) && !this.queue[0].spilling) {
         if (show) { this.release(show); this.dropped = (this.dropped || 0) + 1; }
         show = this.queue.shift();
         if (everyFrame && !decodedAhead) break;
