@@ -9,6 +9,7 @@ const AVMEDIA_TYPE_AUDIO = 1;
 const AV_PIX_FMT_YUV420P = 0;
 const AV_PIX_FMT_YUVJ420P = 12;
 const AV_PKT_FLAG_KEY = 1;
+const AV_PKT_FLAG_DISCARD = 4;
 const BLOCK = 1 << 20;
 
 let libav = null;
@@ -396,7 +397,11 @@ async function more(m) {
   if (V.mode === 'webcodecs') {
     for (const p of vp) {
       const key = !!(p.flags & AV_PKT_FLAG_KEY);
-      msg.video.push({ kind: 'packet', t: packetTime(p, V.tb, false), dts: p.dts === undefined ? null : f64(p.dts, p.dtshi) * V.tb[0] / V.tb[1], key, idr: key ? isIdr(p.data) : undefined, data: p.data });
+      // MOV edit lists can retain reference pictures outside the visible timeline.
+      const discard = !!(p.flags & AV_PKT_FLAG_DISCARD);
+      msg.video.push({ kind: 'packet', t: packetTime(p, V.tb, false),
+        dts: p.dts === undefined ? null : f64(p.dts, p.dtshi) * V.tb[0] / V.tb[1],
+        key, idr: key ? isIdr(p.data) : undefined, discard, data: p.data });
       transfer.push(p.data.buffer);
     }
   } else if (V.mode === 'soft' && !V.off && (vp.length || (atEnd && !V.drained))) {

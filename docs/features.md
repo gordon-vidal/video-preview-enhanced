@@ -67,7 +67,7 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 **ffmpeg command for A–B.** **Copy ffmpeg Command for A–B** copies a command line for the same range: an exact cut that re-encodes, or a fast `-c copy` cut. The fast one starts at the keyframe at or before A, so it can begin a little early.
 
 **Export an A–B clip.** Mark the first and last pictures with **A** and **B**, then choose **Export A–B Clip…**
-from the Command Palette, the details overlay (`I`) or **Settings → Tools**. Pick a folder for
+from the Command Palette, the details overlay (`I` → **Full technical details**) or **Settings → Tools**. Pick a folder for
 `<video>_A-B.<ext>`. The export copies the original video, embedded audio and subtitle streams. It requires native
 ffmpeg and ffprobe on the host that has the video. MP4 and MOV use edit lists to show A through B, inclusive.
 Other files use MP4 when their streams can be copied into it. If an exact clip cannot be made, the player can

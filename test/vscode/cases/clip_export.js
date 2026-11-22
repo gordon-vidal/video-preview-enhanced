@@ -53,6 +53,8 @@ module.exports = [{
 
     for (const file of [mp4, mov]) {
       await R.run(`clip/single-${path.extname(file).slice(1)}`, async (ok) => {
+        const p = path.parse(file);
+        const exported = path.join(folder, p.name + '_A-B' + p.ext);
         const P = await lib.open(vs, h, file);
         try {
           P.seek(1.61); await P.expectFrame(40, 'mark A');
@@ -66,9 +68,14 @@ module.exports = [{
             await P.ask('click', { sel: '#panel button.tool', text: 'Export A–B Clip…' });
           }
           await vs.waitLog(/A–B export to /, { from, timeout: 45000 });
-          const p = path.parse(file);
-          checkClip(ok, h, path.join(folder, p.name + '_A-B' + p.ext), ref, 40, 69);
+          checkClip(ok, h, exported, ref, 40, 69);
         } finally { await P.close(); }
+        const clip = await lib.open(vs, h, exported);
+        try {
+          await clip.expectFrame(0, 'reopened clip starts at A');
+          clip.key('End');
+          await clip.expectFrame(29, 'reopened clip ends at B');
+        } finally { await clip.close(); }
       });
     }
 

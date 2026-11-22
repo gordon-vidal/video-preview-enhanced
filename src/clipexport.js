@@ -49,13 +49,15 @@ async function inspectSource(tools, file, range, signal) {
   const [num, den] = video.time_base.split('/').map(Number);
   const tick = num / den;
   const origin = Number(format.start_time) || 0;
+  const declaredStart = Number(video.start_time);
+  const scanStart = Number.isFinite(declaredStart) ? declaredStart : origin;
   // Some demuxers expose an earlier stream start than the first picture (e.g. AVI with B-frames).
   const head = await videoFrames(tools, file, video.index,
-    `%${seconds((Number(video.start_time) || origin) + PROBE_MARGIN)}`, signal);
+    `%${seconds(scanStart + PROBE_MARGIN)}`, signal);
   const videoStart = head[0]?.t;
   if (!Number.isFinite(videoStart)) throw new Error('Could not find the first video timestamp');
   const videoEnd = Number(video.duration) > 0
-    ? (Number(video.start_time) || origin) + Number(video.duration)
+    ? scanStart + Number(video.duration)
     : origin + (Number(format.duration) || Infinity);
   if (range.a < -tick / 2 || range.b + videoStart >= videoEnd) {
     throw new Error('the mapped range falls outside the video');
@@ -115,7 +117,7 @@ async function makeClip(tools, file, output, source, options, signal) {
     }
     return Math.abs(t - frames[lastCopied]?.t) <= eps;
   });
-  if (!timelineMatches || (exact && (Math.abs(offset) > eps || out.length !== last - first + 1))) {
+  if (!timelineMatches || (exact && (Math.abs(offset) > 0.000005 || out.length !== last - first + 1))) {
     throw new Error('Decoded clip did not match the marked presentation interval');
   }
   const copiedEnd = frames[lastCopied].t;

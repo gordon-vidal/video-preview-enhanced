@@ -93,8 +93,8 @@ sequences are ineligible. [Tool discovery](../../src/ffmpeg.js) ·
   [ffprobe options](https://ffmpeg.org/ffprobe.html)
 - **Players.** An edit-aware player with codec support should start on A. QuickTime specifies
   the mapping and VLC enables edit lists by default. Chromium has had preroll discard issues.
-  Test first visible frames in QuickTime Player, VLC, Chrome/Edge, Safari, Firefox and hidden
-  VS Code (GPU, built-in and native). Playback accuracy is unverified for these versions.
+  The hidden VS Code WebCodecs path honours the demuxer's discard flag for decode dependencies.
+  QuickTime Player, VLC, Chrome/Edge, Safari and Firefox playback accuracy is unverified.
   Readers that ignore the edit may show the earlier keyframe.
   [QuickTime edit list](https://developer.apple.com/documentation/quicktime-file-format/edit_list_atom) ·
   [VLC MP4 demuxer](https://github.com/videolan/vlc/blob/master/modules/demux/mp4/mp4.c) ·
@@ -126,7 +126,8 @@ omitted A–B, which this proposal adds to the shared transport. Clarify clip ve
 FFmpeg 9.0.2 decoded the 25 fps B-frame fixture from A at 1.600 s through B at 2.760 s
 with both boundaries matching and 30 visible pictures in MP4 and MOV. H.264/AAC MKV
 and VP9 WebM also matched after remux to MP4. One-frame intervals, VFR and an MP4
-with a 3600 s timestamp origin matched. AVI with MPEG-4 B-frames passed for some
+with a 3600 s timestamp origin matched. Reopening the MP4 and MOV exports in hidden
+VS Code showed A at the start and B after pressing End. AVI with MPEG-4 B-frames passed for some
 ranges and failed exact verification for others. The MKV/SubRip fallback trial
 reported a 0.600 s early start, a 0.120 s late end and one omitted intervening picture.
 The test fixture is generated with FFmpeg's `testsrc2` and `sine` filters.

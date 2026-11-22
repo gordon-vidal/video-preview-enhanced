@@ -892,10 +892,13 @@ function createEngine(env) {
 
     makeVideoDecoder() {
       const g = this.gen;
+      // WebCodecs needs the dependency packets but does not see the container's discard flag.
+      const discard = new Set();
+      this.discardVideo = discard;
       this.vdec = new VideoDecoder({
         output: (vf) => {
           wake();
-          if (g !== this.gen) { vf.close(); return; }
+          if (g !== this.gen || discard.delete(vf.timestamp)) { vf.close(); return; }
           let t = vf.timestamp / 1e6;
           if (this.noPts) t = (this.ptsBase || 0) + this.outCount / (this.fps || 30);
           this.outCount++;
@@ -1168,8 +1171,12 @@ function createEngine(env) {
           // No presentation times (H.264 in AVI): the decode times are frame-spaced, so they give the rate.
           this.trackTs(it.t === null ? (Number.isFinite(it.dts) ? it.dts : null) : it.t);
           try {
+            if (it.discard) this.discardVideo.add(ts);
             this.vdec.decode(new EncodedVideoChunk({ type: it.key ? 'key' : 'delta', timestamp: ts, data: it.data }));
-          } catch (e) { log(`decode: ${e.message}`); }
+          } catch (e) {
+            if (it.discard) this.discardVideo.delete(ts);
+            log(`decode: ${e.message}`);
+          }
         } else if (it.kind === 'yuv') {
           const t = it.t === null ? (this.lastT || 0) + 1 / (this.fps || 30) : it.t;
           this.trackTs(t);
