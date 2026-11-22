@@ -58,10 +58,11 @@ function selectRange(range, frames, videoStart, tick, videoEnd) {
 
 const seconds = (value) => value.toFixed(6);
 
-function copyArgs(file, output, { video, streams, start, duration, exact, attachments, audio = [], subtitles = [] }) {
+function copyArgs(file, output, { video, streams, start, seek = start, duration, exact, attachments, audio = [], subtitles = [] }) {
   const args = ['-v', 'error', '-xerror', '-nostdin', '-n'];
   // FFmpeg's input seek is relative to format start. Copy keeps the decode preroll.
-  if (start > 0) args.push('-ss', seconds(start));
+  if (seek > 0) args.push('-ss', seconds(seek));
+  if (exact && seek !== start) args.push('-itsoffset', seconds(seek - start));
   args.push(...inputArgs(file));
   if (exact && subtitles.length) {
     // Subtitle demux seeking can miss a cue that started before the video preroll.

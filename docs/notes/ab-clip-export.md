@@ -70,7 +70,9 @@ the copied packets intact. The exact path publishes only after the decoded timel
 boundary hashes match the source. Timed-text cues keep their original payloads and are clipped to the marked interval
 before muxing. PCM tracks use their original sample format with sample-accurate trimming. Compressed
 audio stays stream-copied, and output with decoded samples outside the marked interval fails exact
-verification. The keyframe path requires confirmation of both measured boundaries.
+verification. If an H.264 open GOP fails picture verification, retry with earlier preroll and an
+edit that starts at A. Advertise the earlier sync sample so readers decode its references.
+The keyframe path requires confirmation of both measured boundaries.
 
 **Container choice.** Prefer verified MP4 remux for compatible non-MP4/MOV sources. Otherwise offer
 a warned, same-container keyframe cut if the muxer supports the tracks. Copy the displayed video and

@@ -16,7 +16,23 @@ function child(buf, parent, type) {
   return [...boxes(buf, parent.start, parent.end)].find((box) => box.type === type);
 }
 
-function shortenMovie(buf, duration) {
+function keepFirstVideoSync(buf, track) {
+  const media = child(buf, track, 'mdia');
+  const handler = media && child(buf, media, 'hdlr');
+  if (!handler || buf.toString('ascii', handler.start + 8, handler.start + 12) !== 'vide') return;
+  const info = child(buf, media, 'minf');
+  const table = info && child(buf, info, 'stbl');
+  const sync = table && child(buf, table, 'stss');
+  if (!sync) return;
+  if (sync.end - sync.start < 8) throw new Error('Invalid movie sync table');
+  const count = buf.readUInt32BE(sync.start + 4);
+  if (sync.start + 8 + count * 4 > sync.end) throw new Error('Invalid movie sync table');
+  // A non-IDR recovery picture advertised as sync can cause readers to skip the
+  // retained references when opening an edit. Only advertise the chosen entry point.
+  if (count > 1) buf.writeUInt32BE(1, sync.start + 4);
+}
+
+function shortenMovie(buf, duration, singleVideoSync) {
   const movie = child(buf, { start: 0, end: buf.length }, 'mvhd');
   if (!movie) throw new Error('Missing movie header');
   const mv64 = buf[movie.start] === 1;
@@ -28,6 +44,7 @@ function shortenMovie(buf, duration) {
   let longest = 0;
   for (const track of boxes(buf)) {
     if (track.type !== 'trak') continue;
+    if (singleVideoSync) keepFirstVideoSync(buf, track);
     const header = child(buf, track, 'tkhd');
     const edts = child(buf, track, 'edts');
     const edit = edts && child(buf, edts, 'elst');
@@ -56,7 +73,7 @@ function shortenMovie(buf, duration) {
   write(scaleAt + 4, mv64, longest);
 }
 
-async function trimMovie(file, duration) {
+async function trimMovie(file, duration, singleVideoSync = false) {
   const fd = await fs.open(file, 'r+');
   try {
     const size = (await fd.stat()).size;
@@ -71,7 +88,7 @@ async function trimMovie(file, duration) {
         const data = Buffer.alloc(length - prefix); // read only the index, even for a large clip
         const at = pos + prefix;
         if ((await fd.read(data, 0, data.length, at)).bytesRead !== data.length) break;
-        shortenMovie(data, duration);
+        shortenMovie(data, duration, singleVideoSync);
         if ((await fd.write(data, 0, data.length, at)).bytesWritten !== data.length) break;
         return;
       }

@@ -65,9 +65,18 @@ async function inspectSource(tools, file, range, signal) {
   if (range.a < -tick / 2 || range.b + videoStart >= videoEnd) {
     throw new Error('the mapped range falls outside the video');
   }
-  const begin = videoStart + range.a - PROBE_MARGIN;
-  const interval = `${begin > origin ? seconds(begin) : ''}%${seconds(videoStart + range.b + PROBE_MARGIN)}`;
-  const frames = await videoFrames(tools, file, video.index, interval, signal);
+  let begin = videoStart + range.a - PROBE_MARGIN;
+  const stop = seconds(videoStart + range.b + PROBE_MARGIN);
+  let frames;
+  try {
+    frames = await videoFrames(tools, file, video.index, `${begin > origin ? seconds(begin) : ''}%${stop}`, signal);
+  } catch (e) {
+    signal?.throwIfAborted();
+    if (video.codec_name !== 'h264' || begin <= origin) throw e;
+    // A seek into an open GOP can leave the probing decoder without its earlier references.
+    begin = origin;
+    frames = await videoFrames(tools, file, video.index, `%${stop}`, signal);
+  }
   const selected = selectRange(range, frames, videoStart, tick, videoEnd);
   return { ...selected, frames, begin, origin, tick, video, audio, subtitles, format: format.format_name };
 }
@@ -131,7 +140,34 @@ async function verifyTracks(tools, file, output, src, copied, start, duration, s
   }
 }
 
+class ClipVideoError extends Error {}
+
 async function makeClip(tools, file, output, source, options, signal) {
+  const start = source.start - source.origin;
+  try {
+    return await copyClip(tools, file, output, source, start, options, signal);
+  } catch (e) {
+    signal?.throwIfAborted();
+    if (!options.exact || source.video.codec_name !== 'h264' || !(e instanceof ClipVideoError) || start <= 0) throw e;
+  }
+  const { frames, first, origin } = source;
+  const key = frames.findLastIndex((f, i) => i <= first && f.key);
+  const previous = frames.findLast((f, i) => i < key && f.key)?.t - origin;
+  // A container keyframe can be an open-GOP recovery point. If the preceding keyframe
+  // needs references too, retry from the beginning, where the source must be decodable.
+  const seeks = previous > 0 ? [previous, 0] : [0];
+  for (const seek of seeks) {
+    signal?.throwIfAborted();
+    await fs.rm(output, { force: true });
+    try {
+      return await copyClip(tools, file, output, source, seek, options, signal);
+    } catch (e) {
+      if (seek === 0 || !(e instanceof ClipVideoError)) throw e;
+    }
+  }
+}
+
+async function copyClip(tools, file, output, source, seek, options, signal) {
   const { exact, dropAudio, dropSubtitles } = options;
   const { video, audio, subtitles, origin, tick, frames, first, last, start, end } = source;
   const kept = [...(dropAudio ? [] : audio), ...(dropSubtitles ? [] : subtitles)];
@@ -140,20 +176,24 @@ async function makeClip(tools, file, output, source, options, signal) {
   const copyStart = frames[firstCopied].t;
   const duration = end - start;
   await run(tools.ffmpeg, copyArgs(file, output, {
-    video: video.index, streams: kept.map((s) => s.index), start: start - origin,
+    video: video.index, streams: kept.map((s) => s.index), start: start - origin, seek,
     duration, exact, audio: dropAudio ? [] : audio, subtitles: dropSubtitles ? [] : subtitles,
     attachments: !exact && !dropSubtitles && source.format.includes('matroska') && path.extname(output) === '.mkv',
   }), signal);
-  if (exact) await trimMovie(output, duration);
+  if (exact) await trimMovie(output, duration, seek !== start - origin);
   const { streams } = await probe(tools, output, ['-show_streams'], signal);
   const codecs = (tracks) => tracks.map((s) => `${s.codec_type}:${s.codec_name}`).sort().join(',');
   const copied = streams.filter((s) => ['video', 'audio', 'subtitle'].includes(s.codec_type));
   if (codecs(copied) !== codecs([video, ...kept])) {
     throw new Error('The output did not retain all selected streams');
   }
-  if (exact) await verifyTracks(tools, file, output, kept, copied, start, duration, signal);
   const outputVideo = copied.find((s) => s.codec_type === 'video').index;
-  const out = await videoFrames(tools, output, outputVideo, null, signal);
+  let out;
+  try {
+    out = await videoFrames(tools, output, outputVideo, null, signal);
+  } catch (e) {
+    throw new ClipVideoError(e.message, { cause: e });
+  }
   const eps = Math.max(0.000005, tick + 0.000001);
   const offset = out[0]?.t;
   let lastCopied = firstCopied - 1;
@@ -167,15 +207,29 @@ async function makeClip(tools, file, output, source, options, signal) {
     return Math.abs(t - frames[lastCopied]?.t) <= eps;
   });
   if (!timelineMatches || (exact && (Math.abs(offset) > 0.000005 || out.length !== last - first + 1))) {
-    throw new Error('Decoded clip did not match the marked presentation interval');
+    throw new ClipVideoError('Decoded clip did not match the marked presentation interval');
   }
   const copiedEnd = frames[lastCopied].t;
-  const originalHashes = await boundaryHashes(tools, file, video.index, source.begin - origin,
-    [copyStart, copiedEnd], signal);
-  const clipHashes = await boundaryHashes(tools, output, outputVideo, 0, [offset, out.at(-1).t], signal);
-  if (originalHashes.length !== (out.length === 1 ? 1 : 2) || originalHashes.join(',') !== clipHashes.join(',')) {
-    throw new Error('Decoded clip boundary pictures did not match the source');
+  const referenceSeek = seek === start - origin ? source.begin - origin : seek;
+  const times = [copyStart, copiedEnd];
+  let originalHashes;
+  try {
+    originalHashes = await boundaryHashes(tools, file, video.index, referenceSeek, times, signal);
+  } catch (e) {
+    signal?.throwIfAborted();
+    if (video.codec_name !== 'h264' || referenceSeek <= 0) throw e;
+    originalHashes = await boundaryHashes(tools, file, video.index, 0, times, signal);
   }
+  let clipHashes;
+  try {
+    clipHashes = await boundaryHashes(tools, output, outputVideo, 0, [offset, out.at(-1).t], signal);
+  } catch (e) {
+    throw new ClipVideoError(e.message, { cause: e });
+  }
+  if (originalHashes.length !== (out.length === 1 ? 1 : 2) || originalHashes.join(',') !== clipHashes.join(',')) {
+    throw new ClipVideoError('Decoded clip boundary pictures did not match the source');
+  }
+  if (exact) await verifyTracks(tools, file, output, kept, copied, start, duration, signal);
   return {
     startDelta: copyStart - start,
     endDelta: copiedEnd - frames[last].t,
