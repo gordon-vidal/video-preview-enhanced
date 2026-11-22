@@ -116,8 +116,10 @@ async function verifyTracks(tools, file, output, src, copied, start, duration, s
         return { start, end, hash: p.data_hash };
       });
   }
+  // The muxer drops cues in integer ticks; float sums (0.8 + 0.4 > 1.2) must not expect a zero-length cue it dropped.
+  const CUE_EPS = 5e-7;
   for (let i = 0; i < inputText.length; i++) {
-    const expected = (await cues(file, inputText[i])).filter((cue) => cue.end > start && cue.start < start + duration)
+    const expected = (await cues(file, inputText[i])).filter((cue) => cue.end > start + CUE_EPS && cue.start < start + duration - CUE_EPS)
       .map((cue) => ({ start: Math.max(0, cue.start - start), end: Math.min(duration, cue.end - start), hash: cue.hash }));
     const actual = await cues(output, outputText[i]);
     const eps = Math.max(0.000002, streamTick(inputText[i]), streamTick(outputText[i]));
@@ -263,14 +265,33 @@ async function publish(from, to, signal) {
     await fs.link(from, to);
   } catch (e) {
     signal.throwIfAborted();
-    if (!['EPERM', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP', 'EXDEV'].includes(e.code)) throw e;
-    // Node has no portable no-replace rename. A copy could expose incomplete data,
-    // and an ordinary rename could overwrite a file created by another process.
-    throw new Error('This folder does not support atomic clip publication. Choose a folder that supports hard links.');
+    if (e.code === 'EEXIST') throw e;
+    // No hard links (FAT/exFAT, some SMB and FUSE folders): reserve the name exclusively, then rename over the empty
+    // placeholder. The final name never shows partial clip data and an existing file is never replaced; for the few
+    // milliseconds between the two calls it is an empty file.
+    await reserveAndRename(from, to, signal);
+    return;
   }
   if (signal.aborted) {
     await fs.unlink(to);
     signal.throwIfAborted();
+  }
+}
+
+async function reserveAndRename(from, to, signal) {
+  await (await fs.open(to, 'wx')).close();
+  const dropPlaceholder = async () => {
+    try { if ((await fs.stat(to)).size === 0) await fs.unlink(to); } catch { /* already gone */ }
+  };
+  if (signal.aborted) {
+    await dropPlaceholder();
+    signal.throwIfAborted();
+  }
+  try {
+    await fs.rename(from, to);
+  } catch (e) {
+    await dropPlaceholder();
+    throw e;
   }
 }
 

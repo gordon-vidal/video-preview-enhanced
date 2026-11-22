@@ -43,6 +43,23 @@ const probe = (file, args) => JSON.parse(run(ffprobe, [...args, '-of', 'json', f
     assert.deepEqual(packets.filter((p) => Number(p.size) > 2)
       .map((p) => [Number(p.pts_time), Number(p.duration_time), p.flags.includes('D')]),
     [[0, 0.2, false], [0.4, 0.44, false]]);
+
+    // Contiguous cues: one ends exactly at A, one starts exactly at B's end. Float sums (0.8 + 0.4) must not make the
+    // verifier expect the zero-length cues the muxer correctly drops.
+    await fs.writeFile(srt, [
+      '1', '00:00:00,800 --> 00:00:01,200', 'Ends at A', '',
+      '2', '00:00:01,200 --> 00:00:01,500', 'Starts at A', '',
+      '3', '00:00:01,500 --> 00:00:02,040', 'Ends after B', '',
+      '4', '00:00:02,040 --> 00:00:02,300', 'After the clip', '',
+    ].join('\n'));
+    const touching = path.join(dir, 'touching.mp4');
+    const touchingOut = path.join(dir, 'touching-clip.mp4');
+    run(ffmpeg, ['-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=4', '-i', srt, '-map', '0:v', '-map', '1:s',
+      '-c:v', 'libx264', '-g', '25', '-bf', '2', '-c:s', 'mov_text', touching]);
+    await makeClip(tools, touching, touchingOut, await inspectSource(tools, touching, { a: 1.2, b: 2, early: 0 }), { exact: true });
+    const cues = probe(touchingOut, ['-select_streams', 's', '-show_packets', '-show_entries', 'packet=pts_time,size'])
+      .packets.filter((p) => Number(p.size) > 2).map((p) => Number(p.pts_time));
+    assert.deepEqual(cues, [0, 0.3], 'only the two cues inside the clip are kept');
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

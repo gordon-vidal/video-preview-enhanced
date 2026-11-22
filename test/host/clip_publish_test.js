@@ -15,8 +15,15 @@ const { publish } = require('../../src/clipexport');
     await fs.writeFile(staged, 'verified clip');
     const ctl = new AbortController();
     fs.link = async () => { throw Object.assign(new Error('unsupported'), { code: 'ENOTSUP' }); };
-    await assert.rejects(() => publish(staged, final, ctl.signal), /atomic clip publication/);
-    await assert.rejects(() => fs.stat(final), { code: 'ENOENT' });
+    // No hard links: publish by reserving the name, then renaming over the empty placeholder.
+    await publish(staged, final, ctl.signal);
+    assert.equal(await fs.readFile(final, 'utf8'), 'verified clip');
+    await assert.rejects(() => fs.stat(staged), { code: 'ENOENT' });
+    // Without hard links an existing file is still never replaced.
+    await fs.writeFile(staged, 'verified clip');
+    await assert.rejects(() => publish(staged, final, ctl.signal), { code: 'EEXIST' });
+    assert.equal(await fs.readFile(final, 'utf8'), 'verified clip');
+    await fs.unlink(final);
     fs.link = link;
     await fs.writeFile(final, 'existing clip');
     await assert.rejects(() => publish(staged, final, ctl.signal), { code: 'EEXIST' });

@@ -77,8 +77,8 @@ before saving a keyframe cut. Use an edit-list-aware player to view exact clips.
 compressed pictures outside the visible interval when decoding the selected pictures requires them.
 
 For exact clip export, mark A and B with a built-in playback decoder. Native playback uses estimated frame
-times, which can differ from source timestamps on variable-frame-rate video. Files are published to folders
-that support hard links.
+times, which can differ from source timestamps on variable-frame-rate video. A clip appears under its final
+name only once it is complete, and an existing file is never replaced.
 
 **Export Compare clips.** **A** and **B** mark a shared loop on the Compare clock. Run **Export A–B Clips…**
 from the palette or **Settings → Tools** to save one clip per tile, named `<letter>_<video>_A-B.<ext>`.
