@@ -84,6 +84,10 @@
     // The step buttons' size picked with their badge (this tab, kept over a reload); null: the setting stepButtons.
     stepSize: VpeControls.STEP_SIZES.includes(saved.stepSize) ? saved.stepSize : null,
   };
+  const initPrefs = cfg.prefs || {};
+  let userMuted = saved.muted !== undefined ? !!saved.muted : !!initPrefs.muted;
+  let autoplayMuted = false;
+  const rawVol = saved.volume !== undefined ? Number(saved.volume) : initPrefs.volume !== undefined ? Number(initPrefs.volume) : 1;
   const Pic = VpePicture;
   const st = {
     // The picture size, zoom and pan, one for every tile (media/picture.js): this tab starts as the setting and keeps its own choice.
@@ -100,8 +104,12 @@
       return { unit: 'frames', v: i === 1 && typeof saved.offset === 'number' ? saved.offset : 0 }; // older state: B's offset in frames
     }),
     clock: tileOr0(saved.clock), sound: tileOr0(saved.sound), sel: tileOr0(saved.sel ?? 1), infoSel: 0,
-    rate: VpeControls.clampRate(saved.rate || 1), volume: saved.volume !== undefined ? saved.volume : 1, muted: !!saved.muted,
-    loop: saved.loop !== undefined ? saved.loop : true, thresh: saved.thresh || 40, metrics: INTERNAL, timeMode: Number(saved.timeMode) || 0,
+    rate: VpeControls.clampRate(saved.rate || initPrefs.rate || 1),
+    volume: Number.isFinite(rawVol) && rawVol >= 0 && rawVol <= 1 ? Math.round(rawVol * 100) / 100 : 1,
+    muted: userMuted,
+    loop: saved.loop !== undefined ? saved.loop : true, thresh: saved.thresh || 40, metrics: INTERNAL,
+    timeMode: [0, 1, 2].includes(Number(saved.timeMode)) ? Number(saved.timeMode)
+      : [0, 1, 2].includes(Number(initPrefs.timeMode)) ? Number(initPrefs.timeMode) : 0,
   };
 
   // Decoder keys and per-video state use the host's indices. Only the display slots move.
@@ -180,7 +188,16 @@
       showMessage: (text, sub) => { if (!quiet) showMessage(key, text, sub); else if (text) scanner.fail(`${key}: ${text}`); },
       toast: (t) => { if (!quiet) toast(`${key}: ${t}`); },
       getState: () => ({}),
-      setMuteUi: (m) => { if (key === KEYS[st.sound]) setMute(m); },
+      setMuteUi: (m) => {
+        if (key !== KEYS[st.sound]) return;
+        if (m) {
+          autoplayMuted = true;
+          setMute(true, false);
+        } else if (autoplayMuted) {
+          autoplayMuted = false;
+          setMute(userMuted, false);
+        }
+      },
       onReady: () => onEngineReady(key),
       onMeta: () => onEngineMeta(key),
       wake: () => wakeLoop(),
@@ -1507,25 +1524,34 @@
     ui.mute.setAttribute('aria-label', `${m ? 'Unmute' : 'Mute'} (sound from ${tileLabel(st.sound)})`);
     ui.mute.title = `${m ? 'Unmute' : 'Mute'} (sound from ${tileLabel(st.sound)})  M`;
   }
-  function setMute(m) {
+  function postPlaybackPrefs() {
+    vscode.postMessage({ type: 'playbackPrefs', volume: st.volume, muted: userMuted, rate: st.rate, timeMode: st.timeMode });
+  }
+  function setMute(m, byUser = true) {
+    if (byUser) {
+      autoplayMuted = false;
+      userMuted = m;
+    }
     st.muted = m;
     updateMuteUi();
     applyVolume();
     updateOverlays();
     save();
+    if (byUser) postPlaybackPrefs();
   }
   function setVolume(v) {
     st.volume = Math.max(0, Math.min(1, Math.round(v * 100) / 100));
     ui.volume.value = String(st.volume);
     if (st.volume > 0 && st.muted) setMute(false); else setMute(st.muted);
   }
-  function setRate(r) {
+  function setRate(r, persist = true) {
     st.rate = VpeControls.clampRate(r);
     ui.rate.textContent = VpeControls.speedText(st.rate);
     ui.rate.setAttribute('aria-label', `Speed ${VpeControls.speedText(st.rate)}`);
     for (const p of tiles) p.setRate(st.rate);
     requestTileSize();
     save();
+    if (persist) postPlaybackPrefs();
   }
   /** Speed change with the player's toast ("4× (fastest)"). */
   function changeRate(r) {
@@ -1600,7 +1626,7 @@
     clearTimeout(saveTimer);
     vscode.setState({
       pic: st.pic.mode, mode: st.mode, split: st.split, order: st.order, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
-      rate: st.rate, volume: st.volume, muted: st.muted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode, stepSize: prefs.stepSize,
+      rate: st.rate, volume: st.volume, muted: userMuted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode, stepSize: prefs.stepSize,
       ab: { a: ab.a, b: ab.b, aPts: ab.aPts, bPts: ab.bPts, aNative: ab.aNative, bNative: ab.bNative },
       t: t ?? (pendingStart || (clock && begun && clock.startT !== null ? clock.currentTime() : saved.t || 0)),
       ...changes,
@@ -2230,7 +2256,7 @@
   VpeControls.holdVolumeOpen(ui.volume);
   ui.volume.addEventListener('input', () => setVolume(Number(ui.volume.value)));
   ui.volume.addEventListener('wheel', (e) => { e.preventDefault(); setVolume(st.volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(st.volume * 100)}%`); }, { passive: false });
-  ui.time.onclick = () => { st.timeMode = (st.timeMode + 1) % 3; lastUi = ''; updateUi(); save(); toast(['Time', 'Timecode', 'Frame number'][st.timeMode]); };
+  ui.time.onclick = () => { st.timeMode = (st.timeMode + 1) % 3; lastUi = ''; updateUi(); save(); postPlaybackPrefs(); toast(['Time', 'Timecode', 'Frame number'][st.timeMode]); };
   ui.rate.onclick = () => controls.toggle('speed', ui.rate);
   ui.rate.addEventListener('wheel', (e) => { e.preventDefault(); bumpRate(e.deltaY < 0 ? 1 : -1); }, { passive: false });
   ui.cog.onclick = () => controls.toggle('main', ui.cog);
@@ -2644,9 +2670,9 @@
 
   layoutCells();
   setLoop(st.loop);
-  setRate(st.rate);
+  setRate(st.rate, false);
   ui.volume.value = String(st.volume);
-  setMute(st.muted);
+  setMute(st.muted, false);
   // A video opened into compare starts where the player was.
   if (!(saved.t > 0) && cfg.start > 0) saved.t = cfg.start;
 

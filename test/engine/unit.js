@@ -835,6 +835,69 @@ test('invisible: the AudioContext rests when paused and the clock waits for it o
   assert.ok(!q.acRest);
 });
 
+test('unmuting after playing on a suspended AudioContext hands the clock to audio without jumping back', async () => {
+  ctx.perfNow = 0;
+  let resolveResume;
+  const ac = Object.assign(fakeAc(), {
+    state: 'suspended',
+    currentTime: 0,
+    resume() { return new Promise((r) => { resolveResume = () => { this.state = 'running'; r(); }; }); },
+    createBufferSource() {
+      return {
+        buffer: null, onended: null, connect() {},
+        start(when, offset = 0) { this.started = { when, offset }; },
+        stop() {},
+      };
+    },
+  });
+  const muteUiCalls = [];
+  const { LibavPlayer: L } = ctx.createEngine({
+    vscode: { postMessage: noop }, canvas: {}, log: noop, showMessage: noop, getState: noop,
+    setMuteUi: (m) => muteUiCalls.push(m), toast: noop, onMeta: noop, onReady: noop,
+  });
+  const p = Object.assign(Object.create(L.prototype), player({
+    ac, gain: { gain: { value: 1 } }, amode: 'soft', firstShown: true, shownT: 0,
+    queue: [frame(5.0), frame(5.033)],
+  }));
+  // Decoded sound covering 0..6 s while AudioContext is suspended by autoplay policy.
+  for (let i = 0; i < 6; i++) L.prototype.addAudio.call(p, i, 48000, [new Float32Array(48000)]);
+  L.prototype.play.call(p);
+  assert.deepStrictEqual(muteUiCalls, [true], 'autoplay on a suspended AudioContext mutes the UI');
+  assert.strictEqual(p.anchoredOnAudio, false, 'anchored on the timer clock while suspended');
+
+  // Play for 5 seconds on the timer clock while audio is decoded ahead.
+  ctx.perfNow = 5000;
+  L.prototype.tick.call(p);
+  assert.strictEqual(p.shownT, 5.0);
+  assert.strictEqual(p.audioLive, true, 'decoded sound covers the playhead even while suspended');
+  assert.strictEqual(p.anchoredOnAudio, false);
+
+  // User clicks Unmute: setVolume resumes the AudioContext, which flips state to running with currentTime still near 0.
+  L.prototype.setVolume.call(p, 0.8, false);
+  ac.currentTime = 0.02;
+  resolveResume();
+  await new Promise((r) => setTimeout(r, 0));
+
+  // Before the next tick, now() must still read from the outgoing timer clock (5.0 s), never the stale anchorMedia (0 s).
+  assert.strictEqual(L.prototype.audioMaster.call(p), true);
+  assert.strictEqual(p.anchoredOnAudio, false);
+  assert.ok(Math.abs(L.prototype.now.call(p) - 5.0) < 1e-6, `now() jumped to ${L.prototype.now.call(p)} instead of staying at 5.0`);
+
+  // The next tick hands the clock cleanly to audio at 5.033 s and schedules audio from there.
+  ctx.perfNow = 5033;
+  L.prototype.tick.call(p);
+  assert.strictEqual(p.anchoredOnAudio, true, 'clock handed off to audio');
+  assert.strictEqual(p.shownT, 5.033, 'video picture continues advancing without freezing');
+  assert.ok(Math.abs(p.anchorMedia - 5.033) < 1e-6 && Math.abs(p.anchorAc - 0.02) < 1e-6);
+  assert.strictEqual(p.sources.size, 1, 'current audio chunk scheduled immediately at playhead');
+  const [src] = p.sources;
+  assert.ok(Math.abs(src.started.offset - 0.033) < 1e-6, `audio started at offset ${src.started.offset} within chunk [5, 6]`);
+
+  // Audio clock advances from the handoff point.
+  ac.currentTime = 0.52;
+  assert.ok(Math.abs(L.prototype.now.call(p) - 5.533) < 1e-6, `audio clock at ${L.prototype.now.call(p)}`);
+});
+
 test('Compare A-B wraps before EOF can pause playback', () => {
   const p = player({ eof: true, shownT: 3, lastT: 3, loop: false });
   playingAt(p, 3.2);
