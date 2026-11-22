@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed: Compare reports the correct frame number for tiles with rounded container timestamps.
+
 - Fixed: the Pixel Inspector reads the pixel under the pointer at 100% on high-DPI displays.
 
 - Fixed: running the extension from a development checkout no longer warns about other worktrees as installed versions.

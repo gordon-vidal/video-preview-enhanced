@@ -296,8 +296,8 @@
   /** Each tile's budgets (media/compare-grid.js): frames it keeps decoded, its engine's mem. */
   const memory = Grid.tileMemory(MEM, N);
   const fpsOf = (p) => (p && p.fps) || 30;
-  /** Index of the shown frame; unlike currentFrame() also right before the frame count is known. */
-  const frameOf = (p) => (p.shownT === null ? 0 : Math.max(0, Math.floor(p.rel(p.shownT) * fpsOf(p) + 0.01)));
+  /** Index of the shown frame before the frame count is known. As in currentFrame(), round container PTS. */
+  const frameOf = (p) => (p.shownT === null ? 0 : Math.max(0, Math.round(p.rel(p.shownT) * fpsOf(p))));
   /** Seconds a frame may be shown early in engine.tick(): a quarter frame. */
   const earlyOf = (p) => 0.25 / fpsOf(p);
   /** Tile i's offset in seconds: ms, or frames of that tile at its own frame rate. */
@@ -2373,6 +2373,7 @@
       + ` contexts=${[comp, renderer, metrics].filter(Boolean).length + tiles.filter((p) => p.gl && p.gl.gl).length}`
       + ` frame=${clock ? clock.currentFrame() + 1 : '-'} clock=${st.clock} sound=${st.sound} muted=${st.muted} split=${st.split.toFixed(3)} swap=${N === 2 && st.order[0] === 1}`
       + ` playing=${per((p) => (p.playing ? 1 : 0))} frames=${per((p) => (p.shownT === null ? '-' : frameOf(p) + 1))} shown=${per((p) => p.shownCount || 0)}`
+      + ` pts=${per((p) => p.shownT === null ? '-' : p.rel(p.shownT).toFixed(6))} targets=${per((p) => p.startT === null ? '-' : p.rel(p.pauseT).toFixed(6))}`
       + ` synced=${synced()} native=${per((p) => (p.cfg.native ? 1 : 0))} heights=${per((p) => p.cv.height || 0)} fps=${per((p) => fpsOf(p).toFixed(2))}`
       + ` widths=${per((p) => p.cv.width || 0)} stage=${tileSize().w}x${tileSize().h}`
       + ` transport=${per((p) => p.frameStream ? 'stream' : p.cfg.native ? 'message' : '-')}`
@@ -2510,6 +2511,7 @@
             unnamed: [...document.querySelectorAll('button')].filter((b) => !(b.getAttribute('aria-label') || '').trim() && !/[A-Za-z]/.test(b.textContent || '')).map((b) => b.id || b.className),
             live: ui.live ? ui.live.textContent : null, active: a ? a.id || a.className || a.tagName : '', panel: controls.view(),
             muted: st.muted, loop: st.loop, playing: !!(clock && clock.playing),
+            ready: tiles.length === N && tiles.every((p) => p.shownT !== null) && ui.overlay.hidden,
           })}`);
           break;
         }

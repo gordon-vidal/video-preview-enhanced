@@ -55,7 +55,8 @@ function helpers(vs, h, t) {
     const frames = nums(r.frames);
     for (let i = 0; i < frames.length; i++) {
       const [e, alt] = expect(r, offs, i);
-      ok(frames[i] === e || frames[i] === alt, `${what}: tile ${TILE_KEYS[i]} shows #${frames[i]}, expected #${e} (clock ${TILE_KEYS[r.clock]} #${frames[r.clock]}, fps ${r.fps}, offsets ${r.offsets})`);
+      ok(frames[i] === e || frames[i] === alt, `${what}: tile ${TILE_KEYS[i]} shows #${frames[i]}, expected #${e} `
+        + `(clock ${TILE_KEYS[r.clock]} #${frames[r.clock]}, fps ${r.fps}, offsets ${r.offsets}, PTS ${r.pts}, targets ${r.targets})`);
     }
   };
   /** While playing: every tile near its frame for the clock's (followers may trail a few frames; the clock holds beyond 120 ms). */
