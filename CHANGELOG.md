@@ -14,6 +14,11 @@
 - Changed: **Add Mode** turns on only when you ask to add more: Shift+D, **Add video…**, or right-clicking one video to start a Compare. A Compare that starts from several videos at once (a drag and drop from the Explorer, Open With… on a selection, a multi-selection or folder in **Add to Compare**, **Compare Videos in Folder**, the D quick pick) now opens with Add Mode off.
 - Changed: several videos dropped on the editor or opened together reach one Compare faster: the videos are taken in about a tenth of a second (was 0.4 s), their players no longer start while Compare opens, and a tile that is slower than the clock no longer decodes its first picture twice. Measured from the first open to a picture in every tile (medians of 9 runs, 1080p clips on the development machine): 1.1 s for 2 videos (was 1.4 s), 0.9 s for 5 (was 1.4 s) and 1.1 s for 8 (was 2.1 s). A single video opens as before.
 - Fixed: in a Compare grid with letterboxed pictures the tile's move up/down arrows sat in the black bar at the bottom of the cell; they now sit in the corner of their own picture.
+
+## 0.8.1 (2026-11-22)
+
+Compare grows to 8 videos by default (up to 16), Live transcode inside Compare, and exact full-resolution frames for copy, save, inspector and scopes while Live transcode is on.
+
 - Changed: Compare supports 8 videos by default and up to 16 through `compare.maxVideos`. Grids of 5 or more stack the name and offset controls to fit smaller tiles.
 - New: with **Live transcode** active, **Copy Frame**, **Save Frame as PNG**, the **Pixel Inspector** and the **Scopes** now use one exact, full-resolution frame of the file (decoded on the host by ffmpeg, sent as a PNG: local, WSL and Remote-SSH) instead of the transcoded picture, without leaving Live transcode. The inspector and scopes fetch it once per paused frame; if it can't be fetched the tool falls back to the transcoded picture with a notice.
 - New: **Live transcode in Compare** — Compare can use Live transcode at each tile's size, share a max video bitrate across tiles (`videoPreviewEnhanced.transcodeSplitBitrate`), and show each tile's active encoder + **Use original video** in About.
