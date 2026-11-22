@@ -139,8 +139,8 @@ One feature: compare becomes multi-view. The difference view is dropped.
   and Add Mode on. If a Compare is open, the button becomes **Add to Compare** and adds the video to the most recently
   active Compare at once.
   Other entry points are **D** (quick pick of other videos, same folder first), Shift+drop from the Explorer,
-  **Shift+D** or ⚙ › Tools › **Compare** (wait for an Explorer open), and **Compare With…** in the player's
-  right-click menu (VS Code's open dialog). Compare takes the player's tab and starts at its position.
+  **Shift+D** or ⚙ › Tools › **Compare** (wait for an Explorer open), and **Start Compare** / **Add to Compare** in the
+  player's right-click menu (the same as the bar's Compare button). Compare takes the player's tab and starts at its position.
   **Leave compare** restores the player at the kept video's position.
 - **Explorer:** **Video Preview Enhanced: Start Compare** handles files, folders and mixed selections when no
   Compare is open. It can use the open single-video player or start with the selection alone, including one file.

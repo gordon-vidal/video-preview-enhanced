@@ -28,6 +28,7 @@ function element(parent) {
       if (!stopped) parent?.dispatch(type, event);
     },
     click() { this.onclick?.(); this.dispatch('click'); },
+    contains(node) { return node === this; },
     setAttribute(name, value) { attributes[name] = value; },
     append(...children) { this.children.push(...children); },
     appendChild(child) { this.append(child); },
@@ -142,7 +143,8 @@ function element(parent) {
   stage.addEventListener('click', () => events.push('stage click'));
   const originals = { document: globalThis.document, window: globalThis.window };
   try {
-    globalThis.document = { createElement: () => element(), createDocumentFragment: () => element() };
+    const docListeners = {};
+    globalThis.document = { createElement: () => element(), createDocumentFragment: () => element(), addEventListener: (t, fn) => { docListeners[t] = fn; } };
     globalThis.window = { innerHeight: 400, addEventListener: noop };
     const scopes = Scopes.create({ stage, canvas: element(), getPlayer: () => null, toast: (t) => events.push(t),
       log: noop, returnFocus: () => events.push('focus') });
@@ -161,8 +163,9 @@ function element(parent) {
     const views = Object.fromEntries(['info', 'speed', 'subs', 'cmp'].map((view) => [
       view, { label: view, render: () => element() },
     ]));
+    const bar = element();
     const controls = Controls.create({
-      panel, sheet: element(), bar: element(), buttons, views, act: {},
+      panel, sheet: element(), bar, buttons, views, act: {},
       get: () => ({ rate: 1, jump: {}, tools: [], transcode: { mode: 'ask', maxBitrateMbps: 0 } }),
     });
     for (const [view, button] of [['info', 'info'], ['speed', 'rate'], ['subs', 'tracks'], ['cmp', 'cmp']]) {
@@ -170,6 +173,31 @@ function element(parent) {
       controls.toggle('main', buttons.cog);
       assert.strictEqual(controls.view(), 'main', `Settings opens directly from ${view}`);
       assert.strictEqual(buttons.cog.attributes['aria-expanded'], 'true');
+    }
+    // Click outside (media/controls.js) with the player's own stage click handler (media/player.js): pressing the
+    // picture only dismisses the open panel (no play / pause); pressing a bar control closes it and the control still works.
+    {
+      const barControl = element(), pic = element();
+      bar.contains = (n) => n === barControl;
+      let toggles = 0;
+      const pstage = element();
+      vm.runInContext(script("stage.addEventListener('click', () => { if (controls", '\n'), vm.createContext({
+        stage: pstage, controls, togglePlay: () => { toggles++; },
+      }));
+      const press = (target) => docListeners.pointerdown({ target });
+      for (const view of ['info', 'main']) {
+        controls.show(view, buttons.info);
+        press(barControl);
+        assert.strictEqual(controls.anyOpen(), false, `a press on #mute / #bar closes the ${view} panel`);
+        assert.strictEqual(toggles, 0);
+        controls.show(view, buttons.info);
+        press(pic);
+        pstage.dispatch('click');
+        assert.strictEqual(controls.anyOpen(), false, `a press on the picture closes the ${view} panel`);
+        assert.strictEqual(toggles, 0, 'that click does not play / pause');
+      }
+      press(pic); pstage.dispatch('click');
+      assert.strictEqual(toggles, 1, 'with nothing open a click on the picture plays / pauses');
     }
     controls.show('transcode');
     const notes = panel.children.at(-1).children.filter((child) => child.className === 'pnote');

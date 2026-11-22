@@ -21,6 +21,8 @@ them all, with the jump sizes you chose. In the player and Compare, you can also
 | M | Mute. Playback starts muted until you click, because VS Code blocks autoplay with sound |
 | R | Loop on or off |
 | A / B | Set the start / end of the A–B range for looping and export (press again to clear) |
+| Backspace | Clear the A–B range |
+| T | Copy the current timestamp |
 | F | Fill the editor and switch to zen mode |
 | Shift+N / Shift+P | Next / previous video in the folder |
 | D | Compare with another video: a quick pick of the videos in this folder, then the workspace (**Browse…** opens the file dialog) |
@@ -78,7 +80,7 @@ leaves them alone (`docs/notes/ui-simple.md`).
 
 ## Right-click menu
 
-Right-clicking the player opens VS Code's own context menu (no Cut / Copy / Paste) with quick actions on this moment, like a browser's or YouTube's: **Play** / **Pause**, **Loop** (✓ when on), then **Set Loop Start (A)**, **Set Loop End (B)** and **Clear A-B Loop** (while a loop is set), then **Copy Frame**, **Save Frame as PNG…**, **Copy Timestamp**, then **Compare With…** (video files only), then **Keyboard Shortcuts** and **Settings…** (opens the ⚙ panel). The frame link is `Shift+C`. How it plays (speed, sound, subtitles, tools) is in the ⚙ panel. The entries only run on the player in focus; they are hidden from the Command Palette. Needs VS Code 1.82 or later (the extension's minimum); details in `docs/notes/context-menu.md`.
+Right-clicking the player opens VS Code's own context menu (no Cut / Copy / Paste) with quick actions on this moment, like a browser's or YouTube's. Each entry shows its key: **Play** / **Pause** (Space), **Loop** (R, ✓ when on), then **Set Range Start (A)**, **Set Range End (B)** and **Clear A–B Range** (Backspace, while a range is set), then **Copy Frame** (Ctrl+C), **Save Frame as PNG…** (S), **Copy Timestamp** (T), then **Start Compare** (or **Add to Compare** while a Compare is open; video files only), then **Keyboard Shortcuts** (?) and **Settings…** (opens the ⚙ panel). The frame link is `Shift+C`. How it plays (speed, sound, subtitles, tools) is in the ⚙ panel. The entries only run on the player in focus; they are hidden from the Command Palette. Needs VS Code 1.82 or later (the extension's minimum); details in `docs/notes/context-menu.md`.
 
 Frame numbers are the ones the player shows: `#1` is the first frame.
 While stepping or using the seek bar, the bar shows the requested frame until the decoder catches up.

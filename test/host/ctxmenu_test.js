@@ -16,7 +16,7 @@ const submenus = new Map((pkg.contributes.submenus || []).map((s) => [s.id, s]))
 // every command used by a menu is declared (ours here, the built-in settings command excepted), with a title
 const used = (arr) => arr.filter((m) => m.command).map((m) => m.command);
 const WC = menus['webview/context'];
-assert(WC.length === 13, 'webview/context has the items');
+assert(WC.length === 14, 'webview/context has the items');
 for (const m of [WC, ...[...submenus.keys()].map((k) => menus[k])]) {
   for (const id of used(m)) {
     if (id === 'workbench.action.openSettings') continue;
@@ -53,10 +53,19 @@ assert(keys.has('vpePlaying') && keys.has('vpeLoop') && !keys.has('vpeAdvanced')
 // The menu is quick actions on this moment, in this order (2026-11-19; Compare With… from the compare mock-up, 2026-11-20): no speed, sound, tracks,
 // window, frame-step or tool entries (those are in the cog panel), no submenus.
 const order = WC.slice().sort((x, y) => x.group.localeCompare(y.group, 'en', { numeric: true })).map((m) => m.command.slice(ctx.PREFIX.length));
-assert.deepStrictEqual(order, ['play', 'pause', 'loopOn', 'loopOff', 'setA', 'setB', 'clearAB', 'copyFrame', 'saveFrame', 'copyTime', 'compareWith', 'keys', 'playerSettings']);
-assert.deepStrictEqual(ctx.ITEMS.map((i) => i.title), ['Play', 'Pause', 'Loop', '✓ Loop', 'Set Loop Start (A)', 'Set Loop End (B)', 'Clear A-B Loop', 'Copy Frame', 'Save Frame as PNG…', 'Copy Timestamp', 'Compare With…', 'Keyboard Shortcuts', 'Settings…']);
+assert.deepStrictEqual(order, ['play', 'pause', 'loopOn', 'loopOff', 'setA', 'setB', 'clearAB', 'copyFrame', 'saveFrame', 'copyTime', 'startCompare', 'addToCompare', 'keys', 'playerSettings']);
+assert.deepStrictEqual(ctx.ITEMS.map((i) => i.title), ['Play (Space)', 'Pause (Space)', 'Loop (R)', '✓ Loop (R)', 'Set Range Start (A)', 'Set Range End (B)', 'Clear A–B Range (Backspace)', 'Copy Frame (Ctrl+C)', 'Save Frame as PNG… (S)', 'Copy Timestamp (T)', 'Start Compare (Shift+D)', 'Add to Compare (Shift+D)', 'Keyboard Shortcuts (?)', 'Settings…']);
 assert(WC.find((m) => m.command === ctx.PREFIX + 'clearAB').when.endsWith('&& vpeABSet'), 'Clear only while a loop is set');
-assert(WC.find((m) => m.command === ctx.PREFIX + 'compareWith').when.endsWith('&& vpeFile'), 'Compare With… only for files (not URLs, not image sequences)');
+const whenOf = (id) => WC.find((m) => m.command === ctx.PREFIX + id).when;
+assert(whenOf('startCompare').endsWith('&& vpeFile && !videoPreviewEnhanced.compareOpen'), 'Start Compare: files only, while no Compare is open');
+assert(whenOf('addToCompare').endsWith('&& vpeFile && videoPreviewEnhanced.compareOpen'), 'Add to Compare: files only, while a Compare is open');
+assert(!ctx.ITEMS.some((i) => /Compare With/.test(i.title)) && !declared.has('videoPreviewEnhanced.ctx.compareWith'), 'Compare With… is gone from the menu');
+// Shortcuts shown in the titles are real page keys (no bare-letter keybindings in package.json: the workbench would run them too)
+assert(!(pkg.contributes.keybindings || []).some((k) => /^[a-z?]$|^space$|^backspace$/i.test(k.key) && /videoPreviewEnhanced\.ctx/.test(k.command)), 'no keybindings for the menu commands');
+const shown = Object.fromEntries(ctx.ITEMS.map((i) => [i.id, (/ \((.+)\)$/.exec(i.title) || [])[1]]));
+const keyCase = { play: "case ' '", loopOn: "case 'r'", setA: "case 'a'", setB: "case 'b'", clearAB: "case 'Backspace'", saveFrame: "case 's'", copyTime: "case 't'" };
+for (const [id, c] of Object.entries(keyCase)) assert(shown[id] && page.includes(c), `${id}: ${shown[id]} is handled by the page (${c})`);
+assert(page.includes("e.key === '?'") && page.includes("e.key === 'c' || e.key === 'C'") && page.includes("label: 'Compare', key: 'Shift+D'"), 'Ctrl+C, ? and Shift+D exist');
 assert(!WC.some((m) => m.submenu) && !pkg.contributes.submenus, 'no submenus');
 assert(!pkg.contributes.commands.some((c) => c.command === 'videoPreviewEnhanced.toggleAdvancedMode'), 'the mode switch is gone');
 assert(!Object.keys(menus).some((k) => /ctx(Speed|Advanced|Tools)/.test(k)));
@@ -80,8 +89,11 @@ assert.deepStrictEqual(menus['webview/context'].slice(-gen.submenus.length), WC.
     a.panel.active = false; b.panel.active = true;
     await h.vscode._commands['videoPreviewEnhanced.ctx.loopOn']({ vpe: true, webview: 'videoPreviewEnhanced.player' });
     await h.vscode._commands['videoPreviewEnhanced.ctx.copyTime']({});
+    await h.vscode._commands['videoPreviewEnhanced.ctx.startCompare']({});
+    await h.vscode._commands['videoPreviewEnhanced.ctx.addToCompare']({});
     const last = (s) => s.posted.filter((m) => m.type === 'menu');
-    assert.deepStrictEqual(last(b), [{ type: 'menu', action: 'loop', value: undefined }, { type: 'menu', action: 'copyTime', value: undefined }]);
+    assert.deepStrictEqual(last(b), [{ type: 'menu', action: 'loop', value: undefined }, { type: 'menu', action: 'copyTime', value: undefined },
+      { type: 'menu', action: 'startCompare', value: undefined }, { type: 'menu', action: 'addToCompare', value: undefined }]);
     assert.strictEqual(last(a).length, 0, 'the inactive player gets nothing');
     a.panel.active = true; b.panel.active = false;
     await h.vscode._commands['videoPreviewEnhanced.ctx.pause']({});

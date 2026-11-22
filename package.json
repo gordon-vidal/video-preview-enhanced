@@ -212,62 +212,67 @@
       },
       {
         "command": "videoPreviewEnhanced.ctx.play",
-        "title": "Play",
+        "title": "Play (Space)",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.ctx.pause",
-        "title": "Pause",
+        "title": "Pause (Space)",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.ctx.loopOn",
-        "title": "Loop",
+        "title": "Loop (R)",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.ctx.loopOff",
-        "title": "✓ Loop",
+        "title": "✓ Loop (R)",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.ctx.setA",
-        "title": "Set Loop Start (A)",
+        "title": "Set Range Start (A)",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.ctx.setB",
-        "title": "Set Loop End (B)",
+        "title": "Set Range End (B)",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.ctx.clearAB",
-        "title": "Clear A-B Loop",
+        "title": "Clear A–B Range (Backspace)",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.ctx.copyFrame",
-        "title": "Copy Frame",
+        "title": "Copy Frame (Ctrl+C)",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.ctx.saveFrame",
-        "title": "Save Frame as PNG…",
+        "title": "Save Frame as PNG… (S)",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.ctx.copyTime",
-        "title": "Copy Timestamp",
+        "title": "Copy Timestamp (T)",
         "category": "Video Preview"
       },
       {
-        "command": "videoPreviewEnhanced.ctx.compareWith",
-        "title": "Compare With…",
+        "command": "videoPreviewEnhanced.ctx.startCompare",
+        "title": "Start Compare (Shift+D)",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.ctx.addToCompare",
+        "title": "Add to Compare (Shift+D)",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.ctx.keys",
-        "title": "Keyboard Shortcuts",
+        "title": "Keyboard Shortcuts (?)",
         "category": "Video Preview"
       },
       {
@@ -372,7 +377,11 @@
           "when": "false"
         },
         {
-          "command": "videoPreviewEnhanced.ctx.compareWith",
+          "command": "videoPreviewEnhanced.ctx.startCompare",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.addToCompare",
           "when": "false"
         },
         {
@@ -472,8 +481,13 @@
           "group": "3_copy@3"
         },
         {
-          "command": "videoPreviewEnhanced.ctx.compareWith",
-          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeFile",
+          "command": "videoPreviewEnhanced.ctx.startCompare",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeFile && !videoPreviewEnhanced.compareOpen",
+          "group": "4_compare@1"
+        },
+        {
+          "command": "videoPreviewEnhanced.ctx.addToCompare",
+          "when": "webviewId =~ /^videoPreviewEnhanced\\.(player|playerOptional|sequence|url)$/ && vpeFile && videoPreviewEnhanced.compareOpen",
           "group": "4_compare@1"
         },
         {

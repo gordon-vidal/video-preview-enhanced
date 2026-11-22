@@ -13,7 +13,7 @@ Most palette commands are under **Video Preview**. The Compare actions below use
 | Open with Video Preview Enhanced | Explorer context menu on an MP4 or WebM file (not in the Command Palette) |
 | Start Compare | When no Compare is open, starts one from the Explorer selection. From the player title or Command Palette, opens the file picker. |
 | Add to Compare | When a Compare is open, adds the Explorer selection or the player's video to the most recently active Compare. Available in the Command Palette while a file player is active. |
-| Compare With… | Opens the file picker from the player's right-click menu and starts Compare in the player's place. |
+| Start Compare / Add to Compare | In the player's right-click menu: the same as the bar's Compare button (Start Compare asks first; Add to Compare adds this video to the open Compare). |
 | Compare: Add Videos from the Explorer | Toggles Add Mode for the active player or Compare. Open videos in the Explorer to add them. |
 | Compare: Stop Adding from the Explorer | Ends Add Mode. Esc does the same. |
 | Load Subtitles… | Opens a subtitle file for the current video (needs an open player) |

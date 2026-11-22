@@ -191,3 +191,46 @@ console.log('controls_test: ok');
   assert.match(tips('jump', 5).fwd, /^Forward 5 s/);
   assert.match(tips('jump', 'frame').fwdLabel, /^Forward one frame/);
 }
+
+// Click outside: a press on the bar, another control or the picture closes an open panel; the bar's panel
+// buttons are left to toggle their own page; a press on the picture is reported once so its click does not play / pause.
+{
+  const listeners = {};
+  const fake = (inside = []) => ({
+    hidden: false, style: {}, classList: { toggle() {} }, children: [], attributes: {}, textContent: '',
+    addEventListener() {}, setAttribute(k, v) { this.attributes[k] = v; }, appendChild() {}, querySelectorAll: () => [], querySelector: () => null,
+    getBoundingClientRect: () => ({ top: 300 }), contains(n) { return n === this || inside.includes(n); }, focus() {},
+  });
+  const saved = { document: globalThis.document, window: globalThis.window };
+  try {
+    globalThis.document = { addEventListener: (t, fn, cap) => { listeners[t] = { fn, cap }; }, activeElement: null, createDocumentFragment: () => ({ appendChild() {} }) };
+    globalThis.window = { addEventListener() {}, innerHeight: 600 };
+    const mute = {}, seek = {}, picture = {}, empty = {}, inPanel = {};
+    const panel = fake([inPanel]);
+    const info = fake(), cog = fake();
+    const bar = fake([mute, seek, empty, info, cog]);
+    const sheet = fake(); sheet.hidden = true;
+    const ctl = C.create({
+      panel, sheet, bar, buttons: { cog, info, rate: fake(), tracks: fake(), keys: fake() }, get: () => ({}), act: {},
+      views: { t: { label: 'T', render: () => ({}) } },
+    });
+    assert.ok(listeners.pointerdown && listeners.pointerdown.cap === true, 'capture pointerdown on the document');
+    const press = (target) => listeners.pointerdown.fn({ target });
+    const open = () => { ctl.show('t', info); assert.ok(ctl.anyOpen()); };
+
+    press(picture); assert.strictEqual(ctl.consumeDismiss(), false, 'nothing open: nothing dismissed');
+    for (const target of [mute, seek, empty]) {
+      open(); press(target);
+      assert.ok(!ctl.anyOpen(), 'a press on the bar closes the panel');
+      assert.strictEqual(ctl.consumeDismiss(), false, 'the bar control keeps working: no dismissal to swallow');
+    }
+    open(); press(picture);
+    assert.ok(!ctl.anyOpen(), 'a press on the picture closes the panel');
+    assert.strictEqual(ctl.consumeDismiss(), true, 'its click is the dismissal (no play / pause)');
+    assert.strictEqual(ctl.consumeDismiss(), false, 'reported once');
+    open(); press(inPanel); assert.ok(ctl.anyOpen(), 'a press inside the panel keeps it');
+    press(info); assert.ok(ctl.anyOpen(), 'the panel button toggles its own page (not closed twice)');
+    press(picture); press(picture);
+    assert.strictEqual(ctl.consumeDismiss(), false, 'a later press resets the flag');
+  } finally { Object.assign(globalThis, saved); if (!saved.document) delete globalThis.document; if (!saved.window) delete globalThis.window; }
+}

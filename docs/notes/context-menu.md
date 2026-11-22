@@ -24,9 +24,16 @@ Implementation: `src/ctxmenu.js` (the item table, the generated `package.json` p
 - Toggles are two commands with opposite `when`s (Play / Pause, Turn Loop On / Off, Mute / Unmute, Switch to Advanced / Simple Mode):
   menu items can't change their title.
 - 2026-11-20 (docs/notes/ui-simple.md): one player layout, and the menu is quick actions on this moment only:
-  Play/Pause · Loop (✓) · ─ · Set Loop Start (A) · Set Loop End (B) · Clear A-B Loop (when `vpeABSet`) · ─ · Copy Frame ·
-  Save Frame as PNG… · Copy Timestamp · ─ · Keyboard Shortcuts · Settings… (opens the ⚙ panel). No submenus, no mode switch; speed, sound, tracks, window and tools are in the ⚙ panel.
+  Play/Pause · Loop (✓) · ─ · Set Range Start (A) · Set Range End (B) · Clear A–B Range (when `vpeABSet`) · ─ · Copy Frame ·
+  Save Frame as PNG… · Copy Timestamp · ─ · Start Compare / Add to Compare · ─ · Keyboard Shortcuts · Settings… (opens the ⚙ panel). No submenus, no mode switch; speed, sound, tracks, window and tools are in the ⚙ panel.
   A menu item can't draw a check mark of its own: Loop is two items ("Loop", "✓ Loop") with opposite whens.
+
+- 2026-11-22: **Shortcuts are shown in the item titles** ("Play (Space)", "Save Frame as PNG… (S)"), not through
+  `contributes.keybindings`. VS Code draws a hint only for a command with a keybinding, and the workbench also
+  runs every keybinding for the keydown a webview forwards: a bare `r` or `space` keybinding would toggle Loop
+  twice (page + command) and could hijack typing elsewhere. New page keys: `T` copy timestamp, `Backspace` clear
+  the A–B range (both free; also in the shortcuts sheet). **Start Compare** (`!videoPreviewEnhanced.compareOpen`)
+  / **Add to Compare** (`videoPreviewEnhanced.compareOpen`) replace Compare With…: they run the bar button's flow.
 
 ## VS Code versions
 
