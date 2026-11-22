@@ -38,6 +38,10 @@ const failedMethods = new WeakMap();
 const noStampTools = new WeakSet();
 // Pictures that may wait for their timestamp before the pipe is taken for silent (about two frames of skew are normal).
 const MAX_UNPAIRED = 16;
+// More than this many unpaired pictures and the reader waits for the stamps (they are a pipe read behind); if none
+// arrives in STAMP_SILENCE_MS the pipe is taken for dead.
+const STAMP_SKEW = 8;
+const STAMP_SILENCE_MS = 3000;
 const STAMP_FAILURE = /metadata|No such filter|No option name|Error (?:parsing|initializing|reinitializing) (?:a )?filter|Bad file descriptor|pipe:4/i;
 // Told when a guessed method fails (the extension detects the GPUs again: they may have changed).
 let guessFailed = () => {};
@@ -538,13 +542,31 @@ class NativeDecoder {
     proc.raw.push(parts);
     // Stamps stopped coming (or stopped following the pictures) while pictures go on: waiting for them would
     // fill memory (12 MB a picture at 4K) and stall playback. This run goes on without source times.
-    if (proc.raw.length > MAX_UNPAIRED && !proc.untrusted) {
-      proc.untrusted = true;
-      this.noStamps = true;
-      this.takeStandby(NaN);
-      this.log(`native: ${proc.raw.length} pictures without timestamps; continuing without source times`);
-    }
+    if (proc.raw.length > MAX_UNPAIRED && !proc.untrusted) this.dropStamps(proc);
     this.pair(proc, !!proc.untrusted);
+    if (!proc.untrusted && proc.raw.length >= STAMP_SKEW && !proc.stampWait) {
+      // The stamp pipe is read a little behind the pictures: let it catch up before reading more.
+      proc.stampWait = true;
+      if (proc.stdout && !proc.stdout.isPaused()) proc.stdout.pause();
+      proc.silence = setTimeout(() => { if (proc === this.proc && proc.stampWait) { this.dropStamps(proc); this.pair(proc, true); this.flushWaiting(); } }, this.stampSilenceMs ?? STAMP_SILENCE_MS);
+      if (proc.silence.unref) proc.silence.unref();
+    }
+  }
+
+  /** The stamps caught up (or were given up on): the reader this paused goes on, unless the queue of pictures is full. */
+  endStampWait(proc) {
+    proc.stampWait = false;
+    clearTimeout(proc.silence);
+    if (proc.stdout && proc.stdout.isPaused() && this.frames.length < this.maxQueued) proc.stdout.resume();
+  }
+
+  /** This run goes on without source times (and so do the next ones of this decoder). */
+  dropStamps(proc) {
+    proc.untrusted = true;
+    this.noStamps = true;
+    this.takeStandby(NaN);
+    this.log(`native: ${proc.raw.length} pictures without timestamps; continuing without source times`);
+    this.endStampWait(proc);
   }
 
   /**
@@ -571,6 +593,7 @@ class NativeDecoder {
       proc.last = entry;
       this.frames.push(entry);
     }
+    if (proc.stampWait && proc.raw.length < STAMP_SKEW / 2) this.endStampWait(proc);
     if (this.frames.length >= this.maxQueued && proc.stdout && !proc.stdout.isPaused()) { this.lastBackpressureAt = Date.now(); proc.stdout.pause(); }
   }
 
@@ -660,7 +683,7 @@ class NativeDecoder {
       }
       if (this.st) this.st.postMs += Number(process.hrtime.bigint() - p0) / 1e6;
     }
-    if (this.proc && this.proc.stdout.isPaused() && this.frames.length < this.maxQueued / 2) this.proc.stdout.resume();
+    if (this.proc && this.proc.stdout.isPaused() && !this.proc.stampWait && this.frames.length < this.maxQueued / 2) this.proc.stdout.resume();
     if (this.ended && this.frames.length === 0 && !this.eofSent) {
       this.sendAudio(gen);
       this.eofSent = true;

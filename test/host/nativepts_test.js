@@ -109,7 +109,7 @@ async function real(tools, dir) {
     const pr = await ff.probe(tools, file);
     const frames = [];
     let done = false;
-    const nd = new NativeDecoder({ tools, file, probed: pr, method: 'none', maxHeight: 96, maxQueued: 4, log() {}, post: (m) => { if (m.type === 'batch' && m.eof) done = true; },
+    const nd = new NativeDecoder({ tools, file, probed: pr, method: 'none', maxHeight: 96, maxQueued: 4, log() {}, post: (m) => { if (m.type === 'batch' && m.eof && m.gen === (seek === undefined ? 0 : 1)) done = true; },
       postRaw: (m) => { if (m.type === 'ndv') { frames.push(m); nd.handle({ type: 'more', gen: m.gen }); } } });
     nd.noStamps = noStamps;
     await nd.handle({ type: 'open' });
@@ -201,6 +201,40 @@ function silentPipe() {
   nd.dispose();
 }
 
+/** The stamp pipe is read a little behind the pictures: the reader waits for it; a pipe that stays silent is given up. */
+async function stampSkew() {
+  const make = () => {
+    const nd = new NativeDecoder({ probed: PROBED, method: 'none', log() {}, post() {}, postRaw() {} });
+    const proc = stampedProc();
+    proc.stdout = { paused: false, isPaused() { return this.paused; }, pause() { this.paused = true; }, resume() { this.paused = false; } };
+    nd.proc = proc;
+    return { nd, proc };
+  };
+  // Eight pictures ahead of their stamps: reading pauses, nothing is given up, and the stamps then pair them.
+  const a = make();
+  for (let i = 0; i < 8; i++) a.nd.picture(a.proc, [Buffer.from([i])]);
+  assert.ok(a.proc.stdout.paused && a.proc.stampWait && !a.proc.untrusted, 'waits for the stamps');
+  a.proc.stampQ.push(...[...Array(8).keys()].map((i) => stampLine(i, 3600 + i / 25)));
+  a.nd.pair(a.proc);
+  assert.ok(!a.proc.stampWait && !a.nd.noStamps, 'caught up');
+  assert.strictEqual(a.nd.frames.length, 8);
+  near(a.nd.frames[7].src, 7 / 25, 1e-9);
+  a.nd.flushWaiting();
+  assert.ok(!a.proc.stdout.paused, 'reading goes on');
+  clearTimeout(a.proc.silence);
+  // Silence: given up after the timeout, the waiting pictures are delivered without source times.
+  const b = make();
+  b.nd.stampSilenceMs = 20;
+  for (let i = 0; i < 8; i++) b.nd.picture(b.proc, [Buffer.from([i])]);
+  await new Promise((r) => setTimeout(r, 120));
+  assert.ok(b.proc.untrusted && b.nd.noStamps && !b.proc.stampWait, 'a silent pipe is given up');
+  assert.strictEqual(b.nd.frames.length, 8);
+  assert.ok(b.nd.frames.every((e) => Number.isNaN(e.src)));
+  assert.ok(!b.proc.stdout.paused, 'and reading goes on');
+  a.nd.dispose();
+  b.nd.dispose();
+}
+
 /** Marks stay without source times until the first picture of a run from 0 has been seen. */
 function unverifiedOrigin() {
   const nd = new NativeDecoder({ probed: PROBED, method: 'none', log() {}, post() {}, postRaw() {} });
@@ -279,6 +313,7 @@ function refusal() {
   header();
   pairing();
   silentPipe();
+  await stampSkew();
   unverifiedOrigin();
   filterRefused();
   refusal();
