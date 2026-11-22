@@ -338,6 +338,7 @@ body.idle { cursor: none; }
 }
 #row button:hover { background: var(--vpe-hover); }
 #row button.open { background: var(--vpe-hover); }
+#row button[hidden] { display: none; }
 #row button svg { flex: none; }
 #row .wide { min-width: 40px; }
 #row .gap { margin-left: 6px; }
@@ -353,9 +354,10 @@ body.idle { cursor: none; }
 #row #time #dur { color: var(--vpe-dim); margin-left: 0.45em; }
 .mono { font-family: var(--vpe-mono); font-size: 12px; white-space: nowrap; }
 #row #rate { font-family: var(--vpe-mono); font-size: 12.5px; min-width: 42px; }
-#row #tracks.none { color: var(--vpe-dim); }
-#tracks .ccline { display: flex; padding-bottom: 2px; border-bottom: 2px solid transparent; }
-#tracks.on .ccline { border-bottom-color: var(--vpe-accent); }
+#tracks .ccline { position: relative; display: flex; }
+#tracks.on .ccline::after {
+  content: ''; position: absolute; inset: auto 0 -3px; border-bottom: 2px solid var(--vpe-accent);
+}
 #cog svg { transition: transform 200ms ease-out; }
 #cog.open svg { transform: rotate(45deg); }
 @media (max-width: 720px) { #volume { display: none; } }

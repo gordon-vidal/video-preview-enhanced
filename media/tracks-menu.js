@@ -295,7 +295,7 @@ function createTracksUi(env) {
   function cycleSub() {
     refreshTracks();
     const list = [...sources(), 'off'];
-    if (list.length === 1) { toast('No subtitles · Load one with the CC button'); return; }
+    if (list.length === 1) { toast('No subtitles · Load a file in Settings › Subtitles'); return; }
     const i = list.indexOf(sel || 'off');
     const next = list[(i + 1) % list.length];
     select(next, true);
@@ -306,7 +306,7 @@ function createTracksUi(env) {
     if (sel && sel !== 'off') { select('off', true); toast('Subtitles off'); return; }
     const all = sources();
     const next = lastOn && all.includes(lastOn) ? lastOn : all[0];
-    if (!next) { toast('No subtitles · Load one with the CC button'); return; }
+    if (!next) { toast('No subtitles · Load a file in Settings › Subtitles'); return; }
     select(next, true);
     toast(`Subtitles: ${describe(next)}`);
   }
@@ -354,7 +354,7 @@ function createTracksUi(env) {
     const audio = al.length > 1 ? al.map((a, i) => ({ id: a.id, ...trackLabel(a, i, 'Track'), checked: a.id === tracks.audioId })) : [];
     return { sel: cur, on: cur !== 'off', subs, audio, delay, size, label: cur === 'off' ? 'Off' : describe(cur) };
   }
-  /** The CC button: subtitles on / off when there are some (true), else false (the caller opens the panel). */
+  /** Toggles subtitles when there are tracks, otherwise lets the caller open the Subtitles page. */
   function ccToggle() {
     refreshTracks();
     if (!sources().length) return false;

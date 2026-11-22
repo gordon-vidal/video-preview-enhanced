@@ -1409,6 +1409,11 @@ function activate(context) {
               continue;
             }
             if (c.compare) { for (const s of compareSessions) s.post({ ...c, type: 'debug' }); continue; }
+            if (c.pickSubtitles) {
+              for (const s of sessions) if (s.name === c.name) s.testPickSubtitles = c.pickSubtitles.map((f) => vscode.Uri.file(f));
+              log('debug subtitles picker ready');
+              continue;
+            }
             if (c.bench) {
               // Throughput of extension host -> webview messages (raw-frame transport test).
               for (const sess of sessions) if (!c.name || sess.name.includes(c.name)) {
@@ -2675,7 +2680,9 @@ ${barHtml()}
   /** "Load subtitles…": pick files (in remote windows, on the remote side) and show the first. */
   async loadSubtitles() {
     const folder = this.sequence ? vscode.Uri.file(this.sequence.dir) : this.url ? workspaceFolder() : vscode.Uri.joinPath(this.uri, '..');
-    const picked = await vscode.window.showOpenDialog({
+    const testPicked = this.testPickSubtitles;
+    this.testPickSubtitles = undefined;
+    const picked = testPicked || await vscode.window.showOpenDialog({
       defaultUri: folder, canSelectMany: true, openLabel: 'Load subtitles',
       filters: { Subtitles: ['srt', 'vtt', 'ass', 'ssa'], 'All files': ['*'] },
     });

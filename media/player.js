@@ -113,13 +113,13 @@
   });
   /** @type {any} */
   let controls = null;
-  /** The CC button: dimmed without subtitles, underlined while they show. */
+  /** The CC button is present only when there is a track to toggle. */
   function updateCc() {
     const d = subs.panelData();
     const none = !d.subs.length;
-    ui.tracks.classList.toggle('none', none);
+    ui.tracks.hidden = none;
     ui.tracks.classList.toggle('on', d.on);
-    const label = none ? 'Subtitles: none in this file, load one' : d.on ? `Subtitles on: ${d.label}` : 'Subtitles off';
+    const label = none ? 'Subtitles' : d.on ? `Subtitles on: ${d.label}` : 'Subtitles off';
     ui.tracks.setAttribute('aria-label', label);
     ui.tracks.title = `${label}  C`;
   }
@@ -1007,7 +1007,8 @@
   }
   function ccClick() {
     if (subs.ccToggle()) return;
-    controls.toggle('subs', ui.tracks);
+    if (controls.view() === 'subs') controls.close(true);
+    else controls.show('subs', ui.cog);
   }
   function infoFacts() {
     const p = player;
@@ -1357,7 +1358,7 @@
               };
             })(),
             sheet: ui.sheet.hidden ? null : (ui.sheet.textContent || '').replace(/\s+/g, ' ').trim(),
-            bar: { rate: ui.rate.textContent, cc: ui.tracks.getAttribute('aria-label'), cogExpanded: ui.cog.getAttribute('aria-expanded'), infoExpanded: ui.infoBtn.getAttribute('aria-expanded'), rateExpanded: ui.rate.getAttribute('aria-expanded'), ccExpanded: ui.tracks.getAttribute('aria-expanded') },
+            bar: { rate: ui.rate.textContent, cc: ui.tracks.getAttribute('aria-label'), ccHidden: getComputedStyle(ui.tracks).display === 'none', cogExpanded: ui.cog.getAttribute('aria-expanded'), infoExpanded: ui.infoBtn.getAttribute('aria-expanded'), rateExpanded: ui.rate.getAttribute('aria-expanded'), ccExpanded: ui.tracks.getAttribute('aria-expanded') },
             prefs, volume, drag: { seek: seekDragger.dragging(), volume: volumeDragger.dragging() }, volumeRect: rect(ui.volume),
             canvas: [canvas.width, canvas.height], canvasHidden: canvas.hidden, canvasRect: rect(canvas), video: vw,
             stageClass: stage.className, stageRect: rect(stage), picture: { ...insp.picture(), pct: pictureState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), btnTitle: ui.picBtn.title, need: insp.zoomedSize() }, imageRendering: canvas.style.imageRendering,

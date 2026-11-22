@@ -2,11 +2,12 @@
 // The player's bar and panels in a real VS Code (docs/notes/ui-simple.md, docs/notes/a11y.md): names, roles
 // and states of the bar's controls, the seek bar's time as aria-valuetext, the polite live region, a click
 // on the picture (play / pause, or closing a panel), each panel button toggling its panel, keyboard focus
-// in the panels and the shortcuts sheet, CC without subtitles, speed step and clamp, jump sizes (from the
+// in the panels and the shortcuts sheet, subtitle controls, speed step and clamp, jump sizes (from the
 // panel and from the settings), and the "About this video" facts for a WebAssembly and a native file.
 // Read through the VPE_LOG test hook: the player's `a11y` and `state` probes (media/player.js debugProbe)
 // and compare's `compare a11y` line (media/compare.js).
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const lib = require('../lib');
 
@@ -203,18 +204,34 @@ module.exports = [{
       ok(s.sheet.hidden && s.active === 'cog', `Escape: sheet hidden=${s.sheet.hidden}, focus on ${s.active}`);
     });
 
-    await R.run('cc/no-subtitles', async (ok) => {
-      let s = await P.state();
-      ok(/none in this file/.test(s.bar.cc), `CC label without subtitles: ${s.bar.cc}`);
-      await P.ask('click', { sel: '#tracks' });
-      await settle(300);
-      s = await P.state();
-      ok(s.panel && s.panel.view === 'subs' && /no subtitle tracks/.test(s.panel.text) && s.panel.rows.some((r) => r.label === 'Load subtitle file…'), `CC opens the subtitles panel: ${JSON.stringify(s.panel)}`);
-      ok(s.bar.ccExpanded === 'true', `CC aria-expanded ${s.bar.ccExpanded}`);
+    await R.run('cc/hidden-until-loaded', async (ok) => {
+      ok((await P.state()).bar.ccHidden, 'CC should be hidden without tracks');
+      // C without subtitles opens ⚙ › Subtitles (to load a file); C again closes it.
       P.key('c');
-      await settle(300);
+      let s = await P.waitState((q) => q.panel?.view === 'subs', { what: 'C opens Settings › Subtitles' });
+      ok(/no subtitle tracks/.test(s.panel.text), `C without subtitles: ${JSON.stringify(s.panel)}`);
+      P.key('c');
+      await P.waitState((q) => !q.panel, { what: 'C again closes the page' });
+      await P.ask('click', { sel: '#cog' });
+      await P.ask('click', { sel: '#panel button', text: 'Subtitles' });
       s = await P.state();
-      ok(!s.panel, 'C (or CC again) did not close the subtitles panel');
+      ok(s.panel?.view === 'subs' && /no subtitle tracks/.test(s.panel.text), `Settings › Subtitles: ${JSON.stringify(s.panel)}`);
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-ui-subtitles-'));
+      const file = path.join(dir, 'loaded.srt');
+      try {
+        fs.writeFileSync(file, '1\n00:00:00,000 --> 00:00:02,000\nLoaded from Settings\n');
+        const mark = vs.mark();
+        vs.send({ name: CLIP, pickSubtitles: [file] });
+        await vs.waitLog(/debug subtitles picker ready/, { from: mark, timeout: 10000 });
+        await P.ask('click', { sel: '#panel button', text: 'Load subtitle file…' });
+        const loaded = await P.waitState((q) => !q.bar.ccHidden, { what: 'CC visible after loading an SRT' });
+        ok(/^Subtitles on: loaded\.srt/.test(loaded.bar.cc), `loaded track label: ${loaded.bar.cc}`);
+        await P.ask('click', { sel: '#tracks' });
+        await P.waitState((q) => q.bar.cc === 'Subtitles off', { what: 'CC turns the loaded track off' });
+      } finally {
+        fs.rmSync(file, { force: true });
+        fs.rmdirSync(dir);
+      }
     });
 
     await R.run('speed/step-and-clamp', async (ok) => {
