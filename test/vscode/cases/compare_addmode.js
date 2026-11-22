@@ -138,8 +138,8 @@ module.exports = [{
         await wait(opened(2), started, 'the picked file and player video are compared');
         await onlyCompare();
 
-        const stopped = send({ command: 'videoPreviewEnhanced.stopAddFromExplorer' });
-        await wait(hint(false), stopped, 'turn off click-to-add before opening a second player');
+        // Compare With… picks a whole set, so Compare opens with Add Mode off (src/addmode.js startsInAddMode).
+        assert(!vs.lines.slice(started).some((l) => modeOn.test(l)), 'Compare With… must open Compare with Add Mode off');
         const secondPlayer = open(files[2]);
         await wait(/\[h264_8_1080p\.mp4\] session resolved/, secondPlayer, 'the second player opens separately');
         const added = send({ command: 'videoPreviewEnhanced.addToCompareFromPlayer', arg: files[2] });
