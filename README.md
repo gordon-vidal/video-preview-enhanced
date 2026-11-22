@@ -19,11 +19,15 @@ Double-click a video in a **Remote‑SSH or WSL workspace** and it plays, with n
 
 ## Compare, frame by frame
 
-Select up to **eight videos** (16 with a setting), right-click and choose **Compare Videos**. They play on one timeline, and every step lands on matching frames in all of them, forward or backward. Pause and scroll to step through frames, Ctrl+scroll and drag to zoom and pan all videos together, and nudge a video's offset one frame at a time to bring it in sync. Side by side, split or grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
+Select up to **16 videos**, right-click and choose **Compare Videos**. They play on one timeline, and every step lands on matching frames in all of them, forward or backward. Pause and scroll to step through frames, Ctrl+scroll and drag to zoom and pan all videos together, and nudge a video's offset one frame at a time to bring it in sync. Side by side, split or grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
+
+![Comparing four encodes in a 2×2 grid, stepping frame by frame, zooming together and nudging one video into sync](media/marketing/compare-showcase.gif)
 
 ## Seek‑bar previews
 
 Hover over the seek bar to see the picture at that moment, and drag to scrub through the video live. Release and you land on the exact frame. A separate decoder reads only the keyframes, starts when your pointer reaches the bar and stops when it leaves, so previews appear quickly and never slow playback down.
+
+![Hovering over the seek bar shows a live thumbnail preview and exact frame number](media/marketing/seek-preview.png)
 
 ## And much more
 
@@ -35,6 +39,8 @@ Hover over the seek bar to see the picture at that moment, and drag to scrub thr
 - **Grab frames:** copy or save the current frame as PNG, or export a whole range.
 - **HDR10 and HLG**, upright phone videos, image sequences, and a live reload when a render rewrites the file.
 
+![RGB parade scope and Codec X-ray showing I, P and B frames and bitrate](media/marketing/pro-tools.png)
+
 ## How it compares
 
 The three most-installed dedicated players in the Marketplace snapshot reviewed on **20 November 2026**, alongside VS Code’s built-in preview.
@@ -42,15 +48,15 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 | Feature | **Video Preview Enhanced** | VS Code built-in | [MPEG‑4 Preview](https://marketplace.visualstudio.com/items?itemName=analytic-signal.preview-mp4) · 173k | [video player](https://marketplace.visualstudio.com/items?itemName=VMASPAD.video-player) · 30k | [BNPL](https://marketplace.visualstudio.com/items?itemName=BatchNepal.vscode-video-preview) · 23k |
 |---|---|---|---|---|---|
 | Major formats at 1080p with sound, no FFmpeg setup | ✅ | ❌ MP4 and WebM only | ❌ MP4 only, no sound | ➖ varies by codec | ❌ needs FFmpeg for sound |
-| Optional FFmpeg, set up from the extension | ✅ | — | — | — | ➖ manual setup |
-| Remote‑SSH and WSL | ✅ | — | — | — | — |
-| Video URLs and streams | ✅ | — | — | — | — |
-| Synchronized comparison | ✅ up to 16 videos | ❌ | — | — | — |
-| Frame‑accurate stepping | ✅ forward and back | ❌ | — | — | — |
-| Seek‑bar previews | ✅ | ❌ | — | — | — |
-| Scopes, pixel inspector, Codec X‑ray | ✅ | ❌ | — | — | — |
+| Optional FFmpeg, set up from the extension | ✅ | ❌ | ❌ | ❌ | ➖ manual install |
+| Remote‑SSH and WSL | ✅ with remote transcode | ➖ raw file only | ➖ raw file only | ➖ raw file only | ❌ |
+| Video URLs and streams | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Synchronized comparison | ✅ up to 16 videos | ❌ | ❌ | ❌ | ❌ |
+| Frame‑accurate stepping | ✅ forward and back | ❌ | ❌ | ❌ | ❌ |
+| Seek‑bar previews | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Scopes, pixel inspector, Codec X‑ray | ✅ | ❌ | ❌ | ❌ | ❌ |
 
-*✅ yes · ❌ no · ➖ partly · — not established in the sources reviewed. Install counts are rounded.*
+*✅ yes · ❌ no · ➖ partly. Install counts are rounded.*
 
 ## Under the hood
 

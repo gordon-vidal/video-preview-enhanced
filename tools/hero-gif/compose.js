@@ -148,13 +148,35 @@ async function compose({ tmp, frames, out, width = 1280, fps = 15, name = 'hero-
     stdin.end();
   });
   const scale = `scale=${width}:-2:flags=lanczos`;
+  // Optional on-screen captions from {op:'mark', caption:'...'} events (empty string clears).
+  const capSpans = [];
+  let capCur = null;
+  for (const e of events) {
+    if (e.op !== 'mark' || typeof e.caption !== 'string') continue;
+    const sec = toOutput(e.t) / 1000;
+    if (capCur) capSpans.push({ ...capCur, end: sec });
+    capCur = e.caption ? { text: e.caption, start: sec } : null;
+  }
+  if (capCur) capSpans.push({ ...capCur, end: total / 1000 });
+  const drawCaps = (wd) => {
+    if (!capSpans.length) return '';
+    const fsPx = Math.round(24 * (wd / 1280));
+    const pad = Math.round(12 * (wd / 1280));
+    const yOff = Math.round(118 * (wd / 1280));
+    const esc = (s) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:').replace(/%/g, '\\%');
+    return ',' + capSpans.map(({ text, start, end }) =>
+      `drawtext=fontfile='C\\:/Windows/Fonts/segoeuib.ttf':text='${esc(text)}':fontcolor=white:fontsize=${fsPx}`
+      + `:x=w*0.64-text_w/2:y=h-${yOff}-text_h:box=1:boxcolor=0x0d1117@0.86:boxborderw=${pad}`
+      + `:shadowcolor=black@0.5:shadowx=0:shadowy=1:enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'`
+    ).join(',');
+  };
   const mp4 = path.join(out, `${name}.mp4`);
-  await ffmpeg(['-i', master, '-vf', `${scale},format=yuv420p`, '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-movflags', '+faststart', '-an', mp4]);
+  await ffmpeg(['-i', master, '-vf', `${scale}${drawCaps(width)},format=yuv420p`, '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-movflags', '+faststart', '-an', mp4]);
   // 128 colours with Bayer scale 5 keep a 12 s, 1280 px take under 5 MB (256 / scale 4: about 6 MB);
   // if it is still bigger, 960 px.
   const gif = path.join(out, `${name}.gif`);
   for (const wd of [width, 960]) {
-    await ffmpeg(['-i', master, '-vf', `scale=${wd}:-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`, '-loop', '0', gif]);
+    await ffmpeg(['-i', master, '-vf', `scale=${wd}:-2:flags=lanczos${drawCaps(wd)},split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`, '-loop', '0', gif]);
     if (fs.statSync(gif).size < 5e6) break;
     console.log(`GIF at ${wd} px is ${(fs.statSync(gif).size / 1e6).toFixed(2)} MB; trying 960 px`);
   }
@@ -179,5 +201,5 @@ if (require.main === module) {
   const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
   const tmp = path.resolve(opt('--tmp', path.join(os.tmpdir(), 'vpe-hero')));
   compose({ tmp, frames: path.join(tmp, 'frames'), out: path.resolve(opt('--out', path.join(__dirname, '..', '..', 'media', 'marketing'))),
-    width: Number(opt('--width', 1280)), fps: Number(opt('--fps', 15)) }).catch((e) => { console.error(e); process.exit(1); });
+    width: Number(opt('--width', 1280)), fps: Number(opt('--fps', 15)), name: opt('--name', 'hero-remote') }).catch((e) => { console.error(e); process.exit(1); });
 }

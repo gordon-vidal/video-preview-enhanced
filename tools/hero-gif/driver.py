@@ -55,6 +55,7 @@ u.SetKeyboardState.argtypes = [ctypes.c_char_p]
 u.GetKeyboardState.argtypes = [ctypes.c_char_p]
 u.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
 u.ChildWindowFromPointEx.restype = V
+u.ClientToScreen.argtypes = [V, ctypes.POINTER(wintypes.POINT)]
 
 CMD, OUT = sys.argv[1], sys.argv[2]
 os.makedirs(OUT, exist_ok=True)
@@ -197,6 +198,14 @@ def handle(c):
         with Mods(h, c.get('mods')):
             u.SendMessageW(h, 0x0200, wparam(c, b if op == 'up' else None), lparam(c['x'], c['y']))
             u.SendMessageW(h, MSG[(b, op)], wparam(c, b if op == 'down' else None), lparam(c['x'], c['y']))
+        return {}
+    if op == 'wheel':
+        pt = wintypes.POINT(int(c['x']), int(c['y']))
+        u.ClientToScreen(h, ctypes.byref(pt))
+        delta = int(c.get('delta', -120))
+        wp = ((delta & 0xFFFF) << 16) | wparam(c)
+        with Mods(h, c.get('mods')):
+            u.SendMessageW(h, 0x020A, wp, lparam(pt.x, pt.y))
         return {}
     if op == 'dbl':
         lp = lparam(c['x'], c['y'])
