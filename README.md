@@ -2,11 +2,13 @@
 
 **Play all major video formats with sound in VS Code, locally, over Remote‑SSH, or in WSL.**
 
-- **Every common format, with sound:** MP4, MKV, MOV, AVI, WebM, WMV, MXF and more, including HEVC, AV1 and ProRes at 1080p. Nothing else to install.
+- **Every common format, with sound:** MP4, MKV, MOV, AVI, WebM, WMV, MXF and more, including HEVC, AV1 and ProRes.
+- **Nothing else to install:** plays right away, with no separate FFmpeg and no admin rights.
+- **4K on your GPU, if you want it:** one click sets up FFmpeg (still no admin rights), and 4K HEVC and AV1 play in real time.
 - **Remote‑SSH and WSL:** play videos where they live, no downloading. Video URLs and HLS / DASH streams too.
 - **Seek‑bar previews:** hover or drag the seek bar and see the picture at that moment.
 - **Frame‑accurate:** step one frame forward or back, jump to any frame or timecode.
-- **Compare up to eight videos** in sync: side by side, split or in a grid.
+- **Compare up to 16 videos** in sync: side by side, split or in a grid.
 - **Pro tools:** scopes, pixel inspector, Codec X‑ray (I / P / B frames and bitrate).
 - **Everyday comforts:** subtitles, audio tracks, 0.25× to 4× speed, A–B loops.
 - **Free, MIT licensed, no telemetry.**
@@ -27,7 +29,7 @@ Step one frame forward or back, and backward is exact too. Jump to a frame numbe
 
 ## Compare videos side by side
 
-Select up to **eight videos**, right-click and choose **Compare Videos**. They play on one timeline: play, pause and frame steps move every video together. Nudge a video's offset by single frames to line it up, and switch between side by side, split and grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
+Select up to **eight videos** (16 with a setting), right-click and choose **Compare Videos**. They play on one timeline: play, pause and frame steps move every video together. Nudge a video's offset by single frames to line it up, and switch between side by side, split and grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
 
 ## And much more
 
@@ -48,7 +50,7 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 | Optional FFmpeg, set up from the extension | ✅ | — | — | — | ➖ manual setup |
 | Remote‑SSH and WSL | ✅ | — | — | — | — |
 | Video URLs and streams | ✅ | — | — | — | — |
-| Synchronized comparison | ✅ up to 8 videos | ❌ | — | — | — |
+| Synchronized comparison | ✅ up to 16 videos | ❌ | — | — | — |
 | Frame‑accurate stepping | ✅ forward and back | ❌ | — | — | — |
 | Seek‑bar previews | ✅ | ❌ | — | — | — |
 | Scopes, pixel inspector, Codec X‑ray | ✅ | ❌ | — | — | — |
