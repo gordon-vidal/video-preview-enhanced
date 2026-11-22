@@ -405,7 +405,7 @@ All results: no time/fps thresholds (only `until` poll timeouts 5-30 s). Needs: 
 | Result | Proves | Assertions |
 |---|---|---|
 | `case/compare_ui/enter/in-place` | Compare from the player replaces its tab and starts at player's position | A frame within 1 of #31 (player at 1.0 s); exactly 1 tab, viewType matches /compare/ |
-| `case/compare_ui/bar` | Compare's bar = player's bar minus CC plus Compare | bar has ids prev,play,next,mute,volume,time,cmpBtn,infoBtn,rate,cog,keysBtn,full; no tracks; time starts with "A"; mute title "sound from A"; Shift+> -> rate 1.05; "." steps both to #32 |
+| `case/compare_ui/bar` | Compare's bar = player's bar minus CC plus Compare | bar has ids prev,play,next,mute,volume,time,cmpBtn,infoBtn,rate,cog,full; no tracks; time starts with "A"; mute title "sound from A"; Shift+> -> rate 1.05; "." steps both to #32 |
 | `case/compare_ui/panel/compare` | Compare panel content and toggling; cog panel rows; Tools > Compare | panel view cmp & cmpExpanded; text includes Videos, both clip names, "Add video…", "2 of 4", View, Side by side, Split, Swap sides, Leave compare, keep A; excludes PSNR, SSIM, Find first difference, A vs B; A row label regex; button closes panel; cog panel main with Sound/from A/Copy view/Compare, without Subtitles/Audio track/A-B loop; Tools Compare opens cmp |
 | `case/compare_ui/panel/video-page` | B's page: offset in frames/ms, Reset, clock, sound | view cmpVid; text has Offset, In step, Frames, Time (ms), Clock, Sound from this video, Replace video…, Remove (back to one video); "B later" -> offsets 0f,1f; B shows A+1; frames->ms gives 0f,33.33Xms; +10 ms -> 43.33Xms; page shows "+43.3 ms"; Reset+Frames -> 0f,0f; clock=1 sound=1; bar time "B…" & "sound from B"; seekMax 89; Back -> cmp |
 | `case/compare_ui/tiles/pills-and-nudge` | Hover pills, ‹ › nudges, − / + under pointer | 2 cells each 1 pill 1 nudge; A pill "A…<clip>…#n"; B nudge "‹0›"; A's picture aspect 16:9 ±0.05; › nudge -> 0f,1f; − on B -> 0f,0f; + on A -> 1f,0f |
@@ -575,7 +575,7 @@ All: no time/fps thresholds except the implicit "play advances t within 600 ms" 
 
 | Result | Proves | Assertions |
 |---|---|---|
-| `case/modes/layout/bar` | One layout: all bar buttons visible at start | panel none, sheet false; bar flags play,prev,next,seek,mute,volume,time,tracks,infoBtn,rate,cog,keysBtn,full === 1; tools === 6 |
+| `case/modes/layout/bar` | One layout: all bar buttons visible at start | panel none, sheet false; bar flags play,prev,next,seek,mute,volume,time,tracks,infoBtn,rate,cog,full === 1; tools === 6 |
 | `case/modes/layout/tool-keys` | W cycles scopes; I toggles the info panel | W: scopes != off and visible; cycles back to off within 4 more presses; I: panel info; I again: none |
 | `case/modes/layout/controls` | step ±1, seek, play, pause | step +1 -> f0+1; -1 -> f0; seek 0.5 -> 0.3<t<0.8; play: playing && t > tSeek (after 600 ms); pause: playing false |
 | `case/modes/layout/tools-grid` | Tools from the cog grid; Details overlay | panel main; Scopes visible; info true; play/full still visible |
@@ -1067,12 +1067,12 @@ Source: media/subtitles.js, media/tracks-menu.js, media/controls.js (panels), me
 
 | Result | Proves | Assertions | Thresholds | Needs | Layer |
 |---|---|---|---|---|---|
-| `case/ui/a11y/names` | Every bar control has an accessible name/role/state; seek valuetext; polite live region; status pill gone | no unnamed buttons; aria-labels for play, prev, next, full, infoBtn, cog, keysBtn, seek, volume, canvas; mute/rate/tracks/time label patterns; mute aria-pressed; tracks/infoBtn/rate/cog/keysBtn aria-expanded false; modeBtn/toolsBtn/loop absent; seek valuetext `m:ss.mmm of …, frame N`; live role=status polite; no `pill` in state | none | WebCodecs | 3 (DOM-only; could be 1 with jsdom over src/bar.js html) |
+| `case/ui/a11y/names` | Every bar control has an accessible name/role/state; seek valuetext; polite live region; status pill gone | no unnamed buttons; aria-labels for play, prev, next, full, infoBtn, cog, seek, volume, canvas; mute/rate/tracks/time label patterns; mute aria-pressed; tracks/infoBtn/rate/cog aria-expanded false; modeBtn/toolsBtn/loop absent; seek valuetext `m:ss.mmm of …, frame N`; live role=status polite; no `pill` in state | none | WebCodecs | 3 (DOM-only; could be 1 with jsdom over src/bar.js html) |
 | `case/ui/a11y/states-and-live` | R toggles loop + live text; M toggles mute with aria; play/pause label | as described | settle sleeps 400-600 ms | — | 3 |
 | `case/ui/keys/focused-controls` | Focus-visible outline on #mute; Space on focused button doesn't play; Space on page plays | active=mute & focusVisible; outline not none/0px; Space on #mute → not playing; Space → playing | sleeps | — | 3 |
 | `case/ui/picture/click` | Click on picture plays/pauses; with panel open only closes panel | click → playing ≤4 s; click → paused; cog → panel main; click → no panel, not playing | — | — | 3 |
 | `case/ui/panels/toggle` | cog/info/rate toggle panels and aria-expanded; switching; main page rows; Scopes from grid | each button opens view main/info/speed and expanded true, again closes; info→rate switches; cog closes; 16 row labels present; jump summary `5 s · 1 s · 1 frame`; Scopes tool → scopes mode not off and panel closed; W×4 | — | — | 3 |
-| `case/ui/panels/keyboard` | Focus moves into panel; ArrowDown moves focus; loop is a switch; Escape closes and refocuses cog; `?` sheet modal with groups; keysBtn opens sheet | as described | — | — | 3 |
+| `case/ui/panels/keyboard` | Focus moves into panel; ArrowDown moves focus; loop is a switch; Escape closes and refocuses cog; `?` sheet modal with groups; Settings row opens the sheet and Esc restores focus to Settings | as described | — | — | 3 |
 | `case/ui/cc/no-subtitles` | CC label without subs; CC opens subs panel with `Load subtitle file…`; C closes | — | — | — | 3 |
 | `case/ui/speed/step-and-clamp` | `>`/`<` ±0.05, clamp 0.25..4, wheel +0.05, speed panel slider range and presets, preset 2×, − button | report rate values exact (1e-6) | — | — | 3 (rate step/clamp maths → 1) |
 | `case/ui/drag/outside` | Volume drag outside clamps 0..1, release at 60 %, no change after release, wheel ±5 %; seek drag above bar lands on 75 % frame | values as listed; frame within ±1 of round(0.75·seekMax) ≤8 s | — | — | 3 |

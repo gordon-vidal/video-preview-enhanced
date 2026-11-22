@@ -50,11 +50,11 @@ module.exports = [{
       const s = await a11y();
       const c = s.controls;
       ok(s.unnamed.length === 0, `buttons without a name in words: ${JSON.stringify(s.unnamed)}`);
-      const want = { play: 'Play', prev: 'Previous frame', next: 'Next frame', full: 'Fullscreen', infoBtn: 'About this video', cog: 'Settings', keysBtn: 'Keyboard shortcuts', seek: 'Position', volume: 'Volume', canvas: 'Video' };
+      const want = { play: 'Play', prev: 'Previous frame', next: 'Next frame', full: 'Fullscreen', infoBtn: 'About this video', cog: 'Settings', seek: 'Position', volume: 'Volume', canvas: 'Video' };
       for (const [k, v] of Object.entries(want)) ok(c[k] && c[k]['aria-label'] === v, `#${k}: aria-label ${JSON.stringify(c[k] && c[k]['aria-label'])}, expected ${v}`);
       ok(/^(Mute|Unmute)$/.test(c.mute['aria-label']) && /^Speed \d/.test(c.rate['aria-label']) && /^Subtitles/.test(c.tracks['aria-label']) && /^Position .*frame \d+/.test(c.time['aria-label']), `mute / rate / tracks / time: ${JSON.stringify([c.mute, c.rate, c.tracks, c.time])}`);
       ok(c.mute && /^(true|false)$/.test(c.mute['aria-pressed']), `#mute: no aria-pressed (${JSON.stringify(c.mute)})`);
-      for (const k of ['tracks', 'infoBtn', 'rate', 'cog', 'keysBtn']) ok(c[k]['aria-expanded'] === 'false', `#${k}: ${JSON.stringify(c[k])}`);
+      for (const k of ['tracks', 'infoBtn', 'rate', 'cog']) ok(c[k]['aria-expanded'] === 'false', `#${k}: ${JSON.stringify(c[k])}`);
       for (const k of ['modeBtn', 'toolsBtn', 'loop', 'pip']) ok(!c[k], `#${k} is still on the page`);
       ok(/^\d+:\d\d\.\d{3} of \d+:\d\d\.\d{3}, frame \d+$/.test(c.seek['aria-valuetext'] || ''), `seek aria-valuetext ${JSON.stringify(c.seek['aria-valuetext'])}`);
       ok(s.live && s.live.role === 'status' && s.live.polite === 'polite', `live region ${JSON.stringify(s.live)}`);
@@ -192,12 +192,15 @@ module.exports = [{
       P.key('Escape', { target: ':focus' });
       await settle(300);
       s = await a11y();
-      ok(s.sheet.hidden, 'Escape did not close the sheet');
-      await P.ask('click', { sel: '#keysBtn' });
-      await settle(300);
-      ok(!(await a11y()).sheet.hidden, 'the keyboard button did not open the sheet');
+      ok(s.sheet.hidden && s.active === 'cog', `Escape: sheet hidden=${s.sheet.hidden}, focus on ${s.active}`);
+      await P.ask('click', { sel: '#cog' });
+      await P.ask('click', { sel: '#panel button[aria-keyshortcuts="?"][aria-haspopup="dialog"]', text: 'Keyboard shortcuts' });
+      s = await a11y();
+      ok(!s.sheet.hidden && s.sheet.dialog?.label === 'Keyboard shortcuts' && s.panel.hidden && s.active === 'Close',
+        `settings row: sheet ${JSON.stringify(s.sheet)}, panel hidden=${s.panel.hidden}, focus on ${s.active}`);
       P.key('Escape', { target: ':focus' });
-      await settle(300);
+      s = await a11y();
+      ok(s.sheet.hidden && s.active === 'cog', `Escape: sheet hidden=${s.sheet.hidden}, focus on ${s.active}`);
     });
 
     await R.run('cc/no-subtitles', async (ok) => {

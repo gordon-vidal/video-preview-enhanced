@@ -1,7 +1,8 @@
 # Keys and mouse
 
 The layout follows common video players (YouTube-style). Keys work when the player has focus. `?` shows
-them all, with the jump sizes you chose.
+them all, with the jump sizes you chose. In the player and Compare, you can also open the sheet from
+⚙ › **Keyboard shortcuts**. Press Esc to close it and return to Settings when opened from that menu.
 
 ## Playback
 

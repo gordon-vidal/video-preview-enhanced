@@ -46,7 +46,7 @@ module.exports = {
     let ok = t('layout/bar');
     ok(r.panel === 'none' && r.sheet === 'false', `panel ${r.panel}, sheet ${r.sheet} at start`);
     const bar = flags(r.bar);
-    for (const k of ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'full']) ok(bar[k] === '1', `${k} is not visible (${r.bar})`);
+    for (const k of ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'full']) ok(bar[k] === '1', `${k} is not visible (${r.bar})`);
     ok(Number(r.tools) === 6, `${r.tools} tools in the grid`);
 
     // Tool keys work without any mode: W opens the scopes, I the file facts.

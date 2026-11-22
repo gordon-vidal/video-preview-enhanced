@@ -68,7 +68,7 @@ assert.ok(pressed(cmp, 'mute'), 'compare: #mute has aria-pressed');
 // The player's bar (src/bar.js) without CC, plus the Compare button that opens its panel.
 assert.match(cmp, /<button id="cmpBtn"[^>]*aria-controls="panel"/);
 assert.ok(!/id="tracks"|id="syncBtn"|id="mode"/.test(cmp), 'compare: no CC or old compare toolbar');
-for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'infoBtn', 'rate', 'cog', 'keysBtn', 'full', 'panel', 'sheet', 'menu']) assert.match(cmp, new RegExp(`id="${id}"`), `compare: #${id}`);
+for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'infoBtn', 'rate', 'cog', 'full', 'panel', 'sheet', 'menu']) assert.match(cmp, new RegExp(`id="${id}"`), `compare: #${id}`);
 assert.ok(cmp.indexOf('controls.js') > 0 && cmp.indexOf('controls.js') < cmp.indexOf('compare.js"'), 'compare: controls.js (the panels) loads before compare.js');
 assert.match(cmp, /<button id="picBtn"[^>]*aria-label="Picture size: Fit. Next: Fill"/, 'compare: the picture size button');
 assert.ok(cmp.indexOf('picture.js') > 0 && cmp.indexOf('picture.js') < cmp.indexOf('compare.js"'), 'compare: picture.js loads before compare.js');
@@ -97,9 +97,9 @@ assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: va
   // One layout: no mode switch, no Tools / CC popup menus; the bar's panel buttons say what they open.
   for (const id of ['modeBtn', 'toolsBtn', 'toolsMenu', 'tracksMenu', 'pill']) assert.ok(!html.includes(`id="${id}"`), `player: #${id} is gone`);
   for (const id of ['tracks', 'infoBtn', 'rate', 'cog']) assert.match(html, new RegExp(`<button id="${id}"[^>]*aria-expanded="false" aria-controls="panel"`));
-  assert.match(html, /<button id="keysBtn"[^>]*aria-label="Keyboard shortcuts"/);
+  assert.doesNotMatch(html, /id="keysBtn"/);
   // The picture size button sits between the keyboard shortcuts and fullscreen; it names the mode and the next one.
-  assert.match(html, /<button id="keysBtn"[\s\S]*?<button id="picBtn" class="ib" data-mode="fit"[^>]*aria-label="Picture size: Fit\. Next: Fill"[^>]*aria-keyshortcuts="Z"[\s\S]*?<button id="full"/);
+  assert.match(html, /<button id="cog"[\s\S]*?<button id="picBtn" class="ib" data-mode="fit"[^>]*aria-label="Picture size: Fit\. Next: Fill"[^>]*aria-keyshortcuts="Z"[\s\S]*?<button id="full"/);
   assert.ok(html.indexOf('picture.js') > 0 && html.indexOf('picture.js') < html.indexOf('inspect.js"'), 'picture.js loads before inspect.js');
   assert.match(html, /<div id="panel" class="panel" role="dialog" aria-label="[^"]+" hidden><\/div>/);
   assert.match(html, /<input id="seek" type="range"[^>]*aria-label="Position"/);

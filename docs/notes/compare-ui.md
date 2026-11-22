@@ -43,6 +43,8 @@ Find diff button are gone from the UI.
   sizes, Tools with Compare only (n videos), Extension settings. The mock-up's A-B loop and the other tools
   (Scopes, Inspector, Stats, X-ray, Export A-B) are left out: compare has no A-B loop and those tools are the
   single player's.
+- **Shortcuts:** open **Settings › Keyboard shortcuts** or press **?**. Closing the sheet after opening it
+  from Settings returns focus to the Settings button.
 - **About (ⓘ / I):** "About these videos" with a tab per video (the player's facts for that tile).
 - **Keys:** the player's (Space/K, , ., arrows with the jump sizes, J/L, Home/End, Shift+< >, ↑↓, M, R, F, I, ?,
   Esc, Ctrl+C copies the view) plus − / + (the video under the pointer, else the last chosen) and X (swap, 2

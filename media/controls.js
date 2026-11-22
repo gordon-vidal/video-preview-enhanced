@@ -266,7 +266,7 @@ const VpeControls = (() => {
         f.appendChild(btn('row', 'Live transcode', () => show('transcode'), { icon: ICON.quality, value: `${modeName}${mbps}`, chev: true, aria: { 'aria-label': `Live transcode, ${modeName}${mbps}` } }));
       }
       f.appendChild(btn('row', s.compare ? 'Copy view' : 'Copy frame', () => { close(false); env.act.copyFrame(); }, { icon: ICON.camera, kbd: 'Ctrl+C' }));
-      f.appendChild(btn('row', 'Keyboard shortcuts', () => openSheet(buttons.cog), { icon: ICON.keys, kbd: '?' }));
+      f.appendChild(btn('row', 'Keyboard shortcuts', () => openSheet(buttons.cog), { icon: ICON.keys, kbd: '?', aria: { 'aria-haspopup': 'dialog' } }));
       f.appendChild(btn('row', 'Jump sizes', () => show('jumps'), { icon: ICON.jumps, value: [s.jump.arrow, s.jump.shift, s.jump.ctrl].map(navName).join(' · '), chev: true }));
       f.append(el('div', 'sep'), heading('Tools'));
       const grid = el('div', 'tools');
@@ -539,11 +539,10 @@ const VpeControls = (() => {
       const set = (b, on) => { if (b) { b.setAttribute('aria-expanded', String(on)); b.classList.toggle('open', on); } };
       const own = view && VIEWS[view] ? VIEWS[view].button : null;
       set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'jumps' || view === 'picture' || view === 'transcode' || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
-      for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks', 'keys'].includes(k)) set(b, !!own && own === k);
+      for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks'].includes(k)) set(b, !!own && own === k);
       set(buttons.info, view === 'info');
       set(buttons.rate, view === 'speed' && opener === buttons.rate);
       set(buttons.tracks, view === 'subs' && opener === buttons.tracks);
-      set(buttons.keys, !sheet.hidden);
     }
     /** Opens (or switches to) a page; focus moves into it. */
     function show(v, from) {
@@ -571,9 +570,9 @@ const VpeControls = (() => {
       sync();
       if (refocus && back) back.focus();
     }
-    function openSheet(from) {
+    function openSheet(from = view ? opener : document.activeElement) {
       close(false);
-      sheetOpener = from || null;
+      sheetOpener = from instanceof HTMLElement && from !== document.body ? from : buttons.cog;
       sheet.textContent = '';
       const dlg = el('div', 'sheet');
       dlg.setAttribute('role', 'dialog');
@@ -613,7 +612,8 @@ const VpeControls = (() => {
       sheet.hidden = true;
       sheet.textContent = '';
       sync();
-      if (refocus && sheetOpener) sheetOpener.focus();
+      if (refocus) (sheetOpener?.isConnected ? sheetOpener : buttons.cog).focus();
+      sheetOpener = null;
     }
     sheet.addEventListener('click', (e) => { e.stopPropagation(); closeSheet(true); });
     sheet.addEventListener('keydown', (e) => {
@@ -650,7 +650,7 @@ const VpeControls = (() => {
 
     return {
       toggle, show, close, render, openSheet, closeSheet,
-      toggleSheet: (from) => { if (sheet.hidden) openSheet(from); else closeSheet(true); },
+      toggleSheet: () => { if (sheet.hidden) openSheet(); else closeSheet(true); },
       view: () => view, sheetOpen: () => !sheet.hidden,
       anyOpen: () => !!view || !sheet.hidden,
       closeAll: (refocus) => { close(refocus); closeSheet(refocus); },

@@ -49,6 +49,20 @@ streamlined right-click menu). This branch builds it. Simple mode is the player 
 - **Extension settings** (last row of ⚙): the page posts `openSettings`; the host runs
   `workbench.action.openSettings` with `@ext:gordon-vidal.video-preview-enhanced`.
 
+## Keyboard shortcuts in Settings
+
+Removing the dedicated keyboard button frees space in narrow toolbars. The player and Compare use the
+same **Keyboard shortcuts** row in Settings. Arrow keys navigate to the row, which has the accessible
+name “Keyboard shortcuts” and announces that it opens a dialog.
+
+```text
+Toolbar          … [Settings] [Picture size] [Fullscreen]
+Settings         … [Keyboard shortcuts    ?] [Jump sizes ›] …
+```
+
+Enter or Space opens the sheet from the row. Focus moves to **Close** and returns to **Settings** on
+dismissal. **?** also opens the sheet and restores focus to the originating control when possible.
+
 ## Picture size (2026-11-20)
 
 Approved by the maintainer. Pure maths in `media/picture.js` (`VpePicture`, tested by `test/host/picture_test.js`): a view is

@@ -357,7 +357,7 @@ body.idle { cursor: none; }
 #tracks.on .ccline { border-bottom-color: var(--vpe-accent); }
 #cog svg { transition: transform 200ms ease-out; }
 #cog.open svg { transform: rotate(45deg); }
-@media (max-width: 720px) { #volume, #keysBtn { display: none; } }
+@media (max-width: 720px) { #volume { display: none; } }
 @media (max-width: 520px) { #prev, #next, #infoBtn, #row #time #dur { display: none; } }
 
 kbd {

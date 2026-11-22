@@ -43,7 +43,7 @@
   const stage = $('stage'), canvas = $('canvas'), cellsEl = $('cells');
   const ui = {
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), tip: $('tip'), time: $('time'), now: $('now'), dur: $('dur'),
-    mute: $('mute'), volume: $('volume'), rate: $('rate'), cog: $('cog'), infoBtn: $('infoBtn'), keysBtn: $('keysBtn'), picBtn: $('picBtn'), cmpBtn: $('cmpBtn'), full: $('full'),
+    mute: $('mute'), volume: $('volume'), rate: $('rate'), cog: $('cog'), infoBtn: $('infoBtn'), picBtn: $('picBtn'), cmpBtn: $('cmpBtn'), full: $('full'),
     panel: $('panel'), sheet: $('sheet'), menu: $('menu'), toast: $('toast'), live: $('live'),
     overlay: $('overlay'), message: $('message'), hint: $('hint'),
   };
@@ -1570,7 +1570,7 @@
 
   const controls = VpeControls.create({
     panel: ui.panel, sheet: ui.sheet, bar: ui.bar,
-    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, keys: ui.keysBtn, cmp: ui.cmpBtn, tracks: null },
+    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, cmp: ui.cmpBtn, tracks: null },
     get: () => ({
       rate: st.rate, loop: st.loop, jump: prefs.jump, stepButtons: prefs.stepButtons, picture: picState(), compare: { soundLabel: `from ${tileLabel(st.sound)}` },
       tools: [{ label: 'Compare', note: `${N} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', ui.cmpBtn) }],
@@ -1755,7 +1755,7 @@
     if (N < MAX_TILES) item('Add video…', '', addVideo);
     item('Leave compare', '', () => leave());
     sep();
-    item('Keyboard shortcuts', '?', () => controls.openSheet(ui.keysBtn));
+    item('Keyboard shortcuts', '?', () => controls.openSheet(ui.cog));
     item('Settings…', '', () => controls.show('main', ui.cog));
     m.hidden = false;
     m.dataset.tile = String(i);
@@ -1934,7 +1934,6 @@
   ui.infoBtn.onclick = () => controls.toggle('info', ui.infoBtn);
   ui.infoBtn.title = 'About these videos  I';
   ui.infoBtn.setAttribute('aria-label', 'About these videos');
-  ui.keysBtn.onclick = () => controls.toggleSheet(ui.keysBtn);
   ui.picBtn.onclick = (e) => { e.stopPropagation(); cyclePic(); };
   updatePicBtn();
   ui.cmpBtn.onclick = () => controls.toggle('cmp', ui.cmpBtn);
@@ -1995,7 +1994,7 @@
     if (e.key === 'Escape' && !ui.menu.hidden) { e.preventDefault(); closeMenu(); return; }
     if (e.key === 'Escape' && controls.anyOpen()) { e.preventDefault(); controls.closeAll(true); return; }
     if (e.key === 'Escape' && !addHint.hidden) { e.preventDefault(); vscode.postMessage({ type: 'stopAddMode' }); return; }
-    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(ui.keysBtn); return; }
+    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(); return; }
     if (!clock || e.metaKey || (!altGr && (e.ctrlKey || e.altKey))) return;
     poke();
     const pair = N === 2;
@@ -2361,6 +2360,7 @@
         rows: [...ui.panel.querySelectorAll('button')].map((b) => ({ label: b.getAttribute('aria-label') || text(b), pressed: b.getAttribute('aria-pressed'), checked: b.getAttribute('aria-checked') })),
       },
       sheet: ui.sheet.hidden ? null : text(ui.sheet),
+      active: document.activeElement?.id || document.activeElement?.getAttribute('aria-label'),
       menu: ui.menu.hidden ? null : { tile: Number(ui.menu.dataset.tile), items: [...ui.menu.querySelectorAll('.mi')].map((b) => text(b)) },
       cells: [...cellsEl.children].map((d) => ({
         tile: d.dataset.tile === undefined ? (d.classList.contains('add') ? 'add' : '') : d.dataset.tile, rect: rect(d),
@@ -2463,7 +2463,7 @@
           if (m.focus) { const f = document.querySelector(m.focus); if (f) /** @type {any} */ (f).focus(); }
           if (m.click) { const c = document.querySelector(m.click); if (c) /** @type {any} */ (c).click(); }
           const at = (el, n) => (el ? el.getAttribute(n) : null);
-          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'keysBtn', 'full', 'divider'];
+          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full', 'divider'];
           const a = /** @type {any} */ (document.activeElement);
           log(`compare a11y ${JSON.stringify({
             controls: Object.fromEntries(ids.map((k) => { const el = $(k); return [k, el ? { label: at(el, 'aria-label'), pressed: at(el, 'aria-pressed'), expanded: at(el, 'aria-expanded'), valuetext: at(el, 'aria-valuetext'), role: at(el, 'role') } : null]; })),

@@ -101,16 +101,16 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 One layout (the old simple / advanced switch is gone). The bar, left to right:
 previous frame, play / pause, next frame, mute, volume, the time (click it: time → SMPTE timecode → frame
 number; the same detail while playing and paused), then CC (subtitles), ⓘ (about this video), the speed
-(click: speed panel; scroll: ±0.05), ⚙ (settings), ⌨ (keyboard shortcuts), the **picture size** button and
+(click: speed panel; scroll: ±0.05), ⚙ (settings), the **picture size** button and
 fullscreen.
 
 - A click on the picture plays or pauses; with a panel open it closes the panel.
 - Each bar button opens its panel and closes it when clicked again. `Esc` closes any panel.
 - **⚙ Settings:** Speed ›, Loop (switch), A-B loop (start, end, off), Subtitles ›, Audio track ›, Copy frame,
-  Keyboard shortcuts, Jump sizes › and a **Tools** grid: Compare, Scopes, Inspector, Stats, Codec X-ray,
+  **Keyboard shortcuts** (also opens with `?`), Jump sizes › and a **Tools** grid: Compare, Scopes, Inspector, Stats, Codec X-ray,
   Export A-B, then **Open video URL…** ([network URLs](urls.md)) and last **Extension settings** (VS Code's Settings, filtered to this extension). The tools'
   keys work at any time.
-- **Picture size:** how the picture sits in the player. **Fit** (default) shows the whole picture, with bars where its shape differs; **Fill** has no bars and crops the edges (centred); **Stretch** fills the player and distorts the picture; **100 %** shows one video pixel per screen pixel, and you drag to move a picture larger than the player. The button beside the keyboard shortcuts cycles Fit → Fill → Stretch → 100 % → Fit (its icon shows the current size, the tooltip names the next one) and so does `Z`; ⚙ › **Picture size ›** picks one and has a zoom row (− value + Reset). Ctrl+wheel zoom works in every size. The setting `pictureSize` chooses the size for new tabs; the button and `Z` change the current tab only. Native ffmpeg frames follow the picture (a crop or 100 % gets larger frames).
+- **Picture size:** how the picture sits in the player. **Fit** (default) shows the whole picture, with bars where its shape differs; **Fill** has no bars and crops the edges (centred); **Stretch** fills the player and distorts the picture; **100 %** shows one video pixel per screen pixel, and you drag to move a picture larger than the player. The picture size button cycles Fit → Fill → Stretch → 100 % → Fit (its icon shows the current size, the tooltip names the next one) and so does `Z`; ⚙ › **Picture size ›** picks one and has a zoom row (− value + Reset). Ctrl+wheel zoom works in every size. The setting `pictureSize` chooses the size for new tabs; the button and `Z` change the current tab only. Native ffmpeg frames follow the picture (a crop or 100 % gets larger frames).
 - **Jump sizes ›:** what ← →, Shift+← → and Ctrl+← → (Cmd on macOS) jump: 1 frame, 1 s, 5 s, 10 s or 30 s
   each (defaults 5 s, 1 s, 1 frame). Saved as settings. `,` and `.` always step one frame.
 - No status pill: when decoding falls behind, a notice says so once, with its action (set up ffmpeg, or

@@ -107,7 +107,8 @@ module.exports = [{
     ok = t('bar');
     let u = await ui();
     const ids = u.bar.ids;
-    for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'keysBtn', 'full']) ok(ids.includes(id), `bar has no #${id} (${ids})`);
+    for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(ids.includes(id), `bar has no #${id} (${ids})`);
+    ok(!ids.includes('keysBtn'), 'the shortcuts button still appears in the Compare toolbar');
     ok(!ids.includes('tracks'), `CC shown while comparing: ${ids}`);
     ok(/^A ?\d/.test(u.bar.time), `time does not start with the clock's letter: ${u.bar.time}`);
     ok(/sound from A/.test(u.bar.mute), `mute title: ${u.bar.mute}`);
@@ -118,6 +119,22 @@ module.exports = [{
     act({ action: 'key', key: '.' });
     r = await until((x) => x.synced === 'true' && nums(x.frames)[0] === 32, 10000);
     ok(nums(r.frames)[0] === 32 && nums(r.frames)[1] === 32, `. stepped both to #32: ${r.frames}`);
+
+    ok = t('panel/shortcuts');
+    await click({ sel: '#cog' });
+    await click({ sel: '#panel button[aria-keyshortcuts="?"][aria-haspopup="dialog"]' });
+    u = await ui();
+    ok(!u.panel && /^Keyboard shortcuts/.test(u.sheet) && u.active === 'Close',
+      `settings row: panel ${u.panel?.view}, sheet ${String(u.sheet).slice(0, 40)}, focus on ${u.active}`);
+    act({ action: 'key', key: 'Escape' });
+    u = await ui();
+    ok(!u.sheet && u.active === 'cog', `Escape: sheet open=${!!u.sheet}, focus on ${u.active}`);
+    act({ action: 'key', key: '?' });
+    u = await ui();
+    ok(/^Keyboard shortcuts/.test(u.sheet), 'the ? key did not open the shortcuts sheet');
+    act({ action: 'key', key: '?' });
+    u = await ui();
+    ok(!u.sheet && u.active === 'cog', `second ?: sheet open=${!!u.sheet}, focus on ${u.active}`);
 
     // ---- the Compare panel ----
     ok = t('panel/compare');

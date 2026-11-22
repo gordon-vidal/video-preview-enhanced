@@ -10,7 +10,7 @@
   const ui = {
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), buffered: $('buffered'), tip: $('tip'),
     time: $('time'), now: $('now'), dur: $('dur'), rate: $('rate'), mute: $('mute'), volume: $('volume'),
-    info: $('info'), infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), keysBtn: $('keysBtn'), picBtn: $('picBtn'),
+    info: $('info'), infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), picBtn: $('picBtn'),
     panel: $('panel'), sheet: $('sheet'), toast: $('toast'), abMarks: $('abMarks'), tracks: $('tracks'),
   };
 
@@ -540,7 +540,7 @@
     ui.volume.value = String(volume);
     if (volume > 0 && muted) setMute(false); else setMute(muted);
   };
-  /** Z (and the button beside Keyboard shortcuts): the next picture size; zoomed in, back to Fit. 100 % shows the file's own pixels. */
+  /** Z (and the Picture size button): the next picture size; zoomed in, back to Fit. 100 % shows the file's own pixels. */
   const cyclePicture = () => { insp.cycleMode(); if (insp.picture().mode === 'actual') exactTool(true); };
   /** The button shows the current size and names the next one. */
   function updatePicBtn() {
@@ -926,7 +926,7 @@
     if (insp.onKey(e)) { e.preventDefault(); if (e.ctrlKey || e.metaKey) e.stopPropagation(); return; }
     if (e.key === 'Escape' && controls && controls.anyOpen()) { e.preventDefault(); controls.closeAll(true); return; }
     if (e.key === 'Escape' && !addHint.hidden) { e.preventDefault(); vscode.postMessage({ type: 'stopAddMode' }); return; }
-    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(ui.keysBtn); return; }
+    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(); return; }
     if (!player || e.metaKey || (!altGr && (e.ctrlKey || e.altKey))) return;
     poke();
     // Subtitle and audio-track keys: V, Shift+V, G, H, Shift+A, #.
@@ -1096,7 +1096,7 @@
   const pictureState = () => { const v = insp.picture(); return { mode: v.mode, pct: player && player.meta && player.meta.width ? insp.zoomPercent() : null, zoomed: v.zoom !== 1 }; };
   controls = VpeControls.create({
     panel: ui.panel, sheet: ui.sheet, bar: ui.bar,
-    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, tracks: ui.tracks, keys: ui.keysBtn },
+    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, tracks: ui.tracks },
     get: () => {
       const d = subs.panelData();
       return {
@@ -1143,7 +1143,6 @@
   ui.rate.onclick = (e) => { e.stopPropagation(); controls.toggle('speed', ui.rate); };
   ui.rate.addEventListener('wheel', (e) => { e.preventDefault(); bumpRate(e.deltaY < 0 ? 1 : -1); }, { passive: false });
   ui.tracks.onclick = (e) => { e.stopPropagation(); ccClick(); };
-  ui.keysBtn.onclick = (e) => { e.stopPropagation(); controls.toggleSheet(ui.keysBtn); };
   ui.picBtn.onclick = (e) => { e.stopPropagation(); cyclePicture(); };
   setLoop(loop);
   updateCc();
@@ -1170,7 +1169,7 @@
     copyTime: () => { if (player) vscode.postMessage({ type: 'copyText', text: fmtTime(player.currentTime()) }); toast('Timestamp copied'); },
     subs: () => controls.show('subs', ui.tracks), audio: () => controls.show('audio', ui.cog),
     fullscreen: () => toggleFullscreen(),
-    stepBack: () => stepButton(-1), stepFwd: () => stepButton(1), keys: () => controls.openSheet(ui.keysBtn), cog: () => controls.show('main', ui.cog),
+    stepBack: () => stepButton(-1), stepFwd: () => stepButton(1), keys: () => controls.openSheet(ui.cog), cog: () => controls.show('main', ui.cog),
     xray: () => press('X', { shiftKey: true }),
     // From the menu "Set" always sets (at this moment); the A / B keys toggle.
     setA: () => { if (player) { ab.reset('a', player.currentTime(), player.currentFrame()); abChanged(); } }, setB: () => { if (player) { ab.reset('b', player.currentTime(), player.currentFrame()); abChanged(); } },
@@ -1362,7 +1361,7 @@
           const sc = document.getElementById('scopes');
           const xr = document.getElementById('xray');
           log(`modes report panel=${controls.view() || 'none'} sheet=${controls.sheetOpen()} tools=${TOOLS.length} ` +
-            `bar=${['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'picBtn', 'full'].map((k) => `${k}:${vis(ui[k]) ? 1 : 0}`).join(',')} ` +
+            `bar=${['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'picBtn', 'full'].map((k) => `${k}:${vis(ui[k]) ? 1 : 0}`).join(',')} ` +
             `scopes=${scopes.mode() || 'off'} scopesVisible=${vis(sc)} info=${vis(ui.info)} xray=${vis(xr)} zoomed=${stage.classList.contains('zoom')} picture=${insp.picture().mode} ` +
             `frame=${player.currentFrame() + 1} t=${player.currentTime().toFixed(3)} playing=${player.isPlaying()}`);
         }, m.delay || 300);
@@ -1536,7 +1535,7 @@
           const unnamed = [...document.querySelectorAll('button')].filter((b) => (b.textContent || b.getAttribute('aria-label')) && !/[A-Za-z]/.test(b.getAttribute('aria-label') || b.textContent || '')).map((b) => b.id || b.className || b.textContent);
           const cs = a && a !== document.body ? getComputedStyle(a) : null;
           let fv = false; try { fv = !!a && a.matches(':focus-visible'); } catch { /* old engine */ }
-          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'picBtn', 'full', 'noticeClose', 'canvas'];
+          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'picBtn', 'full', 'noticeClose', 'canvas'];
           log(`a11y ${JSON.stringify({
             id: m.id,
             controls: Object.fromEntries(ids.map((k) => [k, attrs(byId(k))])),
