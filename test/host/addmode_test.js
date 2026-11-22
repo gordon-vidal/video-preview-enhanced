@@ -4,7 +4,7 @@
 // every opened video is added until full; tabs of other editors close; Esc.
 const assert = require('assert');
 const path = require('path');
-const { createAddMode } = require('../../src/addmode');
+const { createAddMode, startsInAddMode, addToCompareOrigin } = require('../../src/addmode');
 const { load } = require('./mock_vscode');
 const { make } = require('../media/make_cases_media');
 
@@ -41,6 +41,26 @@ const { make } = require('../media/make_cases_media');
   assert.ok(m.editorChanged({}), 'switching to an existing editor ends Add Mode');
   m.start(C, { multi: true, uris: ['a', 'b'] });
   assert.ok(m.sync(C, ['a', 'b', 'c', 'c']) && !m.active, 'capacity also applies to files added by other paths');
+}
+
+// ---- which compares start in Add Mode (maintainer decision 2026-11-22: only on explicit add-more intent) ----
+{
+  const on = (origin, count) => startsInAddMode({ origin, count });
+  assert.strictEqual(on('start-single', 1), true, 'right-click Start / Add to Compare on one video: a one-video compare');
+  assert.strictEqual(on('start-single', 2), false, 'start-single means a one-video compare');
+  assert.strictEqual(on('toolbar-start', 1), true, 'the toolbar Compare button, Start comparison');
+  assert.strictEqual(on('armed', 2), true, 'a player armed with Shift+D took its next video: the mode carries on');
+  for (const origin of ['burst', 'selection', 'drop', 'pick', 'with', undefined, 'anything-else']) {
+    for (const count of [1, 2, 5, 8]) assert.strictEqual(on(origin, count), false, `${origin} (${count} videos) opens with Add Mode off`);
+  }
+  assert.strictEqual(startsInAddMode(), false, 'nothing known: off');
+  assert.strictEqual(on('armed', 0), false, 'nothing to add to');
+  // Add to Compare: one file starts a one-video compare; several files, a folder, or a file joining a player do not.
+  assert.strictEqual(addToCompareOrigin({ selected: 1, videos: 1, isFile: true, count: 1 }), 'start-single');
+  assert.strictEqual(addToCompareOrigin({ selected: 1, videos: 1, isFile: true, count: 2 }), 'selection', 'a file added to a player: two videos');
+  assert.strictEqual(addToCompareOrigin({ selected: 2, videos: 2, isFile: false, count: 2 }), 'selection', 'multi-select');
+  assert.strictEqual(addToCompareOrigin({ selected: 1, videos: 1, isFile: false, count: 1 }), 'selection', 'a folder with one video');
+  assert.strictEqual(addToCompareOrigin({ selected: 1, videos: 6, isFile: false, count: 6 }), 'selection', 'a folder');
 }
 
 // ---- the host ----
@@ -118,7 +138,12 @@ const { make } = require('../media/make_cases_media');
       const two = panels.length;
       await W._commands['videoPreviewEnhanced.compare'](W.Uri.file(a), [W.Uri.file(a), W.Uri.file(b)]);
       const cmp2 = panels[two];
-      assert.strictEqual(ctx().pop(), true);
+      assert.strictEqual(ctx().pop(), false, 'a compare started from several files at once has Add Mode off');
+      assert.ok(!cmp2.posted.some((m) => m.type === 'addMode' && m.on), 'and its page shows no hint');
+      // The palette command / Shift+D / Add video… turn it on later.
+      cmp.dispose();
+      await W._commands['videoPreviewEnhanced.addFromExplorer']();
+      assert.strictEqual(ctx().pop(), true, 'the command turns it on');
       await W._commands['videoPreviewEnhanced.stopAddFromExplorer']();
       assert.strictEqual(ctx().pop(), false, 'Esc: off');
       assert.ok(cmp2.posted.filter((m) => m.type === 'addMode').pop().on === false, 'Esc hides the hint');

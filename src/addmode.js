@@ -1,10 +1,40 @@
 'use strict';
 // "Add from the Explorer" (docs/notes/compare-ui.md "Add mode"): while it is on, the next video VS Code opens
 // (an Explorer click, a drop on the editor, Quick Open ...) goes into compare instead of its own tab.
-// A player explicitly armed with Shift+D becomes compare on the first open. Compare starts armed and stays
-// armed until Esc, Shift+D, capacity, or switching editor. Pure state; src/compare.js handles the editors.
+// A player explicitly armed with Shift+D becomes compare on the first open, and the mode carries on until Esc,
+// Shift+D, capacity, or switching editor. Whether a new Compare starts in the mode: startsInAddMode. Pure state; src/compare.js handles the editors.
 
 const { VIDEO_EXT } = require('./comparepick');
+
+/**
+ * Whether a Compare that has just been created starts in Add Mode (maintainer decision 2026-11-22): only on an
+ * explicit "add more" intent. Several files chosen at once are the whole set the user wanted, so those open with the
+ * mode off; the Shift+D key, the Add video… control and the Compare panel's switch turn it on later (toggle / start).
+ *
+ *   on   'toolbar-start'  the toolbar Compare button's "Start comparison" confirm
+ *        'armed'          a player armed with Shift+D (or the D quick pick's Explorer row) took its next video
+ *        'start-single'   right-click Start / Add to Compare on one video that makes a one-video Compare
+ *   off  'burst' (drop, Open With… on a selection), 'selection' (several files or a folder), 'drop', 'pick',
+ *        'with', and anything else
+ *
+ * @param {{ origin?: string, count?: number }} o  `count`: the videos the new Compare starts with
+ * @returns {boolean}
+ */
+function startsInAddMode({ origin, count = 0 } = {}) {
+  if (origin === 'toolbar-start' || origin === 'armed') return count >= 1;
+  if (origin === 'start-single') return count === 1;
+  return false;
+}
+
+/**
+ * The origin of a Compare that Add to Compare creates: 'start-single' when exactly one file was chosen and the
+ * Compare starts with just that file, else 'selection' (several files, a folder, or a file added to a player).
+ * @param {{ selected: number, videos: number, isFile: boolean, count: number }} o
+ *   `selected` items chosen, `videos` they hold, `isFile` the one item is a file, `count` tiles the Compare starts with
+ */
+function addToCompareOrigin({ selected, videos, isFile, count }) {
+  return selected === 1 && videos === 1 && isFile && count === 1 ? 'start-single' : 'selection';
+}
 
 /**
  * @param {{ max: number|(() => number) }} o  the most videos compare shows (a function: read each time, the setting can change)
@@ -76,4 +106,4 @@ function createAddMode({ max: maxOpt }) {
   };
 }
 
-module.exports = { createAddMode };
+module.exports = { createAddMode, startsInAddMode, addToCompareOrigin };

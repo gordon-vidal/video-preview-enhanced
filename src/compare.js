@@ -26,7 +26,7 @@ const Grid = require('../media/compare-grid');
 const frameserver = require('./frameserver');
 const { barHtml } = require('./bar');
 const { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare } = require('./comparepick');
-const { createAddMode } = require('./addmode');
+const { createAddMode, startsInAddMode, addToCompareOrigin } = require('./addmode');
 const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('./burst');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
 
@@ -550,8 +550,11 @@ class CompareSession {
 function registerCompare(context, deps) {
   vscode = deps.vscode;
   compareSessions = deps.compareSessions || null;
-  /** Opens compare; `from` (a player Session) is replaced in its tab, `t` is where it was. */
-  const open = async (list, { from, t, viewColumn: col } = {}) => {
+  /**
+   * Opens compare; `from` (a player Session) is replaced in its tab, `t` is where it was. `origin` says how it was
+   * started, which decides whether Add Mode starts on (src/addmode.js startsInAddMode: only on explicit add-more intent).
+   */
+  const open = async (list, { from, t, viewColumn: col, origin } = {}) => {
     for (const u of list) {
       if (!FS_SCHEMES.has(u.scheme)) {
         vscode.window.showWarningMessage(`Video Preview: can't compare ${u.toString()} (not a file).`);
@@ -575,7 +578,7 @@ function registerCompare(context, deps) {
     if (deps.recent) for (const u of [...list].reverse()) deps.recent.set(pushRecent(deps.recent.get(), u.toString()));
     const viewColumn = from && from.panel ? from.panel.viewColumn : col;
     const session = new CompareSession(context, list, { ...deps, transport, frameSource, pick: pickMany, viewColumn, start: t, addMode: addModeApi });
-    armAddMode(session);
+    if (startsInAddMode({ origin, count: list.length })) armAddMode(session);
     // In place: the player's tab closes once compare has opened beside it in the same group.
     if (from && from.panel && !from.disposed) from.panel.dispose();
     return session;
@@ -672,7 +675,7 @@ function registerCompare(context, deps) {
         promotion = pending;
         const t = target.pos && Number.isFinite(target.pos.t) ? target.pos.t : 0;
         try {
-          pending.done = open(pending.files, { from: target, t });
+          pending.done = open(pending.files, { from: target, t, origin: 'armed' });
           await pending.done;
         } finally {
           if (promotion === pending) promotion = null;
@@ -713,7 +716,8 @@ function registerCompare(context, deps) {
       const from = playerOf(first.uri);
       const tabCol = first.tabs[0] && first.tabs[0].group ? first.tabs[0].group.viewColumn : (first.panels[0] && first.panels[0].viewColumn);
       try {
-        await open(list, { from, t: 0, viewColumn: tabCol });
+        // A burst never turns Add Mode on (src/addmode.js startsInAddMode): the user asked for these videos, not for more.
+        await open(list, { from, t: 0, viewColumn: tabCol, origin: 'burst' });
       } catch (e) {
         deps.log(`compare: open together failed: ${e && e.stack || e}`);
         return false; // the held players start as usual
@@ -865,7 +869,10 @@ function registerCompare(context, deps) {
     }
     if (append) { target.addUris(files); return target; }
     const list = target ? [target.uri, ...files] : files;
-    const session = await open(list, { from: target, t: target?.pos?.t });
+    const origin = addToCompareOrigin({
+      selected: selection.length, videos: videos.length, isFile: videos.length === 1 && videos[0].toString() === String(selection[0]), count: list.length,
+    });
+    const session = await open(list, { from: target, t: target?.pos?.t, origin });
     if (session) closeLeftovers(list, session.panel.viewColumn);
     return session;
   };
@@ -894,7 +901,7 @@ function registerCompare(context, deps) {
       if (list.length > max) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
       if (list.length >= 2) { // opts: the test hook's in-place open
         const shown = list.slice(0, max);
-        const s = await open(shown, opts && opts.from ? opts : {});
+        const s = await open(shown, opts && (opts.from || opts.origin) ? opts : {});
         if (!(opts && opts.from)) closeLeftovers(shown, s && s.panel ? s.panel.viewColumn : undefined);
         return s;
       }

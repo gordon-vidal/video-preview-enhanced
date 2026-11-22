@@ -139,8 +139,17 @@ already included and report how many unique videos were beyond the configured li
 Compare, or the active or most recently used file player if no Compare is open. With neither, start a new Compare.
 A single selected file starts a one-tile Compare with the existing Add cell alongside it.
 
-A Compare with room starts in Add Mode. **Shift+D**, the Compare panel's **Add from the Explorer** switch, or the
-palette command toggle the mode. **Add video…** starts it. **Shift+D** in a file player and the **Click videos in the
+Add Mode turns on only on an explicit "add more" intent (maintainer decision 2026-11-22; `startsInAddMode` in
+`src/addmode.js`, unit-tested):
+
+| Starts the Compare in Add Mode | Opens with Add Mode off |
+|---|---|
+| the toolbar Compare button's **Start comparison** confirm (`origin: 'toolbar-start'`, built on another branch) | a drag and drop of several videos, **Open With…** on a selection (`'burst'`) |
+| a player armed by **Shift+D** or the D pick's Explorer row that took its next video (`'armed'`: the mode carries on) | **Add to Compare** on several files, a folder or a mix (`'selection'`), **Compare Videos in Folder** |
+| right-click **Start / Add to Compare** on one video that makes a one-video Compare (`'start-single'`) | the D quick pick, Shift+drop on a player, **Compare With…**; one file added to an open player (two videos) |
+
+Videos chosen at once are the whole set the user wanted, so nothing waits for more. Later, **Shift+D**, **Add video…**,
+the Compare panel's **Add from the Explorer** switch or the palette command toggle the mode. **Add video…** starts it. **Shift+D** in a file player and the **Click videos in the
 Explorer…** row in the D quick pick arm the player. The next video opens Compare at the player's position and the
 mode carries on. Pin the player while waiting so a preview open can leave the original tab in place until the
 transition.
@@ -174,9 +183,12 @@ from switching to an existing editor. Only file and VS Code remote video URIs jo
   within the window would (not seen, not tested: a real restart is not driven). Fallback if it misfires for someone:
   the setting, and the Explorer's **Add to Compare**.
 
-`test/host/addmode_test.js` and `test/host/comparepick_test.js` cover mode transitions, capacity, duplicate files
-and routing. The hidden VS Code `compare_addmode` case checks the context-menu arguments, tab switching and the
-hint through single-file, multi-file, folder and playback flows. `compare_burst` checks Open Together.
+`test/host/addmode_test.js` and `test/host/comparepick_test.js` cover mode transitions, capacity, duplicate files,
+routing and which starts turn the mode on. The hidden VS Code `compare_addmode` case checks the context-menu
+arguments, tab switching and the hint through single-file, multi-file, folder and playback flows. `compare_burst`
+checks Open Together (one compare, Add Mode off, the next open a player of its own). `test/host/burst_test.js` covers
+the window, holding and releasing players. The layer-4 bench `compare-burst-startup` times 1, 2, 5 and 8 opened
+together.
 
 ## Deviations from the mock-up
 
