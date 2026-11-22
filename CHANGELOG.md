@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.1 (2026-11-22)
+
+Compare grows to 8 videos by default (up to 16), Live transcode inside Compare, and exact full-resolution frames for copy, save, inspector and scopes while Live transcode is on.
+
 - Changed: Compare supports 8 videos by default and up to 16 through `compare.maxVideos`. Grids of 5 or more stack the name and offset controls to fit smaller tiles.
 - New: with **Live transcode** active, **Copy Frame**, **Save Frame as PNG**, the **Pixel Inspector** and the **Scopes** now use one exact, full-resolution frame of the file (decoded on the host by ffmpeg, sent as a PNG: local, WSL and Remote-SSH) instead of the transcoded picture, without leaving Live transcode. The inspector and scopes fetch it once per paused frame; if it can't be fetched the tool falls back to the transcoded picture with a notice.
 - New: **Live transcode in Compare** — Compare can use Live transcode at each tile's size, share a max video bitrate across tiles (`videoPreviewEnhanced.transcodeSplitBitrate`), and show each tile's active encoder + **Use original video** in About.
