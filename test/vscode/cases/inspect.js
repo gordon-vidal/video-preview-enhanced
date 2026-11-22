@@ -88,7 +88,7 @@ module.exports = [{
       try {
         await P.waitFirstFrame();
         P.goto('45'); await P.expectFrame(44, 'go to 45');
-        P.key('z'); P.key('z'); P.key('z'); // Fit, Fill, Stretch, 100 %: at 100 % whole mouse positions hit every pixel
+        P.key('z'); P.key('z'); P.key('z'); // Fit, Fill, Stretch, 100 %
         P.key('x');
         await lib.sleep(600);
         // A pixel whose neighbourhood is flat (away from chroma edges) in ffmpeg's frame 44.
@@ -107,8 +107,8 @@ module.exports = [{
         const rc = st.canvasRect;
         // At 100 % a video pixel is a device pixel: 1 / devicePixelRatio CSS pixels (the rectangle's own size says it).
         const cx = (v) => rc[0] + ((v[0] + 0.5) * rc[2]) / W; const cy = (v) => rc[1] + ((v[1] + 0.5) * rc[3]) / H;
-        P.dom('mousemove', cx(pt), cy(pt));
-        const s = await P.waitState((x) => /RGB/.test(x.pxread), { timeout: 8000, what: 'the pixel read-out' });
+        P.dom('pointermove', cx(pt), cy(pt));
+        const s = await P.waitState((x) => /YUV/.test(x.pxread), { timeout: 8000, what: 'the pixel read-out' });
         const m = /x (\d+)\s+y (\d+)[\s\S]*?RGB (\d+) (\d+) (\d+)[\s\S]*?YUV (\d+) (\d+) (\d+)/.exec(s.pxread);
         ok(m && Number(m[1]) === pt[0] && Number(m[2]) === pt[1], `position: ${s.pxread}`);
         const ref = refPixel(h, file, 44, pt[0], pt[1], W, H);
@@ -134,7 +134,7 @@ module.exports = [{
         ok(st.vmode === 'webcodecs', 'expected the WebCodecs path');
         P.key('x');
         const [left, top, w, ht] = st.canvasRect;
-        P.dom('mousemove', left + (x + 0.5) * w / W, top + (y + 0.5) * ht / H);
+        P.dom('pointermove', left + (x + 0.5) * w / W, top + (y + 0.5) * ht / H);
         const s = await P.waitState((state) => /YUV/.test(state.pxread), { timeout: 8000, what: 'the YUV pixel read-out' });
         const m = /x (\d+)\s+y (\d+)[\s\S]*?RGB (\d+) (\d+) (\d+)[\s\S]*?YUV (\d+) (\d+) (\d+)/.exec(s.pxread);
         if (!ok(m && Math.abs(Number(m[1]) - x) <= 1 && Math.abs(Number(m[2]) - y) <= 1, `position: ${s.pxread}`)) return;

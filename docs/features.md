@@ -41,7 +41,7 @@ These are for checking encodes, renders, captures and test output.
 **Zoom and pixel inspector.**
 - `Ctrl`+wheel zooms around the cursor, from any picture size; drag to pan when the picture is larger than the player. `+` / `-` zoom around the middle. `Z` cycles the **picture size** (below); zoomed in, `Z` goes back to Fit first.
 - `Shift+Z` turns on nearest-neighbour pixels. They also turn on by themselves from 200 %, with a pixel grid from 800 %.
-- `X` shows the position, RGB and the source Y/U/V values under the cursor, with an 8× loupe. Click copies the values. Press `X` again for the inspector without the loupe, and a third time to turn it off.
+- `X` shows the position, RGB and the source Y/U/V values under the cursor, with an 8× loupe. At 100 %, the inspector can distinguish individual screen pixels on high-DPI displays. Click copies the values. Press `X` again for the inspector without the loupe, and a third time to turn it off.
 
 **Go to a frame or time.** `Ctrl+G`, or click the frame number. Type a frame (`1432`), a time (`1:23.456`, `83.5s`), a percentage (`50%`) or a step (`+10`, `-3`).
 

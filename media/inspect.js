@@ -334,11 +334,14 @@ const VpeInspect = (() => {
     let lastPick = null;
     let yuvSeq = 0;
 
-    stage.addEventListener('mousemove', (e) => {
+    // Pointer events retain fractional CSS coordinates on HiDPI displays, where
+    // at 100 % several video pixels can share an integer mouse coordinate.
+    stage.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'touch') return;
       mouse = { x: e.clientX, y: e.clientY };
       if (inspecting && !pickQueued) { pickQueued = true; requestAnimationFrame(pick); }
     });
-    stage.addEventListener('mouseleave', () => { mouse = null; if (inspecting) readout.hidden = true; });
+    stage.addEventListener('pointerleave', () => { mouse = null; if (inspecting) readout.hidden = true; });
 
     /** 15×15 RGBA around (x, y), top row first; outside the picture is transparent. */
     function readBlock(p, x, y) {
