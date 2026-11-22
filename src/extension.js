@@ -1262,6 +1262,7 @@ function activate(context) {
   // ---- Compare and Add to Compare (src/compare.js) ----
   compareApi = registerCompare(context, {
     vscode, log, sessions, compareSessions, nativeTransport, nativeQueue,
+    compareOpenChanged: () => { for (const session of sessions) session.sendCompareOpen(); },
     lastActivePlayer: () => lastActive,
     // Videos compared lately (uri strings): the quick pick on key D lists them first.
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
@@ -1646,6 +1647,7 @@ class Session {
       if (!panel.visible) this.hiddenCount++;
       if (panel.visible && this.shown) this.startEarly();
       this.post({ type: 'visible', visible: panel.visible });
+      if (panel.visible) this.sendCompareOpen();
       if (panel.visible && this.onShown) { const f = this.onShown; this.onShown = null; f(); }
     });
     this.extraSubs = []; // subtitle files the user loaded; sent again after a reload
@@ -1780,6 +1782,19 @@ class Session {
     if (!this.disposed) this.webview.postMessage(msg);
   }
 
+  canCompare() {
+    return !this.sequence && !this.url && FS_SCHEMES.has(this.uri.scheme);
+  }
+
+  /** Whether a Compare is open: the player's Compare button then adds to it (media/player.js setCompareOpen). */
+  compareOpen() {
+    return [...compareSessions].some((c) => !c.disposed);
+  }
+
+  sendCompareOpen() {
+    if (this.canCompare()) this.post({ type: 'compareOpen', open: this.compareOpen() });
+  }
+
   fail(err, hint) {
     log(`[${this.name}] error: ${err && err.stack ? err.stack : err}`);
     this.post({ type: 'error', message: String(err && err.message ? err.message : err), hint: hint || '' });
@@ -1853,7 +1868,16 @@ ${earlyJs}<link rel="stylesheet" href="${uri('player.css')}">
   <div id="toast" hidden aria-hidden="true"></div>
   <div id="notice" role="status" hidden><span id="noticeText"></span><button id="noticeAction"></button><button id="noticeClose" title="Dismiss" aria-label="Dismiss">×</button></div>
 </div>
-${barHtml()}
+${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
+<div id="startCompareBackdrop" hidden>
+  <div id="startCompareDialog" tabindex="-1" role="dialog" aria-modal="true" aria-label="Start comparison" aria-describedby="startCompareHint">
+    <p id="startCompareHint">Start Compare with this video, then click videos in the Explorer to add them.</p>
+    <div class="compare-actions">
+      <button id="cancelCompareBtn" type="button">Cancel</button>
+      <button id="confirmCompareBtn" type="button">Start comparison</button>
+    </div>
+  </div>
+</div>
 <div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
 <div id="sheet" hidden></div>
 <div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -1922,7 +1946,9 @@ ${barHtml()}
         this.t.ready = this.t.ready || Date.now();
         this.sendSubtitles().catch((e) => log(`[${this.name}] subtitles: ${e && e.stack || e}`));
         this.sendFfmpegState();
-        return this.sequence ? this.openSequence() : this.open();
+        // The bar was rendered with the Compare state. A Compare that opened or closed while the page loaded is sent
+        // after the video opened, so nothing comes before the first sound and frames (test/host/wav_parts_test.js).
+        return Promise.resolve(this.sequence ? this.openSequence() : this.open()).finally(() => this.sendCompareOpen());
       case 'loadSubs': return this.loadSubtitles();
       // The settings panel's "Extension settings" row: VS Code's Settings, filtered to this extension.
       case 'openSettings': return vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXT_ID}`);
@@ -1972,6 +1998,9 @@ ${barHtml()}
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         // Compare takes this tab's place and starts where the player is (src/compare.js).
         return vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', this.uri, { t: Number(m.t) || 0 });
+      case 'toolbarCompare':
+        if (!this.canCompare()) return;
+        return compareApi.addFromPlayer(this, Number(m.t) || 0, m.confirmStart === true);
       case 'comparePick': // key D: a quick pick of other videos
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         return vscode.commands.executeCommand('videoPreviewEnhanced.comparePick', this.uri, { t: Number(m.t) || 0 });

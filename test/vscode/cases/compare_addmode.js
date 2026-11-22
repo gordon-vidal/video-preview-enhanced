@@ -3,6 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const lib = require('../lib');
 
 const CLIPS = ['h264_aac_anim_1080p.mp4', 'vp9_opus_anim_1080p.webm', 'h264_8_1080p.mp4'];
 const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] opened, .* ${n} tiles`);
@@ -52,6 +53,43 @@ module.exports = [{
       fs.copyFileSync(files[0], first);
       fs.copyFileSync(files[1], second);
       fs.writeFileSync(notes, 'Compare tab switching test\n');
+      await run('toolbar-confirm-stop-and-append', async () => {
+        const P = await lib.open(vs, h, files[0]);
+        P.pause();
+        await P.ask('click', { sel: '#startCompareBtn' });
+        let state = await P.ask('a11y');
+        assert(!state.startCompare.hidden && state.active === 'cancelCompareBtn', 'Compare opens the confirmation and focuses Cancel');
+        assert(state.controls.startCompareBtn['aria-expanded'] === 'true', 'Compare announces the expanded dialog');
+        P.key('Tab', { target: ':focus' });
+        state = await P.ask('a11y');
+        assert(state.active === 'confirmCompareBtn', 'Tab moves focus to Start comparison');
+        P.key('Tab', { target: ':focus' });
+        assert((await P.ask('a11y')).active === 'cancelCompareBtn', 'Tab wraps back to Cancel');
+        P.key('Escape', { target: ':focus' });
+        state = await P.ask('a11y');
+        assert(state.startCompare.hidden && state.active === 'startCompareBtn', 'Escape dismisses the dialog and returns focus');
+        await P.ask('click', { sel: '#startCompareBtn' });
+        await P.ask('click', { sel: '#startCompareBackdrop' });
+        assert((await P.ask('a11y')).startCompare.hidden, 'click outside dismisses the dialog');
+        const tabs = await tabList();
+        assert(tabs.length === 1 && !isCompare(tabs[0]), 'dismissing the dialog leaves the player tab open');
+
+        await P.ask('click', { sel: '#startCompareBtn' });
+        const confirmed = send({ name: CLIPS[0], action: 'click', sel: '#confirmCompareBtn' });
+        await wait(opened(1), confirmed, 'Start comparison opens one tile');
+        await wait(hint(true), confirmed, 'Start comparison enters Add Mode');
+        await onlyCompare();
+
+        const stopped = act('click', { sel: '#stopAddBtn' });
+        await wait(hint(false), stopped, 'the Stop button ends Add Mode');
+        const other = await lib.open(vs, h, files[1]);
+        state = await other.ask('a11y');
+        assert(state.controls.startCompareBtn['aria-label'] === 'Add to Compare', 'a player detects the open Compare');
+        const appended = send({ name: CLIPS[1], action: 'click', sel: '#startCompareBtn' });
+        await wait(/\[compare [^\]]*\] add vp9_opus_anim_1080p\.webm/, appended, 'the player adds directly to the open Compare');
+        assert((await other.ask('a11y')).startCompare.hidden, 'adding to Compare skips the confirmation');
+      });
+
       await run('single-file-start-and-explorer-add', async () => {
         const start = add([files[0]]);
         await wait(opened(1), start, 'single-tile Compare');

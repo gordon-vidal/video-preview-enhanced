@@ -51,7 +51,7 @@ module.exports = [{
       const s = await a11y();
       const c = s.controls;
       ok(s.unnamed.length === 0, `buttons without a name in words: ${JSON.stringify(s.unnamed)}`);
-      const want = { play: 'Play', prev: 'Previous frame', next: 'Next frame', full: 'Fullscreen', infoBtn: 'About this video', cog: 'Settings', seek: 'Position', volume: 'Volume', canvas: 'Video' };
+      const want = { play: 'Play', prev: 'Previous frame', next: 'Next frame', full: 'Fullscreen', infoBtn: 'About this video', startCompareBtn: 'Compare', cog: 'Settings', seek: 'Position', volume: 'Volume', canvas: 'Video' };
       for (const [k, v] of Object.entries(want)) ok(c[k] && c[k]['aria-label'] === v, `#${k}: aria-label ${JSON.stringify(c[k] && c[k]['aria-label'])}, expected ${v}`);
       ok(/^(Mute|Unmute)$/.test(c.mute['aria-label']) && /^Speed \d/.test(c.rate['aria-label']) && /^Subtitles/.test(c.tracks['aria-label']) && /^Position .*frame \d+/.test(c.time['aria-label']), `mute / rate / tracks / time: ${JSON.stringify([c.mute, c.rate, c.tracks, c.time])}`);
       ok(c.mute && /^(true|false)$/.test(c.mute['aria-pressed']), `#mute: no aria-pressed (${JSON.stringify(c.mute)})`);

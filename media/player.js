@@ -816,7 +816,9 @@
   const poke = () => {
     document.body.classList.remove('idle');
     clearTimeout(hideTimer);
-    if (document.fullscreenElement && player && player.isPlaying()) hideTimer = setTimeout(() => document.body.classList.add('idle'), 2500);
+    if (document.fullscreenElement && player && player.isPlaying() && $('startCompareBackdrop').hidden) {
+      hideTimer = setTimeout(() => document.body.classList.add('idle'), 2500);
+    }
   };
   document.addEventListener('mousemove', poke);
   document.addEventListener('focusin', poke); // a keyboard user tabbing to the hidden bar
@@ -1096,6 +1098,69 @@
   ui.rate.addEventListener('wheel', (e) => { e.preventDefault(); bumpRate(e.deltaY < 0 ? 1 : -1); }, { passive: false });
   ui.tracks.onclick = (e) => { e.stopPropagation(); ccClick(); };
   ui.picBtn.onclick = (e) => { e.stopPropagation(); cyclePicture(); };
+
+  const compareButton = $('startCompareBtn');
+  const compareBackdrop = $('startCompareBackdrop');
+  const compareDialog = $('startCompareDialog');
+  const cancelCompare = $('cancelCompareBtn');
+  const confirmCompare = $('confirmCompareBtn');
+  let compareOpen = compareButton.dataset.open === '1'; // rendered by the host (src/bar.js), then 'compareOpen'
+  function placeCompareDialog() {
+    const r = compareButton.getBoundingClientRect();
+    const left = r.left + r.width / 2 - compareDialog.offsetWidth / 2;
+    compareDialog.style.left = `${Math.max(8, Math.min(left, innerWidth - compareDialog.offsetWidth - 8))}px`;
+    compareDialog.style.bottom = `${innerHeight - ui.bar.getBoundingClientRect().top + 8}px`;
+  }
+  function closeCompareDialog() {
+    if (compareBackdrop.hidden) return;
+    compareBackdrop.hidden = true;
+    compareButton.setAttribute('aria-expanded', 'false');
+    compareButton.classList.remove('open');
+    compareButton.focus();
+    poke();
+  }
+  function setCompareOpen(open) {
+    compareOpen = open;
+    const label = open ? 'Add to Compare' : 'Compare';
+    compareButton.title = label;
+    compareButton.setAttribute('aria-label', label);
+    $('startCompareLabel').textContent = label;
+    if (open) {
+      closeCompareDialog();
+      compareButton.removeAttribute('aria-haspopup');
+      compareButton.removeAttribute('aria-controls');
+      compareButton.removeAttribute('aria-expanded');
+    } else {
+      compareButton.setAttribute('aria-haspopup', 'dialog');
+      compareButton.setAttribute('aria-controls', 'startCompareDialog');
+      compareButton.setAttribute('aria-expanded', String(!compareBackdrop.hidden));
+    }
+  }
+  function requestComparison(confirmStart) {
+    vscode.postMessage({ type: 'toolbarCompare', confirmStart, t: player ? player.currentTime() : 0 });
+  }
+  compareButton.onclick = (e) => {
+    e.stopPropagation();
+    if (compareOpen) { requestComparison(false); return; }
+    controls.closeAll(false);
+    compareBackdrop.hidden = false;
+    compareButton.setAttribute('aria-expanded', 'true');
+    compareButton.classList.add('open');
+    placeCompareDialog();
+    cancelCompare.focus();
+  };
+  cancelCompare.onclick = closeCompareDialog;
+  confirmCompare.onclick = () => { closeCompareDialog(); requestComparison(true); };
+  compareBackdrop.onclick = (e) => { if (e.target === compareBackdrop) closeCompareDialog(); };
+  compareBackdrop.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); closeCompareDialog(); }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      (document.activeElement === cancelCompare ? confirmCompare : cancelCompare).focus();
+    }
+  });
+  window.addEventListener('resize', () => { if (!compareBackdrop.hidden) placeCompareDialog(); });
   setLoop(loop);
   updateCc();
 
@@ -1223,6 +1288,7 @@
       case 'exactFrame': exact.onReply(m).then(wakeLoop, () => {}); break;
       case 'toast': toast(m.text, Math.min(10000, Number(m.ms) || 900)); break;
       case 'addMode': showAddMode(m); break;
+      case 'compareOpen': setCompareOpen(!!m.open); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
       case 'pauseForTest': if (player && player.isPlaying()) { player.pause(); toast('Paused while ffmpeg is tested', 3000); } break;
       case 'prefs': if (m.prefs && m.prefs.jump) { Object.assign(prefs.jump, m.prefs.jump); if (m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons === 'jump' ? 'jump' : 'frame'; if (m.prefs.transcode) prefs.transcode = m.prefs.transcode; if (m.prefs.transcodeMaxBitrate !== undefined) prefs.transcodeMaxBitrate = Number(m.prefs.transcodeMaxBitrate) || 0; stepTips(); controls.refresh(); } break;
@@ -1313,7 +1379,7 @@
           const sc = document.getElementById('scopes');
           const xr = document.getElementById('xray');
           log(`modes report panel=${controls.view() || 'none'} sheet=${controls.sheetOpen()} tools=${TOOLS.length} ` +
-            `bar=${['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'picBtn', 'full'].map((k) => `${k}:${vis(ui[k]) ? 1 : 0}`).join(',')} ` +
+            `bar=${['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'picBtn', 'full'].map((k) => `${k}:${vis(ui[k] || $(k)) ? 1 : 0}`).join(',')} ` +
             `scopes=${scopes.mode() || 'off'} scopesVisible=${vis(sc)} info=${vis(ui.info)} xray=${vis(xr)} zoomed=${stage.classList.contains('zoom')} picture=${insp.picture().mode} ` +
             `frame=${player.currentFrame() + 1} t=${player.currentTime().toFixed(3)} playing=${player.isPlaying()}`);
         }, m.delay || 300);
@@ -1488,7 +1554,7 @@
           const unnamed = [...document.querySelectorAll('button')].filter((b) => (b.textContent || b.getAttribute('aria-label')) && !/[A-Za-z]/.test(b.getAttribute('aria-label') || b.textContent || '')).map((b) => b.id || b.className || b.textContent);
           const cs = a && a !== document.body ? getComputedStyle(a) : null;
           let fv = false; try { fv = !!a && a.matches(':focus-visible'); } catch { /* old engine */ }
-          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'picBtn', 'full', 'noticeClose', 'canvas'];
+          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'picBtn', 'full', 'noticeClose', 'canvas'];
           log(`a11y ${JSON.stringify({
             id: m.id,
             controls: Object.fromEntries(ids.map((k) => [k, attrs(byId(k))])),
@@ -1496,6 +1562,7 @@
             active: a ? (a.id || (a.dataset && a.dataset.tool) || a.getAttribute('aria-label') || (a.textContent || '').trim().slice(0, 40) || a.tagName) : '',
             activeRole: a ? a.getAttribute('role') || a.tagName.toLowerCase() : '',
             focusVisible: fv, outline: cs ? `${cs.outlineStyle} ${cs.outlineWidth}` : '',
+            startCompare: { hidden: compareBackdrop.hidden },
             panel: Object.assign(menuInfo(ui.panel), { view: controls.view(), radios: [...ui.panel.querySelectorAll('[role=radio], [role=switch]')].map((b) => ({ role: b.getAttribute('role'), checked: b.getAttribute('aria-checked') })) }),
             sheet: { hidden: ui.sheet.hidden, dialog: (() => { const d = ui.sheet.querySelector('[role=dialog]'); return d ? { label: d.getAttribute('aria-label'), modal: d.getAttribute('aria-modal'), groups: [...d.querySelectorAll('[role=group]')].map((g) => g.getAttribute('aria-label')) } : null; })() },
             unnamed, playing: player ? player.isPlaying() : null, muted, loop,

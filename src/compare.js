@@ -581,6 +581,8 @@ function registerCompare(context, deps) {
     const viewColumn = from && from.panel ? from.panel.viewColumn : col;
     const session = new CompareSession(context, list, { ...deps, transport, frameSource, pick: pickMany, viewColumn, start: t, addMode: addModeApi });
     armAddMode(session);
+    session.panel.onDidDispose(() => deps.compareOpenChanged?.());
+    deps.compareOpenChanged?.();
     // In place: the player's tab closes once compare has opened beside it in the same group.
     if (from && from.panel && !from.disposed) from.panel.dispose();
     return session;
@@ -824,7 +826,7 @@ function registerCompare(context, deps) {
       return [];
     }
   };
-  const addSelection = async (uri, uris) => {
+  const addSelection = async (uri, uris, { from, t, confirmStart } = {}) => {
     const selection = Array.isArray(uris) && uris.length ? uris : [uri];
     const videos = (await Promise.all(selection.map(selectionVideos))).flat();
     if (!videos.length) {
@@ -834,11 +836,13 @@ function registerCompare(context, deps) {
     if (promotion?.done) await promotion.done.catch(() => {});
     const compares = [...(compareSessions || [])].reverse().filter((s) => !s.disposed);
     const compare = compares.find((s) => s.panel.active) || compares[0];
+    // A click on Add to Compare can race the last Compare closing. Opening a new one requires confirmation.
+    if (from && (from.disposed || (!compare && !confirmStart))) return undefined;
     const players = [...deps.sessions].reverse().filter((s) => (
       !s.disposed && s.panel && !s.url && !s.sequence && s.uri && FS_SCHEMES.has(s.uri.scheme)
     ));
     const last = deps.lastActivePlayer?.();
-    const player = players.find((s) => s.panel.active) || (players.includes(last) ? last : players[0]);
+    const player = from || players.find((s) => s.panel.active) || (players.includes(last) ? last : players[0]);
     const { target, append, files, skipped } = planAddToCompare({
       videos, compare, player, max: maxVideos(), key: fileKey,
     });
@@ -846,30 +850,36 @@ function registerCompare(context, deps) {
       const label = skipped === 1 ? 'video' : 'videos';
       vscode.window.showInformationMessage(`Video Preview: skipped ${skipped} ${label} because Compare is full.`);
     }
-    if (append) { target.addUris(files); return target; }
+    if (append) {
+      target.addUris(files);
+      // The player's Add to Compare button: say what happened, since the Compare may be in another tab.
+      const text = files.length ? `Added to Compare (${target.uris.length} videos)` : skipped ? '' : 'Already in Compare';
+      if (from && text) from.post({ type: 'toast', text, ms: 2500 });
+      return target;
+    }
     const list = target ? [target.uri, ...files] : files;
-    const session = await open(list, { from: target, t: target?.pos?.t });
+    const session = await open(list, { from: target, t: Number.isFinite(t) ? t : target?.pos?.t });
     if (session) closeLeftovers(list, session.panel.viewColumn);
     return session;
   };
   // Resolve each selection and perform its action before looking up the next command's target.
   let selected = Promise.resolve();
-  const addToCompare = (uri, uris) => {
-    const action = selected.then(() => addSelection(uri, uris));
+  const addToCompare = (uri, uris, options) => {
+    const action = selected.then(() => addSelection(uri, uris, options));
     selected = action.catch(() => {});
     return action;
   };
   context.subscriptions.push(
     vscode.commands.registerCommand('videoPreviewEnhanced.comparePick', comparePick),
     vscode.commands.registerCommand('videoPreviewEnhanced.compareDrop', compareDrop),
-    vscode.commands.registerCommand('videoPreviewEnhanced.addToCompare', addToCompare),
+    vscode.commands.registerCommand('videoPreviewEnhanced.addToCompare', (uri, uris) => addToCompare(uri, uris)),
     vscode.commands.registerCommand('videoPreviewEnhanced.addFromExplorer', () => {
       // The palette: the active compare or player (the page posts its own Shift+D with its Session).
       const target = [...(compareSessions || [])].find((s) => s.panel.active) || [...deps.sessions].find((s) => s.panel && s.panel.active);
       return target ? toggleAddMode(target) : undefined;
     }),
     vscode.commands.registerCommand('videoPreviewEnhanced.stopAddFromExplorer', () => stopAddMode()),
-    vscode.commands.registerCommand('videoPreviewEnhanced.compareFolder', addToCompare),
+    vscode.commands.registerCommand('videoPreviewEnhanced.compareFolder', (uri, uris) => addToCompare(uri, uris)),
     vscode.commands.registerCommand('videoPreviewEnhanced.compare', async (uri, uris, opts) => {
       let list = Array.isArray(uris) && uris.length ? uris : uri ? [uri] : [];
       list = list.filter((u) => VIDEO_EXT.test(u.path));
@@ -902,7 +912,10 @@ function registerCompare(context, deps) {
       return open([a, ...files.slice(0, max - 1)], { from, t });
     }),
   );
-  return { claimOpen, noteOpen, toggleAddMode, stopAddMode };
+  return {
+    claimOpen, noteOpen, toggleAddMode, stopAddMode,
+    addFromPlayer: (player, t, confirmStart) => addToCompare(player.uri, undefined, { from: player, t, confirmStart }),
+  };
 }
 
 module.exports = { registerCompare, setPickHook, compareHtml, CompareSession, fileOfKey, MAX_TILES, maxVideos };

@@ -1,7 +1,7 @@
 'use strict';
 // The player's bar (seek bar and buttons), shared by the player (src/extension.js html()) and compare
 // (src/compare.js compareHtml), so both look and behave the same (docs/notes/ui-simple.md, docs/notes/compare-ui.md).
-// Compare leaves out CC and adds its own panel and reorder buttons.
+// Compare leaves out CC and the player's Compare button, and adds its own panel and reorder buttons.
 
 // Every bar icon: a 20 px box on a 24-unit grid, one stroke width with round caps and joins, in the text colour.
 // Transport glyphs (frame steps, play, pause) are solid: the same outline, filled, so their corners match the rest.
@@ -37,8 +37,17 @@ const pictures = [
 ].join('');
 
 const compareButton = `    <button id="cmpBtn" class="ib" title="Compare: videos, offsets, clock, sound" aria-label="Compare" aria-expanded="false" aria-controls="panel">${icons.compare}</button>\n`;
+/** The player's Compare button: starts Compare after a confirmation, or adds to an open one (`open`). */
+const playerCompareButton = (visible, open) => {
+  const label = open ? 'Add to Compare' : 'Compare';
+  const popup = open ? '' : ' aria-haspopup="dialog" aria-controls="startCompareDialog" aria-expanded="false"';
+  return `    <button id="startCompareBtn" class="ib" title="${label}" aria-label="${label}"${popup} data-open="${open ? 1 : 0}"` +
+    `${visible ? '' : ' hidden'}>${icons.compare}<span id="startCompareLabel">${label}</span></button>
+`;
+};
+
 /** The bar's markup; `compare`: the compare page's variant. */
-function barHtml({ compare = false } = {}) {
+function barHtml({ compare = false, canCompare = true, compareOpen = false } = {}) {
   return `<div id="bar">
   <div id="seekRow">
     <input id="seek" type="range" min="0" max="0" value="0" step="1" aria-label="Position">
@@ -57,7 +66,7 @@ function barHtml({ compare = false } = {}) {
 ${compare ? '    <button id="reorderBtn" class="ib" aria-controls="cells">Reorder</button>\n' : ''}
 ${compare ? '' : `    <button id="tracks" class="ib" title="Subtitles  C" aria-label="Subtitles" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="C" hidden><span class="ccline">${icons.cc}</span></button>
 `}
-${compare ? compareButton : ''}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I">${icons.about}</button>
+${compare ? compareButton : playerCompareButton(canCompare, compareOpen)}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I">${icons.about}</button>
     <button id="rate" class="ib speed mono" title="Speed: click, or scroll to change" aria-label="Speed 1×" aria-expanded="false" aria-controls="panel">1×</button>
     <button id="cog" class="ib" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="panel">${icons.settings}</button>
     <button id="picBtn" class="ib" data-mode="fit" title="Picture size: Fit. Click for Fill  Z" aria-label="Picture size: Fit. Next: Fill" aria-keyshortcuts="Z">${pictures}</button>
