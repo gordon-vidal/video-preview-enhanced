@@ -96,16 +96,11 @@ for (const entry of map.SMOKE) {
   assert.ok(doc.includes(`\`${entry.name}\``), `docs/TESTING.md no longer names smoke scenario ${entry.name}`);
 }
 
-// End-to-end CLI check: `node test/run.js vscode --smoke --explain` prints the smoke preset without launching VS Code.
-const { spawnSync } = require('child_process');
-const cli = spawnSync(process.execPath, [path.join(__dirname, '..', 'run.js'), 'vscode', '--smoke', '--explain'], {
-  cwd: path.join(__dirname, '..', '..'),
-  encoding: 'utf8',
-  windowsHide: true,
-});
-assert.strictEqual(cli.status, 0, `run.js vscode --smoke --explain failed: ${cli.stderr || cli.stdout}`);
-assert.match(cli.stdout, new RegExp(`smoke preset \\(${map.SMOKE.length} of ${real.length} scenarios\\):`));
-for (const entry of map.SMOKE) assert.ok(cli.stdout.includes(entry.name), `--smoke --explain missing ${entry.name}`);
+// Check the same formatter the CLI uses without starting the runner and its own child process
+// inside a parallel unit worker.
+const realSmokeLines = map.explainSmoke(realSmoke, require('../vscode/scenario_list'));
+assert.strictEqual(realSmokeLines[0], `smoke preset (${map.SMOKE.length} of ${real.length} scenarios):`);
+for (const entry of map.SMOKE) assert.ok(realSmokeLines.some((line) => line.trimStart().startsWith(`${entry.name} `)));
 
 // Timing: the clock charges the phase it is in; the record adds retries and what no phase claims.
 let now = 1000;
