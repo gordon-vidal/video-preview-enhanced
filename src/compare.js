@@ -713,10 +713,12 @@ function registerCompare(context, deps) {
     return true;
   };
   /** A player tab (a single click's preview tab, say) that still shows a compared video: closed, no duplicate left. */
-  const closeLeftovers = (list, viewColumn) => {
+  const closeLeftovers = (list, viewColumn, closingTabs = new Set()) => {
     try {
       const tabs = leftoverTabs(vscode.window.tabGroups.all || [], list.map(String), viewColumn);
-      for (const tb of tabs) Promise.resolve(vscode.window.tabGroups.close(tb)).catch(() => {});
+      for (const tb of tabs) {
+        if (!closingTabs.has(tb)) Promise.resolve(vscode.window.tabGroups.close(tb)).catch(() => {});
+      }
     } catch { /* tab API missing */ }
   };
   /** The first time videos open together: say what happened and where to turn it off (never again after). */
@@ -735,26 +737,28 @@ function registerCompare(context, deps) {
   const burst = createBurst({
     windowMs: Number(process.env.VPE_BURST_MS) > 0 ? Number(process.env.VPE_BURST_MS) : BURST_WINDOW_MS,
     max: maxVideos,
-    onBurst: async ({ items, extra }) => {
+    onBurst: async ({ items, extra, viewColumn }) => {
       if (addMode.active || !openTogether()) return false;
       const list = items.map((i) => i.uri).filter((u) => FS_SCHEMES.has(u.scheme) && VIDEO_EXT.test(u.path));
       if (list.length < 2) return false;
       deps.log(`compare: ${list.length} videos opened together -> one compare${extra.length ? `, ${extra.length} more stay as tabs` : ''}`);
       const first = items[0];
-      const from = playerOf(first.uri);
-      const tabCol = first.tabs[0] && first.tabs[0].group ? first.tabs[0].group.viewColumn : (first.panels[0] && first.panels[0].viewColumn);
+      const from = playerOf(first.uri, viewColumn);
       try {
         // A burst never turns Add Mode on (src/addmode.js startsInAddMode): the user asked for these videos, not for more.
-        await open(list, { from, t: 0, viewColumn: tabCol, origin: 'burst' });
+        await open(list, { from, t: 0, viewColumn, origin: 'burst' });
       } catch (e) {
         deps.log(`compare: open together failed: ${e && e.stack || e}`);
         return false; // the held players start as usual
       }
+      const tabs = new Set(items.flatMap((it) => it.tabs));
       for (const it of items) {
-        for (const pn of it.panels) { try { pn.dispose(); } catch { /* gone already */ } }
-        for (const tb of it.tabs) Promise.resolve(vscode.window.tabGroups.close(tb)).catch(() => {});
+        for (const pn of it.panels) {
+          if (pn !== from?.panel) { try { pn.dispose(); } catch { /* gone already */ } }
+        }
       }
-      closeLeftovers(list, tabCol);
+      for (const tab of tabs) Promise.resolve(vscode.window.tabGroups.close(tab)).catch(() => {});
+      closeLeftovers(list, viewColumn, tabs);
       noticeTogether(list.length);
       if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
       return true;
@@ -785,12 +789,33 @@ function registerCompare(context, deps) {
   };
   // Videos opened in an editor that is not the player (VS Code's own preview, a text tab): their new tab closes.
   if (vscode.window.tabGroups && vscode.window.tabGroups.onDidChangeTabs) {
+    const isPlayerTab = (tab) => tab.input?.uri && typeof tab.input.viewType === 'string'
+      && tab.input.viewType.startsWith('videoPreviewEnhanced.');
+    const previewState = new WeakMap();
+    for (const group of vscode.window.tabGroups.all || []) {
+      for (const tab of group.tabs) {
+        if (isPlayerTab(tab)) previewState.set(tab, tab.isPreview);
+      }
+    }
     context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs((e) => {
+      for (const tab of e.closed || []) previewState.delete(tab);
+      for (const tab of e.changed || []) {
+        if (!isPlayerTab(tab)) { previewState.delete(tab); continue; }
+        // VS Code reuses the tab on drop. Its current state already reflects the change.
+        if (previewState.get(tab) === true && tab.isPreview === false) {
+          noteOpen(tab.input.uri, { tab, changed: true });
+        }
+        previewState.set(tab, tab.isPreview);
+      }
       for (const tab of e.opened || []) {
         const inp = tab.input || {};
         if (!inp.uri) continue;
         if (addMode.active && FS_SCHEMES.has(inp.uri.scheme) && VIDEO_EXT.test(inp.uri.path)) openingVideos.add(tab);
-        if (typeof inp.viewType === 'string' && inp.viewType.startsWith('videoPreviewEnhanced.')) { noteOpen(inp.uri, { tab }); continue; }
+        if (isPlayerTab(tab)) {
+          previewState.set(tab, tab.isPreview);
+          noteOpen(inp.uri, { tab });
+          continue;
+        }
         if (addMode.active && claimOpen(inp.uri)) Promise.resolve(vscode.window.tabGroups.close(tab)).catch(() => {});
       }
       scheduleEditorCheck();
@@ -811,10 +836,15 @@ function registerCompare(context, deps) {
     for (const s of deps.sessions) if (s.panel && s.panel.active && !s.sequence && !s.url) return s.uri;
     return null;
   };
-  /** The open player showing `uri` (the active one first): compare replaces it in place. */
-  const playerOf = (uri) => {
+  /**
+   * The open player showing `uri` (the active one first): compare replaces it in place.
+   * @param {import('vscode').Uri} uri
+   * @param {number} [viewColumn]
+   */
+  const playerOf = (uri, viewColumn) => {
     const key = uri.toString();
-    const all = [...deps.sessions].filter((s) => s.panel && !s.sequence && !s.url && s.uri && s.uri.toString() === key);
+    const all = [...deps.sessions].filter((s) => s.panel && !s.sequence && !s.url && s.uri && s.uri.toString() === key
+      && (viewColumn === undefined || s.panel.viewColumn === viewColumn));
     return all.find((s) => s.panel.active) || all.find((s) => s.panel.visible) || null;
   };
   /** The quick pick's rows for video `a`: its folder, the workspace, Browse… (src/comparepick.js). */

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed: dragging selected videos from the Explorer into the editor includes any video already open in a preview tab.
+
 - New: **Export A–B Clip…** saves a lossless video excerpt with native ffmpeg. Compare shares an **A** / **B** loop and can save one clip per tile with its offset applied. Marks set during built-in or native ffmpeg playback give exact clips (native ffmpeg now reports each picture's own timestamp, so HEVC, AV1, ProRes and variable-frame-rate files work without switching decoder). Marks set during Live transcode, whose pictures are re-timed, are refused at once with a **Use original video** button.
 - Fixed: WebCodecs keeps visible frames and hides decode preroll when MP4 edit segments share timestamps.
 - Fixed: Compare and the single player agree on frame numbers for rounded timestamps and rates close to standard rates.
