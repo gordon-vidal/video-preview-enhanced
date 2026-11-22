@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.9.1 (2026-11-23)
+
+Refined player and Compare controls (themed in-page context menu, step-size badge, folding volume slider, A/B range buttons and draggable pins, grouped Settings and Info panels, animated Compare tile reorder drag, shared playback preferences with default-muted tabs), plus Chocolatey/Scoop ffmpeg shim support and exact frames during reduced-quality native playback.
+
 - Fixed: unmuting a video that started playing with its audio context suspended no longer freezes playback or jumps the clock backward.
 - New tabs start muted by default (unmute with the mute button, **M** or the volume slider); videos without an audio track show a dimmed, disabled mute button. Volume, playback speed, the time display format (time, SMPTE timecode, frame number) and the step size are shared: every open player and Compare tab follows a change at once, and they are remembered across videos and VS Code sessions.
 - The frame-step buttons have a small badge showing how far they jump; it appears when you point at them; click it to pick 1 frame, 5 frames, 1 s, 5 s or 10 s. The volume slider folds behind the mute button and opens when you point at it. In narrow panes the bar hides less-used buttons step by step (still available from ⚙, the right-click menu and keys). In Compare's Reorder mode, the **×** on a tile still removes it.
