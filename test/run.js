@@ -161,7 +161,6 @@ async function pool(items, jobs, fn) {
 
 /** Makes the generated clips the entries name, once and one at a time (parallel tests would each start ffmpeg on them). */
 function prepareMedia(entries) {
-  if (entries.some((e) => e.trackMedia)) require('./tracks/make_media').ensure();
   const names = [...new Set(entries.flatMap((e) => e.media || []))];
   if (!names.length) return;
   const media = require('./media/make_cases_media');
