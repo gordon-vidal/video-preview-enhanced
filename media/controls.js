@@ -73,7 +73,7 @@ const VpeControls = (() => {
     if (bPct !== null) pinB.style.left = `${bPct}%`;
   }
 
-  /** The [ ] buttons beside the time: pressed while that end of the A-B range is set. */
+  /** The A / B buttons beside the time: pressed while that end of the A-B range is set. */
   function drawRangeButtons(/** @type {HTMLElement} */ btnA, /** @type {HTMLElement} */ btnB, /** @type {{a: number|null, b: number|null}} */ ab) {
     btnA.setAttribute('aria-pressed', String(ab.a !== null));
     btnB.setAttribute('aria-pressed', String(ab.b !== null));
@@ -103,10 +103,58 @@ const VpeControls = (() => {
   /** Jump sizes: one frame or seconds (settings videoPreviewEnhanced.jump.arrow / jump.shift / jump.ctrl). */
   const NAV = ['frame', 1, 5, 10, 30];
   const navName = (v) => (v === 'frame' ? '1 frame' : `${v} s`);
-  /** Tooltips and labels of the buttons beside Play for prefs.stepButtons ('frame' | 'jump', then the Ctrl jump size). */
+  /**
+   * Step sizes of the buttons beside Play, picked with the small badge on them (this tab only, like the picture
+   * size button): one frame, five frames, or seconds. Until a pick the setting stepButtons decides (stepSizeOf).
+   */
+  const STEP_SIZES = ['frame', 'frames5', 1, 5, 10];
+  const stepName = (v) => (v === 'frame' ? '1 frame' : v === 'frames5' ? '5 frames' : `${v} s`);
+  const stepBadge = (v) => (v === 'frame' ? '1f' : v === 'frames5' ? '5f' : `${v}s`);
+  /** @param {{stepSize?: any, stepButtons?: string, jump: {ctrl: any}}} p */
+  const stepSizeOf = (p) => (p.stepSize !== undefined && p.stepSize !== null ? p.stepSize : p.stepButtons === 'jump' ? p.jump.ctrl : 'frame');
+  /** How many frames (n) or seconds (s) one press of a step button moves. */
+  const stepAmount = (v) => (v === 'frame' ? { n: 1 } : v === 'frames5' ? { n: 5 } : { s: Number(v) });
+  /** The badges on the two step buttons: the size, quiet at the default one frame (data-default, media/player.css). */
+  function drawStepBadges(/** @type {HTMLElement[]} */ badges, v) {
+    for (const b of badges) {
+      if (!b) continue;
+      b.textContent = stepBadge(v);
+      b.dataset.default = v === 'frame' ? '1' : '0';
+      b.title = `Step size: ${stepName(v)}. Click to change`;
+      b.setAttribute('aria-label', `Step size: ${stepName(v)}`);
+    }
+  }
+  /**
+   * The volume slider folds behind Mute (media/player.css .vol-wrap); while it is dragged its wrapper keeps it open
+   * (.dragging), so a drag that leaves the pair does not shut the slider under the pointer.
+   */
+  function holdVolumeOpen(/** @type {HTMLElement} */ input) {
+    const wrap = input.closest('.vol-wrap');
+    const win = input.ownerDocument.defaultView;
+    if (!wrap || !win) return;
+    const end = () => {
+      wrap.classList.remove('dragging');
+      win.removeEventListener('pointerup', end, true);
+      win.removeEventListener('pointercancel', end, true);
+    };
+    input.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      wrap.classList.add('dragging');
+      win.addEventListener('pointerup', end, true);
+      win.addEventListener('pointercancel', end, true);
+    });
+  }
+  /** Tooltips and labels of the buttons beside Play for the step size (stepSizeOf), else prefs.stepButtons. */
   const stepTips = (p) => {
     const ctrl = /Mac/i.test((typeof navigator !== 'undefined' && navigator.platform) || '') ? 'Cmd' : 'Ctrl';
-    if (p.stepButtons === 'jump') {
+    if (p.stepSize !== undefined && p.stepSize !== null && p.stepSize !== 'frame') {
+      const what = stepName(p.stepSize);
+      return {
+        back: `Back ${what}  (size: badge above)`, fwd: `Forward ${what}  (size: badge above)`,
+        backLabel: `Back ${what}`, fwdLabel: `Forward ${what}`,
+      };
+    }
+    if (p.stepSize !== 'frame' && p.stepButtons === 'jump') {
       const n = p.jump.ctrl;
       const what = n === 'frame' ? 'one frame' : `${n} s`;
       return {
@@ -274,7 +322,7 @@ const VpeControls = (() => {
    */
   function create(env) {
     const { panel, sheet, bar, buttons } = env;
-    /** @type {null|'main'|'speed'|'ab'|'inspect'|'picture'|'transcode'|'subs'|'audio'|'quality'|'info'} */
+    /** @type {null|'main'|'speed'|'ab'|'inspect'|'picture'|'transcode'|'subs'|'audio'|'quality'|'info'|'step'} */
     let view = null;
     /** @type {HTMLElement|null} */
     let opener = null;
@@ -464,6 +512,16 @@ const VpeControls = (() => {
       return f;
     }
 
+    /** The step size popover (badge on ◀| / |▶): the sizes; a pick applies to both buttons and closes it. */
+    function renderStep(s) {
+      const f = document.createDocumentFragment();
+      const cur = s.stepSize;
+      const sizes = STEP_SIZES.includes(cur) ? STEP_SIZES : [...STEP_SIZES, cur]; // e.g. 30 s from the setting
+      const g = radios('Step size', sizes.map((v) => ({ label: stepName(v), checked: v === cur, pick: () => { env.act.stepSize(v); close(true); } })));
+      f.appendChild(g);
+      return f;
+    }
+
     function radios(name, list) {
       const g = el('div', 'radios');
       g.setAttribute('role', 'radiogroup');
@@ -593,7 +651,7 @@ const VpeControls = (() => {
       return f;
     }
 
-    const LABEL = { main: 'Player settings', speed: 'Speed', ab: 'A–B Range', inspect: 'Inspection', picture: 'Picture size', transcode: 'Live transcode', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video' };
+    const LABEL = { main: 'Player settings', speed: 'Speed', ab: 'A–B Range', inspect: 'Inspection', picture: 'Picture size', transcode: 'Live transcode', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video', step: 'Step size' };
     /**
      * Pages a page adds (compare's panel and its per-video page): { label, render(s, kit), parent?, button? }.
      * `button`: the bar button (env.buttons key) that shows it open; `parent`: where Esc goes.
@@ -612,7 +670,7 @@ const VpeControls = (() => {
       panel.className = `panel ${view}`;
       const custom = VIEWS[view];
       panel.setAttribute('aria-label', custom ? (typeof custom.label === 'function' ? custom.label(s) : custom.label) : view === 'info' && s.infoTabs ? 'About these videos' : LABEL[view]);
-      const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'speed' ? renderSpeed(s) : view === 'ab' ? renderAB(s) : view === 'inspect' ? renderInspect(s) : view === 'picture' ? renderPicture(s) : view === 'transcode' ? renderTranscode(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : renderInfo(s);
+      const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'speed' ? renderSpeed(s) : view === 'ab' ? renderAB(s) : view === 'inspect' ? renderInspect(s) : view === 'picture' ? renderPicture(s) : view === 'transcode' ? renderTranscode(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : view === 'step' ? renderStep(s) : renderInfo(s);
       panel.appendChild(body);
       const after = /** @type {HTMLElement[]} */ ([...panel.querySelectorAll('[data-nav]')]);
       if (fi >= 0 && after.length) after[Math.min(fi, after.length - 1)].focus();
@@ -623,13 +681,22 @@ const VpeControls = (() => {
       const r = bar.getBoundingClientRect();
       panel.style.bottom = `${Math.max(8, window.innerHeight - r.top + 8)}px`;
       panel.style.maxHeight = `${Math.max(120, r.top - 16)}px`;
+      // The step size popover sits right above the step button it was opened from; the other pages at the bar's right end.
+      if (view === 'step' && opener) {
+        const o = opener.getBoundingClientRect();
+        const w = panel.offsetWidth;
+        panel.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, o.left + o.width / 2 - w / 2)))}px`;
+        panel.style.right = 'auto';
+      } else { panel.style.left = ''; panel.style.right = ''; }
     }
     /** Bar buttons show which panel is open. */
     function sync() {
       const set = (b, on) => { if (b) { b.setAttribute('aria-expanded', String(on)); b.classList.toggle('open', on); } };
       const own = view && VIEWS[view] ? VIEWS[view].button : null;
       set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'ab' || view === 'inspect' || view === 'picture' || view === 'transcode' || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
-      for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks'].includes(k)) set(b, !!own && own === k);
+      for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks', 'stepPrev', 'stepNext'].includes(k)) set(b, !!own && own === k);
+      set(buttons.stepPrev, view === 'step' && opener === buttons.stepPrev);
+      set(buttons.stepNext, view === 'step' && opener === buttons.stepNext);
       set(buttons.info, view === 'info');
       set(buttons.rate, view === 'speed' && opener === buttons.rate);
       set(buttons.tracks, view === 'subs' && opener === buttons.tracks);
@@ -641,7 +708,7 @@ const VpeControls = (() => {
       view = v;
       panel.hidden = false;
       render();
-      const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' ? panel.querySelector('[aria-checked="true"]') : null) || panel.querySelector('[data-nav]'));
+      const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' || v === 'step' ? panel.querySelector('[aria-checked="true"]') : null) || panel.querySelector('[data-nav]'));
       if (first) first.focus();
     }
     /** A bar button: opens its page, or closes it when it is the page shown. */
@@ -768,6 +835,7 @@ const VpeControls = (() => {
   return {
     create, createToast, createPlayFlash, drawRangeMarks, drawRangeButtons, facts, keyGroups, qualityRows, qualityLabel,
     clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
+    STEP_SIZES, stepName, stepBadge, stepSizeOf, stepAmount, drawStepBadges, holdVolumeOpen,
   };
 })();
 

@@ -66,7 +66,11 @@ function element(parent) {
   }
   const css = fs.readFileSync(path.join(__dirname, '../../media/player.css'), 'utf8');
   assert.match(css, /\.ab-pin \{[^}]*pointer-events: auto;[^}]*cursor: ew-resize;/, 'pins take the mouse');
-  assert.match(css, /@media \(max-width: 520px\) \{\s*#infoBtn, #row #time #dur, #row button\.rng \{ display: none; \}/, 'range buttons hide on narrow panes');
+  assert.match(css, /@media \(max-width: 640px\) \{\s*#row button\.rng, #row #infoBtn, #row #time #dur \{ display: none; \}/, 'range buttons hide on narrow panes');
+  // The A / B buttons show their key letters (like the seek bar's pins), not an icon.
+  const bar = fs.readFileSync(path.join(__dirname, '../../src/bar.js'), 'utf8');
+  assert.match(bar, /aria-keyshortcuts="A">\$\{rangeLabel\('A'\)\}<\/button>/);
+  assert.match(bar, /aria-keyshortcuts="B">\$\{rangeLabel\('B'\)\}<\/button>/);
 }
 
 {

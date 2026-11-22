@@ -45,7 +45,7 @@
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), tip: $('tip'), time: $('time'), now: $('now'), dur: $('dur'),
     mute: $('mute'), volume: $('volume'), rate: $('rate'), cog: $('cog'), infoBtn: $('infoBtn'), picBtn: $('picBtn'), cmpBtn: $('cmpBtn'), full: $('full'),
     panel: $('panel'), sheet: $('sheet'), menu: $('menu'), toast: $('toast'), live: $('live'), abMarks: $('abMarks'),
-    abA: $('abA'), abB: $('abB'), setABtn: $('setABtn'), setBBtn: $('setBBtn'),
+    abA: $('abA'), abB: $('abB'), setABtn: $('setABtn'), setBBtn: $('setBBtn'), prevSize: $('prevSize'), nextSize: $('nextSize'),
     overlay: $('overlay'), message: $('message'), hint: $('hint'),
   };
   const names = cfg.names || ['A', 'B'];
@@ -81,6 +81,8 @@
     ...cfg.prefs,
     jump: { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1, ...cfg.prefs?.jump },
     stepButtons: cfg.prefs?.stepButtons || 'frame',
+    // The step buttons' size picked with their badge (this tab, kept over a reload); null: the setting stepButtons.
+    stepSize: VpeControls.STEP_SIZES.includes(saved.stepSize) ? saved.stepSize : null,
   };
   const Pic = VpePicture;
   const st = {
@@ -1071,7 +1073,6 @@
       if (!c.add && !c.split) d.dataset.tile = String(c.tiles[0]);
       Object.assign(d.style, { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` });
       for (const ov of d.querySelectorAll('.ov')) {
-        ov.inert = reordering;
         // A narrow letterboxed picture still gets the whole cell's width for its controls.
         const box = largeGrid ? c : c.pic;
         Object.assign(ov.style, {
@@ -1092,7 +1093,12 @@
     });
     stage.classList.toggle('pannable', cells.some(overflows));
     updateOverlays();
+    reorderInert();
     placeTileMotion(performance.now());
+  }
+  /** Reorder mode: a tile's controls sleep (a press drags the tile) except its × remove button, which still removes it. */
+  function reorderInert() {
+    for (const x of cellsEl.querySelectorAll('.ov > *')) /** @type {HTMLElement} */ (x).inert = reordering && !x.classList.contains('rm');
   }
 
   /** True when the picture is larger than its cell on some side (it can be dragged). */
@@ -1137,6 +1143,7 @@
         d.querySelector('.move').innerHTML = arrows(c.tiles[0]);
       }
     });
+    reorderInert();
     lastFr = '';
   }
   let lastFr = '';
@@ -1593,7 +1600,7 @@
     clearTimeout(saveTimer);
     vscode.setState({
       pic: st.pic.mode, mode: st.mode, split: st.split, order: st.order, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
-      rate: st.rate, volume: st.volume, muted: st.muted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode,
+      rate: st.rate, volume: st.volume, muted: st.muted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode, stepSize: prefs.stepSize,
       ab: { a: ab.a, b: ab.b, aPts: ab.aPts, bPts: ab.bPts, aNative: ab.aNative, bNative: ab.bNative },
       t: t ?? (pendingStart || (clock && begun && clock.startT !== null ? clock.currentTime() : saved.t || 0)),
       ...changes,
@@ -1750,9 +1757,9 @@
 
   const controls = VpeControls.create({
     panel: ui.panel, sheet: ui.sheet, bar: ui.bar,
-    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, cmp: ui.cmpBtn, tracks: null },
+    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, cmp: ui.cmpBtn, tracks: null, stepPrev: ui.prevSize, stepNext: ui.nextSize },
     get: () => ({
-      rate: st.rate, loop: st.loop, jump: prefs.jump, stepButtons: prefs.stepButtons, picture: picState(), compare: { soundLabel: `from ${tileLabel(st.sound)}` },
+      rate: st.rate, loop: st.loop, jump: prefs.jump, stepButtons: prefs.stepButtons, stepSize: VpeControls.stepSizeOf(prefs), picture: picState(), compare: { soundLabel: `from ${tileLabel(st.sound)}` },
       abLabel: ab.label(fmtAB),
       tools: [
         { label: 'Compare', note: `${N} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', ui.cmpBtn) },
@@ -1768,6 +1775,7 @@
       canExternal: false,
     }),
     act: {
+      stepSize: (v) => { prefs.stepSize = v; updateStepTips(); save(); toast(`Step buttons: ${VpeControls.stepName(v)}`); },
       cycleAB: () => markAB(),
       loop: () => { setLoop(!st.loop); toast(st.loop ? 'Loop on' : 'Loop off'); },
       copyFrame: () => copyView(),
@@ -1914,7 +1922,7 @@
   }
 
   stage.addEventListener('pointerdown', (e) => {
-    if (!reordering || reorderDrag || e.button !== 0 || e.target.closest('[data-act="move"]')) return;
+    if (!reordering || reorderDrag || e.button !== 0 || e.target.closest('[data-act="move"], .rm')) return;
     const r = stage.getBoundingClientRect(), c = cells[0];
     // Keep the target boundary fixed while previewing two videos of different shapes.
     // A divider at either edge still leaves a target for each video.
@@ -2070,10 +2078,11 @@
       e.stopPropagation();
       const i = Number(el.dataset.i);
       if (el.dataset.act === 'move') moveWithArrow(el);
+      // × works in Reorder mode too (the stage's drag ignores a press on it).
+      else if (el.dataset.act === 'remove') removeTile(i);
       else if (reordering) return;
       else if (el.dataset.act === 'openVid') { closeMenu(); st.sel = i; controls.show('cmpVid', ui.cmpBtn); }
       else if (el.dataset.act === 'nudge') nudge(i, Number(el.dataset.d));
-      else if (el.dataset.act === 'remove') removeTile(i);
       else if (el.dataset.act === 'add') addVideo();
     }
   });
@@ -2196,20 +2205,29 @@
   }
 
   ui.play.onclick = togglePlay;
-  // The buttons beside Play: one frame (lockstep), or the Ctrl+arrow jump (setting stepButtons, as in the player).
-  const stepBtn = (d) => (prefs.stepButtons === 'jump' ? jump(prefs.jump.ctrl, d) : step(d));
+  // The buttons beside Play: the size picked with their badge, else one frame (lockstep) or the Ctrl+arrow jump
+  // (setting stepButtons), as in the player.
+  const stepBtn = (d) => {
+    const a = VpeControls.stepAmount(VpeControls.stepSizeOf(prefs));
+    if (a.n) step(d * a.n); else skip(d * a.s);
+  };
   ui.prev.onclick = () => stepBtn(-1);
   ui.next.onclick = () => stepBtn(1);
+  // The badge on a step button opens the size popover above it; the click never reaches the step button or the bar.
+  for (const b of [ui.prevSize, ui.nextSize]) b.addEventListener('click', (e) => { e.stopPropagation(); controls.toggle('step', b); });
   function updateStepTips() {
     const tips = VpeControls.stepTips(prefs);
-    ui.prev.title = prefs.stepButtons === 'jump' ? tips.back : 'Previous frame (all videos)  ,';
-    ui.next.title = prefs.stepButtons === 'jump' ? tips.fwd : 'Next frame (all videos)  .';
-    ui.prev.setAttribute('aria-label', tips.backLabel);
-    ui.next.setAttribute('aria-label', tips.fwdLabel);
+    const frame = VpeControls.stepSizeOf(prefs) === 'frame';
+    ui.prev.title = frame ? 'Previous frame (all videos)  ,' : tips.back;
+    ui.next.title = frame ? 'Next frame (all videos)  .' : tips.fwd;
+    ui.prev.setAttribute('aria-label', frame ? 'Previous frame' : tips.backLabel);
+    ui.next.setAttribute('aria-label', frame ? 'Next frame' : tips.fwdLabel);
+    VpeControls.drawStepBadges([ui.prevSize, ui.nextSize], VpeControls.stepSizeOf(prefs));
   }
   updateStepTips();
   ui.mute.onclick = () => setMute(!st.muted);
   VpeRangeDrag.bind(ui.volume);
+  VpeControls.holdVolumeOpen(ui.volume);
   ui.volume.addEventListener('input', () => setVolume(Number(ui.volume.value)));
   ui.volume.addEventListener('wheel', (e) => { e.preventDefault(); setVolume(st.volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(st.volume * 100)}%`); }, { passive: false });
   ui.time.onclick = () => { st.timeMode = (st.timeMode + 1) % 3; lastUi = ''; updateUi(); save(); toast(['Time', 'Timecode', 'Frame number'][st.timeMode]); };

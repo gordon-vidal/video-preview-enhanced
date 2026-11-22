@@ -19,6 +19,7 @@
     infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), picBtn: $('picBtn'),
     panel: $('panel'), sheet: $('sheet'), toast: $('toast'), abMarks: $('abMarks'), tracks: $('tracks'),
     abA: $('abA'), abB: $('abB'), setABtn: $('setABtn'), setBBtn: $('setBBtn'),
+    prevSize: $('prevSize'), nextSize: $('nextSize'),
   };
 
   const log = (/** @type {any[]} */ ...a) => vscode.postMessage({ type: 'log', msg: a.map(String).join(' ') });
@@ -37,6 +38,8 @@
   const prefs = {
     jump: { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1, ...((cfg.prefs && cfg.prefs.jump) || {}) },
     stepButtons: (cfg.prefs && cfg.prefs.stepButtons) === 'jump' ? 'jump' : 'frame',
+    // The step buttons' size picked with their badge (this tab, kept over a reload); null: the setting stepButtons.
+    stepSize: VpeControls.STEP_SIZES.includes(saved.stepSize) ? saved.stepSize : null,
     transcode: (cfg.prefs && cfg.prefs.transcode) || 'ask',
     transcodeMaxBitrate: Number(cfg.prefs && cfg.prefs.transcodeMaxBitrate) || 0,
   };
@@ -440,7 +443,7 @@
         lastSave = now;
         // Only when something changed: a paused page wrote the same state and position every second.
         const state = { t: player.currentTime(), rate, volume, muted, loop, subs: subs.state(), timeMode,
-          reducedResDismissed, slowNoticeDismissed, ...(switchPlay !== null ? { play: switchPlay } : {}) };
+          reducedResDismissed, slowNoticeDismissed, stepSize: prefs.stepSize, ...(switchPlay !== null ? { play: switchPlay } : {}) };
         const json = JSON.stringify([state, player.meta.duration || 0]);
         if (json !== lastSaved) {
           lastSaved = json;
@@ -804,15 +807,27 @@
     });
   }
   ui.play.onclick = togglePlay;
-  // The buttons beside Play: one frame, or the Ctrl+arrow jump size (setting stepButtons).
-  const stepButton = (dir) => (prefs.stepButtons === 'jump' ? jump(prefs.jump.ctrl, dir) : step(dir));
+  // The buttons beside Play: the size picked with their badge, else one frame or the Ctrl+arrow jump (setting stepButtons).
+  const stepButton = (dir) => {
+    const a = VpeControls.stepAmount(VpeControls.stepSizeOf(prefs));
+    if (a.n) step(dir * a.n); else skip(dir * a.s);
+  };
   function stepTips() {
     const t = VpeControls.stepTips(prefs);
     ui.prev.title = t.back; ui.prev.setAttribute('aria-label', t.backLabel);
     ui.next.title = t.fwd; ui.next.setAttribute('aria-label', t.fwdLabel);
+    VpeControls.drawStepBadges([ui.prevSize, ui.nextSize], VpeControls.stepSizeOf(prefs));
+  }
+  function setStepSize(v) {
+    prefs.stepSize = v;
+    stepTips();
+    vscode.setState({ ...(vscode.getState() || {}), stepSize: v });
+    toast(`Step buttons: ${VpeControls.stepName(v)}`);
   }
   ui.prev.onclick = () => stepButton(-1);
   ui.next.onclick = () => stepButton(1);
+  // The badge on a step button opens the size popover above it; the click never reaches the step button or the bar.
+  for (const b of [ui.prevSize, ui.nextSize]) b.addEventListener('click', (e) => { e.stopPropagation(); if (controls) controls.toggle('step', b); });
   stepTips();
   ui.mute.onclick = () => setMute(!muted);
   ui.volume.addEventListener('input', () => setVolume(Number(ui.volume.value)));
@@ -823,6 +838,7 @@
       e.clientY < r.top - 4 || e.clientY > r.bottom + 4) hideTip();
   });
   const volumeDragger = VpeRangeDrag.bind(ui.volume);
+  VpeControls.holdVolumeOpen(ui.volume);
   ui.full.onclick = toggleFullscreen;
   ui.time.onclick = () => {
     // A live stream shows only the time since it started (no timecode or frame count to cycle to).
@@ -1159,11 +1175,11 @@
   const pictureState = () => { const v = insp.picture(); return { mode: v.mode, pct: player && player.meta && player.meta.width ? insp.zoomPercent() : null, zoomed: v.zoom !== 1 }; };
   controls = VpeControls.create({
     panel: ui.panel, sheet: ui.sheet, bar: ui.bar,
-    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, tracks: ui.tracks },
+    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, tracks: ui.tracks, stepPrev: ui.prevSize, stepNext: ui.nextSize },
     get: () => {
       const d = subs.panelData();
       return {
-        rate, loop, jump: prefs.jump, stepButtons: prefs.stepButtons, abLabel: abLabel(), picture: pictureState(), tools: TOOLS, ab: { items: AB_ITEMS },
+        rate, loop, jump: prefs.jump, stepButtons: prefs.stepButtons, stepSize: VpeControls.stepSizeOf(prefs), abLabel: abLabel(), picture: pictureState(), tools: TOOLS, ab: { items: AB_ITEMS },
         subsLabel: d.subs.length ? d.label : 'None in file',
         audioLabel: d.audio.length ? (d.audio.find((a) => a.checked) || d.audio[0]).main : (player && player.info && player.info.audio) || (player && player.audio) ? 'Only one' : 'None',
         hasSound: !!(player && ((player.info && player.info.audio) || player.audio)),
@@ -1174,6 +1190,7 @@
       };
     },
     act: {
+      stepSize: setStepSize,
       loop: () => { setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); },
       cycleAB: () => cycleAB(),
       copyFrame: () => copyFrame(),

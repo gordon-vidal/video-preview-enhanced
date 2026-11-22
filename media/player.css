@@ -417,12 +417,44 @@ body.idle { cursor: none; }
 /* Picture size button: the icon of the current mode (media/picture.js). */
 #picBtn svg { display: none; }
 #picBtn[data-mode="fit"] .i-fit, #picBtn[data-mode="fill"] .i-fill, #picBtn[data-mode="stretch"] .i-stretch, #picBtn[data-mode="actual"] .i-actual { display: block; }
-#volume { width: 84px; margin: 0 12px 0 2px; accent-color: var(--vscode-foreground); flex: none; }
+/* Volume: folded behind Mute until the pointer or focus is on the pair, or a drag is under way (media/player.js and
+   media/compare.js set .dragging from pointerdown to pointerup / pointercancel, so leaving the slider mid-drag keeps it open). */
+.vol-wrap { display: inline-flex; align-items: center; flex: none; }
+#volume {
+  width: 0; margin: 0; opacity: 0; pointer-events: none; accent-color: var(--vscode-foreground); flex: none;
+  transition: width 150ms ease-out, margin 150ms ease-out, opacity 150ms ease-out;
+}
+.vol-wrap:hover #volume, .vol-wrap:focus-within #volume, .vol-wrap.dragging #volume {
+  width: 84px; margin: 0 12px 0 2px; opacity: 1; pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) { #volume { transition: none; } }
+/* Step size badge on ◀| and |▶ (media/controls.js drawStepBadges): at the default 1 frame it shows only on hover or
+   focus; any other size stays visible, so the buttons always say how far they jump. A click opens the size popover. */
+.stepw { position: relative; display: inline-flex; flex: none; }
+#row button.stepsz {
+  position: absolute; top: -4px; left: 50%; transform: translateX(-50%); z-index: 1;
+  height: 13px; min-width: 0; padding: 0 3px; border-radius: 6px; border: 1px solid var(--vpe-sep);
+  font: 600 9px/11px var(--vpe-mono); color: var(--vpe-dim); background: var(--vscode-editor-background, #1e1e1e);
+  opacity: 0; pointer-events: none; transition: opacity 120ms ease-out;
+}
+#row button.stepsz[data-default="0"] { opacity: 0.85; pointer-events: auto; color: var(--vscode-foreground); }
+#row .stepw:hover button.stepsz, #row .stepw:focus-within button.stepsz, #row button.stepsz.open { opacity: 1; pointer-events: auto; }
+#row button.stepsz:hover, #row button.stepsz.open { color: var(--vscode-foreground); background: var(--vscode-editor-background, #1e1e1e); border-color: var(--vpe-accent); }
+@media (prefers-reduced-motion: reduce) { #row button.stepsz { transition: none; } }
+.panel.step { width: 148px; }
 #row #time { font-family: var(--vpe-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 8px; }
 #row #time #dur { color: var(--vpe-dim); margin-left: 0.45em; }
-/* [ ] range buttons beside the time: compact, lit while that end is set. */
+/* A / B range buttons beside the time: the key letters in a small box, like the pins on the seek bar; filled while that end is set. */
 #row button.rng { min-width: 24px; height: 28px; padding: 0 2px; opacity: 0.8; }
+.rngl {
+  display: grid; place-items: center; width: 15px; height: 15px; box-sizing: border-box;
+  border: 1.5px solid currentColor; border-radius: 3px; font: 700 10px/1 var(--vpe-mono);
+}
 #row button.rng[aria-pressed="true"] { opacity: 1; color: var(--vscode-progressBar-background, #3794ff); background: var(--vpe-hover); }
+#row button.rng[aria-pressed="true"] .rngl {
+  border-color: var(--vscode-progressBar-background, #3794ff); background: var(--vscode-progressBar-background, #3794ff);
+  color: var(--vscode-button-foreground, #fff);
+}
 .mono { font-family: var(--vpe-mono); font-size: 12px; white-space: nowrap; }
 #row #rate { font-family: var(--vpe-mono); font-size: 12.5px; min-width: 42px; }
 #tracks .ccline { position: relative; display: flex; }
@@ -449,13 +481,27 @@ body.idle { cursor: none; }
 #confirmCompareBtn:hover { background: var(--vscode-button-hoverBackground, var(--vpe-on-bg)); }
 #cog svg { transition: transform 200ms ease-out; }
 #cog.open svg { transform: rotate(45deg); }
-@media (max-width: 720px) { #volume { display: none; } }
 #seek, #volume, #speedSlider { touch-action: none; }
-@media (max-width: 520px) {
-  #infoBtn, #row #time #dur, #row button.rng { display: none; }
+/* Narrow panes shed the bar's secondary buttons in this order; each stays reachable another way (docs/notes/ui-simple.md,
+   "Narrow bar"). Play, the step buttons, the time, Settings and Fullscreen stay longest. */
+@media (max-width: 640px) {
+  #row button.rng, #row #infoBtn, #row #time #dur { display: none; }
+}
+@media (max-width: 500px) {
+  #row #tracks, #row #startCompareBtn { display: none; }
+}
+@media (max-width: 400px) {
+  #row #rate, #row #picBtn { display: none; }
   #row { gap: 0; }
   #row button { min-width: 28px; padding-inline: 3px; }
+  #row button.stepsz { min-width: 0; padding-inline: 3px; }
   #row .gap { margin-left: 0; }
+}
+@media (max-width: 320px) {
+  .vol-wrap { display: none; }
+}
+@media (max-width: 250px) {
+  .stepw { display: none; }
 }
 
 kbd {

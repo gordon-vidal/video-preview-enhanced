@@ -71,9 +71,14 @@ const playFlash = /<div id="playFlash" aria-hidden="true"><svg class="i-play"[\s
 const playerStyles = fs.readFileSync(path.join(__dirname, '../../media/player.css'), 'utf8');
 assert.match(playerStyles, /#seek:focus:not\(:focus-visible\), #volume:focus:not\(:focus-visible\) \{ outline: none; \}/);
 assert.match(playerStyles, /#seek:focus-visible, #volume:focus-visible \{ outline: 1px solid var\(--vscode-focusBorder\); outline-offset: 2px; \}/);
-const narrowStyles = /@media \(max-width: 520px\) \{([\s\S]*?)\n\}/.exec(playerStyles);
-assert.ok(narrowStyles, 'narrow editor styles');
-assert.doesNotMatch(narrowStyles[1], /#prev|#next/, 'narrow layouts retain both frame-step buttons');
+// Narrow panes shed bar buttons in steps (docs/notes/ui-simple.md, "Narrow bar"); the step buttons go only at the last one.
+const ladder = [...playerStyles.matchAll(/@media \(max-width: (\d+)px\) \{([\s\S]*?)\n\}/g)].map((m) => [Number(m[1]), m[2]]);
+assert.deepStrictEqual(ladder.map((m) => m[0]), [640, 500, 400, 320, 250], 'narrow bar steps');
+for (const [w, css] of ladder) {
+  if (w > 250) assert.doesNotMatch(css, /#prev|#next|\.stepw|#play|#cog|#full|#now/, `${w} px keeps Play, the step buttons, the time, Settings, Fullscreen`);
+}
+assert.match(ladder[4][1], /\.stepw \{ display: none; \}/, 'below 250 px the step buttons go');
+assert.match(ladder[3][1], /\.vol-wrap \{ display: none; \}/, 'below 320 px Mute and volume go (M and the arrow keys remain)');
 assert.match(playerStyles, /#notice \{[^}]*background: var\(--vscode-editorWidget-background\)/);
 
 const cmp = compareHtml({ uri: (...p) => `https://webview/${p.join('/')}`, cspSource: 'vscode-resource:', nonce: 'n', cfg: {}, frameSource: '' });

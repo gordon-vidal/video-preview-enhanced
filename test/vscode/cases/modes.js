@@ -47,7 +47,8 @@ module.exports = {
     let ok = t('layout/bar');
     ok(r.panel === 'none' && r.sheet === 'false', `panel ${r.panel}, sheet ${r.sheet} at start`);
     const bar = flags(r.bar);
-    for (const k of ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(bar[k] === '1', `${k} is not visible (${r.bar})`);
+    // The volume slider folds behind Mute until hovered or focused (media/player.css .vol-wrap), so it is not checked here.
+    for (const k of ['play', 'prev', 'next', 'seek', 'mute', 'time', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(bar[k] === '1', `${k} is not visible (${r.bar})`);
     ok(bar.tracks === '0', `CC is visible without subtitle tracks (${r.bar})`);
     ok(Number(r.tools) === 5, `${r.tools} tools (Compare + the four inspection tools; the A–B exports live on the A–B Range page)`);
 

@@ -92,6 +92,38 @@ global `:focus-visible` outline). Panel icons and Compare's tile overlays are no
 
 Captured with `test/vscode/screenshot.js` (hidden desktop, Dark Modern, 1518 px window, bar only).
 
+## Bar polish (2026-11-22)
+
+- **A / B range buttons** show the letters of their keys in a small box (like the A / B pins on the seek bar)
+  instead of `[` / `]` brackets; the box fills with the accent colour while that end is set (`aria-pressed`).
+- **Step size badge.** A tiny pill on top of ◀| and |▶ (`#prevSize`, `#nextSize`, "Step size: 1 frame") says how
+  far they jump: `1f`, `5f`, `1s`, `5s`, `10s`. At the default one frame it shows only on hover or focus; any
+  other size stays visible. The step buttons still step on click; a click on the badge opens a small popover right
+  above it (the panel's `step` page in `media/controls.js`: radios 1 frame, 5 frames, 1 s, 5 s, 10 s; click outside
+  or Esc closes it). A pick sets both buttons, their tooltips and labels ("Back 5 frames"), for this tab only (kept
+  over a reload, like the picture size button); until a pick the setting `stepButtons` decides (`jump` = the Ctrl+arrow
+  size, e.g. 30 s, which the popover then lists too). `,` `.` stay one frame.
+- **Volume** folds behind Mute (`.vol-wrap`) and slides open to 84 px on hover, on focus, and while it is dragged
+  (`.dragging` from pointerdown to pointerup / pointercancel, so leaving the pair mid-drag keeps it open). Reduced
+  motion: no slide. ↑ / ↓ and the wheel over it still work.
+- **Compare, Reorder mode:** the tiles' **×** (3 videos or more) stays visible and live while reordering; a press
+  on it removes the tile and never starts a drag.
+
+### Narrow bar
+
+As the pane gets narrower the bar sheds secondary buttons in this order (`media/player.css`). Play, ◀| / |▶, the
+time, ⚙ and fullscreen stay longest; everything shed is still reachable another way.
+
+| Width | Hidden (in addition) | Still reachable |
+|---|---|---|
+| ≤ 640 px | A / B buttons, ⓘ, the total duration | right-click, keys A / B / I |
+| ≤ 500 px | CC, Compare | ⚙ › Subtitles, right-click, keys C / Shift+D |
+| ≤ 400 px | speed, picture size; tighter padding | ⚙ › Speed / Picture size, keys Z and Shift+< / > |
+| ≤ 320 px | Mute and volume | keys M, ↑ / ↓ |
+| ≤ 250 px | ◀| / |▶ | keys , . and the arrows |
+
+Compare's own Reorder and Compare buttons are not in the ladder (Compare opens at desktop widths).
+
 ## Keyboard shortcuts in Settings
 
 Removing the dedicated keyboard button frees space in narrow toolbars. The player and Compare use the

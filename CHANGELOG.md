@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The frame-step buttons have a small badge showing how far they jump; click it to pick 1 frame, 5 frames, 1 s, 5 s or 10 s for this tab (the badge stays visible unless it is 1 frame). The volume slider folds behind the mute button and opens when you point at it. In narrow panes the bar hides less-used buttons step by step (still available from ⚙, the right-click menu and keys). In Compare's Reorder mode, the **×** on a tile still removes it.
 - Removed the startup warning notification about older extension folders left behind by VS Code updates.
 - Windows: ffmpeg installed with Chocolatey or Scoop now works with the native decoder (audio and exact timestamps). The extension runs the real ffmpeg behind the package manager's shim, which dropped the extra pipes.
 - Slow-playback notices explain the tradeoffs, label choices saved for all videos, and offer Settings and Don't show again.
@@ -11,7 +12,7 @@
 - ⚙ is grouped into Playback, Tools (**A–B Range ›** with the range and all its exports, **Inspection ›** with the pixel inspector, scopes, stats and codec X-ray) and links; Jump sizes are VS Code settings only; Loop is now Repeat video. ⓘ is information only: Open in system player moved to the foot of ⚙, and the top-left "Full technical details" overlay is gone (ⓘ has **Copy link to this frame**). Keys are unchanged.
 - The right-click menu shows each action's key (Space, R, A, B, S, T, Ctrl+C, Shift+D, ?), says "A–B range" like the rest of the player, and **Compare With…** is replaced by **Start Compare** / **Add to Compare**, the same as the Compare button. New keys: **T** copies the timestamp, **Backspace** clears the A–B range.
 - Clicking anywhere outside an open panel (Info, Settings, Speed, Subtitles, Compare), including the control bar, closes it; clicking the picture only closes it and does not play or pause. Clicking outside a Compare tile menu closes it too.
-- A–B range by mouse: **[** and **]** buttons beside the time set the range start and end (lit while set), and the A and B pins on the seek bar drag to the nearest frame, showing the time and frame as you go. Works in the player and in Compare; the buttons hide in very narrow panes.
+- A–B range by mouse: **A** and **B** buttons beside the time set the range start and end (lit while set), and the A and B pins on the seek bar drag to the nearest frame, showing the time and frame as you go. Works in the player and in Compare; the buttons hide in very narrow panes.
 - The seek bar and time readout hold the requested position after you release the thumb while the decoder catches up. Frame-step buttons stay visible in narrow splits.
 - Escape dismisses playback notices, Pixel Inspector and Scopes. Scopes also has a close button, and playback notice buttons leave playback alone.
 - Settings opens on the first click from another panel. Live transcode shows where its defaults apply and which tools fetch full-resolution frames.

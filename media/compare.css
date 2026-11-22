@@ -65,7 +65,8 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 .ov.removable .nudge.right:not(.below) { right: 44px; }
 #cells.dense .ov.removable { padding-right: 30px; }
 #cells.dense .rm { top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 5px; }
-#stage.reordering .rm { visibility: hidden; }
+/* Reorder mode keeps × (it removes the tile and never starts a drag; media/compare.js reorderInert). */
+#stage.reordering .ov > .rm { pointer-events: auto; z-index: 2; cursor: pointer; }
 body.vscode-high-contrast .rm, body.vscode-high-contrast-light .rm { outline: 1px solid var(--vscode-contrastBorder, transparent); }
 
 /* Reorder drag: the lifted tile above the others, with a shadow (its picture is drawn on the canvas below). */

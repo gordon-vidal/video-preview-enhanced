@@ -316,9 +316,14 @@ module.exports = [{
       // Volume: press on the slider, move far outside (above the bar, past both ends), release; then a move does nothing.
       P.pause();
       let s = await P.state();
-      const [vx, vy, vw, vh] = s.volumeRect;
-      P.act({ action: 'dom', ev: 'pointerdown', target: 'volume', x: vx + vw * 0.5, y: vy + vh / 2 });
-      await settle(200);
+      // The slider folds behind Mute: the press focuses it, which opens it (.vol-wrap:focus-within, .dragging);
+      // measure it again once open.
+      const [px, py, pw, ph] = s.volumeRect;
+      P.act({ action: 'dom', ev: 'pointerdown', target: 'volume', x: px + pw * 0.5, y: py + ph / 2 });
+      await settle(400);
+      s = await P.state();
+      const [vx, vy, vw] = s.volumeRect;
+      ok(vw > 40, `volume slider opens while pressed: ${vw} px wide`);
       P.dom('pointermove', vx + vw + 300, vy - 200); // over the picture, right of the slider
       await settle(200);
       s = await P.state();

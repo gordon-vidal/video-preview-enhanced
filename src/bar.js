@@ -27,10 +27,15 @@ const icons = {
   about: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-9.5v.01"/>'),
   settings: svg('<circle cx="12" cy="12" r="3"/>' +
     '<path d="M10 3h4l.7 2.6 2.1 1.2 2.6-.7 2 3.5-1.9 1.9v2.4l1.9 1.9-2 3.5-2.6-.7-2.1 1.2L14 22h-4l-.7-2.2-2.1-1.2-2.6.7-2-3.5 1.9-1.9v-2.4L2.6 9.6l2-3.5 2.6.7 2.1-1.2Z" transform="translate(0 -.5)"/>'),
-  rangeA: svg('<path d="M15 4.5H9.5v15H15"/>'),
-  rangeB: svg('<path d="M9 4.5h5.5v15H9"/>'),
   full: svg('<path d="M4 9V4h5m11 5V4h-5M4 15v5h5m11-5v5h-5"/>'),
 };
+// The range buttons show the letters of their keys and of the pins on the seek bar (A, B), not an icon.
+const rangeLabel = (letter) => '<span class="rngl" aria-hidden="true">' + letter + '</span>';
+/** A step button with its step size badge (media/controls.js drawStepBadges fills it; a click opens the size popover). */
+const stepButton = (id, title, label, key, icon) => '<span class="stepw">' +
+  '<button id="' + id + '" class="ib" title="' + title + '" aria-label="' + label + '" aria-keyshortcuts="' + key + '">' + icon + '</button>' +
+  '<button id="' + id + 'Size" class="stepsz mono" data-default="1" title="Step size: 1 frame. Click to change"' +
+  ' aria-label="Step size: 1 frame" aria-expanded="false" aria-controls="panel">1f</button></span>';
 const playFlashHtml = `<div id="playFlash" aria-hidden="true">${icons.play}${icons.pause}</div>`;
 const pictures = [
   svg(frame + '<rect x="8" y="8" width="8" height="8" rx="1"/>', 'i-fit'),
@@ -61,14 +66,13 @@ function barHtml({ compare = false, canCompare = true, compareOpen = false } = {
     <div id="tip" hidden></div>
   </div>
   <div id="row">
-    <button id="prev" class="ib" title="Previous frame  ," aria-label="Previous frame" aria-keyshortcuts=",">${icons.prev}</button>
+    ${stepButton('prev', 'Previous frame  ,', 'Previous frame', ',', icons.prev)}
     <button id="play" class="ib wide" title="Play  Space" aria-label="Play" aria-keyshortcuts="Space K">${icons.play}${icons.pause}</button>
-    <button id="next" class="ib" title="Next frame  ." aria-label="Next frame" aria-keyshortcuts=".">${icons.next}</button>
-    <button id="mute" class="ib gap" title="Mute  M" aria-label="Mute" aria-pressed="false" aria-keyshortcuts="M">${icons.sound}${icons.muted}</button>
-    <input id="volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume  ↑ ↓" aria-label="Volume">
+    ${stepButton('next', 'Next frame  .', 'Next frame', '.', icons.next)}
+    <span class="vol-wrap gap"><button id="mute" class="ib" title="Mute  M" aria-label="Mute" aria-pressed="false" aria-keyshortcuts="M">${icons.sound}${icons.muted}</button><input id="volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume  ↑ ↓" aria-label="Volume"></span>
     <button id="time" class="mono" title="Click: time / timecode / frames" aria-label="Position"><span id="now">0:00.000</span> <span id="dur">/ 0:00.000</span></button>
-    <button id="setABtn" class="ib rng" title="Set range start (A)" aria-label="Set range start (A)" aria-pressed="false" aria-keyshortcuts="A">${icons.rangeA}</button>
-    <button id="setBBtn" class="ib rng" title="Set range end (B)" aria-label="Set range end (B)" aria-pressed="false" aria-keyshortcuts="B">${icons.rangeB}</button>
+    <button id="setABtn" class="ib rng" title="Set range start (A)" aria-label="Set range start (A)" aria-pressed="false" aria-keyshortcuts="A">${rangeLabel('A')}</button>
+    <button id="setBBtn" class="ib rng" title="Set range end (B)" aria-label="Set range end (B)" aria-pressed="false" aria-keyshortcuts="B">${rangeLabel('B')}</button>
     <span class="spacer"></span>
 ${compare ? '    <button id="reorderBtn" class="ib" aria-controls="cells">Reorder</button>\n' : ''}
 ${compare ? '' : `    <button id="tracks" class="ib" title="Subtitles  C" aria-label="Subtitles" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="C" hidden><span class="ccline">${icons.cc}</span></button>

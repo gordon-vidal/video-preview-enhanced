@@ -94,7 +94,7 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 ## The player (2026-11-19: one layout, the approved mock-up)
 
 - **One player, no modes.** The separate advanced layout is dropped; `advancedMode` is deprecated and ignored.
-- **Bar:** previous frame, play/pause, next frame, mute, volume, time (click: time / timecode / frame number),
+- **Bar:** previous frame, play/pause, next frame, mute, volume (folded behind mute until hovered), time (click: time / timecode / frame number),
   then CC (only when the video has a subtitle track, 2026-11-22), **Compare** (video files), ⓘ (about this video),
   speed, ⚙, picture size, fullscreen. No status pill: only real problems show (a notice, once).
 - **⚙ panel** (2026-11-22), in groups: **Playback** (repeat video, speed, subtitles (always there, also to load a file), audio
@@ -111,7 +111,8 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 - **Jumps:** ← →, Shift+← →, Ctrl+← → each 1 frame / 1 s / 5 s / 10 s / 30 s (defaults 5 s, 1 s, 1 frame);
   `,` `.` always one frame. Keys VS Code uses are avoided (Alt+← →, Ctrl+K, Ctrl+Shift+C).
 - **Buttons beside Play** (2026-11-20): by default step one frame back / forward; setting `stepButtons`
-  (`frame` | `jump`) makes them jump by the Ctrl+arrow size. Tooltips say which.
+  (`frame` | `jump`) makes them jump by the Ctrl+arrow size. Tooltips say which. A small badge on them (2026-11-22)
+  shows the size and picks 1 frame / 5 frames / 1 s / 5 s / 10 s for the current tab (quiet at 1 frame).
 - **Right-click:** quick actions on this moment only (play/pause, loop, copy/save frame, copy timestamp, frame
   link, shortcuts, settings).
 

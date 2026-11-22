@@ -192,6 +192,27 @@ console.log('controls_test: ok');
   assert.match(tips('jump', 'frame').fwdLabel, /^Forward one frame/);
 }
 
+// Step size badge: the tab's pick wins over the setting; badges and amounts for each size; the default is quiet.
+{
+  const p = (stepSize, stepButtons = 'frame', ctrl = 10) => ({ stepSize, stepButtons, jump: { arrow: 5, shift: 1, ctrl } });
+  assert.deepStrictEqual(C.STEP_SIZES, ['frame', 'frames5', 1, 5, 10]);
+  assert.strictEqual(C.stepSizeOf(p(null)), 'frame');
+  assert.strictEqual(C.stepSizeOf(p(null, 'jump', 30)), 30, 'no pick: the setting (jump by the Ctrl size)');
+  assert.strictEqual(C.stepSizeOf(p('frames5', 'jump', 30)), 'frames5', 'a pick wins');
+  assert.deepStrictEqual(C.STEP_SIZES.map(C.stepBadge), ['1f', '5f', '1s', '5s', '10s']);
+  assert.deepStrictEqual(C.STEP_SIZES.map(C.stepName), ['1 frame', '5 frames', '1 s', '5 s', '10 s']);
+  assert.deepStrictEqual(C.STEP_SIZES.map(C.stepAmount), [{ n: 1 }, { n: 5 }, { s: 1 }, { s: 5 }, { s: 10 }]);
+  assert.strictEqual(C.stepTips(p('frames5')).backLabel, 'Back 5 frames');
+  assert.strictEqual(C.stepTips(p(5)).fwdLabel, 'Forward 5 s');
+  assert.strictEqual(C.stepTips(p('frame', 'jump')).back, 'Previous frame  ,', 'picking 1 frame overrides stepButtons: jump');
+  const badge = () => ({ dataset: {}, attrs: {}, textContent: '', title: '', setAttribute(k, v) { this.attrs[k] = v; } });
+  const [a, b] = [badge(), badge()];
+  C.drawStepBadges([a, b], 'frame');
+  assert.deepStrictEqual([a.textContent, a.dataset.default, b.attrs['aria-label']], ['1f', '1', 'Step size: 1 frame']);
+  C.drawStepBadges([a, b], 10);
+  assert.deepStrictEqual([b.textContent, b.dataset.default, a.title], ['10s', '0', 'Step size: 10 s. Click to change']);
+}
+
 // Click outside: a press on the bar, another control or the picture closes an open panel; the bar's panel
 // buttons are left to toggle their own page; a press on the picture is reported once so its click does not play / pause.
 {

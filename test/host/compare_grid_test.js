@@ -145,7 +145,11 @@ for (const n of [3, 4, 9]) {
   // The tiles' click handler stops the click before the stage's play / pause handler sees it.
   assert.match(src, /cellsEl\.addEventListener\('click', \(e\) => \{\s*const el = [^\n]*\n\s*if \(el\) \{\s*e\.stopPropagation\(\);/);
   const css = require('fs').readFileSync(path.join(__dirname, '../../media/compare.css'), 'utf8');
-  assert.match(css, /#stage\.reordering \.rm \{ visibility: hidden; \}/);
+  // Reorder mode keeps × clickable (not inert, not hidden) and the reorder drag ignores a press on it.
+  assert.match(css, /#stage\.reordering \.ov > \.rm \{ pointer-events: auto;/);
+  assert.doesNotMatch(css, /#stage\.reordering \.rm \{ visibility: hidden; \}/);
+  assert.match(src, /x\)\.inert = reordering && !x\.classList\.contains\('rm'\)/, 'only × stays live in Reorder mode');
+  assert.match(src, /e\.target\.closest\('\[data-act="move"\], \.rm'\)\) return;/, 'a press on × never starts a reorder drag');
 }
 
 // ---- memory: 2-4 tiles exactly as before; 5-16 share fixed budgets ----
