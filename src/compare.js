@@ -100,6 +100,7 @@ ${barHtml({ compare: true })}
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
 <script nonce="${nonce}" src="${uri('abloop.js')}"></script>
 <script nonce="${nonce}" src="${uri('comparerange.js')}"></script>
+<script nonce="${nonce}" src="${uri('stepgoal.js')}"></script>
 ${large ? `<script nonce="${nonce}" src="${uri('membudget.js')}"></script>
 ` : ''}<script nonce="${nonce}" src="${uri('compare-grid.js')}"></script>
 <script nonce="${nonce}" src="${uri('compare.js')}"></script>

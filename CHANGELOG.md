@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Frame stepping updates the seek bar immediately. In Compare, fast wheel steps combine into one follow-up seek, and the videos start seeking together.
+
 ## 0.9.0 (2026-11-22)
 
 Lossless A–B clip export in the player and Compare (with native ffmpeg real timestamps), Compare tile reordering, unified Start/Add to Compare controls, larger action toasts, and faster multi-video drops.

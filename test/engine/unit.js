@@ -671,6 +671,8 @@ test('steps back while a step is decoding add up to one target, in few seeks', (
   assert.strictEqual(seeksOf(p).length, 1, 'notches within STEP_SEEK_MS wait for one seek');
   const st = p.stepTo;
   assert.ok(st.timer && Math.abs(st.t - 50 / 30) < 1e-6, `the waiting step is at frame ${st.t * 30}`);
+  assert.strictEqual(p.frameAt(p.pendingStep().t), 50, 'the bar can read the pending frame');
+  assert.strictEqual(p.currentFrame(), 60, 'the shown frame stays available for marks and exports');
   clearTimeout(st.timer);
   P.flushStep.call(p, st);
   const last = seeksOf(p).pop();
@@ -683,9 +685,19 @@ test('steps back while a step is decoding add up to one target, in few seeks', (
   p.seekTarget = null;
   p.queue = [yuvFrame(51 / 30)];
   shown(p);
+  assert.strictEqual(p.pendingStep(), null, 'the step readout clears once the picture is shown');
   ctx.perfNow += 1000;
   P.stepFrame.call(p, -1);
   assert.ok(Math.abs(seeksOf(p).pop().t - 50.5 / 30) < 1e-6, 'from the shown frame');
+});
+
+test('a buffered seek clears a pending step even without a generation change', () => {
+  const p = player({ shownT: 1, shownCount: 1, queue: [frame(2), frame(3)] });
+  p.stepTo = { t: 2, gen: p.gen, shown: p.shownCount, at: 0 };
+  assert.ok(p.pendingStep());
+  p.seekTime(2.5);
+  assert.strictEqual(p.gen, 0);
+  assert.strictEqual(p.pendingStep(), null);
 });
 
 test('steps back are served from the frames decoded on the way to the target', () => {

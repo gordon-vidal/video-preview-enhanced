@@ -298,7 +298,7 @@
   /** Tile i's offset in seconds: ms, or frames of that tile at its own frame rate. */
   const offSec = (i) => VpeCompareRange.offsetSeconds(st.offsets[i], fpsOf(tiles[i]));
   /** Tile i's position (relative seconds) for the clock at cRel: the same moment plus the offsets, nearest frame. */
-  const relFor = (i, cRel) => cRel - offSec(st.clock) + offSec(i) + 0.25 / fpsOf(tiles[i]);
+  const relFor = (i, cRel) => VpeStepGoal.followerTime(cRel, offSec(st.clock), offSec(i), fpsOf(tiles[i]));
   /** The clock's position at which tile i is at rel (relFor's inverse, without the nudge). */
   const clockRelFor = (i, rel) => rel - offSec(i) + offSec(st.clock);
 
@@ -417,6 +417,7 @@
 
   /** Tile i becomes the clock: its own clock comes back, every other tile follows it. */
   function setClock(i, quiet) {
+    stepGoal.clear();
     const was = isPlaying();
     // Followers record their paused positions with the old clock's offset, so pause before it changes.
     pause();
@@ -442,9 +443,21 @@
 
   // ---- transport ---------------------------------------------------------------
 
+  const stepGoal = VpeStepGoal.create({
+    now: () => performance.now(),
+    schedule: (fn, ms) => setTimeout(fn, ms),
+    cancel: (timer) => clearTimeout(timer),
+    dispatch({ frame, time }) {
+      clock.seekFrame(frame);
+      seekFollowers(time);
+      wakeLoop();
+    },
+  });
+
   const isPlaying = () => !!clock && clock.playing;
   function play() {
     if (!clock) return;
+    stepGoal.clear();
     // Followers move while playing: the next pause sends each of them again, even to the same position.
     reqs = [];
     if (clock.eof && !clock.queue.length && clock.currentFrame() >= clock.n - 1) seekClock(0);
@@ -457,20 +470,28 @@
   /** Seek the clock (relative seconds); the others follow at once when playing, after it settles when paused. */
   function seekClock(rel) {
     if (!clock) return;
+    stepGoal.clear();
     clock.seekTime(rel);
     if (clock.playing) syncPlaying(true);
   }
   /** Shows frame `frame` of tile i (through the clock). */
   function seekTile(i, frame) {
     if (!clock) return;
-    if (i === st.clock) clock.seekFrame(frame);
-    else seekClock(Math.max(0, clockRelFor(i, tiles[i].frameSeekTime(frame))));
+    if (i === st.clock) {
+      stepGoal.clear();
+      clock.seekFrame(frame);
+      if (clock.playing) syncPlaying(true);
+    } else seekClock(Math.max(0, clockRelFor(i, tiles[i].frameSeekTime(frame))));
   }
-  /** Lockstep: the clock moves one frame, the others to their frame for it (syncPaused); shown once all are there. */
+  /** The bar shows the requested frame while the tiles decode the matching pictures. */
   function step(d) {
-    if (!clock) return;
+    if (!clock || clock.vmode === undefined || clock.meta.live) return;
     pause();
-    clock.seekFrame(clock.currentFrame() + d);
+    stepGoal.step(d, {
+      frame: clock.currentFrame(), totalFrames: clock.n, rate: clock.frameNumberRate(), duration: clock.meta.duration,
+    });
+    updateUi();
+    wakeLoop();
   }
   const skip = (s) => { if (clock) { seekClock(clock.currentTime() + s); toast(`${s > 0 ? '+' : ''}${s} s`); } };
 
@@ -512,20 +533,30 @@
   let reqs = [];
   /** While paused: every follower to the frame nearest the clock's shown frame (plus the offsets). */
   function syncPaused() {
-    if (!clock || clock.playing || clock.startT === null || clock.shownT === null || clock.seekTarget !== null) return;
-    const cRel = clock.rel(clock.shownT);
+    if (!clock || clock.playing || clock.startT === null || clock.shownT === null || clock.seekTarget !== null
+      || stepGoal.goal) return;
+    seekFollowers(clock.rel(clock.shownT), true);
+  }
+
+  /** All ready followers start together. Reconcile once the clock's picture time is known. */
+  function seekFollowers(cRel, reconcile = false) {
     tiles.forEach((p, i) => {
       if (p === clock || p.startT === null) return;
       if (p.playing) p.pause();
       const rel = relFor(i, cRel);
       const key = rel.toFixed(6);
       if (key === reqs[i]) return;
+      // Timestamp rounding can shift the target by a millisecond. Let the current seek land
+      // before checking whether its decoded picture already matches the adjusted target.
+      if (reconcile && p.seekTarget !== null && Math.abs(rel - Number(reqs[i])) <= 0.001001
+        && !outOfRange(p, rel)) return;
       reqs[i] = key;
       if (outOfRange(p, rel)) return;
       const T = p.startT + Math.max(0, rel);
       const e = earlyOf(p);
       // Already showing it (fewer frames than the clock): nothing to decode.
-      if (p.shownT !== null && p.shownT <= T + e + 1e-6 && p.queue.length && p.queue[0].t > T + e && p.seekTarget === null) {
+      if (p.shownT !== null && p.shownT <= T + e + 1e-6 && p.seekTarget === null
+        && (p.queue.length ? p.queue[0].t > T + e : p.eof)) {
         p.pauseT = T;
         return;
       }
@@ -1151,7 +1182,7 @@
     let ready = true;
     if (paused) {
       // Nothing was drawn yet: the first picture needs each tile's first frame only.
-      ready = tiles.every((p, i) => outs[i] || settled(p) || (!drawn && atFirstFrame(p)));
+      ready = !stepGoal.goal && tiles.every((p, i) => outs[i] || settled(p) || (!drawn && atFirstFrame(p)));
       if (!ready) {
         if (!waitSince) waitSince = now;
         // Still decoding a tile after a while: show what there is.
@@ -1699,6 +1730,7 @@
   }
   function commitOrder(order, video) {
     if (order === st.order) return;
+    stepGoal.clear();
     st.order = order;
     hover = null;
     closeMenu();
@@ -1730,6 +1762,7 @@
     reorderBtn.textContent = on ? 'Done' : 'Reorder';
     reorderHint.hidden = !on;
     if (on) {
+      stepGoal.clear();
       closeMenu();
       controls.closeAll(false);
       if (!addHint.hidden) vscode.postMessage({ type: 'stopAddMode' });
@@ -1963,13 +1996,14 @@
   let lastUi = '';
   function updateUi() {
     if (!clock) return;
-    const f = clock.currentFrame();
+    const goal = stepGoal.goal;
+    const f = goal?.frame ?? clock.currentFrame();
     if (!scrubbing) ui.seek.value = String(f);
     const playing = clock.playing;
-    const fr = tiles.map((p, i) => (p === clock ? f + 1 : p.shownT !== null && !outs[i] ? frameOf(p) + 1 : null));
-    const t = clock.currentTime();
+    const fr = tiles.map((p, i) => (p === clock ? p.currentFrame() + 1 : p.shownT !== null && !outs[i] ? frameOf(p) + 1 : null));
+    const t = goal?.time ?? clock.currentTime();
     const offset = offSec(st.clock);
-    const key = `${fr.join(',')}|${playing}|${t.toFixed(3)}|${tiles.map((p) => p.n).join(',')}|${st.timeMode}|${st.clock}|${ab.a}|${ab.b}|${offset}`;
+    const key = `${fr.join(',')}|${f}|${playing}|${t.toFixed(3)}|${tiles.map((p) => p.n).join(',')}|${st.timeMode}|${st.clock}|${ab.a}|${ab.b}|${offset}`;
     if (key !== lastUi || infoDirty) {
       lastUi = key;
       infoDirty = false;
@@ -2023,7 +2057,7 @@
   updatePicBtn();
   ui.cmpBtn.onclick = () => controls.toggle('cmp', ui.cmpBtn);
   ui.full.onclick = toggleFullscreen;
-  ui.seek.addEventListener('input', () => { scrubbing = true; if (clock) { clock.seekFrame(Number(ui.seek.value)); if (clock.playing) syncPlaying(true); } });
+  ui.seek.addEventListener('input', () => { scrubbing = true; seekTile(st.clock, Number(ui.seek.value)); });
   ui.seek.addEventListener('change', () => { scrubbing = false; });
   ui.seek.addEventListener('mousemove', (e) => {
     if (!clock || !clock.n) return;
@@ -2099,7 +2133,7 @@
       case 'ArrowUp': setVolume(st.volume + 0.05); toast(`Volume ${Math.round(st.volume * 100)}%`); break;
       case 'ArrowDown': setVolume(st.volume - 0.05); toast(`Volume ${Math.round(st.volume * 100)}%`); break;
       case 'Home': pause(); seekClock(0); break;
-      case 'End': pause(); clock.seekFrame(clock.n - 1); break;
+      case 'End': pause(); seekTile(st.clock, clock.n - 1); break;
       case 'm': case 'M': setMute(!st.muted); break;
       case 'r': case 'R': setLoop(!st.loop); toast(st.loop ? 'Loop on' : 'Loop off'); break;
       case 'a': case 'A': markAB('a'); break;
@@ -2218,6 +2252,7 @@
 
   /** Page exit or failed setup: stop every engine and release the WebGL contexts now, not at garbage collection. */
   function disposeEngines() {
+    stepGoal.clear();
     scanner.stop();
     for (const p of Object.values(engines)) {
       try {
@@ -2263,11 +2298,13 @@
         if (restoreClock && clock.startT !== null && clock.vmode !== undefined && visible) {
           const { time, playing } = restoreClock;
           restoreClock = null;
-          if (time > 0) clock.seekTime(time);
+          if (time > 0) seekClock(time);
           if (playing) play();
         }
         if (begun && visible) {
-          if (pendingStart && tiles.every((p) => p.startT !== null)) { clock.seekTime(pendingStart); pendingStart = 0; }
+          if (pendingStart && tiles.every((p) => p.startT !== null)) { seekClock(pendingStart); pendingStart = 0; }
+          if (stepGoal.goal && clock.seekTarget === null
+            && !(clock.queue[0]?.t <= clock.pauseT + earlyOf(clock))) stepGoal.settle();
           if (clock.playing) syncPlaying(); else syncPaused();
         }
         for (const p of tiles) if (p !== clock) p.tick(now);
@@ -2291,7 +2328,7 @@
     visible = shown;
     if (!visible) setReordering(false);
     if (!clock) return;
-    if (!visible) { resumeOnShow = resumeOnShow || clock.playing; pause(); }
+    if (!visible) { stepGoal.clear(); resumeOnShow = resumeOnShow || clock.playing; pause(); }
     for (const p of tiles) if (p.remoteStream) p.setHidden(!visible);
     if (visible && resumeOnShow) { resumeOnShow = false; play(); }
   });
@@ -2301,6 +2338,7 @@
     const old = tiles[i];
     if (!old || nativeTiles[i] !== 'transcode') return;
     if (old === clock) {
+      stepGoal.clear();
       restoreClock = { time: clock.currentTime(), playing: clock.playing };
       pause();
     }
@@ -2410,7 +2448,8 @@
   // A video opened into compare starts where the player was.
   if (!(saved.t > 0) && cfg.start > 0) saved.t = cfg.start;
 
-  const synced = () => !!clock && !clock.playing && tiles.every((p, i) => outs[i] || settled(p)) && upCount[st.clock] === (clock.shownCount || 0);
+  const synced = () => !!clock && !clock.playing && !stepGoal.goal
+    && tiles.every((p, i) => outs[i] || settled(p)) && upCount[st.clock] === (clock.shownCount || 0);
   // For tests and debugging (and the future advanced mode: metrics, the difference search).
   /** @type {any} */ (window).vpeCompare = {
     get tiles() { return tiles; }, get clock() { return clock; }, get A() { return tiles[0]; }, get B() { return tiles[1]; },

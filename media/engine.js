@@ -2139,8 +2139,8 @@ function createEngine(env) {
       const sourceFps = this.info?.video?.fps;
       return sourceFps > 0 && Math.abs(sourceFps - rate) < rate * 0.005 ? sourceFps : rate;
     }
-    currentFrame() {
-      const t = this.shownT !== null ? this.shownT : this.now();
+    currentFrame() { return this.frameAt(this.shownT !== null ? this.shownT : this.now()); }
+    frameAt(t) {
       const fps = this.frameNumberRate();
       // The relative time subtracts two PTS values, each of which can be rounded by half a millisecond.
       const frame = Math.max(0, Math.floor(this.rel(t) * fps + Math.min(fps * 1e-3, 0.125) + 1e-6));
@@ -2244,9 +2244,10 @@ function createEngine(env) {
       this.worker.postMessage({ type: 'seek', gen: this.gen, t, fast: true });
     }
 
-    seekTime(rel) {
+    seekTime(rel, stepping = false) {
       if (this.vmode === undefined) return; // keys before the decoder is ready
       if (this.meta.live) return; // a live stream plays from the live edge (Open Video URL…)
+      if (!stepping) this.clearStepGoal();
       const dur = this.meta.duration || 0;
       const r = Math.max(0, dur ? Math.min(rel, dur - 0.5 / (this.fps || 30)) : rel);
       const t = (this.startT || 0) + r;
@@ -2262,6 +2263,14 @@ function createEngine(env) {
     }
     frameSeekTime(i) { return (Math.max(0, i) + 0.5) / this.frameNumberRate(); }
     seekFrame(i) { this.seekTime(this.frameSeekTime(i)); }
+    /** The requested step stays active until its picture shows or something else moves the player. */
+    pendingStep() {
+      const st = this.stepTo;
+      if (!this.playing && st && st.gen === this.gen
+        && (st.timer || this.seekTarget !== null || (this.shownCount || 0) === st.shown)) return st;
+      return null;
+    }
+
     /**
      * Steps by actual frames: forward to the next decoded one, back to the last one before the shown one.
      * A step that comes before the previous one is on screen counts from that step's frame, not from the one
@@ -2277,9 +2286,8 @@ function createEngine(env) {
       this.pause();
       const f = 1 / (this.fps || 30);
       if (this.shownT === null || this.vmode === 'none') { this.endSteps(); this.seekFrame(this.currentFrame() + d); return; }
-      const st = this.stepTo;
-      // The previous step is still on its way: valid until a new frame is shown (shownCount) or another seek starts (gen).
-      const pending = !!st && st.gen === this.gen && (!!st.timer || this.seekTarget !== null || (this.shownCount || 0) === st.shown);
+      const st = this.pendingStep();
+      const pending = !!st;
       const waiting = pending && !!st.timer; // its seek waits (STEP_SEEK_MS): what is in memory belongs to an older target
       const base = pending ? st.t : this.shownT;
       const start = this.startT || 0;
@@ -2306,7 +2314,7 @@ function createEngine(env) {
         this.stepTo = s;
         return;
       }
-      this.seekTime(seek);
+      this.seekTime(seek, true);
       this.stepTo = { t: to, gen: this.gen, shown: this.shownCount || 0, at: now };
     }
 
@@ -2322,14 +2330,18 @@ function createEngine(env) {
     flushStep(s) {
       s.timer = null;
       if (this.stepTo !== s || s.gen !== this.gen || this.playing) return;
-      this.seekTime(s.seek);
+      this.seekTime(s.seek, true);
       this.stepTo = { t: s.t, gen: this.gen, shown: this.shownCount || 0, at: performance.now() };
+    }
+
+    clearStepGoal() {
+      if (this.stepTo && this.stepTo.timer) clearTimeout(this.stepTo.timer);
+      this.stepTo = null;
     }
 
     /** Playing or seeking elsewhere: no step on its way, no frames kept for steps back. */
     endSteps() {
-      if (this.stepTo && this.stepTo.timer) clearTimeout(this.stepTo.timer);
-      this.stepTo = null;
+      this.clearStepGoal();
       this.dropBack();
     }
 

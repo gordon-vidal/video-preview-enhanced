@@ -13,6 +13,7 @@
     "src/read-block.js",
     "src/extension.js",
     "media/engine.js",
+    "media/stepgoal.js",
     "media/player.js"
   ],
   "exclude": ["media/libav-vpe"]

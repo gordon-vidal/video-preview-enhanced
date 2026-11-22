@@ -283,11 +283,12 @@
   /** Writes the bar from the player's state; true when the time, frame or play state shown changed. */
   function updateUi() {
     if (!player) return false;
-    const f = player.currentFrame();
-    if (!scrubbing) ui.seek.value = String(f);
     const playing = player.isPlaying();
     const dur = player.meta.duration || 0;
-    const t = player.currentTime();
+    const step = scrubbing ? null : player.pendingStep?.();
+    const f = step ? player.frameAt(step.t) : player.currentFrame();
+    const t = step ? Math.max(0, Math.min(dur || Infinity, player.rel(step.t))) : player.currentTime();
+    if (!scrubbing) ui.seek.value = String(f);
     const key = `${f}|${t.toFixed(3)}|${playing}|${Math.round(dur * 1000)}|${timeMode}`;
     const changed = key !== lastUi;
     if (changed) {
@@ -305,7 +306,7 @@
       ui.play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
       ui.play.title = `${playing ? 'Pause' : 'Play'}  Space`;
       // The slider's value is a frame index: screen readers read the time instead.
-      ui.seek.setAttribute('aria-valuetext', `${fmtTime(player.currentTime())} of ${fmtTime(dur)}, frame ${f + 1}`);
+      ui.seek.setAttribute('aria-valuetext', `${fmtTime(t)} of ${fmtTime(dur)}, frame ${f + 1}`);
     }
     // Buffered (converted) ranges on the seek bar.
     if (dur > 0) {
@@ -469,21 +470,22 @@
   }
   function setAB(which) {
     if (!player) return;
-    ab.set(which, player.currentTime(), player.currentFrame(), abTime(), synthTimes());
+    ab.set(which, shownTime(), player.currentFrame(), abTime(), synthTimes());
     abChanged();
     warnSynthetic();
   }
   function clearAB() { ab.clear(); abChanged(); }
+  const shownTime = () => player.shownT != null ? player.rel(player.shownT) : player.currentTime();
   // A clip uses the picture's timestamp even when the playback clock is between pictures.
   function abTime() {
     // Native ffmpeg reports the picture's own timestamp (engine.shownMarkTime); the other decoders' times are that already.
     const own = player.shownMarkTime ? player.shownMarkTime() : null;
     if (own !== null) return own;
-    return player.shownT != null ? player.rel(player.shownT) : player.currentTime();
+    return shownTime();
   }
   function resetAB(which) {
     if (!player) return;
-    ab.reset(which, player.currentTime(), player.currentFrame(), abTime(), synthTimes());
+    ab.reset(which, shownTime(), player.currentFrame(), abTime(), synthTimes());
     abChanged();
     warnSynthetic();
   }
@@ -491,7 +493,7 @@
   // Live transcode, and native ffmpeg that could not report a picture's timestamp, label pictures by count rather than
   // by source timestamp: exact export must refuse marks set on them.
   function synthTimes() { return !!(player.shownFrame?.nativeTimestamp || player.remoteStream); }
-  function cycleAB() { if (!player) return; ab.cycle(player.currentTime(), player.currentFrame(), abTime(), synthTimes()); abChanged(); warnSynthetic(); }
+  function cycleAB() { if (!player) return; ab.cycle(shownTime(), player.currentFrame(), abTime(), synthTimes()); abChanged(); warnSynthetic(); }
   let syntheticNoted = false;
   /**
    * An exact A-B clip needs the file's own picture times. Say so as soon as a mark is set on a picture without
@@ -521,7 +523,13 @@
   }
 
   const togglePlay = () => { if (!player) return; player.isPlaying() ? player.pause() : player.play(); };
-  const step = (d) => { if (!player) return; if (player.stepFrame) { player.stepFrame(d); return; } player.pause(); player.seekFrame(player.currentFrame() + d); };
+  function step(d) {
+    if (!player) return;
+    if (player.stepFrame) player.stepFrame(d);
+    else { player.pause(); player.seekFrame(player.currentFrame() + d); }
+    updateUi();
+    wakeLoop();
+  }
   const skip = (s) => { if (!player) return; player.seekTime(player.currentTime() + s); toast(`${s > 0 ? '+' : ''}${s} s`); };
   /** Arrow keys: one frame or seconds, from the jump-size settings. */
   const jump = (size, dir) => { if (size === 'frame') step(dir); else skip(dir * Number(size)); };
@@ -808,7 +816,11 @@
     // A live stream shows only the time since it started (no timecode or frame count to cycle to).
     if (player && player.meta && player.meta.live) { toast('Live stream'); return; }
     timeMode = (timeMode + 1) % 3; lastUi = ''; updateUi(); toast(['Time', 'Timecode', 'Frame number'][timeMode]); };
-  ui.seek.addEventListener('input', () => { scrubbing = true; pendingSeekFrame = Number(ui.seek.value); });
+  ui.seek.addEventListener('input', () => {
+    scrubbing = true;
+    player?.clearStepGoal?.();
+    pendingSeekFrame = Number(ui.seek.value);
+  });
   ui.seek.addEventListener('change', () => {
     scrubbing = false;
     if (player && pendingSeekFrame !== null) { player.seekFrame(pendingSeekFrame); pendingSeekFrame = null; lastSeekAt = performance.now(); }
