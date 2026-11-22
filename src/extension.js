@@ -1158,11 +1158,17 @@ function activate(context) {
   const provider = {
     openCustomDocument: (uri) => ({ uri, dispose() {} }),
     resolveCustomEditor: (doc, panel) => {
+      if (logFile) log(`[${path.basename(doc.uri.path)}] player resolve started`);
       // Add mode (docs/notes/compare-ui.md): the video goes into compare, and this new tab closes unused.
       if (compareApi && compareApi.claimOpen(doc.uri)) { setTimeout(() => panel.dispose(), 0); return undefined; }
       // Several videos opened at once (an Explorer multi-selection) become one compare (src/burst.js).
-      if (compareApi) compareApi.noteOpen(doc.uri, { panel });
-      return new Session(context, { uri: doc.uri }, panel).show();
+      const noted = !!compareApi && compareApi.noteOpen(doc.uri, { panel });
+      const session = new Session(context, { uri: doc.uri }, panel);
+      // Opened with others within a moment: compare takes these videos, so the heavy start-up (page, decoder, ffprobe) waits
+      // for its verdict and never happens for them. A video opened alone starts at once (one macrotask later).
+      const hold = noted ? compareApi.holdOpen(doc.uri) : null;
+      if (!hold) return session.show();
+      return hold.then((taken) => (taken ? undefined : session.show()));
     },
   };
   for (const viewType of VIEW_TYPES) {

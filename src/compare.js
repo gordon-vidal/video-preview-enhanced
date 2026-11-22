@@ -27,7 +27,7 @@ const frameserver = require('./frameserver');
 const { barHtml } = require('./bar');
 const { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare } = require('./comparepick');
 const { createAddMode } = require('./addmode');
-const { createBurst, leftoverTabs, togetherNotice } = require('./burst');
+const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('./burst');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
 
 const MAX_BLOCK = 8 * 1024 * 1024;
@@ -702,32 +702,54 @@ function registerCompare(context, deps) {
   // ---- Open together: videos that VS Code opens in one burst (an Explorer multi-selection: Open With…, Enter,
   // double-click) become one compare (src/burst.js). A single video, or videos opened apart, are untouched.
   const burst = createBurst({
-    windowMs: Number(process.env.VPE_BURST_MS) > 0 ? Number(process.env.VPE_BURST_MS) : 400,
+    windowMs: Number(process.env.VPE_BURST_MS) > 0 ? Number(process.env.VPE_BURST_MS) : BURST_WINDOW_MS,
     max: maxVideos,
-    onBurst: ({ items, extra }) => {
-      if (addMode.active || !openTogether()) return;
+    onBurst: async ({ items, extra }) => {
+      if (addMode.active || !openTogether()) return false;
       const list = items.map((i) => i.uri).filter((u) => FS_SCHEMES.has(u.scheme) && VIDEO_EXT.test(u.path));
-      if (list.length < 2) return;
+      if (list.length < 2) return false;
       deps.log(`compare: ${list.length} videos opened together -> one compare${extra.length ? `, ${extra.length} more stay as tabs` : ''}`);
       const first = items[0];
       const from = playerOf(first.uri);
       const tabCol = first.tabs[0] && first.tabs[0].group ? first.tabs[0].group.viewColumn : (first.panels[0] && first.panels[0].viewColumn);
-      (async () => {
+      try {
         await open(list, { from, t: 0, viewColumn: tabCol });
-        for (const it of items) {
-          for (const pn of it.panels) { try { pn.dispose(); } catch { /* gone already */ } }
-          for (const tb of it.tabs) Promise.resolve(vscode.window.tabGroups.close(tb)).catch(() => {});
-        }
-        closeLeftovers(list, tabCol);
-        noticeTogether(list.length);
-        if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
-      })().catch((e) => deps.log(`compare: open together failed: ${e && e.stack || e}`));
+      } catch (e) {
+        deps.log(`compare: open together failed: ${e && e.stack || e}`);
+        return false; // the held players start as usual
+      }
+      for (const it of items) {
+        for (const pn of it.panels) { try { pn.dispose(); } catch { /* gone already */ } }
+        for (const tb of it.tabs) Promise.resolve(vscode.window.tabGroups.close(tb)).catch(() => {});
+      }
+      closeLeftovers(list, tabCol);
+      noticeTogether(list.length);
+      if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
+      return true;
     },
   });
   /** A video opened in our player (extension.js resolveCustomEditor) or a tab of it appeared: part of a burst? */
   const noteOpen = (uri, o) => {
-    if (!uri || !FS_SCHEMES.has(uri.scheme) || !VIDEO_EXT.test(uri.path) || addMode.active || !openTogether()) return;
+    if (!uri || !FS_SCHEMES.has(uri.scheme) || !VIDEO_EXT.test(uri.path) || addMode.active || !openTogether()) return false;
     burst.add(uri.toString(), uri, o);
+    return true;
+  };
+  /**
+   * Called by the player after `noteOpen`. One macrotask is waited first, so that opens VS Code delivered together are
+   * all noted before looking. Settles with true once compare has taken the video (the player must never start), or
+   * false at once when it is the only one pending, when no burst takes it or after HOLD_MAX_MS (start the player).
+   */
+  const HOLD_MAX_MS = 10000;
+  const holdOpen = (uri) => {
+    if (!uri || !burst.waiting) return null; // not noted: nothing to wait for
+    const key = uri.toString();
+    return new Promise((done) => setImmediate(done)).then(() => {
+      const held = burst.wait(key);
+      if (!held) return false;
+      let timer;
+      const cap = new Promise((r) => { timer = setTimeout(() => r(false), HOLD_MAX_MS); });
+      return Promise.race([held, cap]).finally(() => clearTimeout(timer));
+    });
   };
   // Videos opened in an editor that is not the player (VS Code's own preview, a text tab): their new tab closes.
   if (vscode.window.tabGroups && vscode.window.tabGroups.onDidChangeTabs) {
@@ -897,7 +919,7 @@ function registerCompare(context, deps) {
       return open([a, ...files.slice(0, max - 1)], { from, t });
     }),
   );
-  return { claimOpen, noteOpen, toggleAddMode, stopAddMode };
+  return { claimOpen, noteOpen, holdOpen, toggleAddMode, stopAddMode };
 }
 
 module.exports = { registerCompare, setPickHook, compareHtml, CompareSession, fileOfKey, MAX_TILES, maxVideos };
