@@ -149,8 +149,9 @@ started while other processes use more than 25 % CPU is marked "under load" and 
 - The extension's test hook (only with `VPE_LOG`) reads JSON lines appended to `<VPE_LOG>.cmd` once
   it has logged `activated:`. Everything the extension and its webviews log lands in `VPE_LOG`, which
   the runner tails.
-- Cleanup always runs: `taskkill /T /F` on the VS Code tree, then any `Code.exe` still using the
-  profile, then the profile is deleted (`--keep` keeps it).
+- Each launch and CLI call runs inside a Windows job. Closing the job terminates its entire process
+  tree, including descendants whose parent has already exited. The runner waits for the launchers
+  to exit before deleting the profile (`--keep` keeps it).
 
 ## Files on the first command line (activation)
 
