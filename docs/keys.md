@@ -89,6 +89,7 @@ The player's keys, for all videos at once, plus:
 |---|---|
 | Space / K | Play or pause all |
 | , / . | Previous / next frame of the clock video (the others follow) |
+| A / B | Mark the start / end of the shared Compare loop (press again to clear). Use Export A–B Clips… to save the marked frames with tile offsets |
 | ← / →, Shift+← / →, Ctrl+← / → | The player's jump sizes, on the clock video |
 | - / + | Offset of the video under the pointer, one frame (10 ms when its offset is in ms) |
 | X | Swap sides (2 videos) |

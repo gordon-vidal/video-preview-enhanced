@@ -44,7 +44,7 @@
   const ui = {
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), tip: $('tip'), time: $('time'), now: $('now'), dur: $('dur'),
     mute: $('mute'), volume: $('volume'), rate: $('rate'), cog: $('cog'), infoBtn: $('infoBtn'), picBtn: $('picBtn'), cmpBtn: $('cmpBtn'), full: $('full'),
-    panel: $('panel'), sheet: $('sheet'), menu: $('menu'), toast: $('toast'), live: $('live'),
+    panel: $('panel'), sheet: $('sheet'), menu: $('menu'), toast: $('toast'), live: $('live'), abMarks: $('abMarks'),
     overlay: $('overlay'), message: $('message'), hint: $('hint'),
   };
   const names = cfg.names || ['A', 'B'];
@@ -64,6 +64,9 @@
   window.addEventListener('unhandledrejection', (e) => log('unhandled rejection:', e.reason && e.reason.stack || e.reason));
 
   const saved = vscode.getState() || {};
+  const ab = VpeAbLoop.create();
+  if (Number.isFinite(saved.ab?.a)) ab.set('a', saved.ab.a, 0);
+  if (Number.isFinite(saved.ab?.b)) ab.set('b', saved.ab.b, 0);
   const tileOr0 = (i) => (Number.isInteger(i) && i >= 0 && i < N ? i : 0);
   const reorderBtn = $('reorderBtn'), reorderHint = $('reorderHint');
   let reordering = false;
@@ -301,11 +304,32 @@
   /** Seconds a frame may be shown early in engine.tick(): a quarter frame. */
   const earlyOf = (p) => 0.25 / fpsOf(p);
   /** Tile i's offset in seconds: ms, or frames of that tile at its own frame rate. */
-  const offSec = (i) => { const o = st.offsets[i]; return o.unit === 'ms' ? o.v / 1000 : o.v / fpsOf(tiles[i]); };
+  const offSec = (i) => VpeCompareRange.offsetSeconds(st.offsets[i], fpsOf(tiles[i]));
   /** Tile i's position (relative seconds) for the clock at cRel: the same moment plus the offsets, nearest frame. */
   const relFor = (i, cRel) => cRel - offSec(st.clock) + offSec(i) + 0.25 / fpsOf(tiles[i]);
   /** The clock's position at which tile i is at rel (relFor's inverse, without the nudge). */
   const clockRelFor = (i, rel) => rel - offSec(i) + offSec(st.clock);
+
+  // Store the markers on the shared timeline so changing the clock or reordering leaves them in place.
+  function fmtAB(t) {
+    const rel = t + offSec(st.clock);
+    return rel < 0 ? `−${fmtTime(-rel)}` : fmtTime(rel);
+  }
+  function markAB(end) {
+    if (clock?.shownT == null) return;
+    const t = clock.rel(clock.shownT) - offSec(st.clock);
+    if (end) ab.set(end, t, 0);
+    else ab.cycle(t, 0);
+    toast(ab.toast(fmtAB));
+    controls.refresh();
+    save();
+  }
+  function exportAB() {
+    const ranges = ab.isRange() && clock?.shownT != null
+      ? tiles.map((p, i) => VpeCompareRange.mapRange(ab.a, ab.b, offSec(i), fpsOf(p), i === st.clock))
+      : null;
+    vscode.postMessage({ type: 'clipRange', ranges, clock: st.clock, order: st.order });
+  }
   const outOfRange = (p, rel) => !!p && (rel < -0.5 / fpsOf(p) || (p.meta.duration > 0 && rel > p.meta.duration + 0.5 / fpsOf(p)));
 
   /** The engine shows the newest frame due at its pause position, and no later frame is due. */
@@ -1451,6 +1475,7 @@
     vscode.setState({
       pic: st.pic.mode, mode: st.mode, split: st.split, order: st.order, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
       rate: st.rate, volume: st.volume, muted: st.muted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode,
+      ab: { a: ab.a, b: ab.b },
       t: t ?? (pendingStart || (clock && begun && clock.startT !== null ? clock.currentTime() : saved.t || 0)),
       ...changes,
     });
@@ -1609,7 +1634,11 @@
     buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, cmp: ui.cmpBtn, tracks: null },
     get: () => ({
       rate: st.rate, loop: st.loop, jump: prefs.jump, stepButtons: prefs.stepButtons, picture: picState(), compare: { soundLabel: `from ${tileLabel(st.sound)}` },
-      tools: [{ label: 'Compare', note: `${N} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', ui.cmpBtn) }],
+      abLabel: ab.label(fmtAB),
+      tools: [
+        { label: 'Compare', note: `${N} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', ui.cmpBtn) },
+        { label: 'Export A–B Clips…', ariaLabel: 'Export A–B video for all Compare tiles', run: exportAB },
+      ],
       facts: factsOf(Math.min(st.infoSel, N - 1)),
       infoTabs: { keys: st.order.map(tileLabel), sel: st.order.indexOf(st.infoSel), pick: (slot) => { st.infoSel = st.order[slot]; } },
       canUseOriginal: nativeTiles[st.infoSel] === 'transcode',
@@ -1620,6 +1649,7 @@
       canExternal: false,
     }),
     act: {
+      cycleAB: () => markAB(),
       loop: () => { setLoop(!st.loop); toast(st.loop ? 'Loop on' : 'Loop off'); },
       copyFrame: () => copyView(),
       setPicture: (m) => { setPic(Pic.fresh(m)); toast(Pic.name(m)); },
@@ -1925,11 +1955,16 @@
     const playing = clock.playing;
     const fr = tiles.map((p, i) => (p === clock ? f + 1 : p.shownT !== null && !outs[i] ? frameOf(p) + 1 : null));
     const t = clock.currentTime();
-    const key = `${fr.join(',')}|${playing}|${t.toFixed(3)}|${tiles.map((p) => p.n).join(',')}|${st.timeMode}|${st.clock}`;
+    const offset = offSec(st.clock);
+    const key = `${fr.join(',')}|${playing}|${t.toFixed(3)}|${tiles.map((p) => p.n).join(',')}|${st.timeMode}|${st.clock}|${ab.a}|${ab.b}|${offset}`;
     if (key !== lastUi || infoDirty) {
       lastUi = key;
       infoDirty = false;
       const dur = clock.meta.duration || 0;
+      const marks = ab.marks(dur, offset);
+      ui.abMarks.hidden = marks.hidden;
+      ui.abMarks.style.left = `${marks.left}%`;
+      ui.abMarks.style.width = `${Math.min(100 - marks.left, marks.width)}%`;
       const fps = fpsOf(clock);
       const nFrames = clock.n || (fps && dur ? Math.round(dur * fps) : 0);
       who.textContent = tileLabel(st.clock);
@@ -2054,6 +2089,8 @@
       case 'End': pause(); clock.seekFrame(clock.n - 1); break;
       case 'm': case 'M': setMute(!st.muted); break;
       case 'r': case 'R': setLoop(!st.loop); toast(st.loop ? 'Loop on' : 'Loop off'); break;
+      case 'a': case 'A': markAB('a'); break;
+      case 'b': case 'B': markAB('b'); break;
       case 'f': case 'F': toggleFullscreen(); break;
       case 'i': case 'I': controls.toggle('info', ui.infoBtn); break;
       case 'x': case 'X': if (pair) swapSides(); else handled = false; break;
@@ -2213,6 +2250,12 @@
         }
         if (begun && visible) {
           if (pendingStart && tiles.every((p) => p.startT !== null)) { clock.seekTime(pendingStart); pendingStart = 0; }
+          if (ab.b !== null && clock.playing && clock.seekTarget === null) {
+            const offset = offSec(st.clock);
+            const start = Math.max(0, ab.a === null ? 0 : ab.a + offset);
+            const end = ab.b + offset;
+            if (end >= start && clock.rel(clock.now()) >= end + 0.5 / fpsOf(clock)) seekClock(start);
+          }
           if (clock.playing) syncPlaying(); else syncPaused();
         }
         for (const p of tiles) if (p !== clock) p.tick(now);
@@ -2271,6 +2314,7 @@
     const m = e.data;
     if (!m || m.page !== cfg.page) return;
     switch (m.type) {
+      case 'abQuery': exportAB(); break;
       case 'toast': toast(String(m.text || ''), Math.min(10000, Number(m.ms) || 1500)); break;
       case 'addMode':
         if (m.on) setReordering(false);

@@ -12,20 +12,37 @@
       /** @type {number|null} */ b: null,
       /** @type {number|null} */ af: null,
       /** @type {number|null} */ bf: null,
+      /** @type {number|null} */ aPts: null,
+      /** @type {number|null} */ bPts: null,
       /** Toggles end `which` ('a' | 'b') at time t (s, from the start) showing frame f (0-based). */
-      set(/** @type {'a'|'b'} */ which, /** @type {number} */ t, /** @type {number} */ f) {
-        if (which === 'a') { s.a = s.a === null ? t : null; s.af = s.a === null ? null : f; } else { s.b = s.b === null ? t : null; s.bf = s.b === null ? null : f; }
-        if (s.a !== null && s.b !== null && s.b <= s.a) { const x = s.a; s.a = s.b; s.b = x; const y = s.af; s.af = s.bf; s.bf = y; }
+      set(/** @type {'a'|'b'} */ which, /** @type {number} */ t, /** @type {number} */ f, pts = t) {
+        if (which === 'a') {
+          s.a = s.a === null ? t : null;
+          s.af = s.a === null ? null : f;
+          s.aPts = s.a === null ? null : pts;
+        } else {
+          s.b = s.b === null ? t : null;
+          s.bf = s.b === null ? null : f;
+          s.bPts = s.b === null ? null : pts;
+        }
+        if (s.a !== null && s.b !== null && s.b <= s.a) {
+          [s.a, s.b] = [s.b, s.a];
+          [s.af, s.bf] = [s.bf, s.af];
+          [s.aPts, s.bPts] = [s.bPts, s.aPts];
+        }
       },
       /** Sets end `which` anew (the context menu's "Set Loop Start / End": never clears). */
-      reset(/** @type {'a'|'b'} */ which, /** @type {number} */ t, /** @type {number} */ f) {
-        if (which === 'a' && s.a !== null) { s.a = null; s.af = null; }
-        if (which === 'b' && s.b !== null) { s.b = null; s.bf = null; }
-        s.set(which, t, f);
+      reset(/** @type {'a'|'b'} */ which, /** @type {number} */ t, /** @type {number} */ f, pts = t) {
+        s[which] = null;
+        s.set(which, t, f, pts);
       },
-      clear() { s.a = s.b = s.af = s.bf = null; },
+      clear() { s.a = s.b = s.af = s.bf = s.aPts = s.bPts = null; },
       /** The settings panel's row: start, then end, then off. */
-      cycle(/** @type {number} */ t, /** @type {number} */ f) { if (s.a === null) s.set('a', t, f); else if (s.b === null) s.set('b', t, f); else s.clear(); },
+      cycle(/** @type {number} */ t, /** @type {number} */ f, pts = t) {
+        if (s.a === null) s.set('a', t, f, pts);
+        else if (s.b === null) s.set('b', t, f, pts);
+        else s.clear();
+      },
       isSet() { return s.a !== null || s.b !== null; },
       /** Both frames known: the export range exists. */
       isRange() { return s.af !== null && s.bf !== null; },
@@ -35,6 +52,10 @@
       exportRange(/** @type {number} */ fps, /** @type {number} */ n) {
         if (s.af === null || s.bf === null) return null;
         return { fa: Math.min(s.af, s.bf), fb: Math.max(s.af, s.bf), fps, n: n || 0, a: s.a, b: s.b };
+      },
+      presentationRange() {
+        if (s.aPts === null || s.bPts === null) return null;
+        return { a: Math.min(s.aPts, s.bPts), b: Math.max(s.aPts, s.bPts), early: 0 };
       },
       /** The toast after A or B. */
       toast(/** @type {(t: number) => string} */ fmtTime) {
@@ -48,10 +69,10 @@
         return `${fmtClock(s.a, false)} – ${fmtClock(s.b, false)}`;
       },
       /** The marks on the seek bar for a file of `dur` s: hidden, or left and width in percent. */
-      marks(/** @type {number} */ dur) {
+      marks(/** @type {number} */ dur, offset = 0) {
         if (!dur || (s.a === null && s.b === null)) return { hidden: true, left: 0, width: 0 };
-        const a = s.a === null ? 0 : s.a / dur;
-        const b = s.b === null ? 1 : s.b / dur;
+        const a = s.a === null ? 0 : Math.max(0, Math.min(1, (s.a + offset) / dur));
+        const b = s.b === null ? 1 : Math.max(0, Math.min(1, (s.b + offset) / dur));
         return { hidden: false, left: a * 100, width: Math.max(0.3, (b - a) * 100) };
       },
     };

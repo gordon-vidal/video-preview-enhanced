@@ -201,6 +201,16 @@
         "category": "Video Preview"
       },
       {
+        "command": "videoPreviewEnhanced.exportVideoRange",
+        "title": "Export A–B Clip…",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.exportCompareVideoRange",
+        "title": "Export A–B Clips…",
+        "category": "Video Preview"
+      },
+      {
         "command": "videoPreviewEnhanced.ctx.play",
         "title": "Play",
         "category": "Video Preview"
@@ -300,6 +310,14 @@
         {
           "command": "videoPreviewEnhanced.copyFfmpegRange",
           "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/"
+        },
+        {
+          "command": "videoPreviewEnhanced.exportVideoRange",
+          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/"
+        },
+        {
+          "command": "videoPreviewEnhanced.exportCompareVideoRange",
+          "when": "activeWebviewPanelId == 'videoPreviewEnhanced.compare'"
         },
         {
           "command": "videoPreviewEnhanced.ctx.play",

@@ -1,6 +1,6 @@
 # Export A–B as video
 
-**Proposal for review.** QA can sync a reference and a test render in Compare, mark and loop a
+QA can sync a reference and a test render in Compare, mark and loop a
 discrepancy, then share one lossless clip per tile to reopen together at time zero. The single
 player saves one clip. Copy original streams even during Live transcode. Scope is one range,
 with timelines, multiple segments, effects and a re-encoded composite deferred.
@@ -10,7 +10,7 @@ with timelines, multiple segments, effects and a re-encoded composite deferred.
 ```text
 Seek bar          |------- A [==========] B ---------|
 Settings          A-B loop        00:12.400 – 00:15.200
-                  Tools           [Export Video (A–B)…]
+                  Tools           [Export A–B Clips…]
 Export            Pick a folder   [Export here]
 Result            A_reference_A-B.mp4    B_test_A-B.mov
 ```
@@ -18,13 +18,14 @@ Result            A_reference_A-B.mp4    B_test_A-B.mov
 - Reuse **A** and **B**, including press again to clear and swapping reversed markers.
   Add the existing seek-bar marks, Settings **A-B loop** row and shortcut entries to Compare.
   Wrap the shared loop by seeking the clock and following the normal lockstep path.
-- Put **Export Video (A–B)…** in Settings › Tools and the Command Palette as
-  **Video Preview: Export Video (A–B)…** (`videoPreviewEnhanced.exportVideoRange`). The command
+- Put **Export A–B Clip…** (`videoPreviewEnhanced.exportVideoRange`) in the single player's Details
+  overlay, Settings › Tools and Command Palette. Compare has **Export A–B Clips…**
+  (`videoPreviewEnhanced.exportCompareVideoRange`) in Settings › Tools and the palette. Each command
   targets the active editor and prompts for missing markers. Tab reaches both controls and
-  Enter/Space activate them. Name the export button **Export Video (A–B)** or, in Compare,
+  Enter/Space activate them. Name the export button **Export A–B Clip…** or, in Compare,
   **Export A–B video for all Compare tiles**. Give **A-B loop** accessible text for marker
-  values and announce changes and results through the status region. Keep export in the
-  panel and palette. [Compare UI](compare-ui.md) · [Context menu](context-menu.md)
+  values and announce changes and results through the status region.
+  [Compare UI](compare-ui.md) · [Context menu](context-menu.md)
 - Pick a folder, defaulting to the source's parent (the clock video's in Compare). Snapshot
   the range, sources, offsets and order. Save `<name>_A-B.<ext>` or `<letter>_<name>_A-B.<ext>`.
   Show cancellable progress, remove temporary files on cancel/error and avoid overwrites.
@@ -64,10 +65,9 @@ ran to 1.216 s. The same start worked when remuxing the fixture from MKV to MP4.
 copies of the MKV, a VP9 WebM and an MPEG-4 AVI began at the keyframe, 0.600 s before A.
 
 **B is a presentation boundary.** Packet-order `-t` can retain later pictures or lose references
-needed by B. Keep those dependencies and verify the visible interval. If ffmpeg's mux cannot
-express the end, prototype bounding each MP4/MOV track's edit duration, including audio and
-subtitle cues across B. Require confirmation before publishing a copy with a measured end
-deviation, including on the keyframe path.
+needed by B. Shorten the movie and track edits to the presentation boundary after B, leaving
+the copied packets intact. The exact path publishes only after the decoded timeline and both
+boundary hashes match the source. The keyframe path requires confirmation of both measured boundaries.
 
 **Container choice.** Prefer verified MP4 remux for compatible non-MP4/MOV sources. Otherwise offer
 a warned, same-container keyframe cut if the muxer supports the tracks. Copy the displayed video and
@@ -114,9 +114,19 @@ omitted A–B, which this proposal adds to the shared transport. Clarify clip ve
 [PNG export and command copy](../features.md) if approved. The existing
 [`rangecmd.js`](../../src/rangecmd.js) commands retain their behavior.
 
-1. May an exact-start clip ship with a confirmed, reported end deviation, or must B be exact
-   before the feature ships?
-2. Is MP4 remux the preferred default for compatible non-MP4/MOV sources, with same-container
-   keyframe cuts opt-in? Which playback versions must pass before we call the start exact?
-3. Should Compare allow explicitly skipping ineligible tiles as proposed, or require a complete
-   aligned set before writing any clips?
+- The exact path must show A through B inclusive. Keep native-only stream copy. Exactness is
+  checked using the installed native decoder with edit lists enabled.
+- Prefer MP4 remux for compatible streams from other containers. Offer single-player keyframe
+  cuts in supported source containers with measured deviations and explicit confirmation.
+- Compare lists ineligible tiles and asks before saving the eligible clips. Report alignment
+  differences when mixed frame rates or fractional offsets land between source pictures.
+
+## Verification on Windows
+
+FFmpeg 9.0.2 decoded the 25 fps B-frame fixture from A at 1.600 s through B at 2.760 s
+with both boundaries matching and 30 visible pictures in MP4 and MOV. H.264/AAC MKV
+and VP9 WebM also matched after remux to MP4. One-frame intervals, VFR and an MP4
+with a 3600 s timestamp origin matched. AVI with MPEG-4 B-frames passed for some
+ranges and failed exact verification for others. The MKV/SubRip fallback trial
+reported a 0.600 s early start, a 0.120 s late end and one omitted intervening picture.
+The test fixture is generated with FFmpeg's `testsrc2` and `sine` filters.

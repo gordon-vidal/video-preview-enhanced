@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- New: **Export A–B Clip…** saves a lossless video excerpt with native ffmpeg. Compare shares an **A** / **B** loop and can save one clip per tile with its offset applied.
+
 - New: a **Compare** button in the player's bar. It asks before starting Compare with the video; with a Compare open it reads **Add to Compare** and adds the video directly.
 - New: a **Stop** button in Compare's Add Mode hint.
 - Changed: the Explorer menu and player title show **Start Compare** or **Add to Compare** based on whether a Compare is open.

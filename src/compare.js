@@ -98,6 +98,8 @@ ${barHtml({ compare: true })}
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
 <script nonce="${nonce}" src="${uri('range-drag.js')}"></script>
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
+<script nonce="${nonce}" src="${uri('abloop.js')}"></script>
+<script nonce="${nonce}" src="${uri('comparerange.js')}"></script>
 ${large ? `<script nonce="${nonce}" src="${uri('membudget.js')}"></script>
 ` : ''}<script nonce="${nonce}" src="${uri('compare-grid.js')}"></script>
 <script nonce="${nonce}" src="${uri('compare.js')}"></script>
@@ -111,7 +113,7 @@ class CompareSession {
    */
   constructor(context, uris, {
     log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn,
-    start, openPlayer, setPref, prefs, copyText, addMode, setTranscodePref, offerTranscode, menu,
+    start, openPlayer, setPref, prefs, copyText, addMode, setTranscodePref, offerTranscode, menu, exportClips,
   }) {
     if (api) vscode = api;
     this.logRaw = log;
@@ -126,6 +128,7 @@ class CompareSession {
     this.prefs = prefs || (() => null);
     this.setTranscodePref = setTranscodePref;
     this.offerTranscode = offerTranscode;
+    this.exportClips = exportClips;
     this.addMode = addMode || null;
     this.menu = menu;
     this.copyText = copyText || ((t) => vscode.env.clipboard.writeText(t));
@@ -276,6 +279,12 @@ class CompareSession {
         return n.handle(m.m);
       }
       case 'add': return this.addVideos();
+      case 'clipRange': {
+        if (!this.exportClips || !this.uris[m.clock]) return undefined;
+        const order = Grid.tileOrder(this.uris.length, m.order);
+        const jobs = order.map((i, slot) => ({ uri: this.uris[i], letter: TILE_KEYS[slot], range: m.ranges?.[i] }));
+        return this.exportClips(this, m.ranges ? jobs : [], this.uris[m.clock], true);
+      }
       case 'addMode': return this.addMode?.toggle(this); // Shift+D, the Compare panel's switch
       case 'startAddMode': return this.addMode?.start(this); // Add video
       case 'stopAddMode': return this.addMode?.stop(this); // Esc in the page

@@ -244,7 +244,8 @@ together.
 ## Deviations from the mock-up
 
 - The tab is swapped rather than the same webview turning into compare (above).
-- ⚙ panel: no A-B loop row, Tools has only Compare (above).
+- ⚙ panel: the shared A-B loop and **Export A–B Clips…** follow the
+  [clip export design](ab-clip-export.md).
 - The bar stays under the picture in the editor (as in the player), not over it.
 - Colours come from the VS Code theme (as the player), not the mock-up's Dark+ values.
 

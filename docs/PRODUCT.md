@@ -98,7 +98,7 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
   then CC (only when the video has a subtitle track, 2026-11-22), **Compare** (video files), ⓘ (about this video),
   speed, ⚙, picture size, fullscreen. No status pill: only real problems show (a notice, once).
 - **⚙ panel:** speed, loop, A-B loop, subtitles (always there, also to load a file), audio track, copy frame, keyboard
-  shortcuts, jump sizes and a Tools grid (compare, scopes, inspector, stats, codec X-ray, export A-B).
+  shortcuts, jump sizes and a Tools grid (compare, scopes, inspector, stats, codec X-ray, export A-B frames and clip).
 - **Picture size** (2026-11-20): **Fit** (default: whole picture, bars where the shape differs), **Fill** (no bars,
   edges cropped, centred), **Stretch** (fills the area, distorted), **100 %** (one video pixel = one device pixel,
   drag to pan when larger). A bar button between Settings and fullscreen and the key **Z** cycle them
@@ -122,6 +122,9 @@ One feature: compare becomes multi-view. The difference view is dropped.
   compact hover controls. A spare cell can add another video while below the limit.
 - **Tile order** can be changed with the bar's **Reorder** button and a drag, or with the arrows on
   each tile. The clock, sound and offsets follow their videos. Free tile placement is deferred.
+- **A–B loop and clips:** A and B mark the shared timeline. Native ffmpeg copies one clip per eligible tile
+  with its offset applied. Compare asks before skipping tiles, and reports any frame rounding that affects sync.
+  The single player can save one clip. MP4/MOV clips use presentation edits to show A through B inclusive.
 - **The player's UI (2026-11-20: the approved compare mock-up).** Compare is the player with more videos:
   the same bar drives all tiles (play, lockstep frame steps, seek, speed, loop, jumps); time and seek follow the
   clock video with its letter; mute / volume act on the sound video; no CC (Compare does not render subtitles). One

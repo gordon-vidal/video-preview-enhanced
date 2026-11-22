@@ -37,6 +37,7 @@ const { barHtml } = require('./bar'); // the bar's markup, shared with compare
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy('./rangecmd'); // A-B frame export and ffmpeg command
+const clipExport = lazy('./clipexport');
 const ctxmenu = require('./ctxmenu'); // the player's right-click menu
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
 const urlsource = lazy('./urlsource'); // Open Video URL… (docs/notes/url-stream.md)
@@ -81,9 +82,11 @@ const DEBUG_COMMANDS = new Set([
   'videoPreviewEnhanced.addToCompareFromPlayer',
   'videoPreviewEnhanced.showLog', 'workbench.action.closeActiveEditor', 'workbench.action.closeAllEditors', 'workbench.action.reloadWindow',
   'notifications.clearAll', 'videoPreviewEnhanced.exportRange', 'videoPreviewEnhanced.addFromExplorer', 'videoPreviewEnhanced.stopAddFromExplorer', 'workbench.files.action.refreshFilesExplorer',
+  'videoPreviewEnhanced.exportVideoRange', 'videoPreviewEnhanced.exportCompareVideoRange',
 ]);
 const sessions = new Set();
 const compareSessions = new Set(); // open compare panels (src/compare.js)
+const clipExports = new WeakSet();
 /** Sound codecs whose WebCodecs decoder lagged in this VS Code session ('audio-aac', ...): the built-in decoder plays them from then on. */
 const wcFailed = new Set();
 // Frame links (vscode://<id>/open?…) waiting for their player: file URI string -> {t, frame}.
@@ -1025,6 +1028,52 @@ function askRange(then) {
   return undefined;
 }
 
+function askClipRange(compare) {
+  const target = [...(compare ? compareSessions : sessions)].find((s) => s.panel.active);
+  if (target) target.post({ type: 'abQuery', then: 'clip' });
+  else vscode.window.showInformationMessage('Video Preview: open a video or Compare and mark an A-B range first.');
+}
+
+async function exportClips(session, jobs, source, compare = false) {
+  if (clipExports.has(session)) return;
+  if (!source || session.url || session.sequence || !FS_SCHEMES.has(source.scheme)) {
+    vscode.window.showInformationMessage('Video Preview: clip export requires a video file on this host.');
+    return;
+  }
+  if (!jobs.length) {
+    vscode.window.showInformationMessage('Video Preview: set an A-B loop first with A and B.');
+    return;
+  }
+  if (!vscode.workspace.isTrusted) {
+    vscode.window.showWarningMessage('Video Preview: clip export requires native ffmpeg in a trusted workspace.');
+    return;
+  }
+  clipExports.add(session);
+  try {
+    const native = await tools();
+    if (!native) {
+      const setup = 'Set Up Optional ffmpeg';
+      const answer = await vscode.window.showInformationMessage(
+        'Video Preview: A-B clip export requires native ffmpeg and ffprobe on this host.', setup,
+      );
+      if (answer === setup) await vscode.commands.executeCommand('videoPreviewEnhanced.setupFfmpeg');
+      return;
+    }
+    const testDir = logFile && process.env.VPE_CLIP_EXPORT_DIR;
+    await clipExport.exportClips({
+      vscode, tools: native, jobs, compare, defaultUri: vscode.Uri.joinPath(source, '..'), log,
+      announce: (message) => session.post({ type: 'toast', text: message, ms: 5000 }),
+      testFolder: testDir ? vscode.Uri.file(testDir) : undefined,
+      testConfirm: !!testDir && process.env.VPE_CLIP_EXPORT_CONFIRM === '1',
+    });
+  } catch (e) {
+    log(`A–B export failed: ${e.message}`);
+    vscode.window.showErrorMessage(`Video Preview: A–B export failed. ${e.message}`);
+  } finally {
+    clipExports.delete(session);
+  }
+}
+
 /**
  * Memory budgets for this machine (media/membudget.js): from os.totalmem() and os.freemem() in local
  * windows. Remote windows: null (this host is the remote machine; the webview sizes from its own
@@ -1229,6 +1278,8 @@ function activate(context) {
     // ---- A-B export: the page answers 'abQuery' with its range, then the host runs it ----
     vscode.commands.registerCommand('videoPreviewEnhanced.exportRange', () => askRange('export')),
     vscode.commands.registerCommand('videoPreviewEnhanced.copyFfmpegRange', () => askRange('ffmpeg')),
+    vscode.commands.registerCommand('videoPreviewEnhanced.exportVideoRange', () => askClipRange(false)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.exportCompareVideoRange', () => askClipRange(true)),
     // ---- end A-B export ----
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('videoPreviewEnhanced.ffmpegPath')) toolsPromise = null;
@@ -1269,7 +1320,7 @@ function activate(context) {
   // ---- Compare and Add to Compare (src/compare.js) ----
   let testCompareFiles;
   compareApi = registerCompare(context, {
-    vscode, log, sessions, compareSessions, nativeTransport, nativeQueue,
+    vscode, log, sessions, compareSessions, nativeTransport, nativeQueue, exportClips,
     compareOpenChanged: () => { for (const session of sessions) session.sendCompareOpen(); },
     showOpenDialog: logFile ? (options) => {
       const files = testCompareFiles;
@@ -1833,6 +1884,7 @@ class Session {
       autoplay: c.autoplay, loop: c.loop, prefs: prefsOf(c), canOpenExternal: this.canOpenExternal(), name: this.name, debug: !!logFile, resume: this.resumeAt(), goto,
       // A URL tab (Open Video URL…): file-only tools are off; the info panel names the host instead of a size.
       url: this.url ? { host: new URL(this.url).host } : null,
+      sequence: !!this.sequence,
       engine: {
         workerUrl: uri('decoder-worker.js'), xrayWorkerUrl: uri('xray-worker.js'), libavBase: base, loader: `${base}/${this.build.loader}`, variant: this.build.variant,
         remote: !!vscode.env.remoteName, whenSlow: c.whenSlow, fastWhenBehind: c.fastWhenBehind,
@@ -2051,6 +2103,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
       case 'saveFrame': return this.saveFrame(m.data, m.frame);
       case 'exportRange': return this.exportRange(m.range);
       case 'ffmpegRange': return this.copyFfmpegRange(m.range);
+      case 'clipRange': return exportClips(this, m.range ? [{ uri: this.uri, range: m.range }] : [], this.uri);
       case 'exportFrame': { const w = this.exportWait && this.exportWait.get(m.id); if (w) { this.exportWait.delete(m.id); w(m); } return undefined; }
       case 'external': if (!this.canOpenExternal()) return undefined; return vscode.env.openExternal(this.sequence ? vscode.Uri.file(this.sequence.files[0]) : this.uri);
       case 'log': log(`[${this.name}] webview: ${m.msg}`); return undefined;

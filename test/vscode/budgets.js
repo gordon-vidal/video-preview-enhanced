@@ -4,6 +4,7 @@
 // native / remote / URL / HDR / many-video scenarios). A scenario not listed gets DEFAULT.
 const BUDGETS = {
   'autoplay-loop': 175000,
+  'clip-export': 90000,
   compare: 255000,
   'file-icons': 170000,
   hdr: 325000,
