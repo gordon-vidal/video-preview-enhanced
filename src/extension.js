@@ -41,7 +41,6 @@ const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy('./rangecmd'); // A-B frame export and ffmpeg command
 const clipExport = lazy('./clipexport');
 const { syntheticRefusal } = require('./clipsource');
-const ctxmenu = require('./ctxmenu'); // the player's right-click menu
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
 const urlsource = lazy('./urlsource'); // Open Video URL… (docs/notes/url-stream.md)
 
@@ -1221,8 +1220,6 @@ function activate(context) {
       supportsMultipleEditorsPerDocument: true,
     }));
   }
-  // Right-click menu of the player (src/ctxmenu.js): the commands post to the active player.
-  ctxmenu.register(vscode, () => [...sessions].find((x) => x.panel.active) || (lastActive && !lastActive.disposed ? lastActive : null), context.subscriptions);
   context.subscriptions.push(
     vscode.commands.registerCommand('videoPreviewEnhanced.openWith', (uri) => {
       const target = uri || (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri);
@@ -1398,10 +1395,6 @@ function activate(context) {
             if (c.command) {
               if (DEBUG_COMMANDS.has(c.command)) vscode.commands.executeCommand(c.command, c.arg ? vscode.Uri.file(c.arg) : undefined);
               else log(`debug command not allowed: ${c.command}`);
-              continue;
-            }
-            if (c.ctxCommand) { // a context-menu command with the context object VS Code would pass
-              if (String(c.ctxCommand).startsWith(ctxmenu.PREFIX)) vscode.commands.executeCommand(c.ctxCommand, c.ctx || {});
               continue;
             }
             if (c.openUrl) { openUrl(context, String(c.openUrl), c.where === 'side' || c.where === 'window' ? c.where : 'active').catch((e) => log(`debug openUrl: ${e && e.stack || e}`)); continue; } // tests: skips the input box
@@ -1968,6 +1961,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
 </div>
 <div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
 <div id="sheet" hidden></div>
+<div id="ctxmenu" class="ctxmenu" role="menu" aria-label="Player menu" tabindex="-1" hidden></div>
 <div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 <script nonce="${nonce}" src="${uri('membudget.js')}"></script>
 <script nonce="${nonce}" src="${uri('timestretch.js')}"></script>
@@ -1988,6 +1982,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
 <script nonce="${nonce}" src="${uri('range-drag.js')}"></script>
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
+<script nonce="${nonce}" src="${uri('ctxmenu.js')}"></script>
 <script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
 <script nonce="${nonce}" src="${uri('abloop.js')}"></script>
 <script nonce="${nonce}" src="${uri('player.js')}"></script>

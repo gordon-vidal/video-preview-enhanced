@@ -96,7 +96,8 @@ end of the file. Checks: `test/engine/frames_edges.js` `end-at-open/` and `short
 | `case/compare_ui/tiles/menu` | L3 `compare/compare_ui/tiles/menu` |  |
 | `case/compare_ui/grid/three` | L3 `compare/compare_ui/grid/three` |  |
 | `case/compare_ui/leave` | L3 `compare/compare_ui/leave` |  |
-| `case/ctxmenu/context/attribute` | L3 `ui/ctxmenu/context/attribute` |  |
+| `case/ctxmenu/menu/items` | L3 `ui/ctxmenu/menu/items` |  |
+| `case/ctxmenu/menu/dismiss` | L3 `ui/ctxmenu/menu/dismiss` |  |
 | `case/ctxmenu/commands/transport` | L3 `ui/ctxmenu/commands/transport` |  |
 | `case/ctxmenu/commands/help` | L3 `ui/ctxmenu/commands/help` |  |
 | `case/ctxmenu/commands/ab-loop` | L3 `ui/ctxmenu/commands/ab-loop` |  |

@@ -106,7 +106,7 @@ offset clock sound step play pause seek sync report`, and the probes in `debugPr
 (toast, pill, message, canvas, tracks, subtitle overlay, scopes, thumbnail, X-ray ... as one JSON line), `thumb`
 (the picture as 64x36 luma), `pixels`, `scopesDump`, `dom` (mouse / pointer / wheel event at a point), `hdrcaps`,
 `hdrpixels`, `gotoText`, `track`, `click`. `key` takes `ctrl` and a `target` selector. In the extension
-(src/extension.js): allowed `command`s, `ctxCommand`, `openUrl`, `compareFiles` / `compareAdd` / `compareReplace` /
+(src/extension.js): allowed `command`s, `openUrl`, `compareFiles` / `compareAdd` / `compareReplace` /
 `compareWith`, `tabs`, and for the scenarios `settings` / `env` / `resetState` (each answers `debug done <id>`).
 `VPE_EXPORT_DIR` and `VPE_SAVE_DIR` replace the folder and save dialogs of frame export and save frame;
 `VPE_TOTALMEM=<bytes>` sizes the decoder pool and frame caches as for a machine with that much memory;

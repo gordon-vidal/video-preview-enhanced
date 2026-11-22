@@ -14,7 +14,7 @@ streamlined right-click menu). This branch builds it. Simple mode is the player 
 | Wiring: keys, buttons, tools list, CC, status notice, time formats, test probes | `media/player.js` |
 | Subtitle / audio lists for the panels | `media/tracks-menu.js` (`panelData`, `ccToggle`, `select`, `selectAudio`; the old popup is gone) |
 | Theme colours (`--vscode-*` only, HC outlines, reduced motion) | `media/player.css` (end of file) |
-| Right-click menu | `src/ctxmenu.js` (package.json parts regenerated from it) |
+| Right-click menu | `media/ctxmenu.js` (HTML menu; `#ctxmenu` block at the end of `media/player.css`) |
 | Settings `videoPreviewEnhanced.jump.arrow / jump.shift / jump.ctrl` | `package.json`; written by `setSetting()` (`pref` message, only declared values) |
 | Stream facts the panel needs | `src/ffmpeg.js` (audio bit rate, track counts), `src/native.js` (bit rates, source channels / rate, GPU method, counts), `media/decoder-worker.js` (codec bit rates) |
 

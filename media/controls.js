@@ -321,7 +321,7 @@ const VpeControls = (() => {
    * }} env
    */
   function create(env) {
-    const { panel, sheet, bar, buttons } = env;
+    const { panel, sheet, bar, buttons, onShow } = env;
     /** @type {null|'main'|'speed'|'ab'|'inspect'|'picture'|'transcode'|'subs'|'audio'|'quality'|'info'|'step'} */
     let view = null;
     /** @type {HTMLElement|null} */
@@ -704,6 +704,7 @@ const VpeControls = (() => {
     /** Opens (or switches to) a page; focus moves into it. */
     function show(v, from) {
       if (from !== undefined) opener = from;
+      if (onShow) onShow();
       closeSheet(false);
       view = v;
       panel.hidden = false;
@@ -728,6 +729,7 @@ const VpeControls = (() => {
       if (refocus && back) back.focus();
     }
     function openSheet(from = view ? opener : document.activeElement) {
+      if (onShow) onShow();
       close(false);
       sheetOpener = from instanceof HTMLElement && from !== document.body ? from : buttons.cog;
       sheet.textContent = '';

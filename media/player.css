@@ -616,3 +616,25 @@ body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-co
   background: var(--vpe-chip-bg); color: var(--vpe-chip-fg);
 }
 #stopAddBtn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vpe-row-hover)); }
+
+/* ==== Right-click menu: #ctxmenu (media/ctxmenu.js, docs/notes/context-menu.md) ====
+   Same tokens as .panel (settings), so it matches the ⚙ panel and VS Code's own menus in every theme.
+   Kept in its own block at the end of the file so edits to the bar's rules never touch it. */
+#ctxmenu {
+  position: fixed; z-index: 20; box-sizing: border-box; min-width: 240px; max-width: calc(100vw - 8px); max-height: calc(100vh - 8px); overflow-y: auto;
+  display: flex; flex-direction: column; padding: 6px 0; outline: none;
+  color: var(--vpe-panel-fg); background: var(--vpe-panel-bg); border: 1px solid var(--vpe-panel-border);
+  border-radius: 8px; box-shadow: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
+  font-size: 13px;
+}
+#ctxmenu[hidden] { display: none; }
+#ctxmenu .ctx-item {
+  display: flex; align-items: center; gap: 0; flex: none; height: 30px; padding: 0 14px 0 6px; text-align: left; cursor: pointer;
+  font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: 0;
+}
+#ctxmenu .ctx-item:hover, #ctxmenu .ctx-item:focus-visible, #ctxmenu .ctx-item:focus { background: var(--vpe-row-hover); outline: none; }
+#ctxmenu .ctx-item:focus-visible { border-color: var(--vpe-accent); }
+#ctxmenu .ctx-check { flex: none; width: 22px; text-align: center; font-size: 12px; color: var(--vpe-accent); }
+#ctxmenu .ctx-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ctxmenu .ctx-key { flex: none; margin-left: 24px; font-family: var(--vpe-mono); font-size: 11px; font-weight: 400; color: var(--vpe-dim); white-space: nowrap; }
+#ctxmenu .ctx-sep { height: 1px; margin: 6px 0; flex: none; background: var(--vpe-sep); }
