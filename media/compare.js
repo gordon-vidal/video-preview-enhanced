@@ -45,7 +45,7 @@
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), tip: $('tip'), time: $('time'), now: $('now'), dur: $('dur'),
     mute: $('mute'), volume: $('volume'), rate: $('rate'), cog: $('cog'), infoBtn: $('infoBtn'), picBtn: $('picBtn'), cmpBtn: $('cmpBtn'), full: $('full'),
     panel: $('panel'), sheet: $('sheet'), menu: $('menu'), toast: $('toast'), live: $('live'), abMarks: $('abMarks'),
-    abA: $('abA'), abB: $('abB'),
+    abA: $('abA'), abB: $('abB'), setABtn: $('setABtn'), setBBtn: $('setBBtn'),
     overlay: $('overlay'), message: $('message'), hint: $('hint'),
   };
   const names = cfg.names || ['A', 'B'];
@@ -328,6 +328,41 @@
     controls.refresh();
     updateUi();
     save();
+  }
+  ui.setABtn.onclick = () => markAB('a');
+  ui.setBBtn.onclick = () => markAB('b');
+  // Dragging a pin moves that end to the nearest frame of the clock video. Its time is that frame's time on the clock
+  // (minus the clock's offset, as marks are stored); no per-tile capture exists for it, so the clip export maps
+  // the time to every tile through the offsets (the nominal mapping), the same fallback as a mark set while seeking.
+  for (const [which, pin] of [['a', ui.abA], ['b', ui.abB]]) {
+    self.VpeAbLoop.bindPin(pin, which, {
+      rect: () => ui.seek.getBoundingClientRect(),
+      n: () => clock ? clock.n || 0 : 0,
+      fps: () => clock ? fpsOf(clock) : 0,
+      dur: () => clock ? clock.meta.duration || 0 : 0,
+      move(w, snap, clientX) {
+        if (!clock) return;
+        const r = ui.seek.getBoundingClientRect();
+        const dur = clock.meta.duration || 0;
+        const pct = clock.n > 1 ? snap.f / (clock.n - 1) * 100 : dur ? snap.t / dur * 100 : 0;
+        pin.style.left = `${pct}%`;
+        ui.tip.textContent = `${w.toUpperCase()} ${tileLabel(st.clock)} ${fmtTime(snap.t)}${clock.n ? ` · #${snap.f + 1}` : ''}`;
+        ui.tip.style.left = `${Math.max(30, Math.min(r.width - 30, clientX - r.left))}px`;
+        ui.tip.hidden = false;
+      },
+      commit(w, snap) {
+        if (!clock) return;
+        const t = snap.t - offSec(st.clock);
+        const native = !!(clock.shownFrame?.nativeTimestamp || clock.remoteStream);
+        ab.reset(w, t, snap.f, t, native);
+        for (const key of [...marks.keys()]) if (key !== ab.aPts && key !== ab.bPts) marks.delete(key);
+        toast(ab.toast(fmtAB));
+        controls.refresh();
+        updateUi();
+        save();
+      },
+      end() { ui.tip.hidden = true; lastUi = ''; updateUi(); },
+    });
   }
   function exportAB() {
     const span = ab.presentationRange();
@@ -2142,6 +2177,7 @@
       infoDirty = false;
       const dur = clock.meta.duration || 0;
       VpeControls.drawRangeMarks(ui.abMarks, ui.abA, ui.abB, ab.marks(dur, offset));
+      VpeControls.drawRangeButtons(ui.setABtn, ui.setBBtn, ab);
       const fps = fpsOf(clock);
       const nFrames = clock.n || (fps && dur ? Math.round(dur * fps) : 0);
       who.textContent = tileLabel(st.clock);

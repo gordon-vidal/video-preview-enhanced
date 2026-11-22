@@ -73,6 +73,12 @@ const VpeControls = (() => {
     if (bPct !== null) pinB.style.left = `${bPct}%`;
   }
 
+  /** The [ ] buttons beside the time: pressed while that end of the A-B range is set. */
+  function drawRangeButtons(/** @type {HTMLElement} */ btnA, /** @type {HTMLElement} */ btnB, /** @type {{a: number|null, b: number|null}} */ ab) {
+    btnA.setAttribute('aria-pressed', String(ab.a !== null));
+    btnB.setAttribute('aria-pressed', String(ab.b !== null));
+  }
+
   const SVG = (body, o = {}) => `<svg width="${o.size || 18}" height="${o.size || 18}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${o.sw || 1.6}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const ICON = {
     speed: SVG('<circle cx="12" cy="13" r="8"></circle><path d="M12 13l4-4M12 3v2"></path>'),
@@ -760,7 +766,7 @@ const VpeControls = (() => {
   }
 
   return {
-    create, createToast, createPlayFlash, drawRangeMarks, facts, keyGroups, qualityRows, qualityLabel,
+    create, createToast, createPlayFlash, drawRangeMarks, drawRangeButtons, facts, keyGroups, qualityRows, qualityLabel,
     clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
   };
 })();

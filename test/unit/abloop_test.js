@@ -106,4 +106,87 @@ test('seek-bar marks', () => {
   assert.strictEqual(ab.marks(10).width, 0.3, 'a minimum width stays visible');
 });
 
+test('snapPin: x along the bar to the nearest frame, as the seek bar does', () => {
+  assert.deepStrictEqual(AB.snapPin(0, 91, 30), { f: 0, t: 0 });
+  assert.deepStrictEqual(AB.snapPin(1, 91, 30), { f: 90, t: 3 });
+  assert.deepStrictEqual(AB.snapPin(0.5, 91, 30), { f: 45, t: 1.5 });
+  assert.strictEqual(AB.snapPin(0.5 / 90 * 0.9, 91, 30).f, 0, 'under half a frame rounds down');
+  assert.strictEqual(AB.snapPin(0.5 / 90 * 1.1, 91, 30).f, 1, 'over half a frame rounds up');
+  assert.strictEqual(AB.snapPin(-0.3, 91, 30).f, 0, 'left of the bar clamps');
+  assert.strictEqual(AB.snapPin(7, 91, 30).f, 90, 'right of the bar clamps');
+  assert.strictEqual(AB.snapPin(NaN, 91, 30).f, 0);
+  assert.deepStrictEqual(AB.snapPin(0.25, 0, 30, 8), { f: 0, t: 2 }, 'no frame count yet: the time from the duration');
+});
+
+test('a committed pin drag sets that end at the frame time, so export cuts at that frame', () => {
+  const ab = AB.create();
+  ab.set('a', 1, 30);
+  ab.set('b', 2, 60);
+  const snap = AB.snapPin(0.5, 91, 30); // frame 45
+  ab.reset('b', snap.t, snap.f, snap.t, false);
+  assert.deepStrictEqual([ab.b, ab.bf, ab.bPts], [1.5, 45, 1.5]);
+  assert.deepStrictEqual(ab.exportRange(30, 91), { fa: 30, fb: 45, fps: 30, n: 91, a: 1, b: 1.5 });
+  assert.deepStrictEqual(ab.presentationRange(), { a: 1, b: 1.5, early: 0 });
+  ab.reset('a', 3, 90, 3, false); // dragged past B: the ends swap
+  assert.deepStrictEqual([ab.a, ab.b, ab.af, ab.bf], [1.5, 3, 45, 90]);
+});
+
+/** A pin with just what bindPin touches; fire(type, event) runs the handlers. */
+function fakePin() {
+  const handlers = {};
+  const classes = new Set();
+  return {
+    addEventListener(type, fn) { handlers[type] = fn; },
+    setPointerCapture() {}, releasePointerCapture() {},
+    classList: { toggle(c, on) { if (on) classes.add(c); else classes.delete(c); } },
+    classes,
+    fire(type, e = {}) {
+      const ev = {
+        pointerId: 1, button: 0, stopped: false, prevented: false,
+        preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; }, ...e,
+      };
+      handlers[type]?.(ev);
+      return ev;
+    },
+  };
+}
+
+test('bindPin: drag moves live, commits the snapped frame on release, never reaches the bar', () => {
+  const pin = fakePin();
+  const log = [];
+  const bound = AB.bindPin(pin, 'b', {
+    rect: () => ({ left: 100, width: 900 }), n: () => 91, fps: () => 30, dur: () => 3,
+    move: (w, s, x) => log.push(['move', w, s.f, x]),
+    commit: (w, s) => log.push(['commit', w, s.f, s.t]),
+    end: () => log.push(['end']),
+  });
+  assert.ok(!bound.dragging());
+  const down = pin.fire('pointerdown', { clientX: 550 });
+  assert.ok(down.stopped && down.prevented, 'pointerdown stays off the seek bar and stage');
+  assert.ok(bound.dragging() && pin.classes.has('dragging'));
+  assert.ok(pin.fire('pointermove', { clientX: 820 }).stopped);
+  pin.fire('pointerup', { clientX: 1000 });
+  assert.ok(!bound.dragging() && !pin.classes.has('dragging'));
+  assert.deepStrictEqual(log, [['move', 'b', 45, 550], ['move', 'b', 72, 820], ['commit', 'b', 90, 3], ['end']]);
+});
+
+test('bindPin: cancel, Escape and other buttons commit nothing; moves without a drag are ignored', () => {
+  const pin = fakePin();
+  const log = [];
+  AB.bindPin(pin, 'a', {
+    rect: () => ({ left: 0, width: 100 }), n: () => 101, fps: () => 25, dur: () => 4,
+    move: () => log.push('move'), commit: () => log.push('commit'), end: () => log.push('end'),
+  });
+  pin.fire('pointermove', { clientX: 10 });
+  pin.fire('pointerdown', { button: 2, clientX: 10 });
+  assert.deepStrictEqual(log, []);
+  pin.fire('pointerdown', { clientX: 10 });
+  pin.fire('pointercancel');
+  pin.fire('pointerdown', { clientX: 20 });
+  assert.ok(pin.fire('keydown', { key: 'Escape' }).stopped);
+  pin.fire('pointerup', { clientX: 30 });
+  assert.deepStrictEqual(log, ['move', 'end', 'move', 'end']);
+  assert.ok(pin.fire('click').stopped, 'a click on the pin does not toggle playback');
+});
+
 console.log(`${n} passed`);

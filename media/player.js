@@ -18,7 +18,7 @@
     time: $('time'), now: $('now'), dur: $('dur'), rate: $('rate'), mute: $('mute'), volume: $('volume'),
     infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), picBtn: $('picBtn'),
     panel: $('panel'), sheet: $('sheet'), toast: $('toast'), abMarks: $('abMarks'), tracks: $('tracks'),
-    abA: $('abA'), abB: $('abB'),
+    abA: $('abA'), abB: $('abB'), setABtn: $('setABtn'), setBBtn: $('setBBtn'),
   };
 
   const log = (/** @type {any[]} */ ...a) => vscode.postMessage({ type: 'log', msg: a.map(String).join(' ') });
@@ -526,9 +526,38 @@
       action: { label: transcode ? 'Use original video' : 'Switch to built-in decoder', id: 'fullRes', close: true },
     });
   }
+  ui.setABtn.onclick = () => setAB('a');
+  ui.setBBtn.onclick = () => setAB('b');
+  // Dragging a pin on the seek bar moves that end to the nearest frame; the playhead stays where it is. The frame's
+  // time (frame / frame rate) is both its A-B time and its presentation time, so the clip export cuts at that frame.
+  for (const [which, pin] of [['a', ui.abA], ['b', ui.abB]]) {
+    self.VpeAbLoop.bindPin(pin, which, {
+      rect: () => ui.seek.getBoundingClientRect(),
+      n: () => player ? player.n : 0,
+      fps: () => player ? (player.frameNumberRate?.() || player.fps || 30) : 0,
+      dur: () => player ? player.meta.duration || 0 : 0,
+      move(w, snap, clientX) {
+        if (!player) return;
+        const dur = player.meta.duration || 0;
+        const r = ui.seek.getBoundingClientRect();
+        const pct = player.n > 1 ? snap.f / (player.n - 1) * 100 : dur ? snap.t / dur * 100 : 0;
+        pin.style.left = `${pct}%`;
+        ui.tip.textContent = `${w.toUpperCase()} ${fmtTime(snap.t)}${player.n ? ` · #${snap.f + 1}` : ''}`;
+        ui.tip.style.left = `${Math.max(30, Math.min(r.width - 30, clientX - r.left))}px`;
+        ui.tip.hidden = false;
+      },
+      commit(w, snap) {
+        if (!player) return;
+        ab.reset(w, snap.t, snap.f, snap.t, synthTimes());
+        abChanged();
+      },
+      end() { hideTip(); drawAB(); },
+    });
+  }
   function abLabel() { return ab.label(fmtClock); }
   function drawAB() {
     VpeControls.drawRangeMarks(ui.abMarks, ui.abA, ui.abB, ab.marks(player && player.meta.duration));
+    VpeControls.drawRangeButtons(ui.setABtn, ui.setBBtn, ab);
   }
 
   const togglePlay = () => {

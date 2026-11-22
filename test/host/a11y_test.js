@@ -58,6 +58,13 @@ function checkButtons(html, what) {
   }
   assert.ok(n > 5, `${what}: only ${n} buttons found`);
 }
+/** The [ ] buttons beside the time: named, unpressed until an end is set; the pins say they can be dragged. */
+function assertRangeButtons(html, where) {
+  assert.match(html, /<button id="time"[\s\S]*?<\/button>\s*<button id="setABtn"[^>]*title="Set range start \(A\)"[^>]*aria-label="Set range start \(A\)"[^>]*aria-pressed="false"/, `${where}: #setABtn`);
+  assert.match(html, /<button id="setBBtn"[^>]*title="Set range end \(B\)"[^>]*aria-label="Set range end \(B\)"[^>]*aria-pressed="false"/, `${where}: #setBBtn`);
+  assert.match(html, /id="abA" class="ab-pin"[^>]*title="Drag to move range start \(A\)"/, `${where}: #abA is draggable`);
+  assert.match(html, /id="abB" class="ab-pin"[^>]*title="Drag to move range end \(B\)"/, `${where}: #abB is draggable`);
+}
 const pressed = (html, id) => new RegExp(`<button id="${id}"[^>]*aria-pressed="false"`).test(html);
 const liveRegion = /<div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>/;
 const playFlash = /<div id="playFlash" aria-hidden="true"><svg class="i-play"[\s\S]*?<svg class="i-pause"/;
@@ -74,6 +81,7 @@ checkButtons(cmp, 'compare');
 assert.match(cmp, liveRegion, 'compare: live region');
 assert.match(cmp, playFlash, 'compare: decorative play/pause flash');
 assert.ok(pressed(cmp, 'mute'), 'compare: #mute has aria-pressed');
+assertRangeButtons(cmp, 'compare');
 // The player's bar (src/bar.js) without CC, plus the Compare button that opens its panel.
 assert.match(cmp, /<button id="cmpBtn"[^>]*aria-controls="panel"/);
 assert.match(cmp, /<button id="stopAddBtn"[^>]*>Stop<\/button>/);
@@ -105,6 +113,7 @@ assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: va
   assert.match(html, liveRegion, 'player: live region');
   assert.match(html, playFlash, 'player: decorative play/pause flash');
   assert.ok(pressed(html, 'mute'), 'player: #mute has aria-pressed');
+  assertRangeButtons(html, 'player');
   assert.ok(!html.includes('id="pip"'), 'player: no picture-in-picture button');
   assert.ok(!html.includes('id="info"'), 'player: the old top-left details overlay is gone (ⓘ has everything)');
   // One layout: no mode switch, no Tools / CC popup menus; the bar's panel buttons say what they open.

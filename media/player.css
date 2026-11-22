@@ -214,9 +214,14 @@ body.idle { cursor: none; }
   border-radius: 1px;
   background: #fff;
   box-shadow: 0 0 0 1px #17191e;
-  pointer-events: none;
-  z-index: 2;
+  /* A wider invisible grab area around the 3 px pin (media/abloop.js bindPin). */
+  pointer-events: auto;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 4;
 }
+.ab-pin::before { content: ""; position: absolute; inset: -2px -6px; }
+.ab-pin.dragging { box-shadow: 0 0 0 1px #17191e, 0 0 0 3px var(--vscode-focusBorder, #3794ff); }
 .ab-pin span {
   position: absolute;
   bottom: 100%;
@@ -415,6 +420,9 @@ body.idle { cursor: none; }
 #volume { width: 84px; margin: 0 12px 0 2px; accent-color: var(--vscode-foreground); flex: none; }
 #row #time { font-family: var(--vpe-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 8px; }
 #row #time #dur { color: var(--vpe-dim); margin-left: 0.45em; }
+/* [ ] range buttons beside the time: compact, lit while that end is set. */
+#row button.rng { min-width: 24px; height: 28px; padding: 0 2px; opacity: 0.8; }
+#row button.rng[aria-pressed="true"] { opacity: 1; color: var(--vscode-progressBar-background, #3794ff); background: var(--vpe-hover); }
 .mono { font-family: var(--vpe-mono); font-size: 12px; white-space: nowrap; }
 #row #rate { font-family: var(--vpe-mono); font-size: 12.5px; min-width: 42px; }
 #tracks .ccline { position: relative; display: flex; }
@@ -444,7 +452,7 @@ body.idle { cursor: none; }
 @media (max-width: 720px) { #volume { display: none; } }
 #seek, #volume, #speedSlider { touch-action: none; }
 @media (max-width: 520px) {
-  #infoBtn, #row #time #dur { display: none; }
+  #infoBtn, #row #time #dur, #row button.rng { display: none; }
   #row { gap: 0; }
   #row button { min-width: 28px; padding-inline: 3px; }
   #row .gap { margin-left: 0; }
