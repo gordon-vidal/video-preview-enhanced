@@ -7,11 +7,11 @@
 //
 // Step: { case, only?, skip?, settings?, env?, ffmpeg?, keepState?, timeout? }
 
-const PLAYER = ['media/player.js', 'media/controls.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/player.css', 'src/bar.js'];
+const PLAYER = ['media/player.js', 'media/controls.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/player.css', 'src/bar.js'];
 const ENGINE = ['media/engine.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
 const HOST = ['src/extension.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
-const COMPARE = ['src/compare.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js', 'media/compare.js', 'media/compare.css', 'media/compare-grid.js'];
+const COMPARE = ['src/compare.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js', 'media/compare.js', 'media/compare.css', 'media/compare-grid.js', 'media/range-drag.js'];
 
 module.exports = [
   {
@@ -84,7 +84,7 @@ module.exports = [
     name: 'multiview',
     journey: 'Play together: grids of 2-4, lockstep, offsets, the sync clock and sound, a short loop',
     sources: [...COMPARE, ...ENGINE],
-    steps: [{ case: 'multiview' }, { case: 'multiview-short-loop' }],
+    steps: [{ case: 'multiview' }, { case: 'multiview-reorder' }, { case: 'multiview-short-loop' }],
   },
   {
     name: 'multiview-transcode',

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- New: a **Compare** button in the player's bar. It asks before starting Compare with the video; with a Compare open it reads **Add to Compare** and adds the video directly.
+- New: a **Stop** button in Compare's Add Mode hint.
+- Changed: the CC button shows only when the video has subtitles. ⚙ › **Subtitles** is always there to load a file.
+- Changed: the player and Compare bar icons share one size, stroke and alignment.
+- Changed: open **Keyboard shortcuts** from ⚙ Settings in the player and Compare, or press `?`.
+- Fixed: speed and volume sliders in the player and Compare keep tracking when dragged off the webview.
+- New: reorder Compare tiles by dragging in **Reorder** mode or using each tile's up and down arrows.
+- Changed: **Add to Compare** works on videos, folders and mixed selections. Compare opens ready to add more videos from the Explorer and stays in Add Mode through playback and scrubbing.
 - Changed: Compare supports 8 videos by default and up to 16 through `compare.maxVideos`. Grids of 5 or more stack the name and offset controls to fit smaller tiles.
 - New: with **Live transcode** active, **Copy Frame**, **Save Frame as PNG**, the **Pixel Inspector** and the **Scopes** now use one exact, full-resolution frame of the file (decoded on the host by ffmpeg, sent as a PNG: local, WSL and Remote-SSH) instead of the transcoded picture, without leaving Live transcode. The inspector and scopes fetch it once per paused frame; if it can't be fetched the tool falls back to the transcoded picture with a notice.
 - New: **Live transcode in Compare** — Compare can use Live transcode at each tile's size, share a max video bitrate across tiles (`videoPreviewEnhanced.transcodeSplitBitrate`), and show each tile's active encoder + **Use original video** in About.

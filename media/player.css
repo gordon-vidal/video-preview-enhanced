@@ -313,7 +313,7 @@ body.idle { cursor: none; }
 
 @media (prefers-reduced-motion: reduce) { #bar { transition: none; } }
 
-/* ---- The bar (src/extension.js html()) and the panels (media/controls.js), docs/notes/ui-simple.md ---- */
+/* ---- The bar (src/bar.js) and the panels (media/controls.js), docs/notes/ui-simple.md ---- */
 :root {
   --vpe-accent: var(--vscode-focusBorder, #3794ff);
   --vpe-panel-bg: var(--vscode-menu-background, var(--vscode-editorWidget-background));
@@ -338,6 +338,8 @@ body.idle { cursor: none; }
 }
 #row button:hover { background: var(--vpe-hover); }
 #row button.open { background: var(--vpe-hover); }
+#row button[hidden] { display: none; }
+#row button svg { flex: none; }
 #row .wide { min-width: 40px; }
 #row .gap { margin-left: 6px; }
 #play .i-pause, #play.playing .i-play { display: none; }
@@ -352,12 +354,34 @@ body.idle { cursor: none; }
 #row #time #dur { color: var(--vpe-dim); margin-left: 0.45em; }
 .mono { font-family: var(--vpe-mono); font-size: 12px; white-space: nowrap; }
 #row #rate { font-family: var(--vpe-mono); font-size: 12.5px; min-width: 42px; }
-#row #tracks.none { color: var(--vpe-dim); }
-#tracks .ccline { display: flex; padding-bottom: 2px; border-bottom: 2px solid transparent; }
-#tracks.on .ccline { border-bottom-color: var(--vpe-accent); }
+#tracks .ccline { position: relative; display: flex; }
+#tracks.on .ccline::after {
+  content: ''; position: absolute; inset: auto 0 -3px; border-bottom: 2px solid var(--vpe-accent);
+}
+#startCompareBtn { gap: 4px; white-space: nowrap; }
+#startCompareBackdrop { position: fixed; inset: 0; z-index: 8; }
+#startCompareDialog {
+  position: absolute; width: min(270px, calc(100% - 16px)); max-height: calc(100% - 80px); overflow: auto;
+  box-sizing: border-box; padding: 12px;
+  border: 1px solid var(--vpe-panel-border); border-radius: 10px;
+  background: var(--vpe-panel-bg); color: var(--vpe-panel-fg);
+  box-shadow: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
+}
+#startCompareHint { margin: 0 0 12px; }
+.compare-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.compare-actions button {
+  font: inherit; padding: 3px 8px; cursor: pointer; border-radius: 4px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vpe-chip-bg); color: var(--vpe-chip-fg);
+}
+.compare-actions button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vpe-row-hover)); }
+#confirmCompareBtn { background: var(--vpe-on-bg); color: var(--vpe-on-fg); }
+#confirmCompareBtn:hover { background: var(--vscode-button-hoverBackground, var(--vpe-on-bg)); }
 #cog svg { transition: transform 200ms ease-out; }
 #cog.open svg { transform: rotate(45deg); }
-@media (max-width: 720px) { #volume, #keysBtn { display: none; } }
+@media (max-width: 720px) { #volume { display: none; } }
+@media (max-width: 600px) { #startCompareLabel { display: none; } }
+#seek, #volume, #speedSlider { touch-action: none; }
 @media (max-width: 520px) { #prev, #next, #infoBtn, #row #time #dur { display: none; } }
 
 kbd {
@@ -470,5 +494,13 @@ body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-co
 @media (prefers-reduced-motion: reduce) { #cog svg { transition: none; } }
 #sheet .srow .grow { white-space: normal; }
 /* Add mode (compare from the Explorer): a quiet line at the top while it is on. */
-#addHint { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 4px 12px; border-radius: 12px; border: 1px dashed var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground, inherit); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; z-index: 6; }
+#addHint { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 4px 12px; border-radius: 12px; border: 1px dashed var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground, inherit); font-size: 12px; white-space: nowrap; pointer-events: none; z-index: 6; display: flex; align-items: center; box-sizing: border-box; }
 #addHint[hidden] { display: none; }
+#addHintText { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Its Stop button: the only part of the hint that takes clicks. */
+#stopAddBtn {
+  flex: none; pointer-events: auto; margin: -2px -6px -2px 8px; padding: 1px 8px; font: inherit; cursor: pointer;
+  border-radius: 4px; border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vpe-chip-bg); color: var(--vpe-chip-fg);
+}
+#stopAddBtn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vpe-row-hover)); }

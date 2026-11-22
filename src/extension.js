@@ -1259,9 +1259,11 @@ function activate(context) {
   fileIcons();
   warnOldInstalls();
 
-  // ---- compare mode (src/compare.js): Explorer "Compare Videos", "Compare With…" ----
+  // ---- Compare and Add to Compare (src/compare.js) ----
   compareApi = registerCompare(context, {
     vscode, log, sessions, compareSessions, nativeTransport, nativeQueue,
+    compareOpenChanged: () => { for (const session of sessions) session.sendCompareOpen(); },
+    lastActivePlayer: () => lastActive,
     // Videos compared lately (uri strings): the quick pick on key D lists them first.
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
     // Compare's bar and panels are the player's: the same jump sizes, written the same way.
@@ -1351,6 +1353,12 @@ function activate(context) {
               vscode.commands.executeCommand('videoPreviewEnhanced.compare', list[0], list);
               continue;
             }
+            if (c.addToCompare) { // the context-menu arguments: primary resource, then the selection
+              const list = c.addToCompare.map((f) => vscode.Uri.file(f));
+              vscode.commands.executeCommand('videoPreviewEnhanced.addToCompare', list[0], list.length > 1 ? list : undefined)
+                .then(() => log(`debug done ${c.id || ''} addToCompare`), (e) => log(`debug addToCompare failed: ${e.message}`));
+              continue;
+            }
             if (c.pickCompare) { // tests: the next compare quick pick logs its rows and picks one (label part, or Browse…)
               setPickHook(async (items) => {
                 setPickHook(null);
@@ -1360,7 +1368,7 @@ function activate(context) {
               continue;
             }
             if (c.openFile) { // tests: opens a file as an Explorer click would (a preview tab in the active group)
-              vscode.commands.executeCommand('vscode.open', vscode.Uri.file(c.openFile), { preview: c.preview !== false, preserveFocus: true })
+              vscode.commands.executeCommand('vscode.open', vscode.Uri.file(c.openFile), { preview: c.preview !== false, preserveFocus: c.preserveFocus !== false })
                 .then(() => log(`debug done ${c.id || ''} openFile`), (e) => log(`debug openFile failed: ${e && e.message || e}`));
               continue;
             }
@@ -1402,6 +1410,11 @@ function activate(context) {
               continue;
             }
             if (c.compare) { for (const s of compareSessions) s.post({ ...c, type: 'debug' }); continue; }
+            if (c.pickSubtitles) {
+              for (const s of sessions) if (s.name === c.name) s.testPickSubtitles = c.pickSubtitles.map((f) => vscode.Uri.file(f));
+              log('debug subtitles picker ready');
+              continue;
+            }
             if (c.bench) {
               // Throughput of extension host -> webview messages (raw-frame transport test).
               for (const sess of sessions) if (!c.name || sess.name.includes(c.name)) {
@@ -1634,6 +1647,7 @@ class Session {
       if (!panel.visible) this.hiddenCount++;
       if (panel.visible && this.shown) this.startEarly();
       this.post({ type: 'visible', visible: panel.visible });
+      if (panel.visible) this.sendCompareOpen();
       if (panel.visible && this.onShown) { const f = this.onShown; this.onShown = null; f(); }
     });
     this.extraSubs = []; // subtitle files the user loaded; sent again after a reload
@@ -1768,6 +1782,19 @@ class Session {
     if (!this.disposed) this.webview.postMessage(msg);
   }
 
+  canCompare() {
+    return !this.sequence && !this.url && FS_SCHEMES.has(this.uri.scheme);
+  }
+
+  /** Whether a Compare is open: the player's Compare button then adds to it (media/player.js setCompareOpen). */
+  compareOpen() {
+    return [...compareSessions].some((c) => !c.disposed);
+  }
+
+  sendCompareOpen() {
+    if (this.canCompare()) this.post({ type: 'compareOpen', open: this.compareOpen() });
+  }
+
   fail(err, hint) {
     log(`[${this.name}] error: ${err && err.stack ? err.stack : err}`);
     this.post({ type: 'error', message: String(err && err.message ? err.message : err), hint: hint || '' });
@@ -1841,7 +1868,16 @@ ${earlyJs}<link rel="stylesheet" href="${uri('player.css')}">
   <div id="toast" hidden aria-hidden="true"></div>
   <div id="notice" role="status" hidden><span id="noticeText"></span><button id="noticeAction"></button><button id="noticeClose" title="Dismiss" aria-label="Dismiss">×</button></div>
 </div>
-${barHtml()}
+${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
+<div id="startCompareBackdrop" hidden>
+  <div id="startCompareDialog" tabindex="-1" role="dialog" aria-modal="true" aria-label="Start comparison" aria-describedby="startCompareHint">
+    <p id="startCompareHint">Start Compare with this video, then click videos in the Explorer to add them.</p>
+    <div class="compare-actions">
+      <button id="cancelCompareBtn" type="button">Cancel</button>
+      <button id="confirmCompareBtn" type="button">Start comparison</button>
+    </div>
+  </div>
+</div>
 <div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
 <div id="sheet" hidden></div>
 <div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -1860,6 +1896,7 @@ ${barHtml()}
 <script nonce="${nonce}" src="${uri('tracks-menu.js')}"></script>
 <script nonce="${nonce}" src="${uri('xray.js')}"></script>
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
+<script nonce="${nonce}" src="${uri('range-drag.js')}"></script>
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
 <script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
 <script nonce="${nonce}" src="${uri('abloop.js')}"></script>
@@ -1909,7 +1946,9 @@ ${barHtml()}
         this.t.ready = this.t.ready || Date.now();
         this.sendSubtitles().catch((e) => log(`[${this.name}] subtitles: ${e && e.stack || e}`));
         this.sendFfmpegState();
-        return this.sequence ? this.openSequence() : this.open();
+        // The bar was rendered with the Compare state. A Compare that opened or closed while the page loaded is sent
+        // after the video opened, so nothing comes before the first sound and frames (test/host/wav_parts_test.js).
+        return Promise.resolve(this.sequence ? this.openSequence() : this.open()).finally(() => this.sendCompareOpen());
       case 'loadSubs': return this.loadSubtitles();
       // The settings panel's "Extension settings" row: VS Code's Settings, filtered to this extension.
       case 'openSettings': return vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXT_ID}`);
@@ -1959,6 +1998,9 @@ ${barHtml()}
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         // Compare takes this tab's place and starts where the player is (src/compare.js).
         return vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', this.uri, { t: Number(m.t) || 0 });
+      case 'toolbarCompare':
+        if (!this.canCompare()) return;
+        return compareApi.addFromPlayer(this, Number(m.t) || 0, m.confirmStart === true);
       case 'comparePick': // key D: a quick pick of other videos
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         return vscode.commands.executeCommand('videoPreviewEnhanced.comparePick', this.uri, { t: Number(m.t) || 0 });
@@ -2667,7 +2709,9 @@ ${barHtml()}
   /** "Load subtitles…": pick files (in remote windows, on the remote side) and show the first. */
   async loadSubtitles() {
     const folder = this.sequence ? vscode.Uri.file(this.sequence.dir) : this.url ? workspaceFolder() : vscode.Uri.joinPath(this.uri, '..');
-    const picked = await vscode.window.showOpenDialog({
+    const testPicked = this.testPickSubtitles;
+    this.testPickSubtitles = undefined;
+    const picked = testPicked || await vscode.window.showOpenDialog({
       defaultUri: folder, canSelectMany: true, openLabel: 'Load subtitles',
       filters: { Subtitles: ['srt', 'vtt', 'ass', 'ssa'], 'All files': ['*'] },
     });

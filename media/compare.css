@@ -55,6 +55,35 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 #cells.dense .nudge button { height: 100%; min-width: 22px; padding: 0 4px; }
 #cells.dense .nudge .offv { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+.move {
+  position: absolute; right: 4px; bottom: 4px; z-index: 2; display: flex; gap: 2px;
+  color: var(--vscode-editorWidget-foreground, #e8e8e8); opacity: 0; pointer-events: none;
+}
+.move.L { left: 4px; right: auto; }
+.cell:hover .move, .cell:focus-within .move { opacity: 1; pointer-events: auto; }
+.move button {
+  display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px;
+  background: var(--vscode-editorWidget-background, #252526); color: inherit; cursor: pointer;
+}
+.move button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, #454545); }
+.move button:disabled { color: var(--vscode-disabledForeground, #999); cursor: default; }
+#row #reorderBtn { min-width: 60px; padding: 0 6px; font-size: 12px; }
+#reorderHint {
+  position: absolute; top: 4px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 16px);
+  box-sizing: border-box; padding: 3px 8px; border-radius: 6px; text-align: center; font-size: 12px;
+  background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-editorWidget-foreground, #e8e8e8);
+  pointer-events: none; z-index: 3;
+}
+#stage.reordering .cell:not(.add) {
+  cursor: grab; touch-action: none; user-select: none;
+  outline: 1px dashed var(--vscode-focusBorder, #007fd4); outline-offset: -2px;
+}
+#stage.reorder-drag, #stage.reorder-drag .cell:not(.add) { cursor: grabbing; }
+#stage.reordering .ov { opacity: 1; }
+#stage.reordering .nudge { visibility: hidden; }
+#stage.reordering :is(.pill, #divider) { cursor: inherit; }
+.reordering .cell :is(.ov > *, #divider) { pointer-events: none; }
+
 .oor {
   position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; pointer-events: none;
   color: #8a8a8a; font-size: 13px;

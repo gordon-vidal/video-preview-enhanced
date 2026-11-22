@@ -47,14 +47,31 @@ function droppedVideos(values) {
 }
 
 /**
- * The video files among a folder's entry names, natural name order, at most `max` of them (Explorer "Compare
- * Videos in Folder"). `total` counts all videos so the caller can say when some were left out.
- * @returns {{ names: string[], total: number }}
+ * The video files among a folder's entry names, in natural name order (Explorer "Add to Compare").
  */
-function folderVideos(names, max) {
-  const vids = [...new Set((names || []).filter((n) => VIDEO_EXT.test(n)))]
+function folderVideos(names) {
+  return [...new Set(names.filter((n) => VIDEO_EXT.test(n)))]
     .sort((a, b) => coll.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0));
-  return { names: vids.slice(0, Math.max(2, max | 0)), total: vids.length };
 }
 
-module.exports = { pickRows, pushRecent, droppedVideos, folderVideos, VIDEO_EXT, RECENT_MAX };
+/** Candidates go after the existing tiles, in selection order. Count overflow after removing duplicates. */
+function planAddToCompare({ videos, compare, player, max, key }) {
+  const target = compare || player;
+  const existing = compare ? compare.uris : player ? [player.uri] : [];
+  const seen = new Set(existing.map(key));
+  const unique = videos.filter((uri) => {
+    const id = key(uri);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  const room = Math.max(0, max - existing.length);
+  return {
+    target,
+    append: !!compare,
+    files: unique.slice(0, room),
+    skipped: Math.max(0, unique.length - room),
+  };
+}
+
+module.exports = { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare, VIDEO_EXT, RECENT_MAX };

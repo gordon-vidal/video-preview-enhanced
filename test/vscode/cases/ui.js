@@ -2,11 +2,12 @@
 // The player's bar and panels in a real VS Code (docs/notes/ui-simple.md, docs/notes/a11y.md): names, roles
 // and states of the bar's controls, the seek bar's time as aria-valuetext, the polite live region, a click
 // on the picture (play / pause, or closing a panel), each panel button toggling its panel, keyboard focus
-// in the panels and the shortcuts sheet, CC without subtitles, speed step and clamp, jump sizes (from the
+// in the panels and the shortcuts sheet, subtitle controls, speed step and clamp, jump sizes (from the
 // panel and from the settings), and the "About this video" facts for a WebAssembly and a native file.
 // Read through the VPE_LOG test hook: the player's `a11y` and `state` probes (media/player.js debugProbe)
 // and compare's `compare a11y` line (media/compare.js).
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const lib = require('../lib');
 
@@ -50,11 +51,11 @@ module.exports = [{
       const s = await a11y();
       const c = s.controls;
       ok(s.unnamed.length === 0, `buttons without a name in words: ${JSON.stringify(s.unnamed)}`);
-      const want = { play: 'Play', prev: 'Previous frame', next: 'Next frame', full: 'Fullscreen', infoBtn: 'About this video', cog: 'Settings', keysBtn: 'Keyboard shortcuts', seek: 'Position', volume: 'Volume', canvas: 'Video' };
+      const want = { play: 'Play', prev: 'Previous frame', next: 'Next frame', full: 'Fullscreen', infoBtn: 'About this video', startCompareBtn: 'Compare', cog: 'Settings', seek: 'Position', volume: 'Volume', canvas: 'Video' };
       for (const [k, v] of Object.entries(want)) ok(c[k] && c[k]['aria-label'] === v, `#${k}: aria-label ${JSON.stringify(c[k] && c[k]['aria-label'])}, expected ${v}`);
       ok(/^(Mute|Unmute)$/.test(c.mute['aria-label']) && /^Speed \d/.test(c.rate['aria-label']) && /^Subtitles/.test(c.tracks['aria-label']) && /^Position .*frame \d+/.test(c.time['aria-label']), `mute / rate / tracks / time: ${JSON.stringify([c.mute, c.rate, c.tracks, c.time])}`);
       ok(c.mute && /^(true|false)$/.test(c.mute['aria-pressed']), `#mute: no aria-pressed (${JSON.stringify(c.mute)})`);
-      for (const k of ['tracks', 'infoBtn', 'rate', 'cog', 'keysBtn']) ok(c[k]['aria-expanded'] === 'false', `#${k}: ${JSON.stringify(c[k])}`);
+      for (const k of ['tracks', 'infoBtn', 'rate', 'cog']) ok(c[k]['aria-expanded'] === 'false', `#${k}: ${JSON.stringify(c[k])}`);
       for (const k of ['modeBtn', 'toolsBtn', 'loop', 'pip']) ok(!c[k], `#${k} is still on the page`);
       ok(/^\d+:\d\d\.\d{3} of \d+:\d\d\.\d{3}, frame \d+$/.test(c.seek['aria-valuetext'] || ''), `seek aria-valuetext ${JSON.stringify(c.seek['aria-valuetext'])}`);
       ok(s.live && s.live.role === 'status' && s.live.polite === 'polite', `live region ${JSON.stringify(s.live)}`);
@@ -192,26 +193,45 @@ module.exports = [{
       P.key('Escape', { target: ':focus' });
       await settle(300);
       s = await a11y();
-      ok(s.sheet.hidden, 'Escape did not close the sheet');
-      await P.ask('click', { sel: '#keysBtn' });
-      await settle(300);
-      ok(!(await a11y()).sheet.hidden, 'the keyboard button did not open the sheet');
+      ok(s.sheet.hidden && s.active === 'cog', `Escape: sheet hidden=${s.sheet.hidden}, focus on ${s.active}`);
+      await P.ask('click', { sel: '#cog' });
+      await P.ask('click', { sel: '#panel button[aria-keyshortcuts="?"][aria-haspopup="dialog"]', text: 'Keyboard shortcuts' });
+      s = await a11y();
+      ok(!s.sheet.hidden && s.sheet.dialog?.label === 'Keyboard shortcuts' && s.panel.hidden && s.active === 'Close',
+        `settings row: sheet ${JSON.stringify(s.sheet)}, panel hidden=${s.panel.hidden}, focus on ${s.active}`);
       P.key('Escape', { target: ':focus' });
-      await settle(300);
+      s = await a11y();
+      ok(s.sheet.hidden && s.active === 'cog', `Escape: sheet hidden=${s.sheet.hidden}, focus on ${s.active}`);
     });
 
-    await R.run('cc/no-subtitles', async (ok) => {
-      let s = await P.state();
-      ok(/none in this file/.test(s.bar.cc), `CC label without subtitles: ${s.bar.cc}`);
-      await P.ask('click', { sel: '#tracks' });
-      await settle(300);
-      s = await P.state();
-      ok(s.panel && s.panel.view === 'subs' && /no subtitle tracks/.test(s.panel.text) && s.panel.rows.some((r) => r.label === 'Load subtitle file…'), `CC opens the subtitles panel: ${JSON.stringify(s.panel)}`);
-      ok(s.bar.ccExpanded === 'true', `CC aria-expanded ${s.bar.ccExpanded}`);
+    await R.run('cc/hidden-until-loaded', async (ok) => {
+      ok((await P.state()).bar.ccHidden, 'CC should be hidden without tracks');
+      // C without subtitles opens ⚙ › Subtitles (to load a file); C again closes it.
       P.key('c');
-      await settle(300);
+      let s = await P.waitState((q) => q.panel?.view === 'subs', { what: 'C opens Settings › Subtitles' });
+      ok(/no subtitle tracks/.test(s.panel.text), `C without subtitles: ${JSON.stringify(s.panel)}`);
+      P.key('c');
+      await P.waitState((q) => !q.panel, { what: 'C again closes the page' });
+      await P.ask('click', { sel: '#cog' });
+      await P.ask('click', { sel: '#panel button', text: 'Subtitles' });
       s = await P.state();
-      ok(!s.panel, 'C (or CC again) did not close the subtitles panel');
+      ok(s.panel?.view === 'subs' && /no subtitle tracks/.test(s.panel.text), `Settings › Subtitles: ${JSON.stringify(s.panel)}`);
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-ui-subtitles-'));
+      const file = path.join(dir, 'loaded.srt');
+      try {
+        fs.writeFileSync(file, '1\n00:00:00,000 --> 00:00:02,000\nLoaded from Settings\n');
+        const mark = vs.mark();
+        vs.send({ name: CLIP, pickSubtitles: [file] });
+        await vs.waitLog(/debug subtitles picker ready/, { from: mark, timeout: 10000 });
+        await P.ask('click', { sel: '#panel button', text: 'Load subtitle file…' });
+        const loaded = await P.waitState((q) => !q.bar.ccHidden, { what: 'CC visible after loading an SRT' });
+        ok(/^Subtitles on: loaded\.srt/.test(loaded.bar.cc), `loaded track label: ${loaded.bar.cc}`);
+        await P.ask('click', { sel: '#tracks' });
+        await P.waitState((q) => q.bar.cc === 'Subtitles off', { what: 'CC turns the loaded track off' });
+      } finally {
+        fs.rmSync(file, { force: true });
+        fs.rmdirSync(dir);
+      }
     });
 
     await R.run('speed/step-and-clamp', async (ok) => {
@@ -254,6 +274,29 @@ module.exports = [{
       P.act({ action: 'panel' });
       P.rate(1);
       await settle(300);
+    });
+
+    await R.run('speed/drag-outside', async (ok) => {
+      await P.ask('click', { sel: '#rate' });
+      const [x, y, w, h] = (await P.state()).panel.sliderRect;
+      const pointer = (ev, pos, target = 'document', height = -20) => P.dom(ev, pos, height, { target });
+      pointer('pointerdown', x + w / 2, 'speedSlider', y + h / 2);
+      // y < 0 is outside the webview. Send the move to the document, as when capture cannot be set
+      // on a synthetic pointer. The readout must change before release.
+      pointer('pointermove', x + w, 'document');
+      let s = await P.state();
+      ok(s.bar.rate === '4×' && s.panel.text.includes('4×'), `speed while off the top edge: ${s.bar.rate}`);
+      pointer('pointermove', -20, 'document');
+      s = await P.state();
+      ok(s.bar.rate === '0.25×', `speed while off the left edge: ${s.bar.rate}`);
+      pointer('pointerup', x + w * 0.2);
+      pointer('pointermove', x + w);
+      s = await P.state();
+      ok(s.bar.rate === '1×' && s.panel.rows.some((r) => r.label === 'Speed 1×' && r.pressed === 'true'),
+        `speed and preset after release: ${s.bar.rate}`);
+      const a = await a11y();
+      ok(a.active === 'speedSlider', `slider focus after release: ${a.active}`);
+      P.key('Escape', { target: ':focus' });
     });
 
     await R.run('drag/outside', async (ok) => {

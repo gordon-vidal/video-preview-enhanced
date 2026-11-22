@@ -10,7 +10,7 @@
   const ui = {
     bar: $('bar'), play: $('play'), prev: $('prev'), next: $('next'), seek: $('seek'), buffered: $('buffered'), tip: $('tip'),
     time: $('time'), now: $('now'), dur: $('dur'), rate: $('rate'), mute: $('mute'), volume: $('volume'),
-    info: $('info'), infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), keysBtn: $('keysBtn'), picBtn: $('picBtn'),
+    info: $('info'), infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), picBtn: $('picBtn'),
     panel: $('panel'), sheet: $('sheet'), toast: $('toast'), abMarks: $('abMarks'), tracks: $('tracks'),
   };
 
@@ -113,13 +113,13 @@
   });
   /** @type {any} */
   let controls = null;
-  /** The CC button: dimmed without subtitles, underlined while they show. */
+  /** The CC button is present only when there is a track to toggle. */
   function updateCc() {
     const d = subs.panelData();
     const none = !d.subs.length;
-    ui.tracks.classList.toggle('none', none);
+    ui.tracks.hidden = none;
     ui.tracks.classList.toggle('on', d.on);
-    const label = none ? 'Subtitles: none in this file, load one' : d.on ? `Subtitles on: ${d.label}` : 'Subtitles off';
+    const label = none ? 'Subtitles' : d.on ? `Subtitles on: ${d.label}` : 'Subtitles off';
     ui.tracks.setAttribute('aria-label', label);
     ui.tracks.title = `${label}  C`;
   }
@@ -540,7 +540,7 @@
     ui.volume.value = String(volume);
     if (volume > 0 && muted) setMute(false); else setMute(muted);
   };
-  /** Z (and the button beside Keyboard shortcuts): the next picture size; zoomed in, back to Fit. 100 % shows the file's own pixels. */
+  /** Z (and the Picture size button): the next picture size; zoomed in, back to Fit. 100 % shows the file's own pixels. */
   const cyclePicture = () => { insp.cycleMode(); if (insp.picture().mode === 'actual') exactTool(true); };
   /** The button shows the current size and names the next one. */
   function updatePicBtn() {
@@ -737,51 +737,12 @@
   ui.mute.onclick = () => setMute(!muted);
   ui.volume.addEventListener('input', () => setVolume(Number(ui.volume.value)));
   ui.volume.addEventListener('wheel', (e) => { e.preventDefault(); setVolume(volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(volume * 100)}%`); }, { passive: false });
-  /**
-   * Seek bar and volume: a drag keeps going while the button is held, wherever the pointer goes (window-level
-   * move / up listeners, plus pointer capture when the pointer is real), and ends on pointerup / cancel / blur.
-   * The slider's own input / change events carry the value, so the seek logic (scrub, thumbnails) is unchanged.
-   */
-  function dragRange(input) {
-    let drag = null;
-    const valueAt = (x) => {
-      const r = input.getBoundingClientRect();
-      const min = Number(input.min) || 0, max = Number(input.max) || 0, stepv = Number(input.step) || 1;
-      const f = r.width > 0 ? Math.max(0, Math.min(1, (x - r.left) / r.width)) : 0;
-      return Math.max(min, Math.min(max, min + Math.round((f * (max - min)) / stepv) * stepv));
-    };
-    const move = (e) => {
-      if (!drag) return;
-      const v = valueAt(e.clientX);
-      if (String(v) !== input.value) { input.value = String(v); input.dispatchEvent(new Event('input', { bubbles: true })); }
-    };
-    const end = () => {
-      if (!drag) return;
-      const d = drag;
-      drag = null;
-      window.removeEventListener('pointermove', move, true);
-      window.removeEventListener('pointerup', end, true);
-      window.removeEventListener('pointercancel', end, true);
-      window.removeEventListener('blur', end);
-      try { if (d.id !== undefined) input.releasePointerCapture(d.id); } catch { /* not captured */ }
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    };
-    input.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || input.disabled || Number(input.max) <= Number(input.min)) return; // disabled: a live stream
-      e.preventDefault(); // no native thumb drag: this one follows the pointer off the slider too
-      input.focus({ preventScroll: true });
-      drag = { id: e.pointerId };
-      try { input.setPointerCapture(e.pointerId); } catch { /* synthetic pointer (test hook) */ }
-      window.addEventListener('pointermove', move, true);
-      window.addEventListener('pointerup', end, true);
-      window.addEventListener('pointercancel', end, true);
-      window.addEventListener('blur', end);
-      move(e);
-    });
-    return { dragging: () => !!drag };
-  }
-  const seekDragger = dragRange(ui.seek);
-  const volumeDragger = dragRange(ui.volume);
+  const seekDragger = VpeRangeDrag.bind(ui.seek, (e) => {
+    const r = ui.seek.getBoundingClientRect();
+    if (e?.type !== 'pointerup' || e.clientX < r.left || e.clientX > r.right ||
+      e.clientY < r.top - 4 || e.clientY > r.bottom + 4) hideTip();
+  });
+  const volumeDragger = VpeRangeDrag.bind(ui.volume);
   ui.full.onclick = toggleFullscreen;
   ui.time.onclick = () => {
     // A live stream shows only the time since it started (no timecode or frame count to cycle to).
@@ -801,23 +762,13 @@
   ui.tip.parentElement.appendChild(thumbBox);
   let thumbShown = false;
   // Dragging (mouse held on the bar): the tip and thumbnail follow the slider value, also off the bar.
-  let seekDrag = false;
-  ui.seek.addEventListener('pointerdown', () => { seekDrag = true; });
-  const endDrag = (e) => {
-    if (!seekDrag) return;
-    seekDrag = false;
-    const r = ui.seek.getBoundingClientRect();
-    if (!e || e.clientX < r.left || e.clientX > r.right || e.clientY < r.top - 4 || e.clientY > r.bottom + 4) hideTip();
-  };
-  document.addEventListener('pointerup', endDrag);
-  document.addEventListener('pointercancel', endDrag);
   ui.seek.addEventListener('input', () => {
-    if (!seekDrag) return; // keyboard on the focused slider: no tip
+    if (!seekDragger.dragging()) return; // keyboard on the focused slider: no tip
     const r = ui.seek.getBoundingClientRect();
     const max = Number(ui.seek.max) || 0;
     if (max > 0) showTip(r.left + (Number(ui.seek.value) / max) * r.width);
   });
-  ui.seek.addEventListener('mousemove', (e) => { if (!seekDrag) showTip(e.clientX); });
+  ui.seek.addEventListener('mousemove', (e) => { if (!seekDragger.dragging()) showTip(e.clientX); });
   function showTip(clientX) {
     // Until the frame count is known (slow 4K decoding), the tip shows the time from the duration.
     const dur = player ? player.meta.duration || 0 : 0;
@@ -845,7 +796,7 @@
     if (!asked) thumbBox.hidden = true;
     else if (thumbShown) place();
   }
-  ui.seek.addEventListener('mouseleave', () => { if (!seekDrag) hideTip(); });
+  ui.seek.addEventListener('mouseleave', () => { if (!seekDragger.dragging()) hideTip(); });
   function hideTip() {
     ui.tip.hidden = true;
     thumbBox.hidden = true;
@@ -865,7 +816,9 @@
   const poke = () => {
     document.body.classList.remove('idle');
     clearTimeout(hideTimer);
-    if (document.fullscreenElement && player && player.isPlaying()) hideTimer = setTimeout(() => document.body.classList.add('idle'), 2500);
+    if (document.fullscreenElement && player && player.isPlaying() && $('startCompareBackdrop').hidden) {
+      hideTimer = setTimeout(() => document.body.classList.add('idle'), 2500);
+    }
   };
   document.addEventListener('mousemove', poke);
   document.addEventListener('focusin', poke); // a keyboard user tabbing to the hidden bar
@@ -926,7 +879,7 @@
     if (insp.onKey(e)) { e.preventDefault(); if (e.ctrlKey || e.metaKey) e.stopPropagation(); return; }
     if (e.key === 'Escape' && controls && controls.anyOpen()) { e.preventDefault(); controls.closeAll(true); return; }
     if (e.key === 'Escape' && !addHint.hidden) { e.preventDefault(); vscode.postMessage({ type: 'stopAddMode' }); return; }
-    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(ui.keysBtn); return; }
+    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(); return; }
     if (!player || e.metaKey || (!altGr && (e.ctrlKey || e.altKey))) return;
     poke();
     // Subtitle and audio-track keys: V, Shift+V, G, H, Shift+A, #.
@@ -1056,7 +1009,8 @@
   }
   function ccClick() {
     if (subs.ccToggle()) return;
-    controls.toggle('subs', ui.tracks);
+    if (controls.view() === 'subs') controls.close(true);
+    else controls.show('subs', ui.cog);
   }
   function infoFacts() {
     const p = player;
@@ -1096,7 +1050,7 @@
   const pictureState = () => { const v = insp.picture(); return { mode: v.mode, pct: player && player.meta && player.meta.width ? insp.zoomPercent() : null, zoomed: v.zoom !== 1 }; };
   controls = VpeControls.create({
     panel: ui.panel, sheet: ui.sheet, bar: ui.bar,
-    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, tracks: ui.tracks, keys: ui.keysBtn },
+    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, tracks: ui.tracks },
     get: () => {
       const d = subs.panelData();
       return {
@@ -1114,7 +1068,7 @@
       loop: () => { setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); },
       cycleAB: () => cycleAB(),
       copyFrame: () => copyFrame(),
-      setRate: (r) => changeRate(r),
+      setRate, pickRate: changeRate,
       stepRate: (d) => bumpRate(d),
       setJump: (k, v) => setJump(k, v),
       setStepButtons: (v) => setStepButtons(v),
@@ -1143,8 +1097,70 @@
   ui.rate.onclick = (e) => { e.stopPropagation(); controls.toggle('speed', ui.rate); };
   ui.rate.addEventListener('wheel', (e) => { e.preventDefault(); bumpRate(e.deltaY < 0 ? 1 : -1); }, { passive: false });
   ui.tracks.onclick = (e) => { e.stopPropagation(); ccClick(); };
-  ui.keysBtn.onclick = (e) => { e.stopPropagation(); controls.toggleSheet(ui.keysBtn); };
   ui.picBtn.onclick = (e) => { e.stopPropagation(); cyclePicture(); };
+
+  const compareButton = $('startCompareBtn');
+  const compareBackdrop = $('startCompareBackdrop');
+  const compareDialog = $('startCompareDialog');
+  const cancelCompare = $('cancelCompareBtn');
+  const confirmCompare = $('confirmCompareBtn');
+  let compareOpen = compareButton.dataset.open === '1'; // rendered by the host (src/bar.js), then 'compareOpen'
+  function placeCompareDialog() {
+    const r = compareButton.getBoundingClientRect();
+    const left = r.left + r.width / 2 - compareDialog.offsetWidth / 2;
+    compareDialog.style.left = `${Math.max(8, Math.min(left, innerWidth - compareDialog.offsetWidth - 8))}px`;
+    compareDialog.style.bottom = `${innerHeight - ui.bar.getBoundingClientRect().top + 8}px`;
+  }
+  function closeCompareDialog() {
+    if (compareBackdrop.hidden) return;
+    compareBackdrop.hidden = true;
+    compareButton.setAttribute('aria-expanded', 'false');
+    compareButton.classList.remove('open');
+    compareButton.focus();
+    poke();
+  }
+  function setCompareOpen(open) {
+    compareOpen = open;
+    const label = open ? 'Add to Compare' : 'Compare';
+    compareButton.title = label;
+    compareButton.setAttribute('aria-label', label);
+    $('startCompareLabel').textContent = label;
+    if (open) {
+      closeCompareDialog();
+      compareButton.removeAttribute('aria-haspopup');
+      compareButton.removeAttribute('aria-controls');
+      compareButton.removeAttribute('aria-expanded');
+    } else {
+      compareButton.setAttribute('aria-haspopup', 'dialog');
+      compareButton.setAttribute('aria-controls', 'startCompareDialog');
+      compareButton.setAttribute('aria-expanded', String(!compareBackdrop.hidden));
+    }
+  }
+  function requestComparison(confirmStart) {
+    vscode.postMessage({ type: 'toolbarCompare', confirmStart, t: player ? player.currentTime() : 0 });
+  }
+  compareButton.onclick = (e) => {
+    e.stopPropagation();
+    if (compareOpen) { requestComparison(false); return; }
+    controls.closeAll(false);
+    compareBackdrop.hidden = false;
+    compareButton.setAttribute('aria-expanded', 'true');
+    compareButton.classList.add('open');
+    placeCompareDialog();
+    cancelCompare.focus();
+  };
+  cancelCompare.onclick = closeCompareDialog;
+  confirmCompare.onclick = () => { closeCompareDialog(); requestComparison(true); };
+  compareBackdrop.onclick = (e) => { if (e.target === compareBackdrop) closeCompareDialog(); };
+  compareBackdrop.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); closeCompareDialog(); }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      (document.activeElement === cancelCompare ? confirmCompare : cancelCompare).focus();
+    }
+  });
+  window.addEventListener('resize', () => { if (!compareBackdrop.hidden) placeCompareDialog(); });
   setLoop(loop);
   updateCc();
 
@@ -1170,7 +1186,7 @@
     copyTime: () => { if (player) vscode.postMessage({ type: 'copyText', text: fmtTime(player.currentTime()) }); toast('Timestamp copied'); },
     subs: () => controls.show('subs', ui.tracks), audio: () => controls.show('audio', ui.cog),
     fullscreen: () => toggleFullscreen(),
-    stepBack: () => stepButton(-1), stepFwd: () => stepButton(1), keys: () => controls.openSheet(ui.keysBtn), cog: () => controls.show('main', ui.cog),
+    stepBack: () => stepButton(-1), stepFwd: () => stepButton(1), keys: () => controls.openSheet(ui.cog), cog: () => controls.show('main', ui.cog),
     xray: () => press('X', { shiftKey: true }),
     // From the menu "Set" always sets (at this moment); the A / B keys toggle.
     setA: () => { if (player) { ab.reset('a', player.currentTime(), player.currentFrame()); abChanged(); } }, setB: () => { if (player) { ab.reset('b', player.currentTime(), player.currentFrame()); abChanged(); } },
@@ -1272,6 +1288,7 @@
       case 'exactFrame': exact.onReply(m).then(wakeLoop, () => {}); break;
       case 'toast': toast(m.text, Math.min(10000, Number(m.ms) || 900)); break;
       case 'addMode': showAddMode(m); break;
+      case 'compareOpen': setCompareOpen(!!m.open); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
       case 'pauseForTest': if (player && player.isPlaying()) { player.pause(); toast('Paused while ffmpeg is tested', 3000); } break;
       case 'prefs': if (m.prefs && m.prefs.jump) { Object.assign(prefs.jump, m.prefs.jump); if (m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons === 'jump' ? 'jump' : 'frame'; if (m.prefs.transcode) prefs.transcode = m.prefs.transcode; if (m.prefs.transcodeMaxBitrate !== undefined) prefs.transcodeMaxBitrate = Number(m.prefs.transcodeMaxBitrate) || 0; stepTips(); controls.refresh(); } break;
@@ -1362,7 +1379,7 @@
           const sc = document.getElementById('scopes');
           const xr = document.getElementById('xray');
           log(`modes report panel=${controls.view() || 'none'} sheet=${controls.sheetOpen()} tools=${TOOLS.length} ` +
-            `bar=${['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'picBtn', 'full'].map((k) => `${k}:${vis(ui[k]) ? 1 : 0}`).join(',')} ` +
+            `bar=${['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'picBtn', 'full'].map((k) => `${k}:${vis(ui[k] || $(k)) ? 1 : 0}`).join(',')} ` +
             `scopes=${scopes.mode() || 'off'} scopesVisible=${vis(sc)} info=${vis(ui.info)} xray=${vis(xr)} zoomed=${stage.classList.contains('zoom')} picture=${insp.picture().mode} ` +
             `frame=${player.currentFrame() + 1} t=${player.currentTime().toFixed(3)} playing=${player.isPlaying()}`);
         }, m.delay || 300);
@@ -1402,11 +1419,12 @@
                 view: controls.view(), label: pn.getAttribute('aria-label'), text: text(pn),
                 rows: [...pn.querySelectorAll('button')].map((b) => ({ label: b.getAttribute('aria-label') || text(b), pressed: b.getAttribute('aria-pressed'), checked: b.getAttribute('aria-checked') })),
                 facts: [...pn.querySelectorAll('.igrid dt')].map((dt) => [text(dt), text(/** @type {any} */ (dt.nextElementSibling))]),
+                sliderRect: pn.querySelector('#speedSlider') ? rect(pn.querySelector('#speedSlider')) : null,
                 slider: pn.querySelector('#speedSlider') ? [/** @type {any} */ (pn.querySelector('#speedSlider')).min, /** @type {any} */ (pn.querySelector('#speedSlider')).max] : null,
               };
             })(),
             sheet: ui.sheet.hidden ? null : (ui.sheet.textContent || '').replace(/\s+/g, ' ').trim(),
-            bar: { rate: ui.rate.textContent, cc: ui.tracks.getAttribute('aria-label'), cogExpanded: ui.cog.getAttribute('aria-expanded'), infoExpanded: ui.infoBtn.getAttribute('aria-expanded'), rateExpanded: ui.rate.getAttribute('aria-expanded'), ccExpanded: ui.tracks.getAttribute('aria-expanded') },
+            bar: { rate: ui.rate.textContent, cc: ui.tracks.getAttribute('aria-label'), ccHidden: getComputedStyle(ui.tracks).display === 'none', cogExpanded: ui.cog.getAttribute('aria-expanded'), infoExpanded: ui.infoBtn.getAttribute('aria-expanded'), rateExpanded: ui.rate.getAttribute('aria-expanded'), ccExpanded: ui.tracks.getAttribute('aria-expanded') },
             prefs, volume, drag: { seek: seekDragger.dragging(), volume: volumeDragger.dragging() }, volumeRect: rect(ui.volume),
             canvas: [canvas.width, canvas.height], canvasHidden: canvas.hidden, canvasRect: rect(canvas), video: vw,
             stageClass: stage.className, stageRect: rect(stage), picture: { ...insp.picture(), pct: pictureState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), btnTitle: ui.picBtn.title, need: insp.zoomedSize() }, imageRendering: canvas.style.imageRendering,
@@ -1485,7 +1503,7 @@
           break;
         }
         case 'dom': { // a mouse / pointer / wheel event at client (x, y), or on the element with id `id`
-          const target = m.target ? byId(m.target) : document.elementFromPoint(m.x, m.y);
+          const target = m.target === 'document' ? document : m.target ? byId(m.target) : document.elementFromPoint(m.x, m.y);
           if (!target) { log(`dom ${JSON.stringify({ id: m.id, error: `no element at ${m.x},${m.y}` })}`); break; }
           const init = { bubbles: true, cancelable: true, clientX: m.x, clientY: m.y, button: m.button || 0, ctrlKey: !!m.ctrl, deltaY: m.deltaY || 0, pointerId: 1, isPrimary: true };
           const Ctor = /^wheel/.test(m.ev) ? WheelEvent : /^pointer/.test(m.ev) ? PointerEvent : MouseEvent;
@@ -1499,7 +1517,7 @@
           if (m.end) {
             ui.seek.dispatchEvent(new Event('change', { bubbles: true }));
             const r = ui.seek.getBoundingClientRect();
-            document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: r.left + m.frac * r.width, clientY: m.off ? r.top - 100 : r.top + r.height / 2 }));
+            document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: r.left + m.frac * r.width, clientY: m.off ? r.top - 100 : r.top + r.height / 2 }));
           }
           log(`scrub ${JSON.stringify({ id: m.id, value: Number(ui.seek.value) })}`);
           break;
@@ -1536,7 +1554,7 @@
           const unnamed = [...document.querySelectorAll('button')].filter((b) => (b.textContent || b.getAttribute('aria-label')) && !/[A-Za-z]/.test(b.getAttribute('aria-label') || b.textContent || '')).map((b) => b.id || b.className || b.textContent);
           const cs = a && a !== document.body ? getComputedStyle(a) : null;
           let fv = false; try { fv = !!a && a.matches(':focus-visible'); } catch { /* old engine */ }
-          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'infoBtn', 'rate', 'cog', 'keysBtn', 'picBtn', 'full', 'noticeClose', 'canvas'];
+          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'picBtn', 'full', 'noticeClose', 'canvas'];
           log(`a11y ${JSON.stringify({
             id: m.id,
             controls: Object.fromEntries(ids.map((k) => [k, attrs(byId(k))])),
@@ -1544,6 +1562,7 @@
             active: a ? (a.id || (a.dataset && a.dataset.tool) || a.getAttribute('aria-label') || (a.textContent || '').trim().slice(0, 40) || a.tagName) : '',
             activeRole: a ? a.getAttribute('role') || a.tagName.toLowerCase() : '',
             focusVisible: fv, outline: cs ? `${cs.outlineStyle} ${cs.outlineWidth}` : '',
+            startCompare: { hidden: compareBackdrop.hidden },
             panel: Object.assign(menuInfo(ui.panel), { view: controls.view(), radios: [...ui.panel.querySelectorAll('[role=radio], [role=switch]')].map((b) => ({ role: b.getAttribute('role'), checked: b.getAttribute('aria-checked') })) }),
             sheet: { hidden: ui.sheet.hidden, dialog: (() => { const d = ui.sheet.querySelector('[role=dialog]'); return d ? { label: d.getAttribute('aria-label'), modal: d.getAttribute('aria-modal'), groups: [...d.querySelectorAll('[role=group]')].map((g) => g.getAttribute('aria-label')) } : null; })() },
             unnamed, playing: player ? player.isPlaying() : null, muted, loop,

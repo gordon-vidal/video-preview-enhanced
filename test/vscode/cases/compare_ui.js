@@ -107,7 +107,8 @@ module.exports = [{
     ok = t('bar');
     let u = await ui();
     const ids = u.bar.ids;
-    for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'keysBtn', 'full']) ok(ids.includes(id), `bar has no #${id} (${ids})`);
+    for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(ids.includes(id), `bar has no #${id} (${ids})`);
+    ok(!ids.includes('keysBtn'), 'the shortcuts button still appears in the Compare toolbar');
     ok(!ids.includes('tracks'), `CC shown while comparing: ${ids}`);
     ok(/^A ?\d/.test(u.bar.time), `time does not start with the clock's letter: ${u.bar.time}`);
     ok(/sound from A/.test(u.bar.mute), `mute title: ${u.bar.mute}`);
@@ -118,6 +119,39 @@ module.exports = [{
     act({ action: 'key', key: '.' });
     r = await until((x) => x.synced === 'true' && nums(x.frames)[0] === 32, 10000);
     ok(nums(r.frames)[0] === 32 && nums(r.frames)[1] === 32, `. stepped both to #32: ${r.frames}`);
+
+    ok = t('panel/shortcuts');
+    await click({ sel: '#cog' });
+    await click({ sel: '#panel button[aria-keyshortcuts="?"][aria-haspopup="dialog"]' });
+    u = await ui();
+    ok(!u.panel && /^Keyboard shortcuts/.test(u.sheet) && u.active === 'Close',
+      `settings row: panel ${u.panel?.view}, sheet ${String(u.sheet).slice(0, 40)}, focus on ${u.active}`);
+    act({ action: 'key', key: 'Escape' });
+    u = await ui();
+    ok(!u.sheet && u.active === 'cog', `Escape: sheet open=${!!u.sheet}, focus on ${u.active}`);
+    act({ action: 'key', key: '?' });
+    u = await ui();
+    ok(/^Keyboard shortcuts/.test(u.sheet), 'the ? key did not open the shortcuts sheet');
+    act({ action: 'key', key: '?' });
+    u = await ui();
+    ok(!u.sheet && u.active === 'cog', `second ?: sheet open=${!!u.sheet}, focus on ${u.active}`);
+
+    ok = t('speed/drag-outside');
+    await click({ sel: '#rate' });
+    const [sx, sy, sw, sh] = (await ui()).panel.sliderRect;
+    const pointer = (ev, x, target = 'document', y = -20) => act({ action: 'dom', ev, target, x, y });
+    pointer('pointerdown', sx + sw / 2, 'speedSlider', sy + sh / 2);
+    pointer('pointermove', -20);
+    u = await ui();
+    ok(u.bar.rate === '0.25×', `Compare speed off the left edge: ${u.bar.rate}`);
+    pointer('pointermove', sx + sw * 0.2);
+    u = await ui();
+    ok(u.bar.rate === '1×' && u.active === 'speedSlider', `Compare speed and focus off the top edge: ${u.bar.rate}, ${u.active}`);
+    pointer('pointercancel', sx + sw);
+    pointer('pointermove', sx + sw);
+    u = await ui();
+    ok(u.bar.rate === '1×', `Compare speed after cancellation: ${u.bar.rate}`);
+    act({ action: 'key', key: 'Escape' });
 
     // ---- the Compare panel ----
     ok = t('panel/compare');
@@ -218,9 +252,11 @@ module.exports = [{
     r = await until((x) => x.swap === 'true', 5000);
     ok(r.swap === 'true', 'X did not swap');
     u = await ui();
-    ok(u.cells[0].pills[0].startsWith('B'), `after Swap the left pill is ${u.cells[0].pills[0]}`);
-    act({ action: 'key', key: 'x' });
+    ok(u.cells[0].pills[0].startsWith(`A${CLIPS[1]}`), `after Swap the left pill is ${u.cells[0].pills[0]}`);
     act({ action: 'mode', mode: 'side' });
+    u = await ui();
+    ok(u.cells[0].pills[0].startsWith(`A${CLIPS[1]}`), `Side by side kept ${u.cells[0].pills[0]} on the left`);
+    await click({ text: `Move ${CLIPS[1]} later` });
     r = await until((x) => x.mode === 'side' && x.divider === 'false' && x.swap === 'false', 5000);
     ok(r.mode === 'side' && r.cells === '2', `back to side by side: mode=${r.mode} cells=${r.cells}`);
 

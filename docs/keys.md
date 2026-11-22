@@ -1,7 +1,8 @@
 # Keys and mouse
 
 The layout follows common video players (YouTube-style). Keys work when the player has focus. `?` shows
-them all, with the jump sizes you chose.
+them all, with the jump sizes you chose. In the player and Compare, you can also open the sheet from
+⚙ › **Keyboard shortcuts**. Press Esc to close it and return focus to the Settings button when opened from that menu.
 
 ## Playback
 
@@ -23,10 +24,10 @@ them all, with the jump sizes you chose.
 | F | Fill the editor and switch to zen mode |
 | Shift+N / Shift+P | Next / previous video in the folder |
 | D | Compare with another video: a quick pick of the videos in this folder, then the workspace (**Browse…** opens the file dialog) |
-| Shift+D | Compare with the next video you click in the Explorer: one click opens compare and ends the mode (a hint shows while it waits; Esc stops). ⚙ › Tools › Compare does the same |
+| Shift+D | Wait for the next video you open from the Explorer. It opens Compare in the player's tab with Add Mode on if there is room. Esc cancels the wait. ⚙ › Tools › Compare does the same |
 | S / Ctrl+C | Save the frame as PNG / copy it |
 | ? | Keyboard shortcuts |
-| Esc | Close a panel or the shortcuts |
+| Esc | Close a panel, the shortcuts or the **Compare** confirmation |
 
 Alt+← / Alt+→ are VS Code's Go Back / Go Forward and Ctrl+K starts VS Code's key chords: the player
 leaves them alone (`docs/notes/ui-simple.md`).
@@ -52,7 +53,7 @@ leaves them alone (`docs/notes/ui-simple.md`).
 
 | Key | Action |
 |---|---|
-| C | Subtitles on / off (with none: the Subtitles panel, to load a file) |
+| C | Subtitles on / off. With none, ⚙ › **Subtitles** (to load a file) |
 | V | Next subtitle track, then off |
 | Shift+V | Subtitles off / on |
 | G / H | Subtitle delay −50 ms / +50 ms |
@@ -91,7 +92,9 @@ The player's keys, for all videos at once, plus:
 | ← / →, Shift+← / →, Ctrl+← / → | The player's jump sizes, on the clock video |
 | - / + | Offset of the video under the pointer, one frame (10 ms when its offset is in ms) |
 | X | Swap sides (2 videos) |
-| Shift+D | Add videos by clicking them in the Explorer; it stays on until Esc, Shift+D again or the maximum (8 by default; `compare.maxVideos`). Also what ⚙ › Tools › Compare and **Add video…** in compare do |
+| Tab, then Enter / Space on a tile's up or down arrow | Move the tile earlier or later |
+| Esc while reordering | Exit Reorder mode and discard any unfinished drag |
+| Shift+D | Toggle Add Mode. It starts on when Compare opens with room for more tiles. Click videos in the Explorer to add them. **Stop** in the hint, Esc, Shift+D, reaching the maximum or switching editors turns it off. **Add video…** turns it on |
 | ← / → on the focused split divider | Move it by 1 % (Shift: 10 %); Home / End |
 | Z | Picture size for all videos: Fit, Fill, Stretch, 100 %, then Fit; zoomed in, back to Fit first |
 | Ctrl+wheel, drag | Zoom and pan all videos together (the same part of every picture) |
