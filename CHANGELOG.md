@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A–B range by mouse: **[** and **]** buttons beside the time set the range start and end (lit while set), and the A and B pins on the seek bar drag to the nearest frame, showing the time and frame as you go. Works in the player and in Compare; the buttons hide in very narrow panes.
 - The seek bar and time readout hold the requested position after you release the thumb while the decoder catches up. Frame-step buttons stay visible in narrow splits.
 - Escape dismisses playback notices, Pixel Inspector and Scopes. Scopes also has a close button, and playback notice buttons leave playback alone.
 - Settings opens on the first click from another panel. Live transcode shows where its defaults apply and which tools fetch full-resolution frames.

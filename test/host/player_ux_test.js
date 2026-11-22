@@ -41,6 +41,33 @@ function element(parent) {
   };
 }
 
+// The [ ] buttons and pin drags: wired in both pages, and the pressed state follows the range.
+{
+  const attrs = () => { const a = {}; return { a, setAttribute: (k, v) => { a[k] = v; } }; };
+  const btnA = attrs(), btnB = attrs();
+  const ab = require('../../media/abloop').create();
+  const pressedNow = () => { Controls.drawRangeButtons(btnA, btnB, ab); return [btnA.a['aria-pressed'], btnB.a['aria-pressed']]; };
+  assert.deepStrictEqual(pressedNow(), ['false', 'false']);
+  ab.set('a', 1, 10);
+  assert.deepStrictEqual(pressedNow(), ['true', 'false']);
+  ab.set('b', 2, 20);
+  assert.deepStrictEqual(pressedNow(), ['true', 'true']);
+  ab.set('a', 5, 50); // the same end again clears it
+  assert.deepStrictEqual(pressedNow(), ['false', 'true']);
+
+  const compareSource = fs.readFileSync(path.join(__dirname, '../../media/compare.js'), 'utf8');
+  for (const [name, src] of [['player', source], ['compare', compareSource]]) {
+    assert.match(src, /ui\.setABtn\.onclick = \(\) => (setAB|markAB)\('a'\)/, `${name}: [ sets A`);
+    assert.match(src, /ui\.setBBtn\.onclick = \(\) => (setAB|markAB)\('b'\)/, `${name}: ] sets B`);
+    assert.match(src, /VpeAbLoop\.bindPin\(pin, which,/, `${name}: the pins can be dragged`);
+    assert.match(src, /ab\.reset\(w, [^)]*snap\.f,/, `${name}: a drag commits the snapped frame`);
+    assert.match(src, /drawRangeButtons\(ui\.setABtn, ui\.setBBtn, ab\)/, `${name}: the buttons follow the range`);
+  }
+  const css = fs.readFileSync(path.join(__dirname, '../../media/player.css'), 'utf8');
+  assert.match(css, /\.ab-pin \{[^}]*pointer-events: auto;[^}]*cursor: ew-resize;/, 'pins take the mouse');
+  assert.match(css, /@media \(max-width: 520px\) \{\s*#infoBtn, #row #time #dur, #row button\.rng \{ display: none; \}/, 'range buttons hide on narrow panes');
+}
+
 {
   let stageClicks = 0;
   const posted = [];
@@ -49,7 +76,7 @@ function element(parent) {
   const notice = element(stage);
   const noticeClose = element(notice);
   const elements = { notice, noticeClose };
-  const ui = Object.fromEntries(['seek', 'now', 'dur', 'play', 'time', 'buffered'].map((id) => [id, element()]));
+  const ui = Object.fromEntries(['seek', 'now', 'dur', 'play', 'time', 'buffered', 'setABtn', 'setBBtn', 'abA', 'abB', 'tip'].map((id) => [id, element()]));
   ui.play.focus = noop;
   notice.contains = () => false;
   const player = {

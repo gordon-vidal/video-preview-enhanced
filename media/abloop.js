@@ -92,7 +92,55 @@
     return s;
   }
 
-  const api = { create };
+  /**
+   * A pin dragged to x (0..1 along the seek bar) of a clip with n frames at fps: the nearest frame and its time,
+   * the same snapping the seek bar uses (Math.round(x * (n - 1))). Without a frame count: the plain time.
+   */
+  function snapPin(/** @type {number} */ x, /** @type {number} */ n, /** @type {number} */ fps, dur = 0) {
+    const c = Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0));
+    if (!(n > 1) || !(fps > 0)) return { f: 0, t: c * dur };
+    const f = Math.round(c * (n - 1));
+    return { f, t: f / fps };
+  }
+
+  /**
+   * Makes a pin (#abA / #abB) draggable along the seek bar. o.rect(): the bar's client rectangle; o.n(), o.fps(),
+   * o.dur(): the clip; o.move(which, snap, clientX) while dragging; o.commit(which, snap) on release; o.end() after
+   * either release or cancel (Escape, lost capture). The drag never reaches the seek bar or the stage.
+   */
+  function bindPin(/** @type {any} */ pin, /** @type {'a'|'b'} */ which, /** @type {any} */ o) {
+    let active = false;
+    const at = (/** @type {any} */ e) => {
+      const r = o.rect();
+      return snapPin(r.width > 0 ? (e.clientX - r.left) / r.width : 0, o.n(), o.fps(), o.dur());
+    };
+    const stop = (/** @type {any} */ e) => { e.stopPropagation(); };
+    const finish = (/** @type {any} */ e, commit) => {
+      if (!active) return;
+      active = false;
+      try { pin.releasePointerCapture?.(e.pointerId); } catch { /* already released */ }
+      pin.classList?.toggle('dragging', false);
+      if (commit) o.commit(which, at(e));
+      o.end();
+    };
+    pin.addEventListener('pointerdown', (/** @type {any} */ e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      stop(e); e.preventDefault();
+      active = true;
+      try { pin.setPointerCapture?.(e.pointerId); } catch { /* synthetic pointer */ }
+      pin.classList?.toggle('dragging', true);
+      o.move(which, at(e), e.clientX);
+    });
+    pin.addEventListener('pointermove', (/** @type {any} */ e) => { if (!active) return; stop(e); o.move(which, at(e), e.clientX); });
+    pin.addEventListener('pointerup', (/** @type {any} */ e) => { stop(e); finish(e, true); });
+    pin.addEventListener('pointercancel', (/** @type {any} */ e) => finish(e, false));
+    pin.addEventListener('lostpointercapture', (/** @type {any} */ e) => finish(e, false));
+    pin.addEventListener('keydown', (/** @type {any} */ e) => { if (active && e.key === 'Escape') { e.stopPropagation(); finish(e, false); } });
+    pin.addEventListener('click', stop);
+    return { dragging: () => active };
+  }
+
+  const api = { create, snapPin, bindPin };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VpeAbLoop = api;
 }(typeof self !== 'undefined' ? self : this));

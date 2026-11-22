@@ -27,6 +27,8 @@ const icons = {
   about: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-9.5v.01"/>'),
   settings: svg('<circle cx="12" cy="12" r="3"/>' +
     '<path d="M10 3h4l.7 2.6 2.1 1.2 2.6-.7 2 3.5-1.9 1.9v2.4l1.9 1.9-2 3.5-2.6-.7-2.1 1.2L14 22h-4l-.7-2.2-2.1-1.2-2.6.7-2-3.5 1.9-1.9v-2.4L2.6 9.6l2-3.5 2.6.7 2.1-1.2Z" transform="translate(0 -.5)"/>'),
+  rangeA: svg('<path d="M15 4.5H9.5v15H15"/>'),
+  rangeB: svg('<path d="M9 4.5h5.5v15H9"/>'),
   full: svg('<path d="M4 9V4h5m11 5V4h-5M4 15v5h5m11-5v5h-5"/>'),
 };
 const playFlashHtml = `<div id="playFlash" aria-hidden="true">${icons.play}${icons.pause}</div>`;
@@ -54,8 +56,8 @@ function barHtml({ compare = false, canCompare = true, compareOpen = false } = {
     <input id="seek" type="range" min="0" max="0" value="0" step="1" aria-label="Position">
     <div id="buffered"></div>
     <div id="abMarks" hidden title="A–B range (loop &amp; export · A / B keys)"></div>
-    <div id="abA" class="ab-pin" hidden aria-hidden="true"><span>A</span></div>
-    <div id="abB" class="ab-pin" hidden aria-hidden="true"><span>B</span></div>
+    <div id="abA" class="ab-pin" hidden aria-hidden="true" title="Drag to move range start (A)"><span>A</span></div>
+    <div id="abB" class="ab-pin" hidden aria-hidden="true" title="Drag to move range end (B)"><span>B</span></div>
     <div id="tip" hidden></div>
   </div>
   <div id="row">
@@ -65,6 +67,8 @@ function barHtml({ compare = false, canCompare = true, compareOpen = false } = {
     <button id="mute" class="ib gap" title="Mute  M" aria-label="Mute" aria-pressed="false" aria-keyshortcuts="M">${icons.sound}${icons.muted}</button>
     <input id="volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume  ↑ ↓" aria-label="Volume">
     <button id="time" class="mono" title="Click: time / timecode / frames" aria-label="Position"><span id="now">0:00.000</span> <span id="dur">/ 0:00.000</span></button>
+    <button id="setABtn" class="ib rng" title="Set range start (A)" aria-label="Set range start (A)" aria-pressed="false" aria-keyshortcuts="A">${icons.rangeA}</button>
+    <button id="setBBtn" class="ib rng" title="Set range end (B)" aria-label="Set range end (B)" aria-pressed="false" aria-keyshortcuts="B">${icons.rangeB}</button>
     <span class="spacer"></span>
 ${compare ? '    <button id="reorderBtn" class="ib" aria-controls="cells">Reorder</button>\n' : ''}
 ${compare ? '' : `    <button id="tracks" class="ib" title="Subtitles  C" aria-label="Subtitles" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="C" hidden><span class="ccline">${icons.cc}</span></button>
