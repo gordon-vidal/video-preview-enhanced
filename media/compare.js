@@ -2007,6 +2007,8 @@
     e.preventDefault();
   }, true);
   stage.addEventListener('pointercancel', endPan);
+  // Prevent Chromium from starting a native text/element drag ghost when dragging across tiles or pills.
+  stage.addEventListener('dragstart', (e) => e.preventDefault());
   stage.addEventListener('wheel', (e) => { if (reordering || e.ctrlKey) return; if (clock && !clock.playing) { e.preventDefault(); step(e.deltaY > 0 ? 1 : -1); } }, { passive: false });
 
   // ---- the bar ------------------------------------------------------------------------------------

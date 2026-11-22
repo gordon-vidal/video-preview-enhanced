@@ -1,5 +1,5 @@
 /* Compare (docs/notes/compare-ui.md): on top of player.css, so the bar and the panels are the player's. */
-body.compare #stage { background: #000; overflow: hidden; }
+body.compare #stage { background: #000; overflow: hidden; user-select: none; -webkit-user-select: none; }
 body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 #cells { position: absolute; inset: 0; }
 
