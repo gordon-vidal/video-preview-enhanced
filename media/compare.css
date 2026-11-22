@@ -115,6 +115,8 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 
 /* Leave room above the shared toast for Compare's mode hint. */
 body.compare #toast { --toast-top: 36px; z-index: 4; }
+/* Dense grids (many small tiles): a compact toast, so it covers less of the top row's labels and offsets. */
+body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 
 /* The Compare panel and its per-video page (media/controls.js pages added by media/compare.js). */
 .panel.cmp, .panel.cmpVid { width: 340px; }

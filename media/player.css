@@ -104,6 +104,10 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
   pointer-events: none;
   z-index: 3;
 }
+/* Drop below a top-centre banner (Add Mode hint, playback notice, Go to) so neither hides the other. */
+body:has(#addHint:not([hidden]), #notice:not([hidden]), #goto:not([hidden])) #toast { --toast-top: 44px; }
+/* The pixel readout and loupe are what the user is reading while inspecting; keep them above a passing toast. */
+#pxread { z-index: 4; }
 :is(.vscode-high-contrast, .vscode-high-contrast-light) #toast {
   background: var(--vscode-notifications-background, var(--vscode-editor-background));
   color: var(--vscode-notifications-foreground, var(--vscode-foreground));
