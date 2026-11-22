@@ -493,6 +493,7 @@
     abChanged();
   }
   function clearAB() { ab.clear(); abChanged(); }
+  function copyTimestamp() { if (player) vscode.postMessage({ type: 'copyText', text: fmtTime(player.currentTime()) }); toast('Timestamp copied'); }
   const shownTime = () => player.shownT != null ? player.rel(player.shownT) : player.currentTime();
   // A clip uses the picture's timestamp even when the playback clock is between pictures.
   function abTime() {
@@ -897,7 +898,7 @@
     if (player && player.thumbnailLeave) player.thumbnailLeave();
   }
   // A click on the picture closes an open panel or the shortcuts sheet; otherwise it plays / pauses.
-  stage.addEventListener('click', () => { if (controls && controls.anyOpen()) { controls.closeAll(false); return; } togglePlay(); });
+  stage.addEventListener('click', () => { if (controls && (controls.consumeDismiss() || controls.anyOpen())) { controls.closeAll(false); return; } togglePlay(); });
   stage.addEventListener('dblclick', toggleFullscreen);
   stage.addEventListener('wheel', (e) => { if (insp.onWheel(e)) { e.preventDefault(); return; } if (player && !player.isPlaying()) { e.preventDefault(); step(e.deltaY > 0 ? 1 : -1); } }, { passive: false });
   setRate(rate);
@@ -1001,6 +1002,8 @@
       case 'P': if (e.shiftKey) vscode.postMessage({ type: 'neighbour', d: -1 }); else handled = false; break;
       case 'a': case 'A': setAB('a'); break;
       case 'b': case 'B': setAB('b'); break;
+      case 'Backspace': clearAB(); toast('A–B range cleared'); break;
+      case 't': case 'T': copyTimestamp(); break;
       case 'z': case 'Z': if (e.shiftKey) handled = false; else cyclePicture(); break;
       case '+': case '=': insp.zoomStep(1); break;
       case '-': case '_': insp.zoomStep(-1); break;
@@ -1270,10 +1273,10 @@
     if (j !== ctxJson) { ctxJson = j; document.body.setAttribute('data-vscode-context', j); }
   }
   const MENU_ACTIONS = {
-    playPause: () => togglePlay(), compareWith: () => compareWith(), loop: () => { setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); }, mute: () => setMute(!muted),
+    playPause: () => togglePlay(), startCompare: () => compareButton.click(), addToCompare: () => requestComparison(false), loop: () => { setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); }, mute: () => setMute(!muted),
     speed: (m) => { if (Number(m.value) > 0) { setRate(Number(m.value)); toast(`${rate}×`); } },
     copyFrame: () => copyFrame(), saveFrame: () => saveFrame(), copyLink: () => press('C', { shiftKey: true }),
-    copyTime: () => { if (player) vscode.postMessage({ type: 'copyText', text: fmtTime(player.currentTime()) }); toast('Timestamp copied'); },
+    copyTime: () => copyTimestamp(),
     subs: () => controls.show('subs', ui.tracks), audio: () => controls.show('audio', ui.cog),
     fullscreen: () => toggleFullscreen(),
     stepBack: () => stepButton(-1), stepFwd: () => stepButton(1), keys: () => controls.openSheet(ui.cog), cog: () => controls.show('main', ui.cog),

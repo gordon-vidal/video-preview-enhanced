@@ -249,9 +249,9 @@ const VpeControls = (() => {
       ];
     }
     return [
-      { title: 'Playback', rows: [['Play / pause', 'Space', 'K'], ['Click the picture', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B']] },
+      { title: 'Playback', rows: [['Play / pause', 'Space', 'K'], ['Click the picture', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B'], ['Clear the A–B range', 'Backspace']] },
       { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End'], ['Jump to 0–90 %', '0…9']] },
-      { title: 'Frames', rows: [['Previous / next frame', ',', '.'], ['Copy frame', `${ctrlName}+C`], ['Save frame as PNG', 'S'], ['Go to frame or time', `${ctrlName}+G`], ['Time / timecode / frames', 'click the time']] },
+      { title: 'Frames', rows: [['Previous / next frame', ',', '.'], ['Copy frame', `${ctrlName}+C`], ['Save frame as PNG', 'S'], ['Copy timestamp', 'T'], ['Go to frame or time', `${ctrlName}+G`], ['Time / timecode / frames', 'click the time']] },
       { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M'], ['Next audio track', 'Shift+A']] },
       { title: 'View', rows: [['Fullscreen', 'F'], ['Subtitles on / off', 'C'], ['About this video', 'I'], ['Picture size: Fit, Fill, Stretch, 100 %', 'Z'], ['Zoom in / out', '+', '-'], ['Zoom at the pointer', `${ctrlName}+wheel`]] },
       { title: 'Tools', rows: [['Scopes', 'W'], ['Pixel inspector', 'X'], ['Codec X-ray', 'Shift+X'], ['Stats', 'Shift+I'], ['Previous / next keyframe', '{', '}']] },
@@ -727,8 +727,24 @@ const VpeControls = (() => {
     });
     window.addEventListener('resize', () => { if (view) place(); });
 
+    // Click outside: a press anywhere but the open panel and the bar's panel buttons closes the panel (the
+    // buttons toggle their own page). The control that was pressed still works (Mute, Seek, Play, ...). A press
+    // in the picture area only dismisses: `consumeDismiss()` tells its click handler so it does not play / pause.
+    let dismissedAtPress = false;
+    document.addEventListener('pointerdown', (e) => {
+      dismissedAtPress = false;
+      if (!view) return;
+      const t = /** @type {Node|null} */ (e.target);
+      if (!t || panel.contains(t)) return;
+      if (Object.values(buttons).some((b) => b && b.contains(t))) return;
+      dismissedAtPress = !bar.contains(t);
+      close(false);
+    }, true);
+
     return {
       toggle, show, close, render, openSheet, closeSheet,
+      /** True once after a press outside the bar closed a panel: the click that follows was the dismissal. */
+      consumeDismiss: () => { const d = dismissedAtPress; dismissedAtPress = false; return d; },
       toggleSheet: () => { if (sheet.hidden) openSheet(); else closeSheet(true); },
       view: () => view, sheetOpen: () => !sheet.hidden,
       anyOpen: () => !!view || !sheet.hidden,

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The right-click menu shows each action's key (Space, R, A, B, S, T, Ctrl+C, Shift+D, ?), says "A–B range" like the rest of the player, and **Compare With…** is replaced by **Start Compare** / **Add to Compare**, the same as the Compare button. New keys: **T** copies the timestamp, **Backspace** clears the A–B range.
+- Clicking anywhere outside an open panel (Info, Settings, Speed, Subtitles, Compare), including the control bar, closes it; clicking the picture only closes it and does not play or pause. Clicking outside a Compare tile menu closes it too.
 - The seek bar and time readout hold the requested position after you release the thumb while the decoder catches up. Frame-step buttons stay visible in narrow splits.
 - Escape dismisses playback notices, Pixel Inspector and Scopes. Scopes also has a close button, and playback notice buttons leave playback alone.
 - Settings opens on the first click from another panel. Live transcode shows where its defaults apply and which tools fetch full-resolution frames.

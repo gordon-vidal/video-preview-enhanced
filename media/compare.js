@@ -1954,9 +1954,21 @@
       else if (el.dataset.act === 'add') addVideo();
     }
   });
+  // A press outside the tile menu closes it (panels do the same in media/controls.js); the click that follows
+  // a press on the picture was only the dismissal, so it must not play / pause.
+  let menuDismissed = false;
+  document.addEventListener('pointerdown', (e) => {
+    menuDismissed = false;
+    if (ui.menu.hidden || ui.menu.contains(/** @type {Node} */ (e.target))) return;
+    menuDismissed = stage.contains(/** @type {Node} */ (e.target));
+    closeMenu();
+  }, true);
   // A click on the picture plays or pauses; with a panel or the menu open it only closes them.
   stage.addEventListener('click', (e) => {
     if (reordering || e.defaultPrevented) return;
+    const menuWas = menuDismissed;
+    menuDismissed = false;
+    if (controls.consumeDismiss() || menuWas) return;
     if (!ui.menu.hidden) { closeMenu(); return; }
     if (controls.anyOpen()) { controls.closeAll(false); return; }
     if (performance.now() - dragEnded < 300) return;
