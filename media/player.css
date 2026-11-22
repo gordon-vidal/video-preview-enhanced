@@ -35,6 +35,29 @@ video, canvas { display: block; background: #000; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 /* Keyboard focus is always visible, in the theme's focus colour. */
 button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+#seek:focus:not(:focus-visible), #volume:focus:not(:focus-visible) { outline: none; }
+#seek:focus-visible, #volume:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+
+#playFlash {
+  --play-flash-scale: 1.25;
+  position: fixed;
+  translate: -50% -50%;
+  width: 60px;
+  height: 60px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+#playFlash svg { width: 30px; height: 30px; }
+#playFlash:not(.playing) .i-play, #playFlash.playing .i-pause { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  #playFlash { --play-flash-scale: 1; }
+}
 
 #overlay {
   position: absolute;
@@ -141,7 +164,7 @@ body.idle { cursor: none; }
   background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
   border: 1px solid var(--vscode-editorHoverWidget-border, transparent);
   pointer-events: none;
-  z-index: 2;
+  z-index: 3;
 }
 
 #notice {
@@ -185,12 +208,37 @@ body.idle { cursor: none; }
   top: 5px;
   height: 8px;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--vscode-progressBar-background) 35%, transparent);
-  border-left: 2px solid var(--vscode-progressBar-background);
-  border-right: 2px solid var(--vscode-progressBar-background);
   pointer-events: none;
   z-index: 2;
 }
+#abMarks.has-range {
+  background: color-mix(in srgb, var(--vscode-progressBar-background, #3794ff) 65%, transparent);
+}
+.ab-pin {
+  position: absolute;
+  top: 2px;
+  width: 3px;
+  height: 14px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: #fff;
+  box-shadow: 0 0 0 1px #17191e;
+  pointer-events: none;
+  z-index: 2;
+}
+.ab-pin span {
+  position: absolute;
+  bottom: 100%;
+  width: 9px;
+  text-align: center;
+  font: 700 9px/11px sans-serif;
+  border-radius: 2px;
+  color: #fff;
+  background: #17191e;
+  box-shadow: 0 0 0 1px #fff;
+}
+#abA span { right: -1px; }
+#abB span { left: -1px; }
 
 /* ---- Inspection (inspect.js): zoom and pan, pixel grid and readout, go to, stats ---- */
 #stage.zoom { overflow: hidden; display: block; }

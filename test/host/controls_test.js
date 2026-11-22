@@ -54,6 +54,48 @@ const C = require('../../media/controls');
   }
 }
 
+// A second toggle replaces the running animation and switches the glyph immediately.
+{
+  const animations = [];
+  const element = {
+    style: {},
+    classList: { toggle: (name, on) => { element[name] = on; } },
+    animate(frames, options) {
+      const animation = { frames, options, cancel() { this.cancelled = true; } };
+      animations.push(animation);
+      return animation;
+    },
+  };
+  const flash = C.createPlayFlash(element, { getBoundingClientRect: () => ({ left: 10, top: 20, width: 300, height: 200 }) });
+  flash(false);
+  assert.strictEqual(element.playing, false);
+  assert.deepStrictEqual(element.style, { left: '160px', top: '120px' });
+  flash(true);
+  assert.strictEqual(element.playing, true);
+  assert.ok(animations[0].cancelled);
+  assert.deepStrictEqual(animations[1].frames.opacity, [1, 1, 0]);
+}
+
+// Both pins are independent of the band, which is shown only with two endpoints.
+{
+  const band = { style: {}, classList: { toggle: (name, on) => { band[name] = on; } } };
+  const a = { style: {} }, b = { style: {} };
+  const ab = require('../../media/abloop').create();
+  const draw = () => C.drawRangeMarks(band, a, b, ab.marks(10));
+  ab.set('a', 1, 1);
+  draw();
+  assert.deepStrictEqual([band['has-range'], a.hidden, b.hidden, a.style.left], [false, false, true, '10%']);
+  ab.set('b', 10, 10);
+  draw();
+  assert.deepStrictEqual([band['has-range'], b.hidden, b.style.left, band.style.width], [true, false, '100%', '90%']);
+  ab.set('a', 1, 1);
+  draw();
+  assert.deepStrictEqual([band['has-range'], a.hidden, b.hidden], [false, true, false]);
+  ab.clear();
+  draw();
+  assert.deepStrictEqual([band.hidden, a.hidden, b.hidden], [true, true, true]);
+}
+
 // Speed: 0.25–4× in steps of 0.05 (the time stretch's range: the sound always keeps playing).
 assert.strictEqual(C.clampRate(0.1), 0.25);
 assert.strictEqual(C.clampRate(9), 4);
@@ -76,6 +118,7 @@ assert.ok(/Volume ±5 %/.test(all) && /Ctrl\+C|Cmd\+C/.test(all));
 
 // Picture size: the sheet names Z for the player and for compare (+ / - only in the player: compare nudges offsets with them).
 const view = (p) => JSON.stringify(C.keyGroups({ jump: { arrow: 5, shift: 1, ctrl: 'frame' }, ...p }));
+for (const compare of [false, true]) assert.ok(view({ compare }).includes('"A–B range start / end","A","B"'));
 assert.ok(view({}).includes('"Picture size: Fit, Fill, Stretch, 100 %","Z"') && view({}).includes('"Zoom in / out","+","-"'), 'player sheet: Z and + / -');
 assert.ok(view({ compare: true }).includes('"Picture size (all videos)","Z"') && !view({ compare: true }).includes('Zoom in / out'), 'compare sheet: Z, no + / - zoom');
 

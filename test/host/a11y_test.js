@@ -60,10 +60,15 @@ function checkButtons(html, what) {
 }
 const pressed = (html, id) => new RegExp(`<button id="${id}"[^>]*aria-pressed="false"`).test(html);
 const liveRegion = /<div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"><\/div>/;
+const playFlash = /<div id="playFlash" aria-hidden="true"><svg class="i-play"[\s\S]*?<svg class="i-pause"/;
+const playerStyles = fs.readFileSync(path.join(__dirname, '../../media/player.css'), 'utf8');
+assert.match(playerStyles, /#seek:focus:not\(:focus-visible\), #volume:focus:not\(:focus-visible\) \{ outline: none; \}/);
+assert.match(playerStyles, /#seek:focus-visible, #volume:focus-visible \{ outline: 1px solid var\(--vscode-focusBorder\); outline-offset: 2px; \}/);
 
 const cmp = compareHtml({ uri: (...p) => `https://webview/${p.join('/')}`, cspSource: 'vscode-resource:', nonce: 'n', cfg: {}, frameSource: '' });
 checkButtons(cmp, 'compare');
 assert.match(cmp, liveRegion, 'compare: live region');
+assert.match(cmp, playFlash, 'compare: decorative play/pause flash');
 assert.ok(pressed(cmp, 'mute'), 'compare: #mute has aria-pressed');
 // The player's bar (src/bar.js) without CC, plus the Compare button that opens its panel.
 assert.match(cmp, /<button id="cmpBtn"[^>]*aria-controls="panel"/);
@@ -93,6 +98,7 @@ assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: va
   assert.ok(html.includes('id="bar"'), 'player page rendered');
   checkButtons(html, 'player');
   assert.match(html, liveRegion, 'player: live region');
+  assert.match(html, playFlash, 'player: decorative play/pause flash');
   assert.ok(pressed(html, 'mute'), 'player: #mute has aria-pressed');
   assert.ok(!html.includes('id="pip"'), 'player: no picture-in-picture button');
   // One layout: no mode switch, no Tools / CC popup menus; the bar's panel buttons say what they open.

@@ -7,6 +7,9 @@
 - Fullscreen in the player and Compare uses the full editor width when it falls back to Zen Mode.
 - Copy Frame, Save Frame as PNG, Pixel Inspector and Scopes now fetch full-resolution source frames during reduced-quality Native ffmpeg playback without switching decoders.
 - The smooth-playback notice shows which picture 100% zoom uses and offers full resolution for this tab, Settings, and a saved dismissal.
+- Seek and volume sliders keep their focus rings for keyboard navigation and clear them after pointer interaction.
+- The player and Compare briefly show a centered Play or Pause icon when you toggle playback.
+- The seek bar labels A and B separately and highlights the range used for looping and export.
 
 ## 0.9.0 (2026-11-22)
 

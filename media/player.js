@@ -18,6 +18,7 @@
     time: $('time'), now: $('now'), dur: $('dur'), rate: $('rate'), mute: $('mute'), volume: $('volume'),
     info: $('info'), infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), picBtn: $('picBtn'),
     panel: $('panel'), sheet: $('sheet'), toast: $('toast'), abMarks: $('abMarks'), tracks: $('tracks'),
+    abA: $('abA'), abB: $('abB'),
   };
 
   const log = (/** @type {any[]} */ ...a) => vscode.postMessage({ type: 'log', msg: a.map(String).join(' ') });
@@ -116,6 +117,7 @@
     liveTimer = setTimeout(() => { live.textContent = text; }, 50);
   }
   const toast = VpeControls.createToast(ui.toast, announce);
+  const flashPlay = VpeControls.createPlayFlash($('playFlash'), stage);
 
   // Subtitles and audio/subtitle tracks (tracks-menu.js, subtitles.js).
   const subs = createTracksUi({
@@ -530,14 +532,15 @@
   }
   function abLabel() { return ab.label(fmtClock); }
   function drawAB() {
-    const m = ab.marks(player && player.meta.duration);
-    ui.abMarks.hidden = m.hidden;
-    if (m.hidden) return;
-    ui.abMarks.style.left = `${m.left}%`;
-    ui.abMarks.style.width = `${m.width}%`;
+    VpeControls.drawRangeMarks(ui.abMarks, ui.abA, ui.abB, ab.marks(player && player.meta.duration));
   }
 
-  const togglePlay = () => { if (!player) return; player.isPlaying() ? player.pause() : player.play(); };
+  const togglePlay = () => {
+    if (!player) return;
+    if (player.isPlaying()) player.pause();
+    else player.play();
+    flashPlay(player.isPlaying());
+  };
   function step(d) {
     if (!player) return;
     if (player.stepFrame) player.stepFrame(d);
@@ -716,7 +719,7 @@
   }
   function sendRange(type, promptInHost = false) {
     const range = type === 'clipRange' ? ab.presentationRange() : abRange();
-    if (!range && !promptInHost) { toast('Set an A-B loop first (A, B)'); return; }
+    if (!range && !promptInHost) { toast('Set an A–B range first (A, B)'); return; }
     if (type === 'clipRange' && range && range.native) { refuseSynthetic(); return; }
     vscode.postMessage({ type, page: cfg.page, range });
   }

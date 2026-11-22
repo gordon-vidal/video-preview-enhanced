@@ -17,8 +17,8 @@ Most palette commands are under **Video Preview**. The Compare actions below use
 | Compare: Add Videos from the Explorer | Toggles Add Mode for the active player or Compare. Open videos in the Explorer to add them. |
 | Compare: Stop Adding from the Explorer | Ends Add Mode. Esc does the same. |
 | Load Subtitles… | Opens a subtitle file for the current video (needs an open player) |
-| Export Frames (A–B)… | (needs an open player) Saves every frame of the A-B loop as PNG into a folder you pick |
-| Copy ffmpeg Command for A–B | (needs an open player) Copies an ffmpeg command that cuts the A-B loop (exact or `-c copy`) |
+| Export Frames (A–B)… | (needs an open player) Saves every frame of the A–B range as PNG into a folder you pick |
+| Copy ffmpeg Command for A–B | (needs an open player) Copies an ffmpeg command that cuts the A–B range (exact or `-c copy`) |
 | Export A–B Clip… | (needs an open player and native ffmpeg) Copies the marked video interval and embedded audio and subtitles into a clip |
 | Export A–B Clips… | (needs an open Compare and native ffmpeg) Copies the shared A–B interval into a clip per eligible tile, applying each tile's offset |
 | (right-click menu items) | The player's context menu runs commands named `videoPreviewEnhanced.ctx.*` (play, pause, loopOn, loopOff, setA, setB, clearAB, copyFrame, saveFrame, copyTime, keys, playerSettings). They are not in the Command Palette; [see Keys and mouse](keys.md#right-click-menu) |

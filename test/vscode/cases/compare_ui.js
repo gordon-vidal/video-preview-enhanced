@@ -169,7 +169,7 @@ module.exports = [{
     u = await ui();
     ok(u.panel && u.panel.view === 'main' && /Sound/.test(panelText(u)) && /from A/.test(panelText(u)) && /Copy view/.test(panelText(u)) && /Compare/.test(panelText(u)), `⚙ panel: ${panelText(u)}`);
     ok(!/Subtitles|Audio track/.test(panelText(u)), `⚙ panel shows player-only rows: ${panelText(u)}`);
-    ok(u.panel?.rows.some((r) => /A-B loop/.test(r.label)), 'Compare Settings has the shared A-B loop row');
+    ok(u.panel?.rows.some((r) => /A–B range/.test(r.label)), 'Compare Settings has the shared A–B range row');
     ok(u.panel?.rows.some((r) => r.label === 'Export A–B video for all Compare tiles'), 'Compare clip export accessible name');
     await click({ text: 'Compare' }); // the Tools grid's Compare opens the Compare panel
     u = await ui();

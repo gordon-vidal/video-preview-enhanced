@@ -152,7 +152,7 @@ module.exports = [{
       await settle(300);
       s = await P.state();
       const labels = s.panel.rows.map((r) => r.label);
-      for (const want of ['Speed', 'Loop', 'A-B loop', 'Subtitles', 'Audio track', 'Copy frame', 'Keyboard shortcuts', 'Jump sizes', 'Compare', 'Scopes', 'Inspector', 'Stats', 'Codec X-ray', 'Export A-B', 'Open video URL…', 'Extension settings']) ok(labels.some((l) => l.includes(want)), `main page has no ${want}: ${JSON.stringify(labels)}`);
+      for (const want of ['Speed', 'Loop', 'A–B range', 'Subtitles', 'Audio track', 'Copy frame', 'Keyboard shortcuts', 'Jump sizes', 'Compare', 'Scopes', 'Inspector', 'Stats', 'Codec X-ray', 'Export A-B', 'Open video URL…', 'Extension settings']) ok(labels.some((l) => l.includes(want)), `main page has no ${want}: ${JSON.stringify(labels)}`);
       ok(/Jump sizes\s*5 s · 1 s · 1 frame/.test(s.panel.text), `jump summary: ${s.panel.text}`);
       // A tool from the grid, without any mode switch: scopes.
       await P.ask('click', { sel: '#panel button.tool', text: 'Scopes' });
