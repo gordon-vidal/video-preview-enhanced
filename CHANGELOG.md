@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Changed: action messages are larger, easier to read, and appear at the top centre of the picture in the player and Compare.
 - New: a **Compare** button in the player's bar. It asks before starting Compare with the video; with a Compare open it reads **Add to Compare** and adds the video directly.
 - New: a **Stop** button in Compare's Add Mode hint.
 - Changed: the Explorer menu and player title show **Start Compare** or **Add to Compare** based on whether a Compare is open.

@@ -5,6 +5,55 @@
 const assert = require('assert');
 const C = require('../../media/controls');
 
+// A replacement cancels the old timer or fade and keeps the new duration and announcement.
+{
+  const timers = new Map();
+  const motion = { matches: false };
+  const originals = { setTimeout, clearTimeout, matchMedia: globalThis.matchMedia };
+  let animation;
+  const element = {
+    hidden: true,
+    animate() {
+      animation = { cancel() { this.cancelled = true; } };
+      return animation;
+    },
+  };
+  const announced = [];
+  try {
+    globalThis.matchMedia = () => motion;
+    globalThis.setTimeout = (fn, ms) => { timers.set(fn, ms); return fn; };
+    globalThis.clearTimeout = (id) => timers.delete(id);
+    const toast = C.createToast(element, (text) => announced.push(text));
+    const expire = () => {
+      const [fn] = timers.keys();
+      timers.delete(fn);
+      fn();
+    };
+    toast('Fill');
+    assert.deepStrictEqual([...timers.values()], [1500]);
+    toast('Stretch', 3000);
+    assert.deepStrictEqual([...timers.values()], [3000]);
+    expire();
+    const oldExit = animation;
+    assert.strictEqual(element.hidden, false);
+    toast('Fit');
+    assert.ok(oldExit.cancelled && oldExit.onfinish === null, 'old fade cannot hide the replacement');
+    assert.strictEqual(element.textContent, 'Fit');
+    assert.deepStrictEqual(announced, ['Fill', 'Stretch', 'Fit']);
+    expire();
+    animation.onfinish();
+    assert.strictEqual(element.hidden, true);
+    motion.matches = true;
+    const lastAnimation = animation;
+    toast('Fill');
+    expire();
+    assert.strictEqual(animation, lastAnimation, 'reduced motion skips both fades');
+    assert.strictEqual(element.hidden, true);
+  } finally {
+    Object.assign(globalThis, originals);
+  }
+}
+
 // Speed: 0.25–4× in steps of 0.05 (the time stretch's range: the sound always keeps playing).
 assert.strictEqual(C.clampRate(0.1), 0.25);
 assert.strictEqual(C.clampRate(9), 4);

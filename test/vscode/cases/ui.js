@@ -405,9 +405,10 @@ module.exports = [{
       ok(/^Play all|^Pause all/.test(c.play.label || ''), `play label ${c.play.label}`);
       const loop0 = s.loop;
       vs.send({ compare: true, action: 'key', key: 'r' });
-      await h.sleep(400);
-      s = await ask();
-      ok(s.loop === !loop0 && s.live === (s.loop ? 'Loop on' : 'Loop off'), `R: loop ${loop0} -> ${s.loop}, live ${JSON.stringify(s.live)}`);
+      const loopText = loop0 ? 'Loop off' : 'Loop on';
+      const liveDeadline = Date.now() + 5000;
+      do { s = await ask(); } while (s.live !== loopText && Date.now() < liveDeadline);
+      ok(s.loop === !loop0 && s.live === loopText, `R: loop ${loop0} -> ${s.loop}, live ${JSON.stringify(s.live)}`);
       vs.send({ compare: true, action: 'key', key: 'r' });
       await h.sleep(300);
       s = await ask({ focus: '#cmpBtn', click: '#cmpBtn' });
