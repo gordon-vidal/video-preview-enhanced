@@ -27,6 +27,13 @@ Every recurring in-player notice must give the user full control:
 ## 4. Prefer Eliminating Popups Over Explaining Them
 Before adding or keeping a notice, ask whether the player can just do the right thing automatically (e.g., fetching an exact single frame from the host for Copy/Save/Inspector/Scopes so smooth playback never needs to warn the user at all).
 
+## 5. Anchored Popups, Menus & Overlays (General Rules)
+Every anchored panel (`ⓘ` Info, `⚙` Settings, Speed, Subtitles, Compare) and overlay (Scopes, Pixel Inspector, `#notice`) must follow consistent dismissal rules:
+- **Click anywhere outside closes it:** Clicking empty space on the control bar, another control (e.g. Mute, Volume, Seek, Play), or the video stage closes any open anchored panel immediately — never require clicking specifically on the video canvas.
+- **Dismissing never triggers playback:** Clicking the stage to dismiss an open panel, or clicking `×` / actions inside a notice or overlay, must not toggle play/pause.
+- **`Escape` always exits:** Every panel, notice, and modal/inspection tool (Pixel Inspector, Scopes) must close cleanly on `Escape`.
+- **Right-click menus show shortcuts:** Every context menu item with a keyboard shortcut displays it, and common actions should have clear, standard shortcuts.
+
 ## Checklist Before Shipping
 - [ ] Plain English? Zero internal decoder jargon?
 - [ ] Explains *why* (the user benefit) and the *tradeoff* of switching?
