@@ -121,5 +121,5 @@ chat shared outside this machine. If it is absent, work from the public docs onl
 
 Project skills live in `.claude/skills/<name>/SKILL.md` (auto-discovered by Claude Code; other
 agents should read the relevant `SKILL.md` directly before running tests, debugging decode issues,
-adding a format, releasing, or updating docs): `run-tests`, `reproduce-decode-bug`, `add-format`,
-`release-checklist`, `update-docs`.
+adding a format, releasing, updating docs, or writing user-facing notices): `run-tests`,
+`reproduce-decode-bug`, `add-format`, `release-checklist`, `update-docs`, `ui-notices`.
