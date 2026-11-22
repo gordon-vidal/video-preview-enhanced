@@ -6,6 +6,8 @@
 - Windows: ffmpeg installed with Chocolatey or Scoop now works with the native decoder (audio and exact timestamps). The extension runs the real ffmpeg behind the package manager's shim, which dropped the extra pipes.
 - Slow-playback notices explain the tradeoffs, label choices saved for all videos, and offer Settings and Don't show again.
 - Right-clicking a video editor tab offers Start Compare or Add to Compare, like the Explorer menu. With several video tabs selected, all of them are used.
+- New settings `jump.wheel` (default one frame) and `jump.wheelShift` (default 1 s) set how far the scroll wheel and Shift+wheel jump while paused, in the player and Compare. Shift+wheel also works where Windows reports it sideways.
+- Picture size and zoom toasts name the size with its percent (`Fit (67%)`, `Fill (112%)`); zooming back out to the picture size shows that instead of a bare `Zoom 67%`.
 - The seek bar and time readout hold the requested position after you release the thumb while the decoder catches up. Frame-step buttons stay visible in narrow splits.
 - Escape dismisses playback notices, Pixel Inspector and Scopes. Scopes also has a close button, and playback notice buttons leave playback alone.
 - Settings opens on the first click from another panel. Live transcode shows where its defaults apply and which tools fetch full-resolution frames.

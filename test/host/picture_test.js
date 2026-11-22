@@ -145,4 +145,15 @@ assert.deepStrictEqual(P.sourceSize({ w: 1280, h: 720 }, { w: 3840, h: 2160 }), 
 assert.deepStrictEqual(P.sourceSize({ w: 720, h: 1280 }, { w: 3840, h: 2160 }), { w: 2160, h: 3840 });
 assert.deepStrictEqual(P.sourceSize({ w: 640, h: 360 }, null), { w: 640, h: 360 });
 
+// Toasts: the mode with its percent at the mode's own size (also after zooming back out to it), "Zoom N%" once zoomed.
+assert.strictEqual(P.pictureToast('fit', 67, false), 'Fit (67%)');
+assert.strictEqual(P.pictureToast('fill', 112, false), 'Fill (112%)');
+assert.strictEqual(P.pictureToast('stretch', 67, false), 'Stretch (67%)');
+assert.strictEqual(P.pictureToast('actual', 100, false), '100%', 'no "100% (100%)"');
+assert.strictEqual(P.pictureToast('fit', 150, true), 'Zoom 150%');
+assert.strictEqual(P.pictureToast('fit', null, false), 'Fit');
+assert.ok(!P.isZoomed({ mode: 'fit', zoom: 1.0005 }) && P.isZoomed({ mode: 'fit', zoom: 1.5 }), 'fit: zoomed past 1x');
+assert.ok(!P.isZoomed({ mode: 'fill', zoom: 1 }) && !P.isZoomed({ mode: 'stretch', zoom: 1 }), 'floor = picture size');
+assert.ok(P.isZoomed({ mode: 'actual', zoom: 0.5 }) && P.isZoomed({ mode: 'actual', zoom: 2 }) && !P.isZoomed({ mode: 'actual', zoom: 1 }), 'actual: either side');
+
 console.log('picture_test: ok');

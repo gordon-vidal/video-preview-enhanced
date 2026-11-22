@@ -563,6 +563,42 @@
           "default": "frame",
           "markdownDescription": "How far **Ctrl+Left** / **Ctrl+Right** (**Cmd** on macOS) jump in the player: `\"frame\"` is one frame, a number is seconds. **,** and **.** always step one frame. Also set in the player's settings panel (cog › Jump sizes)."
         },
+        "videoPreviewEnhanced.jump.wheel": {
+          "enum": [
+            "frame",
+            1,
+            5,
+            10,
+            30
+          ],
+          "enumItemLabels": [
+            "1 frame",
+            "1 s",
+            "5 s",
+            "10 s",
+            "30 s"
+          ],
+          "default": "frame",
+          "markdownDescription": "How far the **scroll wheel** jumps while the video is paused: `\"frame\"` is one frame, a number is seconds. **Ctrl+wheel** still zooms."
+        },
+        "videoPreviewEnhanced.jump.wheelShift": {
+          "enum": [
+            "frame",
+            1,
+            5,
+            10,
+            30
+          ],
+          "enumItemLabels": [
+            "1 frame",
+            "1 s",
+            "5 s",
+            "10 s",
+            "30 s"
+          ],
+          "default": 1,
+          "markdownDescription": "How far **Shift+wheel** jumps while the video is paused: `\"frame\"` is one frame, a number is seconds."
+        },
         "videoPreviewEnhanced.stepButtons": {
           "enum": [
             "frame",

@@ -117,13 +117,14 @@ function prefTarget(key) {
 const JUMPS = ['frame', 1, 5, 10, 30];
 const PREFS = {
   'jump.arrow': { values: JUMPS, dflt: 5 }, 'jump.shift': { values: JUMPS, dflt: 1 }, 'jump.ctrl': { values: JUMPS, dflt: 'frame' },
+  'jump.wheel': { values: JUMPS, dflt: 'frame' }, 'jump.wheelShift': { values: JUMPS, dflt: 1 },
   // The buttons beside Play: 'frame' steps one frame, 'jump' jumps by the Ctrl+arrow size.
   stepButtons: { values: ['frame', 'jump'], dflt: 'frame' },
 };
 function prefsOf(c) {
   const v = (k) => (PREFS[k].values.includes(c.jumps[k]) ? c.jumps[k] : PREFS[k].dflt);
   return {
-    jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl') },
+    jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl'), wheel: v('jump.wheel'), wheelShift: v('jump.wheelShift') },
     stepButtons: v('stepButtons'),
     pictureSize: c.pictureSize,
     transcode: c.transcode,

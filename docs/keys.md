@@ -67,6 +67,7 @@ leaves them alone (`docs/notes/ui-simple.md`).
 | Shift+drag a video from the Explorer onto the picture | Compare with it (VS Code only hands drops to the player while Shift is held) |
 | Double-click the picture | Fill the editor |
 | Wheel, while paused | Step frames |
+| Wheel / Shift+wheel (paused) | Back / forward one frame / 1 s (settings `jump.wheel`, `jump.wheelShift`) |
 | Ctrl+wheel (or pinch) | Zoom around the cursor, in any picture size; drag to pan when the picture is larger than the player (a click without moving still plays or pauses) |
 | Hover the seek bar | Thumbnail and time |
 | Click the time | Time → timecode → frame number |
