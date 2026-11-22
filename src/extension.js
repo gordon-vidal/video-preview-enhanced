@@ -142,13 +142,14 @@ function storedPlaybackPrefs() {
   return sanitizePlaybackPrefs(globalState && globalState.get(PLAYBACK_PREFS_KEY));
 }
 
-function rememberPlaybackPrefs(m) {
+function rememberPlaybackPrefs(m, from) {
   if (!globalState || !m || typeof m !== 'object') return undefined;
   const prev = storedPlaybackPrefs();
   const next = sanitizePlaybackPrefs(m, prev);
   if (['volume', 'muted', 'rate', 'timeMode', 'stepSize'].every((k) => next[k] === prev[k])) return undefined;
-  // Every open player and Compare follows at once (their pages stay alive in the background), not only new tabs.
-  for (const sess of [...sessions, ...compareSessions]) sess.post({ type: 'playbackPrefs', prefs: next });
+  // Every other player and Compare follows at once (their pages stay alive in the background), not only new tabs.
+  // Not the sender: an echo would snap its slider back mid-drag and redraw its open panel.
+  for (const sess of [...sessions, ...compareSessions]) if (sess !== from) sess.post({ type: 'playbackPrefs', prefs: next });
   return globalState.update(PLAYBACK_PREFS_KEY, next);
 }
 
@@ -1355,7 +1356,7 @@ function activate(context) {
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
     // Compare's bar and panels are the player's: the same jump sizes, written the same way.
     prefs: () => prefsOf(config()),
-    setPlaybackPrefs: (m) => rememberPlaybackPrefs(m),
+    setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
     setTranscodePref: (key, value) => setSetting(key, value, vscode.ConfigurationTarget.Global),
     offerTranscode: (sess) => maybeOfferRemoteTranscode(sess, vscode.env.remoteName),
     setPref: (key, value) => (PREFS[key] && PREFS[key].values.includes(value) ? setSetting(key, value, prefTarget(key)) : undefined),
@@ -2123,7 +2124,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
       case 'grabExactFrame': return this.sendExactFrame(m);
       // Jump sizes and speed step from the player's panels: only declared values.
       case 'pref': return PREFS[m.key] && PREFS[m.key].values.includes(m.value) ? setSetting(m.key, m.value, prefTarget(m.key)) : undefined;
-      case 'playbackPrefs': return rememberPlaybackPrefs(m);
+      case 'playbackPrefs': return rememberPlaybackPrefs(m, this);
       // Live transcode mode and max bitrate from the ⚙ panel (machine-scoped).
       case 'transcodePref': {
         if (m.mode !== undefined && transcodePolicy.MODES.includes(m.mode)) {

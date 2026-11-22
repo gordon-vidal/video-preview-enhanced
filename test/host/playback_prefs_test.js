@@ -60,7 +60,10 @@ function slice(src, from, to) {
     // 3b. Open tabs follow a change made in another tab at once (their pages stay alive in the background), and the
     // step size is shared too.
     const before = s1.posted.length;
+    const senderBefore = s2.posted.length;
     await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 });
+    assert.ok(!s2.posted.slice(senderBefore).some((m) => m.type === 'playbackPrefs'),
+      'the sender gets no echo (it would snap a slider back mid-drag)');
     const live = s1.posted.slice(before).find((m) => m.type === 'playbackPrefs');
     assert.deepStrictEqual(live && live.prefs, { volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 },
       'the other open tab receives the new prefs');

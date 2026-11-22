@@ -295,7 +295,7 @@ class CompareSession {
       case 'replace': return this.replaceVideo(Number(m.index));
       case 'leave': return this.leave(Number(m.keep), Number(m.t));
       case 'pref': return this.setPref ? this.setPref(m.key, m.value) : undefined;
-      case 'playbackPrefs': return this.setPlaybackPrefs ? this.setPlaybackPrefs(m) : undefined;
+      case 'playbackPrefs': return this.setPlaybackPrefs ? this.setPlaybackPrefs(m, this) : undefined;
       case 'transcodePref': {
         if (!this.setTranscodePref) return undefined;
         if (MODES.includes(m.mode)) return this.setTranscodePref('transcode', m.mode);
