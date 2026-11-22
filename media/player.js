@@ -396,8 +396,8 @@
   for (const ev of ['message', 'pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'click', 'focusin', 'resize', 'fullscreenchange', 'visibilitychange']) {
     window.addEventListener(ev, wakeLoop, { capture: true, passive: true });
   }
-  // The right-click menu reads data-vscode-context when it opens: bring it up to date first.
-  window.addEventListener('contextmenu', () => { wakeLoop(); updateMenuContext(); }, true);
+  // The right-click menu (media/ctxmenu.js) reads the player state when it opens: wake the loop so it is current.
+  window.addEventListener('contextmenu', wakeLoop, true);
   /** Test hook (state): what keeps the loop from resting now, '' when nothing. */
   function loopBusy() {
     const p = player;
@@ -433,7 +433,6 @@
       { const to = ab.wrapTarget(player.currentTime(), player.isPlaying()); if (to !== null) player.seekTime(to); }
       changed = updateUi();
       if (xray) xray.chapterTicks();
-      updateMenuContext();
       updateStatus();
       syncWakeLock(player.isPlaying());
       if (now - lastSave > 1000) {
@@ -899,7 +898,7 @@
     if (player && player.thumbnailLeave) player.thumbnailLeave();
   }
   // A click on the picture closes an open panel or the shortcuts sheet; otherwise it plays / pauses.
-  stage.addEventListener('click', () => { if (controls && (controls.consumeDismiss() || controls.anyOpen())) { controls.closeAll(false); return; } togglePlay(); });
+  stage.addEventListener('click', () => { if (controls && (controls.consumeDismiss() || controls.anyOpen() || ctxMenu.consumeDismiss())) { controls.closeAll(false); return; } togglePlay(); });
   stage.addEventListener('dblclick', toggleFullscreen);
   // Wheel while paused: jump.wheel; Shift+wheel: jump.wheelShift. Chromium on Windows reports Shift+wheel as deltaX.
   stage.addEventListener('wheel', (e) => {
@@ -1158,7 +1157,7 @@
   }
   const pictureState = () => { const v = insp.picture(); return { mode: v.mode, pct: player && player.meta && player.meta.width ? insp.zoomPercent() : null, zoomed: v.zoom !== 1 }; };
   controls = VpeControls.create({
-    panel: ui.panel, sheet: ui.sheet, bar: ui.bar,
+    panel: ui.panel, sheet: ui.sheet, bar: ui.bar, onShow: () => ctxMenu.close(false),
     buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, tracks: ui.tracks },
     get: () => {
       const d = subs.panelData();
@@ -1270,36 +1269,25 @@
   setLoop(loop);
   updateCc();
 
-  // ---- Right-click menu (package.json "webview/context", src/extension.js ctx commands) ----
-  // VS Code shows its own menu from the data-vscode-context of the clicked element and its parents;
-  // this one helper keeps that JSON current (when-clauses read vpe*), and 'menu' messages run the
-  // chosen item through the same functions as the keys and buttons.
-  let ctxJson = '';
-  function updateMenuContext() {
-    const av = subs.available();
-    const o = {
-      preventDefaultContextMenuItems: true, vpe: true, vpeReady: !!player,
-      vpePlaying: !!player && player.isPlaying(), vpeLoop: loop, vpeMuted: muted,
-      vpeFile: !cfg.url && !(player instanceof FramePlayer), vpeSubs: av.subs > 0, vpeAudio: av.audio > 1, vpeAB: ab.isRange(), vpeABSet: ab.isSet(),
-    };
-    const j = JSON.stringify(o);
-    if (j !== ctxJson) { ctxJson = j; document.body.setAttribute('data-vscode-context', j); }
-  }
+  // ---- Right-click menu (media/ctxmenu.js, docs/notes/context-menu.md) ----
+  // An HTML menu in the page: its items run through the same functions as the keys and buttons.
   const MENU_ACTIONS = {
-    playPause: () => togglePlay(), startCompare: () => compareButton.click(), addToCompare: () => requestComparison(false), loop: () => { setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); }, mute: () => setMute(!muted),
-    speed: (m) => { if (Number(m.value) > 0) { setRate(Number(m.value)); toast(`${rate}×`); } },
-    copyFrame: () => copyFrame(), saveFrame: () => saveFrame(), copyLink: () => press('C', { shiftKey: true }),
-    copyTime: () => copyTimestamp(),
-    subs: () => controls.show('subs', ui.tracks), audio: () => controls.show('audio', ui.cog),
-    fullscreen: () => toggleFullscreen(),
-    stepBack: () => stepButton(-1), stepFwd: () => stepButton(1), keys: () => controls.openSheet(ui.cog), cog: () => controls.show('main', ui.cog),
-    xray: () => press('X', { shiftKey: true }),
+    playPause: () => togglePlay(), loop: () => { setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); },
     // From the menu "Set" always sets (at this moment); the A / B keys toggle.
-    setA: () => resetAB('a'), setB: () => resetAB('b'),
-    clearAB: () => clearAB(),
-    inspector: () => { exactTool(); press('x'); }, scopes: () => { exactTool(); scopes.cycle(); }, stats: () => press('I', { shiftKey: true }),
+    setA: () => resetAB('a'), setB: () => resetAB('b'), clearAB: () => clearAB(),
+    copyFrame: () => copyFrame(), saveFrame: () => saveFrame(), copyTime: () => copyTimestamp(),
+    startCompare: () => compareButton.click(), addToCompare: () => requestComparison(false),
+    keys: () => controls.openSheet(ui.cog), cog: () => controls.show('main', ui.cog),
   };
-  updateMenuContext();
+  const ctxMenu = VpeCtxMenu.create({
+    menu: $('ctxmenu'),
+    getState: () => ({
+      ready: !!player, playing: !!player && player.isPlaying(), loop, abSet: ab.isSet(),
+      file: !cfg.url && !(player instanceof FramePlayer), compareOpen,
+    }),
+    beforeOpen: () => controls.closeAll(false),
+    run: (action) => { if (MENU_ACTIONS[action]) MENU_ACTIONS[action](); },
+  });
 
   // ---- Messages from the extension ----------------------------------------
 
@@ -1404,7 +1392,6 @@
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
       case 'pauseForTest': if (player && player.isPlaying()) { player.pause(); toast('Paused while ffmpeg is tested', 3000); } break;
       case 'prefs': if (m.prefs && m.prefs.jump) { Object.assign(prefs.jump, m.prefs.jump); if (m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons === 'jump' ? 'jump' : 'frame'; if (m.prefs.transcode) prefs.transcode = m.prefs.transcode; if (m.prefs.transcodeMaxBitrate !== undefined) prefs.transcodeMaxBitrate = Number(m.prefs.transcodeMaxBitrate) || 0; stepTips(); controls.refresh(); } break;
-      case 'menu': if (MENU_ACTIONS[m.action]) { MENU_ACTIONS[m.action](m); updateMenuContext(); } break;
       case 'ffmpegState': ffmpegState = { installed: !!m.installed, offer: !!m.offer, mb: Number(m.mb) || 0 }; if (player) player.ffmpeg = ffmpegState; break;
       case 'goto': insp.goToLink(m); break;
       case 'abQuery':
@@ -1483,6 +1470,10 @@
         document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
       }
       if (m.action === 'key') (m.target ? document.querySelector(m.target) : document).dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: !!m.shift, ctrlKey: !!m.ctrl, bubbles: true }));
+      if (m.action === 'ctxOpen') ctxMenu.open(m.x ?? 40, m.y ?? 40, !!m.keyboard);
+      if (m.action === 'stageClick') { const o = { bubbles: true, cancelable: true, button: 0 }; stage.dispatchEvent(new PointerEvent('pointerdown', o)); stage.dispatchEvent(new PointerEvent('pointerup', o)); stage.dispatchEvent(new MouseEvent('click', o)); }
+      if (m.action === 'ctxClose') ctxMenu.close(true);
+      if (m.action === 'ctxPick') { const b = document.querySelector(`#ctxmenu [data-id="${m.id}"]`); if (b) b.click(); else log(`ctxmenu item not found: ${m.id}`); }
       if (m.action === 'play') player.play();
       if (m.action === 'rate') setRate(m.r);
       if (m.action === 'panel') { if (m.view) controls.show(m.view, m.view === 'info' ? ui.infoBtn : m.view === 'speed' ? ui.rate : ui.cog); else controls.closeAll(false); }
@@ -1547,7 +1538,7 @@
             goto: !!byId('goto') && !byId('goto').hidden, stats: byId('stats') && !byId('stats').hidden ? byId('stats').textContent : '',
             infoShown: controls.view() === 'info', abRange: ab.presentationRange(), abMarks: { hidden: ui.abMarks.hidden, left: ui.abMarks.style.left, width: ui.abMarks.style.width },
             subsText: byId('subs') && !byId('subs').hidden ? byId('subs').textContent : '', muted: ui.mute.classList.contains('on'),
-            dpr: globalThis.devicePixelRatio || 1, engine: !!(p && p.queue), loop: { ...loopStats, busy: loopBusy() }, vscodeContext: document.body.getAttribute('data-vscode-context') || '',
+            dpr: globalThis.devicePixelRatio || 1, engine: !!(p && p.queue), loop: { ...loopStats, busy: loopBusy() }, ctxMenu: ctxMenu.snapshot(), viewport: { w: document.documentElement.clientWidth, h: document.documentElement.clientHeight }, playing: !!(player && player.isPlaying()),
             seekRect: rect(ui.seek), quality: streamQ,
             thumb: (() => { const b = byId('thumb'); const c = b && b.querySelector('canvas'); let sig = ''; if (c && c.width) { const u = c.toDataURL(); let x = 0; for (let i = 0; i < u.length; i += 7) x = (x * 31 + u.charCodeAt(i)) | 0; sig = `${u.length}:${x}`; } return { hidden: !b || b.hidden, w: c ? c.width : 0, sig, rect: b ? rect(b) : null }; })(),
             tip: { hidden: ui.tip.hidden, rect: rect(ui.tip) },

@@ -220,14 +220,14 @@ const functional = {
         x.busy = [c.loop.busy, d.loop.busy];
         if (!(d.loop.rests > c.loop.rests || d.loop.rests > 0)) ok(false, 'the frame loop never rested while paused');
         if (x.framesIn4sPaused > 0.5 * rate * 4) ok(false, `${x.framesIn4sPaused} animation frames in 4 s paused (playing: ${rate}/s)`);
-        if (!/"vpePlaying":false/.test(d.vscodeContext)) ok(false, `right-click context while paused: ${d.vscodeContext}`);
+        if (d.playing !== false) ok(false, `player state while paused: ${d.playing}`);
         // Stepping while resting: the frame, the time label and the bar follow.
         P.step(1);
         const e = await P.waitState((s) => s.frame === d.frame + 1, { timeout: 4000, what: 'a step while resting' }).catch((err) => { ok(false, err.message); return null; });
         if (e && e.timeText === d.timeText) ok(false, `the time label did not follow the step (${e.timeText})`);
         await lib.sleep(2500);
         P.play();
-        const f = await P.waitState((s) => s.playing && /"vpePlaying":true/.test(s.vscodeContext), { timeout: 4000, what: 'playing (context) after resting' }).catch((err) => { ok(false, err.message); return null; });
+        const f = await P.waitState((s) => s.playing, { timeout: 4000, what: 'playing after resting' }).catch((err) => { ok(false, err.message); return null; });
         if (f) await P.waitState((s) => s.frame > f.frame + 10, { timeout: 4000, what: 'frames advance after resting' }).catch((err) => ok(false, err.message));
         P.pause();
       } finally { await P.close(); }

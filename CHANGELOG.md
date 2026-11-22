@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The right-click menu is now drawn by the player itself instead of VS Code's native menu: it matches the ⚙ panel's theme, shows each shortcut in a muted monospace column on the right, marks **Loop** with a real ✓, stays inside the window, and also works in fullscreen. Arrow keys, Home / End, Enter / Space and Escape work in it; it closes on a click elsewhere (the click does not play or pause), on resize, and when you open a panel. Right-clicking a text field still gives the normal Cut / Copy / Paste. The `videoPreviewEnhanced.ctx.*` commands are removed (they were hidden from the Command Palette).
 - Removed the startup warning notification about older extension folders left behind by VS Code updates.
 - Windows: ffmpeg installed with Chocolatey or Scoop now works with the native decoder (audio and exact timestamps). The extension runs the real ffmpeg behind the package manager's shim, which dropped the extra pipes.
 - Slow-playback notices explain the tradeoffs, label choices saved for all videos, and offer Settings and Don't show again.

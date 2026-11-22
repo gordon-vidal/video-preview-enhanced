@@ -209,7 +209,7 @@ function element(parent) {
       let toggles = 0;
       const pstage = element();
       vm.runInContext(script("stage.addEventListener('click', () => { if (controls", '\n'), vm.createContext({
-        stage: pstage, controls, togglePlay: () => { toggles++; },
+        stage: pstage, controls, ctxMenu: { consumeDismiss: () => false }, togglePlay: () => { toggles++; },
       }));
       const press = (target) => docListeners.pointerdown({ target });
       for (const view of ['info', 'main']) {
