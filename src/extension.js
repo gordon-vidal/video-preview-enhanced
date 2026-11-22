@@ -2065,7 +2065,8 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
         this.sendFfmpegState();
         // The bar was rendered with the Compare state. A Compare that opened or closed while the page loaded is sent
         // after the video opened, so nothing comes before the first sound and frames (test/host/wav_parts_test.js).
-        return Promise.resolve(this.sequence ? this.openSequence() : this.open()).finally(() => this.sendCompareOpen());
+        return Promise.resolve(this.sequence ? this.openSequence() : this.open())
+          .finally(() => { if (!this.disposed && this.page === m.page && this.boot === m.boot) this.sendCompareOpen(); });
       case 'loadSubs': return this.loadSubtitles();
       // The settings panel's "Extension settings" row: VS Code's Settings, filtered to this extension.
       case 'openSettings': return vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXT_ID}`);
