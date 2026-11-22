@@ -206,6 +206,8 @@
     setRate() { this.syncAudio(true); }
     setVolume() { if (this.audio) { this.audio.muted = muted; this.audio.volume = volume; if (this.playing) this.syncAudio(false); } }
     setLoop() {}
+    audioBlocked() { return !!(this.audio && autoplayMuted); }
+    unlockAudio() { if (this.playing) this.syncAudio(false); }
 
     syncAudio(force) {
       const a = this.audio;
@@ -585,6 +587,7 @@
   /** Arrow keys: one frame or seconds, from the jump-size settings. */
   const jump = (size, dir) => { if (size === 'frame') step(dir); else skip(dir * Number(size)); };
   function postPlaybackPrefs() {
+    vscode.setState({ ...(vscode.getState() || {}), rate, volume, muted: userMuted, timeMode, stepSize: prefs.stepSize });
     vscode.postMessage({ type: 'playbackPrefs', volume, muted: userMuted, rate, timeMode, stepSize: prefs.stepSize });
   }
   /** Another tab changed a shared playback preference (src/extension.js rememberPlaybackPrefs): follow it quietly. */
@@ -594,22 +597,28 @@
     if (typeof p.muted === 'boolean') {
       userMuted = p.muted;
       if (userMuted) autoplayMuted = false;
+      else if (player && typeof player.audioBlocked === 'function' && player.audioBlocked()) autoplayMuted = true;
     }
     setMute(userMuted || autoplayMuted, false);
+    if (!userMuted && autoplayMuted && player && typeof player.unlockAudio === 'function') player.unlockAudio();
     if (Number.isFinite(p.rate) && p.rate !== rate) setRate(p.rate, false);
     if ([0, 1, 2].includes(p.timeMode) && p.timeMode !== timeMode) { timeMode = p.timeMode; lastUi = ''; updateUi(); }
     if (p.stepSize !== undefined && p.stepSize !== prefs.stepSize) {
       prefs.stepSize = p.stepSize;
       stepTips();
-      vscode.setState({ ...(vscode.getState() || {}), stepSize: p.stepSize });
     }
+    vscode.setState({ ...(vscode.getState() || {}), rate, volume, muted: userMuted, timeMode, stepSize: prefs.stepSize });
     if (controls) controls.refresh();
   }
   // A new tab may not start sound until the user interacts with its page (Chromium's autoplay rule), so it plays muted
   // although the user's choice is unmuted. The first click or key in the page is that gesture: turn the sound back on.
-  // The mute button is left to its own click, which unmutes.
+  // The mute button and M key are left to their own handlers, which unmute.
   const endAutoplayMute = (e) => {
-    if (!autoplayMuted || userMuted || (e.target instanceof Element && e.target.closest('#mute'))) return;
+    if (e && typeof e.button === 'number' && e.button !== 0) return;
+    if (e && typeof e.key === 'string' && /^(Shift|Control|Alt|Meta|AltGraph|CapsLock|NumLock|ScrollLock|Escape)$/.test(e.key)) return;
+    if (player && typeof player.unlockAudio === 'function') player.unlockAudio();
+    if (e && (e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey) return;
+    if (!autoplayMuted || userMuted || (e && e.target instanceof Element && e.target.closest('#mute'))) return;
     autoplayMuted = false;
     setMute(false, false);
   };
@@ -657,7 +666,7 @@
   const setVolume = (v) => {
     volume = Math.max(0, Math.min(1, Math.round(v * 100) / 100));
     ui.volume.value = String(volume);
-    if (volume > 0 && muted) setMute(false); else setMute(muted);
+    if (volume > 0 && muted) setMute(false); else setMute(userMuted);
   };
   /** Z (and the Picture size button): the next picture size; zoomed in, back to Fit. 100 % shows the file's own pixels. */
   const cyclePicture = () => { insp.cycleMode(); if (insp.picture().mode === 'actual') exactTool(true); };

@@ -1509,6 +1509,12 @@
   /** Sound from tile i only; the others are muted. */
   function setSound(i, quiet) {
     st.sound = tileOr0(i);
+    const snd = tiles[st.sound];
+    if (!userMuted && snd && typeof snd.audioBlocked === 'function') {
+      autoplayMuted = snd.audioBlocked();
+      if (autoplayMuted && typeof snd.unlockAudio === 'function') snd.unlockAudio();
+      st.muted = userMuted || autoplayMuted;
+    }
     applyVolume();
     updateOverlays();
     updateMuteUi();
@@ -1533,11 +1539,14 @@
   function applyPlaybackPrefs(p) {
     if (!p) return;
     if (Number.isFinite(p.volume)) { st.volume = p.volume; ui.volume.value = String(st.volume); }
+    const snd = tiles[st.sound];
     if (typeof p.muted === 'boolean') {
       userMuted = p.muted;
       if (userMuted) autoplayMuted = false;
+      else if (snd && typeof snd.audioBlocked === 'function' && snd.audioBlocked()) autoplayMuted = true;
     }
     setMute(userMuted || autoplayMuted, false);
+    if (!userMuted && autoplayMuted && snd && typeof snd.unlockAudio === 'function') snd.unlockAudio();
     if (Number.isFinite(p.rate) && p.rate !== st.rate) setRate(p.rate, false);
     if ([0, 1, 2].includes(p.timeMode) && p.timeMode !== st.timeMode) { st.timeMode = p.timeMode; lastUi = ''; updateUi(); }
     if (p.stepSize !== undefined && p.stepSize !== prefs.stepSize) { prefs.stepSize = p.stepSize; updateStepTips(); }
@@ -1546,7 +1555,11 @@
   }
   // As in the player: the first click or key in the page is the gesture a new tab needs before it may play sound.
   const endAutoplayMute = (e) => {
-    if (!autoplayMuted || userMuted || (e.target instanceof Element && e.target.closest('#mute'))) return;
+    if (e && typeof e.button === 'number' && e.button !== 0) return;
+    if (e && typeof e.key === 'string' && /^(Shift|Control|Alt|Meta|AltGraph|CapsLock|NumLock|ScrollLock|Escape)$/.test(e.key)) return;
+    for (const p of tiles) if (p && typeof p.unlockAudio === 'function') p.unlockAudio();
+    if (e && (e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey) return;
+    if (!autoplayMuted || userMuted || (e && e.target instanceof Element && e.target.closest('#mute'))) return;
     autoplayMuted = false;
     setMute(false, false);
   };
@@ -1567,7 +1580,7 @@
   function setVolume(v) {
     st.volume = Math.max(0, Math.min(1, Math.round(v * 100) / 100));
     ui.volume.value = String(st.volume);
-    if (st.volume > 0 && st.muted) setMute(false); else setMute(st.muted);
+    if (st.volume > 0 && st.muted) setMute(false); else setMute(userMuted);
   }
   function setRate(r, persist = true) {
     st.rate = VpeControls.clampRate(r);

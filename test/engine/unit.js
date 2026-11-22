@@ -896,6 +896,43 @@ test('unmuting after playing on a suspended AudioContext hands the clock to audi
   // Audio clock advances from the handoff point.
   ac.currentTime = 0.52;
   assert.ok(Math.abs(L.prototype.now.call(p) - 5.533) < 1e-6, `audio clock at ${L.prototype.now.call(p)}`);
+  assert.deepStrictEqual(muteUiCalls, [true, false], 'resuming the AudioContext clears the transient autoplay mute UI');
+});
+
+test('pausing while wakeAudio is still resuming keeps acRest so the next play does not self-mute', async () => {
+  let resolveResume;
+  const ac = Object.assign(fakeAc(), {
+    state: 'running',
+    suspend() { this.state = 'suspended'; return Promise.resolve(); },
+    resume() { return new Promise((r) => { resolveResume = () => { this.state = 'running'; r(); }; }); },
+  });
+  const muteUiCalls = [];
+  const { LibavPlayer: L } = ctx.createEngine({
+    vscode: { postMessage: noop }, canvas: {}, log: noop, showMessage: noop, getState: noop,
+    setMuteUi: (m) => muteUiCalls.push(m), toast: noop, onMeta: noop, onReady: noop,
+  });
+  const p = Object.assign(Object.create(L.prototype), player({
+    ac, gain: { gain: { value: 1 } }, amode: 'soft', firstShown: true, shownT: 1, acUnlocked: true,
+  }));
+  // Pause rests the running AudioContext.
+  L.prototype.restAudio.call(p);
+  assert.strictEqual(ac.state, 'suspended');
+  assert.strictEqual(p.acRest, true);
+
+  // Play begins waking the rested AudioContext, then pause/restAudio happens before resume() resolves.
+  L.prototype.play.call(p);
+  assert.strictEqual(p.acWaking, true);
+  L.prototype.pause.call(p);
+  clearTimeout(p.acTimer);
+  L.prototype.restAudio.call(p);
+  assert.strictEqual(p.acRest, true, 'restAudio while still waking remembers that we own the suspension');
+
+  // Playing again must wake the AudioContext without treating it as autoplay-blocked (never calling setMuteUi(true)).
+  L.prototype.play.call(p);
+  assert.deepStrictEqual(muteUiCalls, [], 'unlocked rested AudioContext must never self-mute on play');
+  resolveResume();
+  await new Promise((r) => setTimeout(r, 0));
+  clearTimeout(p.acWakeTimer);
 });
 
 test('Compare A-B wraps before EOF can pause playback', () => {

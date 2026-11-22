@@ -146,10 +146,11 @@ function rememberPlaybackPrefs(m, from) {
   if (!globalState || !m || typeof m !== 'object') return undefined;
   const prev = storedPlaybackPrefs();
   const next = sanitizePlaybackPrefs(m, prev);
-  if (['volume', 'muted', 'rate', 'timeMode', 'stepSize'].every((k) => next[k] === prev[k])) return undefined;
   // Every other player and Compare follows at once (their pages stay alive in the background), not only new tabs.
+  // Broadcast even when globalState already holds `next` (e.g. unmuting a tab that only had a transient autoplay mute).
   // Not the sender: an echo would snap its slider back mid-drag and redraw its open panel.
   for (const sess of [...sessions, ...compareSessions]) if (sess !== from) sess.post({ type: 'playbackPrefs', prefs: next });
+  if (['volume', 'muted', 'rate', 'timeMode', 'stepSize'].every((k) => next[k] === prev[k])) return undefined;
   return globalState.update(PLAYBACK_PREFS_KEY, next);
 }
 

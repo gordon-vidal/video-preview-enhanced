@@ -67,6 +67,16 @@ function slice(src, from, to) {
     const live = s1.posted.slice(before).find((m) => m.type === 'playbackPrefs');
     assert.deepStrictEqual(live && live.prefs, { volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 },
       'the other open tab receives the new prefs');
+    // Unmuting a tab that was only autoplay-muted sends muted: false when globalState already has muted: false;
+    // the host must still broadcast to other open tabs without rewriting globalState.
+    const writesBeforeReassert = h1.context.stateWrites;
+    const s1BeforeReassert = s1.posted.length;
+    await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 });
+    assert.strictEqual(h1.context.stateWrites, writesBeforeReassert, 'unchanged prefs do not rewrite globalState');
+    const reasserted = s1.posted.slice(s1BeforeReassert).find((m) => m.type === 'playbackPrefs');
+    assert.deepStrictEqual(reasserted && reasserted.prefs,
+      { volume: 0.35, muted: false, rate: 1.75, timeMode: 2, stepSize: 5 },
+      'other open tabs still receive the explicit unmute broadcast');
     await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: true, rate: 1.75, timeMode: 2, stepSize: 'bogus' });
     assert.strictEqual(state.get(KEY).stepSize, 5, 'an unknown step size keeps the previous one');
     await s2.send({ type: 'playbackPrefs', volume: 0.35, muted: true, rate: 1.75, timeMode: 2, stepSize: null });
@@ -155,11 +165,14 @@ function slice(src, from, to) {
         slice(playerSrc, '  setRate(rate, false);', '\n\n  // Controls hide'),
       ].join('\n'), ctx);
       const setMuteUi = vm.runInContext(`(${slice(playerSrc, '(m) => {\n      if (m) {', '    onReady:').trim().replace(/,$/, '')})`, ctx);
+      let blocked = false;
       vm.runInContext(`player = {
         meta: { duration: 10 },
         setRate: (r) => playerCalls.push(['rate', r]),
         setVolume: (v, m) => playerCalls.push(['vol', v, m]),
-      }`, Object.assign(ctx, { playerCalls }));
+        audioBlocked: () => isBlocked(),
+        unlockAudio: () => playerCalls.push(['unlock']),
+      }`, Object.assign(ctx, { playerCalls, isBlocked: () => blocked }));
       const stateOf = () => ({ ...vm.runInContext('({ volume, muted, userMuted, autoplayMuted, rate, timeMode })', ctx) });
 
       assert.deepStrictEqual(stateOf(), {
@@ -211,8 +224,24 @@ function slice(src, from, to) {
       // A new tab plays muted until the page gets a gesture; the first click there turns the sound on.
       setMuteUi(true);
       assert.strictEqual(stateOf().muted, true);
-      listeners.pointerdown({ target: null });
-      assert.strictEqual(stateOf().muted, false, 'the first click ends the autoplay mute');
+      // Non-activating keys (Shift, Escape) and secondary mouse buttons do not unlock Web Audio in Chromium.
+      listeners.keydown({ key: 'Shift', target: null });
+      listeners.keydown({ key: 'Escape', target: null });
+      listeners.pointerdown({ button: 2, target: null });
+      assert.strictEqual(stateOf().muted, true, 'non-activating gestures must not clear autoplayMute prematurely');
+      // Pressing M while autoplay-muted must not unmute in capture and re-mute in bubble.
+      listeners.keydown({ key: 'm', target: null });
+      assert.strictEqual(stateOf().autoplayMuted, true, 'capture listener leaves M to the mute shortcut');
+      vm.runInContext('setMute(!muted)', ctx);
+      assert.strictEqual(stateOf().muted, false, 'M shortcut unmutes an autoplay-muted tab');
+      assert.strictEqual(stateOf().userMuted, false);
+      assert.strictEqual(stateOf().autoplayMuted, false);
+      assert.strictEqual(posted.pop().muted, false);
+
+      setMuteUi(true);
+      assert.strictEqual(stateOf().muted, true);
+      listeners.pointerdown({ button: 0, target: null });
+      assert.strictEqual(stateOf().muted, false, 'the first primary click ends the autoplay mute');
       assert.strictEqual(posted.length, 0, 'ending the autoplay mute is not a preference change');
 
       // Another tab's change arrives: follow it without echoing it back.
@@ -222,6 +251,21 @@ function slice(src, from, to) {
       });
       assert.strictEqual(vm.runInContext('prefs.stepSize', ctx), 5);
       assert.strictEqual(posted.length, 0, 'a followed change is not posted back');
+
+      // If another tab unmutes while this tab's AudioContext is still blocked by autoplay policy, this tab must
+      // keep showing Muted (autoplayMuted: true) rather than lying that it is unmuted with silent audio, and must
+      // unmute on the first gesture here (or as soon as unlockAudio succeeds).
+      blocked = true;
+      playerCalls.length = 0;
+      vm.runInContext('applyPlaybackPrefs({ volume: 0.2, muted: false, rate: 1.5, timeMode: 0, stepSize: 5 })', ctx);
+      assert.deepStrictEqual(stateOf(), {
+        volume: 0.2, muted: true, userMuted: false, autoplayMuted: true, rate: 1.5, timeMode: 0,
+      }, 'blocked tab stays visibly autoplay-muted until unlocked');
+      assert.ok(playerCalls.some((c) => c[0] === 'unlock'), 'attempts to unlock AudioContext on unmute pref');
+      listeners.pointerdown({ button: 0, target: null });
+      assert.strictEqual(stateOf().muted, false, 'first gesture in the second tab finishes unmuting');
+      assert.strictEqual(stateOf().autoplayMuted, false);
+      blocked = false;
     }
 
     // 7. Compare webview logic: inherits cfg.prefs, ignores autoplay mute for persisted prefs, persists user changes.

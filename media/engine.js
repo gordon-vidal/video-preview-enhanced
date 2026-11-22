@@ -1033,12 +1033,37 @@ function createEngine(env) {
     ensureAudio() {
       if (!this.info.audio || this.ac) return;
       this.ac = new AudioContext({ latencyHint: 'playback' });
+      if (this.ac.state === 'running') this.acUnlocked = true;
+      this.ac.onstatechange = () => this.onAudioRunning();
       // Native ffmpeg resamples to the context's own rate (from its next start) instead of 48 kHz.
       if (this.cfg.native && !this.remoteStream) this.worker.postMessage({ type: 'audioRate', rate: this.ac.sampleRate });
       this.gain = this.ac.createGain();
       this.gain.connect(this.ac.destination);
       this.applyVolume();
       if (!this.playing) this.restAudioLater();
+    }
+
+    onAudioRunning() {
+      if (this.disposed || !this.ac || this.ac.state !== 'running') return;
+      this.acUnlocked = true;
+      setMuteUi(false);
+      if (!this.playing) this.restAudioLater(this.hidden ? 0 : AC_REST_MS);
+      wake();
+    }
+
+    /** True while the AudioContext is still suspended by the browser's autoplay policy (not resting while paused). */
+    audioBlocked() {
+      if (!this.ac || this.amode === 'none' || this.acUnlocked || this.acRest) return false;
+      if (this.ac.state === 'running') { this.acUnlocked = true; return false; }
+      return this.ac.state === 'suspended';
+    }
+
+    /** Called on a user gesture in the page: unlocks a suspended AudioContext so sound can play now or when unmuted later. */
+    unlockAudio() {
+      if (!this.ac || this.acUnlocked || this.acRest) return;
+      if (this.ac.state === 'running') { this.acUnlocked = true; return; }
+      this.ac.resume().then(() => this.onAudioRunning(), () => {});
+      if (this.ac.state === 'running') this.onAudioRunning();
     }
 
     /** Suspends the AudioContext after ms unless playback starts (restAudio). */
@@ -1049,7 +1074,16 @@ function createEngine(env) {
 
     restAudio() {
       this.acTimer = 0;
-      if (!this.ac || this.playing || this.disposed || this.ac.state !== 'running') return;
+      if (!this.ac || this.playing || this.disposed) return;
+      if (this.acWaking) {
+        this.acWaking = false;
+        clearTimeout(this.acWakeTimer);
+        this.acRest = true;
+        this.ac.suspend().catch(() => {});
+        return;
+      }
+      if (this.ac.state !== 'running') return;
+      this.acUnlocked = true;
       this.acRest = true;
       this.ac.suspend().catch(() => {});
     }
@@ -1066,6 +1100,7 @@ function createEngine(env) {
         const held = this.now();
         this.acWaking = false;
         clearTimeout(this.acWakeTimer);
+        if (this.ac && this.ac.state === 'running') this.acUnlocked = true;
         if (this.playing && !this.disposed) this.anchor(held);
         wake();
       };
@@ -2150,15 +2185,14 @@ function createEngine(env) {
       this.seekGoalFrame = null;
       if (this.playing) return;
       clearTimeout(this.acTimer);
-      if (this.ac && this.acRest) this.wakeAudio();
+      if (this.ac && (this.acRest || (this.acUnlocked && this.ac.state === 'suspended'))) this.wakeAudio();
       else if (this.ac && this.ac.state === 'suspended') {
-        const wasUnmuted = !this.muted;
-        this.ac.resume().then(() => {
-          if (wasUnmuted && !this.disposed && this.ac && this.ac.state === 'running') setMuteUi(false);
-          wake();
-        }, () => {});
+        this.ac.resume().then(() => this.onAudioRunning(), () => {});
+        if (this.ac.state === 'running') this.onAudioRunning();
         // Autoplay without a user gesture stays silent until one arrives.
-        if (this.ac.state === 'suspended' && wasUnmuted) setMuteUi(true);
+        else if (this.ac.state === 'suspended' && !this.muted) setMuteUi(true);
+      } else if (this.ac && this.ac.state === 'running') {
+        this.acUnlocked = true;
       }
       this.playing = true;
       this.endSteps();
@@ -2414,7 +2448,10 @@ function createEngine(env) {
       this.volume = volume;
       this.muted = muted;
       // (Suspended while paused, restAudio: play() resumes it.)
-      if (!muted && this.ac && this.ac.state === 'suspended' && !this.acRest) this.ac.resume().then(() => wake(), () => {});
+      if (!muted && this.ac && this.ac.state === 'suspended' && !this.acRest) {
+        this.ac.resume().then(() => this.onAudioRunning(), () => {});
+        if (this.ac.state === 'running') this.onAudioRunning();
+      }
       this.applyVolume();
     }
     applyVolume() { if (this.gain) this.gain.gain.value = this.muted ? 0 : this.volume; }
