@@ -131,3 +131,13 @@ VS Code showed A at the start and B after pressing End. AVI with MPEG-4 B-frames
 ranges and failed exact verification for others. The MKV/SubRip fallback trial
 reported a 0.600 s early start, a 0.120 s late end and one omitted intervening picture.
 The test fixture is generated with FFmpeg's `testsrc2` and `sine` filters.
+
+## Open questions
+
+- For mixed-rate Compare clips, preserve the mapped time origin with an edit as specified above, or
+  start at each tile's independently snapped picture and report the differences. The implementation
+  currently snaps independently. The maintainer decision is pending.
+
+Native playback labels pictures with seek time and frame rate. Exact clip export requires source
+timestamps, so marks set with native playback and Compare tiles mapped with native playback are
+ineligible. Switch to built-in playback and set the markers again.

@@ -14,33 +14,38 @@
       /** @type {number|null} */ bf: null,
       /** @type {number|null} */ aPts: null,
       /** @type {number|null} */ bPts: null,
+      aNative: false,
+      bNative: false,
       /** Toggles end `which` ('a' | 'b') at time t (s, from the start) showing frame f (0-based). */
-      set(/** @type {'a'|'b'} */ which, /** @type {number} */ t, /** @type {number} */ f, pts = t) {
+      set(/** @type {'a'|'b'} */ which, /** @type {number} */ t, /** @type {number} */ f, pts = t, native = false) {
         if (which === 'a') {
           s.a = s.a === null ? t : null;
           s.af = s.a === null ? null : f;
+          s.aNative = s.a !== null && native;
           s.aPts = s.a === null ? null : pts;
         } else {
           s.b = s.b === null ? t : null;
           s.bf = s.b === null ? null : f;
+          s.bNative = s.b !== null && native;
           s.bPts = s.b === null ? null : pts;
         }
         if (s.a !== null && s.b !== null && s.b <= s.a) {
           [s.a, s.b] = [s.b, s.a];
           [s.af, s.bf] = [s.bf, s.af];
+          [s.aNative, s.bNative] = [s.bNative, s.aNative];
           [s.aPts, s.bPts] = [s.bPts, s.aPts];
         }
       },
       /** Sets end `which` anew (the context menu's "Set Loop Start / End": never clears). */
-      reset(/** @type {'a'|'b'} */ which, /** @type {number} */ t, /** @type {number} */ f, pts = t) {
+      reset(/** @type {'a'|'b'} */ which, /** @type {number} */ t, /** @type {number} */ f, pts = t, native = false) {
         s[which] = null;
-        s.set(which, t, f, pts);
+        s.set(which, t, f, pts, native);
       },
-      clear() { s.a = s.b = s.af = s.bf = s.aPts = s.bPts = null; },
+      clear() { s.a = s.b = s.af = s.bf = s.aPts = s.bPts = null; s.aNative = s.bNative = false; },
       /** The settings panel's row: start, then end, then off. */
-      cycle(/** @type {number} */ t, /** @type {number} */ f, pts = t) {
-        if (s.a === null) s.set('a', t, f, pts);
-        else if (s.b === null) s.set('b', t, f, pts);
+      cycle(/** @type {number} */ t, /** @type {number} */ f, pts = t, native = false) {
+        if (s.a === null) s.set('a', t, f, pts, native);
+        else if (s.b === null) s.set('b', t, f, pts, native);
         else s.clear();
       },
       isSet() { return s.a !== null || s.b !== null; },
@@ -55,7 +60,7 @@
       },
       presentationRange() {
         if (s.aPts === null || s.bPts === null) return null;
-        return { a: Math.min(s.aPts, s.bPts), b: Math.max(s.aPts, s.bPts), early: 0 };
+        return { a: Math.min(s.aPts, s.bPts), b: Math.max(s.aPts, s.bPts), early: 0, ...(s.aNative || s.bNative ? { native: true } : {}) };
       },
       /** The toast after A or B. */
       toast(/** @type {(t: number) => string} */ fmtTime) {

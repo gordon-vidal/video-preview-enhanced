@@ -75,6 +75,10 @@ offer a same-container keyframe cut or let you omit audio or subtitles. Review a
 before saving a keyframe cut. Use an edit-list-aware player to view exact clips. The file can still contain
 compressed pictures outside the visible interval when decoding the selected pictures requires them.
 
+For exact clip export, mark A and B with a built-in playback decoder. Native playback uses estimated frame
+times, which can differ from source timestamps on variable-frame-rate video. Files are published to folders
+that support hard links.
+
 **Export Compare clips.** **A** and **B** mark a shared loop on the Compare clock. Run **Export A–B Clips…**
 from the palette or **Settings → Tools** to save one clip per tile, named `<letter>_<video>_A-B.<ext>`.
 Export applies each tile's offset and reports when snapping to a source frame changes alignment. If some tiles

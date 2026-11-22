@@ -470,7 +470,7 @@
   }
   function setAB(which) {
     if (!player) return;
-    ab.set(which, player.currentTime(), player.currentFrame(), abTime());
+    ab.set(which, player.currentTime(), player.currentFrame(), abTime(), !!player.shownFrame?.nativeTimestamp);
     abChanged();
   }
   function clearAB() { ab.clear(); abChanged(); }
@@ -480,11 +480,11 @@
   }
   function resetAB(which) {
     if (!player) return;
-    ab.reset(which, player.currentTime(), player.currentFrame(), abTime());
+    ab.reset(which, player.currentTime(), player.currentFrame(), abTime(), !!player.shownFrame?.nativeTimestamp);
     abChanged();
   }
   /** The settings panel's A-B row: start, then end, then off. */
-  function cycleAB() { if (!player) return; ab.cycle(player.currentTime(), player.currentFrame(), abTime()); abChanged(); }
+  function cycleAB() { if (!player) return; ab.cycle(player.currentTime(), player.currentFrame(), abTime(), !!player.shownFrame?.nativeTimestamp); abChanged(); }
   function abLabel() { return ab.label(fmtClock); }
   function drawAB() {
     const m = ab.marks(player && player.meta.duration);

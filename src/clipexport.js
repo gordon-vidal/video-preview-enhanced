@@ -38,6 +38,10 @@ async function videoFrames(tools, file, index, interval, signal) {
 
 async function inspectSource(tools, file, range, signal) {
   if (!validRange(range)) throw new Error('Set an A-B loop first with A and B');
+  if (range.native) {
+    throw new Error('Exact clip export is unavailable for ranges marked or mapped with native playback. '
+      + 'Switch to a built-in decoder and set A and B again.');
+  }
   if (!path.isAbsolute(file) || /^[/\\]{2}/.test(file) || !(await fs.stat(file)).isFile()
       || await ff.isPlaylistFile(file)) {
     throw new Error('Clip export requires a regular video file on this host');

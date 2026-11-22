@@ -1250,7 +1250,7 @@ function createEngine(env) {
       const k = this.nativeColour && this.nativeColour.depth > 8 ? 2 : 1; // bytes per sample
       const half = (m.w / 2) * k;
       this.addFrame({
-        t: m.t, bytes: m.data.byteLength,
+        t: m.t, bytes: m.data.byteLength, nativeTimestamp: true,
         yuv: { width: m.w, height: m.h, data: m.data, fullRange: false, recycle, layout: [{ offset: 0, stride: m.w * k }, { offset: m.ys, stride: half }, { offset: m.ys + m.ys / 4, stride: half }], ...this.nativeColour },
       });
     }

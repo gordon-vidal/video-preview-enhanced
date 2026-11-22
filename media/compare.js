@@ -65,8 +65,8 @@
 
   const saved = vscode.getState() || {};
   const ab = VpeAbLoop.create();
-  if (Number.isFinite(saved.ab?.a)) ab.set('a', saved.ab.a, 0);
-  if (Number.isFinite(saved.ab?.b)) ab.set('b', saved.ab.b, 0);
+  if (Number.isFinite(saved.ab?.a)) ab.set('a', saved.ab.a, 0, saved.ab.a, !!saved.ab.aNative);
+  if (Number.isFinite(saved.ab?.b)) ab.set('b', saved.ab.b, 0, saved.ab.b, !!saved.ab.bNative);
   const tileOr0 = (i) => (Number.isInteger(i) && i >= 0 && i < N ? i : 0);
   const reorderBtn = $('reorderBtn'), reorderHint = $('reorderHint');
   let reordering = false;
@@ -318,15 +318,19 @@
   function markAB(end) {
     if (clock?.shownT == null) return;
     const t = clock.rel(clock.shownT) - offSec(st.clock);
-    if (end) ab.set(end, t, 0);
-    else ab.cycle(t, 0);
+    const native = !!clock.shownFrame?.nativeTimestamp;
+    if (end) ab.set(end, t, 0, t, native);
+    else ab.cycle(t, 0, t, native);
     toast(ab.toast(fmtAB));
     controls.refresh();
     save();
   }
   function exportAB() {
     const ranges = ab.isRange() && clock?.shownT != null
-      ? tiles.map((p, i) => VpeCompareRange.mapRange(ab.a, ab.b, offSec(i), fpsOf(p), i === st.clock))
+      ? tiles.map((p, i) => ({
+        ...VpeCompareRange.mapRange(ab.a, ab.b, offSec(i), fpsOf(p), i === st.clock),
+        native: ab.aNative || ab.bNative || !!p.shownFrame?.nativeTimestamp || !!p.cfg.native,
+      }))
       : null;
     vscode.postMessage({ type: 'clipRange', ranges, clock: st.clock, order: st.order });
   }
@@ -1475,7 +1479,7 @@
     vscode.setState({
       pic: st.pic.mode, mode: st.mode, split: st.split, order: st.order, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
       rate: st.rate, volume: st.volume, muted: st.muted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode,
-      ab: { a: ab.a, b: ab.b },
+      ab: { a: ab.a, b: ab.b, aNative: ab.aNative, bNative: ab.bNative },
       t: t ?? (pendingStart || (clock && begun && clock.startT !== null ? clock.currentTime() : saved.t || 0)),
       ...changes,
     });
