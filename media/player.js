@@ -737,51 +737,12 @@
   ui.mute.onclick = () => setMute(!muted);
   ui.volume.addEventListener('input', () => setVolume(Number(ui.volume.value)));
   ui.volume.addEventListener('wheel', (e) => { e.preventDefault(); setVolume(volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(volume * 100)}%`); }, { passive: false });
-  /**
-   * Seek bar and volume: a drag keeps going while the button is held, wherever the pointer goes (window-level
-   * move / up listeners, plus pointer capture when the pointer is real), and ends on pointerup / cancel / blur.
-   * The slider's own input / change events carry the value, so the seek logic (scrub, thumbnails) is unchanged.
-   */
-  function dragRange(input) {
-    let drag = null;
-    const valueAt = (x) => {
-      const r = input.getBoundingClientRect();
-      const min = Number(input.min) || 0, max = Number(input.max) || 0, stepv = Number(input.step) || 1;
-      const f = r.width > 0 ? Math.max(0, Math.min(1, (x - r.left) / r.width)) : 0;
-      return Math.max(min, Math.min(max, min + Math.round((f * (max - min)) / stepv) * stepv));
-    };
-    const move = (e) => {
-      if (!drag) return;
-      const v = valueAt(e.clientX);
-      if (String(v) !== input.value) { input.value = String(v); input.dispatchEvent(new Event('input', { bubbles: true })); }
-    };
-    const end = () => {
-      if (!drag) return;
-      const d = drag;
-      drag = null;
-      window.removeEventListener('pointermove', move, true);
-      window.removeEventListener('pointerup', end, true);
-      window.removeEventListener('pointercancel', end, true);
-      window.removeEventListener('blur', end);
-      try { if (d.id !== undefined) input.releasePointerCapture(d.id); } catch { /* not captured */ }
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    };
-    input.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || input.disabled || Number(input.max) <= Number(input.min)) return; // disabled: a live stream
-      e.preventDefault(); // no native thumb drag: this one follows the pointer off the slider too
-      input.focus({ preventScroll: true });
-      drag = { id: e.pointerId };
-      try { input.setPointerCapture(e.pointerId); } catch { /* synthetic pointer (test hook) */ }
-      window.addEventListener('pointermove', move, true);
-      window.addEventListener('pointerup', end, true);
-      window.addEventListener('pointercancel', end, true);
-      window.addEventListener('blur', end);
-      move(e);
-    });
-    return { dragging: () => !!drag };
-  }
-  const seekDragger = dragRange(ui.seek);
-  const volumeDragger = dragRange(ui.volume);
+  const seekDragger = VpeRangeDrag.bind(ui.seek, (e) => {
+    const r = ui.seek.getBoundingClientRect();
+    if (e?.type !== 'pointerup' || e.clientX < r.left || e.clientX > r.right ||
+      e.clientY < r.top - 4 || e.clientY > r.bottom + 4) hideTip();
+  });
+  const volumeDragger = VpeRangeDrag.bind(ui.volume);
   ui.full.onclick = toggleFullscreen;
   ui.time.onclick = () => {
     // A live stream shows only the time since it started (no timecode or frame count to cycle to).
@@ -801,23 +762,13 @@
   ui.tip.parentElement.appendChild(thumbBox);
   let thumbShown = false;
   // Dragging (mouse held on the bar): the tip and thumbnail follow the slider value, also off the bar.
-  let seekDrag = false;
-  ui.seek.addEventListener('pointerdown', () => { seekDrag = true; });
-  const endDrag = (e) => {
-    if (!seekDrag) return;
-    seekDrag = false;
-    const r = ui.seek.getBoundingClientRect();
-    if (!e || e.clientX < r.left || e.clientX > r.right || e.clientY < r.top - 4 || e.clientY > r.bottom + 4) hideTip();
-  };
-  document.addEventListener('pointerup', endDrag);
-  document.addEventListener('pointercancel', endDrag);
   ui.seek.addEventListener('input', () => {
-    if (!seekDrag) return; // keyboard on the focused slider: no tip
+    if (!seekDragger.dragging()) return; // keyboard on the focused slider: no tip
     const r = ui.seek.getBoundingClientRect();
     const max = Number(ui.seek.max) || 0;
     if (max > 0) showTip(r.left + (Number(ui.seek.value) / max) * r.width);
   });
-  ui.seek.addEventListener('mousemove', (e) => { if (!seekDrag) showTip(e.clientX); });
+  ui.seek.addEventListener('mousemove', (e) => { if (!seekDragger.dragging()) showTip(e.clientX); });
   function showTip(clientX) {
     // Until the frame count is known (slow 4K decoding), the tip shows the time from the duration.
     const dur = player ? player.meta.duration || 0 : 0;
@@ -845,7 +796,7 @@
     if (!asked) thumbBox.hidden = true;
     else if (thumbShown) place();
   }
-  ui.seek.addEventListener('mouseleave', () => { if (!seekDrag) hideTip(); });
+  ui.seek.addEventListener('mouseleave', () => { if (!seekDragger.dragging()) hideTip(); });
   function hideTip() {
     ui.tip.hidden = true;
     thumbBox.hidden = true;
@@ -1114,7 +1065,7 @@
       loop: () => { setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); },
       cycleAB: () => cycleAB(),
       copyFrame: () => copyFrame(),
-      setRate: (r) => changeRate(r),
+      setRate, pickRate: changeRate,
       stepRate: (d) => bumpRate(d),
       setJump: (k, v) => setJump(k, v),
       setStepButtons: (v) => setStepButtons(v),
@@ -1401,6 +1352,7 @@
                 view: controls.view(), label: pn.getAttribute('aria-label'), text: text(pn),
                 rows: [...pn.querySelectorAll('button')].map((b) => ({ label: b.getAttribute('aria-label') || text(b), pressed: b.getAttribute('aria-pressed'), checked: b.getAttribute('aria-checked') })),
                 facts: [...pn.querySelectorAll('.igrid dt')].map((dt) => [text(dt), text(/** @type {any} */ (dt.nextElementSibling))]),
+                sliderRect: pn.querySelector('#speedSlider') ? rect(pn.querySelector('#speedSlider')) : null,
                 slider: pn.querySelector('#speedSlider') ? [/** @type {any} */ (pn.querySelector('#speedSlider')).min, /** @type {any} */ (pn.querySelector('#speedSlider')).max] : null,
               };
             })(),
@@ -1484,7 +1436,7 @@
           break;
         }
         case 'dom': { // a mouse / pointer / wheel event at client (x, y), or on the element with id `id`
-          const target = m.target ? byId(m.target) : document.elementFromPoint(m.x, m.y);
+          const target = m.target === 'document' ? document : m.target ? byId(m.target) : document.elementFromPoint(m.x, m.y);
           if (!target) { log(`dom ${JSON.stringify({ id: m.id, error: `no element at ${m.x},${m.y}` })}`); break; }
           const init = { bubbles: true, cancelable: true, clientX: m.x, clientY: m.y, button: m.button || 0, ctrlKey: !!m.ctrl, deltaY: m.deltaY || 0, pointerId: 1, isPrimary: true };
           const Ctor = /^wheel/.test(m.ev) ? WheelEvent : /^pointer/.test(m.ev) ? PointerEvent : MouseEvent;
@@ -1498,7 +1450,7 @@
           if (m.end) {
             ui.seek.dispatchEvent(new Event('change', { bubbles: true }));
             const r = ui.seek.getBoundingClientRect();
-            document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: r.left + m.frac * r.width, clientY: m.off ? r.top - 100 : r.top + r.height / 2 }));
+            document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: r.left + m.frac * r.width, clientY: m.off ? r.top - 100 : r.top + r.height / 2 }));
           }
           log(`scrub ${JSON.stringify({ id: m.id, value: Number(ui.seek.value) })}`);
           break;

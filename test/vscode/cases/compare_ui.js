@@ -136,6 +136,23 @@ module.exports = [{
     u = await ui();
     ok(!u.sheet && u.active === 'cog', `second ?: sheet open=${!!u.sheet}, focus on ${u.active}`);
 
+    ok = t('speed/drag-outside');
+    await click({ sel: '#rate' });
+    const [sx, sy, sw, sh] = (await ui()).panel.sliderRect;
+    const pointer = (ev, x, target = 'document', y = -20) => act({ action: 'dom', ev, target, x, y });
+    pointer('pointerdown', sx + sw / 2, 'speedSlider', sy + sh / 2);
+    pointer('pointermove', -20);
+    u = await ui();
+    ok(u.bar.rate === '0.25×', `Compare speed off the left edge: ${u.bar.rate}`);
+    pointer('pointermove', sx + sw * 0.2);
+    u = await ui();
+    ok(u.bar.rate === '1×' && u.active === 'speedSlider', `Compare speed and focus off the top edge: ${u.bar.rate}, ${u.active}`);
+    pointer('pointercancel', sx + sw);
+    pointer('pointermove', sx + sw);
+    u = await ui();
+    ok(u.bar.rate === '1×', `Compare speed after cancellation: ${u.bar.rate}`);
+    act({ action: 'key', key: 'Escape' });
+
     // ---- the Compare panel ----
     ok = t('panel/compare');
     await click({ sel: '#cmpBtn' });

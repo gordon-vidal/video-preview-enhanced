@@ -63,6 +63,15 @@ Settings         … [Keyboard shortcuts    ?] [Jump sizes ›] …
 Enter or Space opens the sheet from the row. Focus moves to **Close** and returns to **Settings** on
 dismissal. **?** also opens the sheet and restores focus to the originating control when possible.
 
+## Speed and volume drags
+
+Speed and volume in both views use the same pointer capture as the single player's seek bar.
+The value follows horizontal motion past the webview edge while the button is held. Release,
+cancellation, lost capture, window blur and closing the Speed panel end the drag. A focused speed
+slider still uses the browser's arrow keys. The hidden-desktop cases dispatch synthetic pointer
+events at coordinates outside the webview to test the value and cleanup. Windows pointer capture
+itself requires real input.
+
 ## Picture size (2026-11-20)
 
 Approved by the maintainer. Pure maths in `media/picture.js` (`VpePicture`, tested by `test/host/picture_test.js`): a view is

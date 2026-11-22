@@ -259,6 +259,29 @@ module.exports = [{
       await settle(300);
     });
 
+    await R.run('speed/drag-outside', async (ok) => {
+      await P.ask('click', { sel: '#rate' });
+      const [x, y, w, h] = (await P.state()).panel.sliderRect;
+      const pointer = (ev, pos, target = 'document', height = -20) => P.dom(ev, pos, height, { target });
+      pointer('pointerdown', x + w / 2, 'speedSlider', y + h / 2);
+      // y < 0 is outside the webview. Send the move to the document, as when capture cannot be set
+      // on a synthetic pointer. The readout must change before release.
+      pointer('pointermove', x + w, 'document');
+      let s = await P.state();
+      ok(s.bar.rate === '4×' && s.panel.text.includes('4×'), `speed while off the top edge: ${s.bar.rate}`);
+      pointer('pointermove', -20, 'document');
+      s = await P.state();
+      ok(s.bar.rate === '0.25×', `speed while off the left edge: ${s.bar.rate}`);
+      pointer('pointerup', x + w * 0.2);
+      pointer('pointermove', x + w);
+      s = await P.state();
+      ok(s.bar.rate === '1×' && s.panel.rows.some((r) => r.label === 'Speed 1×' && r.pressed === 'true'),
+        `speed and preset after release: ${s.bar.rate}`);
+      const a = await a11y();
+      ok(a.active === 'speedSlider', `slider focus after release: ${a.active}`);
+      P.key('Escape', { target: ':focus' });
+    });
+
     await R.run('drag/outside', async (ok) => {
       // Volume: press on the slider, move far outside (above the bar, past both ends), release; then a move does nothing.
       P.pause();

@@ -210,6 +210,7 @@ const VpeControls = (() => {
     let opener = null;
     /** @type {HTMLElement|null} */
     let sheetOpener = null;
+    let speedDrag = null;
 
     const el = (tag, cls, text) => {
       const e = document.createElement(tag);
@@ -308,15 +309,24 @@ const VpeControls = (() => {
       input.setAttribute('aria-label', 'Speed');
       input.setAttribute('aria-valuetext', speedText(s.rate));
       input.dataset.nav = '1';
-      input.addEventListener('input', () => { env.act.setRate(Number(input.value)); read.textContent = speedText(env.get().rate); input.setAttribute('aria-valuetext', read.textContent); });
-      input.addEventListener('change', () => render());
       // Presets as labels on the slider's track, each at its speed.
       const marks = el('div', 'marks');
       for (const v of SPEEDS) {
-        const b = btn('mark', speedText(v), () => { env.act.setRate(v); render(); }, { aria: { 'aria-pressed': String(Math.abs(v - s.rate) < 1e-6), 'aria-label': `Speed ${speedText(v)}` } });
+        const b = btn('mark', speedText(v), () => env.act.pickRate(v), { aria: { 'aria-pressed': String(Math.abs(v - s.rate) < 1e-6), 'aria-label': `Speed ${speedText(v)}` } });
         b.style.left = `${((v - SPEED_MIN) / (SPEED_MAX - SPEED_MIN)) * 100}%`;
         marks.appendChild(b);
       }
+      // Apply the rate without rebuilding the panel while the slider owns the pointer.
+      speedDrag = VpeRangeDrag.bind(input);
+      input.addEventListener('input', () => {
+        const rate = clampRate(Number(input.value));
+        env.act.setRate(rate);
+        read.textContent = speedText(rate);
+        input.setAttribute('aria-valuetext', read.textContent);
+        for (const [i, b] of [...marks.children].entries()) {
+          b.setAttribute('aria-pressed', String(Math.abs(SPEEDS[i] - rate) < 1e-6));
+        }
+      });
       sl.append(input, marks);
       f.appendChild(sl);
       const note = el('div', 'pnote');
@@ -515,6 +525,8 @@ const VpeControls = (() => {
     const kit = { el, btn, kbd, head, heading, sw, ICON, show: (v) => show(v), close: (r) => close(r), render: () => render() };
     function render() {
       if (!view) return;
+      speedDrag?.stop();
+      speedDrag = null;
       const s = env.get();
       const nav = [...panel.querySelectorAll('[data-nav]')];
       const fi = nav.indexOf(/** @type {any} */ (document.activeElement));
@@ -550,7 +562,6 @@ const VpeControls = (() => {
       closeSheet(false);
       view = v;
       panel.hidden = false;
-      panel.textContent = '';
       render();
       const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' ? panel.querySelector('[aria-checked="true"]') : null) || panel.querySelector('[data-nav]'));
       if (first) first.focus();
@@ -565,6 +576,8 @@ const VpeControls = (() => {
       if (!view) return;
       const back = opener;
       view = null;
+      speedDrag?.stop();
+      speedDrag = null;
       panel.hidden = true;
       panel.textContent = '';
       sync();

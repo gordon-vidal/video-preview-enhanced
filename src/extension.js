@@ -1867,6 +1867,7 @@ ${barHtml()}
 <script nonce="${nonce}" src="${uri('tracks-menu.js')}"></script>
 <script nonce="${nonce}" src="${uri('xray.js')}"></script>
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
+<script nonce="${nonce}" src="${uri('range-drag.js')}"></script>
 <script nonce="${nonce}" src="${uri('controls.js')}"></script>
 <script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
 <script nonce="${nonce}" src="${uri('abloop.js')}"></script>

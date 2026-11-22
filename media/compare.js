@@ -1589,7 +1589,7 @@
       setPicture: (m) => { setPic(Pic.fresh(m)); toast(Pic.name(m)); },
       zoomPicture: (d) => zoomPic(st.pic.zoom * (d > 0 ? Pic.STEP : 1 / Pic.STEP)),
       resetPicture: () => setPic(Pic.fresh(st.pic.mode)),
-      setRate: (r) => changeRate(r),
+      setRate, pickRate: changeRate,
       stepRate: (d) => bumpRate(d),
       setJump: (key, v) => { setJump(key, v); updateStepTips(); },
       setStepButtons: (v) => { prefs.stepButtons = v; updateStepTips(); vscode.postMessage({ type: 'pref', key: 'stepButtons', value: v }); },
@@ -1925,6 +1925,7 @@
   }
   updateStepTips();
   ui.mute.onclick = () => setMute(!st.muted);
+  VpeRangeDrag.bind(ui.volume);
   ui.volume.addEventListener('input', () => setVolume(Number(ui.volume.value)));
   ui.volume.addEventListener('wheel', (e) => { e.preventDefault(); setVolume(st.volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(st.volume * 100)}%`); }, { passive: false });
   ui.time.onclick = () => { st.timeMode = (st.timeMode + 1) % 3; lastUi = ''; updateUi(); save(); toast(['Time', 'Timecode', 'Frame number'][st.timeMode]); };
@@ -2357,6 +2358,7 @@
       },
       panel: ui.panel.hidden ? null : {
         view: controls.view(), label: ui.panel.getAttribute('aria-label'), text: text(ui.panel),
+        sliderRect: $('speedSlider') ? rect($('speedSlider')) : null,
         rows: [...ui.panel.querySelectorAll('button')].map((b) => ({ label: b.getAttribute('aria-label') || text(b), pressed: b.getAttribute('aria-pressed'), checked: b.getAttribute('aria-checked') })),
       },
       sheet: ui.sheet.hidden ? null : text(ui.sheet),
@@ -2440,8 +2442,8 @@
           ev('pointerup', r.left + c.pic.x + c.pic.w * m.x);
           break;
         }
-        case 'dom': { // a mouse / pointer / wheel event at client (x, y)
-          const target = document.elementFromPoint(m.x, m.y);
+        case 'dom': { // a mouse / pointer / wheel event at client (x, y), or at an explicit target
+          const target = m.target === 'document' ? document : m.target ? $(m.target) : document.elementFromPoint(m.x, m.y);
           if (!target) { log(`dom: nothing at ${m.x},${m.y}`); break; }
           if (m.ev === 'pointerdown') log(`dom target ${target.tagName}.${target.className} #${target.id}`);
           const init = { bubbles: true, cancelable: true, clientX: m.x, clientY: m.y, button: m.button || 0, ctrlKey: !!m.ctrl, deltaY: m.deltaY || 0, pointerId: 1, isPrimary: true };
