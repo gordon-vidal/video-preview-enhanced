@@ -79,6 +79,10 @@ function compareHtml({ uri, cspSource, nonce, cfg, frameSource }) {
   <canvas id="canvas" hidden role="img" aria-label="Videos compared"></canvas>
   <div id="cells"${large ? ' class="dense"' : ''}></div>
   <div id="reorderHint" hidden>Drag tiles to reorder · Esc or Done to finish</div>
+  <div id="addHint" hidden>
+    <span id="addHintText" role="status"></span>
+    <button id="stopAddBtn" type="button" title="Stop Add Mode">Stop</button>
+  </div>
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div></div>
   <div id="toast" hidden aria-hidden="true"></div>
 </div>

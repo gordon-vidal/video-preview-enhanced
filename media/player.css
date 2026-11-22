@@ -474,5 +474,13 @@ body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-co
 @media (prefers-reduced-motion: reduce) { #cog svg { transition: none; } }
 #sheet .srow .grow { white-space: normal; }
 /* Add mode (compare from the Explorer): a quiet line at the top while it is on. */
-#addHint { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 4px 12px; border-radius: 12px; border: 1px dashed var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground, inherit); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; z-index: 6; }
+#addHint { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 4px 12px; border-radius: 12px; border: 1px dashed var(--vscode-focusBorder); background: var(--vscode-editorWidget-background); color: var(--vscode-editorWidget-foreground, inherit); font-size: 12px; white-space: nowrap; pointer-events: none; z-index: 6; display: flex; align-items: center; box-sizing: border-box; }
 #addHint[hidden] { display: none; }
+#addHintText { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Its Stop button: the only part of the hint that takes clicks. */
+#stopAddBtn {
+  flex: none; pointer-events: auto; margin: -2px -6px -2px 8px; padding: 1px 8px; font: inherit; cursor: pointer;
+  border-radius: 4px; border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vpe-chip-bg); color: var(--vpe-chip-fg);
+}
+#stopAddBtn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vpe-row-hover)); }

@@ -1365,13 +1365,19 @@
 
   const toggleAddMode = () => { closeMenu(); vscode.postMessage({ type: 'addMode' }); };
   // The add mode's hint, while it is on (the host says so with 'addMode' messages).
-  const addHint = document.createElement('div');
-  addHint.id = 'addHint'; addHint.hidden = true; addHint.setAttribute('role', 'status');
-  document.getElementById('stage').appendChild(addHint);
+  const addHint = $('addHint');
+  const addHintText = $('addHintText');
+  const stopAdd = $('stopAddBtn');
+  stopAdd.addEventListener('pointerdown', (e) => e.stopPropagation());
+  stopAdd.onclick = (e) => {
+    e.stopPropagation();
+    vscode.postMessage({ type: 'stopAddMode' });
+  };
   function showAddMode(m) {
+    const refocus = !m.on && document.activeElement === stopAdd;
     addHint.hidden = !m.on;
-    addHint.textContent = m.on ? 'Click videos in Explorer to add · Esc to stop' : '';
-    if (m.on) announce(addHint.textContent);
+    addHintText.textContent = m.on ? 'Click videos in Explorer to add · Esc to stop' : '';
+    if (refocus) ui.cmpBtn.focus();
     log(`addMode ${m.on ? 'on' : 'off'}`);
   }
   // Add video…: starts add mode (click videos in the Explorer); the file dialog is only the host's 'add' message (palette / tests).
