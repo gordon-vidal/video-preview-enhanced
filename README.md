@@ -4,10 +4,11 @@
 
 - **Every common format, with sound:** MP4, MKV, MOV, AVI, WebM, WMV, MXF and more, including HEVC, AV1 and ProRes at 1080p. Nothing else to install.
 - **Remote‑SSH and WSL:** play videos where they live, no downloading. Video URLs and HLS / DASH streams too.
+- **Seek‑bar previews:** hover or drag the seek bar and see the picture at that moment.
 - **Frame‑accurate:** step one frame forward or back, jump to any frame or timecode.
 - **Compare up to eight videos** in sync: side by side, split or in a grid.
 - **Pro tools:** scopes, pixel inspector, Codec X‑ray (I / P / B frames and bitrate).
-- **Everyday comforts:** subtitles, audio tracks, 0.25× to 4× speed, A–B loops, seek‑bar thumbnails.
+- **Everyday comforts:** subtitles, audio tracks, 0.25× to 4× speed, A–B loops.
 - **Free, MIT licensed, no telemetry.**
 
 ## Your videos stay where they are
@@ -15,6 +16,10 @@
 Open a video straight from a **Remote‑SSH or WSL workspace** with a double-click. Check a render, a test recording or a camera clip without copying it to your machine first. Run **Video Preview: Open Video URL…** to play a link or a stream.
 
 ![Playing a video from a Remote-SSH workspace, stepping a frame and comparing two encodes](media/marketing/hero-remote.gif)
+
+## Seek‑bar previews
+
+Hover over the seek bar to see the picture at that moment, and drag to scrub through the video live. Release and you land on the exact frame. A separate decoder reads only the keyframes, starts when your pointer reaches the bar and stops when it leaves, so previews appear quickly and never slow playback down.
 
 ## Frame‑accurate
 
@@ -45,6 +50,7 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 | Video URLs and streams | ✅ | — | — | — | — |
 | Synchronized comparison | ✅ up to 8 videos | ❌ | — | — | — |
 | Frame‑accurate stepping | ✅ forward and back | ❌ | — | — | — |
+| Seek‑bar previews | ✅ | ❌ | — | — | — |
 | Scopes, pixel inspector, Codec X‑ray | ✅ | ❌ | — | — | — |
 
 *✅ yes · ❌ no · ➖ partly · — not established in the sources reviewed. Install counts are rounded.*
