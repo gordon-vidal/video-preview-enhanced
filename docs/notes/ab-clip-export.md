@@ -67,7 +67,10 @@ copies of the MKV, a VP9 WebM and an MPEG-4 AVI began at the keyframe, 0.600 s b
 **B is a presentation boundary.** Packet-order `-t` can retain later pictures or lose references
 needed by B. Shorten the movie and track edits to the presentation boundary after B, leaving
 the copied packets intact. The exact path publishes only after the decoded timeline and both
-boundary hashes match the source. The keyframe path requires confirmation of both measured boundaries.
+boundary hashes match the source. Timed-text cues keep their original payloads and are clipped to the marked interval
+before muxing. PCM tracks use their original sample format with sample-accurate trimming. Compressed
+audio stays stream-copied, and output with decoded samples outside the marked interval fails exact
+verification. The keyframe path requires confirmation of both measured boundaries.
 
 **Container choice.** Prefer verified MP4 remux for compatible non-MP4/MOV sources. Otherwise offer
 a warned, same-container keyframe cut if the muxer supports the tracks. Copy the displayed video and

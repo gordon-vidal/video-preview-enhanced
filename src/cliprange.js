@@ -58,15 +58,34 @@ function selectRange(range, frames, videoStart, tick, videoEnd) {
 
 const seconds = (value) => value.toFixed(6);
 
-function copyArgs(file, output, { video, streams, start, duration, exact, attachments }) {
+function copyArgs(file, output, { video, streams, start, duration, exact, attachments, audio = [], subtitles = [] }) {
   const args = ['-v', 'error', '-xerror', '-nostdin', '-n'];
   // FFmpeg's input seek is relative to format start. Copy keeps the decode preroll.
   if (start > 0) args.push('-ss', seconds(start));
   args.push(...inputArgs(file));
-  for (const index of [video, ...streams]) args.push('-map', `0:${index}`);
+  if (exact && subtitles.length) {
+    // Subtitle demux seeking can miss a cue that started before the video preroll.
+    args.push('-itsoffset', seconds(-start), '-vn', '-an', ...inputArgs(file));
+  }
+  for (const index of [video, ...streams]) {
+    args.push('-map', `${exact && subtitles.some((s) => s.index === index) ? 1 : 0}:${index}`);
+  }
   if (attachments) args.push('-map', '0:t?');
   args.push('-map_chapters', '-1', '-c', 'copy', '-t', seconds(duration));
   if (exact) {
+    if (subtitles.length) {
+      const end = seconds(duration);
+      // Clip before MOV muxing to keep the cue data and prevent an edit from moving later cues.
+      args.push('-bsf:s', String.raw`noise=amount=0:drop=lte(pts+duration\,0)+gte(pts*tb\,${end}),`
+        + String.raw`setts=pts=max(PTS\,0):dts=max(DTS\,0):duration=min(PTS+DURATION\,${end}/TB)-max(PTS\,0)`);
+    }
+    audio.forEach((track, i) => {
+      if (/^pcm_(?:[su]\d+(?:le|be)?|f(?:32|64)(?:le|be))$/.test(track.codec_name)) {
+        // MOV readers can decode an entire PCM packet across the edit boundary.
+        // Keep the PCM encoding and cut the samples before muxing.
+        args.push(`-c:a:${i}`, track.codec_name, `-filter:a:${i}`, `atrim=start=0:end=${seconds(duration)}`);
+      }
+    });
     args.push('-avoid_negative_ts', 'disabled', '-use_editlist', '1', '-movie_timescale', '1000000',
       '-movflags', '+faststart', '-write_tmcd', '0');
   } else args.push('-avoid_negative_ts', 'make_zero');
