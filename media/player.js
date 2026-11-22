@@ -62,35 +62,47 @@
     }
   }
   function showNotice(n) {
-    $('noticeText').textContent = n.text;
-    announce(n.text);
-    const btn = $('noticeAction');
-    btn.hidden = !n.action;
-    if (n.action) {
-      btn.textContent = n.action.label;
-      btn.onclick = () => { if (n.action.run) n.action.run(); else vscode.postMessage({ type: 'action', id: n.action.id }); if (n.action.close) $('notice').hidden = true; };
-    }
-    $('noticeClose').onclick = () => {
-      const back = $('notice').contains(document.activeElement);
-      $('notice').hidden = true;
+    const notice = $('notice');
+    const dismiss = () => {
+      const back = notice.contains(document.activeElement);
+      notice.hidden = true;
+      if (n.dismiss) n.dismiss();
       if (back) ui.play.focus();
     };
-    $('notice').hidden = false;
+    $('noticeText').textContent = n.text;
+    announce(n.text);
+    for (const [button, action] of [[$('noticeAction'), n.action], [$('noticeSettings'), n.settings], [$('noticeHide'), n.hide]]) {
+      button.hidden = !action;
+      button.title = action?.title || '';
+      button.onclick = null;
+      if (!action) continue;
+      button.textContent = action.label;
+      button.onclick = () => {
+        if (action.run) action.run();
+        else vscode.postMessage({ type: 'action', id: action.id });
+        if (action.close) dismiss();
+      };
+    }
+    $('noticeClose').onclick = dismiss;
+    notice.hidden = false;
   }
   /**
    * Pixel tools (inspector, scopes, 1:1 zoom, frame save/copy/export) on a video that native
    * ffmpeg scaled down or reduced to 8-bit: offer the built-in decoder's exact pixels, once per page.
    */
   let exactOffered = false;
+  let reducedResDismissed = !!saved.reducedResDismissed;
   function exactTool(zoom = false) {
     const p = player;
     // Live transcode hands the pixel tools one exact frame from the host (exactFrame below); only 1:1 zoom has none.
-    if (exactOffered || !p || !p.nativeLossy || (p.remoteStream && !zoom)) return;
+    if (cfg.hideReducedResNotice || reducedResDismissed || exactOffered || !p || !p.nativeLossy || (p.remoteStream && !zoom)) return;
     exactOffered = true;
-    const { width, height } = (p.remoteStream ? p.meta : p.info?.video) || {};
     showNotice({
-      text: `${p.remoteStream ? 'Live transcode' : 'Native ffmpeg'} shows this video at ${width ? `${width}×${height}` : 'a reduced size'}, 8-bit 4:2:0: pixel values and saved frames are not the file's own.`,
-      action: { label: 'Use full resolution', id: 'fullRes' },
+      ...VpeReducedResNotice(p.info?.video, p.info?.remoteStream, p.meta),
+      dismiss: () => {
+        reducedResDismissed = true;
+        vscode.setState({ ...vscode.getState(), reducedResDismissed });
+      },
     });
   }
   // Screen readers: toasts, messages and status changes go to one polite live region (#live).
@@ -416,7 +428,7 @@
       if (now - lastSave > 1000) {
         lastSave = now;
         // Only when something changed: a paused page wrote the same state and position every second.
-        const state = { t: player.currentTime(), rate, volume, muted, loop, subs: subs.state(), timeMode, ...(switchPlay !== null ? { play: switchPlay } : {}) };
+        const state = { t: player.currentTime(), rate, volume, muted, loop, subs: subs.state(), timeMode, reducedResDismissed, ...(switchPlay !== null ? { play: switchPlay } : {}) };
         const json = JSON.stringify([state, player.meta.duration || 0]);
         if (json !== lastSaved) {
           lastSaved = json;
@@ -1192,7 +1204,6 @@
     const label = open ? 'Add to Compare' : 'Compare';
     compareButton.title = label;
     compareButton.setAttribute('aria-label', label);
-    $('startCompareLabel').textContent = label;
     if (open) {
       closeCompareDialog();
       compareButton.removeAttribute('aria-haspopup');
@@ -1356,6 +1367,7 @@
       }
       case 'exactFrame': exact.onReply(m).then(wakeLoop, () => {}); break;
       case 'toast': toast(m.text, Math.min(10000, Number(m.ms)) || undefined); break;
+      case 'hideReducedResNotice': cfg.hideReducedResNotice = true; break;
       case 'addMode': showAddMode(m); break;
       case 'compareOpen': setCompareOpen(!!m.open); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
