@@ -65,7 +65,8 @@ const { make } = require('../media/make_cases_media');
   const tabGroups = { onDidChangeTabs: (fn) => { tabListener = fn; return { dispose() {} }; }, close: async (t) => { closedTabs.push(t); }, all: [] };
   const h2 = load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin' }, setup: (v) => { v.window.createWebviewPanel = fakePanel; v.window.tabGroups = tabGroups; } });
     const W = h2.vscode;
-    const ctx = () => (W.executed || []).filter((c) => c[0] === 'setContext').map((c) => c[2]);
+    const ctx = () => (W.executed || [])
+      .filter(([id, key]) => id === 'setContext' && key === 'videoPreviewEnhanced.addMode').map((c) => c[2]);
     const tick = () => new Promise((r) => setTimeout(r, 20));
     const resolve = (file) => {
       const p = { webview: { html: '', options: null, onDidReceiveMessage() {}, postMessage: async () => true, cspSource: 'x:', asWebviewUri: (u) => u }, fns: [], onDidDispose(fn) { p.fns.push(fn); }, onDidChangeViewState() {}, dispose() { p.disposed = true; for (const fn of p.fns) fn(); } };

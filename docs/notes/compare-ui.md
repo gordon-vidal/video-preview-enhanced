@@ -180,6 +180,21 @@ plans a selection against the open editors. The host intercepts player opens in 
 temporary tab. It uses tab events for files opened through a different editor and distinguishes those new video tabs
 from switching to an existing editor. Only file and VS Code remote video URIs join.
 
+### Contextual Compare commands (maintainer approved)
+
+Both the Explorer menu and the file player's editor title show **Video Preview Enhanced: Start Compare** until
+a Compare session opens, then **Video Preview Enhanced: Add to Compare**. The editor title keeps its diff icon.
+The Explorer variants run the same selection handler for videos, folders and mixed selections. In the player,
+Start Compare opens the file picker and Add to Compare sends the player's video to the most recently active
+Compare. The Command Palette shows the matching player command with the same name. The player's right-click
+**Compare With…** still opens the picker. Existing bindings to `videoPreviewEnhanced.compareWith` and
+`videoPreviewEnhanced.addToCompare` keep working.
+
+`videoPreviewEnhanced.compareOpen` is initialized from the window's live sessions and follows their lifecycle.
+A background Compare still counts. The last Compare closing switches the label back to Start Compare.
+`comparemenu_test.js` checks the context and menu contributions, and `compare_addmode` runs the Explorer and
+player commands in the hidden desktop.
+
 - **Open together.** A multi-selection opened through Open With…, Enter or a double-click is one editor per file
   in quick succession. `src/burst.js` (pure, timers injected) groups videos that arrive within 400 ms of the one before
   (`VPE_BURST_MS` overrides it for tests) and, once it is quiet, `src/compare.js` opens them as one compare (the first

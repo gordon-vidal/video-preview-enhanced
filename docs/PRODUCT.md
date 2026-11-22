@@ -137,11 +137,15 @@ One feature: compare becomes multi-view. The difference view is dropped.
   **Shift+D** or ⚙ › Tools › **Compare** (wait for an Explorer open), and **Compare With…** in the player's
   right-click menu (VS Code's open dialog). Compare takes the player's tab and starts at its position.
   **Leave compare** restores the player at the kept video's position.
-- **Explorer:** **Add to Compare** handles files, folders and mixed selections. A folder contributes only its
-  direct video files, in natural name order. Append to the most recently active Compare, otherwise use the open
-  single-video player or start a Compare with the selection. One file can start a one-tile Compare. Skip duplicates,
-  add up to `compare.maxVideos` and report how many unique videos did not fit. **Open Together**
-  (`compare.openTogether`) also groups several videos opened at once, with a one-time notice.
+- **Explorer:** **Video Preview Enhanced: Start Compare** handles files, folders and mixed selections when no
+  Compare is open. It can use the open single-video player or start with the selection alone, including one file.
+  While any Compare is open, **Video Preview Enhanced: Add to Compare** appends to the most recently active one.
+  Folders contribute their direct video files in natural name order. Skip duplicates, add up to `compare.maxVideos`
+  and report how many unique videos did not fit. **Open Together** (`compare.openTogether`) also groups several
+  videos opened at once, with a one-time notice.
+- **Player editor title and Command Palette:** **Video Preview Enhanced: Start Compare** opens the file picker.
+  While any Compare is open, the player offers **Video Preview Enhanced: Add to Compare** to append its video to
+  the most recently active Compare.
 - **Add Mode:** Compare opens with Add Mode on when it has space. Opening videos from the Explorer adds tiles.
   Playback, scrubbing and stepping keep the mode on. **Stop** in the hint, Esc, Shift+D, reaching the maximum or switching editors
   turns it off. **Add video…** or Shift+D turns it back on. **Add to Compare** also works while the mode is off.
