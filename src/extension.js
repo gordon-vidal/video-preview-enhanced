@@ -11,7 +11,6 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { serveBlock } = require('./read-block');
-const { otherInstalledVersions } = require('./old-installs');
 // Modules a feature needs (URLs, ffmpeg setup and download, A-B export, AVI, the remote stream) load on first use:
 // a window start pays only for what it runs. The proxy forwards property reads to the real module.
 const lazy = (id) => { let m; return new Proxy({}, { get: (_, k) => (m || (m = require(id)))[k] }); };
@@ -1003,21 +1002,6 @@ async function fileIcons({ force = false } = {}) {
 }
 // ---- end file icons ----
 
-/** Two installs of this extension (an old 0.2.0 beside the new one) leave a window with a stale manifest. Tell once. */
-async function warnOldInstalls(extensionId) {
-  try {
-    const others = await otherInstalledVersions(extensionDir, extensionId);
-    const key = others.join(',');
-    if (!others.length || globalState.get('videoPreviewEnhanced.warnedOld') === key) return;
-    await globalState.update('videoPreviewEnhanced.warnedOld', key);
-    log(`other installed versions: ${key}`);
-    const pick = await vscode.window.showWarningMessage(
-      `Video Preview Enhanced: another version is installed beside this one (${key}). Uninstall the old one and reload the window if settings or buttons misbehave.`,
-      'Reload Window');
-    if (pick === 'Reload Window') vscode.commands.executeCommand('workbench.action.reloadWindow');
-  } catch (e) { log(`old-install check: ${e && e.message || e}`); }
-}
-
 /** Export commands: ask the active player for its A-B range (it replies with 'exportRange' or 'ffmpegRange'). */
 function askRange(then) {
   const s = [...sessions].find((x) => x.panel.active) || (lastActive && !lastActive.disposed ? lastActive : null);
@@ -1323,8 +1307,6 @@ function activate(context) {
   );
   autoDefault();
   fileIcons();
-  // A development extension can live beside identically named worktrees.
-  if (context.extensionMode === vscode.ExtensionMode.Production) warnOldInstalls(context.extension?.id);
 
   // ---- Compare and Add to Compare (src/compare.js) ----
   let testCompareFiles;
