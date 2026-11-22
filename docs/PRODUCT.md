@@ -142,13 +142,18 @@ One feature: compare becomes multi-view. The difference view is dropped.
   While any Compare is open, **Video Preview Enhanced: Add to Compare** appends to the most recently active one.
   Folders contribute their direct video files in natural name order. Skip duplicates, add up to `compare.maxVideos`
   and report how many unique videos did not fit. **Open Together** (`compare.openTogether`) also groups several
-  videos opened at once, with a one-time notice.
+  videos opened at once (a drop or Open With… on a selection), with a one-time notice. Opening them is quick: the
+  videos are taken in a moment and their players never start.
 - **Player editor title and Command Palette:** **Video Preview Enhanced: Start Compare** opens the file picker.
   While any Compare is open, the player offers **Video Preview Enhanced: Add to Compare** to append its video to
   the most recently active Compare.
-- **Add Mode:** Compare opens with Add Mode on when it has space. Opening videos from the Explorer adds tiles.
-  Playback, scrubbing and stepping keep the mode on. **Stop** in the hint, Esc, Shift+D, reaching the maximum or switching editors
-  turns it off. **Add video…** or Shift+D turns it back on. **Add to Compare** also works while the mode is off.
+- **Add Mode:** while it is on, opening videos from the Explorer adds tiles. It turns on only when the user asks to
+  add more: **Shift+D**, **Add video…**, the Compare panel's switch, the toolbar Compare button's **Start comparison**
+  and a right-click **Start / Add to Compare** on one video that makes a one-video Compare. A Compare started from
+  several files at once (a drop or Open Together, a multi-selection or folder, **Compare Videos in Folder**, the D
+  quick pick, **Compare With…**) opens with Add Mode off: those videos are the whole set. Playback, scrubbing and
+  stepping keep the mode on. **Stop** in the hint, Esc, Shift+D, reaching the maximum or switching editors turns it
+  off. **Add to Compare** also works while the mode is off.
 - **Picture size in compare:** one mode for every tile (the same button, Z and ⚙ page), and zoom and pan in lockstep:
   the same relative zoom and position in each tile, like a magnifier over all videos.
 - Each video has its own offset, by **time or frame number** (hover nudge and the panel only).

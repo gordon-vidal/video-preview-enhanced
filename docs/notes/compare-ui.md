@@ -72,7 +72,12 @@ Drag over another tile to preview insertion into its slot. Release on a tile to 
 **Esc** or switching editor tabs ends the mode and cancels an unfinished drag. While in the mode, the tiles
 pause their pan, zoom, wheel stepping, divider and offset gestures.
 
-Hover or focus a tile to reveal its arrows in either mode. **Tab** reaches the enabled arrows and
+Hover or focus a tile to reveal its arrows in either mode. They sit in the bottom corner of the tile's own picture
+(bottom-right; in Split, the left picture's arrows bottom-left), not in the cell: a letterboxed picture leaves black
+bars above and below, and arrows in the cell's corner floated in those bars, away from the picture and its name pill.
+`layoutCells` sets `--pic-l`, `--pic-r` and `--pic-b` (how far the picture's edges lie inside the cell) on each cell and
+`.move` uses them; the layer-3 check `reorder/arrows-on-picture` (a 5-tile 3x2 grid) asserts the arrows' box lies inside
+the picture, within 8 px of its corner. **Tab** reaches the enabled arrows and
 **Enter** or **Space** activates them. Their accessible names are `Move <name> earlier` and
 `Move <name> later`. An arrow at an end of the order is disabled. Focus follows the moved tile.
 
@@ -141,8 +146,17 @@ already included and report how many unique videos were beyond the configured li
 Compare, or the active or most recently used file player if no Compare is open. With neither, start a new Compare.
 A single selected file starts a one-tile Compare with the existing Add cell alongside it.
 
-A Compare with room starts in Add Mode. **Shift+D**, the Compare panel's **Add from the Explorer** switch, or the
-palette command toggle the mode. **Add video…** starts it. **Shift+D** in a file player and the **Click videos in the
+Add Mode turns on only on an explicit "add more" intent (maintainer decision 2026-11-22; `startsInAddMode` in
+`src/addmode.js`, unit-tested):
+
+| Starts the Compare in Add Mode | Opens with Add Mode off |
+|---|---|
+| the toolbar Compare button's **Start comparison** confirm (`origin: 'toolbar-start'`, built on another branch) | a drag and drop of several videos, **Open With…** on a selection (`'burst'`) |
+| a player armed by **Shift+D** or the D pick's Explorer row that took its next video (`'armed'`: the mode carries on) | **Add to Compare** on several files, a folder or a mix (`'selection'`), **Compare Videos in Folder** |
+| right-click **Start / Add to Compare** on one video that makes a one-video Compare (`'start-single'`) | the D quick pick, Shift+drop on a player, **Compare With…**; one file added to an open player (two videos) |
+
+Videos chosen at once are the whole set the user wanted, so nothing waits for more. Later, **Shift+D**, **Add video…**,
+the Compare panel's **Add from the Explorer** switch or the palette command toggle the mode. **Add video…** starts it. **Shift+D** in a file player and the **Click videos in the
 Explorer…** row in the D quick pick arm the player. The next video opens Compare at the player's position and the
 mode carries on. Pin the player while waiting so a preview open can leave the original tab in place until the
 transition.
@@ -195,10 +209,22 @@ A background Compare still counts. The last Compare closing switches the label b
 `comparemenu_test.js` checks the context and menu contributions, and `compare_addmode` runs the Explorer and
 player commands in the hidden desktop.
 
-- **Open together.** A multi-selection opened through Open With…, Enter or a double-click is one editor per file
-  in quick succession. `src/burst.js` (pure, timers injected) groups videos that arrive within 400 ms of the one before
-  (`VPE_BURST_MS` overrides it for tests) and, once it is quiet, `src/compare.js` opens them as one compare (the first
-  tab's group, or in the first video's player's place) and closes the burst's tabs and panels. Reports come from two
+- **Open together.** A multi-selection opened through Open With…, Enter, a double-click or a drop is one editor per
+  file in quick succession. `src/burst.js` (pure, timers injected) groups videos that arrive within 120 ms of the one
+  before (`BURST_WINDOW_MS`; `VPE_BURST_MS` overrides it for tests) and, once it is quiet, `src/compare.js` opens
+  them as one compare (the first tab's group, or in the first video's player's place) and closes the burst's tabs and
+  panels. The opens of one gesture arrive within about 10 ms of each other (measured with 2 to 8 videos), so 120 ms
+  leaves a wide margin and was chosen over 400 ms to cut about 280 ms from every open together. A Compare opened by
+  a burst has Add Mode off (above).
+- **Speed (2026-11-22).** Time from the first player resolve to a picture in every tile (debug log, `compare-burst-startup`
+  bench): the burst window, the players, and two waits inside Compare were the cost. (1) The window 400 → 120 ms.
+  (2) A video that arrives while another is pending is **held**: the player's `show()` (page, decoder download, ffprobe,
+  native start) waits for the burst's verdict (`burst.wait`; `holdOpen` in `src/compare.js`, 10 s at most) and never
+  runs if compare takes it, so 2 to 8 players no longer compete with Compare's own start-up. A video opened alone
+  starts after one macrotask (setImmediate, sub-millisecond), so a single open is unchanged. (3) `syncPaused` no
+  longer re-seeks a follower that is still on its first frame and wanted there (a soft tile slower than the clock
+  decoded its first picture twice). (4) The first picture of every tile no longer waits for each tile's second frame
+  to be decoded (`atFirstFrame`). Reports come from two
   places so a lazily resolved editor still counts: `resolveCustomEditor` (`noteOpen`) and `tabGroups.onDidChangeTabs`
   for our view types (the same file from both is one entry). More than `compare.maxVideos`: the first ones are
   compared and the rest stay as their own tabs (warning). Not started: one video, the same file twice, add mode on,
@@ -208,9 +234,12 @@ player commands in the hidden desktop.
   within the window would (not seen, not tested: a real restart is not driven). Fallback if it misfires for someone:
   the setting, and the Explorer's **Add to Compare**.
 
-`test/host/addmode_test.js` and `test/host/comparepick_test.js` cover mode transitions, capacity, duplicate files
-and routing. The hidden VS Code `compare_addmode` case checks the context-menu arguments, tab switching and the
-hint through single-file, multi-file, folder and playback flows. `compare_burst` checks Open Together.
+`test/host/addmode_test.js` and `test/host/comparepick_test.js` cover mode transitions, capacity, duplicate files,
+routing and which starts turn the mode on. The hidden VS Code `compare_addmode` case checks the context-menu
+arguments, tab switching and the hint through single-file, multi-file, folder and playback flows. `compare_burst`
+checks Open Together (one compare, Add Mode off, the next open a player of its own). `test/host/burst_test.js` covers
+the window, holding and releasing players. The layer-4 bench `compare-burst-startup` times 1, 2, 5 and 8 opened
+together.
 
 ## Deviations from the mock-up
 

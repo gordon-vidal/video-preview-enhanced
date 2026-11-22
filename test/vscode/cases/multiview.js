@@ -774,6 +774,32 @@ module.exports = [{
         ok(r.synced === 'true' && r.clock === '1' && r.sound === '0' && r.offsets === '3f,0f,0f',
           `restored sync, clock, sound and offset: ${JSON.stringify(r)}`);
       });
+      // A letterboxed grid (5 tiles, 3x2): each tile's arrows sit on its own picture, not in the black bars of the cell.
+      from = vs.mark();
+      vs.send({ compareAdd: [files[2], files[3]] });
+      await vs.waitLog(opened(5), { from, timeout: 30000 });
+      act({ action: 'stageSize', w: 1000, h: 700 });
+      await until((x) => x.n === '5' && x.grid === '3x2', 20000);
+      u = await ui();
+      await results.run('reorder/arrows-on-picture', (ok) => {
+        const tiles = u.cells.filter((c) => c.tile !== 'add');
+        ok(tiles.length === 5 && u.cells.length === 6, `5 tiles and the Add cell: ${order(u)}`);
+        for (const cell of tiles) {
+          const pic = cell.picRect;
+          const [cx, cy, cw, ch] = cell.rect;
+          ok(pic && pic[3] < ch - 20, `tile ${cell.tile} is letterboxed (picture ${pic}, cell ${cell.rect})`);
+          if (!pic || cell.moveRects.length !== 2) { ok(false, `tile ${cell.tile}: moves ${JSON.stringify(cell.moveRects)}`); continue; }
+          const [px, py, pw, ph] = pic;
+          // The arrows' box (both buttons) lies inside the picture, in its bottom-right corner (at most 8 px from the edges).
+          const left = Math.min(...cell.moveRects.map((r) => r[0])), top = Math.min(...cell.moveRects.map((r) => r[1]));
+          const right = Math.max(...cell.moveRects.map((r) => r[0] + r[2])), bottom = Math.max(...cell.moveRects.map((r) => r[1] + r[3]));
+          ok(left >= px - 1 && top >= py - 1 && right <= px + pw + 1 && bottom <= py + ph + 1,
+            `tile ${cell.tile}: arrows ${[left, top, right, bottom]} leave their picture ${pic}`);
+          ok(py + ph - bottom <= 8 && px + pw - right <= 8,
+            `tile ${cell.tile}: arrows ${[left, top, right, bottom]} are far from their picture's corner ${pic}`);
+          ok(cx <= px + 1 && cy <= py + 1 && cw >= pw - 1, `tile ${cell.tile}: picture ${pic} sits inside its cell ${cell.rect}`);
+        }
+      });
     } finally {
       await h.closeClip(vs);
     }

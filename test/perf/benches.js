@@ -5,6 +5,7 @@
 // A Node bench is a command that writes JSON ({json} in args is replaced by a temporary file path).
 
 const vscode = [
+  { name: 'compare-burst-startup', steps: [{ case: 'compare-burst-startup' }] },
   // Start-up per decoder path: cold, then warm opens; phases from the 'startup host' / 'webview: startup' lines.
   ...['startup-gpu', 'startup-wasm', 'startup-native', 'startup-av1-mp4', 'startup-h264-mp4', 'startup-prores-mov', 'startup-vp9-webm',
     'startup-vp9-mp4', 'startup-h264-mov', 'startup-hevc-mkv', 'startup-av1-mkv'].map((c) => ({ name: c, steps: [{ case: c }] })),

@@ -67,6 +67,8 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
     const pick = V._commands['videoPreviewEnhanced.comparePick'];
     assert.ok(pick && V._commands['videoPreviewEnhanced.compareDrop'], 'commands are registered');
     const uriA = V.Uri.file(a);
+    // Add Mode as the page-context key last had it (src/addmode.js startsInAddMode decides at creation).
+    const ctxOn = () => ((V.executed || []).filter((c) => c[0] === 'setContext' && c[1] === 'videoPreviewEnhanced.addMode').pop() || [])[2] === true;
 
     let items = null;
     setPickHook(async (it) => { items = it; return it.find((i) => i.uri && i.label === path.basename(b)); });
@@ -77,8 +79,7 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
     assert.deepStrictEqual(V.executed, [
       ['setContext', 'videoPreviewEnhanced.compareOpen', false],
       ['setContext', 'videoPreviewEnhanced.compareOpen', true],
-      ['setContext', 'videoPreviewEnhanced.addMode', true],
-    ], 'opening Compare enables the open and Add Mode contexts');
+    ], 'opening Compare enables the open context; a picked pair opens with Add Mode off (no explicit add-more intent)');
     const recent = h.context.globalState.get('videoPreviewEnhanced.compareRecent');
     assert.ok(recent[0] === uriA.toString() && recent[1].includes(path.basename(b)) || recent.length === 2, `recent: ${recent}`);
 
@@ -104,6 +105,7 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
     await V._commands['videoPreviewEnhanced.compareFolder'](folderUri);
     let current = panels.at(-1);
     assert.strictEqual(panels.length, 2, 'the folder opens in one compare');
+    assert.ok(!ctxOn(), 'a folder (several files at once) opens with Add Mode off');
     assert.deepStrictEqual(infos, [], 'no message for two videos');
     await V._commands['videoPreviewEnhanced.stopAddFromExplorer']();
     V.workspace.fs.readDirectory = async () => [[path.basename(a), 1], ['nested.mp4', 2], ['one.mp4', 1], ['x.txt', 1]];
@@ -111,7 +113,7 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
     await add(one, [one, folderUri]);
     assert.strictEqual(panels.length, 2, 'the mixed selection appends to the existing compare');
     assert.ok(/"names":\["rotated\.mp4","s_h264\.mp4","one\.mp4"\]/.test(current.webview.html), 'folder overlap is skipped');
-    assert.deepStrictEqual(V.executed.at(-1), ['setContext', 'videoPreviewEnhanced.addMode', false], 'append keeps Add Mode off');
+    assert.ok(!ctxOn(), 'append keeps Add Mode off');
     const other = await V._commands['videoPreviewEnhanced.compare'](uriA, [uriA, V.Uri.file(b)]);
     current.active = true;
     current.activate();
@@ -131,6 +133,12 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
     await add(uriA);
     current = panels.at(-1);
     assert.ok(/"names":\["s_h264\.mp4"\]/.test(current.webview.html), 'one file starts a one-tile compare');
+    assert.ok(ctxOn(), 'a single video started from the context menu turns Add Mode on');
+    await V._commands['videoPreviewEnhanced.stopAddFromExplorer']();
+    assert.ok(!ctxOn(), 'Esc: off');
+    const multi = await add(V.Uri.file(a), [V.Uri.file(a), V.Uri.file(b)]);
+    assert.ok(multi && !ctxOn(), 'several files chosen at once open with Add Mode off');
+    multi.panel.dispose();
 
     // A drop: videos only, not the file itself, files only.
     const before = panels.length;
@@ -145,6 +153,15 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
     const promoted = await add(uriA);
     assert.deepStrictEqual(promoted.uris.map(String), [uriA.toString()], 'selecting the active player file promotes it once');
     assert.strictEqual(promoted.panel.viewColumn, player.panel.viewColumn, 'Compare takes the player tab’s group');
+    assert.ok(ctxOn(), 'a one-video compare started from a player file starts Add Mode');
+    await V._commands['videoPreviewEnhanced.stopAddFromExplorer']();
+    promoted.panel.dispose();
+    // One file chosen while a player of another video is open makes a two-video compare: no one asked for more.
+    const player2 = h.open(b);
+    player2.panel.active = true;
+    const pair = await add(uriA);
+    assert.strictEqual(pair.uris.length, 2, 'the player and the chosen video');
+    assert.ok(!ctxOn(), 'a two-video compare from a single right-click opens with Add Mode off');
   } finally {
     setPickHook(null);
     h.dispose();

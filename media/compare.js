@@ -316,6 +316,15 @@
     return p.queue.length ? p.queue[0].t > due : !!p.eof;
   }
 
+  /**
+   * The first picture of a tile sits at its start and nothing earlier or later can be due: the tile need not wait for
+   * its second frame to be decoded (settled does), which a slow soft decoder takes a few hundred ms for.
+   */
+  function atFirstFrame(p) {
+    return p.seekTarget === null && p.shownT !== null && p.startT !== null && p.shownT === p.startT &&
+      p.pauseT + earlyOf(p) < p.startT + 0.75 / fpsOf(p);
+  }
+
   function onEngineReady(key) {
     if (key.length > 1) { scanner.onReady(key); return; }
     const p = engines[key];
@@ -483,6 +492,9 @@
         p.pauseT = T;
         return;
       }
+      // Wanted at its first frame, which it is decoding (or shows already, its next one not decoded yet): a seek would
+      // throw that work away. A slow tile finishing its first frame after the clock's used to decode it all again.
+      if (p.seekTarget === null && (p.shownT === null || p.shownT === p.startT) && rel <= 0.5 / fpsOf(p)) { p.pauseT = T; return; }
       p.seekTime(Math.max(0, rel));
     });
   }
@@ -949,6 +961,16 @@
           left: `${box.x - c.x}px`, top: `${box.y - c.y}px`, width: `${box.w}px`, height: `${box.h}px`,
         });
       }
+      // The reorder arrows sit in the picture's bottom corners, not the cell's: a letterboxed picture leaves black
+      // bars between the two, and the arrows would float far from the tile they move. The insets are how far the
+      // picture's edges lie inside the cell (0 where it fills or overflows the cell).
+      if (!c.add) {
+        const pic = c.pic || c;
+        const inset = (v) => `${Math.max(0, Math.round(v * 10) / 10)}px`;
+        d.style.setProperty('--pic-l', inset(pic.x - c.x));
+        d.style.setProperty('--pic-r', inset(c.x + c.w - (pic.x + pic.w)));
+        d.style.setProperty('--pic-b', inset(c.y + c.h - (pic.y + pic.h)));
+      }
       if (c.split) placeDivider(d, c);
     });
     stage.classList.toggle('pannable', cells.some(overflows));
@@ -1079,6 +1101,8 @@
   let outs = [];
   let lastOuts = '';
   let lastAspects = '';
+  let firstPictures = false;
+  let drawn = false;
 
   function present(now) {
     if (!clock || clock.shownT === null) return;
@@ -1089,7 +1113,8 @@
     outs = tiles.map((p, i) => p !== clock && outOfRange(p, relFor(i, cRel)));
     let ready = true;
     if (paused) {
-      ready = tiles.every((p, i) => outs[i] || settled(p));
+      // Nothing was drawn yet: the first picture needs each tile's first frame only.
+      ready = tiles.every((p, i) => outs[i] || settled(p) || (!drawn && atFirstFrame(p)));
       if (!ready) {
         if (!waitSince) waitSince = now;
         // Still decoding a tile after a while: show what there is.
@@ -1113,6 +1138,11 @@
     if (viewDirty && (!largeGrid || ready)) {
       viewDirty = false;
       draw();
+      drawn = true;
+      if (cfg.debug && !firstPictures && tiles.every((_, i) => upCount[i] > 0)) {
+        firstPictures = true;
+        log('first pictures shown');
+      }
       infoDirty = true;
     }
     // Metrics (kept for a future advanced mode): debug builds only, logged, never shown.
@@ -2378,6 +2408,8 @@
         })),
         pillRects: [...d.querySelectorAll('.pill')].map(rect),
         nudgeRects: [...d.querySelectorAll('.nudge')].map(rect),
+        moveRects: [...d.querySelectorAll('.move button')].map(rect),
+        picRect: (() => { const c = cells[[...cellsEl.children].indexOf(d)]; const o = cellsEl.getBoundingClientRect(); return c && c.pic ? [Math.round(o.left + c.pic.x), Math.round(o.top + c.pic.y), Math.round(c.pic.w), Math.round(c.pic.h)] : null; })(),
         pics: [...d.querySelectorAll('.ov')].map((o) => rect(o)), oor: !!d.querySelector('.oor:not([hidden])'),
       })),
       divider: (() => { const dv = cellsEl.querySelector('#divider'); return dv ? { rect: rect(dv), value: dv.getAttribute('aria-valuenow') } : null; })(),

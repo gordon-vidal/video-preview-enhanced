@@ -94,7 +94,7 @@ The player's keys, for all videos at once, plus:
 | X | Swap sides (2 videos) |
 | Tab, then Enter / Space on a tile's up or down arrow | Move the tile earlier or later |
 | Esc while reordering | Exit Reorder mode and discard any unfinished drag |
-| Shift+D | Toggle Add Mode. It starts on when Compare opens with room for more tiles. Click videos in the Explorer to add them. **Stop** in the hint, Esc, Shift+D, reaching the maximum or switching editors turns it off. **Add video…** turns it on |
+| Shift+D | Toggle Add Mode. Click videos in the Explorer to add them. A Compare started from several videos at once (a drop, a multi-selection or a folder) opens with it off. **Stop** in the hint, Esc, Shift+D, reaching the maximum or switching editors turns it off. **Add video…** turns it on |
 | ← / → on the focused split divider | Move it by 1 % (Shift: 10 %); Home / End |
 | Z | Picture size for all videos: Fit, Fill, Stretch, 100 %, then Fit; zoomed in, back to Fit first |
 | Ctrl+wheel, drag | Zoom and pan all videos together (the same part of every picture) |

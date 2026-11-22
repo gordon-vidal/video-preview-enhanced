@@ -126,7 +126,7 @@ Measured 2026-11-20 on the i7-9700K / RTX 4070 desktop **while a game was runnin
 | 1. Unit | 65 files (`test/host`, `test/unit`, engine / inspect / subtitles / timestretch / AVI logic), 8 at a time | 65 passed | 28 s |
 | 2. Engine | 13 files: `test/engine` frame and format tests (the seeking checks of the WebAssembly path, every format of the test media), tracks, engine smoke, picture subtitles, X-ray index, pool, thumbnails | 13 passed | 74 s |
 | 3. VS Code | 21 scenarios, 225 results, 3 instances at once | 223 passed; the 2 failures (sampling speed, fixed) passed when run again; 2 instances without WebGL2, both passed in a fresh one | 12.7 min (33 min of scenarios) |
-| 4. Performance | 29 benches (26 VS Code, 3 Node; 4 more with `VPE_TRANSFER_CLIPS`; `--list`) | built and tried (2 benches, not saved); no stored numbers yet | as long as it takes |
+| 4. Performance | 30 benches (27 VS Code, 3 Node; 4 more with `VPE_TRANSFER_CLIPS`; `--list`) | built and tried (2 benches, not saved); no stored numbers yet | as long as it takes |
 
 Layers 1-3 together took about 14.5 minutes, over the 10-minute target. With layer 3 serial (the default
 until the parallel question is settled) layer 3 alone is about 33 minutes. The longest scenarios are seeking,

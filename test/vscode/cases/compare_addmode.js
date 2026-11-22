@@ -10,6 +10,8 @@ const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] opened, .* ${n} tiles`);
 const hint = (on) => new RegExp(`\\[compare [^\\]]*\\] webview: addMode ${on ? 'on' : 'off'}`);
 const menuContext = (on) => new RegExp(`compare: videoPreviewEnhanced\\.compareOpen=${on}`);
 const isCompare = (tab) => /compare/i.test(tab.viewType);
+// A compare opened without Add Mode (several files chosen at once): neither the host nor its page ever turned it on.
+const modeOn = /compare: add from the Explorer on|webview: addMode on/;
 
 module.exports = [{
   name: 'compare_addmode',
@@ -109,7 +111,8 @@ module.exports = [{
       await run('multi-select-mixed-and-folder', async () => {
         const start = startCompare(files.slice(0, 2));
         await wait(opened(2), start, 'two selected files');
-        await wait(hint(true), start, 'Add Mode on after multi-select');
+        await wait(/webview: begin:/, start, 'Compare ready');
+        assert(!vs.lines.slice(start).some((l) => modeOn.test(l)), 'a multi-select must open Compare with Add Mode off');
         const append = add([dir, first, files[0]]);
         await wait(opened(4), append, 'mixed selection appends two unique folder files');
         await onlyCompare();
@@ -117,7 +120,14 @@ module.exports = [{
         const folder = startCompare([dir]);
         const line = await wait(opened(2), folder, 'two files from a folder');
         assert(/clip2\.mp4.*clip10\.webm/.test(line), `folder order: ${line}`);
+        await wait(/webview: begin:/, folder, 'Compare ready');
+        assert(!vs.lines.slice(folder).some((l) => modeOn.test(l)), 'a folder must open Compare with Add Mode off');
         await onlyCompare();
+        // With Add Mode off, an Explorer open is a player of its own.
+        const separate = open(files[2]);
+        await wait(/\[h264_8_1080p\.mp4\] session resolved/, separate, 'an Explorer open after a multi-select starts a separate player');
+        const tabs = await tabList();
+        assert(tabs.length === 2 && tabs.some(isCompare), `tabs after the open: ${JSON.stringify(tabs)}`);
       });
 
       await run('player-title-start-and-add', async () => {
@@ -174,7 +184,10 @@ module.exports = [{
         await wait(/debug done openNotes openFile/, textOpened, 'the text tab is open');
         const start = add(files.slice(0, 2));
         await wait(opened(2), start, 'Compare opens');
-        await wait(hint(true), start, 'Add Mode on');
+        await wait(/webview: begin:/, start, 'Compare ready');
+        assert(!vs.lines.slice(start).some((l) => modeOn.test(l)), 'Compare from a multi-select starts with Add Mode off');
+        const on = act('key', { key: 'D', shift: true });
+        await wait(hint(true), on, 'Shift+D turns Add Mode on');
         const toggle = act('key', { key: 'D', shift: true });
         await wait(hint(false), toggle, 'Shift+D turns Add Mode off');
         act('panel', { view: 'cmp' });

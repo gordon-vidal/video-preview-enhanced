@@ -24,9 +24,9 @@ const Grid = require('../media/compare-grid');
 const frameserver = require('./frameserver');
 const { barHtml } = require('./bar');
 const { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare } = require('./comparepick');
-const { createAddMode } = require('./addmode');
+const { createAddMode, startsInAddMode, addToCompareOrigin } = require('./addmode');
 const { createCompareMenu } = require('./comparemenu');
-const { createBurst, leftoverTabs, togetherNotice } = require('./burst');
+const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('./burst');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
 
 const MAX_BLOCK = 8 * 1024 * 1024;
@@ -560,8 +560,11 @@ function registerCompare(context, deps) {
       () => deps.log(`compare: ${key}=${open}`), (e) => deps.log(`compare: could not set ${key}: ${e.message}`),
     );
   });
-  /** Opens compare; `from` (a player Session) is replaced in its tab, `t` is where it was. */
-  const open = async (list, { from, t, viewColumn: col } = {}) => {
+  /**
+   * Opens compare; `from` (a player Session) is replaced in its tab, `t` is where it was. `origin` says how it was
+   * started, which decides whether Add Mode starts on (src/addmode.js startsInAddMode: only on explicit add-more intent).
+   */
+  const open = async (list, { from, t, viewColumn: col, origin } = {}) => {
     for (const u of list) {
       if (!FS_SCHEMES.has(u.scheme)) {
         vscode.window.showWarningMessage(`Video Preview: can't compare ${u.toString()} (not a file).`);
@@ -587,7 +590,7 @@ function registerCompare(context, deps) {
     const session = new CompareSession(context, list, {
       ...deps, transport, frameSource, pick: pickMany, viewColumn, start: t, addMode: addModeApi, menu,
     });
-    armAddMode(session);
+    if (startsInAddMode({ origin, count: list.length })) armAddMode(session);
     session.panel.onDidDispose(() => deps.compareOpenChanged?.());
     deps.compareOpenChanged?.();
     // In place: the player's tab closes once compare has opened beside it in the same group.
@@ -686,7 +689,7 @@ function registerCompare(context, deps) {
         promotion = pending;
         const t = target.pos && Number.isFinite(target.pos.t) ? target.pos.t : 0;
         try {
-          pending.done = open(pending.files, { from: target, t });
+          pending.done = open(pending.files, { from: target, t, origin: 'armed' });
           await pending.done;
         } finally {
           if (promotion === pending) promotion = null;
@@ -716,32 +719,55 @@ function registerCompare(context, deps) {
   // ---- Open together: videos that VS Code opens in one burst (an Explorer multi-selection: Open With…, Enter,
   // double-click) become one compare (src/burst.js). A single video, or videos opened apart, are untouched.
   const burst = createBurst({
-    windowMs: Number(process.env.VPE_BURST_MS) > 0 ? Number(process.env.VPE_BURST_MS) : 400,
+    windowMs: Number(process.env.VPE_BURST_MS) > 0 ? Number(process.env.VPE_BURST_MS) : BURST_WINDOW_MS,
     max: maxVideos,
-    onBurst: ({ items, extra }) => {
-      if (addMode.active || !openTogether()) return;
+    onBurst: async ({ items, extra }) => {
+      if (addMode.active || !openTogether()) return false;
       const list = items.map((i) => i.uri).filter((u) => FS_SCHEMES.has(u.scheme) && VIDEO_EXT.test(u.path));
-      if (list.length < 2) return;
+      if (list.length < 2) return false;
       deps.log(`compare: ${list.length} videos opened together -> one compare${extra.length ? `, ${extra.length} more stay as tabs` : ''}`);
       const first = items[0];
       const from = playerOf(first.uri);
       const tabCol = first.tabs[0] && first.tabs[0].group ? first.tabs[0].group.viewColumn : (first.panels[0] && first.panels[0].viewColumn);
-      (async () => {
-        await open(list, { from, t: 0, viewColumn: tabCol });
-        for (const it of items) {
-          for (const pn of it.panels) { try { pn.dispose(); } catch { /* gone already */ } }
-          for (const tb of it.tabs) Promise.resolve(vscode.window.tabGroups.close(tb)).catch(() => {});
-        }
-        closeLeftovers(list, tabCol);
-        noticeTogether(list.length);
-        if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
-      })().catch((e) => deps.log(`compare: open together failed: ${e && e.stack || e}`));
+      try {
+        // A burst never turns Add Mode on (src/addmode.js startsInAddMode): the user asked for these videos, not for more.
+        await open(list, { from, t: 0, viewColumn: tabCol, origin: 'burst' });
+      } catch (e) {
+        deps.log(`compare: open together failed: ${e && e.stack || e}`);
+        return false; // the held players start as usual
+      }
+      for (const it of items) {
+        for (const pn of it.panels) { try { pn.dispose(); } catch { /* gone already */ } }
+        for (const tb of it.tabs) Promise.resolve(vscode.window.tabGroups.close(tb)).catch(() => {});
+      }
+      closeLeftovers(list, tabCol);
+      noticeTogether(list.length);
+      if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
+      return true;
     },
   });
   /** A video opened in our player (extension.js resolveCustomEditor) or a tab of it appeared: part of a burst? */
   const noteOpen = (uri, o) => {
-    if (!uri || !FS_SCHEMES.has(uri.scheme) || !VIDEO_EXT.test(uri.path) || addMode.active || !openTogether()) return;
+    if (!uri || !FS_SCHEMES.has(uri.scheme) || !VIDEO_EXT.test(uri.path) || addMode.active || !openTogether()) return false;
     burst.add(uri.toString(), uri, o);
+    return true;
+  };
+  /**
+   * Called by the player after `noteOpen`. One macrotask is waited first, so that opens VS Code delivered together are
+   * all noted before looking. Settles with true once compare has taken the video (the player must never start), or
+   * false at once when it is the only one pending, when no burst takes it or after HOLD_MAX_MS (start the player).
+   */
+  const HOLD_MAX_MS = 10000;
+  const holdOpen = (uri) => {
+    if (!uri || !burst.waiting) return null; // not noted: nothing to wait for
+    const key = uri.toString();
+    return new Promise((done) => setImmediate(done)).then(() => {
+      const held = burst.wait(key);
+      if (!held) return false;
+      let timer;
+      const cap = new Promise((r) => { timer = setTimeout(() => r(false), HOLD_MAX_MS); });
+      return Promise.race([held, cap]).finally(() => clearTimeout(timer));
+    });
   };
   // Videos opened in an editor that is not the player (VS Code's own preview, a text tab): their new tab closes.
   if (vscode.window.tabGroups && vscode.window.tabGroups.onDidChangeTabs) {
@@ -864,7 +890,11 @@ function registerCompare(context, deps) {
       return target;
     }
     const list = target ? [target.uri, ...files] : files;
-    const session = await open(list, { from: target, t: Number.isFinite(t) ? t : target?.pos?.t });
+    // The toolbar's confirmed Start comparison is an explicit add-more intent; otherwise the selection decides.
+    const origin = confirmStart ? 'toolbar-start' : addToCompareOrigin({
+      selected: selection.length, videos: videos.length, isFile: videos.length === 1 && videos[0].toString() === String(selection[0]), count: list.length,
+    });
+    const session = await open(list, { from: target, t: Number.isFinite(t) ? t : target?.pos?.t, origin });
     if (session) closeLeftovers(list, session.panel.viewColumn);
     return session;
   };
@@ -900,7 +930,7 @@ function registerCompare(context, deps) {
       if (list.length > max) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
       if (list.length >= 2) { // opts: the test hook's in-place open
         const shown = list.slice(0, max);
-        const s = await open(shown, opts && opts.from ? opts : {});
+        const s = await open(shown, opts && (opts.from || opts.origin) ? opts : {});
         if (!(opts && opts.from)) closeLeftovers(shown, s && s.panel ? s.panel.viewColumn : undefined);
         return s;
       }
@@ -925,7 +955,7 @@ function registerCompare(context, deps) {
     }),
   );
   return {
-    claimOpen, noteOpen, toggleAddMode, stopAddMode,
+    claimOpen, noteOpen, holdOpen, toggleAddMode, stopAddMode,
     addFromPlayer: (player, t, confirmStart) => addToCompare(player.uri, undefined, { from: player, t, confirmStart }),
   };
 }
