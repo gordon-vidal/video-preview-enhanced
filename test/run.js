@@ -27,6 +27,7 @@ const TIME_SCALE = Number(process.env.VPE_TIME_SCALE) || (process.env.CI ? 3 : 1
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { spawn, spawnSync } = require('child_process');
 const { acquireVscodeLock } = require('./lib/vscode_lock');
 
@@ -224,15 +225,22 @@ async function waitPerfLock() {
 }
 
 async function runLayerScript(script, args, lock) {
-  const child = spawn(process.execPath, [script, ...args], { cwd: ROOT, stdio: 'inherit', windowsHide: true });
+  const gate = pathToFileURL(path.join(__dirname, 'lib', 'vscode_gate.mjs')).href;
+  const nodeArgs = lock ? ['--import', gate, script, ...args] : [script, ...args];
+  const stdio = lock ? ['inherit', 'inherit', 'inherit', 'ipc'] : 'inherit';
+  const child = spawn(process.execPath, nodeArgs, { cwd: ROOT, stdio, windowsHide: true });
   const done = new Promise((resolve) => {
-    child.once('error', (error) => { console.error(error); });
-    child.once('close', resolve);
+    child.once('error', (error) => { console.error(error); resolve(); });
+    child.once('exit', resolve);
   });
-  // The layer can outlive this runner if the runner is interrupted. Keep its PID on
-  // the lock as well so another checkout still waits for the active layer.
   try {
-    if (child.pid && lock) lock.track(child.pid);
+    if (lock && child.pid) {
+      lock.track(child.pid);
+      await new Promise((resolve, reject) => child.send('start', (err) => (err ? reject(err) : resolve())));
+    }
+  } catch (e) {
+    if (child.connected) child.disconnect();
+    throw e;
   } finally {
     await done;
   }
@@ -292,7 +300,7 @@ async function main() {
       const lock = listing ? null : await acquireVscodeLock(layer);
       let lok;
       try {
-        if (layer === 'vscode' && lock) await waitPerfLock();
+        if (layer === 'vscode' && !listing) await waitPerfLock();
         lok = await runLayerScript(script, a, lock);
       } finally {
         if (lock) lock.release();
