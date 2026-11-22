@@ -298,8 +298,11 @@
     const playing = player.isPlaying();
     const dur = player.meta.duration || 0;
     const step = scrubbing ? null : player.pendingStep?.();
-    const f = step ? player.frameAt(step.t) : player.currentFrame();
-    const t = step ? Math.max(0, Math.min(dur || Infinity, player.rel(step.t))) : player.currentTime();
+    // The slider still holds the drag target after the frame loop consumes pendingSeekFrame.
+    const dragFrame = scrubbing ? pendingSeekFrame ?? Number(ui.seek.value) : null;
+    const f = dragFrame ?? (step ? player.frameAt(step.t) : player.currentFrame());
+    const t = dragFrame !== null ? Math.min(dur || Infinity, dragFrame / (player.frameNumberRate?.() || player.fps || 30))
+      : step ? Math.max(0, Math.min(dur || Infinity, player.rel(step.t))) : player.currentTime();
     if (!scrubbing) ui.seek.value = String(f);
     const key = `${f}|${t.toFixed(3)}|${playing}|${Math.round(dur * 1000)}|${timeMode}`;
     const changed = key !== lastUi;
@@ -831,6 +834,8 @@
     scrubbing = true;
     player?.clearStepGoal?.();
     pendingSeekFrame = Number(ui.seek.value);
+    updateUi();
+    wakeLoop();
   });
   ui.seek.addEventListener('change', () => {
     scrubbing = false;
