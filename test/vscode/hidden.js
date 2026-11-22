@@ -117,7 +117,7 @@ class HiddenCode {
 
   /** Launches Code.exe on the hidden desktop; extra args (e.g. a file) go on its command line. */
   async start(extra = []) {
-    const args = ['--user-data-dir', this.user, '--extensions-dir', this.ext, '--skip-welcome', '--skip-release-notes',
+    const args = [...this.profileArgs(), '--skip-welcome', '--skip-release-notes',
       '--disable-workspace-trust', '--disable-telemetry', '--new-window'];
     if (this.devPath) args.push(`--extensionDevelopmentPath=${ROOT}`);
     args.push(this.work, ...extra);
@@ -138,15 +138,27 @@ class HiddenCode {
   }
 
   /** VS Code's CLI, also on the hidden desktop (waits for it; it forwards to the running instance). */
-  async cli(args) {
-    const job = this.launch(['--wait', this.desktop, this.envCli, this.code.exe, this.code.cli,
-      '--user-data-dir', this.user, '--extensions-dir', this.ext, ...args]);
+  cli(args) {
+    return this.forward(this.envCli, [this.code.cli, ...this.profileArgs(), ...args], 'VS Code CLI');
+  }
+
+  /** Simulates the OS forwarding a vscode:// link through a second, job-owned Code.exe. */
+  openUrl(url) {
+    return this.forward(this.envMain, [...this.profileArgs(), '--open-url', url], 'VS Code URL handler');
+  }
+
+  profileArgs() {
+    return ['--user-data-dir', this.user, '--extensions-dir', this.ext];
+  }
+
+  async forward(env, args, label) {
+    const job = this.launch(['--wait', this.desktop, env, this.code.exe, ...args]);
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; job.child.kill(); }, 60000);
     try {
       const { code, out, err } = await job.closed;
-      if (timedOut) throw new Error('VS Code CLI timed out');
-      if (code !== 0) throw new Error(`VS Code CLI exited ${code}: ${err || out}`);
+      if (timedOut) throw new Error(`${label} timed out`);
+      if (code !== 0) throw new Error(`${label} exited ${code}: ${err || out}`);
       return out;
     } finally {
       clearTimeout(timer);
@@ -250,19 +262,6 @@ function saveGpuLogs(vs, name, attempt) {
   } catch (e) { console.warn(`could not keep the logs: ${e.message}`); }
 }
 
-function run(cmd, args, { timeout = 60000 } = {}) {
-  return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let err = '';
-    const t = setTimeout(() => { p.kill(); reject(new Error(`${cmd} timed out`)); }, timeout);
-    p.stdout.on('data', (d) => { out += d; });
-    p.stderr.on('data', (d) => { err += d; });
-    p.on('error', (e) => { clearTimeout(t); reject(e); });
-    p.on('close', (code) => { clearTimeout(t); if (code === 0) resolve(out); else reject(new Error(`${cmd} ${args.slice(0, 3).join(' ')} exited ${code}: ${err || out}`)); });
-  });
-}
-
 /** Opens a clip as `code <file>` would (the profile associates .mp4/.webm with the extension's editor). */
 async function openClip(vs, file) {
   const from = vs.mark();
@@ -285,4 +284,4 @@ function updaterRunning() {
 }
 
 
-module.exports = { HiddenCode, findCode, findFfmpeg, pathWithoutFfmpeg, saveGpuLogs, updaterRunning, openClip, closeClip, run, NO_WEBGL, tightFirstFrame, STRIP, ROOT, MEDIA, OUT, sleep, fwd };
+module.exports = { HiddenCode, findCode, findFfmpeg, pathWithoutFfmpeg, saveGpuLogs, updaterRunning, openClip, closeClip, NO_WEBGL, tightFirstFrame, STRIP, ROOT, MEDIA, OUT, sleep, fwd };
