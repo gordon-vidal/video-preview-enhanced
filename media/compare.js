@@ -426,7 +426,7 @@
   function seekTile(i, frame) {
     if (!clock) return;
     if (i === st.clock) clock.seekFrame(frame);
-    else seekClock(Math.max(0, clockRelFor(i, (frame + 0.5) / fpsOf(tiles[i]))));
+    else seekClock(Math.max(0, clockRelFor(i, tiles[i].frameSeekTime(frame))));
   }
   /** Lockstep: the clock moves one frame, the others to their frame for it (syncPaused); shown once all are there. */
   function step(d) {

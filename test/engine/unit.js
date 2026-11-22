@@ -60,6 +60,14 @@ test('shown frame numbers tolerate rounded PTS without advancing for snapped rat
   fractional.setFrameRate(29.9);
   assert.strictEqual(fractional.fps, 30000 / 1001);
   assert.strictEqual(fractional.currentFrame(), 300);
+  // After the rates have drifted by multiple pictures, a step by label still advances.
+  fractional.meta.duration = 31;
+  fractional.setFrameRate(29.9);
+  fractional.shownT = 900 / 29.9;
+  let target;
+  fractional.seekTime = (t) => { target = t; };
+  fractional.seekFrame(fractional.currentFrame() + 1);
+  assert.strictEqual(target, 901.5 / 29.9);
   assert.strictEqual(player({ shownT: 300.7 / 30, n: 400 }).currentFrame(), 300);
   assert.strictEqual(player({ shownT: 12 / 30, info: { video: { fps: 600 } } }).currentFrame(), 12);
 });
