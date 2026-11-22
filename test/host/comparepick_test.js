@@ -2,7 +2,7 @@
 // "Compare with…" quick pick (key D) and dropped videos: row order, recent list, drop parsing, and the commands.
 const assert = require('assert');
 const path = require('path');
-const { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare, RECENT_MAX } = require('../../src/comparepick');
+const { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare, compareTargets, RECENT_MAX } = require('../../src/comparepick');
 const { load } = require('./mock_vscode');
 const { setPickHook } = require('../../src/compare');
 const { make } = require('../media/make_cases_media');
@@ -37,6 +37,20 @@ assert.deepStrictEqual(choose(['a', 'b', 'b', 'c'], { player }), { target: playe
 assert.deepStrictEqual(choose(['a', 'c', 'c', 'd', 'e'], { player, compare }),
   { target: compare, append: true, files: ['c'], skipped: 2 });
 assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).files, [], 'duplicate tiles still take space');
+
+// ---- editor tab context menu: (uri, { groupId, editorIndex }) and selected tabs ----
+{
+  const isVideo = (u) => /\.(mp4|mkv|webm)$/i.test(u);
+  const tab = (uri, isSelected) => ({ isSelected, input: { uri } });
+  const info = { groupId: 0, editorIndex: 1 };
+  assert.deepStrictEqual(compareTargets('a.mp4', info, [{ tabs: [tab('a.mp4', false)] }], isVideo), ['a.mp4'], 'single tab');
+  assert.deepStrictEqual(compareTargets('a.mp4', info, undefined, isVideo), ['a.mp4'], 'no tab groups API');
+  const group = { tabs: [tab('a.mp4', true), tab('n.txt', true), tab('b.mkv', true), tab('x.mp4', false), tab('c.webm', true)] };
+  assert.deepStrictEqual(compareTargets('b.mkv', info, [{ tabs: [tab('z.mp4', true)] }, group], isVideo),
+    ['a.mp4', 'b.mkv', 'c.webm'], 'selected video tabs in tab order, non-video skipped');
+  assert.deepStrictEqual(compareTargets('x.mp4', info, [group], isVideo), ['x.mp4'], 'clicked tab outside the selection');
+  assert.deepStrictEqual(compareTargets('a.mp4', ['p.mp4', 'q.mp4'], [group], isVideo), ['p.mp4', 'q.mp4'], 'Explorer array wins');
+}
 
 // ---- the commands ----
 (async () => {

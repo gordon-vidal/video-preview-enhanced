@@ -54,6 +54,29 @@ function folderVideos(names) {
     .sort((a, b) => coll.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0));
 }
 
+/**
+ * What a Start / Add to Compare command acts on. Explorer passes (clicked, selectedArray); the editor tab menu passes
+ * (clicked, { groupId, editorIndex }), so the selection comes from the tab strip: when the clicked tab is one of
+ * several selected tabs of its group, all selected video tabs in tab order, otherwise just the clicked one.
+ * @param {*} uri clicked resource
+ * @param {*} second Explorer selection (array) or the tab menu's group info
+ * @param {{ tabs: { isSelected?: boolean, input?: { uri?: * } }[] }[]} groups vscode.window.tabGroups.all
+ * @param {(uri: *) => boolean} isVideo
+ * @param {(uri: *) => string} key identity of a resource
+ */
+function compareTargets(uri, second, groups, isVideo, key = String) {
+  if (Array.isArray(second) && second.length) return second;
+  const clicked = uri ? key(uri) : '';
+  for (const group of groups || []) {
+    const tabs = group.tabs || [];
+    const selected = tabs.filter((t) => t.isSelected && t.input && t.input.uri && isVideo(t.input.uri));
+    if (selected.length > 1 && selected.some((t) => key(t.input.uri) === clicked)) {
+      return selected.map((t) => t.input.uri);
+    }
+  }
+  return [uri];
+}
+
 /** Candidates go after the existing tiles, in selection order. Count overflow after removing duplicates. */
 function planAddToCompare({ videos, compare, player, max, key }) {
   const target = compare || player;
@@ -74,4 +97,4 @@ function planAddToCompare({ videos, compare, player, max, key }) {
   };
 }
 
-module.exports = { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare, VIDEO_EXT, RECENT_MAX };
+module.exports = { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare, compareTargets, VIDEO_EXT, RECENT_MAX };
