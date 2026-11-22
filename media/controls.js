@@ -205,9 +205,9 @@ const VpeControls = (() => {
   const ctrlName = /Mac/i.test((typeof navigator !== 'undefined' && navigator.platform) || '') ? 'Cmd' : 'Ctrl';
   function keyGroups(p) {
     if (p.compare) {
-      // Compare (media/compare.js): one bar for all videos; no subtitles, tools or A-B loop.
+      // Compare (media/compare.js): one bar for all videos.
       return [
-        { title: 'Playback', rows: [['Play / pause (all)', 'Space', 'K'], ['Click a video', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R']] },
+        { title: 'Playback', rows: [['Play / pause (all)', 'Space', 'K'], ['Click a video', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A-B loop start / end', 'A', 'B']] },
         { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End']] },
         { title: 'Frames', rows: [['Previous / next frame (all videos)', ',', '.'], ['Copy view', `${ctrlName}+C`], ['Time / timecode / frames', 'click the time']] },
         { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M']] },
@@ -305,7 +305,7 @@ const VpeControls = (() => {
       grid.setAttribute('role', 'group');
       grid.setAttribute('aria-label', 'Tools');
       for (const t of s.tools) {
-        const b = btn(`tool${t.on ? ' on' : ''}`, null, () => { if (!t.keepOpen) close(false); t.run(); }, { aria: { 'aria-label': t.label, ...(t.key && !t.note ? { 'aria-keyshortcuts': t.key.replace('Ctrl', 'Control') } : {}) } });
+        const b = btn(`tool${t.on ? ' on' : ''}`, null, () => { if (!t.keepOpen) close(false); t.run(); }, { aria: { 'aria-label': t.ariaLabel || t.label, ...(t.key && !t.note ? { 'aria-keyshortcuts': t.key.replace('Ctrl', 'Control') } : {}) } });
         b.dataset.tool = t.label;
         const k = el('span', 'tkey', t.note || t.key || '·');
         k.setAttribute('aria-hidden', 'true');

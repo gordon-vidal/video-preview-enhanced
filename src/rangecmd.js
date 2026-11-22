@@ -11,6 +11,10 @@ function frameFileName(base, frame1) {
   return `${base}_f${String(frame1).padStart(6, '0')}.png`;
 }
 
+function clipFileName(base, ext, letter) {
+  return `${letter ? letter + '_' : ''}${base}_A-B${ext}`;
+}
+
 /** Seconds for a command line: up to 4 decimals, no trailing zeros. */
 const secs = (t) => String(Math.round(Math.max(0, t) * 1e4) / 1e4);
 
@@ -81,4 +85,4 @@ function rangeProblem(r) {
   return null;
 }
 
-module.exports = { frameFileName, ffmpegRange, rangeProblem, quote, shellKind, MAX_FRAMES, CONFIRM_FRAMES };
+module.exports = { frameFileName, clipFileName, ffmpegRange, rangeProblem, quote, shellKind, MAX_FRAMES, CONFIRM_FRAMES };

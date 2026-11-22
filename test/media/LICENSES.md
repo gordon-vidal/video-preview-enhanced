@@ -112,6 +112,11 @@ missing ones on demand). Groups: `s_*` (3 s step/seek clips, one per decoder pat
 `neigh/` (three 1 s clips), `cmp/` (compare metrics), `fmt/` (1 s clips of many codecs and containers),
 `bitmapsubs/` (PGS, DVD, DVB picture subtitles), `hdr/` (PQ / HLG test patches).
 
+
+The A-B export and edit-list regression tests generate temporary fixtures with FFmpeg's `testsrc2`
+and `sine` sources and handwritten subtitle cues. These fixtures contain no third-party media and
+are covered by this repository's MIT licence.
+
 ## Git LFS
 
 The test videos under `test/media/` (86 files, about 63 MB) are stored with Git LFS

@@ -463,12 +463,21 @@
   }
   function setAB(which) {
     if (!player) return;
-    ab.set(which, player.currentTime(), player.currentFrame());
+    ab.set(which, player.currentTime(), player.currentFrame(), abTime(), !!player.shownFrame?.nativeTimestamp);
     abChanged();
   }
   function clearAB() { ab.clear(); abChanged(); }
+  // A clip uses the picture's timestamp even when the playback clock is between pictures.
+  function abTime() {
+    return player.shownT != null ? player.rel(player.shownT) : player.currentTime();
+  }
+  function resetAB(which) {
+    if (!player) return;
+    ab.reset(which, player.currentTime(), player.currentFrame(), abTime(), !!player.shownFrame?.nativeTimestamp);
+    abChanged();
+  }
   /** The settings panel's A-B row: start, then end, then off. */
-  function cycleAB() { if (!player) return; ab.cycle(player.currentTime(), player.currentFrame()); abChanged(); }
+  function cycleAB() { if (!player) return; ab.cycle(player.currentTime(), player.currentFrame(), abTime(), !!player.shownFrame?.nativeTimestamp); abChanged(); }
   function abLabel() { return ab.label(fmtClock); }
   function drawAB() {
     const m = ab.marks(player && player.meta.duration);
@@ -650,6 +659,11 @@
     if (!player) return null;
     return ab.exportRange(player.fps || (player.meta && player.meta.fps) || 0, player.n || 0);
   }
+  function sendRange(type, promptInHost = false) {
+    const range = type === 'clipRange' ? ab.presentationRange() : abRange();
+    if (!range && !promptInHost) { toast('Set an A-B loop first (A, B)'); return; }
+    vscode.postMessage({ type, range });
+  }
   /**
    * Shows frame k (0-based) paused; resolves with the index of the frame on the canvas once the
    * seek settles (VFR or gapped video can land on a neighbour: the host names files from it), or null.
@@ -695,7 +709,7 @@
       }
     });
   }
-  // Two buttons in the details overlay (I), kept there when the details are rewritten.
+  // Buttons in the details overlay (I), kept there when the details are rewritten.
   const exportBtns = document.createElement('span');
   exportBtns.className = 'exportBtns';
   const mkBtn = (text, then) => {
@@ -704,14 +718,13 @@
     b.textContent = text;
     b.addEventListener('click', (e) => {
       e.stopPropagation();
-      const range = abRange();
-      if (!range) { toast('Set an A-B loop first (A, B)'); return; }
-      vscode.postMessage({ type: then, range });
+      sendRange(then);
     });
     exportBtns.appendChild(b);
   };
   mkBtn('Export frames A–B…', 'exportRange');
   if (!cfg.url) mkBtn('Copy ffmpeg command for A–B', 'ffmpegRange'); // cuts a file: not for URLs
+  if (!cfg.url && !cfg.sequence) mkBtn('Export A–B Clip…', 'clipRange');
   const keepExportBtns = () => { if (exportBtns.parentElement !== ui.info) ui.info.append('\n', exportBtns); };
   new MutationObserver(keepExportBtns).observe(ui.info, { childList: true });
   keepExportBtns();
@@ -935,11 +948,6 @@
   // The tools run through their keys, so each has one code path. One player layout: the tools are
   // always available (the old simple / advanced switch, videoPreviewEnhanced.advancedMode, is gone).
   const press = (key, mods = {}) => document.dispatchEvent(new KeyboardEvent('keydown', { key, ...mods }));
-  const sendRange = (type) => {
-    const range = abRange();
-    if (!range) { toast('Set an A-B loop first (A, B)'); return; }
-    vscode.postMessage({ type, range });
-  };
   const TOOLS = [
     // Compare needs a second file next to this one: not offered for a URL (Open Video URL…).
     ...(cfg.url ? [] : [{ label: 'Compare', key: 'Shift+D', run: () => addMode() }]),
@@ -948,6 +956,7 @@
     { label: 'Stats', key: 'Shift+I', run: () => press('I', { shiftKey: true }) },
     { label: 'Codec X-ray', key: 'Shift+X', run: () => press('X', { shiftKey: true }) },
     { label: 'Export A-B', key: 'A, B', run: () => sendRange('exportRange') },
+    ...(!cfg.url && !cfg.sequence ? [{ label: 'Export A–B Clip…', run: () => sendRange('clipRange') }] : []),
   ];
   // Older names (test hooks and the earlier Tools menu) for the same tools.
   const MORE_TOOLS = {
@@ -1182,7 +1191,7 @@
     stepBack: () => stepButton(-1), stepFwd: () => stepButton(1), keys: () => controls.openSheet(ui.cog), cog: () => controls.show('main', ui.cog),
     xray: () => press('X', { shiftKey: true }),
     // From the menu "Set" always sets (at this moment); the A / B keys toggle.
-    setA: () => { if (player) { ab.reset('a', player.currentTime(), player.currentFrame()); abChanged(); } }, setB: () => { if (player) { ab.reset('b', player.currentTime(), player.currentFrame()); abChanged(); } },
+    setA: () => resetAB('a'), setB: () => resetAB('b'),
     clearAB: () => clearAB(),
     inspector: () => { exactTool(); press('x'); }, scopes: () => { exactTool(); scopes.cycle(); }, stats: () => press('I', { shiftKey: true }),
   };
@@ -1288,7 +1297,9 @@
       case 'menu': if (MENU_ACTIONS[m.action]) { MENU_ACTIONS[m.action](m); updateMenuContext(); } break;
       case 'ffmpegState': ffmpegState = { installed: !!m.installed, offer: !!m.offer, mb: Number(m.mb) || 0 }; if (player) player.ffmpeg = ffmpegState; break;
       case 'goto': insp.goToLink(m); break;
-      case 'abQuery': vscode.postMessage({ type: m.then === 'ffmpeg' ? 'ffmpegRange' : 'exportRange', range: abRange() }); break;
+      case 'abQuery':
+        sendRange(m.then === 'clip' ? 'clipRange' : m.then === 'ffmpeg' ? 'ffmpegRange' : 'exportRange', true);
+        break;
       case 'exportGrab': exportGrab(m.id, m.frame); break;
       case 'exportEnd': break;
       case 'subs': try { subs.onSubs(m); } catch (err) { log(`subtitles failed: ${err && err.stack || err}`); } break;

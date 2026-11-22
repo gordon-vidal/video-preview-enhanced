@@ -57,6 +57,13 @@ module.exports = [
     steps: [{ case: 'subtitles' }],
   },
   {
+    name: 'clip-export',
+    journey: 'Lossless A–B clip export in the player and in an offset Compare with an ineligible tile',
+    sources: ['src/clipexport.js', 'src/clipmovie.js', 'src/cliprange.js', 'src/rangecmd.js',
+      'media/comparerange.js', ...PLAYER, ...COMPARE, ...HOST],
+    steps: [{ case: 'clip_export' }],
+  },
+  {
     name: 'ui',
     journey: 'The bar and panels: accessibility, keys, panels, speed, time formats, jump sizes (panel and settings), About this video, the context menu',
     sources: [...PLAYER, 'src/ctxmenu.js', 'src/extension.js', 'media/scopes.js', 'media/inspect.js', 'package.json'],

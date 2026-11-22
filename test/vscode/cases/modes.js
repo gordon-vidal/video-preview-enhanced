@@ -49,7 +49,7 @@ module.exports = {
     const bar = flags(r.bar);
     for (const k of ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(bar[k] === '1', `${k} is not visible (${r.bar})`);
     ok(bar.tracks === '0', `CC is visible without subtitle tracks (${r.bar})`);
-    ok(Number(r.tools) === 6, `${r.tools} tools in the grid`);
+    ok(Number(r.tools) === 7, `${r.tools} tools in the grid`);
 
     // Tool keys work without any mode: W opens the scopes, I the file facts.
     ok = t('layout/tool-keys');

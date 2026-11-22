@@ -66,6 +66,26 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 
 **ffmpeg command for A–B.** **Copy ffmpeg Command for A–B** copies a command line for the same range: an exact cut that re-encodes, or a fast `-c copy` cut. The fast one starts at the keyframe at or before A, so it can begin a little early.
 
+**Export an A–B clip.** Mark the first and last pictures with **A** and **B**, then choose **Export A–B Clip…**
+from the Command Palette, the details overlay (`I` → **Full technical details**) or **Settings → Tools**. Pick a folder for
+`<video>_A-B.<ext>`. The export copies the original video, compressed audio and embedded subtitle payloads. PCM audio is
+trimmed sample by sample in its original format. The export requires native ffmpeg and ffprobe on the host
+that has the video. MP4 and MOV use edit lists to show A through B, inclusive.
+Other files use MP4 when their streams can be copied into it. If an exact clip cannot be made, the player can
+offer a same-container keyframe cut or let you omit audio or subtitles. Review any early start or shifted end
+before saving a keyframe cut. Use an edit-list-aware player to view exact clips. The file can still contain
+compressed pictures outside the visible interval when decoding the selected pictures requires them.
+
+For exact clip export, mark A and B with a built-in playback decoder. Native playback uses estimated frame
+times, which can differ from source timestamps on variable-frame-rate video. Files are published to folders
+that support hard links.
+
+**Export Compare clips.** **A** and **B** mark a shared loop on the Compare clock. Run **Export A–B Clips…**
+from the palette or **Settings → Tools** to save one clip per tile, named `<letter>_<video>_A-B.<ext>`.
+Export applies each tile's offset and reports when snapping to a source frame changes alignment. If some tiles
+cannot be exported exactly, Compare lists them and asks before saving the remaining clips. Both exports report
+their results and preserve existing files in the chosen folder.
+
 **File details** (`I`). Container, streams, codecs and which decoder plays the file.
 
 **Compare / play together (up to 8 videos by default).** Check an encoder, a shader, a renderer or a model against a reference, frame by frame. For example, the expected and actual output of a failing test, or four camera angles of one take.

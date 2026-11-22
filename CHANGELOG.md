@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- New: **Export A–B Clip…** saves a lossless video excerpt with native ffmpeg. Compare shares an **A** / **B** loop and can save one clip per tile with its offset applied. Set marks during built-in playback to export exact clips.
+- Fixed: WebCodecs keeps visible frames and hides decode preroll when MP4 edit segments share timestamps.
 - Fixed: Compare and the single player agree on frame numbers for rounded timestamps and rates close to standard rates.
 - Fixed: the Pixel Inspector reads the pixel under the pointer at 100% on high-DPI displays.
 - Fixed: detect older installs in custom extensions directories and skip the warning in extension development sessions.

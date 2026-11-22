@@ -41,6 +41,29 @@ test('B before A swaps the ends (times and frames)', () => {
   assert.deepStrictEqual(ab.exportRange(30, 120), { fa: 30, fb: 90, fps: 30, n: 120, a: 1, b: 3 });
 });
 
+test('clip export records the shown PTS independently of the playback clock', () => {
+  const ab = AB.create();
+  ab.set('a', 2.1, 50, 2.02);
+  ab.set('b', 1.4, 34, 1.37);
+  assert.deepStrictEqual(ab.presentationRange(), { a: 1.37, b: 2.02, early: 0 });
+  assert.strictEqual(ab.wrapTarget(2.11, true), 1.4);
+  ab.reset('b', 1.4, 34, 1.37);
+  assert.deepStrictEqual(ab.presentationRange(), { a: 1.37, b: 1.37, early: 0 });
+  ab.clear();
+  assert.strictEqual(ab.presentationRange(), null);
+});
+
+test('native frame labels survive swapped markers and clear when replaced', () => {
+  const ab = AB.create();
+  ab.set('a', 2, 50, 2, true);
+  ab.set('b', 1, 25, 1);
+  assert.strictEqual(ab.aNative, false);
+  assert.strictEqual(ab.bNative, true);
+  assert.deepStrictEqual(ab.presentationRange(), { a: 1, b: 2, early: 0, native: true });
+  ab.reset('b', 2, 50, 2);
+  assert.deepStrictEqual(ab.presentationRange(), { a: 1, b: 2, early: 0 });
+});
+
 test('wrap: only while playing, at or after B, to A (or the start without A)', () => {
   const ab = AB.create();
   assert.strictEqual(ab.wrapTarget(10, true), null);
