@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixed: Compare reports the correct frame number for tiles with rounded container timestamps.
+
+- Fixed: the Pixel Inspector reads the pixel under the pointer at 100% on high-DPI displays.
+
+- Fixed: running the extension from a development checkout no longer warns about other worktrees as installed versions.
+
 - New: a **Compare** button in the player's bar. It asks before starting Compare with the video; with a Compare open it reads **Add to Compare** and adds the video directly.
 - New: a **Stop** button in Compare's Add Mode hint.
 - Changed: the Explorer menu and player title show **Start Compare** or **Add to Compare** based on whether a Compare is open.

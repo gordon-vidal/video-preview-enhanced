@@ -9,6 +9,7 @@ const { spawn, spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..');
 const MEDIA = path.join(ROOT, 'test', 'media');
 const LAUNCHER = path.join(__dirname, 'hidden_launch.py');
+const JOB = path.join(__dirname, '..', 'lib', 'windows_job.py');
 const OUT = path.join(__dirname, 'out');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fwd = (p) => p.split('\\').join('/');
@@ -90,6 +91,28 @@ class HiddenCode {
     this.waiters = new Set();
     this.pos = 0;
     this.pid = 0;
+    this.jobs = new Set();
+    this.stopping = false;
+    this.stopped = false;
+  }
+
+  /** The wrapper's Windows job also owns descendants whose original parent has exited. */
+  launch(args, onOutput = () => {}) {
+    if (this.stopping || this.stopped) throw new Error('VS Code profile is closing');
+    const child = spawn('python', ['-I', JOB, '--watch-stdin', 'python', '-I', LAUNCHER, ...args],
+      { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const job = { child };
+    this.jobs.add(job);
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => { out += d; onOutput(out); });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('error', (e) => { err = e.message; });
+    job.closed = new Promise((resolve) => child.once('close', (code) => {
+      this.jobs.delete(job);
+      resolve({ code, out, err });
+    }));
+    return job;
   }
 
   /** Launches Code.exe on the hidden desktop; extra args (e.g. a file) go on its command line. */
@@ -98,17 +121,36 @@ class HiddenCode {
       '--disable-workspace-trust', '--disable-telemetry', '--new-window'];
     if (this.devPath) args.push(`--extensionDevelopmentPath=${ROOT}`);
     args.push(this.work, ...extra);
-    const out = await run('python', ['-I', LAUNCHER, this.desktop, this.envMain, this.code.exe, ...args]);
-    this.pid = Number(out.trim().split(/\s+/).pop());
-    if (!this.pid) throw new Error(`hidden launch failed: ${out}`);
+    this.pid = await new Promise((resolve, reject) => {
+      const job = this.launch(['--wait-pid', this.desktop, this.envMain, this.code.exe, ...args], (out) => {
+        const match = /^(\d+)\r?\n/.exec(out);
+        if (match) { clearTimeout(timer); resolve(Number(match[1])); }
+      });
+      const timer = setTimeout(() => { job.child.kill(); reject(new Error('hidden VS Code launch timed out')); }, 60000);
+      job.closed.then(({ code, out, err }) => {
+        clearTimeout(timer);
+        reject(new Error(`hidden VS Code exited ${code}: ${err || out}`));
+      });
+    });
+    if (this.stopping || this.stopped) throw new Error('VS Code profile is closing');
     this.tail = setInterval(() => this.readLog(), 150);
     return this.pid;
   }
 
   /** VS Code's CLI, also on the hidden desktop (waits for it; it forwards to the running instance). */
-  cli(args) {
-    return run('python', ['-I', LAUNCHER, '--wait', this.desktop, this.envCli, this.code.exe, this.code.cli,
+  async cli(args) {
+    const job = this.launch(['--wait', this.desktop, this.envCli, this.code.exe, this.code.cli,
       '--user-data-dir', this.user, '--extensions-dir', this.ext, ...args]);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; job.child.kill(); }, 60000);
+    try {
+      const { code, out, err } = await job.closed;
+      if (timedOut) throw new Error('VS Code CLI timed out');
+      if (code !== 0) throw new Error(`VS Code CLI exited ${code}: ${err || out}`);
+      return out;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** A line for the extension's test hook (debug action for players, or an allowed command). */
@@ -116,14 +158,14 @@ class HiddenCode {
 
   readLog() {
     let buf;
+    let fd;
     try {
-      const fd = fs.openSync(this.log, 'r');
+      fd = fs.openSync(this.log, 'r');
       const size = fs.fstatSync(fd).size;
-      if (size <= this.pos) { fs.closeSync(fd); return; }
+      if (size <= this.pos) return;
       buf = Buffer.alloc(size - this.pos);
       fs.readSync(fd, buf, 0, buf.length, this.pos);
-      fs.closeSync(fd);
-    } catch { return; }
+    } catch { return; } finally { if (fd !== undefined) fs.closeSync(fd); }
     const text = buf.toString('utf8');
     const end = text.lastIndexOf('\n');
     if (end < 0) return;
@@ -164,22 +206,23 @@ class HiddenCode {
 
   mark() { this.readLog(); return this.lines.length; }
 
-  /** Ends VS Code (process tree, and anything else still using this profile); the profile stays. */
+  /** Ends VS Code and every launcher for this profile before removing it or starting again. */
   async kill() {
+    this.stopping = true;
     clearInterval(this.tail);
-    if (this.pid) spawnSync('taskkill', ['/PID', String(this.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-    for (const pid of codePidsUsing(this.dir)) spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    const jobs = [...this.jobs];
+    for (const { child } of jobs) child.kill();
+    await Promise.all(jobs.map((job) => job.closed));
     this.pid = 0;
-    await sleep(1000);
+    this.stopping = false;
   }
 
   async stop() {
+    this.stopped = true;
     await this.kill();
     if (this.keep) { console.log(`kept profile ${this.dir}`); return; }
-    for (let i = 0; i < 20; i++) {
-      try { fs.rmSync(this.dir, { recursive: true, force: true }); return; } catch { await sleep(500); }
-    }
-    console.warn(`could not delete ${this.dir}`);
+    // Job close initiates termination; Chromium's file handles can take a moment to drain.
+    await fs.promises.rm(this.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
@@ -205,13 +248,6 @@ function saveGpuLogs(vs, name, attempt) {
     if (fs.existsSync(logs)) fs.cpSync(logs, path.join(dest, 'logs'), { recursive: true });
     console.log(`  VS Code logs of the instance without WebGL2: ${dest}`);
   } catch (e) { console.warn(`could not keep the logs: ${e.message}`); }
-}
-
-function codePidsUsing(dir) {
-  const needle = path.basename(dir).replace(/'/g, "''");
-  const ps = `Get-CimInstance Win32_Process -Filter "Name='Code.exe' or Name='python.exe'" | Where-Object { $_.CommandLine -like '*${needle}*' } | ForEach-Object { $_.ProcessId }`;
-  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', windowsHide: true });
-  return (r.stdout || '').split(/\s+/).map(Number).filter((n) => n > 0 && n !== process.pid);
 }
 
 function run(cmd, args, { timeout = 60000 } = {}) {
@@ -249,4 +285,4 @@ function updaterRunning() {
 }
 
 
-module.exports = { HiddenCode, findCode, findFfmpeg, pathWithoutFfmpeg, codePidsUsing, saveGpuLogs, updaterRunning, openClip, closeClip, run, NO_WEBGL, tightFirstFrame, STRIP, ROOT, MEDIA, OUT, sleep, fwd };
+module.exports = { HiddenCode, findCode, findFfmpeg, pathWithoutFfmpeg, saveGpuLogs, updaterRunning, openClip, closeClip, run, NO_WEBGL, tightFirstFrame, STRIP, ROOT, MEDIA, OUT, sleep, fwd };

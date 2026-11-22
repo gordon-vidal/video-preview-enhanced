@@ -1,12 +1,13 @@
 """Start a program on a separate, invisible Windows desktop (same session, no admin).
 
-  python -I hidden_launch.py [--wait] <desktop-name> <env-json-file> <exe> [args...]
+  python -I hidden_launch.py [--wait | --wait-pid] <desktop-name> <env-json-file> <exe> [args...]
 
 Windows only, Python 3 standard library only (ctypes), no admin rights.
 
 The env file is a JSON object of variables to set on top of this process's
 environment (null removes one). Without --wait it prints the child's PID and
 returns; with --wait it waits for the child and exits with its exit code.
+With --wait-pid it prints the PID before waiting.
 
 Windows on that desktop never show on the user's screen, and the child and every
 process it starts stay on it (a child inherits its parent's desktop). Desktops are
@@ -59,7 +60,8 @@ kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
 def main():
     argv = sys.argv[1:]
-    wait = bool(argv) and argv[0] == '--wait'
+    report_pid = bool(argv) and argv[0] == '--wait-pid'
+    wait = report_pid or (bool(argv) and argv[0] == '--wait')
     if wait:
         argv = argv[1:]
     if len(argv) < 3:
@@ -87,6 +89,8 @@ def main():
                                  ctypes.create_unicode_buffer(block), None, ctypes.byref(si), ctypes.byref(pi))
     if not ok:
         raise SystemExit(f'CreateProcess failed: {ctypes.get_last_error()}')
+    if report_pid or not wait:
+        print(pi.dwProcessId, flush=True)
     code = 0
     if wait:
         kernel32.WaitForSingleObject(pi.hProcess, INFINITE)
@@ -94,7 +98,6 @@ def main():
         kernel32.GetExitCodeProcess(pi.hProcess, ctypes.byref(rc))
         code = rc.value
     else:
-        print(pi.dwProcessId, flush=True)
         # Keep our desktop handle until the child has opened its own (it has once it runs).
         kernel32.Sleep(3000)
     kernel32.CloseHandle(pi.hThread)

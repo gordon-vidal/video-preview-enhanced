@@ -394,20 +394,26 @@ module.exports = [{
       let s = null;
       for (let i = 0; i < 40; i++) {
         s = await ask();
-        if (s.controls.seek.valuetext) break;
+        if (s.ready && s.controls.seek.valuetext) break;
         await h.sleep(1000);
       }
       const c = s.controls;
+      ok(s.ready, 'compare did not finish opening its tiles');
       ok(s.unnamed.length === 0, `buttons without a name in words: ${JSON.stringify(s.unnamed)}`);
       ok(/ of .*, frame \d+$/.test(c.seek.valuetext || ''), `seek aria-valuetext ${JSON.stringify(c.seek.valuetext)}`);
       ok(/^(true|false)$/.test(c.mute.pressed || ''), `#mute: aria-pressed ${c.mute.pressed}`);
       ok(c.cmpBtn && c.cmpBtn.label === 'Compare' && c.cmpBtn.expanded === 'false', `cmpBtn ${JSON.stringify(c.cmpBtn)}`);
       ok(/^Play all|^Pause all/.test(c.play.label || ''), `play label ${c.play.label}`);
       const loop0 = s.loop;
+      const announcement = loop0 ? 'Loop off' : 'Loop on';
       vs.send({ compare: true, action: 'key', key: 'r' });
-      await h.sleep(400);
-      s = await ask();
-      ok(s.loop === !loop0 && s.live === (s.loop ? 'Loop on' : 'Loop off'), `R: loop ${loop0} -> ${s.loop}, live ${JSON.stringify(s.live)}`);
+      // The live region clears first and writes its announcement in a separate timer.
+      for (const end = Date.now() + 5000; Date.now() < end;) {
+        s = await ask();
+        if (s.loop === !loop0 && s.live === announcement) break;
+        await h.sleep(100);
+      }
+      ok(s.loop === !loop0 && s.live === announcement, `R: loop ${loop0} -> ${s.loop}, live ${JSON.stringify(s.live)}`);
       vs.send({ compare: true, action: 'key', key: 'r' });
       await h.sleep(300);
       s = await ask({ focus: '#cmpBtn', click: '#cmpBtn' });
