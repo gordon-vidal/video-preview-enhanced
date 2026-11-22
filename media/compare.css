@@ -56,10 +56,11 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 #cells.dense .nudge .offv { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .move {
-  position: absolute; right: 4px; bottom: 4px; z-index: 2; display: flex; gap: 2px;
+  /* Insets from media/compare.js layoutCells: the picture's corner, so a letterboxed tile's arrows stay on its picture. */
+  position: absolute; right: calc(var(--pic-r, 0px) + 4px); bottom: calc(var(--pic-b, 0px) + 4px); z-index: 2; display: flex; gap: 2px;
   color: var(--vscode-editorWidget-foreground, #e8e8e8); opacity: 0; pointer-events: none;
 }
-.move.L { left: 4px; right: auto; }
+.move.L { left: calc(var(--pic-l, 0px) + 4px); right: auto; }
 .cell:hover .move, .cell:focus-within .move { opacity: 1; pointer-events: auto; }
 .move button {
   display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px;

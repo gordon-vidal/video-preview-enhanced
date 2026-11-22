@@ -70,7 +70,12 @@ Drag over another tile to preview insertion into its slot. Release on a tile to 
 **Esc** or switching editor tabs ends the mode and cancels an unfinished drag. While in the mode, the tiles
 pause their pan, zoom, wheel stepping, divider and offset gestures.
 
-Hover or focus a tile to reveal its arrows in either mode. **Tab** reaches the enabled arrows and
+Hover or focus a tile to reveal its arrows in either mode. They sit in the bottom corner of the tile's own picture
+(bottom-right; in Split, the left picture's arrows bottom-left), not in the cell: a letterboxed picture leaves black
+bars above and below, and arrows in the cell's corner floated in those bars, away from the picture and its name pill.
+`layoutCells` sets `--pic-l`, `--pic-r` and `--pic-b` (how far the picture's edges lie inside the cell) on each cell and
+`.move` uses them; the layer-3 check `reorder/arrows-on-picture` (a 5-tile 3x2 grid) asserts the arrows' box lies inside
+the picture, within 8 px of its corner. **Tab** reaches the enabled arrows and
 **Enter** or **Space** activates them. Their accessible names are `Move <name> earlier` and
 `Move <name> later`. An arrow at an end of the order is disabled. Focus follows the moved tile.
 

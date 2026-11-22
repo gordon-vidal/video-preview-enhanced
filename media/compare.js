@@ -961,6 +961,16 @@
           left: `${box.x - c.x}px`, top: `${box.y - c.y}px`, width: `${box.w}px`, height: `${box.h}px`,
         });
       }
+      // The reorder arrows sit in the picture's bottom corners, not the cell's: a letterboxed picture leaves black
+      // bars between the two, and the arrows would float far from the tile they move. The insets are how far the
+      // picture's edges lie inside the cell (0 where it fills or overflows the cell).
+      if (!c.add) {
+        const pic = c.pic || c;
+        const inset = (v) => `${Math.max(0, Math.round(v * 10) / 10)}px`;
+        d.style.setProperty('--pic-l', inset(pic.x - c.x));
+        d.style.setProperty('--pic-r', inset(c.x + c.w - (pic.x + pic.w)));
+        d.style.setProperty('--pic-b', inset(c.y + c.h - (pic.y + pic.h)));
+      }
       if (c.split) placeDivider(d, c);
     });
     stage.classList.toggle('pannable', cells.some(overflows));
@@ -2390,6 +2400,8 @@
         })),
         pillRects: [...d.querySelectorAll('.pill')].map(rect),
         nudgeRects: [...d.querySelectorAll('.nudge')].map(rect),
+        moveRects: [...d.querySelectorAll('.move button')].map(rect),
+        picRect: (() => { const c = cells[[...cellsEl.children].indexOf(d)]; const o = cellsEl.getBoundingClientRect(); return c && c.pic ? [Math.round(o.left + c.pic.x), Math.round(o.top + c.pic.y), Math.round(c.pic.w), Math.round(c.pic.h)] : null; })(),
         pics: [...d.querySelectorAll('.ov')].map((o) => rect(o)), oor: !!d.querySelector('.oor:not([hidden])'),
       })),
       divider: (() => { const dv = cellsEl.querySelector('#divider'); return dv ? { rect: rect(dv), value: dv.getAttribute('aria-valuenow') } : null; })(),
