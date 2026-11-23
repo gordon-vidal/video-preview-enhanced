@@ -85,7 +85,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Opens `file` in a fresh LibavPlayer. Resolves when the first frame is on the (stub) canvas.
- * o: { ffmpeg, pool = true, loop = false, timeout = 30000, waitRate = true, log }
+ * o: { ffmpeg, pool = true, loop = false, timeout = 30000, waitRate = true, log, virtualClock = false }
+ * virtualClock: after the open, performance.now(), the AudioContext clock and player.tick() follow P.clock only
+ * (P.clock.advance(ms)), so playback runs on deterministic time instead of the wall clock (continuity_fuzz.js).
  */
 async function open(file, o = {}) {
   file = path.resolve(file);
@@ -125,7 +127,7 @@ async function open(file, o = {}) {
   P.player.setLoop && P.player.setLoop(!!o.loop);
   if ('loop' in P.player) P.player.loop = !!o.loop;
   const tick = setInterval(() => { try { P.player.tick(performance.now() / 1000); } catch (e) { logs.push(`tick error: ${e && e.stack || e}`); } if (P.onTick) P.onTick(); }, 8);
-  P.close = () => { if (P.closed) return; P.closed = true; clearInterval(tick); try { P.player.dispose(); } catch { /* gone */ } fs.closeSync(fd); };
+  P.close = () => { if (P.closed) return; P.closed = true; clearInterval(tick); if (P.clock) P.clock.release(); try { P.player.dispose(); } catch { /* gone */ } fs.closeSync(fd); };
 
   const fail = () => {
     const m = messages.find((x) => /could not|failed|damaged|incomplete|cannot|unsupported/i.test(x));
@@ -141,7 +143,7 @@ async function open(file, o = {}) {
       const f = fail();
       if (f) throw new Error(`${P.name}: ${what}: the player failed: ${f}`);
       if (Date.now() - start > timeout) return null;
-      await sleep(10);
+      if (P.clock) await P.clock.advance(16, 16); else await sleep(10); // virtual time: waiting = ticking
     }
   };
   const p = P.player;
@@ -168,6 +170,8 @@ async function open(file, o = {}) {
   Object.defineProperty(P, 'duration', { get: () => p.meta.duration });
   Object.defineProperty(P, 'vmode', { get: () => p.vmode });
 
+  if (o.virtualClock) P.clock = virtualClock(P, tick, logs, o.realMs);
+
   // ---- the user's actions (media/player.js) ----
   P.frame = () => p.currentFrame();
   P.time = () => p.currentTime();
@@ -179,6 +183,9 @@ async function open(file, o = {}) {
   P.play = () => p.play();
   P.pause = () => p.pause();
   P.playing = () => p.isPlaying();
+  // player.js: the mute button and the speed menu call setVolume(volume, muted) and setRate(rate).
+  P.setMuted = (m) => p.setVolume(p.volume === undefined ? 1 : p.volume, !!m);
+  P.setRate = (r) => p.setRate(r);
 
   /** ffmpeg's pictures of this file and their slots (frame numbers at the file's rate). */
   P.refs = async () => {
@@ -205,6 +212,34 @@ async function open(file, o = {}) {
   /** As expectFrame, but also waits `ms` first and requires the frame to stay (nothing pending moved it). */
   P.expectStays = async (k, what, ms = 300) => { await sleep(ms); return P.expectFrame(k, what); };
   return P;
+}
+
+/**
+ * Virtual time for one player: replaces performance.now (which the engine and SilentAudioContext read) with a
+ * clock that only P.clock.advance() moves, and takes over from the wall-clock tick interval. Starts where the
+ * real clock is, so values taken during the open stay valid. close() puts the real clock back.
+ */
+function virtualClock(P, wallTick, logs, realMs = 2) {
+  const realNow = performance.now.bind(performance);
+  let now = realNow();
+  clearInterval(wallTick);
+  performance.now = () => now;
+  const clock = {
+    now: () => now,
+    /** Moves virtual time by `ms` in `stepMs` steps; each step ticks the player, then lets worker messages in. */
+    async advance(ms, stepMs = 16) {
+      const end = now + ms;
+      while (now < end && !P.closed) {
+        now = Math.min(end, now + stepMs);
+        try { P.player.tick(now / 1000); } catch (e) { logs.push(`tick error: ${e && e.stack || e}`); }
+        if (P.onTick) P.onTick();
+        await new Promise((r) => setImmediate(r));
+        if (realMs) await sleep(realMs); // the decoder runs in real time: give it a slice per virtual step
+      }
+    },
+    release() { delete performance.now; },
+  };
+  return clock;
 }
 
 /**
