@@ -2033,6 +2033,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
 <script nonce="${nonce}" src="${uri('ctxmenu.js')}"></script>
 <script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
 <script nonce="${nonce}" src="${uri('abloop.js')}"></script>
+<script nonce="${nonce}" src="${uri('debug-probe.js')}"></script>
 <script nonce="${nonce}" src="${uri('player.js')}"></script>
 </body></html>`;
   }

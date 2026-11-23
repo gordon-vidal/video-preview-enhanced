@@ -164,6 +164,7 @@
       this.fps = meta.fps;
       this.duration = this.n / this.fps;
       this.t = 0;
+      this.gen = 0;
       this.playing = false;
       this.last = 0;
       /** @type {Map<number, ImageBitmap>} */ this.bitmaps = new Map();
@@ -188,7 +189,7 @@
     isPlaying() { return this.playing; }
 
     play() {
-      if (this.frameAt(this.t) >= this.n - 1) this.t = 0;
+      if (this.frameAt(this.t) >= this.n - 1) { this.gen++; this.t = 0; }
       this.playing = true;
       this.last = performance.now();
       this.syncAudio(true);
@@ -200,6 +201,7 @@
     seekTime(t) { this.seekFrame(Math.floor(t * this.fps)); }
     seekFrame(i) {
       i = Math.max(0, Math.min(this.n - 1, i));
+      this.gen++;
       this.t = (i + 0.5) / this.fps;
       this.syncAudio(true);
     }
@@ -228,7 +230,7 @@
       if (this.playing) {
         this.t += (Math.min(250, now - this.last) / 1000) * rate;
         if (this.t >= this.duration) {
-          if (loop) { this.t %= this.duration; this.syncAudio(true); }
+          if (loop) { this.gen++; this.t %= this.duration; this.syncAudio(true); }
           else { this.t = (this.n - 0.5) / this.fps; this.pause(); }
         }
         this.syncAudio(false);
@@ -414,6 +416,8 @@
   let loopOn = true;
   let quietSince = null;
   const loopStats = { frames: 0, rests: 0 }; // test hook (state)
+  /** @type {{ wake: () => void, dispose: () => void } | null} */
+  let debugProbe = null;
   function wakeLoop() {
     quietSince = null;
     if (pageClosed || loopOn) return;
@@ -478,8 +482,9 @@
     }
     if (changed || !restful()) quietSince = null;
     else if (quietSince === null) quietSince = now;
-    else if (now - quietSince > REST_AFTER_MS) { loopOn = false; loopStats.rests++; return; }
+    else if (now - quietSince > REST_AFTER_MS) { loopOn = false; loopStats.rests++; if (debugProbe) debugProbe.wake(); return; }
     requestAnimationFrame(frameLoop);
+    if (debugProbe) debugProbe.wake();
   }
   requestAnimationFrame(frameLoop);
 
@@ -1406,6 +1411,7 @@
   window.addEventListener('pagehide', () => {
     if (pageClosed) return;
     pageClosed = true;
+    if (debugProbe) { debugProbe.dispose(); debugProbe = null; }
     exportPage.abort();
     pendingWav = null;
     const gl = player?.gl?.gl;
@@ -1543,323 +1549,60 @@
     }
   });
 
-  if (cfg.debug) {
-    log(`webview env: crossOriginIsolated=${self.crossOriginIsolated} SharedArrayBuffer=${typeof SharedArrayBuffer} cores=${navigator.hardwareConcurrency}`);
-    setInterval(() => {
-      if (!player) return;
-      let s = `status frame=${player.currentFrame()} t=${player.currentTime().toFixed(2)} playing=${player.isPlaying()}`;
-      if (player instanceof engine.LibavPlayer) {
-        const q = player.queue;
-        const shownNow = player.shownCount || 0;
-        const fpsShown = ((shownNow - (player.__lastShown || 0)) / 2).toFixed(1);
-        player.__lastShown = shownNow;
-        // Native frames: received per second (and MB/s), CPU time of drawing one (upload + draw calls).
-        const g = player.gl;
-        if (player.cfg.native && g && !g.__timed) {
-          g.__timed = { ms: 0, n: 0 };
-          const draw = g.drawYuv.bind(g);
-          g.drawYuv = (f) => { const t0 = performance.now(); draw(f); g.__timed.ms += performance.now() - t0; g.__timed.n++; };
-        }
-        if (player.cfg.native && player.ndvStats) {
-          // Native frames received (by message or from the frame server), per second over the 2 s.
-          const d = player.ndvStats;
-          const tm = g && g.__timed;
-          s += ` ndv=${(d.n / 2).toFixed(1)}fps/${(d.bytes / 2e6).toFixed(0)}MB/s draw=${tm && tm.n ? (tm.ms / tm.n).toFixed(1) : '-'}ms`;
-          player.ndvStats = { n: 0, bytes: 0 };
-          if (tm) { tm.ms = 0; tm.n = 0; }
-        }
-        s += ` shownFps=${fpsShown} v=${player.vmode} a=${player.amode} fps=${player.fps} queued=${q.length}${q.length ? `(${player.rel(q[0].t).toFixed(2)}-${player.rel(q[q.length - 1].t).toFixed(2)})` : ''} audio=${player.audio.length} playingSources=${player.sources.size} eof=${player.eof} ac=${player.ac ? player.ac.state : '-'} clock=${player.audioMaster() ? 'audio' : 'timer'} drift=${player.audioMaster() && player.shownT !== null ? ((player.now() - player.shownT) * 1000).toFixed(0) + 'ms' : '-'} canvas=${canvas.width}x${canvas.height}`;
-      } else {
-        s += ` shown=${player.shown} cached=${player.bitmaps.size} canvas=${canvas.width}x${canvas.height}`;
-      }
-      log(s);
-    }, 2000);
-    // Test hook: the extension host can drive the player through debug messages.
-    window.addEventListener('message', (e) => {
-      const m = e.data;
-      if (m.type !== 'debug') return;
-      if (DEBUG_PROBES.has(m.action)) { debugProbe(m); return; } // also before a player exists (error messages)
-      if (!player) return;
-      if (m.action === 'remoteStreamRate' && player.remoteStream) player.debugRemoteRate = m.bytesPerSecond;
-      if (m.action === 'seek') player.seekTime(m.t);
-      if (m.action === 'step') step(m.d);
-      if (m.action === 'pause') player.pause();
-      // Tests: a picture area of this many CSS pixels (as a resized panel or fullscreen would give); 0 restores it.
-      if (m.action === 'stageSize') { stage.style.flex = m.h ? 'none' : ''; stage.style.width = m.w ? `${m.w}px` : ''; stage.style.height = m.h ? `${m.h}px` : ''; }
-      if (m.action === 'wheel') stage.dispatchEvent(new WheelEvent('wheel', { deltaY: Number(m.deltaY) || 0, ctrlKey: !!m.ctrl, clientX: stage.getBoundingClientRect().width / 2, clientY: stage.getBoundingClientRect().height / 2, bubbles: true, cancelable: true }));
-      if (m.action === 'drop') { // tests: a drop carrying these URI lists, as VS Code would deliver (Shift held)
-        const dt = new DataTransfer();
-        for (const [k, v] of Object.entries(m.data || {})) dt.setData(k, v);
-        document.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true, cancelable: true }));
-        log(`debug dropHint ${!dropHint.hidden}`);
-        document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
-      }
-      if (m.action === 'key') (m.target ? document.querySelector(m.target) : document).dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: !!m.shift, ctrlKey: !!m.ctrl, bubbles: true }));
-      if (m.action === 'ctxOpen') ctxMenu.open(m.x ?? 40, m.y ?? 40, !!m.keyboard);
-      if (m.action === 'stageClick') { const o = { bubbles: true, cancelable: true, button: 0 }; stage.dispatchEvent(new PointerEvent('pointerdown', o)); stage.dispatchEvent(new PointerEvent('pointerup', o)); stage.dispatchEvent(new MouseEvent('click', o)); }
-      if (m.action === 'ctxClose') ctxMenu.close(true);
-      if (m.action === 'ctxPick') { const b = document.querySelector(`#ctxmenu [data-id="${m.id}"]`); if (b) b.click(); else log(`ctxmenu item not found: ${m.id}`); }
-      if (m.action === 'play') player.play();
-      if (m.action === 'rate') setRate(m.r);
-      if (m.action === 'panel') { if (m.view) controls.show(m.view, m.view === 'info' ? ui.infoBtn : m.view === 'speed' ? ui.rate : ui.cog); else controls.closeAll(false); }
-      if (m.action === 'tool') { if (m.open) controls.show('main', ui.cog); else if (!runTool(m.label)) log(`tool not found: ${m.label}`); }
-      if (m.action === 'modesReport') {
-        setTimeout(() => {
-          const vis = (el) => !!el && el.offsetWidth > 0 && el.offsetHeight > 0 && getComputedStyle(el).visibility !== 'hidden';
-          const sc = document.getElementById('scopes');
-          const xr = document.getElementById('xray');
-          log(`modes report panel=${controls.view() || 'none'} sheet=${controls.sheetOpen()} tools=${TOOLS.length} ` +
-            `bar=${['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'picBtn', 'full'].map((k) => `${k}:${vis(ui[k] || $(k)) ? 1 : 0}`).join(',')} ` +
-            `scopes=${scopes.mode() || 'off'} scopesVisible=${vis(sc)} info=${controls.view() === 'info'} xray=${vis(xr)} zoomed=${stage.classList.contains('zoom')} picture=${insp.picture().mode} ` +
-            `frame=${player.currentFrame() + 1} t=${player.currentTime().toFixed(3)} playing=${player.isPlaying()}`);
-        }, m.delay || 300);
-      }
-      if (m.action === 'wcprobe') wcProbe().then((r) => log(`wcprobe ${JSON.stringify(r)}`), (e) => log(`wcprobe failed: ${e}`));
-      if (m.action === 'report') setTimeout(() => log(`report frame=${player.currentFrame() + 1} frames=${player.n || '-'} t=${player.currentTime().toFixed(3)} playing=${player.isPlaying()} rate=${player.rate} sources=${player.sources ? player.sources.size : '-'} master=${player.audioMaster ? player.audioMaster() : "-"} ac=${player.ac ? player.ac.state : "-"} amode=${player.amode}`), m.delay || 300);
+  const { columnLevels, targets75 } = VpeScopes;
+  const { debugPixels, probe: probeHdr } = VpeHdr;
+  // checkJs: start
+  if (cfg.debug && globalThis.VpeDebugProbe) {
+    debugProbe = globalThis.VpeDebugProbe.install({
+      log,
+      getPlayer: () => player,
+      isLibavPlayer: (p) => p instanceof engine.LibavPlayer,
+      stage,
+      canvas,
+      overlay,
+      message,
+      hint,
+      actionBtn,
+      dropHint,
+      compareBackdrop,
+      ui,
+      controls,
+      ctxMenu,
+      insp,
+      scopes: {
+        mode: () => scopes.mode(),
+        analysis: () => scopes.analysis(),
+        perf: () => scopes.perf(),
+        columnLevels,
+        targets75,
+      },
+      hdr: {
+        debugPixels,
+        probe: probeHdr,
+      },
+      ab: {
+        presentationRange: () => ab.presentationRange(),
+      },
+      frameText,
+      step,
+      setRate,
+      runTool,
+      getToolCount: () => TOOLS.length,
+      getState: () => ({
+        prefs,
+        volume,
+        muted,
+        loop,
+        streamQ,
+        loopStats,
+        loopBusy: loopBusy(),
+        picturePct: pictureState().pct,
+        seekDragging: seekDragger.dragging(),
+        volumeDragging: volumeDragger.dragging(),
+      }),
     });
   }
-
-  const DEBUG_PROBES = new Set(['state', 'thumb', 'pixels', 'scopesDump', 'dom', 'gotoText', 'track', 'click', 'a11y', 'scrub', 'hdrcaps', 'hdrpixels']);
-  /**
-   * Test hook (debug only, test/vscode/lib.js): what the page shows, one JSON line per request
-   * ("<action> {json}"), and synthetic input for what the debug keys cannot do (mouse, wheel, the
-   * go-to box, menu items). Reads state and dispatches the same DOM events a user would; changes nothing else.
-   */
-  function debugProbe(m) {
-    const byId = (id) => document.getElementById(id);
-    const rect = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; };
-    try {
-      switch (m.action) {
-        case 'state': {
-          const p = player;
-          const sp = document.querySelector('.subs-pic');
-          const vw = (() => { const r = canvas.getBoundingClientRect(); const k = Math.min(r.width / canvas.width, r.height / canvas.height); return [r.left + (r.width - canvas.width * k) / 2, r.top + (r.height - canvas.height * k) / 2, canvas.width * k, canvas.height * k]; })();
-          const s = {
-            id: m.id,
-            toast: ui.toast.hidden ? '' : ui.toast.textContent, toastRect: ui.toast.hidden ? null : rect(ui.toast),
-            status: p && p.status ? ((p.status() || {}).text || '') : '',
-            notice: byId('notice').hidden ? '' : byId('noticeText').textContent,
-            message: overlay.hidden ? '' : message.textContent, hint: overlay.hidden ? '' : hint.textContent,
-            action: overlay.hidden || actionBtn.hidden ? '' : actionBtn.textContent, seekDisabled: ui.seek.disabled,
-            frameText: p ? frameText(p.currentFrame(), p.n) : '', timeText: ui.time.textContent.replace(/\s+/g, ' ').trim(),
-            panel: (() => {
-              const pn = ui.panel;
-              if (pn.hidden) return null;
-              const text = (e) => (e.textContent || '').replace(/\s+/g, ' ').trim();
-              return {
-                view: controls.view(), label: pn.getAttribute('aria-label'), text: text(pn),
-                rows: [...pn.querySelectorAll('button')].map((b) => ({ label: b.getAttribute('aria-label') || text(b), pressed: b.getAttribute('aria-pressed'), checked: b.getAttribute('aria-checked') })),
-                facts: [...pn.querySelectorAll('.igrid dt')].map((dt) => [text(dt), text(/** @type {any} */ (dt.nextElementSibling))]),
-                sliderRect: pn.querySelector('#speedSlider') ? rect(pn.querySelector('#speedSlider')) : null,
-                slider: pn.querySelector('#speedSlider') ? [/** @type {any} */ (pn.querySelector('#speedSlider')).min, /** @type {any} */ (pn.querySelector('#speedSlider')).max] : null,
-              };
-            })(),
-            sheet: ui.sheet.hidden ? null : (ui.sheet.textContent || '').replace(/\s+/g, ' ').trim(),
-            bar: { rate: ui.rate.textContent, cc: ui.tracks.getAttribute('aria-label'), ccHidden: getComputedStyle(ui.tracks).display === 'none', cogExpanded: ui.cog.getAttribute('aria-expanded'), infoExpanded: ui.infoBtn.getAttribute('aria-expanded'), rateExpanded: ui.rate.getAttribute('aria-expanded'), ccExpanded: ui.tracks.getAttribute('aria-expanded') },
-            prefs, volume, drag: { seek: seekDragger.dragging(), volume: volumeDragger.dragging() }, volumeRect: rect(ui.volume),
-            canvas: [canvas.width, canvas.height], canvasHidden: canvas.hidden, canvasRect: rect(canvas), video: vw,
-            stageClass: stage.className, stageRect: rect(stage), picture: { ...insp.picture(), pct: pictureState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), btnTitle: ui.picBtn.title, need: insp.zoomedSize() }, imageRendering: canvas.style.imageRendering,
-            pxgrid: !!byId('pxgrid') && !byId('pxgrid').hidden, pxread: byId('pxread') && !byId('pxread').hidden ? byId('pxread').innerText : '',
-            goto: !!byId('goto') && !byId('goto').hidden, stats: byId('stats') && !byId('stats').hidden ? byId('stats').textContent : '',
-            infoShown: controls.view() === 'info', abRange: ab.presentationRange(), abMarks: { hidden: ui.abMarks.hidden, left: ui.abMarks.style.left, width: ui.abMarks.style.width },
-            subsText: byId('subs') && !byId('subs').hidden ? byId('subs').textContent : '', muted: ui.mute.classList.contains('on'),
-            dpr: globalThis.devicePixelRatio || 1, engine: !!(p && p.queue), loop: { ...loopStats, busy: loopBusy() }, ctxMenu: ctxMenu.snapshot(), viewport: { w: document.documentElement.clientWidth, h: document.documentElement.clientHeight }, playing: !!(player && player.isPlaying()),
-            seekRect: rect(ui.seek), quality: streamQ,
-            thumb: (() => { const b = byId('thumb'); const c = b && b.querySelector('canvas'); let sig = ''; if (c && c.width) { const u = c.toDataURL(); let x = 0; for (let i = 0; i < u.length; i += 7) x = (x * 31 + u.charCodeAt(i)) | 0; sig = `${u.length}:${x}`; } return { hidden: !b || b.hidden, w: c ? c.width : 0, sig, rect: b ? rect(b) : null }; })(),
-            tip: { hidden: ui.tip.hidden, rect: rect(ui.tip) },
-            strip: p && p.thumbStrip ? p.thumbStrip() : null, seekValue: Number(ui.seek.value), seekMax: Number(ui.seek.max),
-            tracksMenu: (() => { const m = ui.panel; const on = !m.hidden && (controls.view() === 'subs' || controls.view() === 'audio' || controls.view() === 'quality'); return { hidden: !on, items: on ? [...m.querySelectorAll('[role=radio], button.row:not(.head)')].map((x) => `${x.getAttribute('aria-checked') === 'true' ? '*' : ''}${(x.querySelector('.grow') || x).textContent.trim()}`) : [] }; })(),
-            xray: (() => { const x = byId('xray'); const lg = byId('xrayLegend'); const tp = byId('xrayTip'); return { shown: !!x && !x.hidden, legend: lg ? lg.textContent : '', tip: tp && !tp.hidden ? tp.textContent : '', ticks: byId('xrayChapters') ? byId('xrayChapters').children.length : -1 }; })(),
-          };
-          if (p) {
-            Object.assign(s, {
-              vmode: p.vmode, amode: p.amode, fps: p.fps, n: p.n, duration: p.meta && p.meta.duration, shownCount: p.shownCount || p.shown || 0, eof: p.eof,
-              audioMaster: p.audioMaster ? p.audioMaster() : null, ac: p.ac ? p.ac.state : null, sources: p.sources && p.sources.size !== undefined ? p.sources.size : null,
-              t: p.currentTime(), frame: p.currentFrame(), label: p.meta && p.meta.label, firstShown: !!p.firstShown, gen: p.gen, playing: p.isPlaying(), rate: p.rate,
-              hdr: p.gl ? p.gl.hdr : null, audioChunks: Array.isArray(p.audio) ? p.audio.length : null, audioChannels: Array.isArray(p.audio) && p.audio.length ? p.audio[0].buf.numberOfChannels : null,
-              audioSeconds: Array.isArray(p.audio) ? p.audio.reduce((x, a) => x + a.dur, 0) : null,
-              drift: p.audioMaster && p.audioMaster() && p.shownT !== null ? p.now() - p.shownT : null,
-              tracks: p.tracks ? p.tracks() : null,
-            });
-            if (p.gl && p.gl.gl && p.gl.prog) { try { s.tf = p.gl.gl.getUniform(p.gl.prog, p.gl.uTf); } catch { /* not WebGL */ } }
-          }
-          s.subpic = sp && !sp.hidden ? [...sp.querySelectorAll('canvas.subs-bitmap')].map((e) => {
-            const b = e.getBoundingClientRect();
-            const d = e.getContext('2d').getImageData(e.width >> 1, e.height >> 1, 1, 1).data;
-            return { box: [b.left, b.top, b.width, b.height], size: [e.width, e.height], mid: [...d] };
-          }) : [];
-          log(`state ${JSON.stringify(s)}`);
-          break;
-        }
-        case 'thumb': {
-          // The canvas as w x h luma, area-averaged in two steps (as ffmpeg's scale flags=area), base64.
-          const w = m.w || 64, h = m.h || 36;
-          if (!canvas.width || !canvas.height) { log(`thumb ${JSON.stringify({ id: m.id, error: 'no picture' })}`); break; }
-          const mid = document.createElement('canvas'); mid.width = w * 4; mid.height = h * 4;
-          const mc = mid.getContext('2d'); mc.imageSmoothingQuality = 'high'; mc.drawImage(canvas, 0, 0, mid.width, mid.height);
-          const c = document.createElement('canvas'); c.width = w; c.height = h;
-          const cx = c.getContext('2d', { willReadFrequently: true }); cx.imageSmoothingQuality = 'high'; cx.drawImage(mid, 0, 0, w, h);
-          const d = cx.getImageData(0, 0, w, h).data;
-          let bin = '';
-          for (let i = 0; i < w * h; i++) bin += String.fromCharCode(Math.round(0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]));
-          log(`thumb ${JSON.stringify({ id: m.id, frame: player ? player.currentFrame() : -1, w, h, y: btoa(bin) })}`);
-          break;
-        }
-        case 'pixels': {
-          const g = player && player.gl && player.gl.gl;
-          if (!g) { log(`pixels ${JSON.stringify({ id: m.id, error: 'no WebGL canvas' })}`); break; }
-          const H = g.drawingBufferHeight;
-          const rgb = (m.pts || []).map(([x, y]) => { const px = new Uint8Array(4); g.readPixels(x, H - 1 - y, 1, 1, g.RGBA, g.UNSIGNED_BYTE, px); return [px[0], px[1], px[2]]; });
-          log(`pixels ${JSON.stringify({ id: m.id, rgb })}`);
-          break;
-        }
-        case 'hdrpixels': VpeHdr.debugPixels(player, m.pts || []).then((r) => log(`hdrpixels ${JSON.stringify({ id: m.id, ...r })}`), (e) => log(`hdrpixels ${JSON.stringify({ id: m.id, error: String(e) })}`)); break;
-        case 'hdrcaps': VpeHdr.probe().then((r) => log(`hdrcaps ${JSON.stringify({ id: m.id, ...r })}`), (e) => log(`hdrcaps ${JSON.stringify({ id: m.id, error: String(e) })}`)); break;
-        case 'scopesDump': {
-          const an = scopes.analysis();
-          const out = { id: m.id, mode: scopes.mode() || 'off', hidden: byId('scopes').hidden, perf: scopes.perf() };
-          if (an) {
-            out.w = an.w; out.h = an.h; out.matrix = an.matrix;
-            const cols = Array.from({ length: 8 }, (_, i) => Math.floor((i + 0.5) * an.w / 8));
-            out.cols = cols;
-            if (an.wave) { let n = 0; for (const v of an.wave) n += v; out.waveN = n; out.wave = cols.map((c) => VpeScopes.columnLevels(an.wave, c, 0.5)); }
-            if (an.parade) out.parade = [0, 1, 2].map((ch) => cols.map((c) => VpeScopes.columnLevels(an.parade[ch], c, 0.5)));
-            if (an.vec) {
-              const near = (x0, y0, rad) => { let n = 0; for (let y = Math.max(0, Math.floor(y0 - rad)); y <= Math.min(255, Math.ceil(y0 + rad)); y++) for (let x = Math.max(0, Math.floor(x0 - rad)); x <= Math.min(255, Math.ceil(x0 + rad)); x++) if (Math.hypot(x - x0, y - y0) <= rad) n += an.vec[y * 256 + x]; return n; };
-              const total = an.w * an.h;
-              out.vec = { targets: VpeScopes.targets75(an.matrix).map((tg) => ({ name: tg.name, x: tg.x, y: tg.y, share: near(tg.x, tg.y, 6) / total })), centre: near(128, 128, 4) / total };
-            }
-          }
-          log(`scopesDump ${JSON.stringify(out)}`);
-          break;
-        }
-        case 'dom': { // a mouse / pointer / wheel event at client (x, y), or on the element with id `id`
-          const target = m.target === 'document' ? document : m.target ? byId(m.target) : document.elementFromPoint(m.x, m.y);
-          if (!target) { log(`dom ${JSON.stringify({ id: m.id, error: `no element at ${m.x},${m.y}` })}`); break; }
-          const init = { bubbles: true, cancelable: true, clientX: m.x, clientY: m.y, button: m.button || 0, ctrlKey: !!m.ctrl, deltaY: m.deltaY || 0, pointerId: 1, isPrimary: true };
-          const Ctor = /^wheel/.test(m.ev) ? WheelEvent : /^pointer/.test(m.ev) ? PointerEvent : MouseEvent;
-          target.dispatchEvent(new Ctor(m.ev, init));
-          break;
-        }
-        case 'scrub': { // the slider dragged to `frac` (what the browser does while the mouse is held): input; end: change + pointerup
-          const max = Number(ui.seek.max) || 0;
-          ui.seek.value = String(Math.round(Math.max(0, Math.min(1, m.frac)) * max));
-          ui.seek.dispatchEvent(new Event('input', { bubbles: true }));
-          if (m.end) {
-            ui.seek.dispatchEvent(new Event('change', { bubbles: true }));
-            const r = ui.seek.getBoundingClientRect();
-            document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: r.left + m.frac * r.width, clientY: m.off ? r.top - 100 : r.top + r.height / 2 }));
-          }
-          log(`scrub ${JSON.stringify({ id: m.id, value: Number(ui.seek.value) })}`);
-          break;
-        }
-        case 'gotoText': { // Ctrl+G, type, Enter
-          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', ctrlKey: true }));
-          const input = document.querySelector('#goto input');
-          if (!input) { log(`gotoText ${JSON.stringify({ id: m.id, error: 'no go-to box' })}`); break; }
-          input.value = m.text;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-          break;
-        }
-        case 'track': {
-          if (player && m.sub !== undefined && player.selectSub) Promise.resolve(player.selectSub(m.sub)).catch(() => {});
-          if (player && m.audio !== undefined && player.selectAudio) Promise.resolve(player.selectAudio(m.audio)).catch(() => {});
-          break;
-        }
-        case 'a11y': { // roles, names and states of the controls, the live region, focus (`focus`: a selector to focus first)
-          if (m.focus) { const f = document.querySelector(m.focus); if (f) /** @type {any} */ (f).focus(); }
-          const ATTRS = ['role', 'aria-label', 'aria-pressed', 'aria-expanded', 'aria-haspopup', 'aria-checked', 'aria-valuetext', 'aria-keyshortcuts', 'tabindex'];
-          const attrs = (e) => (e ? Object.fromEntries(ATTRS.filter((a) => e.hasAttribute(a)).map((a) => [a, e.getAttribute(a)])) : null);
-          const a = /** @type {any} */ (document.activeElement);
-          const menuInfo = (mm) => ({
-            hidden: mm.hidden, role: mm.getAttribute('role'), label: mm.getAttribute('aria-label'),
-            items: [...mm.querySelectorAll('button')].map((b) => ({ role: b.getAttribute('role'), label: b.getAttribute('aria-label') || b.textContent.trim(), checked: b.getAttribute('aria-checked'), tabindex: b.getAttribute('tabindex') })),
-            groups: [...mm.querySelectorAll('[role=group]')].map((g) => g.getAttribute('aria-label')),
-            separators: mm.querySelectorAll('[role=separator]').length,
-            // Children of a menu other than items, groups and separators (headings are aria-hidden).
-            stray: [...mm.querySelectorAll('*')].filter((x) => !x.closest('[aria-hidden=true]') && x.parentElement && (x.parentElement === mm || x.parentElement.getAttribute('role') === 'group')
-              && !/^(menuitem|menuitemradio|menuitemcheckbox|group|separator)$/.test(x.getAttribute('role') || '') && x.getAttribute('aria-hidden') !== 'true').map((x) => x.className || x.tagName),
-          });
-          // Buttons on the page with no accessible name in words (a symbol such as ▶ is not one); empty ones are unused placeholders.
-          const unnamed = [...document.querySelectorAll('button')].filter((b) => (b.textContent || b.getAttribute('aria-label')) && !/[A-Za-z]/.test(b.getAttribute('aria-label') || b.textContent || '')).map((b) => b.id || b.className || b.textContent);
-          const cs = a && a !== document.body ? getComputedStyle(a) : null;
-          let fv = false; try { fv = !!a && a.matches(':focus-visible'); } catch { /* old engine */ }
-          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'tracks', 'startCompareBtn', 'infoBtn', 'rate', 'cog', 'picBtn', 'full', 'noticeClose', 'canvas'];
-          log(`a11y ${JSON.stringify({
-            id: m.id,
-            controls: Object.fromEntries(ids.map((k) => [k, attrs(byId(k))])),
-            live: (() => { const l = byId('live'); return l ? { text: l.textContent, role: l.getAttribute('role'), polite: l.getAttribute('aria-live') } : null; })(),
-            active: a ? (a.id || (a.dataset && a.dataset.tool) || a.getAttribute('aria-label') || (a.textContent || '').trim().slice(0, 40) || a.tagName) : '',
-            activeRole: a ? a.getAttribute('role') || a.tagName.toLowerCase() : '',
-            focusVisible: fv, outline: cs ? `${cs.outlineStyle} ${cs.outlineWidth}` : '',
-            startCompare: { hidden: compareBackdrop.hidden },
-            panel: Object.assign(menuInfo(ui.panel), { view: controls.view(), radios: [...ui.panel.querySelectorAll('[role=radio], [role=switch]')].map((b) => ({ role: b.getAttribute('role'), checked: b.getAttribute('aria-checked') })) }),
-            sheet: { hidden: ui.sheet.hidden, dialog: (() => { const d = ui.sheet.querySelector('[role=dialog]'); return d ? { label: d.getAttribute('aria-label'), modal: d.getAttribute('aria-modal'), groups: [...d.querySelectorAll('[role=group]')].map((g) => g.getAttribute('aria-label')) } : null; })() },
-            unnamed, playing: player ? player.isPlaying() : null, muted, loop,
-          })}`);
-          break;
-        }
-        case 'click': { // the first element matching `sel` (whose text contains `text`, when given)
-          const e = [...document.querySelectorAll(m.sel)].find((x) => !m.text || (x.textContent || '').includes(m.text));
-          log(`click ${JSON.stringify({ id: m.id, found: !!e, disabled: !!(e && e.disabled) })}`);
-          if (e) e.click();
-          break;
-        }
-      }
-    } catch (e) { log(`${m.action} ${JSON.stringify({ id: m.id, error: String(e && e.stack || e) })}`); }
-  }
-
-  /** Test hook (debug only): WebCodecs support matrix in this webview, here and in a worker. */
-  async function wcProbe() {
-    const C = {
-      h264: ['avc1.640033', 3840, 2160], hevc8: ['hvc1.1.6.L153.B0', 3840, 2160], hevc10: ['hvc1.2.4.L153.B0', 3840, 2160],
-      vp8: ['vp8', 1920, 1080], vp9: ['vp09.00.51.08', 3840, 2160], vp9_10: ['vp09.02.51.10', 3840, 2160],
-      av1: ['av01.0.12M.08', 3840, 2160], av1_10: ['av01.0.12M.10', 3840, 2160],
-    };
-    // Sound: Y supported, - not, E the check threw (flac/vorbis are also asked with a description).
-    const A = { aac: 'mp4a.40.2', opus: 'opus', mp3: 'mp3', flac: 'flac', vorbis: 'vorbis', pcm: 'pcm-s16' };
-    async function run() {
-      const out = { VideoDecoder: typeof VideoDecoder, AudioDecoder: typeof AudioDecoder };
-      for (const [k, [codec, w, h]] of Object.entries(C)) {
-        let s = '';
-        for (const hw of ['prefer-hardware', 'no-preference', 'prefer-software']) {
-          try { s += (await VideoDecoder.isConfigSupported({ codec, codedWidth: w, codedHeight: h, hardwareAcceleration: /** @type {any} */ (hw) })).supported ? 'Y' : '-'; } catch (e) { s += 'E'; }
-        }
-        out[k] = s;
-      }
-      out.audio = {};
-      for (const [k, codec] of Object.entries(A)) {
-        let s = '';
-        for (const desc of [null, new Uint8Array(64)]) {
-          const c = { codec, sampleRate: 48000, numberOfChannels: 2 };
-          if (desc) c.description = desc;
-          try { s += (await AudioDecoder.isConfigSupported(c)).supported ? 'Y' : '-'; } catch (e) { s += 'E'; }
-        }
-        out.audio[k] = s;
-      }
-      return out;
-    }
-    const src = `const C=${JSON.stringify(C)};const A=${JSON.stringify(A)};${run.toString()}`;
-    const page = await run();
-    let worker = null;
-    try {
-      const url = URL.createObjectURL(new Blob([`${src};run().then((r)=>postMessage(r),(e)=>postMessage(String(e)));`], { type: 'text/javascript' }));
-      worker = await new Promise((res) => { const w = new Worker(url); w.onmessage = (e) => { res(e.data); w.terminate(); }; w.onerror = (e) => res(`worker error ${e.message}`); });
-    } catch (e) { worker = `no worker: ${e}`; }
-    // <video>/MSE (not used by the player; shows what the webview's media stack has).
-    const T = {
-      h264: 'video/mp4; codecs="avc1.640028"', hevc: 'video/mp4; codecs="hvc1.1.6.L120.90"', av1: 'video/mp4; codecs="av01.0.08M.08"',
-      vp8: 'video/webm; codecs="vp8"', vp9: 'video/webm; codecs="vp9"', aac: 'audio/mp4; codecs="mp4a.40.2"', opus: 'audio/webm; codecs="opus"',
-      mp3: 'audio/mpeg', flac: 'audio/flac', vorbis: 'audio/ogg; codecs="vorbis"',
-    };
-    const media = {};
-    const el = document.createElement('video');
-    for (const [k, t] of Object.entries(T)) {
-      media[k] = `${el.canPlayType(t) || '-'}/${typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(t) ? 'mse' : '-'}`;
-    }
-    return { ua: navigator.userAgent, isolated: self.crossOriginIsolated, sab: typeof SharedArrayBuffer, page, worker, media };
-  }
+  // checkJs: end
 
   // Start-up timeline (engine.js logs it with the first frame when debugging).
   (self.vpeMarks || (self.vpeMarks = {})).ready = Math.round(performance.timeOrigin + performance.now());

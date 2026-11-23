@@ -62,6 +62,7 @@ module.exports = [{
           // Near the target: no further than the wall time since the seek allows (correct under any load).
           const wall = (Date.now() - t0) / 1000;
           ok(s.t < 1.0 + wall + 0.3, `seek while playing went to ${s.t}, ${wall.toFixed(2)} s after asking for 1.0`);
+          await P.checkTelemetry(ok, `seek/${name} continuity`, { minSamples: 1 });
         });
 
         // Reuse the open s_h264.mp4 editor for edges and A-B loop instead of opening it three times.
@@ -118,6 +119,7 @@ module.exports = [{
             ok(lo > 1.0 - 0.1, `went before A: min ${lo.toFixed(3)} s`);
             P.key('a'); P.key('b');
             await P.waitState((x) => x.toast === 'A–B range cleared', { what: 'A–B range cleared toast' });
+            await P.checkTelemetry(ok, 'abloop/s_h264.mp4 continuity');
           });
         }
       } finally { if (P) await P.close(); }
@@ -135,6 +137,7 @@ module.exports = [{
         ok(before.vmode === 'webcodecs', `played to frame ${before.frame} in ${before.vmode}, expected WebCodecs`);
         P.pause();
         await P.waitState((s) => !s.playing, { what: 'paused' });
+        await P.checkTelemetry(ok, 'open-gop/h264 continuity');
         const from = vs.mark();
         P.seek(45.5 / first.fps);
         await vs.waitLog(/\[s_h264_opengop\.mkv\] webview: open-GOP H\.264: no IDR/, { from, timeout: 10000 });
@@ -185,6 +188,7 @@ module.exports = [{
         P.play();
         await P.waitState((x) => !x.playing && x.t > 1, { timeout: 15000, what: 'the end' });
         await P.expectFrame(59, 'last frame at the end');
+        await P.checkTelemetry(ok, 'eof-flush/vp8_2s.webm continuity');
       } finally { await P.close(); }
     });
     return R.out;

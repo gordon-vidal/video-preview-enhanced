@@ -402,6 +402,7 @@ module.exports = [{
       // ⓘ is information only: no link to a second overlay, no actions.
       ok(!s.panel.rows.some((r) => /Full technical details|Open in system player/.test(r.label)), `ⓘ lists actions: ${JSON.stringify(s.panel.rows.map((r) => r.label))}`);
       ok(s.infoShown, 'ⓘ is the details panel (infoShown)');
+      await P.checkTelemetry(ok, 'ui playback continuity');
       P.act({ action: 'panel' });
     });
     await P.close();

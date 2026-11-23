@@ -94,6 +94,31 @@ class Player {
 
   state() { return this.ask('state'); }
 
+  /** Passive 60Hz continuity telemetry from media/debug-probe.js (`reset: true` clears counters after reading). */
+  telemetry(extra = {}) { return this.ask('telemetry', extra); }
+
+  /**
+   * Asserts passive 60Hz playback continuity telemetry collected during active playback:
+   * - no page errors (uncaught errors or unhandled rejections in the webview or host logs)
+   * - at least `minSamples` active-playback RAF samples
+   * - zero backward frame jumps within a seek/loop generation
+   * - zero backward or unexpected forward clock jumps within a generation
+   * - max single-tick frame gap within `maxFrameGap` (default 45 frames: generous enough for hidden-desktop
+   *   Windows runner scheduling jitter, while catching runaway frame-skipping bugs)
+   */
+  async checkTelemetry(ok, label = this.name, { minSamples = 2, maxFrameGap = 45, reset = false } = {}) {
+    const tm = await this.telemetry({ reset });
+    const pe = pageError(this.vs, this.fromMark, this.name);
+    const errs = [...(pe ? [pe] : []), ...(tm.pageErrors || [])];
+    ok(errs.length === 0, `${label}: page errors: ${errs.join('; ')}`);
+    ok(tm.samples >= minSamples, `${label}: expected >= ${minSamples} passive 60Hz samples, got ${tm.samples}`);
+    ok(tm.backwardFrames === 0, `${label}: ${tm.backwardFrames} backward frame jumps during playback`);
+    ok(tm.backwardClockJumps === 0, `${label}: ${tm.backwardClockJumps} backward clock jumps (max -${Number(tm.maxBackwardSec || 0).toFixed(3)} s)`);
+    ok(tm.unexpectedClockJumps === 0, `${label}: ${tm.unexpectedClockJumps} unexpected forward clock jumps (max +${Number(tm.maxClockJumpSec || 0).toFixed(3)} s)`);
+    ok(tm.maxFrameGap <= maxFrameGap, `${label}: max frame gap ${tm.maxFrameGap} > ${maxFrameGap}`);
+    return tm;
+  }
+
   /** The `report` line as numbers (frame is 1-based there; frame0 is 0-based). */
   async report() {
     const from = this.vs.mark();

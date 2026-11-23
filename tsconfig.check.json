@@ -18,6 +18,7 @@
     "media/slow-notice.js",
     "media/stepgoal.js",
     "media/timefmt.js",
+    "media/debug-probe.js",
     "media/player.js"
   ],
   "exclude": ["media/libav-vpe"]

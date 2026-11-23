@@ -7,7 +7,7 @@
 //
 // Step: { case, only?, skip?, settings?, env?, ffmpeg?, keepState?, timeout? }
 
-const PLAYER = ['media/player.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/player.css', 'src/bar.js'];
+const PLAYER = ['media/player.js', 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/player.css', 'src/bar.js'];
 const ENGINE = ['media/engine.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
 const HOST = ['src/extension.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/nativepts.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
