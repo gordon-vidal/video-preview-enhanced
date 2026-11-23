@@ -98,7 +98,7 @@ const SCRIPTS = [
   'membudget.js', 'timestretch.js', 'pool.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js',
   'gl-renderer.js', 'engine.js', 'picture.js', 'inspect.js', 'scopes.js', 'exactframe.js', 'reduced-res-notice.js',
   'slow-notice.js', 'subtitles.js', 'tracks-menu.js', 'xray.js', 'modes.js', 'range-drag.js', 'controls.js',
-  'ctxmenu.js', 'timefmt.js', 'abloop.js', 'debug-probe.js', 'player.js',
+  'ctxmenu.js', 'timefmt.js', 'abloop.js', 'debug-probe.js', 'frame-player.js', 'player.js',
 ];
 // checkJs: end
 

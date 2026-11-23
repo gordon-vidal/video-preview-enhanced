@@ -7,7 +7,7 @@
 //
 // Step: { case, only?, skip?, settings?, env?, ffmpeg?, keepState?, timeout? }
 
-const PLAYER = ['media/player.js', 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/player.css', 'src/bar.js'];
+const PLAYER = ['media/player.js', 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/frame-player.js', 'media/player.css', 'src/bar.js'];
 const ENGINE = ['media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
 const HOST = ['src/extension.js', 'src/player-html.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/nativepts.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
@@ -21,7 +21,7 @@ module.exports = [
   {
     name: 'open-formats',
     journey: 'A user without ffmpeg opens each kind of file: the right decoder (GPU for H.264 / VP8 in every container, WebAssembly for the rest), it plays, a paused seek lands',
-    sources: [...HOST, ...ENGINE, 'media/player.js'],
+    sources: [...HOST, ...ENGINE, 'media/player.js', 'media/frame-player.js'],
     steps: [{ case: 'open-formats' }],
   },
   {
@@ -100,7 +100,7 @@ module.exports = [
   {
     name: 'multiview-transcode',
     journey: 'Compare streams two tiles, shares their bitrate cap, and switches one tile to its original video',
-    sources: [...COMPARE, 'src/stream.js', 'src/stream-adapt.js', 'src/transcode_policy.js', 'media/controls.js'],
+    sources: [...COMPARE, 'src/stream.js', 'src/stream-adapt.js', 'src/stream-buffer.js', 'src/transcode_policy.js', 'media/controls.js'],
     steps: [{ case: 'multiview-transcode' }],
   },
   {
@@ -124,7 +124,7 @@ module.exports = [
   {
     name: 'native',
     journey: 'With ffmpeg: native decoding plays, frames sized to the picture and grown on resize / zoom, the message fallback, About this video',
-    sources: [...NATIVE, 'src/decide.js', 'src/extension.js', 'media/framestream.js', 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/player.js'],
+    sources: [...NATIVE, 'src/decide.js', 'src/extension.js', 'media/framestream.js', 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/player.js', 'media/frame-player.js'],
     steps: [
       { case: 'open-native' }, { case: 'native-transfer' }, { case: 'native-transfer-resize' }, { case: 'native-transfer-fallback' }, { case: 'ui_info_native' },
     ],
@@ -180,7 +180,7 @@ module.exports = [
   {
     name: 'remote-stream',
     journey: 'Remote windows: formats the GPU decoder can\'t play are re-encoded to H.264 by ffmpeg; seeks, scrubbing, the quality ladder, pixel tools',
-    sources: ['src/remotestream.js', 'src/stream.js', 'src/stream-adapt.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/player.js'],
+    sources: ['src/remotestream.js', 'src/stream.js', 'src/stream-adapt.js', 'src/stream-buffer.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/player.js', 'media/frame-player.js'],
     steps: [{ case: 'remote_stream' }, { case: 'remote_stream_long' }, { case: 'remote_stream_size' }, { case: 'remote_stream_fallback' }],
   },
   {

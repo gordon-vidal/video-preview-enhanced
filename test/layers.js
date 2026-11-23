@@ -219,6 +219,7 @@ const unit = [
   { file: 'test/unit/abloop_test.js', sources: ['media/abloop.js', 'media/player.js'] },
   { file: 'test/unit/block_cache_test.js', sources: ['media/block-cache.js'] },
   { file: 'test/unit/compare_metrics_test.js', sources: ['media/compare-metrics.js', 'media/compare.js'] },
+  { file: 'test/unit/frame_player_test.js', sources: ['media/frame-player.js', 'media/player.js'] },
   { file: 'test/unit/comparerange_test.js', sources: ['media/comparerange.js', 'media/compare.js'] },
   { file: 'test/unit/gl_renderer_test.js', sources: ['media/gl-renderer.js', 'media/engine.js', 'media/compare.js'] },
   { file: 'test/unit/stepgoal_test.js', sources: ['media/stepgoal.js', 'media/compare-sync.js', 'media/compare.js'] },
