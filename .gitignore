@@ -36,3 +36,5 @@ test/media/cases/hdr/dv*.mp4
 # libav.js build outputs (build/libav/25_mix_build.sh, 32_relink.sh)
 build/libav/dist_*/
 .lfs-ids
+
+/test/media/.heavy/

@@ -117,6 +117,10 @@ The A-B export and edit-list regression tests generate temporary fixtures with F
 and `sine` sources and handwritten subtitle cues. These fixtures contain no third-party media and
 are covered by this repository's MIT licence.
 
+The on-demand heavy and fault fixtures from `make_heavy_media.js` are synthetic
+FFmpeg test patterns and tones with a handwritten subtitle cue. This repository's
+MIT licence covers these fixtures. The default output directory is ignored by Git.
+
 ## Git LFS
 
 The test videos under `test/media/` (86 files, about 63 MB) are stored with Git LFS

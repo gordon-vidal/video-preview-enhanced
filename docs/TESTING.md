@@ -117,6 +117,28 @@ exports against namespace and lazy consumers before removing them.
 - Change base for `--changed`: `VPE_BASE` (default `main`). VS Code: `VPE_CODE` or the portable build of
   `node test/vscode/get_code.js`.
 
+## Synthetic reliability fixtures
+
+Run `node test/media/make_heavy_media.js --quick` to make a roughly 100 MiB, ten-minute MP4
+alongside small VFR, ten-second GOP, multi-track MKV and malformed MP4 fixtures. Omit
+`--quick` for the default 3072 MiB target or choose a target with `--size-mb <MiB>`.
+The generator uses FFmpeg with libx264. It builds missing files in the ignored
+`test/media/.heavy/` cache or in the directory supplied with `--out <dir>`.
+Files are published after generation succeeds and reused on later runs. Delete a
+cached file to regenerate it.
+
+Layers 1 and 2 include the deterministic chaos tests. Use
+`node test/run.js unit engine --grep chaos --verbose` to run them alone. Set
+`VPE_FUZZ_SEED` to change or reproduce the action sequence. The host checks kill real
+FFmpeg children after native decode, Live transcode or clip export has started, then
+check recovery and resource cleanup. The engine tests drive the WASM player with
+FFmpeg presentation timestamps and reference pictures.
+
+Set `VPE_HEAVY_MEDIA=1` for the engine run to add multi-GiB seeks. This creates the
+default large fixture if missing, requires several GiB of free disk space, and checks
+that seeks reach file offsets above 2 GiB while keeping decoded frames and input
+reads bounded. CI uses only the small fixtures.
+
 ## Playback and seeking coverage
 
 Layer 2's `formats_cases.js` covers the playback format matrix. For the WASM formats covered only there,
@@ -162,6 +184,8 @@ instances (`playback` and `scopes-export` twice in a row, `file-icons` once); ru
 
 Listed here, reported as KNOWN by the test (not failing it), and removed when the test reports that it passes.
 
-None at the moment.
+- `test/engine/chaos.js` checks exact backward adjacency after stepping forward into
+  the dense VFR segment. The nominal-rate back cache lookup can skip a 60 fps picture.
+  The fuzz test still checks monotonic direction and picture identity against FFmpeg.
 
 Inventory of every test before the layers and where it lives now: [docs/notes/test-inventory.md](notes/test-inventory.md).
