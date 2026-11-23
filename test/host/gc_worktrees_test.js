@@ -246,19 +246,58 @@ function edgeCases() {
     assert.strictEqual(relBr.action, 'skip');
     assert.match(relBr.reason, /base branch/);
 
-    // 7. A branch reserved by an in-progress rebase (detached HEAD in linked worktree) is protected in dry-run.
+    // 7. An in-progress rebase protects its original branch and every queued branch update.
     git(repo, 'worktree', 'add', '-q', '-b', 'rebasing', path.join(root, 'w-rebase'), mainTip);
     const rebaseDir = path.join(root, 'w-rebase');
     const rebaseGitDir = path.resolve(rebaseDir, git(rebaseDir, 'rev-parse', '--git-dir'));
     git(rebaseDir, 'checkout', '-q', '--detach', mainTip);
     fs.mkdirSync(path.join(rebaseGitDir, 'rebase-merge'), { recursive: true });
     fs.writeFileSync(path.join(rebaseGitDir, 'rebase-merge', 'head-name'), 'refs/heads/rebasing\n');
-    const rebPlan = run(repo, ['--json']);
-    assert.strictEqual(rebPlan.code, 0, rebPlan.err);
-    const rpj = JSON.parse(rebPlan.text);
-    const rebBr = rpj.branches.find((b) => b.name === 'rebasing');
-    assert.strictEqual(rebBr.action, 'skip', 'branch under active rebase must not be planned for deletion');
-    assert.match(rebBr.reason, /stays/);
+    const queued = ['queued-one', 'topic/queued-two'];
+    for (const branch of queued) git(repo, 'branch', branch, mainTip);
+    fs.writeFileSync(path.join(rebaseGitDir, 'rebase-merge', 'update-refs'),
+      queued.map((branch) => `refs/heads/${branch}\n${mainTip}\n${'0'.repeat(mainTip.length)}\n`).join(''));
+    const rebPlan = gc.plan({ cwd: repo, base: 'main' });
+    assert.deepStrictEqual(rebPlan.errors, []);
+    for (const branch of ['rebasing', ...queued]) {
+      assert.strictEqual(rebPlan.branches.find((b) => b.name === branch).action, 'skip', branch);
+    }
+    const applied = run(repo, ['--apply', '--json']);
+    assert.strictEqual(applied.code, 0, applied.err || applied.text);
+    for (const branch of ['rebasing', ...queued]) {
+      assert.strictEqual(git(repo, 'rev-parse', `refs/heads/${branch}`), mainTip);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+}
+
+function activeBisect() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-gcwt-bisect-'));
+  try {
+    const repo = makeRepo(root);
+    commit(repo, 'a.txt', 'a');
+    const checkout = path.join(root, 'w-bisect');
+    git(repo, 'worktree', 'add', '-q', '-b', 'bisecting', checkout);
+    const before = gc.plan({ cwd: repo, base: 'main' });
+    assert.strictEqual(before.worktrees.find((w) => w.branch === 'bisecting').action, 'remove');
+    assert.strictEqual(before.branches.find((b) => b.name === 'bisecting').action, 'remove');
+
+    git(checkout, 'bisect', 'start', '--no-checkout');
+    assert.strictEqual(git(checkout, 'symbolic-ref', 'HEAD'), 'refs/heads/bisecting');
+    assert.strictEqual(git(checkout, 'status', '--porcelain'), '');
+
+    const during = gc.plan({ cwd: repo, base: 'main' });
+    assert.deepStrictEqual(during.errors, []);
+    const worktree = during.worktrees.find((w) => w.branch === 'bisecting');
+    assert.strictEqual(worktree.action, 'skip');
+    assert.match(worktree.reason, /BISECT_START/);
+    assert.strictEqual(during.branches.find((b) => b.name === 'bisecting').action, 'skip');
+
+    const results = gc.apply(before);
+    assert.deepStrictEqual(results.map((r) => [r.kind, r.ok]), [['worktree', false], ['branch', false]]);
+    assert.match(results[0].error, /BISECT_START/);
+    assert.strictEqual(git(checkout, 'symbolic-ref', 'HEAD'), 'refs/heads/bisecting');
   } finally {
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
   }
@@ -267,4 +306,5 @@ function edgeCases() {
 pure();
 real();
 edgeCases();
+activeBisect();
 console.log('gc-worktrees ok');

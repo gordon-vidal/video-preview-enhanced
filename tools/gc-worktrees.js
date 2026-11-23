@@ -12,7 +12,7 @@ const { spawnSync } = require('node:child_process');
 // checkJs: start
 /**
  * @typedef {{path: string, head: string, branch: string|null, detached: boolean, bare: boolean,
- *   locked: boolean, prunable: boolean, gitDir?: string|null}} Worktree
+ *   locked: boolean, prunable: boolean, gitDir?: string|null, operation?: string}} Worktree
  * @typedef {{action: 'remove'|'skip', reason: string}} Decision
  * @typedef {{primary: string, cwd: string, cwdGitDir?: string|null, base: string, baseBranch: string|null,
  *   merged: (commit: string) => boolean, dirty: (wtPath: string) => boolean,
@@ -119,6 +119,7 @@ function classifyWorktree(wt, ctx) {
   if (wt.locked) return skip('locked');
   if (wt.prunable || !ctx.exists(wt.path)) return skip('missing or prunable (run git worktree prune)');
   if (wt.detached || !wt.branch) return skip('detached HEAD');
+  if (wt.operation) return skip(`Git operation in progress (${wt.operation})`);
   if (!ctx.merged(wt.head)) return skip(`not merged into ${ctx.base}`);
   if (ctx.hasSubmodule && ctx.hasSubmodule(wt.path)) return skip('contains initialized submodule');
   if (ctx.dirty(wt.path)) return skip('has staged, unstaged or untracked changes');
@@ -167,8 +168,8 @@ const HELP = `Usage: node tools/gc-worktrees.js [--base <ref>] [--apply] [--json
 
 Removes worktrees and local branches already merged into <ref> (default: main).
 Dry run unless --apply. Never touches the primary or the current worktree, the base
-branch, or worktrees that are dirty, locked, detached, missing or contain initialized
-submodules; never force-deletes.
+branch, or worktrees that are dirty, locked, detached, missing, have a Git operation
+in progress or contain initialized submodules; never force-deletes.
 `;
 
 /**
@@ -280,26 +281,39 @@ function resolveBase(cwd, base, baseExplicit) {
 }
 
 /**
- * Returns the local branch name reserved by an in-progress rebase or bisect in `gitDir`, if any.
- * During a detached rebase/bisect, `git worktree list` omits `branch` even though `git branch -d` refuses deletion.
- * @param {string|null|undefined} gitDir
- * @returns {string|null}
+ * An attached worktree can be clean during an operation, such as `git bisect start --no-checkout`.
+ * @param {string} gitDir
  */
-function inProgressBranch(gitDir) {
-  if (!gitDir) return null;
-  for (const rel of ['rebase-merge/head-name', 'rebase-apply/head-name']) {
+function operationInProgress(gitDir) {
+  const markers = [
+    'BISECT_START', 'BISECT_LOG', 'BISECT_NAMES', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD',
+    'rebase-merge', 'rebase-apply', 'sequencer',
+  ];
+  return markers.find((marker) => fs.lstatSync(path.join(gitDir, marker), { throwIfNoEntry: false }));
+}
+
+/**
+ * Finds branches reserved by a rebase or bisect, including those omitted by `git worktree list`.
+ * @param {string} gitDir
+ */
+function inProgressBranches(gitDir) {
+  const heads = 'refs/heads/';
+  const branches = new Set();
+  for (const rel of ['rebase-merge/head-name', 'rebase-apply/head-name', 'rebase-merge/update-refs']) {
     const p = path.join(gitDir, rel);
-    if (!fs.existsSync(p)) continue;
-    const raw = fs.readFileSync(p, 'utf8').trim();
-    if (raw.startsWith('refs/heads/')) return raw.slice('refs/heads/'.length);
+    if (!fs.statSync(p, { throwIfNoEntry: false })) continue;
+    // Git stores each update-refs entry as a refname followed by two object IDs on separate lines.
+    for (const line of fs.readFileSync(p, 'utf8').split(/\r?\n/)) {
+      if (line.startsWith(heads)) branches.add(line.slice(heads.length));
+    }
   }
   const bisect = path.join(gitDir, 'BISECT_START');
-  if (fs.existsSync(bisect)) {
+  if (fs.statSync(bisect, { throwIfNoEntry: false })) {
     const raw = fs.readFileSync(bisect, 'utf8').trim();
-    if (raw && !raw.startsWith('refs/')) return raw;
-    if (raw.startsWith('refs/heads/')) return raw.slice('refs/heads/'.length);
+    if (raw && !raw.startsWith('refs/')) branches.add(raw);
+    if (raw.startsWith(heads)) branches.add(raw.slice(heads.length));
   }
-  return null;
+  return branches;
 }
 
 /**
@@ -378,12 +392,11 @@ function plan({ cwd, base, baseExplicit = base !== 'main' }) {
     const wtCopy = { ...wt, path: wt.path };
     /** @type {Decision} */
     let d;
-    /** @type {string|null} */
-    let reserved = null;
     try {
       if (ctx.exists(wt.path)) {
         wtCopy.gitDir = gitDirOf(wt.path);
-        reserved = inProgressBranch(wtCopy.gitDir);
+        wtCopy.operation = operationInProgress(wtCopy.gitDir);
+        for (const branch of inProgressBranches(wtCopy.gitDir)) keptBranches.add(branch);
       }
       d = classifyWorktree(wtCopy, ctx);
     } catch (e) {
@@ -391,10 +404,7 @@ function plan({ cwd, base, baseExplicit = base !== 'main' }) {
       errors.push({ kind: 'worktree', label: wt.path, error: msg });
       d = { action: 'skip', reason: `inspection error: ${msg}` };
     }
-    if (d.action === 'skip') {
-      if (wt.branch) keptBranches.add(wt.branch);
-      if (reserved) keptBranches.add(reserved);
-    }
+    if (d.action === 'skip' && wt.branch) keptBranches.add(wt.branch);
     plannedWorktrees.push({ path: wt.path, branch: wt.branch, head: wt.head, ...d });
   }
 
@@ -464,6 +474,8 @@ function apply(p) {
       }
       if (hasInitializedSubmodule(w.path)) throw new Error('worktree now contains an initialized submodule');
       if (isDirtyWorktree(w.path)) throw new Error('worktree became dirty since planning');
+      const operation = operationInProgress(gitDirOf(w.path));
+      if (operation) throw new Error(`Git operation in progress (${operation})`);
       git(p.primary, ['worktree', 'remove', '--', w.path]);
       results.push({ kind: 'worktree', label: w.path, ok: true });
     } catch (e) {
