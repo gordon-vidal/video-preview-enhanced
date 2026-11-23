@@ -43,6 +43,8 @@ const clipExport = lazy(() => require('./clipexport'));
 const { syntheticRefusal } = require('./clipsource');
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
 const urlsource = lazy(() => require('./urlsource')); // Open Video URL… (docs/notes/url-stream.md)
+const { createSettings, PREFS } = require('./settings'); // settings, player prefs, globalState fallback
+const { createOffers } = require('./offers'); // onboarding, hint, GPU test and remote ffmpeg offers
 
 const HIDE_SLOW_PLAYBACK_NOTICE = 'videoPreviewEnhanced.hideSlowPlaybackNotice';
 const HIDE_REDUCED_RES_NOTICE = 'videoPreviewEnhanced.hideReducedResNotice';
@@ -59,14 +61,7 @@ let extensionDir = '';
 let hwPromise = null; // hardware.detect(), once per session (Re-test detects again)
 let probeRun = null; // the running probe (one at a time)
 let probeChecked = false; // fingerprint compared this session
-let hintShown = false; // the "set up ffmpeg" hint, at most once per session
-let onboardPending = false; // the first-open popup is showing (no other popup meanwhile)
-let onboardShown = false; // the first-open popup was shown in this session
-let hintPending = false; // the "set up ffmpeg" hint is showing
-let probeOfferShown = false; // the GPU test offer, at most once per session
-let probeOfferPending = false; // that offer is showing
-const remoteOfferAsked = new Set(); // remotes asked about an ffmpeg download in this session
-let remoteOfferPending = false; // that question is showing
+let offers = null; // createOffers(), built in activate once globalState exists
 let speedsMem = null; // built-in speed records, written to globalState in batches
 let speedsTimer = null;
 const POSITIONS_KEY = 'videoPreviewEnhanced.positions';
@@ -105,150 +100,16 @@ function log(msg) {
   if (logFile) fs.appendFile(logFile, `${new Date().toISOString()} ${msg}\n`, () => {});
 }
 
-/** Where to write a player preference: the scope that sets it now, so a workspace value doesn't shadow the change (review 2026-11-19 #6). */
-function prefTarget(key) {
-  const i = vscode.workspace.getConfiguration('videoPreviewEnhanced').inspect(key) || {};
-  if (i.workspaceValue !== undefined) return vscode.ConfigurationTarget.Workspace;
-  return vscode.ConfigurationTarget.Global;
-}
+const { prefTarget, rememberPlaybackPrefs, prefsOf, config, setSetting } = createSettings({
+  vscode, getState: () => globalState, log, transcodePolicy, sessions, compareSessions,
+});
 
-/** Player preferences the page shows and changes (the jump sizes): only the values package.json declares. */
-const JUMPS = ['frame', 1, 5, 10, 30];
-const PREFS = {
-  'jump.arrow': { values: JUMPS, dflt: 5 }, 'jump.shift': { values: JUMPS, dflt: 1 }, 'jump.ctrl': { values: JUMPS, dflt: 'frame' },
-  'jump.wheel': { values: JUMPS, dflt: 'frame' }, 'jump.wheelShift': { values: JUMPS, dflt: 1 },
-  // The buttons beside Play: 'frame' steps one frame, 'jump' jumps by the Ctrl+arrow size.
-  stepButtons: { values: ['frame', 'jump'], dflt: 'frame' },
-};
-const PLAYBACK_PREFS_KEY = 'videoPreviewEnhanced.playbackPrefs';
-const DEFAULT_PLAYBACK_PREFS = { volume: 1, rate: 1, timeMode: 0, stepSize: null };
-// The step buttons' size (media/controls.js STEP_SIZES); null follows the stepButtons setting.
-const STEP_SIZES = ['frame', 'frames5', 1, 5, 10];
-
-function sanitizePlaybackPrefs(raw, base = DEFAULT_PLAYBACK_PREFS) {
-  const src = raw && typeof raw === 'object' ? raw : {};
-  const vol = Number(src.volume);
-  const volume = Number.isFinite(vol) && vol >= 0 && vol <= 1 ? Math.round(vol * 100) / 100 : base.volume;
-  const r = Number(src.rate);
-  const rate = Number.isFinite(r) && r >= 0.25 && r <= 4 ? Math.round(r * 100) / 100 : base.rate;
-  const tm = Number(src.timeMode);
-  const timeMode = tm === 0 || tm === 1 || tm === 2 ? tm : base.timeMode;
-  const stepSize = src.stepSize === null || STEP_SIZES.includes(src.stepSize) ? src.stepSize : base.stepSize;
-  return { volume, rate, timeMode, stepSize };
-}
-
-function storedPlaybackPrefs() {
-  return sanitizePlaybackPrefs(globalState && globalState.get(PLAYBACK_PREFS_KEY));
-}
-
-function rememberPlaybackPrefs(m, from) {
-  if (!globalState || !m || typeof m !== 'object') return undefined;
-  const prev = storedPlaybackPrefs();
-  const next = sanitizePlaybackPrefs(m, prev);
-  if (['volume', 'rate', 'timeMode', 'stepSize'].every((k) => next[k] === prev[k])) return undefined;
-  // Every other player and Compare follows at once (their pages stay alive in the background), not only new tabs.
-  // Not the sender: an echo would snap its slider back mid-drag and redraw its open panel.
-  for (const sess of [...sessions, ...compareSessions]) if (sess !== from) sess.post({ type: 'playbackPrefs', prefs: next });
-  return globalState.update(PLAYBACK_PREFS_KEY, next);
-}
+const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
 
 function broadcastFocusMode(active) {
   for (const sess of [...sessions, ...compareSessions]) sess.post({ type: 'focusMode', active: !!active });
 }
 setFocusModeListener(broadcastFocusMode);
-
-function prefsOf(c) {
-  const v = (k) => (PREFS[k].values.includes(c.jumps[k]) ? c.jumps[k] : PREFS[k].dflt);
-  return {
-    jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl'), wheel: v('jump.wheel'), wheelShift: v('jump.wheelShift') },
-    stepButtons: v('stepButtons'),
-    pictureSize: c.pictureSize,
-    transcode: c.transcode,
-    transcodeMaxBitrate: c.transcodeMaxBitrate,
-    transcodeSplitBitrate: c.transcodeSplitBitrate,
-    ...storedPlaybackPrefs(),
-  };
-}
-
-const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
-const FALLBACK_KEY = 'videoPreviewEnhanced.settingFallback';
-
-/**
- * Writes one of our settings. When VS Code refuses (e.g. "not a registered configuration": an older
- * install's manifest is still loaded in this window) the choice is kept in globalState instead,
- * logged, and no error reaches the user. Returns true when the setting itself was written.
- */
-async function setSetting(key, value, target) {
-  let ok = true;
-  try {
-    await vscode.workspace.getConfiguration('videoPreviewEnhanced').update(key, value, target);
-  } catch (e) {
-    ok = false;
-    log(`setting ${key}: write failed, kept in globalState: ${e && e.message || e}`);
-  }
-  try {
-    const fb = { ...(globalState.get(FALLBACK_KEY) || {}) };
-    if (ok) delete fb[key]; else fb[key] = value;
-    await globalState.update(FALLBACK_KEY, fb);
-  } catch (e) { log(`setting ${key}: fallback save failed: ${e && e.message || e}`); }
-  if (!ok && (PREFS[key] || key.startsWith('transcode'))) {
-    const prefs = prefsOf(config());
-    const msg = { type: 'prefs', prefs };
-    for (const sess of [...sessions, ...compareSessions]) sess.post(msg);
-    if (key.startsWith('transcode')) for (const sess of compareSessions) sess.updateTranscode(prefs);
-  }
-  return ok;
-}
-
-/** The setting, or the globalState fallback when a write failed and the setting has no value of its own. */
-function settingOr(c, key, dflt) {
-  const fb = globalState && globalState.get(FALLBACK_KEY);
-  if (fb && fb[key] !== undefined) {
-    const i = c.inspect(key) || {};
-    if (i.globalValue === undefined && i.workspaceValue === undefined && i.workspaceFolderValue === undefined) return fb[key];
-  }
-  return c.get(key, dflt);
-}
-
-function config() {
-  const c = vscode.workspace.getConfiguration('videoPreviewEnhanced');
-  return {
-    autoplay: c.get('autoplay', true),
-    loop: c.get('loop', true),
-    jumps: Object.fromEntries(Object.entries(PREFS).map(([k, p]) => [k, settingOr(c, k, p.dflt)])),
-    sequenceFps: c.get('sequenceFps', 30),
-    decoder: c.get('decoder', 'auto'),
-    whenSlow: settingOr(c, 'whenSlow', 'every'),
-    fastWhenBehind: c.get('fastPreviewWhenBehind', false),
-    ffmpegPath: c.get('ffmpegPath', ''),
-    // 0 (the default): automatic, see nativeHeights(). nativeMaxHeight is then the postMessage size (1080).
-    nativeMaxHeight: c.get('nativeMaxHeight', 0) > 0 ? c.get('nativeMaxHeight', 0) : 1080,
-    nativeMaxAuto: !(c.get('nativeMaxHeight', 0) > 0),
-    // Performance: with the automatic nativeMaxHeight, frames only as large as the picture is shown (NativeDecoder fitView).
-    sizeFramesToView: c.get('sizeFramesToView', true) !== false,
-    gpuDecoding: c.get('gpuDecoding', true),
-    remoteStream: c.get('remoteStream', 'auto'),
-    transcode: (() => {
-      const ti = (c.inspect && c.inspect('transcode')) || {};
-      const ri = (c.inspect && c.inspect('remoteStream')) || {};
-      const fb = (globalState && globalState.get(FALLBACK_KEY)) || {};
-      const rawTranscode = settingOr(c, 'transcode', 'ask');
-      const rawRemote = c.get('remoteStream', 'auto');
-      const tExp = ti.globalValue !== undefined || ti.workspaceValue !== undefined || ti.workspaceFolderValue !== undefined || fb.transcode !== undefined || rawTranscode !== 'ask';
-      const rExp = ri.globalValue !== undefined || ri.workspaceValue !== undefined || ri.workspaceFolderValue !== undefined || rawRemote !== 'auto';
-      return transcodePolicy.resolveSetting({
-        transcode: rawTranscode,
-        transcodeExplicit: tExp,
-        remoteStream: rawRemote,
-        remoteStreamExplicit: rExp,
-      });
-    })(),
-    transcodeMaxBitrate: Math.max(0, Number(settingOr(c, 'transcodeMaxBitrate', 0)) || 0),
-    transcodeSplitBitrate: settingOr(c, 'transcodeSplitBitrate', true),
-    hdrOutput: c.get('hdrOutput', 'auto') === 'off' ? 'off' : 'auto',
-    pictureSize: ['fit', 'fill', 'stretch', 'actual'].includes(c.get('pictureSize')) ? c.get('pictureSize') : 'fit',
-  };
-}
 
 /** Native ffmpeg: the setting, then a build downloaded by setup, then PATH. Null when absent. */
 function tools() {
@@ -411,88 +272,6 @@ function flushSpeeds() {
 }
 
 /**
- * The first video of a session while no ffmpeg is found: "Set up ffmpeg",
- * "Not now" / "Don't Show Again". Once per session until "Don't Show Again"; never in SSH/container or untrusted windows.
- */
-async function maybeOnboard() {
-  const base = { state: globalState.get(decide.ONBOARD_KEY), remote: vscode.env.remoteName, trusted: vscode.workspace.isTrusted, pending: onboardPending, shownThisSession: onboardShown };
-  if (!decide.shouldOnboard({ ...base, toolsInstalled: false })) return;
-  onboardPending = true;
-  try {
-    const t = await tools();
-    if (t) { await globalState.update(decide.ONBOARD_KEY, decide.afterOnboard('had-ffmpeg')); return; }
-    const st0 = globalState.get(decide.ONBOARD_KEY);
-    if (st0 && st0.choice === 'builtin') return; // "Don't Show Again"
-    onboardShown = true;
-    log('onboarding: first video, asking about ffmpeg');
-    const answer = await vscode.window.showInformationMessage(decide.ONBOARD_TEXT.replace('{mb}', setup.downloadSizeMB()), decide.ONBOARD_SETUP, decide.ONBOARD_LATER, decide.ONBOARD_BUILTIN);
-    const st = decide.afterOnboard(answer);
-    await globalState.update(decide.ONBOARD_KEY, st);
-    log(`onboarding: answer ${st.choice}`);
-    if (st.choice === 'ffmpeg') setupFfmpeg();
-  } finally {
-    onboardPending = false;
-  }
-}
-
-/** The built-in decoder stays below real time and there's no ffmpeg: suggest it, without nagging. */
-async function maybeHint(sess, sample) {
-  if (onboardPending || hintPending || probeOfferPending) return; // one question at a time
-  if (!vscode.workspace.isTrusted) return; // shouldHint says no anyway; don't run ffmpeg -version to learn it
-  const t = await tools();
-  const ok = decide.shouldHint({
-    hint: globalState.get(decide.HINT_KEY), onboard: globalState.get(decide.ONBOARD_KEY), now: Date.now(), shownThisSession: hintShown, toolsInstalled: !!t,
-    remote: vscode.env.remoteName, trusted: vscode.workspace.isTrusted, slowRun: sess.slowRun, ratio: sample.ratio,
-  });
-  if (!ok) return;
-  hintShown = true;
-  const rec = probe.latest(globalState); // an earlier ffmpeg's probe, if any
-  const text = decide.hintText(sample, { mb: setup.downloadSizeMB(), probeRecord: rec && rec.complete ? rec : null });
-  log(`[${sess.name}] built-in decoding at ${sample.ratio.toFixed(2)}x (sample ${sess.slowRun}); suggesting ffmpeg: ${text}`);
-  hintPending = true;
-  let answer;
-  try { answer = await vscode.window.showInformationMessage(text, 'Set up', 'Not now', "Don't Show Again"); } finally { hintPending = false; }
-  await globalState.update(decide.HINT_KEY, decide.afterHint(globalState.get(decide.HINT_KEY), answer));
-  if (answer === 'Set up') setupFfmpeg();
-}
-
-/** Another popup of ours is showing (onboarding, the setup hint, the remote download offer, the GPU test offer). */
-function popupPending() {
-  return onboardPending || hintPending || remoteOfferPending || probeOfferPending;
-}
-
-/**
- * Playback stays below real time with ffmpeg installed (native ffmpeg, or the built-in decoder) and no GPU
- * test result fits this ffmpeg and GPU: offer the test once (decide.shouldOfferProbe). It never runs by
- * itself; "Run test" pauses the videos playing natively (the test would wait for them) and runs it with
- * its progress and Cancel; the result applies to the next open, or to this video with "Reopen video".
- */
-async function maybeOfferProbe(sess, sample) {
-  if (probeOfferShown || popupPending() || probeRun) return;
-  const remote = vscode.env.remoteName;
-  if (remote || !vscode.workspace.isTrusted) return; // never run ffmpeg -version to learn what shouldOfferProbe says anyway
-  const t = await tools();
-  const ctx = {
-    offer: globalState.get(decide.PROBE_OFFER_KEY), shownThisSession: probeOfferShown, toolsInstalled: !!t, probeRecord: !!probeRecordFor(t),
-    gpu: config().gpuDecoding, remote, trusted: vscode.workspace.isTrusted, pending: popupPending(), running: !!probeRun,
-    slowRun: sess.slowRun, ratio: sample.ratio,
-  };
-  if (!decide.shouldOfferProbe(ctx)) return;
-  probeOfferShown = true;
-  probeOfferPending = true;
-  log(`[${sess.name}] ${sample.native ? 'native ffmpeg' : 'built-in decoder'} at ${sample.ratio.toFixed(2)}x (sample ${sess.slowRun}), no GPU test yet: offering it`);
-  let answer;
-  try {
-    answer = await vscode.window.showInformationMessage(decide.PROBE_OFFER_TEXT, decide.PROBE_OFFER_RUN, decide.PROBE_OFFER_LATER, decide.PROBE_OFFER_NEVER);
-  } finally { probeOfferPending = false; }
-  await globalState.update(decide.PROBE_OFFER_KEY, decide.afterProbeOffer(globalState.get(decide.PROBE_OFFER_KEY), answer));
-  log(`GPU test offer: ${answer || 'dismissed'}`);
-  if (answer !== decide.PROBE_OFFER_RUN) return null;
-  for (const x of sessions) if (x.native && !x.disposed) x.post({ type: 'pauseForTest' });
-  return runProbeUi(t, await machine(), { userAsked: true, reload: sess });
-}
-
-/**
  * Raw frames from a native decoder cross from the extension host to the webview.
  * That's fine on this machine and in WSL, too much for SSH and containers.
  */
@@ -647,38 +426,6 @@ async function downloadManaged(build) {
   await globalState.update(managedKey(), { ffmpeg: res.ffmpeg, ffprobe: res.ffprobe, label: build.label });
   log(`downloaded ${build.label} to ${res.dir}`);
   return res;
-}
-
-/**
- * Remote windows (SSH, containers, tunnels): the picture of this file decodes in WebAssembly, the
- * remote stream would take it, and the remote has no ffmpeg. Offers BtbN's static Linux build
- * (x64, arm64) in the extension's folder there: once per remote and session, "Don't Show Again" per
- * remote (docs/notes/remote-stream.md).
- */
-async function maybeOfferRemoteFfmpeg(sess, m) {
-  const remote = vscode.env.remoteName;
-  const c = config();
-  const key = remoteff.remoteKey(remote);
-  const ctx = () => ({
-    remote, platform: hostPlatform(), arch: hostArch(), trusted: vscode.workspace.isTrusted,
-    streamOn: c.transcode !== 'off', builtinOnly: c.decoder === 'builtin',
-    askedThisSession: remoteOfferAsked, state: globalState.get(remoteff.OFFER_KEY), key, pending: remoteOfferPending || onboardPending,
-  });
-  if (!remoteff.shouldOffer(ctx())) return;
-  if (await tools()) return;
-  if (!remoteff.shouldOffer(ctx())) return; // another tab asked meanwhile
-  remoteOfferAsked.add(key);
-  remoteOfferPending = true;
-  const host = os.hostname();
-  const codec = typeof m.codec === 'string' && /^[\w-]{1,24}$/.test(m.codec) ? m.codec : '';
-  let answer;
-  try {
-    log(`[${sess.name}] ${codec || 'video'} decodes in WebAssembly and ${host} has no ffmpeg: offering the download`);
-    answer = await vscode.window.showInformationMessage(remoteff.offerText({ codec, host, mb: setup.downloadSizeMB('linux', hostArch()) }),
-      remoteff.OFFER_DOWNLOAD, remoteff.OFFER_LATER, remoteff.OFFER_NEVER);
-  } finally { remoteOfferPending = false; }
-  await globalState.update(remoteff.OFFER_KEY, remoteff.afterOffer(globalState.get(remoteff.OFFER_KEY), key, answer));
-  if (answer === remoteff.OFFER_DOWNLOAD) await downloadRemoteFfmpeg();
 }
 
 /** Picks the Linux build for this host's CPU, downloads it into the extension's folder here, and reloads open players. */
@@ -1231,6 +978,10 @@ function activate(context) {
   out = vscode.window.createOutputChannel('Video Preview Enhanced');
   globalState = context.globalState;
   hwKnown = globalState.get(HW_KEY) || null;
+  offers = createOffers({
+    vscode, globalState, log, decide, probe, remoteff, setup, tools, config, probeRecordFor, probeRunning: () => !!probeRun, machine, runProbeUi,
+    setupFfmpeg, downloadRemoteFfmpeg, hostPlatform, hostArch, hostname: () => os.hostname(), sessions,
+  });
   // A method guessed from the stored GPUs produced no picture: maybe another GPU or driver now; detect again.
   onGuessFailed(() => { hwStale = true; hwPromise = null; });
   storageDir = context.globalStorageUri.fsPath;
@@ -2216,7 +1967,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
         }
         return undefined;
       case 'decodeSpeed': return this.onSpeed(m);
-      case 'softVideo': if (vscode.env.remoteName && !this.native && !this.fullRes) maybeOfferRemoteFfmpeg(this, m).catch((e) => log(`remote ffmpeg offer: ${e && e.stack || e}`)); return undefined;
+      case 'softVideo': if (vscode.env.remoteName && !this.native && !this.fullRes) offers.maybeOfferRemoteFfmpeg(this, m).catch((e) => log(`remote ffmpeg offer: ${e && e.stack || e}`)); return undefined;
       case 'saveFrame': return m.page === this.page ? this.saveFrame(m.data, m.frame) : undefined;
       case 'exportRange': return m.page === this.page ? this.exportRange(m.range) : undefined;
       case 'ffmpegRange': return m.page === this.page ? this.copyFfmpegRange(m.range) : undefined;
@@ -2290,7 +2041,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     // git:, vscode-vfs: and other virtual files: fsPath would name a different file (git: the working tree).
     if (this.url) return this.openUrlPage(gen, signal);
     if (!FS_SCHEMES.has(this.uri.scheme)) return this.fail(new Error(`Can't play ${this.uri.scheme}: files`), 'Open the file from the Explorer instead.');
-    maybeOnboard().catch((e) => log(`onboarding failed: ${e && e.message || e}`));
+    offers.maybeOnboard().catch((e) => log(`onboarding failed: ${e && e.message || e}`));
     const stat = await fs.promises.stat(this.file);
     if (this.stale(gen)) return undefined;
     if (early && !sameFile(await early.stat, stat)) early.abort.abort();
@@ -3239,7 +2990,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
           maybeOfferLocalTranscode(this).catch((e) => log(`local transcode prompt failed: ${e && e.message || e}`));
           return;
         }
-        if (!hostKeepsUp) maybeOfferProbe(this, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));
+        if (!hostKeepsUp) offers.maybeOfferProbe(this, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));
       }
       return;
     }
@@ -3249,8 +3000,8 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     if (!sample.realtime && was === 0) log(`[${this.name}] built-in decoder below real time: ${sample.ratio.toFixed(2)}x (${decide.describe(sample)})`);
     if (sample.realtime && was > 0) log(`[${this.name}] built-in decoder back to real time`);
     if (!sample.realtime) {
-      maybeHint(this, sample).catch((e) => log(`hint failed: ${e && e.message || e}`));
-      maybeOfferProbe(this, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));
+      offers.maybeHint(this, sample).catch((e) => log(`hint failed: ${e && e.message || e}`));
+      offers.maybeOfferProbe(this, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));
     }
   }
 
