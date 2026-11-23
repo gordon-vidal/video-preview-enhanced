@@ -22,7 +22,7 @@ build dependencies, no build step. Works locally, in WSL and over Remote-SSH.
 | `test/subtitles`, `test/timestretch`, `test/inspect` | More Node unit tests that CI runs |
 | `test/media/` | Test clips (Git LFS) and generators; licences in `test/media/LICENSES.md` |
 | `docs/` | User docs, `PRODUCT.md` (product truth), `TESTING.md` (test truth), `RELEASING.md`, `REVIEW.md`, `adr/` (signed-off decisions), `notes/` (design notes) |
-| `tools/`, `review.cmd` | Maintainer helpers (`review.cmd` = visible review profile; humans only) |
+| `tools/`, `review.cmd`, `review.sh` | Maintainer helpers (`review.cmd` / `review.sh` = visible review profile; humans only) |
 | `build/libav/` | Scripts that rebuild the WebAssembly decoder (Linux/WSL only; rarely needed) |
 | `.private-context/` | Git-ignored maintainer notes, local only (see below) |
 
@@ -66,7 +66,7 @@ before releases or in performance work.
 ## Rules
 
 - **Never open a visible VS Code window or a browser** in automated runs. Real-VS-Code tests go only
-  through the hidden-desktop runner (`test/vscode/`). `review.cmd` is for a human.
+  through the hidden-desktop runner (`test/vscode/`). `review.cmd` / `review.sh` is for a human.
 - **Fix with the smallest run**: while fixing, run only the failing test **through
   `node test/run.js <layer> --grep <re>`** (never bare `node test/host/<file>.js`, which bypasses
   the runner's timeout and stall kill); run the full layer once at the end. Do not retry flaky

@@ -56,7 +56,7 @@ VS Code. See [test/vscode/README.md](test/vscode/README.md). They need a GPU, so
 1-2 only; run the scenarios that cover your change locally if you can, and say in the pull request
 what you ran.
 
-To try a branch, commit or `.vsix` by hand in a throwaway profile on Windows: `review.cmd <ref>`
+To try a branch, commit or `.vsix` by hand in a throwaway profile (Windows, macOS, Linux): `review.cmd <ref>` or `review.sh <ref>`
 ([docs/REVIEW.md](docs/REVIEW.md)).
 
 ## Optional local pre-commit check

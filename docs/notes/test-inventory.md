@@ -1237,7 +1237,7 @@ None decodes with WASM (no libav-vpe / worker_threads; "libav" hits are the 'lib
 | remote_ladder_test | remote stream quality ladder adapt() from mocked link samples | 28 | - | 1 | 0 / 0.1 / pass | src/remotestream.js |
 | remote_uri_test | URI schemes: git: not played, vscode-remote: opens | 6 | mock vscode | 1 | 0 / 1.1 / pass | src/extension.js |
 | remotestream_test | remote stream: when to stream, GPU encoder probe+cache; with ffmpeg: A/V sync over 200 s clips, scrub, splice | 94 | **ff** (unit-only w/o) | 1 (+ff, heavier: real encode) | 0 / 9.3 / pass | src/remotestream.js, src/remoteff.js, src/ffmpeg.js |
-| review_test | tools/review.ps1 -DryRun prints right commands, launches nothing | 19 | **Windows PowerShell** (skips elsewhere) | 1 (tooling) | 0 / 6.1 / pass | tools/review.ps1 |
+| review_test | tools/review.js --dry-run prints right commands, launches nothing (all platforms); menu state machine; review.ps1 wrapper on Windows | 108 | git | 1 (tooling) | 0 / 7 / pass | tools/review.js, tools/review.ps1 |
 | security_test | manifests refused as media, moov walk capped, A-B range and shell quoting | 17 | tmpdir | 1 | 0 / 0.1 / pass | src/ffmpeg.js, src/rangecmd.js, src/rotation.js |
 | seek_preview_test | lazy seek-bar previews (hover order, cancel, idle close) + native ffmpeg thumbnail | 32 | **ff** + test/media/cases/long_20s.mp4 for native part (skips w/o) | 1 (+ff) | 0 / 1.8 / pass | media/thumbs.js (stub worker), src/thumbhost.js |
 | send_frames_test | every requested frame answered even unreadable | 3 | mock vscode | 1 | 0 / 0.2 / pass | src/extension.js FramePlayer |

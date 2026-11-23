@@ -129,7 +129,7 @@ started while other processes use more than 25 % CPU is marked "under load" and 
 - `activation.js`: how a file passed when VS Code starts opens (below).
 - `remote_ssh.js`: the remote-stream cases against a real SSH host.
 - `screenshot.js`, `capture_window.py`: window captures (the file-icon cases use them).
-- `review.cmd [branch|commit|file.vsix]` (repo root) opens a fresh visible VS Code with the change installed:
+- `review.cmd` / `review.sh` `[branch|commit|file.vsix]` (repo root) opens a fresh visible VS Code with the change installed:
   see [docs/REVIEW.md](../../docs/REVIEW.md).
 
 ## How it works
