@@ -38,7 +38,12 @@ const { videoPickerOptions, VIDEO_EXT } = require('../../src/open-video');
   let openFailure;
   let moveFailure;
   let loseFocus = false;
+  let availableCommands = [move[0]];
   vscode.executed = [];
+  vscode.commands.getCommands = async (filterInternal) => {
+    assert.equal(filterInternal, true);
+    return availableCommands;
+  };
   vscode.commands.executeCommand = async (...args) => {
     vscode.executed.push(args);
     if (args[0] === 'vscode.openWith') {
@@ -106,6 +111,16 @@ const { videoPickerOptions, VIDEO_EXT } = require('../../src/open-video');
   await run('playInNewWindow', mp4);
   expectCalls(open(mp4, optional, Active), move);
   assert.match(errors.pop(), /could not open the video in a new window: window unavailable/);
+  moveFailure = undefined;
+
+  const previousTab = { input: { uri: mkv, viewType: primary } };
+  group.activeTab = previousTab;
+  availableCommands = [];
+  await run('playInNewWindow', mp4);
+  expectCalls();
+  assert.equal(group.activeTab, previousTab, 'unavailable move command leaves the active editor untouched');
+  assert.match(errors.pop(), /could not open the video in a new window: requires VS Code 1\.85 or newer/);
+  availableCommands = [move[0]];
 
   vscode.window.showOpenDialog = async () => { throw new Error('picker unavailable'); };
   await run('openVideoFile');

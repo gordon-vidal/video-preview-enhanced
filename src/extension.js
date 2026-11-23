@@ -987,6 +987,14 @@ async function openLocalVideo(where, clicked) {
       void vscode.window.showWarningMessage('Video Preview: choose a local video file.');
       return;
     }
+    if (where === 'window') {
+      moving = true;
+      const commands = await vscode.commands.getCommands(true);
+      if (!commands.includes(MOVE_TO_NEW_WINDOW)) {
+        throw new Error('requires VS Code 1.85 or newer');
+      }
+      moving = false;
+    }
     const viewType = playerViewType(target);
     await vscode.commands.executeCommand('vscode.openWith', target, viewType, {
       viewColumn: videoColumn(where, vscode.ViewColumn), preview: false, preserveFocus: false,
