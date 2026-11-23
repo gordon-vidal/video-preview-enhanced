@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Export Frames (A–B)…** now prompts for an optional frame stride (default `1` for every frame, or `N` for every Nth frame); the 300-frame confirmation and 2,000-frame cap apply to the exported frame count while file names keep each frame's 1-based video index.
 - Pick a local video with **Open Video File…**, or open it in a separate editor group or window with **Play to the Side** and **Play in New Window**.
 - Open Video URL: closing or reloading a URL tab now stops its downloads at once (page inspection, HLS playlists, segments, keys and range reads), and native ffmpeg now checks the certificate of an HTTPS URL (`-tls_verify 1`), unless `http.proxyStrictSSL` is off.
 

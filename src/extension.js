@@ -2811,15 +2811,29 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     });
   }
 
-  /** Every frame of A-B as `<video>_f000123.png` in a folder the user picks (written through workspace.fs: remote too). */
+  /** Every frame (or every Nth frame) of A-B as `<video>_f000123.png` in a folder the user picks (written through workspace.fs: remote too). */
   async exportRange(range) {
     const { signal } = this.pageAbort;
     if (this.exporting) { vscode.window.showInformationMessage('Video Preview: an export is already running.'); return; }
     const problem = rangecmd.rangeProblem(range);
     if (problem) { vscode.window.showInformationMessage(`Video Preview: ${problem}`); return; }
-    const count = range.fb - range.fa + 1;
+    let stride = 1;
+    if (range.stride !== undefined) {
+      stride = rangecmd.parseStride(range.stride);
+    } else if (logFile && process.env.VPE_EXPORT_DIR && process.env.VPE_EXPORT_STRIDE === undefined) {
+      stride = 1;
+    } else {
+      const raw = logFile && process.env.VPE_EXPORT_DIR
+        ? process.env.VPE_EXPORT_STRIDE
+        : vscode.window.showInputBox ? await vscode.window.showInputBox(rangecmd.strideInputOptions(range)) : '1';
+      if (signal.aborted || raw === undefined) return;
+      const strideErr = rangecmd.strideProblem(raw);
+      if (strideErr) { vscode.window.showWarningMessage(`Video Preview: ${strideErr}`); return; }
+      stride = rangecmd.parseStride(raw);
+    }
+    const count = rangecmd.rangeFrameCount(range, stride);
     if (count > rangecmd.MAX_FRAMES) {
-      vscode.window.showWarningMessage(`Video Preview: A-B holds ${count} frames; export takes at most ${rangecmd.MAX_FRAMES}. Shorten the loop, or use "Copy ffmpeg Command for A–B".`);
+      vscode.window.showWarningMessage(`Video Preview: A-B holds ${count} frames${stride > 1 ? ` at stride ${stride}` : ''}; export takes at most ${rangecmd.MAX_FRAMES}. Shorten the loop, or use "Copy ffmpeg Command for A–B".`);
       return;
     }
     if (count > rangecmd.CONFIRM_FRAMES) {
@@ -2852,7 +2866,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     let existing = 0;
     try {
       const names = new Set((await vscode.workspace.fs.readDirectory(folder)).map(([n]) => n));
-      for (let k = range.fa; k <= range.fb; k++) if (names.has(rangecmd.frameFileName(base, k + 1))) existing++;
+      for (const k of rangecmd.rangeFrames(range, stride)) if (names.has(rangecmd.frameFileName(base, k + 1))) existing++;
     } catch { /* unreadable: writing reports the problem */ }
     if (signal.aborted) return;
     if (existing) {
@@ -2874,6 +2888,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
         signal.addEventListener('abort', cancel, { once: true });
         if (signal.aborted || token?.isCancellationRequested) cancel();
         try {
+          const end = range.fa + count * stride;
           let last = -1; // the last frame written
           for (let k = range.fa; k <= range.fb && !work.aborted;) {
             if (!this.panel.visible) {
@@ -2903,8 +2918,8 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
               if (work.aborted) break;
               last = shown;
             }
-            const next = Math.max(k + 1, shown + 1);
-            progress.report({ increment: (100 * (Math.min(next, range.fb + 1) - k)) / count, message: `${done} / ${count}` });
+            const next = rangecmd.nextRangeFrame(k, shown, stride);
+            progress.report({ increment: (100 * ((Math.min(next, end) - k) / stride)) / count, message: `${done} / ${count}` });
             k = next;
           }
         } finally {

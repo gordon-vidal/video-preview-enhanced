@@ -62,7 +62,7 @@ Opening it from a browser, a terminal, an issue or a chat opens the file in this
 - **Histogram** of R, G, B and luma.
 - Scopes read the picture as shown (after colour conversion and HDR tone mapping), about 256 columns wide, so levels are 8-bit and below-black or above-white values are already clipped. They update about 10 times a second while playing and at once when you step.
 
-**Export frames.** Set an A-B loop (`A`, `B`), then run **Export Frames (A–B)…** (Command Palette, or the button in the details overlay, `I`). Every frame from A to B is saved as a PNG, named `<video>_f000123.png` with the frame number the player shows, into a folder you pick. It shows progress and can be cancelled; at most 2000 frames, and it asks first above 300. Remote files work: the frames are written where the folder is.
+**Export frames.** Set an A-B loop (`A`, `B`), then run **Export Frames (A–B)…** (Command Palette, or **⚙ › A–B Range**). Choose a frame stride (`1` for every frame, or `N` for every Nth frame) and a folder: each exported frame from A to B is saved as a PNG named `<video>_f000123.png` with the 1-based frame number the player shows. It shows progress and can be cancelled; at most 2000 exported frames, and it asks first above 300. Remote files work: the frames are written where the folder is.
 
 **ffmpeg command for A–B.** **Copy ffmpeg Command for A–B** copies a command line for the same range: an exact cut that re-encodes, or a fast `-c copy` cut. The fast one starts at the keyframe at or before A, so it can begin a little early.
 
