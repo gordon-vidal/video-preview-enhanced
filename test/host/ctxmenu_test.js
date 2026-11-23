@@ -108,7 +108,7 @@ assert(html.indexOf('u/ctxmenu.js') > html.indexOf('u/controls.js') && html.inde
 assert(html.includes('<script nonce="N" src="u/ctxmenu.js"></script>'), 'ctxmenu.js carries the CSP nonce');
 const block = css.slice(css.indexOf('/* ==== Right-click menu'));
 assert(block.length > 0 && !/^#(bar|volume|row)\b/m.test(block), 'the #ctxmenu CSS is its own block at the end');
-for (const t of ['--vpe-panel-bg', '--vpe-panel-fg', '--vpe-panel-border', '--vpe-row-hover', '--vpe-sep', '--vpe-dim', '--vpe-mono']) assert(block.includes(t), `the menu uses ${t}`);
+for (const t of ['--vpe-surface-float', '--vpe-panel-fg', '--vpe-panel-border', '--vpe-row-hover', '--vpe-sep', '--vpe-dim', '--vpe-mono']) assert(block.includes(t), `the menu uses ${t}`);
 const keyRule = /\.ctx-key \{([^}]*)\}/.exec(block)[1];
 assert(/margin-left: 24px/.test(keyRule) && /var\(--vpe-mono\)/.test(keyRule) && /font-size: 11px/.test(keyRule) && /var\(--vpe-dim\)/.test(keyRule), 'the shortcut is dim mono, 24px from the label');
 assert(/#ctxmenu\[hidden\] \{ display: none/.test(block), 'hidden really hides (display: flex would win)');

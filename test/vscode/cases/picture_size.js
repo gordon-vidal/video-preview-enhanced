@@ -250,19 +250,12 @@ module.exports = [{
       act({ action: 'pause' });
       const dragOnce = async (tile, fx, fy, dx, dy) => {
         const t = (await ui()).picture.tiles[tile].box;
-        // fx 'pill': on the tile's name pill (a button over the picture's top corner); else a fraction of the tile
-        const x = u.stage[0] + t[0] + (fx === 'pill' ? (tile === 0 ? 30 : t[2] - 30) : t[2] * fx), y = u.stage[1] + t[1] + (fx === 'pill' ? 22 : t[3] * fy);
-        const mark0 = vs.mark();
+        const x = u.stage[0] + t[0] + t[2] * fx, y = u.stage[1] + t[1] + t[3] * fy;
         act({ action: 'dom', ev: 'pointerdown', x, y });
         act({ action: 'dom', ev: 'pointermove', x: x + dx / 2, y: y + dy / 2 });
         act({ action: 'dom', ev: 'pointermove', x: x + dx, y: y + dy });
         act({ action: 'dom', ev: 'pointerup', x: x + dx, y: y + dy });
         await h.sleep(250); // a drag that hits an edge moves nothing: there is no result to wait for
-        if (fx === 'pill') {
-          await vs.waitLog(/webview: dom target/, { from: mark0, timeout: 5000 }).catch(() => null);
-          const l = vs.lines.slice(mark0).filter((q) => /webview: dom target/.test(q))[0] || '';
-          if (!/dom target (BUTTON|SPAN)/.test(l)) ok(false, `the drag did not start on the name pill: ${l.replace(/^.*webview: /, '')}`);
-        }
       };
       const panWorks = async (label, tile, fx, fy) => {
         for (const sign of [-1, 1]) { // one direction can be against the edge: the other must move
@@ -287,7 +280,8 @@ module.exports = [{
             act(phase === 'after a step' ? { action: 'step', d: 1 } : { action: 'seek', t: 0.8 });
             await ui((x) => x.bar.time !== time0, 4000);
           }
-          for (const [tile, fx, fy] of [[0, 0.5, 0.5], [1, 0.5, 0.5], [0, 0.15, 0.85], [1, 0.9, 0.1], [0, 'pill', 0], [1, 'pill', 0]]) {
+          // Top-left name/grip pill is now a tile-reorder handle even while zoomed in; pan starts anywhere else on the picture.
+          for (const [tile, fx, fy] of [[0, 0.5, 0.5], [1, 0.5, 0.5], [0, 0.15, 0.85], [1, 0.9, 0.1]]) {
             await panWorks(`zoom x${u.picture.zoom.toFixed(2)} ${phase}, tile ${tile} at ${fx},${fy}`, tile, fx, fy);
           }
         }
