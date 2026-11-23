@@ -2204,7 +2204,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
       this.postStream();
       this.post({ type: 'libav', meta: { size: 0, duration: 0, label: '', native: true, live: !!this.live, url: true } });
       this.logStartup('native');
-      this.sendHlsSubs(gen, null);
+      this.sendHlsSubs(gen, null, signal);
       return undefined;
     };
     const forced = () => decide.decide({ setting: 'ffmpeg', trusted: true, tools: t, video: pr.video, probe: probeRecordFor(t), hw: hwKnown, gpu: c.gpuDecoding });
@@ -2229,15 +2229,13 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
         }
         this.post({ type: 'status', text: 'Reading the HLS playlist…' });
         const hls = new urlsource.HlsFile(plan, opts);
-        const close = () => hls.close();
-        signal.addEventListener('abort', close, { once: true });
+        // The file follows the load's signal itself (urlsource linkSignal): an abort stops its requests.
         try {
           await hls.open((n, all) => { if (!signal.aborted) this.post({ type: 'status', text: `Reading the HLS playlist… ${n} / ${all} segments` }); });
           if (signal.aborted) return undefined;
           this.net = hls;
         } finally {
-          signal.removeEventListener('abort', close);
-          if (!signal.aborted && this.net !== hls) close();
+          if (this.net !== hls) hls.close();
         }
         log(`[${this.name}] HLS for the built-in decoder: ${hls.segments} ${hls.fmp4 ? 'fMP4' : 'MPEG-TS'} segments${hls.encrypted ? ' (AES-128, decrypted here)' : ''}, ${hls.size} bytes, ${hls.duration.toFixed(1)} s${hls.variant ? `, variant ${hls.variant.width}x${hls.variant.height} ${hls.variant.bandwidth} b/s` : ''}`);
       } else {
@@ -2258,7 +2256,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     this.postStream();
     this.post({ type: 'libav', meta: { size: this.net.size, duration: this.net.duration || 0, label: '', url: true } });
     this.logStartup('libav');
-    this.sendHlsSubs(gen, this.net instanceof urlsource.HlsFile ? this.net : null);
+    this.sendHlsSubs(gen, this.net instanceof urlsource.HlsFile ? this.net : null, signal);
     return undefined;
   }
 
@@ -2291,8 +2289,8 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
    * as loaded subtitle files (the CC menu names them by NAME and LANGUAGE). Kept for reloads (quality changes).
    * file: the opened HlsFile (its first bytes give the timeline's start), else the start is read from the first segment.
    */
-  async sendHlsSubs(gen, file) {
-    const opts = { ...netOpts(), signal: this.pageAbort.signal };
+  async sendHlsSubs(gen, file, signal) {
+    const opts = { ...netOpts(), signal };
     const plan = this.hlsPlan;
     if (!plan || !plan.master || this.live || !plan.master.media.some((m) => m.type === 'SUBTITLES' && m.url)) return;
     try {
@@ -2316,7 +2314,10 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
         flags: x.forced ? ['forced'] : [], data: new Uint8Array(Buffer.from(x.text, 'utf8')),
       }));
       if (files.length) this.post({ type: 'subs', files });
-    } catch (e) { log(`[${this.name}] HLS subtitles: ${e && e.stack || e}`); }
+    } catch (e) {
+      if (signal.aborted) return; // the page was closed or reloaded: nothing to report
+      log(`[${this.name}] HLS subtitles: ${e && e.stack || e}`);
+    }
   }
 
   /** What ffmpeg reads for this URL player: the URL (after redirects) and the proxy (src/ffmpeg.js inputArgs). */
@@ -2327,7 +2328,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     // HLS master playlist: ffprobe picks the streams of the chosen variant (src/ffmpeg.js probe).
     const plan = this.hlsPlan;
     const variant = plan && plan.master && plan.variant ? { bandwidth: plan.variant.bandwidth } : undefined;
-    return { url, proxy: p || undefined, variant };
+    return { url, proxy: p || undefined, strictSSL: h.get('proxyStrictSSL', true) !== false, variant };
   }
 
   /** The built-in decoder can't play this URL: say why, and offer ffmpeg where it would run. */

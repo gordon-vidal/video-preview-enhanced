@@ -219,20 +219,23 @@ async function isPlaylistFile(file) {
 const URL_PROTOCOLS = 'http,https,tcp,tls,crypto,httpproxy';
 const URL_RW_TIMEOUT_US = 20000000;
 
-/** A URL input: { url, proxy?, variant? } (from the user's input box only; variant: the HLS quality choice for probe); a file input is a path string. */
+/** A URL input: { url, proxy?, strictSSL?, variant? } (from the user's input box only; variant: the HLS quality choice for probe); a file input is a path string. */
 function isUrlInput(input) {
   return !!input && typeof input === 'object' && typeof input.url === 'string';
 }
 
 /**
  * The input part of an ffmpeg/ffprobe command line: `-protocol_whitelist file -i <path>` for a file;
- * for a URL input the network whitelist above, an I/O timeout and the proxy (http.proxy), only for
- * http(s) URLs.
+ * for a URL input the network whitelist above, an I/O timeout, `-tls_verify 1` and the proxy (http.proxy),
+ * only for http(s) URLs. ffmpeg's TLS does not check the server certificate by default (the Linux builds;
+ * schannel builds do), so it is asked to, unless the user turned http.proxyStrictSSL off (strictSSL false:
+ * a proxy that re-signs HTTPS traffic with its own certificate). The option is ignored for plain http.
  */
 function inputArgs(input) {
   if (isUrlInput(input)) {
     if (!/^https?:\/\/[^\s]+$/i.test(input.url)) throw new Error('only http and https URLs can be opened');
     const args = ['-protocol_whitelist', URL_PROTOCOLS, '-rw_timeout', String(URL_RW_TIMEOUT_US)];
+    if (input.strictSSL !== false) args.push('-tls_verify', '1');
     if (input.proxy && /^https?:\/\/[^\s]+$/i.test(input.proxy)) args.push('-http_proxy', input.proxy);
     return [...args, '-i', input.url];
   }

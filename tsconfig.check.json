@@ -12,6 +12,7 @@
     "tools/page-work-contract.js",
     "src/read-block.js",
     "src/extension.js",
+    "src/urlsource.js",
     "src/settings.js",
     "src/offers.js",
     "src/compare.js",

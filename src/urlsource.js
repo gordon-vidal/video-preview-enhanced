@@ -88,6 +88,57 @@ function rememberUrl(state, url) {
   return state.update(RECENT_KEY, list);
 }
 
+// ---- Cancellation -----------------------------------------------------------
+
+// checkJs: start
+/** The error a cancelled request rejects with (name AbortError, like fetch). */
+function abortError() {
+  const e = /** @type {Error & { code?: string }} */ (new Error('aborted'));
+  e.name = 'AbortError';
+  e.code = 'ABORT_ERR';
+  return e;
+}
+
+/** True for what abortError makes (and for DOMException AbortError from signal.throwIfAborted). */
+function isAbort(e) {
+  return !!e && (e.name === 'AbortError' || e.code === 'ABORT_ERR');
+}
+
+/** @type {WeakMap<AbortSignal, { fns: Set<() => void>, run: () => void }>} */
+const abortHooks = new WeakMap();
+
+/**
+ * Runs fn once when signal aborts; returns a function that cancels the hook (safe to call twice). All hooks
+ * of one signal share a single 'abort' listener, so many requests on one load's signal never pile up
+ * listeners (no MaxListenersExceededWarning) and none stays after the last hook is gone.
+ * @param {AbortSignal | undefined} signal
+ * @param {() => void} fn
+ * @returns {() => void}
+ */
+function onAbort(signal, fn) {
+  if (!signal) return () => {};
+  let hooks = abortHooks.get(signal);
+  if (!hooks) {
+    /** @type {Set<() => void>} */
+    const fns = new Set();
+    const run = () => {
+      abortHooks.delete(signal);
+      for (const f of [...fns]) f();
+    };
+    hooks = { fns, run };
+    abortHooks.set(signal, hooks);
+    signal.addEventListener('abort', run, { once: true });
+  }
+  const mine = hooks;
+  mine.fns.add(fn);
+  return () => {
+    if (!mine.fns.delete(fn) || mine.fns.size || abortHooks.get(signal) !== mine) return;
+    abortHooks.delete(signal);
+    signal.removeEventListener('abort', mine.run);
+  };
+}
+// checkJs: end
+
 // ---- HTTP ----------------------------------------------------------------
 
 const agents = {
@@ -126,7 +177,7 @@ function httpError(status, url) {
  */
 function open(url, opts = {}, hops = 0) {
   return new Promise((resolve, reject) => {
-    opts.signal?.throwIfAborted();
+    if (opts.signal?.aborted) { reject(abortError()); return; }
     let u;
     try { u = new URL(url); } catch { reject(new Error('bad URL')); return; }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') { reject(new Error(`redirected to a ${u.protocol} URL: refused`)); return; }
@@ -145,11 +196,12 @@ function open(url, opts = {}, hops = 0) {
       req = mod.request(url, { method: opts.method || 'GET', headers, agent });
     }
     let done = false;
-    const fail = (e) => { if (!done) { done = true; reject(e); } };
+    // The hook lives as long as the request: a body read after the response is cut off by an abort too.
+    // It goes when the request closes, fails or hands over to a redirect, never later.
+    const unhook = onAbort(opts.signal, () => { req.destroy(); fail(abortError()); });
+    const fail = (e) => { unhook(); if (!done) { done = true; reject(e); } };
     req.setTimeout(timeoutMs, () => { const e = new Error('timeout'); e.code = 'TIMEOUT'; req.destroy(e); });
-    const abort = () => { req.destroy(); fail(new Error('aborted')); };
-    opts.signal?.addEventListener('abort', abort, { once: true });
-    req.once('close', () => opts.signal?.removeEventListener('abort', abort));
+    req.once('close', unhook);
     req.on('error', (e) => fail(new Error(describeError(e, url))));
     req.on('response', (res) => {
       if (done) { res.destroy(); return; }
@@ -157,6 +209,7 @@ function open(url, opts = {}, hops = 0) {
       if (st >= 300 && st < 400 && st !== 304 && res.headers.location) {
         res.resume();
         done = true;
+        unhook();
         if (hops >= MAX_REDIRECTS) { reject(new Error(`${redact(url)}: too many redirects`)); return; }
         let next;
         try { next = new URL(res.headers.location, url).href; } catch { reject(new Error('bad redirect')); return; }
@@ -173,19 +226,20 @@ function open(url, opts = {}, hops = 0) {
   });
 }
 
-/** Reads a whole response body (at most max bytes). */
-function readBody(res, max, url) {
+/** Reads a whole response body (at most max bytes). signal: a cancelled read rejects with an AbortError. */
+function readBody(res, max, url, signal) {
   return new Promise((resolve, reject) => {
     const parts = [];
     let n = 0;
+    const fail = (e) => reject(signal?.aborted ? abortError() : e);
     res.on('data', (d) => {
       n += d.length;
       if (n > max) { res.destroy(); reject(new Error(`${redact(url)}: more than ${max} bytes`)); return; }
       parts.push(d);
     });
     res.on('end', () => resolve(Buffer.concat(parts, n)));
-    res.on('error', (e) => reject(new Error(describeError(e, url))));
-    res.on('close', () => { if (!res.complete) reject(new Error(`${redact(url)}: the connection closed early`)); else resolve(Buffer.concat(parts, n)); });
+    res.on('error', (e) => fail(new Error(describeError(e, url))));
+    res.on('close', () => { if (!res.complete) fail(new Error(`${redact(url)}: the connection closed early`)); else resolve(Buffer.concat(parts, n)); });
   });
 }
 
@@ -196,7 +250,7 @@ async function fetchRange(url, start, end, opts = {}) {
   const st = res.statusCode;
   if (st !== 200 && st !== 206) { res.resume(); throw httpError(st, final); }
   const max = end !== undefined && st === 206 ? end - start + 1 : (opts.maxBody || MAX_PLAYLIST);
-  const body = await readBody(res, max, final);
+  const body = await readBody(res, max, final, opts.signal);
   return { status: st, headers: res.headers, body, url: final };
 }
 
@@ -240,7 +294,11 @@ async function inspect(url, opts = {}) {
   res.on('end', () => { ended = true; if (wake) wake(); });
   res.on('error', (e) => { failed = failed || new Error(describeError(e, final)); if (wake) wake(); });
   res.on('close', () => { if (!ended && !failed) failed = new Error(`${redact(final)}: the connection closed early`); if (wake) wake(); });
-  const until = async (ok) => { while (!ok() && !ended && !failed) await new Promise((r) => { wake = r; }); wake = null; };
+  const until = async (ok) => {
+    while (!ok() && !ended && !failed) await new Promise((r) => { wake = r; });
+    wake = null;
+    if (failed && opts.signal?.aborted) throw abortError(); // a cut-off read is a cancellation, not a network error
+  };
   await until(() => n > 0);
   if (!n && failed) throw failed;
   const peekKind = kindOf(final, ct, Buffer.concat(parts, n));
@@ -283,6 +341,7 @@ class HttpFile {
       if (!(this.size > 0)) throw new Error('The server sends no file size and no range support: this URL needs native ffmpeg');
       if (this.size > MAX_WHOLE) throw new Error(`The server does not support range requests (needed for files over ${MAX_WHOLE >> 20} MB): set up ffmpeg to play it`);
     }
+    this.unlink = linkSignal(opts.signal, this); // last: a constructor that throws leaves no hook behind
   }
 
   /** No range support: download the whole file in the background (reads wait for their bytes). */
@@ -322,14 +381,15 @@ class HttpFile {
         const r = await fetchRange(this.url, pos, end - 1, this.opts);
         if (r.status !== 206) throw new Error('the server stopped answering range requests');
         return r.body;
-      } catch (e) { last = e; if (this.closed || (e.status && e.status < 500)) break; }
+      } catch (e) { last = e; if (this.closed || isAbort(e) || (e.status && e.status < 500)) break; }
     }
-    throw last;
+    throw this.closed ? closedError() : last;
   }
 
   close() {
     if (this.closed) return;
     this.closed = true;
+    if (this.unlink) this.unlink();
     this.abort.abort();
     if (this.wholeRes) this.wholeRes.destroy();
     const w = this.whole;
@@ -341,6 +401,16 @@ class HttpFile {
       for (const f of ws) f();
     }
   }
+}
+
+/**
+ * Closes file when the load that opened it is cancelled (parent: that load's signal), so its requests stop with
+ * the load and not only when the owner remembers to call close(). Returns the unlink function (close() calls it).
+ */
+function linkSignal(parent, file) {
+  if (!parent) return null;
+  if (parent.aborted) { queueMicrotask(() => file.close()); return null; }
+  return onAbort(parent, () => file.close());
 }
 
 function closedError() { const e = new Error('the file was closed'); e.code = 'CLOSED'; return e; }
@@ -585,7 +655,7 @@ async function hlsOpen(info, opts = {}, { pick = 'auto', view = null, maxHeight 
     let got = await fetchPl(top.variants[i]);
     plan.throughput = rateFor(info.url);
     if (plan.auto && top.variants.length > 1 && !plan.throughput && !got.p.live && !got.p.drm) {
-      try { plan.throughput = await measureRate(got.p, opts); } catch { plan.throughput = 0; }
+      try { plan.throughput = await measureRate(got.p, opts); } catch (e) { if (isAbort(e)) throw e; plan.throughput = 0; }
       if (plan.throughput) {
         const j = top.variants.indexOf(chooseVariant(top.variants, { maxHeight, view, throughput: plan.throughput }));
         if (j !== i) { i = j; got = await fetchPl(top.variants[i]); }
@@ -604,8 +674,12 @@ async function hlsOpen(info, opts = {}, { pick = 'auto', view = null, maxHeight 
 /** Runs fn over items, at most n at a time. */
 async function pool(items, n, fn) {
   let i = 0;
+  let failed = false; // after one failure nobody starts another request (a cancelled load stops at once)
   const workers = Array.from({ length: Math.min(n, items.length) }, async () => {
-    while (i < items.length) { const k = i++; await fn(items[k], k); }
+    while (!failed && i < items.length) {
+      const k = i++;
+      try { await fn(items[k], k); } catch (e) { failed = true; throw e; }
+    }
   });
   await Promise.all(workers);
 }
@@ -618,7 +692,7 @@ async function sizeOf(url, opts) {
     const n = Number(res.headers['content-length']);
     if (res.statusCode === 200 && n >= 0 && Number.isFinite(n)) return n;
     if (res.statusCode >= 400 && res.statusCode !== 405 && res.statusCode !== 501) throw httpError(res.statusCode, url);
-  } catch (e) { if (e.status) throw e; }
+  } catch (e) { if (e.status || isAbort(e)) throw e; }
   const r = await fetchRange(url, 0, 0, opts);
   const total = r.status === 206 ? totalOf(r.headers) : r.body.length;
   if (!Number.isFinite(total)) throw new Error(`${redact(url)}: unknown size`);
@@ -630,7 +704,7 @@ async function tailOf(url, n, opts) {
   const { res, url: final } = await open(url, { ...opts, headers: { Range: `bytes=-${n}` } });
   const st = res.statusCode;
   if (st !== 200 && st !== 206) { res.resume(); throw httpError(st, final); }
-  const body = await readBody(res, st === 206 ? n : 512 * 1024 * 1024, final);
+  const body = await readBody(res, st === 206 ? n : 512 * 1024 * 1024, final, opts.signal);
   const size = st === 206 ? totalOf(res.headers) : body.length;
   if (!Number.isFinite(size)) throw new Error(`${redact(final)}: unknown size`);
   return { size, tail: body.subarray(Math.max(0, body.length - n)) };
@@ -675,6 +749,7 @@ class HlsFile {
     this.parts = [];
     this.size = 0;
     this.keys = new Map(); // key URI -> Promise<Buffer> (never logged)
+    this.unlink = linkSignal(opts.signal, this);
   }
 
   async open(onProgress) {
@@ -758,6 +833,7 @@ class HlsFile {
   }
 
   async read(pos, len) {
+    if (this.closed) throw closedError();
     if (pos >= this.size || len <= 0) return Buffer.alloc(0);
     const end = Math.min(this.size, pos + len);
     const pieces = [];
@@ -780,9 +856,9 @@ class HlsFile {
         // A server without ranges sends the whole segment: cut out the piece.
         if (r.status === 200) return r.body.subarray(p.start + a, p.start + b);
         return r.body;
-      } catch (e) { last = e; if (e.status && e.status < 500) break; }
+      } catch (e) { last = e; if (this.closed || isAbort(e) || (e.status && e.status < 500)) break; }
     }
-    throw last;
+    throw this.closed ? closedError() : last;
   }
 
   /** Plain bytes [a, b) of an AES-128 part: the cipher blocks that hold them, plus the block before as the IV. */
@@ -796,7 +872,13 @@ class HlsFile {
     return plain.subarray(a - ba, b - ba);
   }
 
-  close() { this.closed = true; this.keys.clear(); this.abort.abort(); }
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.unlink) this.unlink();
+    this.keys.clear();
+    this.abort.abort();
+  }
 }
 
 /** True when an HLS playlist (or, for a master playlist, its first variant) is live: no #EXT-X-ENDLIST, not VOD. */
@@ -931,7 +1013,10 @@ async function hlsSubtitles(plan, opts = {}, { start = null } = {}) {
         texts[i] = body.toString('utf8');
       });
       out.push({ id, name, lang: m.lang, default: m.default, autoselect: m.autoselect, forced: m.forced, text: joinVtt(texts, start) });
-    } catch (e) { out.push({ id, name, error: e.message }); }
+    } catch (e) {
+      if (isAbort(e)) throw e; // cancelled: not a failed rendition
+      out.push({ id, name, error: e.message });
+    }
   }
   return out;
 }
@@ -943,7 +1028,7 @@ function dashLive(text) {
 
 module.exports = {
   checkUrl, redact, displayName, recentUrls, rememberUrl, RECENT_KEY, MAX_RECENT,
-  open, fetchRange, inspect, kindOf, describeError, HttpFile, HlsFile, parseM3u8, pickVariant, chooseVariant, hlsOpen, hlsLive, dashLive,
+  open, fetchRange, inspect, isAbort, onAbort, kindOf, describeError, HttpFile, HlsFile, parseM3u8, pickVariant, chooseVariant, hlsOpen, hlsLive, dashLive,
   hlsSubtitles, joinVtt, streamStart, noteRate, rateFor, NeedsFfmpeg, Protected,
   HEAD_BYTES, MAX_WHOLE,
 };

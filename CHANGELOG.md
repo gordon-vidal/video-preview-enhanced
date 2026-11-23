@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Open Video URL: closing or reloading a URL tab now stops its downloads at once (page inspection, HLS playlists, segments, keys and range reads), and native ffmpeg now checks the certificate of an HTTPS URL (`-tls_verify 1`), unless `http.proxyStrictSSL` is off.
+
 ## 0.9.1 (2026-11-23)
 
 Refined player and Compare controls (themed in-page context menu, step-size badge, folding volume slider, A/B range buttons and draggable pins, grouped Settings and Info panels, animated Compare tile reorder drag, shared playback preferences with default-muted tabs), plus Chocolatey/Scoop ffmpeg shim support and exact frames during reduced-quality native playback.
