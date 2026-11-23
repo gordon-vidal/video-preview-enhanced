@@ -84,11 +84,12 @@ const { fileOfKey } = require('../../src/compare');
     compare.closeFiles();
     let openedFh;
     let finishOpen;
+    let reloadReads = 0;
     const gate = new Promise((r) => { finishOpen = r; });
     fs.promises.open = async (...a) => {
       await gate;
       openedFh = await origOpen(...a);
-      openedFh.read = () => { throw new Error('read after a reload'); };
+      openedFh.read = () => { reloadReads++; throw new Error('read after a reload'); };
       return openedFh;
     };
     posts.length = 0;
@@ -97,6 +98,7 @@ const { fileOfKey } = require('../../src/compare');
     compare.reload();
     finishOpen();
     await pending;
+    assert.strictEqual(reloadReads, 0, 'a request overtaken by a reload never calls fh.read');
     assert.strictEqual(posts.filter((m) => m.type === 'block' || m.type === 'error').length, 0,
       'a request overtaken by a reload does not read or post');
     fs.promises.open = origOpen;
