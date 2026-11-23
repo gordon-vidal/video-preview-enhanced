@@ -8,10 +8,6 @@ const winPath = path.win32;
 const posixPath = path.posix;
 
 // checkJs: start
-/**
- * @typedef {{ fa: number, fb: number, fps: number, stride?: unknown }} ExportRange
- */
-
 const MAX_FRAMES = 2000;
 const CONFIRM_FRAMES = 300;
 
@@ -47,7 +43,7 @@ function strideProblem(/** @type {unknown} */ value) {
 /** Number of frames exported from `r` (`fa..fb` inclusive) at `stride` (every Nth frame, starting at `fa`). */
 function rangeFrameCount(/** @type {{ fa?: unknown, fb?: unknown, stride?: unknown } | null | undefined} */ r, /** @type {unknown} */ stride = r && r.stride !== undefined ? r.stride : 1) {
   const st = parseStride(stride);
-  if (!st || !r || typeof r.fa !== 'number' || typeof r.fb !== 'number' || !Number.isInteger(r.fa) || !Number.isInteger(r.fb) || r.fa < 0 || r.fb < r.fa) return 0;
+  if (!st || !r || typeof r.fa !== 'number' || typeof r.fb !== 'number' || !Number.isSafeInteger(r.fa) || !Number.isSafeInteger(r.fb) || r.fa < 0 || r.fb < r.fa) return 0;
   return Math.floor((r.fb - r.fa) / st) + 1;
 }
 
@@ -68,7 +64,7 @@ function rangeFrames(/** @type {{ fa?: unknown, fb?: unknown, stride?: unknown }
  */
 function nextRangeFrame(/** @type {number} */ k, /** @type {unknown} */ shown, /** @type {unknown} */ stride = 1) {
   const st = parseStride(stride) || 1;
-  if (typeof shown !== 'number' || !Number.isInteger(shown) || shown < k + st) return k + st;
+  if (typeof shown !== 'number' || !Number.isSafeInteger(shown) || shown < k + st) return k + st;
   return k + (Math.floor((shown - k) / st) + 1) * st;
 }
 
@@ -146,8 +142,8 @@ function ffmpegRange(/** @type {string} */ file, /** @type {{ fa: number, fb: nu
 /** Checks a range from the page: null when fine, else a message. */
 function rangeProblem(/** @type {{ fa?: unknown, fb?: unknown, fps?: unknown, stride?: unknown } | null | undefined} */ r) {
   if (!r || r.fa === undefined || r.fb === undefined || r.fa === null || r.fb === null) return 'Set an A-B loop first: press A at the first frame and B at the last.';
-  // Frame indices name the exported files: whole numbers only, whatever the page sends.
-  if (typeof r.fa !== 'number' || typeof r.fb !== 'number' || !Number.isInteger(r.fa) || !Number.isInteger(r.fb) || r.fa < 0) return 'The A-B range is not valid.';
+  // Frame indices name the exported files: whole safe integers only, whatever the page sends.
+  if (typeof r.fa !== 'number' || typeof r.fb !== 'number' || !Number.isSafeInteger(r.fa) || !Number.isSafeInteger(r.fb) || r.fa < 0) return 'The A-B range is not valid.';
   if (typeof r.fps !== 'number' || !(r.fps > 0)) return 'The frame rate is not known yet; try again in a moment.';
   if (r.fb < r.fa) return 'The A-B range is empty.';
   if (r.stride !== undefined) return strideProblem(r.stride);

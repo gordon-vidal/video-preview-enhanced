@@ -2863,15 +2863,18 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     if (signal.aborted || !pick || !pick.length) return;
     const folder = pick[0];
     // Ask before writing over frames exported before.
+    let existingNames = new Set();
     let existing = 0;
     try {
-      const names = new Set((await vscode.workspace.fs.readDirectory(folder)).map(([n]) => n));
-      for (const k of rangecmd.rangeFrames(range, stride)) if (names.has(rangecmd.frameFileName(base, k + 1))) existing++;
+      existingNames = new Set((await vscode.workspace.fs.readDirectory(folder)).map(([n]) => n));
+      for (const k of rangecmd.rangeFrames(range, stride)) if (existingNames.has(rangecmd.frameFileName(base, k + 1))) existing++;
     } catch { /* unreadable: writing reports the problem */ }
     if (signal.aborted) return;
+    let overwriteConfirmed = false;
     if (existing) {
       const ok = await vscode.window.showWarningMessage(`Overwrite ${existing} existing file${existing === 1 ? '' : 's'}?`, { modal: true, detail: `${folder.scheme === 'file' ? folder.fsPath : folder.toString()} already holds ${existing === 1 ? 'a frame' : 'frames'} of this range.` }, 'Overwrite');
       if (ok !== 'Overwrite') return;
+      overwriteConfirmed = true;
     }
     if (signal.aborted || this.exporting) return; // another export started while the dialogs were open
     this.exporting = signal;
@@ -2913,7 +2916,13 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
             // VFR or gapped video: the seek can settle on a neighbour. Name the file from the frame shown; skip repeats.
             const shown = Number.isInteger(r.frame) ? r.frame : k;
             if (shown > last && shown >= range.fa && shown <= range.fb) {
-              await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, rangecmd.frameFileName(base, shown + 1)), new Uint8Array(r.data));
+              const name = rangecmd.frameFileName(base, shown + 1);
+              if (!overwriteConfirmed && existingNames.has(name)) {
+                const ok = await vscode.window.showWarningMessage(`Overwrite existing file ${name}?`, { modal: true, detail: `${folder.scheme === 'file' ? folder.fsPath : folder.toString()} already holds ${name}.` }, 'Overwrite');
+                if (work.aborted || ok !== 'Overwrite') { controller.abort(); break; }
+                overwriteConfirmed = true;
+              }
+              await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, name), new Uint8Array(r.data));
               done++;
               if (work.aborted) break;
               last = shown;

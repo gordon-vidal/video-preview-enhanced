@@ -243,6 +243,55 @@ assert.strictEqual(args.at(-1), 'target.mp4');
       assert.strictEqual(grabbed.length, 0);
     }
 
+    // 8. Unsafe integer frame endpoints (2 ** 53) are rejected cleanly before counting or looping.
+    assert.ok(r.rangeProblem({ fa: 2 ** 53, fb: 2 ** 53, fps: 30 }));
+    assert.strictEqual(r.rangeFrameCount({ fa: 2 ** 53, fb: 2 ** 53 }, 1), 0);
+
+    // 9. CONFIRM_FRAMES boundary (300 vs 301 strided targets): 300 skips prompt, 301 prompts and honours Cancel.
+    grabbed.length = 0; written.length = 0; warnings.length = 0;
+    inputReply = '2';
+    confirmReply = 'Cancel';
+    await s.send({ type: 'exportRange', page, range: { fa: 0, fb: 598, fps: 30 } }); // 300 strided targets
+    assert.strictEqual(warnings.length, 0);
+    assert.strictEqual(grabbed.length, 300);
+
+    grabbed.length = 0; written.length = 0; warnings.length = 0;
+    inputReply = '2';
+    confirmReply = 'Cancel';
+    await s.send({ type: 'exportRange', page, range: { fa: 0, fb: 600, fps: 30 } }); // 301 strided targets
+    assert.strictEqual(warnings.length, 1);
+    assert.ok(warnings[0].startsWith('Export 301 frames as PNG?'), warnings[0]);
+    assert.strictEqual(grabbed.length, 0);
+    confirmReply = 'Export';
+
+    // 10. VFR / gapped video settling on an off-grid frame whose PNG already exists prompts before writing.
+    grabbed.length = 0; written.length = 0; warnings.length = 0;
+    existingFiles = ['clip_f000007.png']; // off-grid for stride 5 (targets 0, 5, 10), but frame 5 settles on 6 -> f000007
+    inputReply = '5';
+    overwriteReply = 'Cancel';
+    const normalPost = s.panel.webview.postMessage;
+    s.panel.webview.postMessage = (m) => {
+      if (m.type === 'exportGrab') {
+        grabbed.push(m.frame);
+        const settled = m.frame === 5 ? 6 : m.frame;
+        queueMicrotask(() => {
+          s.send({ type: 'exportFrame', page, id: m.id, frame: settled, data: Uint8Array.of(settled + 1) });
+        });
+        return origPost(m);
+      }
+      return normalPost(m);
+    };
+    try {
+      await s.send({ type: 'exportRange', page, range: { fa: 0, fb: 10, fps: 30 } });
+      assert.strictEqual(warnings.length, 1);
+      assert.ok(warnings[0].startsWith('Overwrite existing file clip_f000007.png?'), warnings[0]);
+      assert.deepStrictEqual(written, [['clip_f000001.png', 1]]);
+      assert.deepStrictEqual(grabbed, [0, 5]);
+    } finally {
+      s.panel.webview.postMessage = normalPost;
+      existingFiles = [];
+    }
+
     console.log('rangecmd: ok');
   } finally {
     s.panel.dispose();
