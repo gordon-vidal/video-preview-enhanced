@@ -8,7 +8,7 @@
 // Step: { case, only?, skip?, settings?, env?, ffmpeg?, keepState?, timeout? }
 
 const PLAYER = ['media/player.js', 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/player.css', 'src/bar.js'];
-const ENGINE = ['media/engine.js', 'media/block-cache.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
+const ENGINE = ['media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
 const HOST = ['src/extension.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/nativepts.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
 const COMPARE = ['src/compare.js', 'src/comparemenu.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js', 'media/compare.js', 'media/timefmt.js', 'media/compare.css', 'media/compare-grid.js', 'media/range-drag.js'];
@@ -78,7 +78,7 @@ module.exports = [
   {
     name: 'picture-size-native',
     journey: 'With ffmpeg: native frames grow for Fill and 100 % and wait for the next seek when back to Fit',
-    sources: ['media/picture.js', 'media/inspect.js', 'media/engine.js', 'media/block-cache.js', ...NATIVE, 'src/compare.js'],
+    sources: ['media/picture.js', 'media/inspect.js', 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', ...NATIVE, 'src/compare.js'],
     steps: [{ case: 'picture_size_native' }],
   },
   {
@@ -120,7 +120,7 @@ module.exports = [
   {
     name: 'native',
     journey: 'With ffmpeg: native decoding plays, frames sized to the picture and grown on resize / zoom, the message fallback, About this video',
-    sources: [...NATIVE, 'src/decide.js', 'src/extension.js', 'media/framestream.js', 'media/engine.js', 'media/block-cache.js', 'media/player.js'],
+    sources: [...NATIVE, 'src/decide.js', 'src/extension.js', 'media/framestream.js', 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/player.js'],
     steps: [
       { case: 'open-native' }, { case: 'native-transfer' }, { case: 'native-transfer-resize' }, { case: 'native-transfer-fallback' }, { case: 'ui_info_native' },
     ],
@@ -128,7 +128,7 @@ module.exports = [
   {
     name: 'invisible',
     journey: 'Work a user never notices: a hidden native tab stops ffmpeg, paused players read only about 1 s ahead, the frame loop rests while paused',
-    sources: [...NATIVE, 'media/engine.js', 'media/block-cache.js', 'media/player.js', 'media/membudget.js'],
+    sources: [...NATIVE, 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/player.js', 'media/membudget.js'],
     steps: [{ case: 'perf-invisible', skip: '^audio-rest$' }],
   },
   {
@@ -152,7 +152,7 @@ module.exports = [
   {
     name: 'hdr',
     journey: 'HDR output: the display probe, tone mapping on SDR, Dolby Vision, PQ / HLG on an HDR canvas (built-in and native 10-bit)',
-    sources: ['media/hdr.js', 'media/engine.js', 'media/block-cache.js', 'src/native.js', 'src/probe.js', 'src/extension.js'],
+    sources: ['media/hdr.js', 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'src/native.js', 'src/probe.js', 'src/extension.js'],
     steps: [{ case: 'hdr_output' }, { case: 'hdr_output_forced' }, { case: 'hdr_output_forced_native' }],
   },
   {
@@ -176,7 +176,7 @@ module.exports = [
   {
     name: 'remote-stream',
     journey: 'Remote windows: formats the GPU decoder can\'t play are re-encoded to H.264 by ffmpeg; seeks, scrubbing, the quality ladder, pixel tools',
-    sources: ['src/remotestream.js', 'src/stream.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/block-cache.js', 'media/player.js'],
+    sources: ['src/remotestream.js', 'src/stream.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/player.js'],
     steps: [{ case: 'remote_stream' }, { case: 'remote_stream_long' }, { case: 'remote_stream_size' }, { case: 'remote_stream_fallback' }],
   },
   {

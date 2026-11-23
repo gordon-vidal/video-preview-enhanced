@@ -50,6 +50,7 @@ else { const P = globalThis.DecoderPool; globalThis.DecoderPool = class extends 
 
 // ---- engine --------------------------------------------------------------------
 globalThis.VpeBlockCache = require('../../media/block-cache');
+globalThis.VpeGlRenderer = require('../../media/gl-renderer');
 const src = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'engine.js'), 'utf8');
 vm.runInThisContext(`${src}\nglobalThis.createEngine = createEngine;`, { filename: 'engine.js' });
 let size = 0;

@@ -17,6 +17,7 @@
     "src/compare.js",
     "src/thumbhost.js",
     "media/block-cache.js",
+    "media/gl-renderer.js",
     "media/engine.js",
     "media/slow-notice.js",
     "media/stepgoal.js",

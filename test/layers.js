@@ -209,7 +209,7 @@ const limits = (f) => ({ timeout: TIMEOUTS[f] || DEFAULT_TIMEOUT, stall: STALLS[
 
 const unit = [
   ...hostTests.map((f) => ({ file: rel('test/host', f), args: HOST_ARGS[f], media: HOST_MEDIA[f], })),
-  { file: 'test/engine/unit.js', sources: ['media/engine.js', 'media/block-cache.js', 'media/pool.js', 'media/timestretch.js', 'media/membudget.js', 'media/decoder-worker.js'] },
+  { file: 'test/engine/unit.js', sources: ['media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/pool.js', 'media/timestretch.js', 'media/membudget.js', 'media/decoder-worker.js'] },
   { file: 'test/inspect/inspect_test.js', sources: ['media/inspect.js'] },
   { file: 'test/subtitles/run.js', sources: ['media/subtitles.js'] },
   { file: 'test/subtitles/sidecars.js', sources: ['src/sidecars.js'] },
@@ -217,13 +217,14 @@ const unit = [
   { file: 'test/unit/abloop_test.js', sources: ['media/abloop.js', 'media/player.js'] },
   { file: 'test/unit/block_cache_test.js', sources: ['media/block-cache.js'] },
   { file: 'test/unit/comparerange_test.js', sources: ['media/comparerange.js', 'media/compare.js'] },
+  { file: 'test/unit/gl_renderer_test.js', sources: ['media/gl-renderer.js', 'media/engine.js', 'media/compare.js'] },
   { file: 'test/unit/stepgoal_test.js', sources: ['media/stepgoal.js', 'media/compare.js'] },
   { file: 'test/unit/timefmt_test.js', sources: ['media/timefmt.js', 'media/player.js', 'media/compare.js'] },
   { file: 'test/avi_test.js', args: ['test/media/cases/s_mjpeg.avi'], media: ['s_mjpeg.avi'], needs: ['ffmpeg'], sources: ['src/avi.js'] },
 ].filter((e) => fs.existsSync(path.join(ROOT, e.file)));
 
 // ---- layer 2: the WebAssembly decoders in Node, about a minute ----------------------------
-const ENGINE_SRC = ['media/engine.js', 'media/block-cache.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/abloop.js', 'test/engine/harness.js', 'test/lib/frames.js'];
+const ENGINE_SRC = ['media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/abloop.js', 'test/engine/harness.js', 'test/lib/frames.js'];
 const engine = [
   // Frame-exact seeking and stepping (frames_*) and every format of the test media (formats_*) through
   // media/engine.js (the product's player), one file per clip set so they run in parallel.
