@@ -46,11 +46,11 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 .tbtn.rm:hover { background: rgba(220, 38, 38, 0.88); border-color: transparent; color: #fff; }
 .tbtn.rm.confirm { background: #dc2626; border-color: #f87171; color: #fff; padding: 0 8px; }
 
-/* Floating bottom-left identity + monochrome info & mute pill (no heavy shaded bar). */
+/* Floating top-left identity + drag-grip + monochrome info & mute pill (no heavy shaded bar). */
 .tile-bottom-pill, .pill {
-  position: absolute; left: 7px; bottom: 7px; z-index: 6;
+  position: absolute; top: 7px; left: 7px; z-index: 6;
   display: inline-flex; align-items: center; gap: 5px;
-  max-width: calc(100% - 14px); height: 26px; padding: 0 5px 0 4px; box-sizing: border-box;
+  max-width: calc(100% - 70px); height: 26px; padding: 0 5px 0 4px; box-sizing: border-box;
   border-radius: 999px;
   background: color-mix(in srgb, var(--vscode-editorWidget-background, #101216) 80%, transparent);
   backdrop-filter: blur(8px);
@@ -58,6 +58,7 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   color: var(--vscode-foreground, #f4f4f5);
   font: inherit; font-size: 11.5px;
 }
+.cell.split .pill { max-width: calc(50% - 14px); }
 .pill.right { left: auto; right: 7px; }
 .pill-open {
   display: inline-flex; align-items: center; gap: 5px; min-width: 0;
@@ -91,9 +92,9 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 .mute-mini.on { color: var(--vscode-foreground, #f4f4f5); }
 .mute-mini.info-on { background: color-mix(in srgb, var(--vscode-focusBorder, #3b82f6) 32%, transparent); color: #93c5fd; }
 
-/* Per-tile "Stats for nerds" translucent monospace HUD (top-left inside tile, mismatches in amber). */
+/* Per-tile "Stats for nerds" translucent monospace HUD (top-left below identity pill, mismatches in amber). */
 .tile-stats {
-  position: absolute; top: 7px; left: 7px; z-index: 6;
+  position: absolute; top: 38px; left: 7px; z-index: 6;
   display: none; grid-template-columns: auto auto; column-gap: 10px; row-gap: 2px;
   padding: 6px 8px; border-radius: 6px;
   background: color-mix(in srgb, var(--vscode-editorWidget-background, #101216) 84%, transparent);
@@ -116,8 +117,8 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   border: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #60a5fa) 55%, transparent);
   font-family: var(--vpe-mono, monospace); font-size: 11px; color: var(--vscode-foreground, #e4e4e7);
 }
-.nudge.left { left: 7px; right: auto; bottom: 38px; }
-.nudge.right.below { bottom: 38px; }
+.nudge.left { left: 7px; right: auto; top: 38px; bottom: auto; }
+.nudge.right.below { top: 38px; bottom: auto; }
 #stage.sync-mode .sync-pill,
 #stage.sync-mode .nudge { display: inline-flex; }
 .sync-pill button, .nudge button {
@@ -132,23 +133,22 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 /* Dense cells (5+ tiles): compact pills and buttons so small tiles stay readable. */
 #cells.dense .cell { isolation: isolate; }
 #cells.dense .tile-bottom-pill, #cells.dense .pill {
-  left: 4px; bottom: 4px; height: 22px; gap: 4px; padding: 0 4px 0 3px; font-size: 11px; max-width: calc(100% - 8px);
+  top: 4px; left: 4px; bottom: auto; height: 22px; gap: 4px; padding: 0 4px 0 3px; font-size: 11px; max-width: calc(100% - 54px);
 }
 #cells.dense .tile-top-acts { top: 4px; right: 4px; }
 #cells.dense .tbtn { height: 20px; min-width: 20px; border-radius: 5px; }
 #cells.dense .ltr { width: 15px; height: 15px; font-size: 9.5px; }
 #cells.dense .mute-mini { width: 18px; height: 18px; }
 #cells.dense .sync-pill, #cells.dense .nudge { bottom: 4px; right: 4px; height: 21px; font-size: 10.5px; }
-#cells.dense .tile-stats { top: 4px; left: 4px; padding: 4px 6px; font-size: 9.5px; }
+#cells.dense .tile-stats { top: 30px; left: 4px; padding: 4px 6px; font-size: 9.5px; }
 #cells.dense .pill:focus-visible { outline-color: var(--vscode-focusBorder); }
 
 /* Keyboard-accessible reorder arrows (shown on focus-within for keyboard users, unobtrusive otherwise). */
 .move {
-  position: absolute; left: calc(var(--pic-l, 0px) + 7px); top: calc(var(--pic-t, 0px) + 7px);
+  position: absolute; left: calc(var(--pic-l, 0px) + 7px); bottom: calc(var(--pic-b, 0px) + 7px);
   z-index: 5; display: flex; gap: 2px; opacity: 0; pointer-events: none;
 }
 .cell:focus-within .move { opacity: 1; pointer-events: auto; }
-.cell.show-stats .move { top: auto; bottom: calc(var(--pic-b, 0px) + 38px); }
 .move button {
   display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px;
   background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-editorWidget-foreground, #e8e8e8); cursor: pointer;

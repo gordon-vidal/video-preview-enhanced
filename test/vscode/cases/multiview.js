@@ -780,13 +780,13 @@ module.exports = [{
           ok(pic && pic[3] < ch - 20, `tile ${cell.tile} is letterboxed (picture ${pic}, cell ${cell.rect})`);
           if (!pic || cell.moveRects.length !== 2) { ok(false, `tile ${cell.tile}: moves ${JSON.stringify(cell.moveRects)}`); continue; }
           const [px, py, pw, ph] = pic;
-          // The keyboard reorder arrows sit inside the picture's top-left corner.
+          // The keyboard reorder arrows sit inside the picture's bottom-left corner.
           const left = Math.min(...cell.moveRects.map((r) => r[0])), top = Math.min(...cell.moveRects.map((r) => r[1]));
           const right = Math.max(...cell.moveRects.map((r) => r[0] + r[2])), bottom = Math.max(...cell.moveRects.map((r) => r[1] + r[3]));
           ok(left >= px - 1 && top >= py - 1 && right <= px + pw + 1 && bottom <= py + ph + 1,
             `tile ${cell.tile}: arrows ${[left, top, right, bottom]} leave their picture ${pic}`);
-          ok(top - py <= 10 && left - px <= 10,
-            `tile ${cell.tile}: arrows ${[left, top, right, bottom]} are far from their picture's top-left corner ${pic}`);
+          ok(py + ph - bottom <= 10 && left - px <= 10,
+            `tile ${cell.tile}: arrows ${[left, top, right, bottom]} are far from their picture's bottom-left corner ${pic}`);
           ok(cx <= px + 1 && cy <= py + 1 && cw >= pw - 1, `tile ${cell.tile}: picture ${pic} sits inside its cell ${cell.rect}`);
         }
       });
