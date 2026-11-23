@@ -1,4 +1,6 @@
 /* Compare (docs/notes/compare-ui.md): on top of player.css, so the bar and the panels are the player's. */
+body.compare { --cmp-accent: #3461f6; --cmp-accent-tint: rgba(52, 97, 246, 0.16); --cmp-accent-border: rgba(52, 97, 246, 0.45); }
+body.compare #seek { accent-color: var(--cmp-accent); }
 body.compare #stage { background: #000; overflow: hidden; user-select: none; -webkit-user-select: none; }
 body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 #cells { position: absolute; inset: 0; }
@@ -16,7 +18,7 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 .cell.lifted {
   z-index: 30;
   cursor: grabbing;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.68), 0 0 0 2px var(--vscode-focusBorder, #3b82f6);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.68), 0 0 0 2px var(--cmp-accent);
   border-radius: 6px;
 }
 
@@ -43,6 +45,8 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   transition: background 120ms, color 120ms, border-color 120ms;
 }
 .tbtn:hover { background: rgba(255, 255, 255, 0.18); color: #fff; border-color: rgba(255, 255, 255, 0.28); }
+.tbtn.spot svg rect { transition: opacity 120ms ease; }
+.tbtn.spot:hover svg rect, .tbtn.spot:focus-visible svg rect { opacity: 1; }
 .tbtn.rm:hover { background: rgba(220, 38, 38, 0.88); border-color: transparent; color: #fff; }
 .tbtn.rm.confirm { background: #dc2626; border-color: #f87171; color: #fff; padding: 0 8px; }
 
@@ -90,7 +94,7 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 }
 .mute-mini:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
 .mute-mini.on { color: var(--vscode-foreground, #f4f4f5); }
-.mute-mini.info-on { background: color-mix(in srgb, var(--vscode-focusBorder, #3b82f6) 32%, transparent); color: #93c5fd; }
+.mute-mini.info-on { background: var(--cmp-accent-tint); color: #93c5fd; }
 
 /* Per-tile "Stats for nerds" translucent monospace HUD (top-left below identity pill, mismatches in amber). */
 .tile-stats {
@@ -114,7 +118,7 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   display: none; align-items: center; gap: 3px; height: 24px; padding: 0 4px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--vscode-editorWidget-background, #0c0e14) 90%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #60a5fa) 55%, transparent);
+  border: 1px solid var(--cmp-accent-border);
   font-family: var(--vpe-mono, monospace); font-size: 11px; color: var(--vscode-foreground, #e4e4e7);
 }
 .nudge.left { left: 7px; right: auto; top: 38px; bottom: auto; }
@@ -126,7 +130,7 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   background: rgba(255, 255, 255, 0.1); color: inherit; cursor: pointer; font: inherit;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.sync-pill button:hover, .nudge button:hover { background: var(--vscode-button-background, #3b82f6); color: var(--vscode-button-foreground, #fff); }
+.sync-pill button:hover, .nudge button:hover { background: var(--cmp-accent); color: #fff; }
 .sync-pill .offv, .nudge .offv { background: transparent; min-width: 30px; padding: 0 4px; font-family: var(--vpe-mono, monospace); font-size: 11px; }
 .sync-pill .offv:hover, .nudge .offv:hover { background: rgba(255, 255, 255, 0.12); color: inherit; }
 
@@ -193,13 +197,13 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 .splitter.v .splitter-bar { width: 4px; height: 42px; }
 .splitter:hover .splitter-bar,
 .splitter:focus-visible .splitter-bar,
-.splitter.dragging .splitter-bar { background: var(--vscode-focusBorder, #3b82f6); transform: scale(1.15); }
+.splitter.dragging .splitter-bar { background: var(--cmp-accent); transform: scale(1.15); }
 
 /* Drag & 4-sided edge docking skeletons. */
 .skeleton {
   position: absolute; border-radius: 6px;
-  border: 2px dashed var(--vscode-focusBorder, #3b82f6);
-  background: color-mix(in srgb, var(--vscode-focusBorder, #3b82f6) 16%, transparent);
+  border: 2px dashed var(--cmp-accent);
+  background: var(--cmp-accent-tint);
   pointer-events: none; z-index: 26;
   display: flex; align-items: center; justify-content: center;
   transition: left 140ms cubic-bezier(0.2, 0, 0, 1), top 140ms cubic-bezier(0.2, 0, 0, 1),
@@ -207,7 +211,7 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 }
 .skeleton-label {
   background: rgba(15, 23, 42, 0.92); color: #93c5fd;
-  border: 1px solid rgba(96, 165, 250, 0.45);
+  border: 1px solid var(--cmp-accent-border);
   padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
 }
 .skeleton-sub {
@@ -250,14 +254,14 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 #cmpGroup.cmp-group {
   display: inline-flex; align-items: center; gap: 2px;
   padding: 2px 3px; margin: 0 3px; border-radius: 7px;
-  background: color-mix(in srgb, var(--vscode-focusBorder, #3b82f6) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #60a5fa) 32%, transparent);
+  background: var(--cmp-accent-tint);
+  border: 1px solid var(--cmp-accent-border);
 }
 #cmpGroup .ib { height: 24px; min-width: 24px; width: 26px; border-radius: 5px; }
 #cmpGroup .ib[aria-pressed="true"],
 #cmpGroup .ib.active {
-  background: var(--vpe-on-bg, var(--vscode-button-background, #3b82f6));
-  color: var(--vpe-on-fg, var(--vscode-button-foreground, #fff));
+  background: var(--cmp-accent);
+  color: #fff;
 }
 #cmpGroup .ib:disabled { opacity: 0.4; cursor: default; }
 #cmpGroup .cmp-sep { width: 1px; height: 14px; background: color-mix(in srgb, var(--vscode-foreground, #fff) 18%, transparent); margin: 0 2px; flex: none; }

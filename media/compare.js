@@ -462,14 +462,14 @@
 
   // ---- the hover layer: minimal monochrome bottom-left pill, top-right controls, stats HUD, sync pill ----
 
-  const SVG = (body, size = 14) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const SVG = (body, size = 14) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const ICONS = {
     clock: (s) => SVG('<circle cx="12" cy="13" r="8"></circle><path d="M12 9v4l2.5 2M10 2.5h4"></path>', s),
     sound: (s) => SVG('<path d="M3.5 9.5H7l5-4v13l-5-4H3.5ZM15.5 9a4.2 4.2 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"></path>', s),
     muted: SVG('<path d="M3.5 9.5H7l5-4v13l-5-4H3.5ZM15.5 9.5l5 5m0-5-5 5"></path>', 13),
     info: SVG('<circle cx="12" cy="12" r="9"></circle><path d="M12 11v6m0-9.5v.01"></path>', 13),
-    // Window-maximize / Make Spotlight icon (not fullscreen diagonal arrows).
-    spot: '<svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="1.75" y="2" width="10.5" height="10" rx="1.6" stroke="currentColor" stroke-width="1.4"/><line x1="1.75" y1="5" x2="12.25" y2="5" stroke="currentColor" stroke-width="1.4"/></svg>',
+    // Promote to Spotlight: 68% Hairline Dimmed Strip (brightens to 100% on hover).
+    spot: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="8" rx="1.5" stroke="currentColor" stroke-width="1.15" opacity="0.68"/><rect x="1.5" y="11.5" width="5.5" height="3" rx="0.9" stroke="currentColor" stroke-width="1.15" opacity="0.25"/><rect x="9" y="11.5" width="5.5" height="3" rx="0.9" stroke="currentColor" stroke-width="1.15" opacity="0.25"/></svg>',
     plus: SVG('<path d="M12 5v14M5 12h14"></path>', 18),
     swap: SVG('<path d="M4 8h15M15 4l4 4-4 4M20 16H5M9 12l-4 4 4 4"></path>', 18),
     view: SVG('<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M12 5v14"></path>', 18),
