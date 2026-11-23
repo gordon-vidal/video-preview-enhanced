@@ -1,4 +1,4 @@
-/* global DecoderPool, ThumbService, FrameStream, VpeHdr, VpeBlockCache, VpeGlRenderer */
+/* global VpeCodecUtils, VpeDecoderBoot, ThumbService, FrameStream, VpeHdr, VpeBlockCache, VpeGlRenderer */
 // @ts-check
 // Decode-only playback engine for the webview. Demuxing and software decoding
 // run in decoder-worker.js (libav.js / WebAssembly); H.264 and VP8 go to the
@@ -9,16 +9,9 @@
 
 /* exported createEngine, matrixBySize */
 const { GLRenderer, matrixBySize } = VpeGlRenderer;
-
-/** Matrix tags from libav's AVCOL_SPC or WebCodecs' VideoColorSpace. */
-function taggedMatrix(tag) {
-  switch (tag) {
-    case 1: case 'bt709': return 709;
-    case 5: case 6: case 'bt470bg': case 'smpte170m': return 601;
-    case 9: case 10: case 'bt2020-ncl': case 'bt2020-cl': return 2020;
-    default: return 0;
-  }
-}
+const { taggedMatrix, h264Config, hdrLabel, toWebAudio, AUDIO_CODECS, speedText,
+  measureRate, snapRate, nv12ToI420 } = VpeCodecUtils;
+const { memFor, pictureArea, startupTimeline, mark } = VpeDecoderBoot;
 
 // eslint-disable-next-line no-unused-vars
 function createEngine(env) {
@@ -39,6 +32,7 @@ function createEngine(env) {
       ...(self.vpeMarks || {}), lib,
     };
   };
+  const { bootDecoder, preload, takePreload, dropPreload } = VpeDecoderBoot.create(env);
   const SPEED_WARMUP_MS = 1500; // decode speed samples (sampleSpeed): ignore the start
   const SPEED_SAMPLE_MS = 3000;
   const FAST_CODECS = new Set(['hevc', 'h264']); // decoders that honour skip_loop_filter (fast preview)
@@ -52,9 +46,6 @@ function createEngine(env) {
   const AUDIO_DRY_MS = 500;
   /** Decode speed is measured over this many ms of frame arrivals. */
   const RATE_WINDOW = 4000;
-  /** "0.31×", "1.2×", "<0.01×": decode speed for the pill, never Infinity or thousands. */
-  const speedText = (r) => (!Number.isFinite(r) || r > 99 ? '>99×' : r >= 10 ? `${r.toFixed(0)}×` : r >= 0.995 ? `${r.toFixed(1)}×` : r >= 0.01 ? `${r.toFixed(2)}×` : '<0.01×');
-
   /** WebCodecs frames kept open while paused (hardware decoders stall when all their surfaces are held). */
   const GPU_FRAMES = 6;
   /** Paused read-ahead (s) for decoders much faster than real time (native ffmpeg, WebCodecs); the built-in decoder fills its budget. */
@@ -71,189 +62,8 @@ function createEngine(env) {
    */
   const AC_REST_MS = 3000;
   const AC_WAKE_MAX_MS = 400;
-  // Memory budgets (media/membudget.js): these are a 32 GB machine's, the sizes before they scaled.
-  const MEM_DEFAULT = { frames: 400e6, pool: 600e6, batch: 100e6, blocks: 64e6, freeBufs: 64e6, thumbs: 30e6, workers: 6, gb: 0 };
-  /**
-   * The WebAssembly decoder, started: worker source and libav.js fetched (as blob URLs: workers
-   * made from blobs can't reach the webview's resource origin), the worker (or the decoder pool,
-   * pool.js) created and sent 'init'. Its messages wait in `queue` until a player takes it over.
-   */
-  function bootDecoder(cfg, mem) {
-    // A response the page's head started fetching (src/extension.js html(), self.vpeEarly), else a new fetch.
-    const page = /** @type {any} */ (self);
-    const early = page.vpeEarly;
-    delete page.vpeEarly;
-    const controller = early ? early.controller : new AbortController();
-    const { signal } = controller;
-    const urls = new Set();
-    let worker;
-    const drop = () => {
-      controller.abort();
-      if (worker) { worker.terminate(); worker = null; }
-      for (const url of urls) URL.revokeObjectURL(url);
-      urls.clear();
-    };
-    const get = async (url) => {
-      const response = early && await early.responses[url];
-      signal.throwIfAborted();
-      const r = response || await fetch(url, { signal });
-      if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
-      return r;
-    };
-    const blobUrl = (data, type) => {
-      // A body read can finish just before another decoder takes over.
-      signal.throwIfAborted();
-      const url = URL.createObjectURL(new Blob([data], { type }));
-      urls.add(url);
-      return url;
-    };
-    const asset = async (url, type) => {
-      const res = await get(url);
-      return blobUrl(await res.arrayBuffer(), type);
-    };
-    // The decoder's wasm as a blob URL (libav.js loads it by URL) and compiled once here for the workers.
-    const wasmAsset = async (url) => {
-      const buf = await (await get(url)).arrayBuffer();
-      const out = { url: blobUrl(buf, 'application/wasm'), module: null };
-      try { if (buf.byteLength) out.module = await WebAssembly.compile(buf); } catch (e) { log(`WebAssembly compile in the page failed: ${e && e.message || e}`); }
-      signal.throwIfAborted();
-      return out;
-    };
-    const stem = cfg.loader.replace(/\.js$/, '');
-    // Fetch all four at once, and start loading the worker while the wasm is still downloading.
-    const startWorker = async () => {
-      const res = await get(cfg.workerUrl);
-      const src = await res.text();
-      const url = blobUrl(src, 'text/javascript');
-      if (cfg.debug || env.debug) log(`memory budgets: ${mem.gb ? `${mem.gb} GB` : 'default'}: frames ${Math.round(mem.frames / 1e6)} MB, pool ${Math.round(mem.pool / 1e6)} MB, ${mem.workers} extra workers at most, blocks ${Math.round(mem.blocks / 1e6)} MB`);
-      // Several WebAssembly decoders for heavy intra/short-GOP video (pool.js); one worker otherwise.
-      const poolOpts = { budget: mem.pool, batchBytes: mem.batch, maxWorkers: mem.workers, ...(cfg.pool || {}), multiRead: true };
-      worker = !cfg.singleWorker && typeof DecoderPool === 'function' ? new DecoderPool(url, poolOpts) : new Worker(url);
-      const d = { url, worker, chars: src.length, queue: [], error: null, libav: null, preloaded: false };
-      worker.onmessage = (e) => d.queue.push(e.data);
-      worker.onerror = (e) => { d.error = e; };
-      return d;
-    };
-    const promise = Promise.all([
-      startWorker(),
-      asset(cfg.loader, 'text/javascript'),
-      asset(`${stem}.wasm.js`, 'text/javascript'),
-      wasmAsset(`${stem}.wasm.wasm`),
-    ]).then(([d, loader, toImport, { url: wasmurl, module: wasmModule }]) => {
-      signal.throwIfAborted();
-      d.libav = { loader, toImport, wasmurl, variant: cfg.variant };
-      // One compiled module for every worker (pool, thumbnails): the compile happens once.
-      // A large compare grid shares one buffer budget among its tiles: no two-buffer floor per worker.
-      const strict = cfg.largeGrid ? { strictFreeBytes: true } : {};
-      try {
-        d.worker.postMessage({ type: 'init', ...d.libav, ...(wasmModule ? { wasmModule } : {}), freeBytes: mem.freeBufs, ...strict });
-        if (wasmModule) d.libav.wasmModule = wasmModule;
-      } catch (e) {
-        log(`shared WebAssembly module not sent: ${e && e.message || e}`);
-        d.worker.postMessage({ type: 'init', ...d.libav, freeBytes: mem.freeBufs, ...strict });
-      }
-      return d;
-    }).catch((err) => { drop(); throw err; });
-    return { promise, drop };
-  }
-  let preloaded = null;
-  /** The player's decoder, started while the host decides (most files need it: GPU and WebAssembly paths both demux in it). */
-  function preload(cfg) {
-    if (preloaded || !cfg || !cfg.workerUrl) return;
-    preloaded = bootDecoder(cfg, memFor(cfg));
-    preloaded.promise.then((d) => { d.preloaded = true; }, () => {});
-  }
-  /** The preloaded decoder for the first player that wants it (null: none, or already taken). */
-  function takePreload() { const p = preloaded; preloaded = null; return p; }
-  /** Native ffmpeg or the frame player took the file: the preloaded decoder isn't needed. */
-  function dropPreload() {
-    const p = takePreload();
-    if (p) p.drop();
-    const page = /** @type {any} */ (self);
-    if (page.vpeEarly) {
-      page.vpeEarly.controller.abort();
-      delete page.vpeEarly;
-    }
-  }
-
-  /**
-   * The player's picture area in device pixels ({ w, h }), or null (no stage, hidden or not laid out).
-   * zoomed: the zoomed picture's size in CSS px (media/inspect.js zoomedSize), which counts instead of the stage.
-   */
-  function pictureArea(zoomed) {
-    const st = typeof document !== 'undefined' ? document.getElementById('stage') : null;
-    if (!st) return null;
-    const r = st.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) return null; // hidden
-    const dpr = globalThis.devicePixelRatio || 1;
-    const w = Math.min(32768, Math.round((zoomed ? zoomed.w : r.width) * dpr));
-    const h = Math.min(32768, Math.round((zoomed ? zoomed.h : r.height) * dpr));
-    return w >= 16 && h >= 16 ? { w, h } : null;
-  }
-
-  /** The host's budgets (local windows), else from navigator.deviceMemory (remote windows; reported up to 8). */
-  function memFor(cfg) {
-    if (cfg.mem) return { ...MEM_DEFAULT, ...cfg.mem };
-    const MB = /** @type {any} */ (globalThis).MemBudget;
-    return MB ? MB.fromDeviceMemory(/** @type {any} */ (navigator).deviceMemory) : MEM_DEFAULT;
-  }
-
-  const hex2 = (n) => (n & 255).toString(16).padStart(2, '0');
-  function h264Config(v) {
-    const ex = v.extradata;
-    if (ex && ex.length > 4 && ex[0] === 1) {
-      return { codec: `avc1.${hex2(ex[1])}${hex2(ex[2])}${hex2(ex[3])}`, description: ex, codedWidth: v.width, codedHeight: v.height };
-    }
-    // Annex B stream (AVI, TS): no description; parameter sets travel in-band.
-    const profile = v.profile > 0 ? v.profile : 100;
-    const level = v.level > 0 ? v.level : 51;
-    return { codec: `avc1.${hex2(profile)}00${hex2(level)}`, codedWidth: v.width, codedHeight: v.height };
-  }
-  /** " · HDR PQ" / " · HDR HLG" for the info overlay, with "(HDR output)" or "(HDR tone-mapped to SDR)" once decided. */
-  const hdrLabel = (v, out) => {
-    const k = v && v.colorTrc === 16 ? ' · HDR PQ' : v && v.colorTrc === 18 ? ' · HDR HLG' : '';
-    const dv = v && v.dv && typeof VpeHdr !== 'undefined' ? VpeHdr.dolbyVision(v.dv) : null;
-    const d = dv ? ` · ${dv.label} (${dv.base} base layer)` : '';
-    return k && out && typeof VpeHdr !== 'undefined' ? `${k} (${VpeHdr.outputLabel(out.on)})${d}` : `${k}${d}`;
-  };
-  // AV_CH_* bits of a channel layout mask, in ffmpeg's channel order.
-  const CH_FC = 0x4;
-  const CH_LFE = 0x8;
-  const WEBAUDIO_LAYOUTS = new Set([0x3, 0x4, 0x33, 0x603, 0x3f, 0x60f]); // stereo, mono, quad, quad(side), 5.1, 5.1(side)
-  /**
-   * WebAudio downmixes only mono, stereo, quad and 5.1 (by channel count, in that order); any other
-   * layout (7.1, 6.1, 5.0, 2.1, ...) would keep just its first two channels, dropping the centre
-   * (dialogue). Those are mixed to stereo here: centre and centre-back at -3 dB to both sides,
-   * left/right surrounds at -3 dB to their side, LFE dropped (as WebAudio does for 5.1).
-   */
-  function toWebAudio(planes, mask) {
-    const ch = planes.length;
-    if (ch <= 2 || (mask ? WEBAUDIO_LAYOUTS.has(mask) : ch === 4 || ch === 6)) return planes;
-    // Each channel's AV_CH bit, from the mask, else ffmpeg's default layout for this count.
-    const bits = [];
-    if (mask) for (let b = 0; b < 64 && bits.length < ch; b++) { if (b < 32 ? mask & (1 << b) : 0) bits.push(1 << b); }
-    const defaults = [0x1, 0x2, CH_FC, CH_LFE, 0x200, 0x400, 0x10, 0x20]; // FL FR FC LFE SL SR BL BR
-    while (bits.length < ch) bits.push(ch < 4 && bits.length === 2 ? CH_FC : defaults[bits.length] || 0);
-    const LEFT = 0x1 | 0x10 | 0x40 | 0x200 | 0x1000 | 0x8000; // FL BL FLC SL TFL TBL
-    const RIGHT = 0x2 | 0x20 | 0x80 | 0x400 | 0x4000 | 0x20000; // FR BR FRC SR TFR TBR
-    const n = planes[0].length;
-    const l = new Float32Array(n);
-    const r = new Float32Array(n);
-    const h = Math.SQRT1_2;
-    planes.forEach((p, c) => {
-      const b = bits[c];
-      if (b === CH_LFE) return;
-      const front = b === 0x1 || b === 0x2;
-      const gl = b & LEFT ? (front ? 1 : h) : b & RIGHT ? 0 : h;
-      const gr = b & RIGHT ? (front ? 1 : h) : b & LEFT ? 0 : h;
-      for (let i = 0; i < n; i++) { l[i] += gl * p[i]; r[i] += gr * p[i]; }
-    });
-    return [l, r];
-  }
   /** Sound codecs whose WebCodecs decoder lagged in this webview (audioToSoft): the built-in decoder from then on. */
   const wcFailed = new Set();
-  const AUDIO_CODECS = { mp3: 'mp3', flac: 'flac', vorbis: 'vorbis', opus: 'opus', aac: 'mp4a.40.2' };
-
   // ---- Player -------------------------------------------------------------
   class LibavPlayer {
     constructor(meta, cfg) {
@@ -1044,26 +854,13 @@ function createEngine(env) {
 
     /** Rate from the timestamps seen; at the end of a short file (under 24 frames) from what there is. */
     measureRate() {
-      const s = [...this.tsSeen].sort((x, y) => x - y);
-      // Median spacing finds the frame duration even with gaps (B-frames still in flight);
-      // counting frames over the whole span then removes millisecond rounding (WebM 33/33/34 ms).
-      const d = [];
-      for (let i = 1; i < s.length; i++) if (s[i] - s[i - 1] > 1e-4) d.push(s[i] - s[i - 1]);
-      d.sort((x, y) => x - y);
-      const med = d[Math.floor(d.length / 2)];
-      const span = s[s.length - 1] - s[0];
-      if (med > 0 && span > 0) {
-        // Frame periods per neighbour (1, more across a gap), summed: round(span / med) miscounts over 40
-        // frames when ms rounding puts the median 2% off (60 fps MKV: 16/17/17 ms gave 58.46 fps).
-        this.setFrameRate(d.reduce((k, x) => k + Math.max(1, Math.round(x / med)), 0) / span);
-      }
+      const fps = measureRate(this.tsSeen);
+      if (fps !== undefined) this.setFrameRate(fps);
     }
 
     /** Takes a measured or stated rate (snapped to a common one when close) and derives the frame count. */
     setFrameRate(fps) {
-      const common = [24000 / 1001, 24, 25, 30000 / 1001, 30, 48, 50, 60000 / 1001, 60, 120];
-      const near = common.reduce((best, c) => (Math.abs(c - fps) < Math.abs(best - fps) ? c : best), common[0]);
-      this.fps = Math.abs(near - fps) / near < 0.005 ? near : Math.round(fps * 1000) / 1000;
+      this.fps = snapRate(fps);
       this.n = Math.max(1, Math.round((this.meta.duration || 0) * this.fps));
       this.meta.fps = this.fps;
       this.meta.frames = this.n;
@@ -1181,21 +978,7 @@ function createEngine(env) {
         const src = new Uint8Array(vf.allocationSize());
         const lay = await vf.copyTo(src);
         if (fr.vf !== vf || vf.format === null) return; // shown or dropped meanwhile
-        const cw = (w + 1) >> 1;
-        const ch = (h + 1) >> 1;
-        let data = src;
-        let layout = lay;
-        if (fmt === 'NV12') {
-          data = new Uint8Array(w * h + 2 * cw * ch);
-          for (let y = 0; y < h; y++) data.set(src.subarray(lay[0].offset + y * lay[0].stride, lay[0].offset + y * lay[0].stride + w), y * w);
-          const u = w * h;
-          const v = u + cw * ch;
-          for (let y = 0; y < ch; y++) {
-            const row = lay[1].offset + y * lay[1].stride;
-            for (let x = 0; x < cw; x++) { data[u + y * cw + x] = src[row + 2 * x]; data[v + y * cw + x] = src[row + 2 * x + 1]; }
-          }
-          layout = [{ offset: 0, stride: w }, { offset: u, stride: cw }, { offset: v, stride: cw }];
-        }
+        const { data, layout } = fmt === 'NV12' ? nv12ToI420(src, lay, w, h) : { data: src, layout: lay };
         const cs = vf.colorSpace || {};
         if (this.loopCache?.video.includes(fr)) this.keepLoopBytes(data.byteLength - fr.bytes);
         fr.yuv = { width: w, height: h, data, layout, fullRange: !!cs.fullRange, space: this.frameMatrix(vf) };

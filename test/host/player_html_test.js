@@ -50,6 +50,7 @@ const connect = (html) => csp(html).split('; ').find((d) => d.startsWith('connec
   const at = (f) => srcs.indexOf(f);
   assert.ok(at('membudget.js') === 0 && at('player.js') === srcs.length - 1, 'player.js is last');
   assert.ok(at('block-cache.js') < at('engine.js') && at('gl-renderer.js') < at('engine.js'));
+  assert.ok(at('codec-utils.js') < at('engine.js') && at('decoder-boot.js') < at('engine.js'));
   assert.ok(at('engine.js') < at('controls.js') && at('timefmt.js') < at('debug-probe.js'));
   assert.ok(html.indexOf('id="cfg"') < html.indexOf('membudget.js'), 'config before the scripts');
 }

@@ -19,10 +19,10 @@ const MACHINERY = ['test/vscode/scenarios.js', 'test/vscode/scenario_list.js', '
 // The "Known dependencies" table of docs/TESTING.md: [what changed (files or folders), why, scenarios to also run].
 // A test (test/host/scenario_map_test.js) checks every scenario named here exists and the doc still names it.
 const DEPENDENCIES = [
-  { when: ['media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/pool.js'], why: 'stepping, seeking, decoder pool, end of file', run: ['seeking', 'playback'] },
+  { when: ['media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/pool.js'], why: 'stepping, seeking, decoder pool, end of file', run: ['seeking', 'playback'] },
   { when: ['src/native.js', 'src/frameserver.js'], why: 'native ffmpeg transport and frame sizes', run: ['native', 'picture-size-native'] },
   { when: ['media/picture.js', 'media/inspect.js'], why: 'drawn picture size, zoom, pan', run: ['picture-size', 'compare', 'inspect'] },
-  { when: ['media/compare.js', 'src/compare.js'], why: 'compare / multi-view', run: ['compare', 'multiview'] },
+  { when: ['media/compare.js', 'media/compare-compositor.js', 'media/compare-grid.js', 'src/compare.js'], why: 'compare / multi-view', run: ['compare', 'multiview'] },
   { when: ['src/remotestream.js', 'src/stream-adapt.js'], why: 'remote stream', run: ['remote-stream'] },
   { when: ['src/urlsource.js'], why: 'URLs', run: ['url', 'url-native'] },
   { when: ['media/controls.js', 'media/range-drag.js', 'src/bar.js'], why: 'the bar, panels, keys', run: ['ui'] },

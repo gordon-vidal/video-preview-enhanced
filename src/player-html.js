@@ -96,7 +96,7 @@ ${SCRIPTS.map((s) => `<script nonce="${nonce}" src="${uri(s)}"></script>`).join(
 /** The page's scripts in load order (each reads globals the ones before it define). */
 const SCRIPTS = [
   'membudget.js', 'timestretch.js', 'pool.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js',
-  'gl-renderer.js', 'engine.js', 'picture.js', 'inspect.js', 'scopes.js', 'exactframe.js', 'reduced-res-notice.js',
+  'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js', 'engine.js', 'picture.js', 'inspect.js', 'scopes.js', 'exactframe.js', 'reduced-res-notice.js',
   'slow-notice.js', 'subtitles.js', 'tracks-menu.js', 'xray.js', 'modes.js', 'range-drag.js', 'controls.js',
   'ctxmenu.js', 'timefmt.js', 'abloop.js', 'debug-probe.js', 'player.js',
 ];

@@ -5,7 +5,8 @@
 // the tiles split fixed budgets, so 16 videos use about what 4 did (docs/notes/multiview-engine.md).
 'use strict';
 
-(function (root) {
+(() => {
+  // checkJs: start
   /** Tile letters: 'A'-'P'. Engine keys are these (the scan's 'sA' / 'sB' end in one). */
   const TILE_KEYS = 'ABCDEFGHIJKLMNOP';
   const MAX_VIDEOS = TILE_KEYS.length;
@@ -69,6 +70,7 @@
     const large = isLarge(n);
     const frames = (n <= 2 ? 250e6 : large ? 480e6 / n : 120e6) * scale;
     if (!mem) return { frames, scale, engine: undefined };
+    /** @type {Record<string, number>} */
     const engine = {
       ...mem, frames: mem.frames / n, pool: mem.pool / n, thumbs: mem.thumbs / n,
       workers: large ? Math.floor(mem.workers / n) : Math.max(1, Math.floor(mem.workers / n)),
@@ -186,11 +188,92 @@
     };
   }
 
+  /** A tile's display aspect: its engine canvas once it has drawn, else the file's size, else 16:9. */
+  function aspectOf(p) {
+    const { w, h } = tileNat(p);
+    return w / h;
+  }
+  const fitRect = (x, y, w, h, a) => {
+    let fw = w, fh = w / a;
+    if (fh > h) { fh = h; fw = h * a; }
+    return { x: x + (w - fw) / 2, y: y + (h - fh) / 2, w: fw, h: fh };
+  };
+  const GAP = 2;
+  /** Tile i's drawn size (its canvas, else the file's) and the video's own size (what 100 % shows). */
+  function tileNat(p) {
+    if (p && p.cv && p.cv.width && p.cv.height) return { w: p.cv.width, h: p.cv.height };
+    if (p && p.meta && p.meta.width && p.meta.height) return { w: p.meta.width, h: p.meta.height };
+    return { w: 1600, h: 900 };
+  }
+  const tileSrc = (p, Pic) => {
+    const stream = p?.info?.remoteStream;
+    return Pic.sourceSize(tileNat(p), stream
+      ? { w: stream.sourceWidth, h: stream.sourceHeight }
+      : { w: p?.meta?.width, h: p?.meta?.height });
+  };
+  /** Place a cell-local picture in stage coordinates and clip it to the cell. */
+  function placed(r, x, y, w, h) {
+    const full = { x: x + r.x, y: y + r.y, w: r.w, h: r.h };
+    const x0 = Math.max(x, full.x), y0 = Math.max(y, full.y), x1 = Math.min(x + w, full.x + full.w), y1 = Math.min(y + h, full.y + full.h);
+    return { full, pic: { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) } };
+  }
+  /**
+   * The cells in CSS pixels of the stage: {x, y, w, h, tiles: [i] or [left, right] (split) or [] (the add cell), pic}.
+   */
+  function computeCells({ order, mode, width: W, height: H, maxTiles, pictureRect }) {
+    const n = order.length;
+    const place = (i, x, y, w, h) => placed(pictureRect(i, w, h), x, y, w, h);
+    if (mode === 'split') {
+      const [l, r] = order;
+      return [{ x: 0, y: 0, w: W, h: H, tiles: [l, r], split: true, ...place(l, 0, 0, W, H) }];
+    }
+    if (mode === 'side') {
+      const w = (W - GAP) / 2;
+      return order.map((i, k) => ({ x: k * (w + GAP), y: 0, w, h: H, tiles: [i], ...place(i, k * (w + GAP), 0, w, H) }));
+    }
+    const { cols, rows } = gridFor(n, 'grid');
+    const w = (W - GAP * (cols - 1)) / cols, h = (H - GAP * (rows - 1)) / rows;
+    const out = [];
+    // The first empty cell adds a video (3 of 4; in a larger grid while the setting allows more).
+    for (let k = 0, count = gridCellCount(n, maxTiles, cols, rows); k < count; k++) {
+      const x = (k % cols) * (w + GAP), y = Math.floor(k / cols) * (h + GAP);
+      if (k < n) out.push({ x, y, w, h, tiles: [order[k]], ...place(order[k], x, y, w, h) });
+      else out.push({ x, y, w, h, tiles: [], add: true, pic: { x, y, w, h }, full: { x, y, w, h } });
+    }
+    return out;
+  }
+
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  /** Offset text: short ("0", "+3 f", "−40 ms") for the nudge and the panel rows, long ("In step", "+3 frames") for the page. */
+  function offText(o, long = false) {
+    if (!o || !o.v) return long ? 'In step' : '0';
+    const sg = o.v > 0 ? '+' : '−';
+    const a = Math.abs(o.v);
+    if (o.unit === 'ms') return `${sg}${Math.round(a * 10) / 10} ms`;
+    return `${sg}${a}${long ? (a === 1 ? ' frame' : ' frames') : ' f'}`;
+  }
+
+  function frameFactor(cells, fitRectFor) {
+    let f = 0;
+    for (const c of cells) {
+      if (c.add) continue;
+      const fit = fitRectFor(c.tiles[0], c.w, c.h);
+      if (fit.w > 0 && fit.h > 0) f = Math.max(f, c.full.w / fit.w, c.full.h / fit.h);
+    }
+    return Math.round(Math.max(0.1, Math.min(64, f || 1)) * 100) / 100;
+  }
+
   const api = {
+    aspectOf, fitRect, tileNat, tileSrc, placed, computeCells, frameFactor, offText, esc,
     TILE_KEYS, MAX_VIDEOS, DEFAULT_MAX, LARGE, GRID_PIXELS, clampMax, isLarge, gridFor, gridCellCount,
     tileOrder, moveTile, orderAfterRemoval, tileMemory, texturePixels, capSize, nativeCredits, nativeQueuePerTile,
     compareVisibility, reorderSession, canRemoveTile, removeButtonHtml, easeStandard, createGlide,
   };
-  if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.CompareGrid = api;
-}(typeof self !== 'undefined' ? self : this));
+  const commonJs = /** @type {{ exports?: typeof api } | undefined} */ (
+    // @ts-ignore The webview has no CommonJS globals.
+    typeof module === 'undefined' ? undefined : module
+  );
+  if (commonJs) commonJs.exports = api;
+  else /** @type {typeof globalThis & { CompareGrid?: typeof api }} */ (globalThis).CompareGrid = api;
+  // checkJs: end
+})();
