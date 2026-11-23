@@ -89,7 +89,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Opens `file` in a fresh LibavPlayer. Resolves when the first frame is on the (stub) canvas.
- * o: { ffmpeg, pool = true, loop = false, timeout = 30000, waitRate = true, log, virtualClock = false }
+ * o: { ffmpeg, pool = true, loop = false, timeout = 30000, waitRate = true, log, virtualClock = false, onRead }
  * virtualClock: after the open, performance.now(), the AudioContext clock and player.tick() follow P.clock only
  * (P.clock.advance(ms)), so playback runs on deterministic time instead of the wall clock (continuity_fuzz.js).
  */
@@ -111,6 +111,7 @@ async function open(file, o = {}) {
         setImmediate(() => {
           if (P.closed) return;
           const n = Math.max(0, Math.min(m.len, size - m.pos));
+          o.onRead?.(m.pos, n);
           const buf = Buffer.alloc(n);
           if (n) fs.readSync(fd, buf, 0, n, m.pos);
           P.player.onBlock(m.pos, new Uint8Array(buf.buffer, buf.byteOffset, n));
