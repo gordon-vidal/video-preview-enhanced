@@ -4,7 +4,7 @@
 
 const { webcodecsPlays, FRAME_SERVER_BPS } = require('./decide');
 
-const MODES = ['ask', 'auto', 'always', 'off'];
+const MODES = ['auto', 'always', 'off'];
 const BITRATE_PRESETS = [0, 2, 5, 10, 20, 40]; // 0 = Auto, else Mb/s cap
 const MIN_BITRATE_KBPS = 250; // 0.25 Mb/s floor for explicit bitrate caps
 const STALL_FPS_RATIO = 0.95;
@@ -14,19 +14,21 @@ const REMOTE_H264_AUTO_BPS = 12e6; // 12 Mb/s: transcode high-bitrate H.264 over
 const REMOTE_H264_DOWNSCALE_BPS = 6e6; // 6 Mb/s when downscaling > 1.3x over remote links
 
 /**
- * Resolves the effective Live transcode mode (`ask | auto | always | off`),
- * migrating the deprecated `remoteStream` setting when `transcode` is not explicitly set.
+ * Resolves the effective Live transcode mode (`auto | always | off`),
+ * migrating the deprecated `remoteStream` setting when `transcode` is not explicitly set, and the retired
+ * `ask` value (2026-11-23, ADR 0002) to `auto`.
  * @param {{ transcode?: string, transcodeExplicit?: boolean, remoteStream?: string, remoteStreamExplicit?: boolean }} o
- * @returns {'ask'|'auto'|'always'|'off'}
+ * @returns {'auto'|'always'|'off'}
  */
 function resolveSetting(o = {}) {
+  if (o.transcode === 'ask') o = { ...o, transcode: 'auto' }; // retired value: stored 'ask' behaves as 'auto'
   if (o.transcodeExplicit && MODES.includes(o.transcode)) return /** @type {any} */ (o.transcode);
   if (o.remoteStreamExplicit) {
     if (o.remoteStream === 'off') return 'off';
     if (o.remoteStream === 'on') return 'always';
     if (o.remoteStream === 'auto') return 'auto';
   }
-  return MODES.includes(o.transcode) ? /** @type {any} */ (o.transcode) : 'ask';
+  return MODES.includes(o.transcode) ? /** @type {any} */ (o.transcode) : 'auto';
 }
 
 /** Whether a probed video stream is HDR (PQ/HDR10, HLG, or Dolby Vision side data). Phase 1 keeps HDR on the exact/raw path. */
@@ -114,22 +116,21 @@ function compareTileSize(video, maxHeight, { w, h, cols, rows, factor, actual } 
 
 /**
  * Decides what to do when a video opens.
- * Returns { action: 'stream' | 'prompt_remote' | 'skip', reason }.
+ * Returns { action: 'stream' | 'skip', reason }.
  *
  * @param {{
- *   mode: 'ask'|'auto'|'always'|'off',
+ *   mode: 'auto'|'always'|'off',
  *   remote: string|undefined,
  *   video: any,
  *   maxBitrateMbps?: number,
  *   viewHeight?: number,
  *   forced?: boolean,
  *   compare?: boolean,
- *   remotePrompted?: boolean,
  * }} o
- * @returns {{ action: 'stream'|'prompt_remote'|'skip', reason: string }}
+ * @returns {{ action: 'stream'|'skip', reason: string }}
  */
 function shouldTranscodeOnOpen(o) {
-  const { mode, remote, video, maxBitrateMbps = 0, viewHeight = 0, forced = false, compare = false, remotePrompted = false } = o;
+  const { mode, remote, video, maxBitrateMbps = 0, viewHeight = 0, forced = false, compare = false } = o;
   if (!video) return { action: 'skip', reason: 'no video stream' };
   if (isHdr(video)) return { action: 'skip', reason: 'HDR stays on exact/raw path in v1' };
   if (forced) return { action: 'stream', reason: 'enabled for this session' };
@@ -140,10 +141,7 @@ function shouldTranscodeOnOpen(o) {
     if (!remoteQualifies(video, { maxBitrateMbps, viewHeight })) {
       return { action: 'skip', reason: '8-bit H.264/VP8 within link budget plays directly on WebCodecs' };
     }
-    if (mode === 'always' || mode === 'auto') return { action: 'stream', reason: `remote window (${remote}), transcode ${mode}` };
-    // mode === 'ask': first remote use prompts the user to pick Live transcode vs original quality.
-    if (remotePrompted) return { action: 'skip', reason: 'remote transcode prompt already handled this session' };
-    return { action: 'prompt_remote', reason: `first remote video (${remote}): ask user` };
+    return { action: 'stream', reason: `remote window (${remote}), transcode ${mode}` };
   }
 
   if (compare && mode === 'always') return { action: 'stream', reason: 'transcode always in Compare' };
@@ -160,10 +158,10 @@ function shouldTranscodeOnOpen(o) {
 
 /**
  * Evaluates whether a local native playback session has stalled on raw frame transfer
- * (not on decoding itself) and should offer or switch to Live transcode.
+ * (not on decoding itself) and should switch to Live transcode.
  *
  * @param {{
- *   mode: 'ask'|'auto'|'always'|'off',
+ *   mode: 'auto'|'always'|'off',
  *   slowWindows: number,
  *   hostKeepsUp: boolean,
  *   playing: boolean,
@@ -172,9 +170,8 @@ function shouldTranscodeOnOpen(o) {
  *   sinceEventMs: number,
  *   video: any,
  *   alreadyTranscoding: boolean,
- *   promptedThisSession: boolean,
  * }} o
- * @returns {'switch'|'prompt'|'none'}
+ * @returns {'switch'|'none'}
  */
 function evaluateLocalStall(o) {
   if (o.mode === 'off' || o.alreadyTranscoding || isHdr(o.video)) return 'none';
@@ -182,24 +179,17 @@ function evaluateLocalStall(o) {
   if (o.sinceEventMs < STALL_SETTLE_MS) return 'none';
   if (!o.hostKeepsUp) return 'none'; // decode bottleneck: leave to the GPU decode test
   if (o.slowWindows < STALL_WINDOWS) return 'none';
-  if (o.mode === 'auto' || o.mode === 'always') return 'switch';
-  if (o.mode === 'ask' && !o.promptedThisSession) return 'prompt';
-  return 'none';
+  return 'switch';
 }
 
-const REMOTE_PROMPT_YES = 'Use live transcode';
-const REMOTE_PROMPT_NO = 'Keep original quality';
+// The one-time, non-blocking notice the first time Live transcode starts (2026-11-23: replaces the 'ask' prompts).
+const INFORM_KEY = 'videoPreviewEnhanced.transcodeInformed';
+const INFORM_ORIGINAL = 'Use original video';
+const INFORM_OFF = 'Turn off';
 
-function remotePromptText(remoteName) {
-  return `Remote video (${remoteName || 'SSH'}): use Live transcode on the remote machine (H.264 stream, fast playback) or keep original quality (built-in decoder, reads the full file)? You can change this anytime in ⚙ › Live transcode.`;
-}
-
-const LOCAL_OFFER_YES = 'Use live transcode';
-const LOCAL_OFFER_KEEP = 'Keep current path';
-const LOCAL_OFFER_NEVER = "Don't Show Again";
-
-function localOfferText() {
-  return 'Playback is falling behind while sending raw frames. Use Live transcode? The video is re-encoded locally to H.264 (8-bit, lossy); pixel tools will warn and offer Use original video.';
+function informText() {
+  return 'Live transcode is on for smooth playback: this video is re-encoded to H.264 (lossy) as you watch. '
+    + 'Use original video for this tab, or turn it off for every video (also in ⚙ › Live transcode).';
 }
 
 function driverNoticeText(notice) {
@@ -225,12 +215,9 @@ module.exports = {
   compareTileSize,
   shouldTranscodeOnOpen,
   evaluateLocalStall,
-  REMOTE_PROMPT_YES,
-  REMOTE_PROMPT_NO,
-  remotePromptText,
-  LOCAL_OFFER_YES,
-  LOCAL_OFFER_KEEP,
-  LOCAL_OFFER_NEVER,
-  localOfferText,
+  INFORM_KEY,
+  INFORM_ORIGINAL,
+  INFORM_OFF,
+  informText,
   driverNoticeText,
 };

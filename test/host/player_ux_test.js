@@ -197,7 +197,7 @@ function element(parent) {
     const bar = element();
     const controls = Controls.create({
       panel, sheet: element(), bar, buttons, views, act: {},
-      get: () => ({ rate: 1, jump: {}, tools: [], transcode: { mode: 'ask', maxBitrateMbps: 0 } }),
+      get: () => ({ rate: 1, jump: {}, tools: [], transcode: { mode: 'auto', maxBitrateMbps: 0 } }),
     });
     for (const [view, button] of [['info', 'info'], ['speed', 'rate'], ['subs', 'tracks'], ['cmp', 'cmp']]) {
       controls.toggle(view, buttons[button]);

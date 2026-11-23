@@ -5,7 +5,7 @@ Compare needs a shared video bitrate cap for constrained connections and a way t
 ```text
 ⚙ Player settings
   Live transcode ›
-    Ask | Auto | Always | Off
+    Auto | Always | Off
     Max bitrate     Auto | 2 Mb/s | 5 Mb/s | …
     Split bitrate   [On]
 

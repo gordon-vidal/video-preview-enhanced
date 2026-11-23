@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Live transcode is now automatic** (`videoPreviewEnhanced.transcode` defaults to `auto`; the `ask` mode is retired and a stored `ask` behaves as `auto`). Nothing asks before it starts; the first time it does, one non-blocking notice explains it and offers **Use original video** or **Turn off**, and never appears again. `off`, the per-tab **Use original video** and ⚙ › Live transcode work as before.
 - Right-clicking a folder in the Explorer and choosing **Start Compare** or **Add to Compare** now includes videos in subfolders (e.g. `recording/cam1/video.mp4`), in natural folder and file order.
 - **Export Frames (A–B)…** now prompts for an optional frame stride (default `1` for every frame, or `N` for every Nth frame); the 300-frame confirmation and 2,000-frame cap apply to the exported frame count while file names keep each frame's 1-based video index.
 - Pick a local video with **Open Video File…**, or open it in a separate editor group or window with **Play to the Side** and **Play in New Window**.
