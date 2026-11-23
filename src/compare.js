@@ -133,7 +133,7 @@ class CompareSession {
    */
   constructor(context, uris, {
     log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn,
-    start, openPlayer, setPref, setPlaybackPrefs, prefs, copyText, addMode, setTranscodePref, informTranscode, menu, exportClips,
+    start, openPlayer, setPref, setPlaybackPrefs, prefs, copyText, addMode, setTranscodePref, informTranscode, menu, exportClips, linkSim,
   }) {
     if (api) vscode = api;
     this.logRaw = log;
@@ -159,6 +159,9 @@ class CompareSession {
     this.originalTiles = []; // indexed by tile occurrence, including duplicate URIs
     this.natives = [];
     this.disposed = false;
+    // VPE_SIMULATE_LINK (src/link-sim.js): this panel shares the one simulated link with every other player and panel,
+    // so its tiles compete for the same bytes; dispose() drops what is still in flight.
+    this.link = linkSim ? linkSim.wrapChannel('compare') : null;
     this.setFiles(uris);
     const media = vscode.Uri.joinPath(context.extensionUri, 'media');
     this.media = media;
@@ -171,7 +174,12 @@ class CompareSession {
     this.webview.onDidReceiveMessage((m) => {
       // A replaced page can still have messages in flight, with tile keys now assigned to other files.
       if (this.disposed || !m || typeof m !== 'object' || m.page !== this.page) return;
-      this.onMessage(m).catch((e) => { if (m.page === this.page) this.fail(e); });
+      if (this.link && m.type === 'nd') {
+        const epoch = this.epoch;
+        this.link.sendUp(m, () => { if (!this.disposed && m.page === this.page && epoch === this.epoch) this.receive(m); });
+        return;
+      }
+      this.receive(m);
     });
     panel.onDidDispose(() => this.dispose());
     panel.onDidChangeViewState(() => {
@@ -240,7 +248,22 @@ class CompareSession {
     return compareHtml({ uri, cspSource: w.cspSource, nonce: crypto.randomBytes(16).toString('base64'), cfg, frameSource: this.frameSource });
   }
 
-  post(msg) { if (!this.disposed) this.webview.postMessage({ ...msg, page: this.page }); }
+  post(msg) {
+    if (this.disposed) return;
+    const page = this.page;
+    if (this.link && msg.type === 'nd') {
+      const epoch = this.epoch; // closeFiles() bumps it: a tile that was replaced gets nothing from the old one
+      this.link.sendDown(msg, () => {
+        if (!this.disposed && page === this.page && epoch === this.epoch) this.webview.postMessage({ ...msg, page });
+      });
+      return;
+    }
+    this.webview.postMessage({ ...msg, page });
+  }
+
+  receive(m) {
+    this.onMessage(m).catch((e) => { if (m.page === this.page) this.fail(e); });
+  }
 
   fail(err) {
     this.log(`error: ${err && err.stack ? err.stack : err}`);
@@ -587,6 +610,7 @@ class CompareSession {
     this.disposed = true;
     this.menu?.closed(this);
     this.closeFiles();
+    if (this.link) { this.link.dispose(); this.link = null; }
     this.log('closed');
   }
 }
