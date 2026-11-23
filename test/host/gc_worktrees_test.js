@@ -1,6 +1,7 @@
 'use strict';
-// node test/host/gc_worktrees_test.js: tools/gc-worktrees.js. Pure decisions first, then a real temporary repo
-// with merged / unmerged / dirty / detached worktrees and standalone branches, dry run and --apply.
+// node test/host/gc_worktrees_test.js: tools/gc-worktrees.js. Pure decisions first, then real temporary git repos
+// covering merged / unmerged / dirty / detached / submodule worktrees, tag-vs-branch ambiguity, --base HEAD from
+// linked worktrees, primary-HEAD / upstream branch -d refusals, revalidation on concurrent changes, and dry-run/--apply.
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -17,36 +18,60 @@ function pure() {
   assert.deepStrictEqual(wts.map((w) => [w.path, w.branch, w.locked, w.detached, w.prunable]), [
     ['/r', 'main', false, false, false], ['/r-w', 'feat/x', true, false, false], ['/r-d', null, false, true, true],
   ]);
+
+  // NUL-delimited porcelain preserves newlines inside POSIX paths.
+  const zWts = gc.parseWorktrees(
+    'worktree /r\0HEAD aaa\0branch refs/heads/main\0\0worktree /r/line\nbreak\0HEAD bbb\0branch refs/heads/f\0\0'
+  );
+  assert.strictEqual(zWts.length, 2);
+  assert.strictEqual(zWts[1].path, '/r/line\nbreak');
+
   assert.ok(gc.isInside('/r/w/sub', '/r/w', 'linux') && !gc.isInside('/r/wx', '/r/w', 'linux'));
   assert.ok(gc.isInside('C:\\R\\W', 'c:/r/w', 'win32'), 'Windows paths compare case-insensitively');
 
-  const ctx = { primary: '/r', cwd: '/elsewhere', base: 'main', merged: () => true, dirty: () => false, exists: () => true, platform: 'linux' };
-  const wt = (o) => ({ path: '/r-w', head: 'h', branch: 'feat', detached: false, bare: false, locked: false, prunable: false, ...o });
+  const ctx = {
+    primary: '/r', cwd: '/elsewhere', cwdGitDir: '/r/.git', base: 'main', baseBranch: 'main',
+    merged: () => true, dirty: () => false, hasSubmodule: () => false, exists: () => true, platform: 'linux',
+  };
+  const wt = (o) => ({
+    path: '/r-w', head: 'h', branch: 'feat', detached: false, bare: false, locked: false, prunable: false,
+    gitDir: '/r/.git/worktrees/r-w', ...o,
+  });
   const why = (o, c = {}) => gc.classifyWorktree(wt(o), { ...ctx, ...c });
   assert.deepStrictEqual(why({}), { action: 'remove', reason: 'merged into main' });
   assert.match(why({ path: '/r' }).reason, /primary/);
   assert.match(why({}, { cwd: '/r-w/deep' }).reason, /active/);
+  // Matching canonical gitDir protects the active worktree even when path spellings differ (junctions/symlinks).
+  assert.match(why({ gitDir: '/r/.git/worktrees/r-w' }, { cwd: '/junction/alias', cwdGitDir: '/r/.git/worktrees/r-w' }).reason, /active/);
   assert.match(why({ branch: 'main' }).reason, /base branch/);
   assert.match(why({ locked: true }).reason, /locked/);
   assert.match(why({ prunable: true }).reason, /prunable/);
   assert.match(why({}, { exists: () => false }).reason, /missing/);
   assert.match(why({ detached: true, branch: null }).reason, /detached/);
   assert.match(why({}, { merged: () => false }).reason, /not merged/);
+  assert.match(why({}, { hasSubmodule: () => true }).reason, /submodule/);
   assert.match(why({}, { dirty: () => true }).reason, /changes/);
   // Dirty is never even asked for work that is not merged.
   let asked = false;
   why({}, { merged: () => false, dirty: () => { asked = true; return false; } });
   assert.strictEqual(asked, false);
 
-  const bctx = { base: 'main', merged: () => true, checkedOut: new Set(['kept', 'gone']), removedWith: new Set(['gone']) };
+  const bctx = { base: 'main', baseBranch: 'main', merged: () => true, keptBranches: new Set(['kept']) };
   assert.strictEqual(gc.classifyBranch('main', 'x', bctx).action, 'skip');
   assert.match(gc.classifyBranch('kept', 'x', bctx).reason, /stays/);
   assert.strictEqual(gc.classifyBranch('gone', 'x', bctx).action, 'remove');
   assert.strictEqual(gc.classifyBranch('solo', 'x', bctx).action, 'remove');
   assert.match(gc.classifyBranch('solo', 'x', { ...bctx, merged: () => false }).reason, /not merged/);
+  assert.match(gc.classifyBranch('solo', 'x', { ...bctx, safeDeleteBlocked: () => 'not merged into upstream' }).reason, /upstream/);
 
-  assert.deepStrictEqual(gc.parseArgs(['--apply', '--base', 'dev', '--json']), { apply: true, base: 'dev', json: true, help: false, error: '' });
+  assert.deepStrictEqual(gc.parseArgs(['--apply', '--base', 'dev', '--json']), {
+    apply: true, base: 'dev', baseExplicit: true, json: true, help: false, error: '',
+  });
+  assert.strictEqual(gc.parseArgs([]).baseExplicit, false);
   assert.ok(gc.parseArgs(['--base']).error && gc.parseArgs(['--nope']).error);
+  // --help paired with an unknown flag must still fail with usage error (exit 2).
+  const badHelp = run(process.cwd(), ['--help', '--unknown']);
+  assert.strictEqual(badHelp.code, 2);
 }
 
 function git(cwd, ...args) {
@@ -59,16 +84,26 @@ function run(cwd, argv) {
   return { code, text: io.out.join('\n'), err: io.err.join('\n') };
 }
 
+function makeRepo(root, name = 'repo') {
+  const repo = path.join(root, name);
+  fs.mkdirSync(repo, { recursive: true });
+  git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'config', 'user.email', 'you@example.com');
+  git(repo, 'config', 'user.name', 'Test');
+  git(repo, 'config', 'commit.gpgsign', 'false');
+  return repo;
+}
+
+function commit(cwd, file, msg) {
+  fs.writeFileSync(path.join(cwd, file), msg);
+  git(cwd, 'add', file);
+  git(cwd, 'commit', '-q', '-m', msg);
+}
+
 function real() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-gcwt-'));
   try {
-    const repo = path.join(root, 'repo');
-    fs.mkdirSync(repo);
-    git(repo, 'init', '-q', '-b', 'main');
-    git(repo, 'config', 'user.email', 'you@example.com');
-    git(repo, 'config', 'user.name', 'Test');
-    git(repo, 'config', 'commit.gpgsign', 'false');
-    const commit = (cwd, file, msg) => { fs.writeFileSync(path.join(cwd, file), msg); git(cwd, 'add', file); git(cwd, 'commit', '-q', '-m', msg); };
+    const repo = makeRepo(root, 'repo');
     commit(repo, 'a.txt', 'a');
     const wtPath = (n) => path.join(root, n);
     // Merged worktree: its branch is an ancestor of main once main moves on.
@@ -92,6 +127,7 @@ function real() {
     assert.strictEqual(dry.code, 0, dry.err);
     const j = JSON.parse(dry.text);
     assert.strictEqual(j.applied, false);
+    assert.deepStrictEqual(j.errors, []);
     const wAction = (n) => j.worktrees.find((w) => w.path.replace(/\\/g, '/').endsWith(`/${n}`)).action;
     assert.deepStrictEqual(['w-merged', 'w-unmerged', 'w-dirty', 'w-detached'].map(wAction), ['remove', 'skip', 'skip', 'skip']);
     assert.strictEqual(j.worktrees[0].action, 'skip', 'primary');
@@ -103,7 +139,6 @@ function real() {
     assert.ok(fs.existsSync(wtPath('w-merged')), 'dry run removes nothing');
     assert.ok(git(repo, 'branch', '--list', 'merged'), 'dry run keeps branches');
     assert.ok(find(dry, 'worktrees', 'branch', 'dirty').reason.match(/changes/));
-
     assert.match(find(dry, 'branches', 'name', 'dirty').reason, /stays/);
 
     // Running from inside a candidate protects it.
@@ -114,7 +149,7 @@ function real() {
     assert.strictEqual(applied.code, 0, applied.err);
     assert.ok(!fs.existsSync(wtPath('w-merged')), 'merged worktree removed');
     for (const n of ['w-unmerged', 'w-dirty', 'w-detached']) assert.ok(fs.existsSync(wtPath(n)), `${n} kept`);
-    const left = git(repo, 'branch', '--format=%(refname:short)').split(/\r?\n/).sort();
+    const left = git(repo, 'for-each-ref', '--format=%(refname:strip=2)', 'refs/heads').split(/\r?\n/).sort();
     assert.deepStrictEqual(left, ['dirty', 'main', 'solo-unmerged', 'unmerged']);
     assert.ok(fs.existsSync(path.join(wtPath('w-dirty'), 'scratch.txt')), 'untracked file untouched');
 
@@ -131,6 +166,79 @@ function real() {
   }
 }
 
+function edgeCases() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-gcwt-edge-'));
+  try {
+    const repo = makeRepo(root, 'repo');
+    commit(repo, 'a.txt', 'a');
+
+    // 1. Tag + branch collision: tag `topic`, merged branch `topic`, unmerged branch literally named `heads/topic`.
+    git(repo, 'branch', 'topic', 'main');
+    git(repo, 'tag', 'topic', 'main');
+    git(repo, 'checkout', '-q', '-b', 'heads/topic');
+    commit(repo, 'ht.txt', 'ht');
+    git(repo, 'checkout', '-q', 'main');
+    // Tag `main` pointing elsewhere must not hijack default refs/heads/main.
+    git(repo, 'tag', 'main', 'heads/topic');
+
+    const amb = run(repo, ['--apply', '--json']);
+    assert.strictEqual(amb.code, 0, amb.err);
+    const branchesAfterAmb = git(repo, 'for-each-ref', '--format=%(refname:strip=2)', 'refs/heads').split(/\r?\n/).sort();
+    assert.deepStrictEqual(branchesAfterAmb, ['heads/topic', 'main'], 'deletes topic, preserves unmerged heads/topic');
+
+    // 2. --base HEAD from a linked worktree resolves HEAD in the invoking worktree, not primary.
+    // Primary is on `main` (commit B); linked worktree `w-base` is on `base-wt` (commit A).
+    commit(repo, 'b.txt', 'b');
+    const commitA = git(repo, 'rev-parse', 'HEAD~1');
+    const mainTip = git(repo, 'rev-parse', 'refs/heads/main');
+    git(repo, 'branch', 'at-b', mainTip); // merged into primary HEAD (B), NOT into commit A!
+    git(repo, 'worktree', 'add', '-q', '-b', 'base-wt', path.join(root, 'w-base'), commitA);
+
+    const fromLinked = run(path.join(root, 'w-base'), ['--base', 'HEAD', '--json']);
+    assert.strictEqual(fromLinked.code, 0, fromLinked.err);
+    const lj = JSON.parse(fromLinked.text);
+    assert.strictEqual(lj.baseCommit, commitA);
+    const atB = lj.branches.find((b) => b.name === 'at-b');
+    assert.strictEqual(atB.action, 'skip', 'at-b is NOT an ancestor of linked worktree HEAD');
+    assert.match(atB.reason, /not merged/);
+
+    // 3. Dry-run predicts `git branch -d` refusal when primary HEAD does not contain a branch merged into --base.
+    // Here primary is on `main` (B), while `heads/topic` is ahead of A on a side branch; create `side-child` at `heads/topic`.
+    git(repo, 'branch', 'side-child', 'heads/topic');
+    const predictRefuse = run(repo, ['--base', 'heads/topic', '--json']);
+    assert.strictEqual(predictRefuse.code, 0, predictRefuse.err);
+    const prj = JSON.parse(predictRefuse.text);
+    const sc = prj.branches.find((b) => b.name === 'side-child');
+    assert.strictEqual(sc.action, 'skip');
+    assert.match(sc.reason, /primary HEAD/);
+
+    // 4. Revalidation in apply(): if a planned branch advances or a worktree becomes dirty after plan(),
+    // apply() refuses to delete them and returns partial failure (exit code 1 equivalent via results).
+    git(repo, 'worktree', 'add', '-q', '-b', 'race-wt', path.join(root, 'w-race'), mainTip);
+    git(repo, 'branch', 'race-br', mainTip);
+    const p = gc.plan({ cwd: repo, base: 'main', baseExplicit: false });
+    assert.strictEqual(p.worktrees.find((w) => w.branch === 'race-wt').action, 'remove');
+    assert.strictEqual(p.branches.find((b) => b.name === 'race-br').action, 'remove');
+    // Mutate after plan: dirty the worktree and advance the branch tip.
+    fs.writeFileSync(path.join(root, 'w-race', 'late.txt'), 'unsaved');
+    git(repo, 'branch', '-f', 'race-br', 'heads/topic');
+    const res = gc.apply(p);
+    assert.ok(res.some((r) => r.kind === 'worktree' && r.label.includes('w-race') && !r.ok), 'dirty worktree refused');
+    assert.ok(res.some((r) => r.kind === 'branch' && r.label === 'race-wt' && !r.ok), 'branch kept when worktree removal failed');
+    assert.ok(res.some((r) => r.kind === 'branch' && r.label === 'race-br' && !r.ok), 'advanced branch refused');
+    assert.ok(fs.existsSync(path.join(root, 'w-race', 'late.txt')), 'late untracked file preserved');
+    assert.strictEqual(git(repo, 'rev-parse', 'refs/heads/race-br'), git(repo, 'rev-parse', 'refs/heads/heads/topic'));
+
+    // 5. isAncestor distinguishes exit 1 (false) from git command errors (throws).
+    assert.strictEqual(gc.isAncestor(repo, commitA, mainTip), true);
+    assert.strictEqual(gc.isAncestor(repo, mainTip, commitA), false);
+    assert.throws(() => gc.isAncestor(repo, '0000000000000000000000000000000000000000', mainTip));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+}
+
 pure();
 real();
+edgeCases();
 console.log('gc-worktrees ok');
