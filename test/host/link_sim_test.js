@@ -263,6 +263,97 @@ function rig(spec, opts = {}) {
   assert.strictEqual(sim.stats().downPending, 0);
 }
 
+{ // Rounding a deadline up to a whole millisecond must not put it on the first millisecond of a blackout.
+  const { clock, sim, log, down } = rig('mbps=8,rtt=0,blackout=1500/8000'); // blackout [8000, 9500)
+  clock.advance(7992);
+  down('edge', bytes(7500)); // 7.5 ms of sending: due at 7999.5, which rounds to 8000
+  clock.advance(8);
+  assert.strictEqual(clock.now(), 8000);
+  assert.strictEqual(sim.stats().inBlackout, true);
+  assert.deepStrictEqual(log, [], 'not delivered as the blackout opens');
+  clock.runAll();
+  assert.deepStrictEqual(log, [['down', 'edge', 9500]], 'delivered when the link is back');
+}
+
+{ // A timer that fires late, inside a blackout, delivers nothing until the blackout is over (order kept).
+  const real = createVirtualClock();
+  const late = { now: real.now, setTimeout: (fn, ms) => real.setTimeout(fn, ms + 5), clearTimeout: real.clearTimeout };
+  const sim = createLinkSimulator('mbps=8,rtt=0,blackout=1500/8000', { clock: late });
+  const log = [];
+  real.advance(7990);
+  sim.sendDown(bytes(7000), () => log.push(['first', real.now()])); // due at 7997, but the timer fires at 8002
+  sim.sendDown(bytes(1000), () => log.push(['second', real.now()]));
+  real.advance(1400); // 9390: inside the blackout
+  assert.deepStrictEqual(log, [], 'nothing arrives while the link is down');
+  real.runAll();
+  assert.deepStrictEqual(log.map((e) => e[0]), ['first', 'second']);
+  assert.ok(log.every((e) => e[1] >= 9500), `after the blackout: ${JSON.stringify(log)}`);
+}
+
+{ // A transfer far longer than any iteration cap still counts every blackout: 0.125 bytes/ms, 1 ms dark every 2 ms.
+  const { clock, log, down } = rig('mbps=0.001,rtt=0,blackout=1/2');
+  down('long', bytes(100000)); // 800000 ms of sending: open [0, 2), then 1 ms in every 2
+  clock.runAll();
+  // The last open ms ends at 1599998, a blackout's first ms: delivery waits for it to end.
+  assert.deepStrictEqual(log, [['down', 'long', 3 + 799997 * 2 + 1 + 1]], 'one dark ms for every open ms');
+}
+
+{ // The closed form matches stepping a millisecond at a time, for starts and sizes around the blackouts.
+  for (const [dark, every] of [[3, 10], [1, 2], [5, 6]]) {
+    const inDark = (t) => t >= every && t % every < dark;
+    for (let start = 0; start < 25; start += 1) {
+      for (let need = 1; need <= 40; need += 1) {
+        let t = start;
+        for (let left = need; left > 0; t++) if (!inDark(t)) left--;
+        while (inDark(t)) t++; // a message that would land in a blackout waits for its end
+        const { clock, log, down } = rig(`mbps=8,rtt=0,blackout=${dark}/${every}`);
+        clock.advance(start);
+        down('m', bytes(need * 1000));
+        clock.runAll();
+        assert.strictEqual(log[0][2], t, `blackout ${dark}/${every}, start ${start}, ${need} ms of sending`);
+      }
+    }
+  }
+}
+
+{ // Cancelling one send frees it at once: no pending entry, and no timer waiting for it.
+  const { clock, sim, log, down } = rig('mbps=8,rtt=40');
+  const ch = sim.wrapChannel('A');
+  const first = ch.sendDown(bytes(1000), () => log.push(['down', 'first', clock.now()]));
+  ch.sendDown(bytes(1000), () => log.push(['down', 'second', clock.now()]));
+  down('other', bytes(1000));
+  assert.strictEqual(ch.pending(), 2);
+  assert.strictEqual(sim.stats().downPending, 3);
+  first.cancel(); // the head of the queue: the timer moves on to the next message
+  first.cancel(); // twice is fine
+  assert.strictEqual(ch.pending(), 1, 'it left the channel at once');
+  assert.strictEqual(sim.stats().downPending, 2, 'and the queue');
+  clock.runAll();
+  assert.deepStrictEqual(log, [['down', 'second', 22], ['down', 'other', 23]], 'the rest arrive on time, in order');
+  assert.strictEqual(ch.pending(), 0, 'a delivered message leaves the channel too');
+  assert.strictEqual(clock.pending(), 0);
+  const lone = sim.sendDown(bytes(0), () => assert.fail('cancelled'));
+  lone.cancel();
+  assert.strictEqual(clock.pending(), 0, 'cancelling the only message clears the timer');
+}
+
+{ // Disposing a channel releases everything it had in flight now, not at the deadlines.
+  const { clock, sim, log, down } = rig('mbps=8,rtt=40');
+  const a = sim.wrapChannel('A');
+  const b = sim.wrapChannel('B');
+  for (let i = 0; i < 3; i++) down(`A${i}`, bytes(500000), a);
+  assert.strictEqual(a.pending(), 3);
+  down('B0', bytes(1000), b);
+  a.dispose();
+  assert.strictEqual(a.pending(), 0, 'nothing left to run for A');
+  assert.strictEqual(sim.stats().downPending, 1, 'only B is queued');
+  assert.strictEqual(clock.pending(), 1, 'one timer, for B');
+  b.dispose();
+  assert.strictEqual(clock.pending(), 0, 'no timer once nothing is waiting');
+  clock.runAll();
+  assert.deepStrictEqual(log, []);
+}
+
 { // A callback that throws does not stop the messages behind it (the host's own handler reports its errors).
   const errors = [];
   const { clock, sim, log, down } = rig('mbps=8,rtt=0', { onError: (e) => errors.push(e.message) });

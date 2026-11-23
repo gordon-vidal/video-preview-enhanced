@@ -233,7 +233,7 @@ function prng(seed) {
  * @property {number} bytesPerMs
  * @property {number} free when the pipe finishes what is queued
  * @property {number} last arrival of the newest message (arrivals never go backwards: FIFO)
- * @property {Array<{ at: number, deliver: () => void, live: boolean }>} queue sent, not yet delivered
+ * @property {Array<{ at: number, deliver: (() => void) | null }>} queue sent, not yet delivered (a cancelled one leaves it)
  * @property {any} timer
  * @property {number} bytes
  * @property {number} msgs
@@ -266,16 +266,16 @@ function createLinkSimulator(config, opts = {}) {
   const sendEnd = (start, need) => {
     if (!every || need <= 0) return start + need;
     let t = start;
-    let left = need;
-    for (let guard = 0; guard < 100000; guard++) {
-      const end = blackoutEnd(t);
-      if (end >= 0) t = end;
-      const room = nextBlackout(t) - t;
-      if (left <= room) return t + left;
-      left -= room;
-      t = nextBlackout(t);
-    }
-    return t + left;
+    const out = blackoutEnd(t);
+    if (out >= 0) t = out;
+    const room = nextBlackout(t) - t; // open time before the next blackout
+    if (need <= room) return t + need;
+    // Every later period is open for `open` ms and dark for `duration`: whole periods are skipped by arithmetic, so a
+    // transfer of any length counts all its blackouts. (The epsilon keeps an exact multiple from rounding up a period.)
+    const left = need - room;
+    const open = every - duration;
+    const skipped = Math.max(0, Math.ceil(left / open - 1e-9) - 1);
+    return nextBlackout(t) + duration + skipped * every + (left - skipped * open);
   };
 
   /** @param {number} mbps @returns {Dir} */
@@ -286,17 +286,28 @@ function createLinkSimulator(config, opts = {}) {
   /** @param {Dir} d */
   const arm = (d) => {
     if (d.timer !== null || !d.queue.length || disposed) return;
-    d.timer = clock.setTimeout(() => {
-      d.timer = null;
-      if (disposed) return;
-      const now = clock.now();
-      while (d.queue.length && d.queue[0].at <= now && !disposed) {
-        const item = /** @type {NonNullable<typeof d.queue[0]>} */ (d.queue.shift());
-        if (!item.live) continue;
-        try { item.deliver(); } catch (e) { if (opts.onError) opts.onError(e); }
-      }
-      arm(d);
-    }, Math.max(0, Math.ceil(d.queue[0].at - clock.now())));
+    schedule(d, d.queue[0].at - clock.now());
+  };
+
+  /** @param {Dir} d @param {number} ms */
+  const schedule = (d, ms) => { d.timer = clock.setTimeout(() => tick(d), Math.max(0, Math.ceil(ms))); };
+
+  /** The timer fired: deliver what is due, in order, then wait for the next. @param {Dir} d */
+  const tick = (d) => {
+    d.timer = null;
+    if (disposed) return;
+    const now = clock.now();
+    // Late, and inside a blackout (a timer can overshoot): nothing arrives until the link is back.
+    const end = blackoutEnd(now);
+    if (end >= 0) { schedule(d, end - now); return; }
+    while (d.queue.length && d.queue[0].at <= now && !disposed) {
+      const item = /** @type {NonNullable<typeof d.queue[0]>} */ (d.queue.shift());
+      const deliver = item.deliver;
+      item.deliver = null;
+      if (!deliver) continue;
+      try { deliver(); } catch (e) { if (opts.onError) opts.onError(e); }
+    }
+    arm(d);
   };
 
   /**
@@ -310,17 +321,27 @@ function createLinkSimulator(config, opts = {}) {
     const done = sendEnd(Math.max(now, d.free), bytes / d.bytesPerMs);
     d.free = done;
     const flight = cfg.rttMs / 2 + (cfg.jitterMs ? (rand() - 0.5) * cfg.jitterMs : 0);
-    let at = done + Math.max(0, flight);
-    const end = blackoutEnd(at);
-    if (end >= 0) at = end; // arrives while the link is down: delivered when it comes back
-    at = Math.max(Math.ceil(at), d.last, now);
+    // Whole milliseconds first, then the blackout test on that final deadline: rounding up must not land on a blackout's
+    // first millisecond. (A blackout end is rounded up too, and the test repeats for a period shorter than a millisecond.)
+    let at = Math.ceil(done + Math.max(0, flight));
+    for (let end = blackoutEnd(at); end >= 0; end = blackoutEnd(at)) at = Math.ceil(end); // down: delivered when it is back
+    at = Math.max(at, d.last, now);
     d.last = at;
     d.bytes += bytes;
     d.msgs++;
-    const item = { at, deliver, live: true };
+    /** @type {{ at: number, deliver: (() => void) | null }} */
+    const item = { at, deliver };
     d.queue.push(item);
     arm(d);
-    return { at, bytes, cancel: () => { item.live = false; } };
+    // Cancelling frees the callback (and what it captured) at once, and the timer when it was waiting for this message.
+    const cancel = () => {
+      item.deliver = null;
+      const i = d.queue.indexOf(item);
+      if (i < 0) return;
+      d.queue.splice(i, 1);
+      if (i === 0 && d.timer !== null) { clock.clearTimeout(d.timer); d.timer = null; arm(d); }
+    };
+    return { at, bytes, cancel };
   };
 
   /** Stops every pending delivery: nothing arrives after this, and the simulator takes no more messages. */
@@ -329,12 +350,13 @@ function createLinkSimulator(config, opts = {}) {
     for (const d of [down, up]) {
       if (d.timer !== null) clock.clearTimeout(d.timer);
       d.timer = null;
+      for (const item of d.queue) item.deliver = null;
       d.queue.length = 0;
     }
   };
 
   /** @param {Dir} d */
-  const pending = (d) => d.queue.reduce((n, item) => n + (item.live ? 1 : 0), 0);
+  const pending = (d) => d.queue.length;
 
   return {
     config: cfg,
@@ -354,16 +376,22 @@ function createLinkSimulator(config, opts = {}) {
       /** @param {Dir} d */
       const via = (d) => (/** @type {unknown} */ msg, /** @type {() => void} */ deliver) => {
         if (closed) return null;
-        /** @type {LinkSend | null} */
-        const h = send(d, msg, () => { mine.delete(/** @type {LinkSend} */ (h)); if (!closed) deliver(); });
-        if (h) mine.add(h);
-        return h;
+        /** @type {LinkSend} */
+        let handle;
+        const h = send(d, msg, () => { mine.delete(handle); deliver(); });
+        if (!h) return null;
+        // A cancelled send leaves the set (and frees its callback) at once, not when its deadline would have come.
+        handle = { at: h.at, bytes: h.bytes, cancel: () => { mine.delete(handle); h.cancel(); } };
+        mine.add(handle);
+        return handle;
       };
       return {
         id,
         sendDown: via(down),
         sendUp: via(up),
-        dispose: () => { closed = true; for (const h of mine) h.cancel(); mine.clear(); },
+        /** Messages of this channel still in flight. */
+        pending: () => mine.size,
+        dispose: () => { closed = true; for (const h of [...mine]) h.cancel(); },
       };
     },
     /** @returns {LinkStats} */
