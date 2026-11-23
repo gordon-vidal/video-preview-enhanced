@@ -141,7 +141,7 @@ body.idle #bar { opacity: 0; }
 body.idle { cursor: none; }
 
 #seekRow { position: relative; height: 18px; display: flex; align-items: center; }
-#seek { width: 100%; margin: 0; position: relative; z-index: 1; accent-color: var(--vscode-progressBar-background); background: transparent; }
+#seek { width: 100%; margin: 0; position: relative; z-index: 1; accent-color: var(--vpe-seek-fill); background: transparent; }
 #buffered { position: absolute; left: 0; right: 0; top: 7px; height: 4px; border-radius: 2px; pointer-events: none; }
 #tip {
   position: absolute;
@@ -172,27 +172,31 @@ body.idle { cursor: none; }
   width: max-content;
   max-width: calc(100% - 32px);
   padding: 4px 6px 4px 10px;
-  border-radius: 4px;
+  border-radius: 8px;
   font-size: 12px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border, transparent);
+  background: var(--vpe-surface-float);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--vpe-panel-border);
   z-index: 3;
 }
 #notice button {
   font: inherit;
   cursor: pointer;
-  border: none;
-  border-radius: 2px;
+  border: 1px solid var(--vpe-bd-active);
+  border-radius: 4px;
   padding: 2px 8px;
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
+  color: var(--vscode-foreground);
+  background: var(--vpe-fill-subtle);
 }
+#notice button:hover { background: var(--vpe-hover); }
 #notice .noticeSecondary {
-  color: var(--vscode-button-secondaryForeground);
-  background: var(--vscode-button-secondaryBackground);
+  border-color: var(--vpe-bd-subtle);
+  color: var(--vscode-foreground);
+  background: transparent;
 }
-#notice .noticeSecondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
-#notice #noticeClose { background: transparent; color: var(--vscode-foreground); padding: 0 4px; font-size: 14px; }
+#notice .noticeSecondary:hover { background: var(--vpe-hover); }
+#notice #noticeClose { border-color: transparent; background: transparent; color: var(--vscode-foreground); padding: 0 4px; font-size: 14px; }
 
 #abMarks {
   position: absolute;
@@ -203,7 +207,7 @@ body.idle { cursor: none; }
   z-index: 2;
 }
 #abMarks.has-range {
-  background: color-mix(in srgb, var(--vscode-progressBar-background, #3794ff) 65%, transparent);
+  background: var(--vpe-seek-ab);
 }
 .ab-pin {
   position: absolute;
@@ -383,16 +387,22 @@ body.idle { cursor: none; }
 
 /* ---- The bar (src/bar.js) and the panels (media/controls.js), docs/notes/ui-simple.md ---- */
 :root {
-  --vpe-accent: var(--vscode-focusBorder, #3794ff);
-  --vpe-panel-bg: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+  --vpe-fill-subtle: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  --vpe-bd-subtle: color-mix(in srgb, var(--vscode-foreground) 15%, transparent);
+  --vpe-bd-active: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+  --vpe-seek-fill: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+  --vpe-seek-ab: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+  --vpe-surface-float: color-mix(in srgb, var(--vscode-menu-background, #1e1f23) 86%, transparent);
+  --vpe-accent: var(--vpe-bd-active);
+  --vpe-panel-bg: var(--vpe-surface-float);
   --vpe-panel-fg: var(--vscode-menu-foreground, var(--vscode-foreground));
-  --vpe-panel-border: var(--vscode-menu-border, var(--vscode-editorWidget-border, var(--vscode-panel-border, transparent)));
+  --vpe-panel-border: var(--vscode-menu-border, var(--vscode-editorWidget-border, var(--vpe-bd-subtle)));
   --vpe-hover: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.18));
   --vpe-row-hover: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15));
-  --vpe-chip-bg: var(--vscode-button-secondaryBackground, var(--vscode-input-background));
-  --vpe-chip-fg: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
-  --vpe-on-bg: var(--vscode-button-background);
-  --vpe-on-fg: var(--vscode-button-foreground);
+  --vpe-chip-bg: var(--vpe-fill-subtle);
+  --vpe-chip-fg: var(--vscode-foreground);
+  --vpe-on-bg: var(--vpe-fill-subtle);
+  --vpe-on-fg: var(--vscode-foreground);
   --vpe-dim: var(--vscode-descriptionForeground);
   --vpe-sep: var(--vscode-menu-separatorBackground, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
   --vpe-mono: var(--vscode-editor-font-family, Consolas, monospace);
@@ -448,18 +458,18 @@ body.idle { cursor: none; }
 @media (prefers-reduced-motion: reduce) { #row button.stepsz { transition: none; } }
 .panel.step { width: max-content; min-width: 112px; }
 .panel.step .row.radio { height: 30px; padding: 0 14px 0 10px; gap: 8px; }
-#row #time { font-family: var(--vpe-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 8px; }
+#row #time { font-family: var(--vpe-mono); font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 8px; }
 #row #time #dur { color: var(--vpe-dim); margin-left: 0.45em; }
-/* A / B range buttons beside the time: the key letters in a small box, like the pins on the seek bar; filled while that end is set. */
+/* A / B range buttons beside the time: 16x16 visual box (1.2px border) inside a 24x28 hit target; outline-only active state. */
 #row button.rng { min-width: 24px; height: 28px; padding: 0 2px; opacity: 0.8; }
 .rngl {
-  display: grid; place-items: center; width: 15px; height: 15px; box-sizing: border-box;
-  border: 1.5px solid currentColor; border-radius: 3px; font: 700 10px/1 var(--vpe-mono);
+  display: grid; place-items: center; width: 16px; height: 16px; box-sizing: border-box;
+  border: 1.2px solid var(--vpe-bd-subtle); border-radius: 3px; font: 600 10px/1 var(--vpe-mono);
 }
-#row button.rng[aria-pressed="true"] { opacity: 1; color: var(--vscode-progressBar-background, #3794ff); background: var(--vpe-hover); }
+#row button.rng[aria-pressed="true"] { opacity: 1; color: var(--vscode-foreground); background: var(--vpe-fill-subtle); }
 #row button.rng[aria-pressed="true"] .rngl {
-  border-color: var(--vscode-progressBar-background, #3794ff); background: var(--vscode-progressBar-background, #3794ff);
-  color: var(--vscode-button-foreground, #fff);
+  border-color: var(--vpe-bd-active); background: transparent;
+  color: var(--vscode-foreground);
 }
 .mono { font-family: var(--vpe-mono); font-size: 12px; white-space: nowrap; }
 #row #remoteLiveBtn {
@@ -468,10 +478,10 @@ body.idle { cursor: none; }
   background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-sep);
 }
 #row #remoteLiveBtn:hover, #row #remoteLiveBtn.open {
-  background: var(--vpe-hover); border-color: var(--vpe-accent); color: var(--vscode-foreground);
+  background: var(--vpe-hover); border-color: var(--vpe-bd-active); color: var(--vscode-foreground);
 }
-#row #remoteLiveBtn.adapting { border-color: var(--vpe-accent); }
-#row #rate { font-family: var(--vpe-mono); font-size: 12.5px; min-width: 42px; }
+#row #remoteLiveBtn.adapting { border-color: var(--vpe-bd-active); }
+#row #rate { font-family: var(--vpe-mono); font-size: 11.5px; font-weight: 500; min-width: 40px; }
 #tracks .ccline { position: relative; display: flex; }
 #tracks.on .ccline::after {
   content: ''; position: absolute; inset: auto 0 -3px; border-bottom: 2px solid var(--vpe-accent);
@@ -533,7 +543,9 @@ kbd {
 .panel {
   position: fixed; right: 16px; z-index: 5; width: 316px; box-sizing: border-box; overflow-y: auto;
   display: flex; flex-direction: column; padding: 6px 0;
-  color: var(--vpe-panel-fg); background: var(--vpe-panel-bg); border: 1px solid var(--vpe-panel-border);
+  color: var(--vpe-panel-fg); background: var(--vpe-surface-float);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--vpe-panel-border);
   border-radius: 10px; box-shadow: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
   font-size: 13px;
 }
@@ -553,17 +565,17 @@ kbd {
 /* The radio mark: .panel .mark below is the speed presets (absolute), so reset what it sets. */
 .panel .row .mark { position: static; transform: none; width: 14px; height: auto; padding: 0; flex: none; font-size: 10px; color: var(--vpe-accent); background: none; }
 .panel .abicon { width: 18px; flex: none; text-align: center; font-weight: 600; font-size: 9.5px; letter-spacing: -0.02em; white-space: nowrap; }
-.panel .switch { position: relative; width: 34px; height: 18px; flex: none; border-radius: 9px; background: var(--vscode-checkbox-background, rgba(128, 128, 128, 0.45)); border: 1px solid var(--vscode-checkbox-border, transparent); box-sizing: border-box; }
-.panel .switch .knob { position: absolute; top: 1px; left: 1px; width: 14px; height: 14px; border-radius: 50%; background: var(--vscode-foreground); }
-.panel .switch.on { background: var(--vpe-on-bg); }
-.panel .switch.on .knob { left: 17px; background: var(--vpe-on-fg); }
+.panel .switch { position: relative; width: 34px; height: 18px; flex: none; border-radius: 9px; background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle); box-sizing: border-box; }
+.panel .switch .knob { position: absolute; top: 1px; left: 1px; width: 14px; height: 14px; border-radius: 50%; background: var(--vpe-dim); }
+.panel .switch.on { background: var(--vpe-fill-subtle); border-color: var(--vpe-bd-active); }
+.panel .switch.on .knob { left: 17px; background: var(--vscode-foreground); }
 .panel .sep { height: 1px; margin: 6px 0; background: var(--vpe-sep); flex: none; }
 .panel .phead, #sheet .phead { padding: 2px 14px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vpe-dim); }
 .panel .chip {
   height: 26px; padding: 0 7px; border-radius: 5px; font-size: 11.5px;
-  background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border);
+  background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-bd-subtle);
 }
-.panel .chip[aria-pressed="true"], .panel .chip[aria-checked="true"] { background: var(--vpe-on-bg); color: var(--vpe-on-fg); border-color: var(--vpe-accent); }
+.panel .chip[aria-pressed="true"], .panel .chip[aria-checked="true"] { background: var(--vpe-on-bg); color: var(--vpe-on-fg); border-color: var(--vpe-bd-active); }
 .panel .zval { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
 .panel .jrow { display: flex; align-items: center; gap: 6px; padding: 2px 14px; }
 .panel .jbox { display: flex; flex-direction: column; gap: 5px; padding: 0 14px; }
@@ -639,7 +651,9 @@ body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-co
 #ctxmenu {
   position: fixed; z-index: 20; box-sizing: border-box; min-width: 240px; max-width: calc(100vw - 8px); max-height: calc(100vh - 8px); overflow-y: auto;
   display: flex; flex-direction: column; padding: 6px 0; outline: none;
-  color: var(--vpe-panel-fg); background: var(--vpe-panel-bg); border: 1px solid var(--vpe-panel-border);
+  color: var(--vpe-panel-fg); background: var(--vpe-surface-float);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--vpe-panel-border);
   border-radius: 8px; box-shadow: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
   font-size: 13px;
 }

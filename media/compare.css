@@ -1,6 +1,4 @@
 /* Compare (docs/notes/compare-ui.md): on top of player.css, so the bar and the panels are the player's. */
-body.compare { --cmp-accent: #3461f6; --cmp-accent-tint: rgba(52, 97, 246, 0.16); --cmp-accent-border: rgba(52, 97, 246, 0.45); }
-body.compare #seek { accent-color: var(--cmp-accent); }
 body.compare #stage { background: #000; overflow: hidden; user-select: none; -webkit-user-select: none; }
 body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 #cells { position: absolute; inset: 0; }
@@ -18,7 +16,7 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 .cell.lifted {
   z-index: 30;
   cursor: grabbing;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.68), 0 0 0 2px var(--cmp-accent);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.68), 0 0 0 1.5px var(--vpe-bd-active);
   border-radius: 6px;
 }
 
@@ -79,46 +77,54 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 .ltr {
   width: 17px; height: 17px; flex: none; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 700; color: #fff;
-  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.55));
+  font-size: 10px; font-weight: 700; color: var(--vscode-foreground, #f4f4f5);
+  background: color-mix(in srgb, var(--vscode-foreground, #fff) 16%, transparent);
+  border: 1px solid var(--vpe-bd-subtle);
+  box-sizing: border-box;
 }
 .ico { display: inline-flex; flex: none; color: var(--vpe-dim); }
 .ico.dim { opacity: 0.5; }
 
-/* Monochrome inline mini buttons inside the bottom-left pill (info + mute). */
+/* Monochrome inline mini buttons inside the top-left pill (info + mute). */
 .mute-mini {
-  width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+  width: 20px; height: 20px; padding: 0; border: 1px solid transparent; border-radius: 50%;
   background: transparent; color: var(--vpe-dim, #94a3b8); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; flex: none;
-  transition: background 120ms, color 120ms;
+  transition: background 120ms, color 120ms, border-color 120ms;
 }
-.mute-mini:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.mute-mini:hover { background: var(--vpe-hover); color: var(--vscode-foreground, #fff); }
 .mute-mini.on { color: var(--vscode-foreground, #f4f4f5); }
-.mute-mini.info-on { background: var(--cmp-accent-tint); color: #93c5fd; }
+.mute-mini.info-on { background: var(--vpe-fill-subtle); border-color: var(--vpe-bd-active); color: var(--vscode-foreground, #fff); }
 
-/* Per-tile "Stats for nerds" translucent monospace HUD (top-left below identity pill, mismatches in amber). */
+/* Per-tile ⓘ info card: unified 86% frosted surface reusing the exact .itop + <dl class="igrid"> layout (amber on mismatches). */
 .tile-stats {
   position: absolute; top: 38px; left: 7px; z-index: 6;
-  display: none; grid-template-columns: auto auto; column-gap: 10px; row-gap: 2px;
-  padding: 6px 8px; border-radius: 6px;
-  background: color-mix(in srgb, var(--vscode-editorWidget-background, #101216) 84%, transparent);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  font-family: var(--vpe-mono, ui-monospace, monospace); font-size: 10.5px; line-height: 1.35;
-  color: var(--vscode-foreground, #e4e4e7); pointer-events: none;
+  display: none; flex-direction: column; gap: 8px;
+  width: min(300px, calc(100% - 14px)); box-sizing: border-box;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--vpe-surface-float);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--vpe-panel-border);
+  box-shadow: 0 10px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
+  color: var(--vpe-panel-fg); pointer-events: none;
 }
-.cell.show-stats .tile-stats { display: grid; }
-.tile-stats .k { color: var(--vpe-dim, #94a3b8); }
-.tile-stats .v { text-align: right; white-space: nowrap; }
-.tile-stats .v.diff { color: #fbbf24; font-weight: 600; }
+.cell.show-stats .tile-stats { display: flex; }
+.tile-stats .itop { display: flex; flex-direction: column; gap: 2px; }
+.tile-stats .iname { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+.tile-stats .isub { color: var(--vpe-dim); font-size: 11.5px; }
+.tile-stats .igrid { display: grid; grid-template-columns: 74px minmax(0, 1fr); row-gap: 5px; column-gap: 10px; margin: 0; font-size: 12px; line-height: 1.35; }
+.tile-stats .igrid dt { color: var(--vpe-dim); }
+.tile-stats .igrid dd { margin: 0; overflow-wrap: anywhere; }
+.tile-stats .igrid dd.diff { color: #fbbf24; font-weight: 600; }
 
 /* On-demand Sync mode per-tile offset stepper (bottom-right, hidden unless #stage.sync-mode). */
 .sync-pill, .nudge {
   position: absolute; bottom: 7px; right: 7px; z-index: 7;
   display: none; align-items: center; gap: 3px; height: 24px; padding: 0 4px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--vscode-editorWidget-background, #0c0e14) 90%, transparent);
-  border: 1px solid var(--cmp-accent-border);
+  background: var(--vpe-surface-float);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--vpe-bd-active);
   font-family: var(--vpe-mono, monospace); font-size: 11px; color: var(--vscode-foreground, #e4e4e7);
 }
 .nudge.left { left: 7px; right: auto; top: 38px; bottom: auto; }
@@ -127,10 +133,10 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 #stage.sync-mode .nudge { display: inline-flex; }
 .sync-pill button, .nudge button {
   min-width: 19px; height: 19px; padding: 0 3px; border-radius: 999px; border: 0;
-  background: rgba(255, 255, 255, 0.1); color: inherit; cursor: pointer; font: inherit;
+  background: var(--vpe-fill-subtle); color: inherit; cursor: pointer; font: inherit;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.sync-pill button:hover, .nudge button:hover { background: var(--cmp-accent); color: #fff; }
+.sync-pill button:hover, .nudge button:hover { background: var(--vpe-hover); color: var(--vscode-foreground, #fff); }
 .sync-pill .offv, .nudge .offv { background: transparent; min-width: 30px; padding: 0 4px; font-family: var(--vpe-mono, monospace); font-size: 11px; }
 .sync-pill .offv:hover, .nudge .offv:hover { background: rgba(255, 255, 255, 0.12); color: inherit; }
 
@@ -197,21 +203,21 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 .splitter.v .splitter-bar { width: 4px; height: 42px; }
 .splitter:hover .splitter-bar,
 .splitter:focus-visible .splitter-bar,
-.splitter.dragging .splitter-bar { background: var(--cmp-accent); transform: scale(1.15); }
+.splitter.dragging .splitter-bar { background: var(--vpe-bd-active); transform: scale(1.15); }
 
-/* Drag & 4-sided edge docking skeletons. */
+/* Drag & 4-sided edge docking skeletons (pure monochrome). */
 .skeleton {
   position: absolute; border-radius: 6px;
-  border: 2px dashed var(--cmp-accent);
-  background: var(--cmp-accent-tint);
+  border: 1.5px dashed var(--vpe-bd-active);
+  background: var(--vpe-fill-subtle);
   pointer-events: none; z-index: 26;
   display: flex; align-items: center; justify-content: center;
   transition: left 140ms cubic-bezier(0.2, 0, 0, 1), top 140ms cubic-bezier(0.2, 0, 0, 1),
               width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
 }
 .skeleton-label {
-  background: rgba(15, 23, 42, 0.92); color: #93c5fd;
-  border: 1px solid var(--cmp-accent-border);
+  background: var(--vpe-surface-float); color: var(--vscode-foreground, #f4f4f5);
+  border: 1px solid var(--vpe-bd-active);
   padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
 }
 .skeleton-sub {
@@ -250,28 +256,30 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   background: rgba(20, 20, 20, 0.86); border: 2px solid rgba(255, 255, 255, 0.85);
 }
 
-/* Grouped Compare Capsule inside the bottom player bar (#bar #row). */
+/* Grouped Compare Capsule inside the bottom player bar (#bar #row): pure monochrome, outline-only active state. */
 #cmpGroup.cmp-group {
   display: inline-flex; align-items: center; gap: 2px;
   padding: 2px 3px; margin: 0 3px; border-radius: 7px;
-  background: var(--cmp-accent-tint);
-  border: 1px solid var(--cmp-accent-border);
+  background: var(--vpe-fill-subtle);
+  border: 1px solid var(--vpe-bd-subtle);
 }
-#cmpGroup .ib { height: 24px; min-width: 24px; width: 26px; border-radius: 5px; }
+#cmpGroup .ib { height: 24px; min-width: 24px; width: 26px; border-radius: 5px; border: 1px solid transparent; }
 #cmpGroup .ib[aria-pressed="true"],
 #cmpGroup .ib.active {
-  background: var(--cmp-accent);
-  color: #fff;
+  background: var(--vpe-fill-subtle);
+  border-color: var(--vpe-bd-active);
+  color: var(--vscode-foreground);
 }
 #cmpGroup .ib:disabled { opacity: 0.4; cursor: default; }
-#cmpGroup .cmp-sep { width: 1px; height: 14px; background: color-mix(in srgb, var(--vscode-foreground, #fff) 18%, transparent); margin: 0 2px; flex: none; }
+#cmpGroup .cmp-sep { width: 1px; height: 14px; background: var(--vpe-bd-subtle); margin: 0 2px; flex: none; }
 
-/* Add popover anchored above the Compare capsule in the player bar. */
+/* Add popover anchored above the Compare capsule in the player bar (unified 86% frosted surface). */
 .add-pop {
   position: fixed; bottom: 52px; right: 120px; z-index: 15; width: 240px; box-sizing: border-box;
-  background: var(--vpe-panel-bg, rgba(20, 22, 30, 0.96));
+  background: var(--vpe-surface-float);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   color: var(--vpe-panel-fg, var(--vscode-foreground, #e4e4e7));
-  border: 1px solid var(--vpe-panel-border, rgba(255, 255, 255, 0.16));
+  border: 1px solid var(--vpe-panel-border);
   border-radius: 9px; padding: 5px;
   box-shadow: 0 12px 32px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
 }
@@ -328,11 +336,12 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 .panel .unitrow .seg { flex: 1; }
 .panel .readout.off { font-size: 18px; }
 
-/* A tile's right-click menu (VS Code's menu colours). */
+/* A tile's right-click menu (unified 86% frosted surface). */
 #menu {
   position: fixed; z-index: 16; min-width: 250px; padding: 4px 0; display: flex; flex-direction: column;
-  color: var(--vscode-menu-foreground, var(--vscode-foreground)); background: var(--vscode-menu-background, #252526);
-  border: 1px solid var(--vscode-menu-border, #454545); border-radius: 6px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
+  color: var(--vpe-panel-fg, var(--vscode-foreground)); background: var(--vpe-surface-float);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--vpe-panel-border); border-radius: 8px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
   font-size: 13px;
 }
 #menu .mi {

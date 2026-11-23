@@ -81,7 +81,7 @@ for (const [w, css] of ladder) {
 }
 assert.match(ladder[4][1], /\.stepw \{ display: none; \}/, 'below 250 px the step buttons go');
 assert.match(ladder[3][1], /\.vol-wrap \{ display: none; \}/, 'below 320 px Mute and volume go (M and the arrow keys remain)');
-assert.match(playerStyles, /#notice \{[^}]*background: var\(--vscode-editorWidget-background\)/);
+assert.match(playerStyles, /#notice \{[^}]*background: var\(--vpe-surface-float\)/);
 
 const cmp = compareHtml({ uri: (...p) => `https://webview/${p.join('/')}`, cspSource: 'vscode-resource:', nonce: 'n', cfg: {}, frameSource: '' });
 checkButtons(cmp, 'compare');
