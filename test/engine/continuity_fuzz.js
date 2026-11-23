@@ -43,15 +43,17 @@ await c.run('mute / rate / pause continuity', async () => {
     const samples = [];
     // Every virtual tick: the clock a viewer sees, and whether the player is meant to be running.
     const step = async (ms, label) => {
-      const end = P.clock.now() + ms;
+      const start = P.clock.now();
+      samples.push({ t: P.time(), playing: P.playing(), label, at: start });
+      const end = start + ms;
       while (P.clock.now() < end) {
         await P.clock.advance(16, 16);
         samples.push({ t: P.time(), playing: P.playing(), label, at: P.clock.now() });
       }
     };
     const plan = [
-      [300, 'play'], ['m', true], [300, 'muted'], ['m', false], [300, 'unmuted'], ['m', true], [200, 'muted'],
-      ['m', false], [300, 'unmuted'], ['r', 2], [300, 'rate 2'], ['r', 1], [200, 'rate 1'],
+      [300, 'play'], ['m', true], [300, 'muted'], ['m', false], [300, 'unmuted'], ['m', true], [200, 'muted-2'],
+      ['m', false], [300, 'unmuted-2'], ['r', 2], [300, 'rate 2'], ['r', 1], [200, 'rate 1'],
       ['p'], [100, 'paused'], ['g'], [300, 'play again'],
     ];
     for (const [a, b] of plan) {
@@ -66,13 +68,19 @@ await c.run('mute / rate / pause continuity', async () => {
     const run = samples.filter((s) => s.playing);
     assert(run.length > 40, `only ${run.length} playing samples`);
     assert(run[run.length - 1].t - run[0].t > 0.8, `no progress: ${run[0].t.toFixed(3)} -> ${run[run.length - 1].t.toFixed(3)}`);
-    // No stall: within any 300 ms virtual window of continuous play the clock moves.
-    for (let i = 0; i + 19 < samples.length; i++) {
-      const w = samples.slice(i, i + 20);
-      if (w.every((s) => s.playing && s.label === w[0].label) && w[19].t < P.duration - 0.2) {
-        assert(w[19].t - w[0].t > 0.05, `clock froze at ${w[0].t.toFixed(3)} during "${w[0].label}"`);
+    // No stall: every continuous playing window of >= 200 ms virtual time (before EOF) must advance the clock.
+    let windowsChecked = 0;
+    for (let i = 0; i < samples.length; i++) {
+      if (!samples[i].playing) continue;
+      let j = i;
+      while (j + 1 < samples.length && samples[j + 1].playing && samples[j + 1].label === samples[i].label
+        && samples[j].at - samples[i].at < 200) j++;
+      if (samples[j].at - samples[i].at >= 200 && samples[j].t < P.duration - 0.2) {
+        windowsChecked++;
+        assert(samples[j].t - samples[i].t > 0.05, `clock froze at ${samples[i].t.toFixed(3)} during "${samples[i].label}"`);
       }
     }
+    assert(windowsChecked >= 6, `expected >= 6 stall-check windows, only evaluated ${windowsChecked}`);
     assert(!errors(P).length, `errors: ${errors(P).join('; ')}`);
   } finally { P.close(); }
 });

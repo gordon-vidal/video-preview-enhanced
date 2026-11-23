@@ -38,10 +38,13 @@ function makePrng(seed) {
   };
 }
 
-const within = (p, ms, what) => Promise.race([
-  p,
-  new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}: timed out after ${ms} ms`)), ms)),
-]);
+const within = (p, ms, what) => {
+  let timer;
+  return Promise.race([
+    p,
+    new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${what}: timed out after ${ms} ms`)), ms); }),
+  ]).finally(() => clearTimeout(timer));
+};
 
 const tick = ( hops = 1) => {
   let p = Promise.resolve();
