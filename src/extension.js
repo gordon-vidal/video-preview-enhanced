@@ -800,7 +800,14 @@ function activate(context) {
   hwKnown = globalState.get(HW_KEY) || null;
   offers = createOffers({
     vscode, globalState, log, decide, probe, remoteff, setup, tools, config, probeRecordFor, probeRunning: () => !!probeRun, machine, runProbeUi,
-    setupFfmpeg, turnOffTranscode: () => setSetting('transcode', 'off', vscode.ConfigurationTarget.Global), downloadRemoteFfmpeg,
+    setupFfmpeg,
+    turnOffTranscode: async () => {
+      await setSetting('transcode', 'off', vscode.ConfigurationTarget.Global);
+      for (const s of sessions) {
+        if (!s.disposed && s.native instanceof remotestream.EncodedStream) s.useOriginalVideo();
+      }
+    },
+    downloadRemoteFfmpeg,
     hostPlatform, hostArch, hostname: () => os.hostname(), sessions,
   });
   // A method guessed from the stored GPUs produced no picture: maybe another GPU or driver now; detect again.

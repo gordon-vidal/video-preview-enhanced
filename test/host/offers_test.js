@@ -286,5 +286,18 @@ const sample = { ratio: 0.4, native: false };
   await t.offers.maybeInformTranscode(tab);
   assert.strictEqual(t.calls.off, 1, '"Turn off" sets transcode to off');
 
+  // A rejected globalState.update must clear the in-flight guard so a later start can still show the notice.
+  t = make({ answers: [undefined] });
+  const origUpdate = t.state.update;
+  let failOnce = true;
+  t.state.update = async (k, v) => {
+    if (failOnce) { failOnce = false; throw new Error('disk full'); }
+    return origUpdate(k, v);
+  };
+  await assert.rejects(() => t.offers.maybeInformTranscode(tab), /disk full/);
+  assert.strictEqual(t.shown.length, 0);
+  await t.offers.maybeInformTranscode(tab);
+  assert.strictEqual(t.shown.length, 1, 'notice recovers after a failed state write');
+
   console.log('offers tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

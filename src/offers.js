@@ -164,10 +164,10 @@ function createOffers(deps) {
   async function maybeInformTranscode(/** @type {{ name?: string, disposed?: boolean, useOriginalVideo?: () => void }} */ sess) {
     if (informing || globalState.get(transcodePolicy.INFORM_KEY)) return;
     informing = true;
-    await globalState.update(transcodePolicy.INFORM_KEY, Date.now());
-    log(`[${sess.name || 'video'}] live transcode started for the first time: showing the one-time notice`);
     let answer;
     try {
+      await globalState.update(transcodePolicy.INFORM_KEY, Date.now());
+      log(`[${sess.name || 'video'}] live transcode started for the first time: showing the one-time notice`);
       answer = await vscode.window.showInformationMessage(transcodePolicy.informText(), transcodePolicy.INFORM_ORIGINAL, transcodePolicy.INFORM_OFF);
     } finally { informing = false; }
     if (answer === transcodePolicy.INFORM_ORIGINAL) { if (!sess.disposed && sess.useOriginalVideo) sess.useOriginalVideo(); }
