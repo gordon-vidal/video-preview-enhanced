@@ -130,14 +130,18 @@ for (let n = 2; n <= 16; n++) {
   assert.ok(Grid.easeStandard(0.5) > 0.8, 'decelerating: most of the way by half time');
 
   const g = Grid.createGlide(180);
-  // Tile 1 was shown at x 0 and its new slot is x 100: it starts 100 px left of the slot and eases in.
-  g.retarget({ 0: { x: 100, y: 0 }, 1: { x: 0, y: 0 } }, { 0: { x: 0, y: 0 }, 1: { x: 100, y: 0 } }, 1000);
-  assert.deepStrictEqual(g.offset(1, 1000), { dx: -100, dy: 0 });
-  assert.deepStrictEqual(g.offset(0, 1000), { dx: 100, dy: 0 });
+  // Full rect FLIP: tile 1 was shown at (0, 0, 200, 100) and moves to (100, 20, 400, 200).
+  g.retarget(
+    { 0: { x: 100, y: 0, w: 400, h: 200 }, 1: { x: 0, y: 0, w: 200, h: 100 } },
+    { 0: { x: 0, y: 0, w: 200, h: 100 }, 1: { x: 100, y: 20, w: 400, h: 200 } },
+    1000
+  );
+  assert.deepStrictEqual(g.offset(1, 1000), { dx: -100, dy: -20, dw: -200, dh: -100 });
+  assert.deepStrictEqual(g.offset(0, 1000), { dx: 100, dy: 0, dw: 200, dh: 100 });
   assert.ok(g.active(1090));
-  const mid = g.offset(1, 1090).dx;
-  assert.ok(mid > -100 && mid < 0, 'half way in time, part of the way in space');
-  assert.deepStrictEqual(g.offset(1, 1180), { dx: 0, dy: 0 });
+  const mid = g.offset(1, 1090);
+  assert.ok(mid.dx > -100 && mid.dx < 0 && mid.dw > -200 && mid.dw < 0, 'half way in time, part of the way in rect');
+  assert.deepStrictEqual(g.offset(1, 1180), { dx: 0, dy: 0, dw: 0, dh: 0 });
   assert.ok(!g.active(1180), 'done after the duration');
   // Retargeting from where a tile is shown keeps its motion continuous.
   g.retarget({ 2: { x: 0, y: 0 } }, { 2: { x: 0, y: 50 } }, 0);
@@ -146,39 +150,74 @@ for (let n = 2; n <= 16; n++) {
   assert.strictEqual(g.offset(2, 60).dy, shown.y, 'a new target starts where the tile is shown');
   // The tile under the pointer and tiles that stay put do not glide; clear drops everything.
   g.retarget({ 3: { x: 0, y: 0 }, 4: { x: 5, y: 5 } }, { 3: { x: 40, y: 0 }, 4: { x: 5, y: 5.2 } }, 0, 3);
-  assert.deepStrictEqual(g.offset(3, 0), { dx: 0, dy: 0 });
-  assert.deepStrictEqual(g.offset(4, 0), { dx: 0, dy: 0 });
+  assert.deepStrictEqual(g.offset(3, 0), { dx: 0, dy: 0, dw: 0, dh: 0 });
+  assert.deepStrictEqual(g.offset(4, 0), { dx: 0, dy: 0, dw: 0, dh: 0 });
   g.clear();
   assert.ok(!g.active(60));
   // Reduced motion (duration 0, read on each retarget): tiles jump to their slots.
   let ms = 180;
   const r = Grid.createGlide(() => ms);
   ms = 0;
-  r.retarget({ 0: { x: 0, y: 0 } }, { 0: { x: 100, y: 0 } }, 0);
-  assert.deepStrictEqual(r.offset(0, 0), { dx: 0, dy: 0 });
+  r.retarget({ 0: { x: 0, y: 0, w: 100, h: 100 } }, { 0: { x: 100, y: 0, w: 300, h: 200 } }, 0);
+  assert.deepStrictEqual(r.offset(0, 0), { dx: 0, dy: 0, dw: 0, dh: 0 });
   assert.ok(!r.active(0));
 }
 
-// ---- the tile header's remove button: 3 videos or more ----
+// ---- Spotlight layout (4-sided docking, 10%-90% ratio clamping, edge detection) & stats HUD ----
+{
+  assert.strictEqual(Grid.clampHeroRatio(0.01), 0.10);
+  assert.strictEqual(Grid.clampHeroRatio(0.99), 0.90);
+  assert.strictEqual(Grid.clampHeroRatio('bad'), 0.72);
+  assert.strictEqual(Grid.clampDock('left'), 'left');
+  assert.strictEqual(Grid.clampDock('invalid'), 'top');
+  assert.strictEqual(Grid.detectEdgeDock(500, 20, 1000, 500), 'top');
+  assert.strictEqual(Grid.detectEdgeDock(500, 480, 1000, 500), 'bottom');
+  assert.strictEqual(Grid.detectEdgeDock(40, 250, 1000, 500), 'left');
+  assert.strictEqual(Grid.detectEdgeDock(960, 250, 1000, 500), 'right');
+  assert.strictEqual(Grid.detectEdgeDock(500, 250, 1000, 500), null);
+
+  for (const dock of ['top', 'bottom', 'left', 'right']) {
+    const s = Grid.spotlightLayout({ order: [2, 0, 1], dock, heroRatio: 0.7, width: 1000, height: 600, gap: 2 });
+    assert.strictEqual(s.rects[2].hero, true, `${dock}: first in order is Main`);
+    assert.strictEqual(s.rects[0].hero, false);
+    assert.strictEqual(s.splitter.dir, dock === 'top' || dock === 'bottom' ? 'h' : 'v');
+    assert.ok(s.stripBounds && s.stripBounds.w > 0 && s.stripBounds.h > 0, `${dock}: stripBounds`);
+    if (dock === 'top') assert.ok(s.rects[2].y < s.stripBounds.y);
+    if (dock === 'bottom') assert.ok(s.rects[2].y > s.stripBounds.y);
+    if (dock === 'left') assert.ok(s.rects[2].x < s.stripBounds.x);
+    if (dock === 'right') assert.ok(s.rects[2].x > s.stripBounds.x);
+  }
+  const pictureRect = (_, w, h) => ({ x: 0, y: 0, w, h });
+  const spotCells = Grid.computeCells({ order: [1, 0, 2], mode: 'spotlight', dock: 'left', heroRatio: 0.6, width: 1000, height: 500, maxTiles: 8, pictureRect });
+  assert.strictEqual(spotCells.length, 3, 'spotlight has no empty add cell');
+  assert.strictEqual(spotCells[0].hero, true);
+  assert.deepStrictEqual(spotCells[0].tiles, [1]);
+  assert.ok(spotCells[0].w > spotCells[1].w, 'Main tile is wider at 60% ratio');
+
+  const ref = { w: 1920, h: 1080, fps: 30, frames: 90, codec: 'H264 8b' };
+  const diff = Grid.tileStatsRows({ w: 1280, h: 720, fps: 30, frames: 60, codec: 'VP9 8b' }, ref);
+  assert.deepStrictEqual(diff.map((r) => [r.key, r.diff]), [['Size', true], ['FPS', false], ['Frames', true], ['Codec', true]]);
+}
+
+// ---- the tile header's remove button: 3 videos or more, with inline two-click confirm ----
 assert.ok(!Grid.canRemoveTile(2) && Grid.canRemoveTile(3) && Grid.canRemoveTile(16));
-assert.strictEqual(Grid.removeButtonHtml(2, 1, 'b.mp4', '<svg></svg>'), '', '2 videos: no remove button (Remove leaves Compare)');
+assert.strictEqual(Grid.removeButtonHtml(2, 1, 'b.mp4', '×'), '', '2 videos: no remove button (Remove leaves Compare)');
 for (const n of [3, 4, 9]) {
-  const html = Grid.removeButtonHtml(n, 2, 'clip &amp; co.mp4', '<svg></svg>');
-  assert.match(html, /^<button class="rm" data-act="remove" data-i="2" /, `${n} videos: a remove button for the tile's video`);
+  const html = Grid.removeButtonHtml(n, 2, 'clip &amp; co.mp4', '×');
+  assert.match(html, /^<button class="tbtn rm" data-act="remove" data-i="2" /, `${n} videos: a remove button for the tile's video`);
   assert.match(html, /aria-label="Remove clip &amp; co\.mp4 from Compare" title="Remove from Compare"/);
+  const conf = Grid.removeButtonHtml(n, 2, 'clip &amp; co.mp4', '×', true);
+  assert.match(conf, /^<button class="tbtn rm confirm" data-act="remove" data-i="2" /);
+  assert.match(conf, />Remove\?<\/button>$/);
 }
 {
   const src = require('fs').readFileSync(path.join(__dirname, '../../media/compare.js'), 'utf8');
-  assert.match(src, /\(side \? '' : Grid\.removeButtonHtml\(N, i, esc\(names\[i\]\), ICONS\.close\)\)/, 'tile overlays use the remove button');
-  assert.match(src, /el\.dataset\.act === 'remove'\) removeTile\(i\)/, 'the button removes through removeTile (the host\'s remove message)');
-  // The tiles' click handler stops the click before the stage's play / pause handler sees it.
-  assert.match(src, /cellsEl\.addEventListener\('click', \(e\) => \{\s*const el = [^\n]*\n\s*if \(el\) \{\s*e\.stopPropagation\(\);/);
+  assert.match(src, /Grid\.removeButtonHtml\(N, i, esc\(names\[i\]\), ICONS\.close, confirmingId === i\)/, 'tile overlays use the two-click remove button');
+  assert.match(src, /case 'remove':[\s\S]*if \(confirmingId === i\) \{ confirmingId = -1; removeTile\(i\); \}/, 'second click removes through removeTile');
+  assert.match(src, /cellsEl\.addEventListener\('click', \(e\) => \{[\s\S]*e\.stopPropagation\(\);/, 'tile button clicks stop before stage play/pause');
   const css = require('fs').readFileSync(path.join(__dirname, '../../media/compare.css'), 'utf8');
-  // Reorder mode keeps × clickable (not inert, not hidden) and the reorder drag ignores a press on it.
-  assert.match(css, /#stage\.reordering \.ov > \.rm \{ pointer-events: auto;/);
-  assert.doesNotMatch(css, /#stage\.reordering \.rm \{ visibility: hidden; \}/);
-  assert.match(src, /x\)\.inert = reordering && !x\.classList\.contains\('rm'\)/, 'only × stays live in Reorder mode');
-  assert.match(src, /e\.target\.closest\('\[data-act="move"\], \.rm'\)\) return;/, 'a press on × never starts a reorder drag');
+  assert.match(css, /#stage\.sync-mode \.sync-pill/, 'sync steppers reveal in sync-mode');
+  assert.match(css, /#cmpGroup\.cmp-group/, 'grouped Compare capsule styled');
 }
 
 // ---- memory: 2-4 tiles exactly as before; 5-16 share fixed budgets ----

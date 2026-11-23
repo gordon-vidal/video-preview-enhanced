@@ -99,7 +99,9 @@ ${styles}
 <div id="stage">
   <canvas id="canvas" hidden role="img" aria-label="Videos compared"></canvas>
   <div id="cells"${large ? ' class="dense"' : ''}></div>
-  <div id="reorderHint" hidden>Drag tiles to reorder · Esc or Done to finish</div>
+  <div id="splitter" class="splitter" role="separator" tabindex="0" aria-label="Spotlight split" aria-valuemin="10" aria-valuemax="90" hidden><div class="splitter-bar"></div></div>
+  <div id="skeletonSub" class="skeleton-sub" hidden></div>
+  <div id="skeleton" class="skeleton" hidden><span id="skeletonLabel" class="skeleton-label">Drop here</span></div>
   <div id="addHint" hidden>
     <span id="addHintText" role="status"></span>
     <button id="stopAddBtn" type="button" title="Stop Add Mode">Stop</button>
@@ -107,6 +109,11 @@ ${styles}
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div></div>
   ${playFlashHtml}
   <div id="toast" hidden aria-hidden="true"></div>
+</div>
+<div id="addPop" class="add-pop" role="menu" aria-label="Add video" hidden>
+  <button id="addPickBtn" type="button" role="menuitem"><span>Pick / Browse video…</span></button>
+  <button id="addModePopBtn" type="button" role="menuitem"><span>Add Mode (click in Explorer)</span><span class="kbd">Shift+D</span></button>
+  <div class="note">Tip: You can also <b>Shift+drop</b> any video file from Explorer onto this view.</div>
 </div>
 ${barHtml({ compare: true })}
 <div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>

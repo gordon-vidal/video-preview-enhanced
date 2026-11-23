@@ -22,12 +22,41 @@
 
   const isLarge = (n) => n >= LARGE;
 
+  const SPOTLIGHT_MIN = 0.10;
+  const SPOTLIGHT_MAX = 0.90;
+  const SPOTLIGHT_DEFAULT = 0.72;
+  const DOCKS = ['top', 'bottom', 'left', 'right'];
+
+  /** Clamp Spotlight main-tile ratio symmetrically to 10%-90%. */
+  function clampHeroRatio(r) {
+    const n = Number(r);
+    return Number.isFinite(n) ? Math.max(SPOTLIGHT_MIN, Math.min(SPOTLIGHT_MAX, n)) : SPOTLIGHT_DEFAULT;
+  }
+
+  /** Validate Spotlight dock side (where the Main tile sits; strip is on the opposite side). */
+  function clampDock(d) {
+    return DOCKS.includes(d) ? d : 'top';
+  }
+
+  /** Detect which stage edge a pointer is near while dragging the Spotlight Main tile. */
+  function detectEdgeDock(px, py, W, H) {
+    if (!(W > 0 && H > 0)) return null;
+    const mX = W * 0.22, mY = H * 0.24;
+    const dists = [
+      { edge: 'top', d: py / mY },
+      { edge: 'bottom', d: (H - py) / mY },
+      { edge: 'left', d: px / mX },
+      { edge: 'right', d: (W - px) / mX },
+    ].sort((a, b) => a.d - b.d);
+    return dists[0].d <= 1 ? dists[0].edge : null;
+  }
+
   /**
-   * Columns and rows: 2 side by side (split: 1x1), 3-4 the 2x2 grid, more the smallest square-ish
+   * Columns and rows: 2 side by side (split/spotlight: 1x1), 3-4 the 2x2 grid, more the smallest square-ish
    * grid (5-6: 3x2, 7-9: 3x3, 10-12: 4x3, 13-16: 4x4).
    */
   function gridFor(n, mode) {
-    if (mode === 'split') return { cols: 1, rows: 1 };
+    if (mode === 'split' || mode === 'spotlight') return { cols: 1, rows: 1 };
     if (mode === 'side' || n <= 2) return { cols: 2, rows: 1 };
     if (n <= 4) return { cols: 2, rows: 2 };
     const cols = Math.ceil(Math.sqrt(n));
@@ -131,10 +160,12 @@
 
   /** The tile header's remove button: only from 3 videos on (with 2, Remove leaves Compare: src/compare.js `remove`). */
   const canRemoveTile = (n) => n > 2;
-  /** `name` is already HTML-escaped; `icon` an SVG string. */
-  function removeButtonHtml(n, i, name, icon) {
+  /** `name` is already HTML-escaped; `icon` an SVG string or text; `confirming` switches to inline "Remove?". */
+  function removeButtonHtml(n, i, name, icon, confirming = false) {
     if (!canRemoveTile(n)) return '';
-    return `<button class="rm" data-act="remove" data-i="${i}" aria-label="Remove ${name} from Compare" title="Remove from Compare">${icon}</button>`;
+    const label = confirming ? `Confirm remove ${name} from Compare` : `Remove ${name} from Compare`;
+    const cls = confirming ? 'tbtn rm confirm' : 'tbtn rm';
+    return `<button class="${cls}" data-act="remove" data-i="${i}" aria-label="${label}" title="${confirming ? 'Click again to remove' : 'Remove from Compare'}">${confirming ? 'Remove?' : icon}</button>`;
   }
 
   /** cubic-bezier(0.2, 0, 0, 1) (the tiles' glide) at progress p of 0-1: x solved by bisection, then y. */
@@ -151,22 +182,22 @@
   }
 
   /**
-   * Tiles gliding into new slots (FLIP): `retarget(shown, next, now)` takes where each video is drawn now
-   * (its slot plus any glide still running) and where its new slot is, and starts from the difference;
-   * `offset(v, now)` eases that to 0 in `duration` ms (a function: read on each retarget, 0 = jump).
-   * Positions are {video: {x, y}}; `skip` is a video that follows the pointer instead.
+   * Tiles gliding into new slots (full rect FLIP): `retarget(shown, next, now)` takes where each video is
+   * drawn now (its slot rect plus any glide still running) and where its new slot rect is, and starts from
+   * the difference; `offset(v, now)` eases `{dx, dy, dw, dh}` to 0 in `duration` ms (a function: read on
+   * each retarget, 0 = jump). Rects are `{x, y, w?, h?}`; `skip` is a video that follows the pointer instead.
    * @param {number | (() => number)} duration
    */
-  function createGlide(duration = 180) {
-    /** @type {Map<number, {dx: number, dy: number, t0: number, ms: number}>} */
+  function createGlide(duration = 200) {
+    /** @type {Map<number, {dx: number, dy: number, dw: number, dh: number, t0: number, ms: number}>} */
     const moving = new Map();
     function offset(v, now) {
       const m = moving.get(v);
-      if (!m) return { dx: 0, dy: 0 };
+      if (!m) return { dx: 0, dy: 0, dw: 0, dh: 0 };
       const p = m.ms > 0 ? (now - m.t0) / m.ms : 1;
-      if (p >= 1) { moving.delete(v); return { dx: 0, dy: 0 }; }
+      if (p >= 1) { moving.delete(v); return { dx: 0, dy: 0, dw: 0, dh: 0 }; }
       const k = 1 - easeStandard(p);
-      return { dx: m.dx * k, dy: m.dy * k };
+      return { dx: m.dx * k, dy: m.dy * k, dw: m.dw * k, dh: m.dh * k };
     }
     return {
       offset,
@@ -176,8 +207,9 @@
           const v = Number(key), a = shown[key], b = next[key];
           if (v === skip || !a || ms <= 0) { moving.delete(v); continue; }
           const dx = a.x - b.x, dy = a.y - b.y;
-          if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) moving.delete(v);
-          else moving.set(v, { dx, dy, t0: now, ms });
+          const dw = (a.w ?? 0) - (b.w ?? 0), dh = (a.h ?? 0) - (b.h ?? 0);
+          if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(dw) < 0.5 && Math.abs(dh) < 0.5) moving.delete(v);
+          else moving.set(v, { dx, dy, dw, dh, t0: now, ms });
         }
       },
       active(now) {
@@ -186,6 +218,75 @@
       },
       clear() { moving.clear(); },
     };
+  }
+
+  /**
+   * Spotlight geometry (1 Main tile + opposite-side strip of child tiles) in stage CSS pixels.
+   * Returns `{ rects, splitter, stripBounds }` where `rects` is keyed by video index.
+   */
+  function spotlightLayout({ order, dock = 'top', heroRatio = SPOTLIGHT_DEFAULT, width: W, height: H, gap = GAP, pad = 0 }) {
+    const n = order.length;
+    const dk = clampDock(dock);
+    const ratio = clampHeroRatio(heroRatio);
+    const innerW = Math.max(0, W - pad * 2);
+    const innerH = Math.max(0, H - pad * 2);
+    /** @type {Record<number, {x: number, y: number, w: number, h: number, hero: boolean, slot: number}>} */
+    const rects = {};
+    if (n <= 1) {
+      if (n === 1) rects[order[0]] = { x: pad, y: pad, w: innerW, h: innerH, hero: true, slot: 0 };
+      return { rects, splitter: null, stripBounds: null };
+    }
+    const subN = n - 1;
+    const horizontal = dk === 'top' || dk === 'bottom';
+    if (horizontal) {
+      const heroH = Math.round(Math.max(0, innerH - gap) * ratio);
+      const stripH = Math.max(0, innerH - gap - heroH);
+      const heroY = dk === 'top' ? pad : pad + stripH + gap;
+      const stripY = dk === 'top' ? pad + heroH + gap : pad;
+      rects[order[0]] = { x: pad, y: heroY, w: innerW, h: heroH, hero: true, slot: 0 };
+      const subW = Math.max(0, innerW - gap * (subN - 1)) / subN;
+      for (let k = 0; k < subN; k++) {
+        rects[order[k + 1]] = { x: pad + k * (subW + gap), y: stripY, w: subW, h: stripH, hero: false, slot: k + 1 };
+      }
+      const splitY = dk === 'top' ? heroY + heroH : stripY + stripH;
+      return {
+        rects,
+        splitter: { dir: 'h', x: pad, y: splitY - 4, w: innerW, h: gap + 8 },
+        stripBounds: { x: pad, y: stripY, w: innerW, h: stripH },
+      };
+    }
+    const heroW = Math.round(Math.max(0, innerW - gap) * ratio);
+    const stripW = Math.max(0, innerW - gap - heroW);
+    const heroX = dk === 'left' ? pad : pad + stripW + gap;
+    const stripX = dk === 'left' ? pad + heroW + gap : pad;
+    rects[order[0]] = { x: heroX, y: pad, w: heroW, h: innerH, hero: true, slot: 0 };
+    const subH = Math.max(0, innerH - gap * (subN - 1)) / subN;
+    for (let k = 0; k < subN; k++) {
+      rects[order[k + 1]] = { x: stripX, y: pad + k * (subH + gap), w: stripW, h: subH, hero: false, slot: k + 1 };
+    }
+    const splitX = dk === 'left' ? heroX + heroW : stripX + stripW;
+    return {
+      rects,
+      splitter: { dir: 'v', x: splitX - 4, y: pad, w: gap + 8, h: innerH },
+      stripBounds: { x: stripX, y: pad, w: stripW, h: innerH },
+    };
+  }
+
+  /** Compact per-tile stats HUD rows (Size, FPS, Frames, Codec), highlighting mismatches against slot A. */
+  function tileStatsRows(clip, ref) {
+    const fmtSize = (c) => (c && c.w > 0 && c.h > 0 ? `${c.w}×${c.h}` : '—');
+    const fmtFps = (c) => (c && c.fps > 0 ? Number(c.fps).toFixed(2) : '—');
+    const fmtFrames = (c) => (c && c.frames > 0 ? `${c.frames} f` : '—');
+    const fmtCodec = (c) => (c && c.codec ? String(c.codec) : '—');
+    const a = { size: fmtSize(clip), fps: fmtFps(clip), frames: fmtFrames(clip), codec: fmtCodec(clip) };
+    const r = ref ? { size: fmtSize(ref), fps: fmtFps(ref), frames: fmtFrames(ref), codec: fmtCodec(ref) } : a;
+    const diff = (k) => !!ref && a[k] !== '—' && r[k] !== '—' && a[k] !== r[k];
+    return [
+      { key: 'Size', value: a.size, diff: diff('size') },
+      { key: 'FPS', value: a.fps, diff: diff('fps') },
+      { key: 'Frames', value: a.frames, diff: diff('frames') },
+      { key: 'Codec', value: a.codec, diff: diff('codec') },
+    ];
   }
 
   /** A tile's display aspect: its engine canvas once it has drawn, else the file's size, else 16:9. */
@@ -218,16 +319,23 @@
     return { full, pic: { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) } };
   }
   /**
-   * The cells in CSS pixels of the stage: {x, y, w, h, tiles: [i] or [left, right] (split) or [] (the add cell), pic}.
+   * The cells in CSS pixels of the stage: {x, y, w, h, tiles: [i] or [left, right] (split) or [] (the add cell), pic, full, hero?}.
    */
-  function computeCells({ order, mode, width: W, height: H, maxTiles, pictureRect }) {
+  function computeCells({ order, mode, dock = 'top', heroRatio = SPOTLIGHT_DEFAULT, width: W, height: H, maxTiles, pictureRect }) {
     const n = order.length;
     const place = (i, x, y, w, h) => placed(pictureRect(i, w, h), x, y, w, h);
-    if (mode === 'split') {
+    if (mode === 'split' && n === 2) {
       const [l, r] = order;
       return [{ x: 0, y: 0, w: W, h: H, tiles: [l, r], split: true, ...place(l, 0, 0, W, H) }];
     }
-    if (mode === 'side') {
+    if (mode === 'spotlight' && n >= 2) {
+      const { rects } = spotlightLayout({ order, dock, heroRatio, width: W, height: H, gap: GAP, pad: 0 });
+      return order.map((i, k) => {
+        const r = rects[i];
+        return { x: r.x, y: r.y, w: r.w, h: r.h, tiles: [i], hero: k === 0, ...place(i, r.x, r.y, r.w, r.h) };
+      });
+    }
+    if (mode === 'side' && n === 2) {
       const w = (W - GAP) / 2;
       return order.map((i, k) => ({ x: k * (w + GAP), y: 0, w, h: H, tiles: [i], ...place(i, k * (w + GAP), 0, w, H) }));
     }
@@ -265,7 +373,10 @@
 
   const api = {
     aspectOf, fitRect, tileNat, tileSrc, placed, computeCells, frameFactor, offText, esc,
-    TILE_KEYS, MAX_VIDEOS, DEFAULT_MAX, LARGE, GRID_PIXELS, clampMax, isLarge, gridFor, gridCellCount,
+    TILE_KEYS, MAX_VIDEOS, DEFAULT_MAX, LARGE, GRID_PIXELS, GAP,
+    SPOTLIGHT_MIN, SPOTLIGHT_MAX, SPOTLIGHT_DEFAULT, DOCKS,
+    clampMax, clampHeroRatio, clampDock, detectEdgeDock, spotlightLayout, tileStatsRows,
+    isLarge, gridFor, gridCellCount,
     tileOrder, moveTile, orderAfterRemoval, tileMemory, texturePixels, capSize, nativeCredits, nativeQueuePerTile,
     compareVisibility, reorderSession, canRemoveTile, removeButtonHtml, easeStandard, createGlide,
   };

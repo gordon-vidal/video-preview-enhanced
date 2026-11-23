@@ -103,12 +103,13 @@ module.exports = [{
     const all = tb.flat();
     ok(all.length === 1 && /compare/i.test(all[0].viewType), `tabs after entering: ${JSON.stringify(tb)}`);
 
-    // ---- the bar: the player's, without CC, plus Compare ----
+    // ---- the bar: the player's, without CC, plus the grouped Compare capsule ----
     ok = t('bar');
     let u = await ui();
     const ids = u.bar.ids;
-    for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(ids.includes(id), `bar has no #${id} (${ids})`);
+    for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'layoutSpotlightBtn', 'layoutGridBtn', 'layoutSplitBtn', 'addPopBtn', 'syncModeBtn', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(ids.includes(id), `bar has no #${id} (${ids})`);
     ok(!ids.includes('keysBtn'), 'the shortcuts button still appears in the Compare toolbar');
+    ok(!ids.includes('reorderBtn'), 'the old Reorder button should be gone');
     ok(!ids.includes('tracks'), `CC shown while comparing: ${ids}`);
     ok(/^A ?\d/.test(u.bar.time), `time does not start with the clock's letter: ${u.bar.time}`);
     ok(/sound from A/.test(u.bar.mute), `mute title: ${u.bar.mute}`);
@@ -159,7 +160,7 @@ module.exports = [{
     u = await ui();
     ok(u.panel && u.panel.view === 'cmp' && u.bar.cmpExpanded === 'true', `Compare button: panel ${u.panel && u.panel.view}, expanded ${u.bar.cmpExpanded}`);
     const txt = panelText(u);
-    for (const want of ['Videos', CLIPS[0], CLIPS[1], 'Add video…', '2 of 8', 'View', 'Side by side', 'Split', 'Swap sides', 'Leave compare', 'keep A']) ok(txt.includes(want), `panel lacks "${want}": ${txt}`);
+    for (const want of ['Videos', CLIPS[0], CLIPS[1], 'Add video…', '2 of 8', 'Layout', 'Spotlight', 'Grid', 'Split', 'Swap sides', 'Leave compare', 'keep A']) ok(txt.includes(want), `panel lacks "${want}": ${txt}`);
     for (const gone of ['PSNR', 'SSIM', 'Find first difference', 'A vs B']) ok(!txt.includes(gone), `panel shows "${gone}" (hidden for now)`);
     ok(u.panel.rows.some((x) => /^A: .*clock, sound, offset In step/.test(x.label)), `A's row: ${JSON.stringify(u.panel.rows.map((x) => x.label))}`);
     await click({ sel: '#cmpBtn' });
@@ -218,18 +219,26 @@ module.exports = [{
     act({ action: 'sound', tile: 0 });
     act({ action: 'panel' });
 
-    // ---- hover pills and nudges; − / + on the video under the pointer ----
+    // ---- hover pills, per-tile stats HUD, on-demand Sync mode; − / + on the video under the pointer ----
     ok = t('tiles/pills-and-nudge');
     r = await until((x) => x.synced === 'true', 10000);
     u = await ui();
-    ok(u.cells.length === 2 && u.cells.every((c) => c.pills.length === 1 && c.nudges.length === 1), `cells: ${JSON.stringify(u.cells.map((c) => [c.tile, c.pills.length]))}`);
-    ok(u.cells[0].pills[0].startsWith('A') && u.cells[0].pills[0].includes(CLIPS[0]) && /#\d+$/.test(u.cells[0].pills[0]), `A's pill: ${u.cells[0].pills[0]}`);
-    ok(u.cells[1].nudges[0].replace(/\s/g, '') === '‹0›', `B's nudge: ${u.cells[1].nudges[0]}`);
-    const [ax, , aw] = u.cells[0].pics[0];
-    ok(aw > 0 && Math.abs(u.cells[0].pics[0][2] / u.cells[0].pics[0][3] - 16 / 9) < 0.05, `A's picture keeps 16:9 in its half: ${u.cells[0].pics[0]} (${ax})`);
+    ok(u.cells.length === 2 && u.cells.every((c) => c.pills.length === 1 && !c.hasSpot), `cells: ${JSON.stringify(u.cells.map((c) => [c.tile, c.pills.length, c.hasSpot]))}`);
+    ok(u.cells[0].pills[0].includes('A') && u.cells[0].pills[0].includes(CLIPS[0]) && /#\d+/.test(u.cells[0].pills[0]), `A's pill: ${u.cells[0].pills[0]}`);
+    ok(u.syncMode === false, 'Sync mode should be off by default');
+    await click({ sel: '#syncModeBtn' });
+    u = await ui();
+    ok(u.syncMode === true && u.cells[1].nudges[0].replace(/\s/g, '') === '−0+', `Sync mode B nudge: ${u.cells[1].nudges[0]}`);
     await click({ sel: '.nudge [data-act="nudge"][data-i="1"][data-d="1"]' });
     r = await until((x) => x.offsets === '0f,1f', 5000);
-    ok(r.offsets === '0f,1f', `B's › nudge: ${r.offsets}`);
+    ok(r.offsets === '0f,1f', `B's + nudge: ${r.offsets}`);
+    act({ action: 'key', key: 'Escape' });
+    u = await ui();
+    ok(u.syncMode === false, 'Escape should exit Sync mode');
+    await click({ sel: '[data-act="info"][data-i="0"]' });
+    u = await ui();
+    ok(u.cells[0].statsOpen === true, 'per-tile ⓘ should open stats HUD');
+    await click({ sel: '[data-act="info"][data-i="0"]' });
     act({ action: 'hover', tile: 1 });
     act({ action: 'key', key: '-' });
     r = await until((x) => x.offsets === '0f,0f', 5000);
@@ -241,14 +250,22 @@ module.exports = [{
     act({ action: 'offset', tile: 0, v: 0, unit: 'frames' });
     act({ action: 'hover', tile: null });
 
-    // ---- side by side / split, the divider, Swap ----
-    ok = t('view/split');
-    act({ action: 'panel', view: 'cmp' });
-    await h.sleep(200);
-    await click({ text: 'Split' });
+    // ---- Spotlight (4-sided dock + splitter), Equal Grid, Split Wipe, Swap ----
+    ok = t('view/spotlight-and-split');
+    await click({ sel: '#layoutSpotlightBtn' });
+    r = await until((x) => x.mode === 'spotlight', 5000);
+    u = await ui();
+    ok(r.mode === 'spotlight' && u.splitter && u.splitter.dir === 'h', `Spotlight: mode=${r.mode} splitter=${JSON.stringify(u.splitter)}`);
+    ok(!u.cells[0].hasSpot && u.cells[1].hasSpot, `Spotlight button only on non-main tile: ${JSON.stringify(u.cells.map((c) => c.hasSpot))}`);
+    act({ action: 'dock', dock: 'left' });
+    u = await ui();
+    ok(u.spotlight.dock === 'left' && u.splitter && u.splitter.dir === 'v', `dock left: ${JSON.stringify(u.spotlight)} ${JSON.stringify(u.splitter)}`);
+    act({ action: 'heroRatio', ratio: 0.5 });
+    u = await ui();
+    ok(u.splitter && u.splitter.value === '50', `splitter ratio 50%: ${JSON.stringify(u.splitter)}`);
+    await click({ sel: '#layoutSplitBtn' });
     r = await until((x) => x.mode === 'split' && x.divider === 'true', 5000);
     ok(r.mode === 'split' && r.divider === 'true' && r.cells === '1', `Split: mode=${r.mode} divider=${r.divider} cells=${r.cells}`);
-    act({ action: 'panel' });
     u = await ui();
     ok(u.cells.length === 1 && u.cells[0].pills.length === 2, `split shows both pills: ${JSON.stringify(u.cells.map((c) => c.pills))}`);
     act({ action: 'drag', x: 0.25 });
@@ -260,13 +277,13 @@ module.exports = [{
     r = await until((x) => x.swap === 'true', 5000);
     ok(r.swap === 'true', 'X did not swap');
     u = await ui();
-    ok(u.cells[0].pills[0].startsWith(`A${CLIPS[1]}`), `after Swap the left pill is ${u.cells[0].pills[0]}`);
-    act({ action: 'mode', mode: 'side' });
+    ok(u.cells[0].pills[0].includes(`A${CLIPS[1]}`) || u.cells[0].pills[0].includes(CLIPS[1]), `after Swap the left pill is ${u.cells[0].pills[0]}`);
+    await click({ sel: '#layoutGridBtn' });
     u = await ui();
-    ok(u.cells[0].pills[0].startsWith(`A${CLIPS[1]}`), `Side by side kept ${u.cells[0].pills[0]} on the left`);
+    ok(u.cells[0].pills[0].includes(CLIPS[1]) && u.cells.every((c) => !c.hasSpot), `Equal Grid kept ${u.cells[0].pills[0]} on the left with no Spotlight button`);
     await click({ text: `Move ${CLIPS[1]} later` });
-    r = await until((x) => x.mode === 'side' && x.divider === 'false' && x.swap === 'false', 5000);
-    ok(r.mode === 'side' && r.cells === '2', `back to side by side: mode=${r.mode} cells=${r.cells}`);
+    r = await until((x) => x.mode === 'grid' && x.divider === 'false' && x.swap === 'false', 5000);
+    ok(r.mode === 'grid' && r.cells === '2', `back to grid: mode=${r.mode} cells=${r.cells}`);
 
     // ---- a tile's right-click menu ----
     ok = t('tiles/menu');
@@ -304,15 +321,16 @@ module.exports = [{
     act({ action: 'panel', view: 'cmp' });
     await h.sleep(200);
     u = await ui();
-    ok(panelText(u).includes('3 of 8') && !panelText(u).includes('Side by side') && !panelText(u).includes('PSNR'), `3-video panel: ${panelText(u)}`);
-    act({ action: 'select', tile: 2 });
-    act({ action: 'panel', view: 'cmpVid' });
-    await h.sleep(200);
+    ok(panelText(u).includes('3 of 8') && !panelText(u).includes('Split') && !panelText(u).includes('PSNR'), `3-video panel: ${panelText(u)}`);
+    act({ action: 'panel' });
+    await click({ sel: '[data-act="remove"][data-i="2"]' });
+    u = await ui();
+    ok(u.cells[2].rmConfirm === true, 'first click on × should ask Remove?');
     from = vs.mark();
-    await click({ text: 'Remove from compare' });
+    await click({ sel: '[data-act="remove"][data-i="2"]' });
     await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare back to 2' });
     r = await until((x) => x.n === '2' && x.synced === 'true', 30000);
-    ok(r.n === '2' && r.mode === 'side', `after Remove: n=${r.n} mode=${r.mode}`);
+    ok(r.n === '2' && r.mode === 'grid', `after Remove: n=${r.n} mode=${r.mode}`);
 
     // ---- Leave compare: the player in this tab, at the kept video's moment ----
     ok = t('leave');

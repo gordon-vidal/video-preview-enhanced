@@ -72,14 +72,21 @@
   if (Number.isFinite(saved.ab?.a)) ab.set('a', saved.ab.a, 0, Number.isFinite(saved.ab.aPts) ? saved.ab.aPts : saved.ab.a, !!saved.ab.aNative);
   if (Number.isFinite(saved.ab?.b)) ab.set('b', saved.ab.b, 0, Number.isFinite(saved.ab.bPts) ? saved.ab.bPts : saved.ab.b, !!saved.ab.bNative);
   const tileOr0 = (i) => (Number.isInteger(i) && i >= 0 && i < N ? i : 0);
-  const reorderBtn = $('reorderBtn'), reorderHint = $('reorderHint');
-  let reordering = false;
-  let reorderDrag = null;
+  const splitterEl = $('splitter'), skeletonEl = $('skeleton'), skeletonSubEl = $('skeletonSub'), skeletonLabelEl = $('skeletonLabel');
+  const cmpGroupEl = $('cmpGroup'), layoutSpotlightBtn = $('layoutSpotlightBtn'), layoutGridBtn = $('layoutGridBtn'), layoutSplitBtn = $('layoutSplitBtn');
+  const addPopBtn = $('addPopBtn'), addPopEl = $('addPop'), addPickBtn = $('addPickBtn'), addModePopBtn = $('addModePopBtn');
+  const syncModeBtn = $('syncModeBtn');
+  let syncMode = false;
+  let confirmingId = -1;
+  /** @type {Set<number>} tile indices with the per-tile stats HUD open */
+  const statsIds = new Set();
+  /** @type {any} */
+  let tileDrag = null;
   /** Tiles were moved (glide or lifted) at the last placement: one more placement clears their transforms. */
   let tilesMoving = false;
-  // Tiles glide into their new slots while a drag previews an order (none with reduced motion).
+  // Tiles glide into their new rects (full FLIP) on swaps, docking, and layout switches (none with reduced motion).
   const reduceMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
-  const glide = Grid.createGlide(() => (reduceMotion && reduceMotion.matches ? 0 : 180));
+  const glide = Grid.createGlide(() => (reduceMotion && reduceMotion.matches ? 0 : 200));
   const prefs = {
     ...cfg.prefs,
     jump: { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1, ...cfg.prefs?.jump },
@@ -91,11 +98,18 @@
   const initPrefs = cfg.prefs || {};
   const rawVol = saved.volume !== undefined ? Number(saved.volume) : initPrefs.volume !== undefined ? Number(initPrefs.volume) : 1;
   const Pic = VpePicture;
+  const initialMode = () => {
+    if (saved.mode === 'spotlight' && N >= 2) return 'spotlight';
+    if (N === 2 && (saved.mode === 'split' || saved.mode === 'wipe')) return 'split';
+    return 'grid';
+  };
   const st = {
     // The picture size, zoom and pan, one for every tile (media/picture.js): this tab starts as the setting and keeps its own choice.
     pic: Pic.fresh(Pic.parse(saved.pic || (cfg.prefs && cfg.prefs.pictureSize))),
-    // 2 videos: side by side or split (an older 'wipe' is the split, 'toggle' is gone); 3-4: the grid.
-    mode: N > 2 ? 'grid' : N === 2 && (saved.mode === 'split' || saved.mode === 'wipe') ? 'split' : 'side',
+    // Primary layouts: 'grid' (Equal Grid; 2 videos = 2x1 side by side) and 'spotlight' (1 Main + strip); 'split' for 2 videos only.
+    mode: initialMode(),
+    dock: Grid.clampDock(saved.dock),
+    heroRatio: Grid.clampHeroRatio(saved.heroRatio),
     split: typeof saved.split === 'number' ? saved.split : 0.5,
     order: Grid.tileOrder(N, saved.order, saved.swap),
     /** Per tile: offset value and unit ('frames' of that tile, or 'ms'). */
@@ -115,7 +129,8 @@
   };
 
   // Decoder keys and per-video state use the host's indices. Only the display slots move.
-  const displayOrder = () => reorderDrag?.preview || st.order;
+  const displayOrder = () => tileDrag?.previewOrder || st.order;
+  const displayDock = () => tileDrag?.previewDock || st.dock;
   const tileLabel = (i) => KEYS[st.order.indexOf(i)];
 
   // Screen readers: toasts and messages go to one polite live region (#live).
@@ -438,29 +453,92 @@
   const tileSrc = (i) => Grid.tileSrc(tiles[i], Pic);
   const picOpts = () => ({ dpr: window.devicePixelRatio || 1 });
   const pictureRect = (view, i, w, h) => Pic.rectOf(view, tileNat(i), tileSrc(i), { w, h }, picOpts());
-  const computeCells = (order = displayOrder()) => Grid.computeCells({
-    order, mode: st.mode, width: stage.clientWidth, height: stage.clientHeight, maxTiles: MAX_TILES,
+  const computeCells = (order = displayOrder(), dock = displayDock(), mode = st.mode) => Grid.computeCells({
+    order, mode, dock, heroRatio: st.heroRatio, width: stage.clientWidth, height: stage.clientHeight, maxTiles: MAX_TILES,
     pictureRect: (i, w, h) => pictureRect(st.pic, i, w, h),
   });
   /** @type {any[]} */
   let cells = [];
 
-  // ---- the hover layer: name pill, frame number and offset nudge per tile ---------------------
+  // ---- the hover layer: minimal monochrome bottom-left pill, top-right controls, stats HUD, sync pill ----
 
-  const SVG = (body, size = 14) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const SVG = (body, size = 14) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const ICONS = {
     clock: (s) => SVG('<circle cx="12" cy="13" r="8"></circle><path d="M12 9v4l2.5 2M10 2.5h4"></path>', s),
-    sound: (s) => SVG('<path d="M4 9h4l5-4v14l-5-4H4z"></path><path d="M16.5 8.5a5 5 0 0 1 0 7"></path>', s),
+    sound: (s) => SVG('<path d="M3.5 9.5H7l5-4v13l-5-4H3.5ZM15.5 9a4.2 4.2 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"></path>', s),
+    muted: SVG('<path d="M3.5 9.5H7l5-4v13l-5-4H3.5ZM15.5 9.5l5 5m0-5-5 5"></path>', 13),
+    info: SVG('<circle cx="12" cy="12" r="9"></circle><path d="M12 11v6m0-9.5v.01"></path>', 13),
+    // Promote to Spotlight: 68% Hairline Dimmed Strip (brightens to 100% on hover).
+    spot: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="8" rx="1.5" stroke="currentColor" stroke-width="1.15" opacity="0.68"/><rect x="1.5" y="11.5" width="5.5" height="3" rx="0.9" stroke="currentColor" stroke-width="1.15" opacity="0.25"/><rect x="9" y="11.5" width="5.5" height="3" rx="0.9" stroke="currentColor" stroke-width="1.15" opacity="0.25"/></svg>',
     plus: SVG('<path d="M12 5v14M5 12h14"></path>', 18),
     swap: SVG('<path d="M4 8h15M15 4l4 4-4 4M20 16H5M9 12l-4 4 4 4"></path>', 18),
     view: SVG('<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M12 5v14"></path>', 18),
     leave: SVG('<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M9 12h8M13 8l4 4-4 4"></path>', 18),
     replace: SVG('<path d="M20 11a8 8 0 0 0-14.5-4.5M4 4v3h3M4 13a8 8 0 0 0 14.5 4.5M20 20v-3h-3"></path>', 18),
     remove: SVG('<path d="M6 6l12 12M18 6L6 18"></path>', 18),
-    close: SVG('<path d="M7 7l10 10M17 7L7 17"></path>', 14),
+    close: '×',
     split: SVG('<path d="M9 7l-5 5 5 5M15 7l5 5-5 5"></path>', 14),
   };
   const offText = (i, long = false) => Grid.offText(st.offsets[i], long);
+
+  function tileStats(i) {
+    const p = tiles[i];
+    if (!p) return null;
+    const v = p.info && p.info.video ? p.info.video : {};
+    const w = v.sourceWidth || p.meta?.width || p.cv?.width || 0;
+    const h = v.sourceHeight || p.meta?.height || p.cv?.height || 0;
+    const fps = p.fps || p.meta?.fps || 0;
+    const frames = p.n || (fps && p.meta?.duration ? Math.round(p.meta.duration * fps) : 0);
+    const rawCodec = String(v.codec || '').toUpperCase();
+    const depth = v.depth || (/10/.test(String(v.pixFmt || '')) ? 10 : /12/.test(String(v.pixFmt || '')) ? 12 : rawCodec ? 8 : 0);
+    const codec = rawCodec ? `${rawCodec}${depth ? ` ${depth}b` : ''}` : '';
+    return { w, h, fps, frames, codec };
+  }
+
+  function syncCapsuleButtons() {
+    if (layoutSplitBtn) layoutSplitBtn.hidden = N !== 2;
+    if (layoutSpotlightBtn) {
+      layoutSpotlightBtn.disabled = N < 2;
+      layoutSpotlightBtn.classList.toggle('active', st.mode === 'spotlight');
+      layoutSpotlightBtn.setAttribute('aria-pressed', String(st.mode === 'spotlight'));
+    }
+    if (layoutGridBtn) {
+      layoutGridBtn.classList.toggle('active', st.mode === 'grid' || st.mode === 'side');
+      layoutGridBtn.setAttribute('aria-pressed', String(st.mode === 'grid' || st.mode === 'side'));
+    }
+    if (layoutSplitBtn) {
+      layoutSplitBtn.classList.toggle('active', st.mode === 'split');
+      layoutSplitBtn.setAttribute('aria-pressed', String(st.mode === 'split'));
+    }
+    if (addPopBtn) {
+      addPopBtn.disabled = N >= MAX_TILES;
+      addPopBtn.title = N >= MAX_TILES ? `Maximum videos reached (${MAX_TILES})` : 'Add video to Compare';
+    }
+    if (syncModeBtn) {
+      syncModeBtn.classList.toggle('active', syncMode);
+      syncModeBtn.setAttribute('aria-pressed', String(syncMode));
+    }
+  }
+
+  function placeSplitter() {
+    if (!splitterEl) return;
+    const show = st.mode === 'spotlight' && N >= 2 && !(tileDrag && tileDrag.lifted);
+    splitterEl.hidden = !show;
+    if (!show) return;
+    const { splitter } = Grid.spotlightLayout({
+      order: displayOrder(), dock: displayDock(), heroRatio: st.heroRatio,
+      width: stage.clientWidth, height: stage.clientHeight, gap: Grid.GAP, pad: 0,
+    });
+    if (!splitter) { splitterEl.hidden = true; return; }
+    splitterEl.className = `splitter ${splitter.dir}${splitterEl.classList.contains('dragging') ? ' dragging' : ''}`;
+    Object.assign(splitterEl.style, {
+      left: `${splitter.x}px`, top: `${splitter.y}px`, width: `${splitter.w}px`, height: `${splitter.h}px`,
+    });
+    const pct = Math.round(st.heroRatio * 100);
+    splitterEl.setAttribute('aria-orientation', splitter.dir === 'h' ? 'horizontal' : 'vertical');
+    splitterEl.setAttribute('aria-valuenow', String(pct));
+    splitterEl.setAttribute('aria-valuetext', `Spotlight ${pct}%`);
+  }
 
   let cellsKey = '';
   /** Builds the cells' DOM when the structure changes; positions them on every layout. */
@@ -471,18 +549,22 @@
       cellsKey = key;
       cellsEl.textContent = '';
       for (const c of cells) {
-        const d = document.createElement(c.add ? 'button' : 'div');
+        const d = document.createElement('div');
         d.className = `cell${c.add ? ' add' : ''}${c.split ? ' split' : ''}`;
         if (c.add) {
-          d.dataset.act = 'add';
-          d.setAttribute('aria-label', 'Add video');
-          d.innerHTML = `<span class="addcell">${ICONS.plus}<span>Add video</span></span>`;
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'addcell';
+          btn.dataset.act = 'add';
+          btn.setAttribute('aria-label', 'Add video');
+          btn.innerHTML = `${ICONS.plus}<span>Add video</span>`;
+          d.appendChild(btn);
         } else if (c.split) {
           d.dataset.tile = 'split';
           d.innerHTML = `<div class="ov L" data-side="L"></div><div class="ov R" data-side="R"></div><div class="move L"></div><div class="move R"></div><div class="oor" hidden>One side has no picture at this moment</div>`
             + `<div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" title="Drag, or ← → (Shift: 10 %), Home / End"><span class="h">${ICONS.split}</span></div>`;
         } else {
-          d.innerHTML = `<div class="ov${Grid.canRemoveTile(N) ? ' removable' : ''}"></div><div class="move"></div><div class="oor" hidden>No picture at this moment (offset or length)</div>`;
+          d.innerHTML = `<div class="ended-ov"><span class="ended-badge">No frame (clip ended)</span></div><div class="tile-stats"></div><div class="ov"></div><div class="move"></div>`;
         }
         cellsEl.appendChild(d);
       }
@@ -492,65 +574,77 @@
     [...cellsEl.children].forEach((d, k) => {
       const c = cells[k];
       if (!c) return;
-      if (c.add) d.inert = reordering;
       if (!c.add && !c.split) d.dataset.tile = String(c.tiles[0]);
       Object.assign(d.style, { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` });
       for (const ov of d.querySelectorAll('.ov')) {
-        // A narrow letterboxed picture still gets the whole cell's width for its controls.
-        const box = largeGrid ? c : c.pic;
+        // Cover the cell so bottom-left pill, top-right controls and bottom-right sync pill stay cleanly anchored.
+        const box = c.split ? c.pic : c;
         Object.assign(ov.style, {
           left: `${box.x - c.x}px`, top: `${box.y - c.y}px`, width: `${box.w}px`, height: `${box.h}px`,
         });
       }
-      // The reorder arrows sit in the picture's bottom corners, not the cell's: a letterboxed picture leaves black
-      // bars between the two, and the arrows would float far from the tile they move. The insets are how far the
-      // picture's edges lie inside the cell (0 where it fills or overflows the cell).
       if (!c.add) {
         const pic = c.pic || c;
         const inset = (v) => `${Math.max(0, Math.round(v * 10) / 10)}px`;
         d.style.setProperty('--pic-l', inset(pic.x - c.x));
         d.style.setProperty('--pic-r', inset(c.x + c.w - (pic.x + pic.w)));
+        d.style.setProperty('--pic-t', inset(pic.y - c.y));
         d.style.setProperty('--pic-b', inset(c.y + c.h - (pic.y + pic.h)));
       }
       if (c.split) placeDivider(d, c);
     });
-    stage.classList.toggle('pannable', cells.some(overflows));
+    const isPannable = cells.some(overflows);
+    stage.classList.toggle('pannable', isPannable);
+    stage.classList.toggle('zoomed', isPannable || Pic.isZoomed(st.pic));
+    placeSplitter();
+    syncCapsuleButtons();
     updateOverlays();
-    reorderInert();
     placeTileMotion(performance.now());
-  }
-  /** Reorder mode: a tile's controls sleep (a press drags the tile) except its × remove button, which still removes it. */
-  function reorderInert() {
-    for (const x of cellsEl.querySelectorAll('.ov > *')) /** @type {HTMLElement} */ (x).inert = reordering && !x.classList.contains('rm');
   }
 
   /** True when the picture is larger than its cell on some side (it can be dragged). */
   const overflows = Pic.overflows;
   let overlaysKey = '';
-  /** Pill and nudge content of every tile (letter, name, clock / sound, offset). */
+  /** Pill, top-right controls, stats HUD and sync stepper of every tile. */
   function updateOverlays() {
     const order = displayOrder();
-    const key = `${cellsKey}|${order}|${st.clock}|${st.sound}|${st.muted}|${st.offsets.map((o) => `${o.v}${o.unit}`).join(',')}`;
+    const statsKey = [...statsIds].sort((a, b) => a - b).join(',');
+    const key = `${cellsKey}|${st.mode}|${order}|${st.clock}|${st.sound}|${st.muted}|${confirmingId}|${statsKey}|${st.offsets.map((o) => `${o.v}${o.unit}`).join(',')}`;
     if (key === overlaysKey) return;
     overlaysKey = key;
     infoDirty = true;  // the new pills start empty: refill the frame numbers on the next tick even when paused
+    const refStats = tileStats(order[0]);
     const html = (i, side) => {
-      const clockI = i === st.clock ? `<span class="ico" title="Clock">${ICONS.clock(14)}</span>` : '';
-      const soundI = i === st.sound ? `<span class="ico${st.muted ? ' dim' : ''}" title="${st.muted ? 'Sound (muted)' : 'Sound'}">${ICONS.sound(14)}</span>` : '';
       const k = KEYS[order.indexOf(i)];
-      return `<button class="pill ${side === 'R' ? 'right' : 'left'}" data-act="openVid" data-i="${i}" title="${esc(names[i])}: offset, clock, sound, replace, remove"><span class="ltr">${k}</span><span class="nm">${esc(names[i])}</span>${clockI}${soundI}<span class="fr mono" data-fr="${i}"></span></button>`
-        + `<div class="nudge ${side === 'R' ? 'right below' : side === 'L' ? 'left below' : 'right'}" role="group" aria-label="Offset of ${k}"><button data-act="nudge" data-i="${i}" data-d="-1" aria-label="${k} earlier" title="Earlier  −">‹</button>`
-        + `<button class="offv mono" data-act="openVid" data-i="${i}" title="Offset of ${k}" aria-label="Offset of ${k}: ${offText(i, true)}">${offText(i)}</button>`
-        + `<button data-act="nudge" data-i="${i}" data-d="1" aria-label="${k} later" title="Later  +">›</button></div>`
-        // Split (2 videos) has sides and no remove button: removing one of 2 leaves Compare (the tile menu does that).
-        + (side ? '' : Grid.removeButtonHtml(N, i, esc(names[i]), ICONS.close));
+      const tileMuted = st.muted || i !== st.sound;
+      const showStats = statsIds.has(i);
+      const isMain = st.mode === 'spotlight' && order[0] === i;
+      const showSpot = !side && st.mode === 'spotlight' && !isMain;
+      const rmHtml = side ? '' : Grid.removeButtonHtml(N, i, esc(names[i]), ICONS.close, confirmingId === i);
+      const topActs = (showSpot || rmHtml)
+        ? `<div class="tile-top-acts">${showSpot ? `<button class="tbtn spot" type="button" data-act="spot" data-i="${i}" aria-label="Make ${esc(names[i])} Spotlight" title="Make Spotlight">${ICONS.spot}</button>` : ''}${rmHtml}</div>`
+        : '';
+      const pillCls = `tile-bottom-pill pill${side === 'R' ? ' right' : ' left'}`;
+      const pill = `<div class="${pillCls}" data-zoom-drag="1">`
+        + `<span class="zoom-grip" title="Drag here to reposition while zoomed" aria-hidden="true">⋮⋮</span>`
+        + `<button class="pill-open" type="button" data-act="openVid" data-i="${i}" title="${esc(names[i])}: offset, clock, sound, replace, remove"><span class="ltr">${k}</span><span class="nm">${esc(names[i])}</span><span class="fr mono" data-fr="${i}"></span></button>`
+        + (side ? '' : `<button class="mute-mini${showStats ? ' info-on' : ''}" type="button" data-act="info" data-i="${i}" aria-label="Toggle details for ${k}" aria-pressed="${showStats}" title="Toggle clip details (mismatch highlighted)">${ICONS.info}</button>`)
+        + `<button class="mute-mini${!tileMuted ? ' on' : ''}" type="button" data-act="mute" data-i="${i}" aria-label="${tileMuted ? `Unmute ${k}` : `Mute ${k}`}" aria-pressed="${!tileMuted}" title="${tileMuted ? `Sound from ${k}` : 'Mute'}">${tileMuted ? ICONS.muted : ICONS.sound(13)}</button>`
+        + `</div>`;
+      const nudgeCls = `sync-pill nudge${side === 'R' ? ' right below' : side === 'L' ? ' left below' : ''}`;
+      const nudge = `<div class="${nudgeCls}" role="group" aria-label="Offset of ${k}">`
+        + `<button type="button" data-act="nudge" data-i="${i}" data-d="-1" aria-label="${k} earlier" title="Earlier (−)">−</button>`
+        + `<button class="offv mono" type="button" data-act="openVid" data-i="${i}" title="Offset of ${k}" aria-label="Offset of ${k}: ${offText(i, true)}">${offText(i)}</button>`
+        + `<button type="button" data-act="nudge" data-i="${i}" data-d="1" aria-label="${k} later" title="Later (+)">+</button>`
+        + `</div>`;
+      return topActs + pill + nudge;
     };
     const arrows = (i) => [-1, 1].map((d) => {
       const pos = order.indexOf(i) + d;
       const label = `Move ${esc(names[i])} ${d < 0 ? 'earlier' : 'later'}`;
       const icon = d < 0 ? 'M6 14l6-6 6 6' : 'M6 10l6 6 6-6';
       const disabled = pos < 0 || pos >= N ? ' disabled' : '';
-      return `<button data-act="move" data-i="${i}" data-d="${d}" aria-label="${label}" title="${label}"${disabled}>${SVG(`<path d="${icon}"></path>`)}</button>`;
+      return `<button type="button" data-act="move" data-i="${i}" data-d="${d}" aria-label="${label}" title="${label}"${disabled}>${SVG(`<path d="${icon}"></path>`)}</button>`;
     }).join('');
     [...cellsEl.children].forEach((d, k) => {
       const c = cells[k];
@@ -562,15 +656,23 @@
         d.querySelector('.move.L').innerHTML = arrows(l);
         d.querySelector('.move.R').innerHTML = arrows(r);
       } else {
-        d.querySelector('.ov').innerHTML = html(c.tiles[0]);
-        d.querySelector('.move').innerHTML = arrows(c.tiles[0]);
+        const i = c.tiles[0];
+        d.querySelector('.ov').innerHTML = html(i);
+        d.querySelector('.move').innerHTML = arrows(i);
+        d.classList.toggle('confirming', confirmingId === i);
+        const showStats = statsIds.has(i);
+        d.classList.toggle('show-stats', showStats);
+        const statsEl = d.querySelector('.tile-stats');
+        if (statsEl && showStats) {
+          const rows = Grid.tileStatsRows(tileStats(i), i === order[0] ? null : refStats);
+          statsEl.innerHTML = rows.map((row) => `<span class="k">${row.key}</span><span class="v${row.diff ? ' diff' : ''}">${esc(row.value)}</span>`).join('');
+        }
       }
     });
-    reorderInert();
     lastFr = '';
   }
   let lastFr = '';
-  /** Each tile's frame number in its pill; the out-of-range notes. */
+  /** Each tile's frame number in its pill; the out-of-range / ended overlays. */
   function updateTileInfo(fr) {
     const key = `${fr.join(',')}|${outs.join(',')}`;
     if (key === lastFr) return;
@@ -581,8 +683,13 @@
     }
     [...cellsEl.children].forEach((d, k) => {
       const c = cells[k];
-      const o = d.querySelector('.oor');
-      if (c && o) o.hidden = !c.tiles.some((i) => outs[i]);
+      if (!c || c.add) return;
+      if (c.split) {
+        const o = d.querySelector('.oor');
+        if (o) o.hidden = !c.tiles.some((i) => outs[i]);
+      } else {
+        d.classList.toggle('ended', !!outs[c.tiles[0]]);
+      }
     });
   }
 
@@ -591,7 +698,6 @@
   function placeDivider(d, c) {
     const dv = d.querySelector('#divider');
     if (!dv) return;
-    dv.inert = reordering;
     Object.assign(dv.style, { left: `${c.pic.x - c.x + c.pic.w * st.split}px`, top: `${c.pic.y - c.y}px`, height: `${c.pic.h}px` });
     const pct = Math.round(st.split * 100);
     dv.setAttribute('aria-valuenow', String(pct));
@@ -723,14 +829,23 @@
     // The visible part of the picture, and which part of the texture that is (zoomed in, the picture is larger than its cell).
     const now = performance.now();
     const px = (c, slot) => {
-      const p = c.pic, f = c.full;
       const src = tileSrc(slot);
-      // A tile gliding to its slot, or lifted under the pointer, is drawn where its cell is shown.
-      const m = c.split ? { dx: 0, dy: 0, s: 1 } : tileShift(slot, now);
-      const w = p.w * m.s, h = p.h * m.s;
+      let p = c.pic, f = c.full, s = 1;
+      if (!c.split) {
+        // Full rect FLIP: while gliding between Spotlight/Grid or across swaps, refit the picture inside the interpolated rect.
+        const r = shownRect(slot, c, now);
+        s = r.s;
+        if (Math.abs(r.x - c.x) > 0.25 || Math.abs(r.y - c.y) > 0.25 || Math.abs(r.w - c.w) > 0.25 || Math.abs(r.h - c.h) > 0.25) {
+          const box = Grid.placed(pictureRect(st.pic, slot, r.w, r.h), r.x, r.y, r.w, r.h);
+          p = box.pic;
+          f = box.full;
+        }
+      }
+      const w = p.w * s, h = p.h * s;
       return {
-        x: (p.x + m.dx - (w - p.w) / 2) * dpr, y: (p.y + m.dy - (h - p.h) / 2) * dpr, w: w * dpr, h: h * dpr,
-        win: [(p.x - f.x) / f.w, (p.y - f.y) / f.h, p.w / f.w, p.h / f.h], nearest: src.w > 0 && (f.w * dpr) / src.w >= 2,
+        x: (p.x - (w - p.w) / 2) * dpr, y: (p.y - (h - p.h) / 2) * dpr, w: w * dpr, h: h * dpr,
+        win: f.w > 0 && f.h > 0 ? [(p.x - f.x) / f.w, (p.y - f.y) / f.h, p.w / f.w, p.h / f.h] : [0, 0, 1, 1],
+        nearest: src.w > 0 && (f.w * dpr) / src.w >= 2,
       };
     };
     for (const c of cells) {
@@ -811,17 +926,100 @@
   // ---- state changes -------------------------------------------------------------------------
 
   function setMode(m) {
-    if (N > 2) m = 'grid';
-    else if (m === 'wipe') m = 'split';
-    else if (m !== 'side' && m !== 'split') return;
-    finishReorderDrag();
-    st.mode = m;
-    layoutDirty = true;
-    viewDirty = true;
-    if (!clock) layoutCells();
+    if (m === 'wipe') m = 'split';
+    if (m === 'side') m = 'grid';
+    if (m === 'split' && N !== 2) m = 'grid';
+    if (m === 'spotlight' && N < 2) m = 'grid';
+    if (m !== 'grid' && m !== 'spotlight' && m !== 'split') return;
+    finishTileDrag(false);
+    closeAddPop();
+    const animate = st.mode !== 'split' && m !== 'split' && st.mode !== m;
+    const apply = () => {
+      st.mode = m;
+      layoutDirty = false;
+      layoutCells();
+      viewDirty = true;
+    };
+    if (animate) relayout(apply);
+    else { apply(); wakeLoop(); }
     requestTileSize();
     refreshPanel();
     save();
+  }
+  function setDock(d) {
+    const next = Grid.clampDock(d);
+    if (next === st.dock) return;
+    relayout(() => {
+      st.dock = next;
+      layoutDirty = false;
+      layoutCells();
+      viewDirty = true;
+    });
+    requestTileSize();
+    save();
+  }
+  function setHeroRatio(r) {
+    const next = Grid.clampHeroRatio(r);
+    if (Math.abs(next - st.heroRatio) < 1e-4) return;
+    st.heroRatio = next;
+    layoutDirty = false;
+    layoutCells();
+    viewDirty = true;
+    wakeLoop();
+    save();
+  }
+  function promoteToSpotlight(i) {
+    const idx = st.order.indexOf(i);
+    if (idx < 0) return;
+    finishTileDrag(false);
+    closeAddPop();
+    relayout(() => {
+      st.mode = 'spotlight';
+      if (idx > 0) {
+        const next = st.order.slice();
+        [next[0], next[idx]] = [next[idx], next[0]];
+        st.order = next;
+        vscode.postMessage({ type: 'tileOrder', order: next });
+      }
+      layoutDirty = false;
+      layoutCells();
+      viewDirty = true;
+    });
+    updateMuteUi();
+    requestTileSize();
+    refreshPanel();
+    saveNow();
+    announce(`${names[i]} in Spotlight`);
+  }
+  function setSyncMode(on) {
+    const next = !!on;
+    if (next === syncMode) return;
+    syncMode = next;
+    stage.classList.toggle('sync-mode', syncMode);
+    syncCapsuleButtons();
+    if (syncMode) closeAddPop();
+    announce(syncMode ? 'Sync mode on: adjust per-clip frame offsets' : 'Sync mode off');
+  }
+  function closeAddPop() {
+    if (!addPopEl || addPopEl.hidden) return;
+    addPopEl.hidden = true;
+    if (addPopBtn) addPopBtn.setAttribute('aria-expanded', 'false');
+  }
+  function toggleAddPop(force) {
+    if (!addPopEl || !addPopBtn || addPopBtn.disabled) return;
+    const open = force !== undefined ? !!force : addPopEl.hidden;
+    if (!open) { closeAddPop(); return; }
+    closeMenu();
+    controls.closeAll(false);
+    addPopEl.hidden = false;
+    addPopBtn.setAttribute('aria-expanded', 'true');
+    const br = addPopBtn.getBoundingClientRect();
+    const pr = addPopEl.getBoundingClientRect();
+    const left = Math.max(8, Math.min(window.innerWidth - pr.width - 8, br.right - pr.width));
+    const bottom = Math.max(8, window.innerHeight - br.top + 8);
+    addPopEl.style.left = `${left}px`;
+    addPopEl.style.right = 'auto';
+    addPopEl.style.bottom = `${bottom}px`;
   }
   /** The picture size / zoom / pan for every tile at once. */
   function setPic(v) {
@@ -903,8 +1101,8 @@
     else setOffset(i, (o.v / 1000) * fps, 'frames');
   }
   function swapSides() {
-    finishReorderDrag();
-    if (N === 2) commitOrder(Grid.moveTile(st.order, 0, 1), st.order[1]);
+    finishTileDrag(false);
+    if (N === 2) relayout(() => commitOrder(Grid.moveTile(st.order, 0, 1), st.order[1]));
   }
   /** Sound from tile i only; the others are muted. */
   function setSound(i, quiet) {
@@ -1061,7 +1259,7 @@
   function saveNow(t, changes) {
     clearTimeout(saveTimer);
     vscode.setState({
-      pic: st.pic.mode, mode: st.mode, split: st.split, order: st.order, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
+      pic: st.pic.mode, mode: st.mode, dock: st.dock, heroRatio: st.heroRatio, split: st.split, order: st.order, offsets: st.offsets, clock: st.clock, sound: st.sound, sel: st.sel,
       rate: st.rate, volume: st.volume, muted: st.muted, loop: st.loop, thresh: st.thresh, timeMode: st.timeMode, stepSize: prefs.stepSize,
       ab: { a: ab.a, b: ab.b, aPts: ab.aPts, bPts: ab.bPts, aNative: ab.aNative, bNative: ab.bNative },
       t: t ?? (pendingStart || (clock && begun && clock.startT !== null ? clock.currentTime() : saved.t || 0)),
@@ -1155,19 +1353,22 @@
     // Add mode (src/addmode.js): every video clicked in the Explorer is added, until Esc, this row again or full.
     if (N < MAX_TILES) f.appendChild(k.btn('row', 'Add from the Explorer', () => { k.close(false); toggleAddMode(); }, { icon: ICONS.plus, kbd: 'Shift+D', aria: { role: 'switch', 'aria-checked': String(!addHint.hidden) } }));
     f.appendChild(k.el('div', 'sep'));
-    if (N === 2) {
+    if (N >= 2) {
       const row = k.el('div', 'row static');
       row.insertAdjacentHTML('beforeend', ICONS.view);
-      row.appendChild(k.el('span', 'grow', 'View'));
+      row.appendChild(k.el('span', 'grow', 'Layout'));
       const seg = k.el('div', 'seg');
       seg.setAttribute('role', 'group');
-      seg.setAttribute('aria-label', 'View');
-      for (const [m, label] of [['side', 'Side by side'], ['split', 'Split']]) {
-        seg.appendChild(k.btn('chip', label, () => { setMode(m); toast(m === 'split' ? 'Split · drag the divider' : 'Side by side'); k.render(); }, { aria: { 'aria-pressed': String(st.mode === m) } }));
+      seg.setAttribute('aria-label', 'Layout');
+      const modes = N === 2
+        ? [['spotlight', 'Spotlight'], ['grid', 'Grid'], ['split', 'Split']]
+        : [['spotlight', 'Spotlight'], ['grid', 'Equal Grid']];
+      for (const [m, label] of modes) {
+        seg.appendChild(k.btn('chip', label, () => { setMode(m); toast(m === 'split' ? 'Split · drag the divider' : m === 'spotlight' ? 'Spotlight' : 'Equal Grid'); k.render(); }, { aria: { 'aria-pressed': String(st.mode === m) } }));
       }
       row.appendChild(seg);
       f.appendChild(row);
-      f.appendChild(k.btn('row', 'Swap sides', () => { swapSides(); k.render(); }, { icon: ICONS.swap, kbd: 'X' }));
+      if (N === 2) f.appendChild(k.btn('row', 'Swap sides', () => { swapSides(); k.render(); }, { icon: ICONS.swap, kbd: 'X' }));
       f.appendChild(k.el('div', 'sep'));
     }
     f.appendChild(k.btn('row', 'Leave compare', () => leave(), { icon: ICONS.leave, value: `keep ${tileLabel(st.clock)}`, aria: { 'aria-label': `Leave compare, keep ${tileLabel(st.clock)}` } }));
@@ -1290,154 +1491,298 @@
     const video = Number(el.dataset.i), direction = Number(el.dataset.d);
     const from = st.order.indexOf(video);
     const focused = el === document.activeElement;
-    finishReorderDrag();
+    finishTileDrag(false);
     relayout(() => commitOrder(Grid.moveTile(st.order, from, from + direction), video));
     if (focused) {
       const buttons = `[data-act="move"][data-i="${video}"]:enabled`;
       (cellsEl.querySelector(`${buttons}[data-d="${direction}"]`) || cellsEl.querySelector(buttons))?.focus();
     }
   }
-  function setReordering(on) {
-    if (on === reordering) return;
-    reordering = on;
-    finishReorderDrag();
-    stage.classList.toggle('reordering', on);
-    reorderBtn.textContent = on ? 'Done' : 'Reorder';
-    reorderHint.hidden = !on;
-    if (on) {
-      clearStep();
-      closeMenu();
-      controls.closeAll(false);
-      if (!addHint.hidden) vscode.postMessage({ type: 'stopAddMode' });
-      panDrag = null;
-      stage.classList.remove('panning');
-      announce(reorderHint.textContent);
-    }
-    layoutCells();
-  }
-  reorderBtn.onclick = () => setReordering(!reordering);
 
-  function reorderSlot(e, splitX) {
-    const hit = cellAt(e.clientX, e.clientY);
-    if (!hit) return -1;
-    return hit.c.split ? Number(e.clientX >= splitX) : cells.indexOf(hit.c);
-  }
+  // ---- direct drag, 4-sided edge docking, full rect FLIP glide & skeletons ----------------------
 
-  // Discord-style drag: past 4 px the tile lifts and follows the pointer; the others glide to the order a drop
-  // would give (Grid.reorderSession, always from the start order). The canvas draws each picture where its cell is
-  // shown (tileShift), so pictures and overlays move together. Split (one cell, two sides) only re-labels.
-  /** Each video's slot position (stage px) in the current layout. */
-  function slotPositions() {
-    /** @type {Record<string, {x: number, y: number}>} */
+  /** Each video's target cell rect (stage CSS px) in the current layout. */
+  function slotRects() {
+    /** @type {Record<string, {x: number, y: number, w: number, h: number}>} */
     const m = {};
-    for (const c of cells) if (!c.add && !c.split) m[c.tiles[0]] = { x: c.x, y: c.y };
+    for (const c of cells) if (!c.add && !c.split) m[c.tiles[0]] = { x: c.x, y: c.y, w: c.w, h: c.h };
     return m;
   }
   /** The video that follows the pointer, or -1. */
-  function liftedTile() { return reorderDrag && reorderDrag.lift ? reorderDrag.video : -1; }
-  /** How far video v is drawn from its slot now, and its scale (1.02 while lifted). */
-  function tileShift(v, now) {
-    const drag = reorderDrag;
-    if (drag && drag.lift && v === drag.video) {
-      const slot = slotPositions()[v];
-      if (slot) return { dx: drag.lift.x + drag.px - drag.x - slot.x, dy: drag.lift.y + drag.py - drag.y - slot.y, s: 1.02 };
+  function liftedTile() { return tileDrag && tileDrag.lifted ? tileDrag.video : -1; }
+  /** Where video v is shown right now (interpolated rect + scale 1.02 when lifted). */
+  function shownRect(v, c, now) {
+    const drag = tileDrag;
+    if (drag && drag.lifted && v === drag.video && drag.lift) {
+      return {
+        x: drag.lift.x + (drag.px - drag.x),
+        y: drag.lift.y + (drag.py - drag.y),
+        w: drag.lift.w,
+        h: drag.lift.h,
+        s: 1.02,
+      };
     }
-    return { ...glide.offset(v, now), s: 1 };
+    const o = glide.offset(v, now);
+    return {
+      x: c.x + o.dx,
+      y: c.y + o.dy,
+      w: Math.max(1, c.w + o.dw),
+      h: Math.max(1, c.h + o.dh),
+      s: 1,
+    };
   }
-  /** Where each video is shown now (its slot plus its shift). */
-  function shownPositions(now) {
-    const m = slotPositions();
-    for (const k of Object.keys(m)) {
-      const o = tileShift(Number(k), now);
-      m[k] = { x: m[k].x + o.dx, y: m[k].y + o.dy };
+  /** Snapshot of where every video is currently shown (for retargeting FLIP mid-flight). */
+  function shownRects(now) {
+    /** @type {Record<string, {x: number, y: number, w: number, h: number}>} */
+    const m = {};
+    for (const c of cells) {
+      if (c.add || c.split) continue;
+      const r = shownRect(c.tiles[0], c, now);
+      m[c.tiles[0]] = { x: r.x, y: r.y, w: r.w, h: r.h };
     }
     return m;
   }
-  /** Runs a layout change; the tiles glide from where they were shown to their new slots. */
+  /** Runs a layout change; tiles smoothly FLIP-glide (x, y, w, h) from where they were shown to their new slots. */
   function relayout(change) {
     const now = performance.now();
-    const shown = shownPositions(now);
+    const shown = shownRects(now);
     change();
-    glide.retarget(shown, slotPositions(), now, liftedTile());
+    glide.retarget(shown, slotRects(), now, liftedTile());
     placeTileMotion(now);
     viewDirty = true;
     wakeLoop();
   }
-  /** The cells' DOM at their shown positions; true while something moves (or just stopped). */
+  /** Positions each cell's DOM at its shown rect without distorting text/buttons; true while animating or lifted. */
   function placeTileMotion(now) {
     const lifted = liftedTile();
     const moving = lifted >= 0 || glide.active(now);
     if (!moving && !tilesMoving) return false;
     [...cellsEl.children].forEach((d, k) => {
       const c = cells[k];
-      const v = c && !c.add && !c.split ? c.tiles[0] : -1;
-      const o = v >= 0 ? tileShift(v, now) : { dx: 0, dy: 0, s: 1 };
-      d.style.transform = o.dx || o.dy || o.s !== 1 ? `translate3d(${o.dx}px, ${o.dy}px, 0)${o.s !== 1 ? ` scale(${o.s})` : ''}` : '';
-      d.classList.toggle('lifted', v >= 0 && v === lifted);
+      if (!c || c.add || c.split) return;
+      const v = c.tiles[0];
+      const r = shownRect(v, c, now);
+      Object.assign(d.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+      for (const ov of d.querySelectorAll('.ov')) {
+        Object.assign(ov.style, { left: '0px', top: '0px', width: `${r.w}px`, height: `${r.h}px` });
+      }
+      d.style.transform = r.s !== 1 ? `scale(${r.s})` : '';
+      d.classList.toggle('lifted', v === lifted);
     });
     tilesMoving = moving;
     return true;
   }
-  /** Per frame: move the cells and redraw the pictures while tiles glide or follow the pointer. */
+  /** Per frame: move the cells and redraw WebGL pictures while tiles glide or follow the pointer. */
   function stepTileMotion(now) {
     if (placeTileMotion(now)) viewDirty = true;
   }
 
-  stage.addEventListener('pointerdown', (e) => {
-    if (!reordering || reorderDrag || e.button !== 0 || e.target.closest('[data-act="move"], .rm')) return;
-    const r = stage.getBoundingClientRect(), c = cells[0];
-    // Keep the target boundary fixed while previewing two videos of different shapes.
-    // A divider at either edge still leaves a target for each video.
-    const splitX = c.split ? r.left + Math.max(r.width * 0.1, Math.min(r.width * 0.9, c.pic.x + c.pic.w * st.split)) : 0;
-    const from = reorderSlot(e, splitX);
-    if (from < 0) return;
-    reorderDrag = {
-      id: e.pointerId, from, to: from, x: e.clientX, y: e.clientY, px: e.clientX, py: e.clientY, splitX, moved: false,
-      video: st.order[from], session: Grid.reorderSession(st.order, from), preview: st.order, lift: null,
-    };
-    e.preventDefault();
-    try { stage.setPointerCapture(e.pointerId); } catch { /* synthetic pointer (test hook) */ }
-  });
-  function previewReorder(e) {
-    const drag = reorderDrag;
+  function showSkeleton(r, label, subRect = null) {
+    if (!skeletonEl || !r) return;
+    skeletonEl.hidden = false;
+    Object.assign(skeletonEl.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+    if (skeletonLabelEl) skeletonLabelEl.textContent = label;
+    if (skeletonSubEl) {
+      if (subRect) {
+        skeletonSubEl.hidden = false;
+        Object.assign(skeletonSubEl.style, { left: `${subRect.x}px`, top: `${subRect.y}px`, width: `${subRect.w}px`, height: `${subRect.h}px` });
+      } else {
+        skeletonSubEl.hidden = true;
+      }
+    }
+  }
+  function hideSkeleton() {
+    if (skeletonEl) skeletonEl.hidden = true;
+    if (skeletonSubEl) skeletonSubEl.hidden = true;
+  }
+
+  function previewTileDrag(e) {
+    const drag = tileDrag;
     if (!drag || e.pointerId !== drag.id) return;
     drag.px = e.clientX;
     drag.py = e.clientY;
-    if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
-    if (!drag.moved) {
-      drag.moved = true;
-      stage.classList.add('reorder-drag');
-      // The tile lifts from where it is shown now (a glide may still be running).
-      if (st.mode !== 'split') drag.lift = shownPositions(performance.now())[drag.video] || null;
+    const dx = drag.px - drag.x, dy = drag.py - drag.y;
+    if (!drag.lifted && Math.hypot(dx, dy) < 6) return;
+    if (!drag.lifted) {
+      drag.lifted = true;
+      stage.classList.add('tile-dragging');
+      drag.lift = shownRects(performance.now())[drag.video] || null;
+      if (splitterEl) splitterEl.hidden = true;
+      if (confirmingId !== -1) { confirmingId = -1; updateOverlays(); }
+      closeMenu();
+      closeAddPop();
+      try { stage.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
     }
-    const to = reorderSlot(e, drag.splitX);
-    if (to === drag.to) return;
-    drag.to = to;
-    drag.preview = drag.session.over(to);
-    relayout(layoutCells);
+
+    const stRect = stage.getBoundingClientRect();
+    const px = e.clientX - stRect.left;
+    const py = e.clientY - stRect.top;
+
+    if (drag.isHero) {
+      const edge = Grid.detectEdgeDock(px, py, stRect.width, stRect.height);
+      const nextDock = edge || drag.origDock;
+      const preview = Grid.spotlightLayout({
+        order: drag.origOrder, dock: nextDock, heroRatio: st.heroRatio,
+        width: stRect.width, height: stRect.height, gap: Grid.GAP, pad: 0,
+      });
+      const mainRect = preview.rects[drag.video];
+      showSkeleton(mainRect, nextDock === drag.origDock ? `Spotlight (${nextDock})` : `Dock Spotlight ${nextDock}`, preview.stripBounds);
+      if (nextDock !== drag.previewDock) {
+        drag.previewDock = nextDock;
+        relayout(layoutCells);
+      } else {
+        placeTileMotion(performance.now());
+        viewDirty = true;
+      }
+      return;
+    }
+
+    // Hit-test against the original layout's cells so targets stay stable while previewing.
+    const baseCells = computeCells(drag.origOrder, drag.origDock, st.mode);
+    let targetIdx = -1;
+    for (let k = 0; k < baseCells.length; k++) {
+      const c = baseCells[k];
+      if (c.add || c.split) continue;
+      if (px >= c.x && px <= c.x + c.w && py >= c.y && py <= c.y + c.h) {
+        targetIdx = drag.origOrder.indexOf(c.tiles[0]);
+        break;
+      }
+    }
+    const fromIdx = drag.fromIdx;
+    let nextOrder = drag.origOrder;
+    if (targetIdx >= 0) {
+      if (st.mode === 'spotlight' && targetIdx === 0 && fromIdx !== 0) {
+        nextOrder = drag.origOrder.slice();
+        [nextOrder[0], nextOrder[fromIdx]] = [nextOrder[fromIdx], nextOrder[0]];
+        const mainCell = baseCells.find((c) => !c.add && c.tiles[0] === drag.origOrder[0]);
+        showSkeleton(mainCell, 'Swap into Spotlight');
+      } else {
+        nextOrder = Grid.moveTile(drag.origOrder, fromIdx, targetIdx);
+        const destCells = computeCells(nextOrder, drag.origDock, st.mode);
+        const dest = destCells.find((c) => !c.add && c.tiles[0] === drag.video);
+        showSkeleton(dest, 'Move here');
+      }
+    } else {
+      hideSkeleton();
+    }
+    const changed = nextOrder.length !== drag.previewOrder.length || nextOrder.some((v, idx) => v !== drag.previewOrder[idx]);
+    if (changed) {
+      drag.previewOrder = nextOrder;
+      relayout(layoutCells);
+    } else {
+      placeTileMotion(performance.now());
+      viewDirty = true;
+    }
   }
-  function finishReorderDrag(commit = false) {
-    const drag = reorderDrag;
+
+  function finishTileDrag(commit = false) {
+    const drag = tileDrag;
     if (!drag) return;
-    const order = commit ? drag.session.commit() : drag.session.cancel();
-    // The lifted tile drops from where it is shown into its slot (its own slot again on cancel).
+    const wasLifted = drag.lifted;
+    const nextDock = commit ? drag.previewDock : drag.origDock;
+    const nextOrder = commit ? drag.previewOrder : drag.origOrder;
+    hideSkeleton();
+    stage.classList.remove('tile-dragging');
+    if (stage.hasPointerCapture(drag.id)) stage.releasePointerCapture(drag.id);
+    if (!wasLifted) {
+      tileDrag = null;
+      return;
+    }
+    dragEnded = performance.now();
+    if (drag.isHero) {
+      relayout(() => {
+        tileDrag = null;
+        if (nextDock !== st.dock) {
+          st.dock = nextDock;
+          save();
+          requestTileSize();
+          announce(`Spotlight docked ${st.dock}`);
+        }
+        layoutCells();
+      });
+      return;
+    }
+    const orderChanged = nextOrder.some((v, idx) => v !== st.order[idx]);
     relayout(() => {
-      reorderDrag = null;
-      stage.classList.remove('reorder-drag');
-      if (stage.hasPointerCapture(drag.id)) stage.releasePointerCapture(drag.id);
-      if (order !== st.order) commitOrder(order, drag.video);
-      else if (drag.preview !== st.order) updateOrderLayout();
+      tileDrag = null;
+      if (orderChanged) commitOrder(nextOrder, drag.video);
+      else updateOrderLayout();
     });
   }
-  stage.addEventListener('pointermove', previewReorder);
-  stage.addEventListener('pointerup', (e) => {
-    if (e.pointerId !== reorderDrag?.id) return;
-    previewReorder(e);
-    finishReorderDrag(true);
-  });
-  for (const event of ['pointercancel', 'lostpointercapture']) {
-    stage.addEventListener(event, (e) => { if (e.pointerId === reorderDrag?.id) finishReorderDrag(); });
+
+  // Spotlight splitter resize (10%-90%, pointer + keyboard).
+  if (splitterEl) {
+    let splitDrag = null;
+    const ratioFromEvent = (ev) => {
+      const r = stage.getBoundingClientRect();
+      const px = ev.clientX - r.left, py = ev.clientY - r.top;
+      const innerW = Math.max(1, r.width - Grid.GAP), innerH = Math.max(1, r.height - Grid.GAP);
+      if (st.dock === 'top') return py / innerH;
+      if (st.dock === 'bottom') return 1 - py / innerH;
+      if (st.dock === 'left') return px / innerW;
+      return 1 - px / innerW;
+    };
+    splitterEl.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || st.mode !== 'spotlight') return;
+      e.preventDefault();
+      e.stopPropagation();
+      splitDrag = { id: e.pointerId };
+      splitterEl.classList.add('dragging');
+      try { splitterEl.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+    });
+    splitterEl.addEventListener('pointermove', (e) => {
+      if (!splitDrag || e.pointerId !== splitDrag.id) return;
+      setHeroRatio(ratioFromEvent(e));
+    });
+    const endSplitDrag = (e) => {
+      if (!splitDrag || (e && e.pointerId !== splitDrag.id)) return;
+      splitDrag = null;
+      splitterEl.classList.remove('dragging');
+      dragEnded = performance.now();
+      requestTileSize();
+    };
+    splitterEl.addEventListener('pointerup', endSplitDrag);
+    splitterEl.addEventListener('pointercancel', endSplitDrag);
+    splitterEl.addEventListener('click', (e) => e.stopPropagation());
+    splitterEl.addEventListener('dblclick', (e) => { e.stopPropagation(); setHeroRatio(Grid.SPOTLIGHT_DEFAULT); requestTileSize(); });
+    splitterEl.addEventListener('keydown', (e) => {
+      const delta = e.shiftKey ? 0.10 : 0.05;
+      const horiz = st.dock === 'top' || st.dock === 'bottom';
+      let next = null;
+      if (horiz && e.key === 'ArrowDown') next = st.heroRatio + (st.dock === 'top' ? delta : -delta);
+      else if (horiz && e.key === 'ArrowUp') next = st.heroRatio + (st.dock === 'top' ? -delta : delta);
+      else if (!horiz && e.key === 'ArrowRight') next = st.heroRatio + (st.dock === 'left' ? delta : -delta);
+      else if (!horiz && e.key === 'ArrowLeft') next = st.heroRatio + (st.dock === 'left' ? -delta : delta);
+      else if (e.key === 'Home') next = Grid.SPOTLIGHT_MIN;
+      else if (e.key === 'End') next = Grid.SPOTLIGHT_MAX;
+      if (next !== null) {
+        e.preventDefault();
+        e.stopPropagation();
+        setHeroRatio(next);
+        requestTileSize();
+      }
+    });
   }
+
+  // Grouped Compare capsule + Add popover handlers.
+  if (cmpGroupEl) {
+    cmpGroupEl.addEventListener('click', (e) => {
+      const b = /** @type {HTMLElement|null} */ (/** @type {any} */ (e.target).closest('button'));
+      if (!b) return;
+      if (b.dataset.layout) {
+        e.stopPropagation();
+        setMode(b.dataset.layout);
+      } else if (b.id === 'addPopBtn') {
+        e.stopPropagation();
+        toggleAddPop();
+      } else if (b.id === 'syncModeBtn') {
+        e.stopPropagation();
+        setSyncMode(!syncMode);
+      }
+    });
+  }
+  if (addPickBtn) addPickBtn.onclick = (e) => { e.stopPropagation(); closeAddPop(); vscode.postMessage({ type: 'add' }); };
+  if (addModePopBtn) addModePopBtn.onclick = (e) => { e.stopPropagation(); closeAddPop(); toggleAddMode(); };
 
   // ---- the tiles' right-click menu --------------------------------------------------------------
 
@@ -1523,7 +1868,7 @@
   document.addEventListener('contextmenu', (e) => {
     // Our own menu instead of VS Code's (a webview's default menu only has Cut / Copy / Paste).
     e.preventDefault();
-    if (reordering || !clock) return;
+    if (tileDrag?.lifted || !clock) return;
     const t = tileAt(e.target, e.clientX);
     openMenu(t === null ? st.clock : t, e.clientX, e.clientY);
   });
@@ -1532,46 +1877,80 @@
 
   /** The tile under the pointer (− / + nudge it), or null. */
   let hover = null;
-  cellsEl.addEventListener('pointermove', (e) => { hover = tileAt(e.target, e.clientX); });
-  cellsEl.addEventListener('pointerleave', () => { hover = null; });
+  cellsEl.addEventListener('pointermove', (e) => {
+    const nextHover = tileAt(e.target, e.clientX);
+    if (confirmingId !== -1 && nextHover !== confirmingId) {
+      confirmingId = -1;
+      updateOverlays();
+    }
+    hover = nextHover;
+  });
+  cellsEl.addEventListener('pointerleave', () => {
+    hover = null;
+    if (confirmingId !== -1) { confirmingId = -1; updateOverlays(); }
+  });
   cellsEl.addEventListener('click', (e) => {
+    if (performance.now() - dragEnded < 300) { e.stopPropagation(); e.preventDefault(); return; }
     const el = /** @type {any} */ (e.target).closest('[data-act]');
-    if (el) {
-      e.stopPropagation();
-      const i = Number(el.dataset.i);
-      if (el.dataset.act === 'move') moveWithArrow(el);
-      // × works in Reorder mode too (the stage's drag ignores a press on it).
-      else if (el.dataset.act === 'remove') removeTile(i);
-      else if (reordering) return;
-      else if (el.dataset.act === 'openVid') { closeMenu(); st.sel = i; controls.show('cmpVid', ui.cmpBtn); }
-      else if (el.dataset.act === 'nudge') nudge(i, Number(el.dataset.d));
-      else if (el.dataset.act === 'add') addVideo();
+    if (!el) return;
+    e.stopPropagation();
+    const i = Number(el.dataset.i);
+    switch (el.dataset.act) {
+      case 'move': moveWithArrow(el); break;
+      case 'spot': promoteToSpotlight(i); break;
+      case 'info':
+        if (statsIds.has(i)) statsIds.delete(i); else statsIds.add(i);
+        updateOverlays();
+        break;
+      case 'mute':
+        if (st.muted || i !== st.sound) {
+          if (i !== st.sound) setSound(i, true);
+          if (st.muted) setMute(false);
+          else updateOverlays();
+        } else {
+          setMute(true);
+        }
+        break;
+      case 'remove':
+        if (!Grid.canRemoveTile(N)) return;
+        if (confirmingId === i) { confirmingId = -1; removeTile(i); }
+        else { confirmingId = i; updateOverlays(); }
+        break;
+      case 'openVid': closeMenu(); closeAddPop(); st.sel = i; controls.show('cmpVid', ui.cmpBtn); break;
+      case 'nudge': nudge(i, Number(el.dataset.d)); break;
+      case 'add': addVideo(); break;
     }
   });
-  // A press outside the tile menu closes it (panels do the same in media/controls.js); the click that follows
-  // a press on the picture was only the dismissal, so it must not play / pause.
+  // A press outside the tile menu or Add popover closes them; the click that follows was only the dismissal.
   let menuDismissed = false;
   document.addEventListener('pointerdown', (e) => {
     menuDismissed = false;
-    if (ui.menu.hidden || ui.menu.contains(/** @type {Node} */ (e.target))) return;
-    menuDismissed = stage.contains(/** @type {Node} */ (e.target));
-    closeMenu();
+    const t = /** @type {Node} */ (e.target);
+    if (!ui.menu.hidden && !ui.menu.contains(t)) {
+      menuDismissed = stage.contains(t);
+      closeMenu();
+    }
+    if (addPopEl && !addPopEl.hidden && !addPopEl.contains(t) && (!addPopBtn || !addPopBtn.contains(t))) {
+      menuDismissed = menuDismissed || stage.contains(t);
+      closeAddPop();
+    }
   }, true);
   // A click on the picture plays or pauses; with a panel or the menu open it only closes them.
   stage.addEventListener('click', (e) => {
-    if (reordering || e.defaultPrevented) return;
+    if (e.defaultPrevented) return;
     const menuWas = menuDismissed;
     menuDismissed = false;
     if (controls.consumeDismiss() || menuWas) return;
     if (!ui.menu.hidden) { closeMenu(); return; }
+    if (addPopEl && !addPopEl.hidden) { closeAddPop(); return; }
     if (controls.anyOpen()) { controls.closeAll(false); return; }
     if (performance.now() - dragEnded < 300) return;
-    if (/** @type {any} */ (e.target).closest('#divider')) return;
+    if (/** @type {any} */ (e.target).closest('#divider, #splitter, button')) return;
     togglePlay();
   });
   // Ctrl+wheel (pinch) zooms every tile around the pointer; a drag moves them all (the same part of each picture).
   stage.addEventListener('wheel', (e) => {
-    if (reordering) { e.preventDefault(); return; }
+    if (tileDrag?.lifted) { e.preventDefault(); return; }
     if (!e.ctrlKey || !clock) return;
     const hit = cellAt(e.clientX, e.clientY);
     if (!hit) return;
@@ -1580,18 +1959,38 @@
     toastPicture(hit.c);
   }, { passive: false });
   let panDrag = null;
-  // A drag may start on a name pill or an offset nudge too (they sit over the picture's corners and edges): the 4 px
-  // threshold keeps a plain click on them a click, and the click that ends a drag is swallowed below.
+  // Unified pointerdown:
+  // - Zoomed (>1x / overflowing): video body pans all tiles in lockstep, EXCEPT grabbing the ⋮⋮ bottom-left name pill repositions/docks tiles.
+  // - Unzoomed (1x): dragging anywhere on any tile past 6 px lifts and repositions/docks it.
   stage.addEventListener('pointerdown', (e) => {
-    if (reordering || e.button !== 0 || !clock || /** @type {any} */ (e.target).closest('#divider, #menu, .move, .rm')) return;
+    if (e.button !== 0 || tileDrag || panDrag) return;
+    const target = /** @type {any} */ (e.target);
+    if (target.closest('#divider, #splitter, #menu, .move, .tbtn, .mute-mini, .sync-pill, .addcell')) return;
     const hit = cellAt(e.clientX, e.clientY);
-    if (!hit) return;
-    // One view for all tiles: a tile that fits its cell may start the drag when another one overflows.
-    const ref = Pic.panCell(cells, hit.c);
-    if (!ref) return;
-    panDrag = { x: e.clientX, y: e.clientY, pic: st.pic, hit: { ...hit, c: ref, i: ref.tiles[0] }, moved: false, id: e.pointerId };
+    const fromZoomHandle = !!target.closest('[data-zoom-drag="1"]');
+    const panBase = hit ? hit.c : clockCell();
+    const ref = clock && panBase ? Pic.panCell(cells, panBase) : null;
+    if (ref && !fromZoomHandle) {
+      const h = hit || { c: ref, i: ref.tiles[0], px: ref.w / 2, py: ref.h / 2 };
+      panDrag = { x: e.clientX, y: e.clientY, pic: st.pic, hit: { ...h, c: ref, i: ref.tiles[0] }, moved: false, id: e.pointerId };
+      return;
+    }
+    if (!hit || hit.c.add || st.mode === 'split' || hit.c.split) return;
+    const video = hit.c.tiles[0];
+    const fromIdx = st.order.indexOf(video);
+    if (fromIdx < 0) return;
+    tileDrag = {
+      id: e.pointerId, video, fromIdx,
+      x: e.clientX, y: e.clientY, px: e.clientX, py: e.clientY,
+      lift: null,
+      origOrder: st.order.slice(), previewOrder: st.order.slice(),
+      origDock: st.dock, previewDock: st.dock,
+      isHero: st.mode === 'spotlight' && st.order[0] === video,
+      lifted: false,
+    };
   });
   stage.addEventListener('pointermove', (e) => {
+    if (tileDrag && e.pointerId === tileDrag.id) { previewTileDrag(e); return; }
     if (!panDrag || e.pointerId !== panDrag.id) return;
     const dx = e.clientX - panDrag.x, dy = e.clientY - panDrag.y;
     if (!panDrag.moved && Math.hypot(dx, dy) < 4) return;
@@ -1605,18 +2004,26 @@
     panDrag = null;
     stage.classList.remove('panning');
   };
-  stage.addEventListener('pointerup', endPan);
+  stage.addEventListener('pointerup', (e) => {
+    if (tileDrag && e.pointerId === tileDrag.id) { previewTileDrag(e); finishTileDrag(true); return; }
+    endPan(e);
+  });
   stage.addEventListener('click', (e) => {
     if (performance.now() - dragEnded >= 300 || !(/** @type {any} */ (e.target).closest('.pill, .nudge'))) return;
-    e.stopPropagation(); // the end of a pan that started on a pill is not a click on it
+    e.stopPropagation(); // the end of a pan or tile drag that started on a pill is not a click on it
     e.preventDefault();
   }, true);
-  stage.addEventListener('pointercancel', endPan);
+  for (const event of ['pointercancel', 'lostpointercapture']) {
+    stage.addEventListener(event, (e) => {
+      if (tileDrag && e.pointerId === tileDrag.id) finishTileDrag(false);
+      else endPan(e);
+    });
+  }
   // Prevent Chromium from starting a native text/element drag ghost when dragging across tiles or pills.
   stage.addEventListener('dragstart', (e) => e.preventDefault());
   // Wheel while paused: jump.wheel; Shift+wheel: jump.wheelShift. Chromium on Windows reports Shift+wheel as deltaX.
   stage.addEventListener('wheel', (e) => {
-    if (reordering || e.ctrlKey) return;
+    if (tileDrag?.lifted || e.ctrlKey) return;
     if (!clock || clock.playing) return;
     e.preventDefault();
     const delta = e.deltaY || (e.shiftKey ? e.deltaX : 0);
@@ -1760,12 +2167,26 @@
   document.addEventListener('fullscreenchange', () => { poke(); layoutDirty = true; });
 
   document.addEventListener('keydown', (e) => {
-    if (!reordering || e.key !== 'Escape') return;
-    e.preventDefault();
-    e.stopPropagation();
-    controls.closeAll(false);
-    setReordering(false);
-    reorderBtn.focus();
+    if (e.key !== 'Escape') return;
+    if (tileDrag) {
+      e.preventDefault();
+      e.stopPropagation();
+      finishTileDrag(false);
+      return;
+    }
+    if (confirmingId !== -1) {
+      e.preventDefault();
+      e.stopPropagation();
+      confirmingId = -1;
+      updateOverlays();
+      return;
+    }
+    if (addPopEl && !addPopEl.hidden) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeAddPop();
+      if (addPopBtn) addPopBtn.focus();
+    }
   }, { capture: true });
   document.addEventListener('keydown', (e) => {
     // Typing in a field, a list box, or Space / Enter on a button reached with the keyboard: not player keys.
@@ -1777,6 +2198,7 @@
     if (clock && mod && !e.shiftKey && (e.key === 'c' || e.key === 'C')) { e.preventDefault(); e.stopPropagation(); copyView(); return; }
     if (e.key === 'Escape' && !ui.menu.hidden) { e.preventDefault(); closeMenu(); return; }
     if (e.key === 'Escape' && controls.anyOpen()) { e.preventDefault(); controls.closeAll(true); return; }
+    if (e.key === 'Escape' && syncMode) { e.preventDefault(); setSyncMode(false); if (syncModeBtn) syncModeBtn.focus(); return; }
     if (e.key === 'Escape' && !addHint.hidden) { e.preventDefault(); vscode.postMessage({ type: 'stopAddMode' }); return; }
     if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(); return; }
     if (!clock || e.metaKey || (!altGr && (e.ctrlKey || e.altKey))) return;
@@ -1812,8 +2234,8 @@
       case 'x': case 'X': if (pair) swapSides(); else handled = false; break;
       case 'z': case 'Z': if (e.shiftKey) handled = false; else cyclePic(); break;
       case 'D': if (e.shiftKey && N < MAX_TILES) toggleAddMode(); else handled = false; break;
-      case '-': case '_': if (!reordering) nudge(target(), -1); break;
-      case '+': case '=': if (!reordering) nudge(target(), 1); break;
+      case '-': case '_': nudge(target(), -1); break;
+      case '+': case '=': nudge(target(), 1); break;
       case 'Escape':
         if (INTERNAL && scanner.running) scanner.stop('Stopped');
         else {
@@ -2010,7 +2432,7 @@
   let resumeOnShow = false;
   const syncVisibility = Grid.compareVisibility((shown) => {
     visible = shown;
-    if (!visible) setReordering(false);
+    if (!visible) { finishTileDrag(false); closeAddPop(); }
     if (!clock) return;
     if (!visible) { clearStep(); resumeOnShow = resumeOnShow || clock.playing; pause(); }
     for (const p of tiles) if (p.remoteStream) p.setHidden(!visible);
@@ -2049,7 +2471,7 @@
       case 'abQuery': exportAB(); break;
       case 'toast': toast(String(m.text || ''), Math.min(10000, Number(m.ms)) || undefined); break;
       case 'addMode':
-        if (m.on) setReordering(false);
+        if (m.on) { finishTileDrag(false); closeAddPop(); }
         showAddMode(m);
         break;
       case 'open':
@@ -2105,7 +2527,7 @@
       case 'playbackPrefs': applyPlaybackPrefs(m.prefs); break;
       case 'focusMode': document.body.classList.toggle('maxi', !!m.active); break;
       case 'visible':
-        if (m.active === false) setReordering(false);
+        if (m.active === false) { finishTileDrag(false); closeAddPop(); }
         syncVisibility(document.hidden, m.visible);
         break;
       case 'prefs':
@@ -2137,17 +2559,17 @@
   /** @type {any} */ (window).vpeCompare = {
     get tiles() { return tiles; }, get clock() { return clock; }, get A() { return tiles[0]; }, get B() { return tiles[1]; },
     st, scanner, settled, computeMetrics, ssim, synced,
-    step, seekClock, seekA: seekClock, play, pause, setMode, setOffset, setClock, setSound, setSplit, swapSides, nudge, leave, removeTile,
+    step, seekClock, seekA: seekClock, play, pause, setMode, setDock, setHeroRatio, setSyncMode, setOffset, setClock, setSound, setSplit, swapSides, nudge, leave, removeTile,
     metrics: () => lastMetrics,
     measure: (opt) => pairMetrics(tiles[0], tiles[1], { ssim: true, rgb: true, ...opt }),
   };
 
   VpeCompareDebug.install({
     cfg, log, Grid, N, MAX_TILES, st, canvas, stage, cellsEl, ui, controls,
-    scanner, reorderBtn, reorderHint, $, getState: () => ({ tiles, clock, cells, hover }),
+    scanner, $, getState: () => ({ tiles, clock, cells, hover, syncMode, statsIds }),
     contextCount: () => (comp?.contextCount ?? 0) + Number(hasReadback()),
     setHover: (value) => { hover = value; },
-    frameOf, fpsOf, synced, tileSize, frameFactor, picState, setMode, setOffset,
+    frameOf, fpsOf, synced, tileSize, frameFactor, picState, setMode, setDock, setHeroRatio, setSyncMode, setOffset,
     setClock, removeTile, setSound, step, play, pause, seekClock, setRate,
     setSplit, tileOr0, leave,
   });

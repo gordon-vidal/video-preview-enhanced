@@ -89,11 +89,14 @@ assert.match(cmp, liveRegion, 'compare: live region');
 assert.match(cmp, playFlash, 'compare: decorative play/pause flash');
 assert.ok(pressed(cmp, 'mute'), 'compare: #mute has aria-pressed');
 assertRangeButtons(cmp, 'compare');
-// The player's bar (src/bar.js) without CC, plus the Compare button that opens its panel.
+// The player's bar (src/bar.js) without CC, plus the grouped Compare capsule.
+assert.match(cmp, /<div id="cmpGroup" class="cmp-group" role="group" aria-label="Compare controls">/);
 assert.match(cmp, /<button id="cmpBtn"[^>]*aria-controls="panel"/);
 assert.match(cmp, /<button id="stopAddBtn"[^>]*>Stop<\/button>/);
-assert.ok(!/id="tracks"|id="syncBtn"|id="mode"/.test(cmp), 'compare: no CC or old compare toolbar');
-for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'infoBtn', 'rate', 'cog', 'full', 'panel', 'sheet', 'menu']) assert.match(cmp, new RegExp(`id="${id}"`), `compare: #${id}`);
+assert.match(cmp, /<div id="splitter" class="splitter" role="separator" tabindex="0" aria-label="Spotlight split"/);
+assert.match(cmp, /<div id="addPop" class="add-pop" role="menu" aria-label="Add video" hidden>/);
+assert.ok(!/id="tracks"|id="syncBtn"|id="mode"|id="reorderBtn"/.test(cmp), 'compare: no CC, old compare toolbar, or Reorder toggle');
+for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'layoutSpotlightBtn', 'layoutGridBtn', 'layoutSplitBtn', 'addPopBtn', 'syncModeBtn', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full', 'panel', 'sheet', 'menu']) assert.match(cmp, new RegExp(`id="${id}"`), `compare: #${id}`);
 assert.ok(cmp.indexOf('controls.js') > 0 && cmp.indexOf('controls.js') < cmp.indexOf('compare.js"'), 'compare: controls.js (the panels) loads before compare.js');
 assert.match(cmp, /<button id="picBtn"[^>]*aria-label="Picture size: Fit. Next: Fill"/, 'compare: the picture size button');
 assert.ok(cmp.indexOf('picture.js') > 0 && cmp.indexOf('picture.js') < cmp.indexOf('compare.js"'), 'compare: picture.js loads before compare.js');
