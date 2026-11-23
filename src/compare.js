@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { rotationOf } = require('./rotation');
+const { serveBlock, readFileBlock } = require('./read-block');
 const { NativeDecoder } = require('./native');
 const { EncodedStream } = require('./stream');
 const { MODES, compareCapsKbps, compareTileSize } = require('./transcode_policy');
@@ -45,7 +46,14 @@ function openTogether() {
 const VIDEO_EXT = /\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i;
 
 /** Engine keys: 'A'-'P' for the tiles, 'sA' and 'sB' for the scan (of the first two). */
-const fileOfKey = (key) => Math.max(0, TILE_KEYS.indexOf(String(key).slice(-1)));
+// checkJs: start
+const SCAN_KEY = /^s[AB]$/;
+/** The file index of an engine key, or -1 for anything else (a malformed key never means file A). */
+const fileOfKey = (key) => {
+  if (typeof key !== 'string' || !(key.length === 1 || SCAN_KEY.test(key))) return -1;
+  return TILE_KEYS.indexOf(key.slice(-1));
+};
+// checkJs: end
 // Like Session: fsPath is the real file for local files and, in SSH/WSL/container
 // windows, for files on the remote machine (this is a workspace extension).
 const FS_SCHEMES = new Set(['file', 'vscode-remote']);
@@ -103,6 +111,7 @@ ${barHtml({ compare: true })}
 <script nonce="${nonce}" src="${uri('abloop.js')}"></script>
 <script nonce="${nonce}" src="${uri('comparerange.js')}"></script>
 <script nonce="${nonce}" src="${uri('stepgoal.js')}"></script>
+<script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
 ${large ? `<script nonce="${nonce}" src="${uri('membudget.js')}"></script>
 ` : ''}<script nonce="${nonce}" src="${uri('compare-grid.js')}"></script>
 <script nonce="${nonce}" src="${uri('compare.js')}"></script>
@@ -153,7 +162,7 @@ class CompareSession {
     this.webview.html = this.html();
     this.webview.onDidReceiveMessage((m) => {
       // A replaced page can still have messages in flight, with tile keys now assigned to other files.
-      if (this.disposed || !m || m.page !== this.page) return;
+      if (this.disposed || !m || typeof m !== 'object' || m.page !== this.page) return;
       this.onMessage(m).catch((e) => { if (m.page === this.page) this.fail(e); });
     });
     panel.onDidDispose(() => this.dispose());
@@ -231,6 +240,7 @@ class CompareSession {
   }
 
   async onMessage(m) {
+    if (!m || typeof m !== 'object') return undefined;
     switch (m.type) {
       case 'ready': {
         this.closeFiles();
@@ -543,20 +553,23 @@ class CompareSession {
   }
 
   async readBlock(key, pos, len) {
+    const i = fileOfKey(key);
+    if (i < 0 || i >= this.files.length) throw new Error(`no file for tile key ${JSON.stringify(key)}`);
     // A reply after a reload would reach the new page under a tile key now used by another file.
     const epoch = this.epoch;
-    let data = new Uint8Array(0);
-    try {
-      const { fh, size } = await this.blockFile(fileOfKey(key));
-      const n = Math.max(0, Math.min(len, MAX_BLOCK, size - pos));
-      const buf = Buffer.alloc(n);
-      const { bytesRead } = n ? await fh.read(buf, 0, n, pos) : { bytesRead: 0 };
-      data = new Uint8Array(buf.buffer, buf.byteOffset, bytesRead);
-    } catch (e) {
-      if (epoch === this.epoch) this.fail(e);
-    }
-    // Always answer (empty on error), or the engine keeps the block in flight forever.
-    if (epoch === this.epoch) this.post({ type: 'block', key, pos, data });
+    const page = this.page;
+    const isCurrent = () => !this.disposed && epoch === this.epoch && page === this.page;
+    await serveBlock({ type: 'readBlock', page, pos, len }, isCurrent, async (p, l) => {
+      try {
+        const { fh, size } = await this.blockFile(i);
+        if (!isCurrent()) return undefined;
+        return await readFileBlock(fh, size, p, l, MAX_BLOCK);
+      } catch (e) {
+        if (isCurrent()) this.fail(e);
+        // Always answer (empty on error), or the engine keeps the block in flight forever.
+        return new Uint8Array(0);
+      }
+    }, (reply) => this.post({ ...reply, key }));
   }
 
   dispose() {

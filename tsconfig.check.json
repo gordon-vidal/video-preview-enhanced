@@ -12,9 +12,11 @@
     "tools/page-work-contract.js",
     "src/read-block.js",
     "src/extension.js",
+    "src/compare.js",
     "media/engine.js",
     "media/slow-notice.js",
     "media/stepgoal.js",
+    "media/timefmt.js",
     "media/player.js"
   ],
   "exclude": ["media/libav-vpe"]

@@ -116,7 +116,7 @@ function load({ settings, env, setup, state: sharedState } = {}) {
       panel, posted, shown,
       setVisible: (v) => { panel.visible = v; if (listeners.viewState) listeners.viewState(); },
       send: async (m) => {
-        if (m.type === 'ready') {
+        if (m && m.type === 'ready') {
           if (!panel.webview.html) await shown;
           m = { page: webviewConfig(panel.webview).page, boot: 'mock-document', ...m };
         }

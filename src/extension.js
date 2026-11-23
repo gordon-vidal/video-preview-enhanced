@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { serveBlock } = require('./read-block');
+const { serveBlock, readFileBlock } = require('./read-block');
 // Modules a feature needs (URLs, ffmpeg setup and download, A-B export, AVI, the remote stream) load on first use:
 // a window start pays only for what it runs. The proxy forwards property reads to the real module.
 const lazy = (load) => { let m; return new Proxy({}, { get: (_, k) => (m || (m = load()))[k] }); };
@@ -2082,6 +2082,8 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
   }
 
   async onMessage(m) {
+    // A page can only send objects; null or a primitive is not one of ours.
+    if (!m || typeof m !== 'object') return undefined;
     if (this.disposed || (m.type !== 'ready' && m.boot !== undefined && m.boot !== this.boot)) return undefined;
     switch (m.type) {
       case 'ready':
@@ -2823,10 +2825,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     try {
       const { fh, size } = await this.blockFile();
       if (!isCurrent()) return undefined;
-      const n = Math.max(0, Math.min(len, MAX_BLOCK, size - pos));
-      const buf = Buffer.alloc(n);
-      const { bytesRead } = n ? await fh.read(buf, 0, n, pos) : { bytesRead: 0 };
-      data = new Uint8Array(buf.buffer, buf.byteOffset, bytesRead);
+      data = await readFileBlock(fh, size, pos, len, MAX_BLOCK);
     } catch (e) {
       if (isCurrent()) this.fail(e);
     }

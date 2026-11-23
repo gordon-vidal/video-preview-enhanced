@@ -3,6 +3,7 @@
 // frame counter. Pure functions, also loaded by the unit tests (test/unit/timefmt_test.js).
 'use strict';
 
+// checkJs: start
 (function (root) {
   /** m:ss.mmm (h:mm:ss.mmm), rounded to milliseconds: tooltips, toasts, the info panel. */
   const fmtTime = (/** @type {number} */ t) => {
@@ -34,5 +35,6 @@
 
   const api = { fmtTime, fmtClock, fmtTimecode, fmtSize, frameText };
   if (typeof module === 'object' && module.exports) module.exports = api;
-  else root.VpeTime = api;
+  else /** @type {any} */ (root).VpeTime = api;
 }(typeof self !== 'undefined' ? self : this));
+// checkJs: end

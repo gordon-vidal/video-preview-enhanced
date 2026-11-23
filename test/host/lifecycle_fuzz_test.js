@@ -113,7 +113,7 @@ async function runSuiteA(rng, tmpDir) {
       let disposedAt = -1;
 
       const sendRaw = (msg) => {
-        const p = Promise.resolve().then(() => s.send(msg));
+        const p = Promise.resolve(s.send(msg)); // delivered now, so a boot or page change cutoff never overtakes it
         pending.push(p);
         return p;
       };
@@ -234,6 +234,9 @@ async function runSuiteA(rng, tmpDir) {
         }
       }
 
+      // Null and primitive envelopes are ignored, not thrown on (fixed order, so the seeded sequence stays put).
+      if (disposedAt < 0) for (const junk of [null, undefined, 7, 'readBlock', true]) await sendRaw(junk);
+
       if (disposedAt < 0) {
         s.panel.dispose();
         disposedAt = s.posted.length;
@@ -267,6 +270,10 @@ async function runSuiteA(rng, tmpDir) {
           const cutoff = deadBootCutoff.get(m.boot);
           assert.ok(idx < cutoff, `Episode ${ep}: message ${m.type} for dead boot ${m.boot} posted at ${idx} >= ${cutoff}`);
         }
+        if (m.type === 'block' && !(Number.isInteger(m.pos) && m.pos >= 0)) {
+          assert.strictEqual(m.data.length, 0, `Episode ${ep}: a bad position (${String(m.pos)}) answers an empty block`);
+        }
+        assert.ok(m.type !== 'error' || !/RangeError|ERR_OUT_OF_RANGE/.test(String(m.message)), `Episode ${ep}: ${m.message}`);
         if (m.type === 'block' && Number.isInteger(m.pos) && m.pos >= 0 && m.pos < fileSize && m.data.length > 0) {
           const expected = groundTruth.subarray(m.pos, m.pos + m.data.length);
           assert.ok(Buffer.from(m.data).equals(expected), `Episode ${ep}: corrupted block data at pos=${m.pos}`);
@@ -482,6 +489,11 @@ async function runSuiteB(rng, tmpDir) {
       for (let idx = 0; idx < posts.length; idx++) {
         const m = posts[idx];
         assert.strictEqual(typeof m.page, 'number', 'Compare host posts must carry numeric page id');
+        if (m.type === 'block') {
+          assert.ok(/^(s[AB]|[A-P])$/.test(m.key), `Compare episode ${ep}: block for tile key ${String(m.key)}`);
+          if (!(Number.isInteger(m.pos) && m.pos >= 0)) assert.strictEqual(m.data.length, 0, `bad position ${String(m.pos)} answers empty`);
+        }
+        assert.ok(m.type !== 'error' || !/RangeError|ERR_OUT_OF_RANGE/.test(String(m.message)), `Compare episode ${ep}: ${m.message}`);
         if (deadPageCutoff.has(m.page)) {
           const cutoff = deadPageCutoff.get(m.page);
           assert.ok(idx < cutoff, `Compare episode ${ep}: post ${m.type} for dead page ${m.page} at ${idx} >= ${cutoff}`);
