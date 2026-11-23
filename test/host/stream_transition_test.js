@@ -98,6 +98,7 @@ const fakeProc = () => ({ exitCode: null, signalCode: null, stdout: { isPaused: 
   assert.strictEqual(hiddenSeek.s.hidden, true, 'tab remains hidden');
   // Showing the tab and re-seeking spawns cleanly at the new size.
   hiddenSeek.s.setHidden(false);
+  hiddenSeek.s.lastSeekAt = 0; // allow immediate spawn without waiting out SEEK_QUIET_MS
   hiddenSeek.s.seek({ gen: 3, t: 1.5 });
   assert.strictEqual(hiddenSpawns, 1, 'showing and seeking spawns ffmpeg');
   assert.strictEqual(hiddenSeek.s.h, 1080);

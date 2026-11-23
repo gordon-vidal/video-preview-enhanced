@@ -247,9 +247,12 @@ class EncodedStream {
     this.hidden = !!on;
     if (!this.fps) return;
     if (!on) {
+      this.hiddenRefresh = false;
       if (wasHidden && !this.spawns && !this.startTimer) this.spawnNow();
       return;
     }
+    this.hiddenRefresh = !!this.growQueued;
+    this.growQueued = false;
     const had = !!this.proc || !!this.audioProc || !!this.standby || !!this.startTimer;
     clearTimeout(this.startTimer);
     this.startTimer = null;
@@ -315,8 +318,8 @@ class EncodedStream {
     this.w = w;
     this.h = h;
     // One page seek per growth: more view messages for the same size (zoom, resize jitter) add none.
-    this.growQueued = grow;
-    if (grow && !queued) this.post({ type: 'refresh' });
+    this.growQueued = grow && !this.hidden;
+    if (grow && !queued && !this.hidden) this.post({ type: 'refresh' });
   }
 
   sizeVideo() {
@@ -660,7 +663,7 @@ class EncodedStream {
     this.post({ type: 'seeked', gen: m.gen, t });
     clearTimeout(this.startTimer);
     this.startTimer = null;
-    if (this.hidden) return;
+    if (this.hidden && (!this.spawns || this.hiddenRefresh)) { this.hiddenRefresh = false; return; }
     const due = this.lastSpawnAt + SPAWN_GAP_MS;
     if (quiet && now >= due) { this.spawnNow(); return; }
     if (this.deferredSince === null) this.deferredSince = now;

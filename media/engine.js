@@ -194,7 +194,7 @@ function createEngine(env) {
         case 'link': this.openFrameStream(m); break; // native: the frame server's address, before 'streams'
         case 'transport': this.recoverFrameStream(m); break;
         // Native: the picture area changed size; the host sizes the frames anew with a seek to the same moment.
-        case 'refresh': if (this.info) this.refreshNativeFrame(); break;
+        case 'refresh': if (this.info && !this.hidden) this.refreshNativeFrame(); break;
         case 'size':
           if (this.info && this.info.video) {
             Object.assign(this.info.video, { width: m.width, height: m.height });
