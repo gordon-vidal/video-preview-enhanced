@@ -53,6 +53,7 @@ const { createOffers } = require('./offers'); // onboarding, hint, GPU test and 
 const { createAssociations } = require('./associations'); // default viewer for MP4/WebM, file icons
 const { createFrameLink, sameFile, hlsPlanText } = require('./framelink'); // frame links, native frame sizes, log texts
 const { createDebugCommands } = require('./debug-cmd'); // the VPE_LOG test hook (<log>.cmd)
+const { linkSimulatorFromEnv, effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VPE_SIMULATE_REMOTE
 
 const HIDE_SLOW_PLAYBACK_NOTICE = 'videoPreviewEnhanced.hideSlowPlaybackNotice';
 const HIDE_REDUCED_RES_NOTICE = 'videoPreviewEnhanced.hideReducedResNotice';
@@ -81,6 +82,14 @@ const FS_SCHEMES = new Set(['file', 'vscode-remote']);
 const logFile = process.env.VPE_LOG || '';
 // Tests (with VPE_LOG only): decoder pool options for the webview, e.g. {"workers":4,"budget":1e9}.
 const debugPool = (() => { try { return logFile && process.env.VPE_POOL ? JSON.parse(process.env.VPE_POOL) : undefined; } catch { return undefined; } })();
+/**
+ * The window kind that decides what this window can do (raw native frames, Live transcode, link-limited streaming).
+ * vscode.env.remoteName, unless VPE_SIMULATE_REMOTE / VPE_SIMULATE_LINK pretend otherwise (src/link-sim.js). Real
+ * remote paths, URIs and the host's own state keys keep using vscode.env.remoteName.
+ */
+const remoteName = () => effectiveRemoteName(vscode);
+/** VPE_SIMULATE_LINK: one slow / flaky link shared by every player and Compare panel (null when unset, the normal case). */
+let linkSim = null;
 const sessions = new Set();
 const compareSessions = new Set(); // open compare panels (src/compare.js)
 const clipExports = new WeakSet();
@@ -267,7 +276,7 @@ function flushSpeeds() {
  * That's fine on this machine and in WSL, too much for SSH and containers.
  */
 function nativeAllowedHere() {
-  const remote = vscode.env.remoteName;
+  const remote = remoteName();
   return !remote || remote === 'wsl';
 }
 
@@ -279,7 +288,7 @@ function nativeAllowedHere() {
  * player can't open, to exercise the fallback).
  */
 function nativeTransport() {
-  if (vscode.env.remoteName) return 'message';
+  if (remoteName()) return 'message';
   const t = logFile ? process.env.VPE_NATIVE_TRANSPORT : '';
   return /^(message|http|ws|fail)$/.test(t || '') ? t : 'http';
 }
@@ -655,7 +664,7 @@ async function exportClips(session, jobs, source, compare = false) {
 function memBudgets(forNative = false) {
   const emulated = logFile && Number(process.env.VPE_TOTALMEM) > 0 ? Number(process.env.VPE_TOTALMEM) : 0;
   // WSL's native queue lives on the host, even though its webview is on the client.
-  if (!emulated && vscode.env.remoteName && !(forNative && nativeAllowedHere())) return null;
+  if (!emulated && remoteName() && !(forNative && nativeAllowedHere())) return null;
   // macOS reports only wholly free pages (its file cache counts as used), so a healthy Mac would look
   // nearly full: size it from the total alone (review 2026-11-19-3 M4).
   const free = process.platform === 'darwin' ? undefined : os.freemem();
@@ -797,6 +806,8 @@ function activate(context) {
   T_ACTIVATE = Date.now();
   out = vscode.window.createOutputChannel('Video Preview Enhanced');
   globalState = context.globalState;
+  linkSim = linkSimulatorFromEnv(process.env, log);
+  if (linkSim) context.subscriptions.push({ dispose: () => { if (linkSim) linkSim.dispose(); linkSim = null; } });
   hwKnown = globalState.get(HW_KEY) || null;
   offers = createOffers({
     vscode, globalState, log, decide, probe, remoteff, setup, tools, config, probeRecordFor, probeRunning: () => !!probeRun, machine, runProbeUi,
@@ -930,7 +941,7 @@ function activate(context) {
   // ---- Compare and Add to Compare (src/compare.js) ----
   let testCompareFiles;
   compareApi = registerCompare(context, {
-    vscode, log, sessions, compareSessions, nativeTransport, nativeQueue, exportClips,
+    vscode, log, sessions, compareSessions, nativeTransport, nativeQueue, exportClips, linkSim,
     compareOpenChanged: () => { for (const session of sessions) session.sendCompareOpen(); },
     showOpenDialog: logFile ? (options) => {
       const files = testCompareFiles;
@@ -959,7 +970,7 @@ function activate(context) {
       return {
         workerUrl: w.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', 'decoder-worker.js')).toString(),
         libavBase: base, loader: `${base}/${build.loader}`, variant: build.variant,
-        remote: !!vscode.env.remoteName, whenSlow: 'every', debug: !!logFile,
+        remote: !!remoteName(), whenSlow: 'every', debug: !!logFile,
         wcFailed: [...wcFailed],
         mem: memBudgets(), // the whole machine's; media/compare.js shares it among the tiles (review 2026-11-19-3 M3)
       };
@@ -967,7 +978,7 @@ function activate(context) {
     // Compare shares probe and decoder policy with the player, then sizes the tile in the panel.
     nativeFor: async (file, transport, tile) => {
       const c = config();
-      const remote = vscode.env.remoteName;
+      const remote = remoteName();
       const rawAllowed = nativeAllowedHere();
       if (c.decoder === 'builtin' || !vscode.workspace.isTrusted || (!rawAllowed && c.transcode === 'off')) return null;
       const t = await tools();
@@ -1080,10 +1091,15 @@ class Session {
     // Only the extension's own media: video data, frames and images reach the page as messages.
     this.webview.options = { enableScripts: true, localResourceRoots: [media] };
     this.media = media;
+    // VPE_SIMULATE_LINK: this player's own slice of the shared link; its undelivered messages go with the session.
+    this.link = linkSim ? linkSim.wrapChannel(this.name) : null;
     this.webview.onDidReceiveMessage((m) => {
-      const pending = this.onMessage(m);
-      const gen = this.loadGen;
-      return pending.catch((e) => { if (!this.stale(gen)) this.fail(e); });
+      if (this.link && m && m.type === 'nd') {
+        const gen = this.loadGen;
+        this.link.sendUp(m, () => { if (!this.disposed && this.loadGen === gen) this.receive(m); });
+        return undefined;
+      }
+      return this.receive(m);
     });
     panel.onDidDispose(() => this.dispose());
     // VS Code does not fire visibilitychange in webviews; tell the player directly.
@@ -1102,7 +1118,7 @@ class Session {
   }
 
   async show() {
-    if (!vscode.env.remoteName && (logFile || (!this.sequence && nativeTransport() !== 'message'))) {
+    if (!remoteName() && (logFile || (!this.sequence && nativeTransport() !== 'message'))) {
       // The CSP needs the selected port before the page is created.
       try { await frameserver.start(); this.framePort = frameserver.port; }
       catch (e) { log(`frame server could not start: ${e.message}`); }
@@ -1271,7 +1287,21 @@ class Session {
   }
 
   post(msg) {
-    if (!this.disposed) this.webview.postMessage(msg);
+    if (this.disposed) return;
+    if (this.link && msg && msg.type === 'nd') {
+      // Over the simulated link; a page that was replaced or closed meanwhile never gets it.
+      const gen = this.loadGen;
+      this.link.sendDown(msg, () => { if (!this.disposed && this.loadGen === gen) this.webview.postMessage(msg); });
+      return;
+    }
+    this.webview.postMessage(msg);
+  }
+
+  /** A message from the page (after the simulated link, if any). */
+  receive(m) {
+    const pending = this.onMessage(m);
+    const gen = this.loadGen;
+    return pending.catch((e) => { if (!this.stale(gen)) this.fail(e); });
   }
 
   canCompare() {
@@ -1312,7 +1342,7 @@ class Session {
       hideReducedResNotice: !!globalState.get(HIDE_REDUCED_RES_NOTICE),
       engine: {
         workerUrl: uri('decoder-worker.js'), xrayWorkerUrl: uri('xray-worker.js'), libavBase: base, loader: `${base}/${this.build.loader}`, variant: this.build.variant,
-        remote: !!vscode.env.remoteName, whenSlow: c.whenSlow, fastWhenBehind: c.fastWhenBehind,
+        remote: !!remoteName(), whenSlow: c.whenSlow, fastWhenBehind: c.fastWhenBehind,
         net: !!this.url, // blocks come over the network: larger blocks, more read-ahead, no seek-bar thumbnails
         wcFailed: [...wcFailed],
         rotation: this.sequence || this.url ? 0 : rotationOf(this.file),
@@ -1594,7 +1624,7 @@ class Session {
     // Native ffmpeg when installed, except 8-bit H.264/VP8 and when there's a reason not to
     // (src/decide.js): an SSH/container window, a file it failed on, pixel tools.
     const c = config();
-    const remote = vscode.env.remoteName;
+    const remote = remoteName();
     // Live transcode "always" (or forced for this session): stream before raw native ffmpeg, in any window.
     if (c.transcode === 'always' || this.forceTranscode) {
       if (early) early.cancelProbe();
@@ -1679,7 +1709,7 @@ class Session {
     let info;
     try { info = await urlsource.inspect(this.url, opts); } catch (e) {
       if (this.stale(gen)) return undefined;
-      return this.fail(e, `Could not open ${red}.${vscode.env.remoteName ? ` URLs are fetched from the ${vscode.env.remoteName} host this window is connected to.` : ''}`);
+      return this.fail(e, `Could not open ${red}.${remoteName() ? ` URLs are fetched from the ${remoteName()} host this window is connected to.` : ''}`);
     }
     if (this.stale(gen)) return undefined;
     if (info.kind === 'html') {
@@ -1740,7 +1770,7 @@ class Session {
     let d = null;
     if (pr) {
       d = decide.decide({
-        setting: stream && c.decoder === 'auto' ? 'ffmpeg' : c.decoder, remote: vscode.env.remoteName, trusted: true, tools: t, video: pr.video,
+        setting: stream && c.decoder === 'auto' ? 'ffmpeg' : c.decoder, remote: remoteName(), trusted: true, tools: t, video: pr.video,
         probe: probeRecordFor(t), hw: hwKnown, failed: false, gpu: c.gpuDecoding, maxHeight: nativeHeight(c, pr.video), transport: nativeTransport() === 'message' ? 'message' : 'stream',
       });
       log(`[${this.name}] decoder: ${d.use === 'native' ? `native ffmpeg (${d.method})` : 'built-in'}: ${stream ? `${info.kind} stream` : d.reason}`);
@@ -1863,7 +1893,7 @@ class Session {
   /** The built-in decoder can't play this URL: say why, and offer ffmpeg where it would run. */
   failUrl(e, { t, probeError }) {
     if (!e.needsFfmpeg) return this.fail(e);
-    const remote = vscode.env.remoteName;
+    const remote = remoteName();
     let hint = '';
     let action = null;
     if (probeError) hint = `ffmpeg could not open it either: ${probeError.slice(0, 300)}`;
@@ -1899,7 +1929,7 @@ class Session {
   /** decide.decide() for native ffmpeg on this file (open() and the early start ask the same). */
   decideNative(c, t, pr, stat) {
     const d = decide.decide({
-      setting: c.decoder, remote: vscode.env.remoteName, trusted: true, tools: t, video: pr.video, probe: probeRecordFor(t), hw: hwKnown,
+      setting: c.decoder, remote: remoteName(), trusted: true, tools: t, video: pr.video, probe: probeRecordFor(t), hw: hwKnown,
       failed: decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, stat), gpu: c.gpuDecoding,
       maxHeight: nativeHeight(c, pr.video), transport: nativeTransport() === 'message' ? 'message' : 'stream',
     });
@@ -1948,7 +1978,7 @@ class Session {
   async tryRemoteStream(gen, stat, probed, opts = {}) {
     const { signal } = this.pageAbort;
     const c = config();
-    const remote = vscode.env.remoteName;
+    const remote = remoteName();
     if (this.fullRes || this.noRemoteStream || !vscode.workspace.isTrusted) return false;
     if (c.decoder === 'builtin' || decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, stat)) return false;
     const t = probed ? probed.t : await tools();
@@ -2523,6 +2553,7 @@ class Session {
     this.watchTimer = null;
     if (this.watcher) { this.watcher.close(); this.watcher = null; }
     this.closePage('closed');
+    if (this.link) { this.link.dispose(); this.link = null; }
     this.boots.clear();
     if (this.pos && this.pos !== this.savedPos) this.savePos();
   }

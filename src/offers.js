@@ -1,5 +1,6 @@
 'use strict';
 const transcodePolicy = require('./transcode_policy');
+const { effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VPE_SIMULATE_REMOTE pretend a window is SSH
 // The popups that offer ffmpeg: first-open onboarding, the slow-playback hint, the GPU test offer and the
 // remote download offer, plus the one-time notice that Live transcode is on. This holds their per-session state (shown / pending flags) so at most one is up at a
 // time; the rules for whether to ask live in src/decide.js and src/remoteff.js. Everything VS Code-shaped and
@@ -52,7 +53,7 @@ function createOffers(deps) {
    * "Not now" / "Don't Show Again". Once per session until "Don't Show Again"; never in SSH/container or untrusted windows.
    */
   async function maybeOnboard() {
-    const base = { state: globalState.get(decide.ONBOARD_KEY), remote: vscode.env.remoteName, trusted: vscode.workspace.isTrusted, pending: onboardPending, shownThisSession: onboardShown };
+    const base = { state: globalState.get(decide.ONBOARD_KEY), remote: effectiveRemoteName(vscode), trusted: vscode.workspace.isTrusted, pending: onboardPending, shownThisSession: onboardShown };
     if (!decide.shouldOnboard({ ...base, toolsInstalled: false })) return;
     onboardPending = true;
     try {
@@ -79,7 +80,7 @@ function createOffers(deps) {
     const t = await tools();
     const ok = decide.shouldHint({
       hint: globalState.get(decide.HINT_KEY), onboard: globalState.get(decide.ONBOARD_KEY), now: Date.now(), shownThisSession: hintShown, toolsInstalled: !!t,
-      remote: vscode.env.remoteName, trusted: vscode.workspace.isTrusted, slowRun: sess.slowRun, ratio: sample.ratio,
+      remote: effectiveRemoteName(vscode), trusted: vscode.workspace.isTrusted, slowRun: sess.slowRun, ratio: sample.ratio,
     });
     if (!ok) return;
     hintShown = true;
@@ -101,7 +102,7 @@ function createOffers(deps) {
    */
   async function maybeOfferProbe(/** @type {any} */ sess, /** @type {{ ratio: number, native?: boolean }} */ sample) {
     if (probeOfferShown || popupPending() || probeRunning()) return;
-    const remote = vscode.env.remoteName;
+    const remote = effectiveRemoteName(vscode);
     if (remote || !vscode.workspace.isTrusted) return; // never run ffmpeg -version to learn what shouldOfferProbe says anyway
     const t = await tools();
     const ctx = {
@@ -131,6 +132,7 @@ function createOffers(deps) {
    * remote (docs/notes/remote-stream.md).
    */
   async function maybeOfferRemoteFfmpeg(/** @type {{ name: string }} */ sess, /** @type {{ codec?: unknown }} */ m) {
+    // The real window, not the simulated one: this downloads a Linux build into the remote host's extension folder.
     const remote = vscode.env.remoteName;
     const c = config();
     const key = remoteff.remoteKey(remote);

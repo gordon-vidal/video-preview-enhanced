@@ -112,6 +112,8 @@ exports against namespace and lazy consumers before removing them.
 - Run layers 3 and 4 through `test/run.js`. They share `vpe-vscode-lock` in the system temp directory
   across worktrees. A waiting runner prints the holder and starts after it releases the lock.
 - CI (`.github/workflows/ci.yml`) and the Publish workflow run `node test/run.js unit engine`.
+- Slow or flaky SSH link in a local window: `VPE_SIMULATE_LINK=slow-ssh` (and `VPE_SIMULATE_REMOTE`), see
+  [docs/notes/link-simulator.md](notes/link-simulator.md). Layers 1-2 use `src/link-sim.js` with `test/lib/virtual-clock.js`.
 - Change base for `--changed`: `VPE_BASE` (default `main`). VS Code: `VPE_CODE` or the portable build of
   `node test/vscode/get_code.js`.
 
