@@ -171,13 +171,17 @@ and extending `HlsFile` instead. Done for steps 1-4 of that plan:
   isn't `http(s)://` without white space. The whitelist has no `file`, `concat`, `subfile` or `data`: a remote
   playlist or manifest can't make ffmpeg read local files or UNC shares (tested: a served playlist that lists
   `file:///…/src.mp4` fails in ffprobe).
-- TLS: the host verifies certificates and opens every URL first. ffmpeg's own TLS does not verify by default on
-  OpenSSL/GnuTLS builds (`tls_verify` 0), so `inputArgs` adds `-tls_verify 1` for URL inputs, unless the user turned
-  `http.proxyStrictSSL` off (a proxy that re-signs HTTPS traffic; the player passes `strictSSL: false`). Checked
-  2026-11-23 with ffmpeg 9.0.2 (Windows, schannel: verifies by default, the option changes nothing) and 8.0.1 (Linux,
-  OpenSSL): valid HTTPS plays, a self-signed certificate is refused ("Peer certificate failed verification"), plain
-  http URLs and local files are unaffected (the option is ignored there). Needs the system CA store: a build
-  without one fails on every HTTPS URL, and the user sees ffmpeg's error (test/host/urlsource_abort_test.js).
+- TLS: the host verifies certificates and opens every URL first (and passes the final post-redirect URL to ffmpeg).
+  ffmpeg's own TLS does not verify by default on OpenSSL/GnuTLS builds (`tls_verify` 0), so `inputArgs` adds
+  `-tls_verify 1` for `https://` URL inputs unless the user turned `http.proxyStrictSSL` off (a proxy that re-signs
+  HTTPS traffic; the player passes `strictSSL: false`). Plain `http://` URLs and local files do not get `-tls_verify`
+  because `ffmpeg` itself rejects it with `Option not found` on plain HTTP inputs. Checked 2026-11-23 with ffmpeg
+  9.0.2 (Windows, schannel: verifies by default) and 8.0.1 (Linux, OpenSSL): valid HTTPS plays, a self-signed
+  certificate on the initial HTTPS URL is refused ("Peer certificate failed verification"), and plain http URLs decode
+  normally. Caveats: (1) on OpenSSL/GnuTLS builds whose default is unverified, ffmpeg's HLS and DASH demuxers do not
+  propagate `tls_verify` to sub-requests on other origins (segments/keys opened on fresh connections fall back to the
+  backend default); (2) verification needs the system CA store (a build without one fails on every HTTPS URL, and the
+  user sees ffmpeg's error) (`test/host/urlsource_abort_test.js`).
 - Cancellation: each page load has one `AbortSignal` (`pageAbort`); it goes through `inspect`, `hlsOpen`, the
   `HttpFile` / `HlsFile` reads (range, segment, key) and the subtitle fetches. An abort destroys the requests
   and rejects with an `AbortError`; the files also close themselves when the signal aborts (`linkSignal`). All

@@ -108,22 +108,33 @@ function isAbort(e) {
 const abortHooks = new WeakMap();
 
 /**
- * Runs fn once when signal aborts; returns a function that cancels the hook (safe to call twice). All hooks
- * of one signal share a single 'abort' listener, so many requests on one load's signal never pile up
- * listeners (no MaxListenersExceededWarning) and none stays after the last hook is gone.
+ * Runs fn once when signal aborts (or immediately if signal is already aborted); returns a function that
+ * cancels the hook (safe to call twice). All hooks of one signal share a single 'abort' listener, so many
+ * requests on one load's signal never pile up listeners (no MaxListenersExceededWarning) and none stays
+ * after the last hook is gone.
  * @param {AbortSignal | undefined} signal
  * @param {() => void} fn
  * @returns {() => void}
  */
 function onAbort(signal, fn) {
   if (!signal) return () => {};
+  if (signal.aborted) {
+    try { fn(); } catch { /* isolate callback failure */ }
+    return () => {};
+  }
   let hooks = abortHooks.get(signal);
   if (!hooks) {
     /** @type {Set<() => void>} */
     const fns = new Set();
     const run = () => {
       abortHooks.delete(signal);
-      for (const f of [...fns]) f();
+      // Drain live registrations so an earlier hook can unsubscribe a later one, and one throw cannot skip the rest.
+      while (fns.size) {
+        const f = fns.values().next().value;
+        if (!f) break;
+        fns.delete(f);
+        try { f(); } catch { /* isolate callback failure */ }
+      }
     };
     hooks = { fns, run };
     abortHooks.set(signal, hooks);
@@ -196,10 +207,11 @@ function open(url, opts = {}, hops = 0) {
       req = mod.request(url, { method: opts.method || 'GET', headers, agent });
     }
     let done = false;
+    let unhook = () => {};
+    const fail = (e) => { unhook(); if (!done) { done = true; reject(e); } };
     // The hook lives as long as the request: a body read after the response is cut off by an abort too.
     // It goes when the request closes, fails or hands over to a redirect, never later.
-    const unhook = onAbort(opts.signal, () => { req.destroy(); fail(abortError()); });
-    const fail = (e) => { unhook(); if (!done) { done = true; reject(e); } };
+    unhook = onAbort(opts.signal, () => { req.destroy(); fail(abortError()); });
     req.setTimeout(timeoutMs, () => { const e = new Error('timeout'); e.code = 'TIMEOUT'; req.destroy(e); });
     req.once('close', unhook);
     req.on('error', (e) => fail(new Error(describeError(e, url))));
@@ -207,7 +219,8 @@ function open(url, opts = {}, hops = 0) {
       if (done) { res.destroy(); return; }
       const st = res.statusCode;
       if (st >= 300 && st < 400 && st !== 304 && res.headers.location) {
-        res.resume();
+        // Destroy the discarded redirect response immediately so a streaming redirect body cannot stay open.
+        res.destroy();
         done = true;
         unhook();
         if (hops >= MAX_REDIRECTS) { reject(new Error(`${redact(url)}: too many redirects`)); return; }
@@ -409,7 +422,7 @@ class HttpFile {
  */
 function linkSignal(parent, file) {
   if (!parent) return null;
-  if (parent.aborted) { queueMicrotask(() => file.close()); return null; }
+  if (parent.aborted) { file.close(); return null; }
   return onAbort(parent, () => file.close());
 }
 

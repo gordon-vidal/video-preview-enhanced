@@ -226,16 +226,18 @@ function isUrlInput(input) {
 
 /**
  * The input part of an ffmpeg/ffprobe command line: `-protocol_whitelist file -i <path>` for a file;
- * for a URL input the network whitelist above, an I/O timeout, `-tls_verify 1` and the proxy (http.proxy),
- * only for http(s) URLs. ffmpeg's TLS does not check the server certificate by default (the Linux builds;
- * schannel builds do), so it is asked to, unless the user turned http.proxyStrictSSL off (strictSSL false:
- * a proxy that re-signs HTTPS traffic with its own certificate). The option is ignored for plain http.
+ * for a URL input the network whitelist above, an I/O timeout, `-tls_verify 1` (for https:// URLs only:
+ * ffmpeg rejects `-tls_verify` with "Option not found" on plain http:// inputs) and the proxy (http.proxy),
+ * only for http(s) URLs. ffmpeg's OpenSSL/GnuTLS builds do not check the server certificate by default
+ * (Windows schannel builds do), so `-tls_verify 1` enforces verification on the initial HTTPS URL unless
+ * the user turned http.proxyStrictSSL off (strictSSL false: a proxy that re-signs HTTPS traffic). Note:
+ * ffmpeg's HLS/DASH demuxers do not copy `tls_verify` onto sub-requests to other origins.
  */
 function inputArgs(input) {
   if (isUrlInput(input)) {
     if (!/^https?:\/\/[^\s]+$/i.test(input.url)) throw new Error('only http and https URLs can be opened');
     const args = ['-protocol_whitelist', URL_PROTOCOLS, '-rw_timeout', String(URL_RW_TIMEOUT_US)];
-    if (input.strictSSL !== false) args.push('-tls_verify', '1');
+    if (input.strictSSL !== false && /^https:\/\//i.test(input.url)) args.push('-tls_verify', '1');
     if (input.proxy && /^https?:\/\/[^\s]+$/i.test(input.proxy)) args.push('-http_proxy', input.proxy);
     return [...args, '-i', input.url];
   }
