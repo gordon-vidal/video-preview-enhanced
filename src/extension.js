@@ -398,7 +398,7 @@ async function downloadRemoteFfmpeg() {
   let build;
   try {
     build = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Video Preview: finding the ffmpeg build for ${host}…` },
-      () => remoteff.chooseRemoteBuild(hostArch(), { base: buildBase() }));
+      () => remoteff.chooseRemoteBuild(hostArch(), { base: buildBase(), detect: machine }));
   } catch (e) {
     log(`remote ffmpeg: no build: ${e.stack || e}`);
     vscode.window.showErrorMessage(`Video Preview: no ffmpeg download for ${host}: ${e.message}${proxy.looksBlocked(e) ? ' (behind a proxy? set "http.proxy")' : ''}. Install ffmpeg there, or set "videoPreviewEnhanced.ffmpegPath".`);
@@ -413,7 +413,7 @@ async function downloadRemoteFfmpeg() {
   if (!res) return;
   toolsPromise = null;
   const nt = await tools();
-  vscode.window.showInformationMessage(nt ? `Video Preview: ffmpeg ready on ${host} (${nt.version.replace(/ Copyright.*/, '')}). Videos the GPU can't decode stream from there now.` : `Video Preview: ffmpeg was downloaded on ${host} but does not run there; see the output log.`);
+  vscode.window.showInformationMessage(nt ? `Video Preview: ffmpeg ready on ${host} (${nt.version.replace(/ Copyright.*/, '')}). Live transcode uses it from now on.` : `Video Preview: ffmpeg was downloaded on ${host} but does not run there; see the output log.`);
   for (const s of sessions) s.reload('ffmpeg changed');
 }
 

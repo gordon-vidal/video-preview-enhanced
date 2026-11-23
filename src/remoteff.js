@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const setup = require('./setup');
+const hardware = require('./hardware');
 const { run } = require('./ffmpeg');
 
 const OFFER_KEY = 'videoPreviewEnhanced.remoteFfmpegOffer';
@@ -54,9 +55,9 @@ const OFFER_NEVER = "Don't Show Again";
 
 function offerText({ codec, host, mb }) {
   const what = codec ? String(codec).toUpperCase() : 'This video';
-  return `${what} plays in the built-in decoder in this window (4K slowly). With ffmpeg on ${host}, videos like this ` +
-    `are decoded there and streamed to this window in real time. Download ffmpeg (~${mb} MB, LGPL build, no admin) ` +
-    `into the extension's folder on ${host}?`;
+  return `${what} plays in the built-in decoder in this window (4K slowly). With ffmpeg on ${host}, Live transcode ` +
+    `decodes it there (on its GPU when it has one) and streams a lighter H.264 version to this window in real time. ` +
+    `Download ffmpeg (~${mb} MB, LGPL build matched to ${host}'s GPU driver, no admin) into the extension's folder on ${host}?`;
 }
 
 /** globalState OFFER_KEY after an answer: "Don't Show Again" is kept per remote. */
@@ -123,9 +124,17 @@ async function extractTools(archive, dir, signal, opts = {}) {
  * storageDir/ffmpeg-builds with ffmpeg and ffprobe only. Returns { build, ffmpeg, ffprobe, dir }.
  * opts: { base (test server), extract options }.
  */
-function chooseRemoteBuild(arch = process.arch, opts = {}) {
-  if (!ARCHES[arch]) return Promise.reject(new Error(`no ffmpeg download for Linux ${arch}`));
-  return setup.chooseBuild({ os: 'linux', arch, gpus: [], vaapi: false }, opts.base ? { base: opts.base } : {});
+async function chooseRemoteBuild(arch = process.arch, opts = {}) {
+  if (!ARCHES[arch]) throw new Error(`no ffmpeg download for Linux ${arch}`);
+  // The GPU and NVIDIA driver of this host decide the release line (an n9.0 build needs driver 610+ for NVENC),
+  // exactly as in the local setup. Detection is best effort: without it the newest build is chosen.
+  // opts.detect: hardware.detect or a stand-in; by default only a Linux host is probed (this runs on the remote).
+  const detect = opts.detect || (process.platform === 'linux' ? hardware.detect : null);
+  let hw = null;
+  try { hw = detect ? await detect() : null; } catch { hw = null; }
+  return setup.chooseBuild({
+    os: 'linux', arch, gpus: (hw && hw.gpus) || [], vaapi: !!(hw && hw.vaapi), nvidiaDriver: (hw && hw.nvidiaDriver) || null,
+  }, opts.base ? { base: opts.base } : {});
 }
 
 function installRemoteBuild(build, storageDir, onProgress, signal, opts = {}) {
