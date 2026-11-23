@@ -52,6 +52,7 @@ globalThis.DecoderPool = class extends BasePool { postMessage(m, tr) { super.pos
 // The page's scripts the engine uses, in the page's order (src/extension.js): HDR helpers, then the engine.
 for (const f of ['membudget.js', 'hdr.js']) vm.runInThisContext(fs.readFileSync(path.join(MEDIA, f), 'utf8'), { filename: path.join(MEDIA, f) });
 globalThis.VpeBlockCache = require('../../media/block-cache');
+globalThis.VpeGlRenderer = require('../../media/gl-renderer');
 const src = fs.readFileSync(path.join(MEDIA, 'engine.js'), 'utf8');
 vm.runInThisContext(`${src}\nglobalThis.createEngine = createEngine;`, { filename: path.join(MEDIA, 'engine.js') });
 

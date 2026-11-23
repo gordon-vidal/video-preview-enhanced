@@ -204,31 +204,38 @@
 
   /**
    * Keeps the last drawn frame's source so metrics can use the decoded luma plane
-   * itself (exact, like ffmpeg) instead of luma recovered from RGB. Wraps this
-   * engine's renderer instance only; GLRenderer itself is untouched.
+   * itself (exact, like ffmpeg) instead of luma recovered from RGB. Uses the
+   * renderer's explicit onFrame capture contract (media/gl-renderer.js).
    * Software frames: a reference to the YUV object (read on demand; if a later
    * frame path recycles or detaches its buffer, metrics fall back to RGB).
    * WebCodecs frames: a clone of the VideoFrame (released when the next one is drawn).
    */
   function captureLuma(p) {
     const g = p.gl;
-    if (!g || typeof g.drawYuv !== 'function' || typeof g.drawFrame !== 'function') return;
-    const drawYuv = g.drawYuv.bind(g);
-    const drawFrame = g.drawFrame.bind(g);
+    if (!g) return;
     const keep = (snap) => {
       const old = p.lumaSrc;
       if (old && old.vf) { try { old.vf.close(); } catch { /* closed */ } }
       p.lumaSrc = snap;
     };
-    g.drawYuv = (f) => { keep({ yuv: f }); return drawYuv(f); };
-    g.drawFrame = (vf) => {
-      let c = null;
-      try { c = vf.clone(); } catch { /* unsupported */ }
-      keep(c ? { vf: c } : null);
-      return drawFrame(vf);
+    const onFrame = (frame) => {
+      if (!frame) { keep(null); return; }
+      if (frame.yuv) { keep({ yuv: frame.yuv }); return; }
+      if (frame.vf) {
+        let c = null;
+        try { c = frame.vf.clone(); } catch { /* unsupported */ }
+        keep(c ? { vf: c } : null);
+      }
     };
-    const dispose = p.dispose.bind(p);
-    p.dispose = () => { keep(null); dispose(); };
+    if (typeof VpeGlRenderer !== 'undefined' && typeof VpeGlRenderer.setCapture === 'function') {
+      VpeGlRenderer.setCapture(g, onFrame);
+    } else {
+      g.onFrame = onFrame;
+    }
+    if (typeof g.dispose !== 'function') {
+      const dispose = p.dispose.bind(p);
+      p.dispose = () => { keep(null); dispose(); };
+    }
   }
 
   /** The shown frame's luma plane as {data, w, h, depth}, or null when it can't be had. */
@@ -737,7 +744,7 @@
     let rotation = 0;
     let held = null;
     const out = {
-      norm16: renderer.norm16, hdrPeak: 0, hdr: 0, onUploaded: null, twin: null, gl: null,
+      norm16: renderer.norm16, hdrPeak: 0, hdr: 0, onUploaded: null, onFrame: null, twin: null, gl: null,
       get rot() { return rotation; },
       setRotation(deg) { rotation = [90, 180, 270].includes(deg) ? deg : 0; },
       prepareNative(w, h) {
@@ -747,6 +754,16 @@
       },
       drawYuv(f) { draw(() => renderer.drawYuv(f)); },
       drawFrame(vf) { draw(() => renderer.drawFrame(vf)); },
+      dispose() {
+        if (out.onFrame) {
+          const fn = out.onFrame;
+          out.onFrame = null;
+          fn(null);
+        }
+        out.onUploaded = null;
+        out.twin = null;
+        held = null;
+      },
     };
     function draw(render) {
       if (!renderer || !comp) return;
@@ -754,7 +771,9 @@
       renderer.hdrPeak = out.hdrPeak;
       renderer.heldBuf = held;
       renderer.onUploaded = out.onUploaded;
+      renderer.onFrame = out.onFrame;
       render();
+      renderer.onFrame = null;
       held = renderer.heldBuf;
       out.hdr = renderer.hdr;
       if (cv.width !== scratch.width || cv.height !== scratch.height) { cv.width = scratch.width; cv.height = scratch.height; }
@@ -2515,11 +2534,12 @@
     for (const p of Object.values(engines)) {
       try {
         p.dispose();
-        p.gl?.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+        p.gl?.dispose?.({ loseContext: true });
       } catch (e) { log(`dispose ${p.key}: ${e && e.message || e}`); }
       delete engines[p.key];
     }
-    for (const r of [comp, metrics, renderer]) r?.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    renderer?.dispose?.({ loseContext: true });
+    for (const r of [comp, metrics]) r?.gl?.getExtension('WEBGL_lose_context')?.loseContext();
     tiles = [];
     clock = comp = metrics = renderer = scratch = null;
   }
@@ -2603,7 +2623,7 @@
       pause();
     }
     old.dispose();
-    old.gl?.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    old.gl?.dispose?.({ loseContext: true });
     nativeTiles[i] = false;
     const p = makeEngine(KEYS[i], { quiet: false, budget: memory.frames });
     tiles[i] = p;

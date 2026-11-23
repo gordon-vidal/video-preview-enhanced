@@ -16,6 +16,7 @@ const ctx = { performance: { now: () => ctx.perfNow }, perfNow: 0, console, setT
 ctx.globalThis = ctx;
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(media, 'block-cache.js'), 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(path.join(media, 'gl-renderer.js'), 'utf8'), ctx);
 vm.runInContext(`${fs.readFileSync(path.join(media, 'engine.js'), 'utf8')}\n;globalThis.createEngine = createEngine;`, ctx);
 vm.runInContext(fs.readFileSync(path.join(media, 'timestretch.js'), 'utf8'), ctx);
 const noop = () => {};

@@ -21,11 +21,24 @@
   window.onerror = (e) => report({ ...out, error: String(e) });
   try {
     const canvas = document.getElementById('c');
-    const engineSrc = await (await fetch(`${root}media/engine.js`)).text();
-    const a = engineSrc.indexOf('  class GLRenderer {');
-    const b = engineSrc.indexOf('\n  const hex2');
-    // eslint-disable-next-line no-new-func
-    const GLRenderer = new Function('canvas', `${engineSrc.slice(a, b)}\nreturn GLRenderer;`)(canvas);
+    let GLRenderer;
+    const standalone = await fetch(`${root}media/gl-renderer.js`, { method: 'HEAD' });
+    if (standalone.ok) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = `${root}media/gl-renderer.js`;
+        s.onload = res;
+        s.onerror = rej;
+        document.head.appendChild(s);
+      });
+      GLRenderer = window.VpeGlRenderer.GLRenderer;
+    } else {
+      const engineSrc = await (await fetch(`${root}media/engine.js`)).text();
+      const a = engineSrc.indexOf('  class GLRenderer {');
+      const b = engineSrc.indexOf('\n  const hex2');
+      // eslint-disable-next-line no-new-func
+      GLRenderer = new Function('canvas', `${engineSrc.slice(a, b)}\nreturn GLRenderer;`)(canvas);
+    }
     const gl = new GLRenderer(canvas);
     const dbg = gl.gl.getExtension('WEBGL_debug_renderer_info');
     out.gpu = dbg ? gl.gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '?';
