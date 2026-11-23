@@ -1,5 +1,5 @@
 # Checks on every push and pull request: layers 1-2 of docs/TESTING.md (Node only) on Linux and
-# Windows, a syntax check, and a `vsce package` dry run. The real-VS-Code scenarios (test/vscode,
+# Windows, static checks, and a `vsce package` dry run. The real-VS-Code scenarios (test/vscode,
 # layer 3) and performance runs (layer 4) need a GPU and a desktop session, which hosted runners
 # don't provide reliably, so they run locally before a merge or release.
 name: CI
@@ -85,35 +85,17 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Check single-player block messages
-        run: npm run typecheck
+      - name: Verify static checks
+        run: npm run verify:fast
 
-      - name: Syntax check
+      - name: Syntax check for tests and build tools
         shell: bash
         run: |
-          git ls-files 'src/*.js' 'media/*.js' 'test/**/*.js' 'build/**/*.js' \
+          git ls-files 'test/**/*.js' 'build/**/*.js' \
             | xargs -n 1 node --check
 
       - name: Layers 1-2 (unit and engine)
         run: node test/run.js unit engine
-
-  # Seconds-long repository hygiene checks (no dependencies): no personal data in tracked files,
-  # no broken relative Markdown links. Also runnable locally: node tools/check-personal-data.js
-  hygiene:
-    name: Hygiene
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - name: Personal data in tracked files
-        run: node tools/check-personal-data.js
-      - name: Markdown links
-        run: node tools/check-links.js
 
   # Secret scan of the full history with the gitleaks CLI at a pinned version and SHA-256 (from the
   # release's checksums file). Not gitleaks-action: it needs a licence key for organisation repos.

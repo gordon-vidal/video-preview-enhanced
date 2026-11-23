@@ -17,6 +17,8 @@ CLAUDE.md
 .gitattributes
 package-lock.json
 tsconfig.check.json
+.dependency-cruiser.cjs
+knip.json
 *.vsix
 
 # Repository-only files (the README, CHANGELOG, LICENSE and THIRD_PARTY_NOTICES ship)

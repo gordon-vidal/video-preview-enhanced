@@ -1,0 +1,5 @@
+{
+  "entry": ["test/**/*.js"],
+  "project": ["src/**/*.js"],
+  "ignoreExportsUsedInFile": true
+}

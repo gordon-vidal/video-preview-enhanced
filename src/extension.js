@@ -13,36 +13,36 @@ const crypto = require('crypto');
 const { serveBlock } = require('./read-block');
 // Modules a feature needs (URLs, ffmpeg setup and download, A-B export, AVI, the remote stream) load on first use:
 // a window start pays only for what it runs. The proxy forwards property reads to the real module.
-const lazy = (id) => { let m; return new Proxy({}, { get: (_, k) => (m || (m = require(id)))[k] }); };
-const avi = lazy('./avi');
+const lazy = (load) => { let m; return new Proxy({}, { get: (_, k) => (m || (m = load()))[k] }); };
+const avi = lazy(() => require('./avi'));
 const { findSequence } = require('./sequence');
 const ff = require('./ffmpeg');
-const setup = lazy('./setup');
+const setup = lazy(() => require('./setup'));
 const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
 const { decodeThumb } = require('./thumbhost');
 const { ExactFrameGrabber } = require('./exact_frame');
 const { toggleFocusMode, noteFocusModeExited, resetFocusMode, setFocusModeListener } = require('./focus-mode');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
-const remotestream = lazy('./remotestream'); // unified Live transcode stream engine (ADR 0002)
-const transcodePolicy = lazy('./transcode_policy');
-const transcodeProbe = lazy('./transcode_probe');
-const probe = lazy('./probe'); // ffmpeg's GPU decoding tested on this machine
+const remotestream = lazy(() => require('./remotestream')); // unified Live transcode stream engine (ADR 0002)
+const transcodePolicy = lazy(() => require('./transcode_policy'));
+const transcodeProbe = lazy(() => require('./transcode_probe'));
+const probe = lazy(() => require('./probe')); // ffmpeg's GPU decoding tested on this machine
 const decide = require('./decide'); // native ffmpeg or built-in, per file
-const localff = lazy('./localff'); // "Use an ffmpeg I already have…"
-const remoteff = lazy('./remoteff'); // ffmpeg downloaded on the remote host, for the remote stream
-const proxy = lazy('./proxy');
+const localff = lazy(() => require('./localff')); // "Use an ffmpeg I already have…"
+const remoteff = lazy(() => require('./remoteff')); // ffmpeg downloaded on the remote host, for the remote stream
+const proxy = lazy(() => require('./proxy'));
 const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
 const { registerCompare, setPickHook } = require('./compare'); // compare mode (src/compare.js)
 const { barHtml, playFlashHtml } = require('./bar');
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
-const rangecmd = lazy('./rangecmd'); // A-B frame export and ffmpeg command
-const clipExport = lazy('./clipexport');
+const rangecmd = lazy(() => require('./rangecmd')); // A-B frame export and ffmpeg command
+const clipExport = lazy(() => require('./clipexport'));
 const { syntheticRefusal } = require('./clipsource');
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
-const urlsource = lazy('./urlsource'); // Open Video URL… (docs/notes/url-stream.md)
+const urlsource = lazy(() => require('./urlsource')); // Open Video URL… (docs/notes/url-stream.md)
 
 const HIDE_SLOW_PLAYBACK_NOTICE = 'videoPreviewEnhanced.hideSlowPlaybackNotice';
 const HIDE_REDUCED_RES_NOTICE = 'videoPreviewEnhanced.hideReducedResNotice';

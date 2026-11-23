@@ -81,6 +81,8 @@ was waited for.
 ## Commands
 
 ```
+npm run verify:fast                  # static checks, also run by CI on Windows and Linux
+node tools/arch-inputs.js            # on-demand Git history, typecheck coverage and file sizes
 node test/run.js                     # layers 1-3 (npm test)
 node test/run.js unit engine         # layers 1-2 (npm run test:unit, test:engine): what CI runs
 node test/run.js vscode              # layer 3 (npm run test:vscode)
@@ -89,6 +91,13 @@ node test/run.js perf                # layer 4 (npm run test:perf)
 node test/run.js unit engine vscode --changed     # only what covers the files changed against main
 node test/run.js engine --grep frames_            # only matching files / scenarios
 ```
+
+`verify:fast` runs typecheck, dependency rules, Knip, source syntax checks, and the personal-data
+and Markdown link checks. The development tools require Node 20.19+ on the Node 20 line.
+Dependency rules cover statically resolvable imports. Knip reports on `src/` and reads test imports
+so test-only consumers count. Its CommonJS analysis can miss unused members in shorthand
+`module.exports` objects when it ignores exports referenced in their own file. Review reported
+exports against namespace and lazy consumers before removing them.
 
 - **Layers 1-2** (`test/layers.js`): every file in its own process (a Windows job object kills its children
   on timeout), as many at once as there are logical CPUs, one line per file, the output of failed files, one
