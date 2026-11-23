@@ -221,7 +221,8 @@ const unit = [
   { file: 'test/unit/compare_metrics_test.js', sources: ['media/compare-metrics.js', 'media/compare.js'] },
   { file: 'test/unit/comparerange_test.js', sources: ['media/comparerange.js', 'media/compare.js'] },
   { file: 'test/unit/gl_renderer_test.js', sources: ['media/gl-renderer.js', 'media/engine.js', 'media/compare.js'] },
-  { file: 'test/unit/stepgoal_test.js', sources: ['media/stepgoal.js', 'media/compare.js'] },
+  { file: 'test/unit/stepgoal_test.js', sources: ['media/stepgoal.js', 'media/compare-sync.js', 'media/compare.js'] },
+  { file: 'test/unit/compare_sync_test.js', sources: ['media/compare-sync.js', 'media/engine.js', 'media/stepgoal.js'] },
   { file: 'test/unit/timefmt_test.js', sources: ['media/timefmt.js', 'media/player.js', 'media/compare.js'] },
   { file: 'test/avi_test.js', args: ['test/media/cases/s_mjpeg.avi'], media: ['s_mjpeg.avi'], needs: ['ffmpeg'], sources: ['src/avi.js'] },
 ].filter((e) => fs.existsSync(path.join(ROOT, e.file)));

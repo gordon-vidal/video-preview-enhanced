@@ -95,15 +95,15 @@
   /**
    * A follower already decoding for this step gets to show its picture before a correction.
    * @param {{gen: number, seekTarget: number | null, pauseT: number, shownT: number | null,
-   *   queue: {t: number}[], eof: boolean}} tile
+   *   eof: boolean} & ({nextQueuedT: number | null} | {queue: {t: number}[]})} tile
    * @param {number} target @param {number} early @param {number} [stepGen]
    */
   function followerSeekAction(tile, target, early, stepGen) {
-    const next = tile.queue[0];
+    const next = 'nextQueuedT' in tile ? tile.nextQueuedT : tile.queue[0]?.t ?? null;
     const shownFits = tile.shownT !== null && tile.shownT <= target + early + 1e-6;
     if (tile.gen === stepGen && (tile.seekTarget !== null
-      || (next ? next.t <= tile.pauseT + early : shownFits && !tile.eof))) return 'wait';
-    if (tile.seekTarget === null && shownFits && (next ? next.t > target + early : tile.eof)) return 'keep';
+      || (next !== null ? next <= tile.pauseT + early : shownFits && !tile.eof))) return 'wait';
+    if (tile.seekTarget === null && shownFits && (next !== null ? next > target + early : tile.eof)) return 'keep';
     return 'seek';
   }
   // checkJs: end
