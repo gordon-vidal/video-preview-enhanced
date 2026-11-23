@@ -2,12 +2,17 @@
 // node test/host/lifecycle_fuzz_test.js: deterministic seeded fuzzing of host Session, CompareSession, and HttpFile
 // lifecycle, reload, stale-page/boot cancellation, malformed envelopes, and close-mid-read invariants.
 const assert = require('assert');
+const { EventEmitter } = require('events');
+const childProcess = require('child_process');
 const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
 const { load, webviewConfig } = require('./mock_vscode');
 const { HttpFile } = require('../../src/urlsource');
+const compareModule = require('../../src/compare');
+const { NativeDecoder } = require('../../src/native');
+const { RemoteStream } = require('../../src/remotestream');
 
 const RAW_SEED = process.env.VPE_FUZZ_SEED || '20261123';
 
@@ -89,17 +94,88 @@ async function runSuiteA(rng, tmpDir) {
   };
 
   const fakeFfmpeg = path.join(tmpDir, 'no_such_ffmpeg_bin');
-  const h = load({
-    settings: {
-      'videoPreviewEnhanced.decoder': 'builtin',
-      'videoPreviewEnhanced.ffmpegPath': fakeFfmpeg,
-    },
-  });
+  const children = [];
+  const thumbPath = require.resolve('../../src/thumbhost');
+  const previousThumb = require.cache[thumbPath];
+  const spawn = childProcess.spawn;
+  const registerCompare = compareModule.registerCompare;
+  let host;
+  compareModule.registerCompare = (context, deps) => {
+    host = deps;
+    return registerCompare(context, deps);
+  };
+  delete require.cache[thumbPath];
+  childProcess.spawn = () => {
+    const proc = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(), stderr: new EventEmitter(), kills: 0,
+      kill() { this.kills++; }, // Deliberately never emits close.
+    });
+    children.push(proc);
+    return proc;
+  };
+  try { require(thumbPath); } finally { childProcess.spawn = spawn; }
+  let h;
+  try {
+    h = load({
+      settings: {
+        'videoPreviewEnhanced.decoder': 'builtin',
+        'videoPreviewEnhanced.ffmpegPath': fakeFfmpeg,
+      },
+    });
+  } finally {
+    compareModule.registerCompare = registerCompare;
+    if (previousThumb) require.cache[thumbPath] = previousThumb;
+    else delete require.cache[thumbPath];
+  }
 
   try {
+    const first = h.open(file);
+    const firstSession = host.lastActivePlayer();
+    const second = h.open(file);
+    const session = host.lastActivePlayer();
+    await Promise.all([first.shown, second.shown]);
+    firstSession.watcher.emit('change', 'change', path.basename(file));
+    assert.ok(firstSession.watchTimer);
+    first.panel.dispose();
+    assert.strictEqual(firstSession.watchTimer, null);
+    first.panel.active = true;
+    first.setVisible(true); // A late callback must not restore a closed session.
+    assert.ok(firstSession.disposed);
+    assert.strictEqual(host.lastActivePlayer(), session);
+
+    for (const endPage of [() => session.reload(), () => second.panel.dispose()]) {
+      const native = new NativeDecoder({ file, tools: { ffmpeg: fakeFfmpeg }, probed: { video: { width: 80, height: 48 } } });
+      session.native = native;
+      const request = { page: session.page, id: 1, t: 0, w: 80, h: 48 };
+      const before = children.length;
+      session.sendThumb(request);
+      session.sendThumb({ ...request, id: 2 });
+      const thumbs = session.thumbChain;
+      await Promise.resolve();
+      const child = children.at(-1);
+      const childCount = children.length;
+      assert.strictEqual(childCount, before + 1);
+      child.stdout.emit('data', Buffer.alloc(128));
+      // Include a waiter with a separate signal, as range exports use their own controller.
+      const exportReply = session.grabFrame(0, new AbortController().signal);
+      assert.strictEqual(session.exportWait.size, 1);
+      const posts = second.posted.length;
+      endPage();
+      assert.strictEqual(session.exportWait.size, 0);
+      assert.strictEqual(session.thumbChain, null);
+      assert.strictEqual(child.kills, 1);
+      assert.deepStrictEqual(await exportReply, { error: 'export cancelled' });
+      await within(thumbs, 1000, 'thumbnail cancellation without child close');
+      assert.strictEqual(children.length, childCount, 'cancelled queued thumbnail must not spawn');
+      assert.strictEqual(second.posted.length, posts, 'cancelled thumbnails must not reply');
+    }
+    session.dispose();
+    assert.strictEqual(host.lastActivePlayer(), null);
+
     const episodes = 10;
     for (let ep = 0; ep < episodes; ep++) {
       const s = h.open(file);
+      const currentSession = host.lastActivePlayer();
       await s.shown;
       let curPage = webviewConfig(s.panel.webview).page;
       let bootSeq = 0;
@@ -251,6 +327,12 @@ async function runSuiteA(rng, tmpDir) {
       await sendRaw({ type: 'pref', boot: curBoot, key: 'jump.arrow', value: 10 });
       await Promise.all(pending);
       await tick(2);
+      assert.strictEqual(host.lastActivePlayer(), null);
+      assert.strictEqual(host.sessions.size, 0);
+      assert.strictEqual(currentSession.watchTimer, null);
+      assert.strictEqual(currentSession.watcher, null);
+      assert.strictEqual(currentSession.frames, null);
+      assert.strictEqual(currentSession.thumbChain, null);
 
       assert.strictEqual(
         s.posted.length,
@@ -287,6 +369,60 @@ async function runSuiteA(rng, tmpDir) {
     fs.promises.open = origOpen;
     h.dispose();
   }
+}
+
+function checkDecoderDisposal() {
+  const bytes = Buffer.alloc(64);
+  const native = new NativeDecoder({});
+  const stream = new RemoteStream({ probed: {}, audioEncoder: 'libopus' });
+  const makeProcess = () => ({
+    exitCode: null,
+    kills: 0,
+    stdout: { destroy() {} },
+    kill() { this.kills++; },
+  });
+  const proc = native.proc = makeProcess();
+  proc.raw = [bytes];
+  proc.stampQ = [{}];
+  proc.silence = setTimeout(assert.fail, 30000);
+  native.connectTimer = setTimeout(assert.fail, 30000);
+  native.frames = [bytes];
+  native.pending = bytes;
+  native.audioChunks = [bytes];
+  native.audioBytes = bytes.length;
+  native.credits = 2;
+  native.draining = true;
+  let closes = 0;
+  let settles = 0;
+  native.channel = { close() { closes++; native.dispose(); } };
+  native.settle = () => { settles++; };
+  native.dispose();
+  native.dispose();
+  assert.strictEqual(proc.kills, 1);
+  assert.strictEqual(closes, 1);
+  assert.strictEqual(settles, 1);
+  assert.strictEqual(proc.silence, null);
+  assert.strictEqual(native.connectTimer, null);
+  assert.deepStrictEqual([proc.raw, proc.stampQ, native.frames, native.audioChunks], [[], [], [], []]);
+  assert.strictEqual(native.pending.length + native.audioBytes + native.credits, 0);
+  assert.strictEqual(native.draining, false);
+
+  const video = stream.proc = makeProcess();
+  const audio = stream.audioProc = makeProcess();
+  stream.standby = makeProcess();
+  stream.standby.timer = setTimeout(assert.fail, 30000);
+  stream.startTimer = setTimeout(assert.fail, 30000);
+  stream.vAll = [bytes];
+  stream.aStore = [bytes];
+  stream.pending = stream.aRest = bytes;
+  stream.waiting = {};
+  stream.dispose();
+  stream.dispose();
+  assert.strictEqual(video.kills, 1);
+  assert.strictEqual(audio.kills, 1);
+  assert.deepStrictEqual([stream.vAll, stream.aStore], [[], []]);
+  assert.strictEqual(stream.pending.length + stream.aRest.length, 0);
+  assert.deepStrictEqual([stream.waiting, stream.ogg, stream.startTimer, stream.standby], [null, null, null, null]);
 }
 
 async function runSuiteB(rng, tmpDir) {
@@ -644,6 +780,7 @@ async function runSuiteC(rng) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `vpe_fuzz_${process.pid}_`));
   const t0 = Date.now();
   try {
+    checkDecoderDisposal();
     await runSuiteA(rng, tmpDir);
     await runSuiteB(rng, tmpDir);
     await runSuiteC(rng);

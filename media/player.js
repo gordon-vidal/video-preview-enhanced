@@ -32,6 +32,7 @@
   const initPrefs = cfg.prefs || {};
   /** @type {any} */
   let player = null;
+  let pageClosed = false;
   let loop = saved.loop !== undefined ? saved.loop : !!cfg.loop;
   let muted = saved.muted !== undefined ? !!saved.muted : true;
   const rawVol = saved.volume !== undefined ? Number(saved.volume) : initPrefs.volume !== undefined ? Number(initPrefs.volume) : 1;
@@ -218,7 +219,7 @@
         this.audioPending = true;
         a.play().catch((e) => {
           // Autoplay with sound needs a user gesture; continue muted.
-          if (e && e.name === 'NotAllowedError' && !muted) { setMute(true, false); this.syncAudio(true); }
+          if (!this.disposed && e && e.name === 'NotAllowedError' && !muted) { setMute(true, false); this.syncAudio(true); }
         }).finally(() => { this.audioPending = false; });
       }
     }
@@ -279,16 +280,34 @@
 
     onFrame(index, data) {
       createImageBitmap(new Blob([data])).then((bmp) => {
+        if (this.disposed) { bmp.close(); return; }
         this.inflight.delete(index);
         const old = this.bitmaps.get(index);
         if (old) old.close();
         this.bitmaps.set(index, bmp);
         if (this.shown < 0) showMessage('');
       }, (e) => {
+        if (this.disposed) return;
         this.inflight.delete(index);
         log(`frame ${index} failed to decode: ${e}`);
         if (this.shown < 0) showMessage(`Frame ${index + 1} could not be decoded.`);
       });
+    }
+
+    dispose() {
+      if (this.disposed) return;
+      this.disposed = true;
+      this.pause();
+      const audio = this.audio;
+      this.audio = null;
+      if (audio) {
+        URL.revokeObjectURL(audio.src);
+        audio.removeAttribute('src');
+        audio.load();
+      }
+      for (const bmp of this.bitmaps.values()) bmp.close();
+      this.bitmaps.clear();
+      this.inflight.clear();
     }
 
     snapshotSource() { return canvas; }
@@ -397,7 +416,7 @@
   const loopStats = { frames: 0, rests: 0 }; // test hook (state)
   function wakeLoop() {
     quietSince = null;
-    if (loopOn) return;
+    if (pageClosed || loopOn) return;
     loopOn = true;
     requestAnimationFrame(frameLoop);
   }
@@ -422,6 +441,7 @@
       && insp.idle() && !scopes.mode() && !(xray && xray.isShown()) && !exactNeeded();
   }
   function frameLoop(now) {
+    if (pageClosed) return;
     loopStats.frames++;
     let changed = false;
     if (player) {
@@ -463,7 +483,15 @@
   }
   requestAnimationFrame(frameLoop);
 
+  function disposePlayer() {
+    const previous = player;
+    player = null;
+    previous?.dispose();
+  }
+
   function begin(p, meta) {
+    if (pageClosed) { p.dispose(); return; }
+    if (player !== p) disposePlayer();
     player = p;
     p.ffmpeg = ffmpegState;
     subs.attach(p);
@@ -801,7 +829,6 @@
    * seek settles (VFR or gapped video can land on a neighbour: the host names files from it), or null.
    */
   const exportPage = new AbortController();
-  window.addEventListener('pagehide', () => exportPage.abort(), { once: true });
 
   function showFrame(k) {
     const p = player;
@@ -1376,7 +1403,18 @@
   // ---- Messages from the extension ----------------------------------------
 
   let pendingWav = null;
+  window.addEventListener('pagehide', () => {
+    if (pageClosed) return;
+    pageClosed = true;
+    exportPage.abort();
+    pendingWav = null;
+    const gl = player?.gl?.gl;
+    disposePlayer();
+    engine.dropPreload();
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+  }, { once: true });
   window.addEventListener('message', (e) => {
+    if (pageClosed) return;
     const m = e.data;
     if (m.boot !== undefined && m.boot !== boot) return;
     switch (m.type) {
@@ -1396,7 +1434,7 @@
         if (self.vpeMarks && !self.vpeMarks.libavMsg) self.vpeMarks.libavMsg = Math.round(performance.timeOrigin + performance.now());
         try {
           // Opened again (reload while opening): the first player must not keep decoding or call begin().
-          if (player && player.dispose) player.dispose();
+          disposePlayer();
           if (m.meta && m.meta.native) engine.dropPreload();
           const p = new engine.LibavPlayer(m.meta, cfg.engine);
           player = p;

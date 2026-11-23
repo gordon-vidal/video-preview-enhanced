@@ -2760,6 +2760,7 @@ function createEngine(env) {
     }
 
     dispose() {
+      if (this.disposed) return;
       this.disposed = true;
       this.loopCache = null;
       if (this.hdrOutput && this.hdrOutput.out) { this.hdrOutput.out.dispose(); this.gl.twin = null; }
@@ -2773,6 +2774,7 @@ function createEngine(env) {
       clearTimeout(this.readTimer);
       clearTimeout(this.acTimer);
       clearTimeout(this.acWakeTimer);
+      this.clearStepGoal();
       if (this.thumbs) this.thumbs.dispose();
       if (this.hostThumbWait) {
         for (const done of this.hostThumbWait.values()) done(null);

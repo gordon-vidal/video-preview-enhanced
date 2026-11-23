@@ -51,28 +51,31 @@ function decodeThumb(tools, file, src, t, bw, bh, log, signal) {
     const parts = [];
     let got = 0;
     let err = '';
-    let stopped = false;
+    // checkJs: start
     let settled = false;
-    const kill = () => {
-      if (stopped) return;
-      stopped = true;
-      try { proc.kill(); } catch { /* gone */ }
-    };
-    const timer = setTimeout(kill, 8000);
-    signal?.addEventListener('abort', kill, { once: true });
+    /** @param {{w: number, h: number, data: Uint8Array} | null} result */
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      signal?.removeEventListener('abort', kill);
+      signal?.removeEventListener('abort', cancel);
+      parts.length = 0;
       resolve(result);
     };
-    proc.stdout.on('data', (d) => { parts.push(d); got += d.length; });
-    proc.stderr.on('data', (d) => { if (err.length < 2000) err += d; });
+    const cancel = () => {
+      if (settled) return;
+      // A replaced page can release its job before the child emits close.
+      finish(null);
+      try { proc.kill('SIGKILL'); } catch { /* gone */ }
+    };
+    const timer = setTimeout(cancel, 8000);
+    signal?.addEventListener('abort', cancel, { once: true });
+    // checkJs: end
+    proc.stdout.on('data', (d) => { if (!settled) { parts.push(d); got += d.length; } });
+    proc.stderr.on('data', (d) => { if (!settled && err.length < 2000) err += d; });
     proc.on('error', (e) => { if (log && !signal?.aborted) log(`thumb ffmpeg: ${e.message}`); finish(null); });
     proc.on('close', () => {
       if (settled) return;
-      if (stopped) { finish(null); return; }
       if (got < want) { if (log && err) log(`thumb at ${t.toFixed(2)} s: ${err.trim().slice(0, 300)}`); finish(null); return; }
       finish({ w, h, data: Buffer.concat(parts, got).subarray(0, want) });
     });

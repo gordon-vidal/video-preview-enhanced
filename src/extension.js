@@ -1743,6 +1743,7 @@ class Session {
     panel.onDidDispose(() => this.dispose());
     // VS Code does not fire visibilitychange in webviews; tell the player directly.
     panel.onDidChangeViewState(() => {
+      if (this.disposed) return;
       if (panel.active) lastActive = this;
       if (!panel.visible) this.hiddenCount++;
       if (panel.visible && this.shown) this.startEarly();
@@ -1781,15 +1782,16 @@ class Session {
   /** Reload when the file is rewritten (render or capture loops), keeping the position. */
   watch() {
     if (this.sequence || !FS_SCHEMES.has(this.uri.scheme)) return;
-    let timer = null;
     let lastStamp = 0;
     try {
       this.watcher = fs.watch(path.dirname(this.file), (_ev, name) => {
+        if (this.disposed) return;
         if (name && name.toLowerCase() !== path.basename(this.file).toLowerCase()) return;
-        clearTimeout(timer);
-        timer = setTimeout(() => {
+        clearTimeout(this.watchTimer);
+        this.watchTimer = setTimeout(() => {
+          this.watchTimer = null;
           fs.stat(this.file, (err, st) => {
-            if (err || st.mtimeMs === lastStamp) return;
+            if (this.disposed || err || st.mtimeMs === lastStamp) return;
             lastStamp = st.mtimeMs;
             if (this.opened) this.reload();
             else this.dropEarly('file changed'); // the page's open() probes the new file
@@ -1870,17 +1872,24 @@ class Session {
   }
 
   resetPage() {
+    this.closePage('reload');
+    this.pageAbort = new AbortController();
+  }
+
+  closePage(why) {
     this.loadGen = (this.loadGen || 0) + 1;
     this.pageAbort.abort();
-    this.pageAbort = new AbortController();
     this.thumbChain = null;
     this.exporting = null;
+    this.onShown = null;
+    if (this.exportWait) for (const finish of this.exportWait.values()) finish({ error: 'export cancelled' });
     this.hlsPlan = null;
-    this.exact.cancel();
+    if (this.disposed) this.exact.dispose();
+    else this.exact.cancel();
     this.closeBenchChannels();
     this.webviewOrigin = null;
     this.closeFile();
-    this.dropEarly('reload'); // the new page probes the file again
+    this.dropEarly(why);
     if (this.native) { this.native.dispose(); this.native = null; }
     this.frames = null;
   }
@@ -2975,7 +2984,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
 
   /** Asks the page for frame k (0-based) as PNG bytes; resolves with {data} or {error}. */
   grabFrame(frame, signal) {
-    if (signal.aborted) return Promise.resolve({ error: 'export cancelled' });
+    if (this.pageAbort.signal.aborted || signal.aborted) return Promise.resolve({ error: 'export cancelled' });
     if (!this.exportWait) { this.exportWait = new Map(); this.exportSeq = 0; }
     const id = ++this.exportSeq;
     return new Promise((resolve) => {
@@ -3252,17 +3261,16 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
 
   dispose() {
     if (this.disposed) return;
-    if (logFile) log(`[${this.name}] session closed`);
-    sessions.delete(this);
-    if (this.pos && this.pos !== this.savedPos) this.savePos();
     this.disposed = true;
-    this.pageAbort.abort();
-    this.exact.dispose();
-    this.closeBenchChannels();
-    if (this.watcher) this.watcher.close();
-    this.closeFile();
-    this.dropEarly('closed');
-    if (this.native) { this.native.dispose(); this.native = null; }
+    sessions.delete(this);
+    if (lastActive === this) lastActive = null;
+    if (logFile) log(`[${this.name}] session closed`);
+    clearTimeout(this.watchTimer);
+    this.watchTimer = null;
+    if (this.watcher) { this.watcher.close(); this.watcher = null; }
+    this.closePage('closed');
+    this.boots.clear();
+    if (this.pos && this.pos !== this.savedPos) this.savePos();
   }
 }
 

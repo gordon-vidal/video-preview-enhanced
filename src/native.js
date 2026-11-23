@@ -138,6 +138,7 @@ class NativeDecoder {
   }
 
   async handle(m) {
+    if (this.disposed) return undefined;
     switch (m.type) {
       case 'open': return this.open(m);
       case 'config': return this.post({ type: 'configured', video: this.pr.video ? 'soft' : 'none', audio: this.pr.audio ? 'soft' : 'none' });
@@ -332,7 +333,12 @@ class NativeDecoder {
     this.log(`native transport: message (${why})`);
     this.settled();
     // A large grid re-sizes all its tiles together for the message budget, also before ffmpeg starts.
-    if (this.onMessages && (restart || this.largeGrid)) setTimeout(() => { if (!this.disposed && this.onMessages) this.onMessages(); }, 0);
+    if (this.onMessages && (restart || this.largeGrid)) {
+      this.messagesTimer = setTimeout(() => {
+        this.messagesTimer = null;
+        if (!this.disposed && this.onMessages) this.onMessages();
+      }, 0);
+    }
     // open() will choose the message size before starting ffmpeg; after a hidden tab stopped it, the next seek does.
     if (!restart) { if (this.fps && this.w) this.resizePending = true; return; }
 
@@ -375,6 +381,7 @@ class NativeDecoder {
       // copied: the frame server writes the list as it is (one writev), postMessage joins it once.
       let parts = [];
       let have = 0;
+      proc.clearPartialFrame = () => { parts = []; have = 0; };
       proc.stdout.on('data', (d) => {
         if (proc !== this.proc) return;
         const h0 = this.stats ? process.hrtime.bigint() : 0n;
@@ -758,18 +765,36 @@ class NativeDecoder {
   kill() {
     const proc = this.proc;
     this.proc = null;
-    if (proc && proc.exitCode === null) proc.kill("SIGKILL");
+    if (!proc) return;
+    proc.clearPartialFrame?.();
+    clearTimeout(proc.silence);
+    proc.silence = null;
+    if (proc.raw) proc.raw.length = 0;
+    if (proc.stampQ) proc.stampQ.length = 0;
+    // A paused stdout can otherwise keep unread pictures after the process exits.
+    proc.stdout?.destroy?.();
+    if (proc.exitCode === null && !proc.signalCode) proc.kill("SIGKILL");
   }
 
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
     clearTimeout(this.connectTimer);
-    if (this.channel) { this.channel.close(); this.channel = null; }
+    clearTimeout(this.messagesTimer);
+    this.connectTimer = null;
+    this.messagesTimer = null;
+    const channel = this.channel;
+    this.channel = null;
+    if (channel) channel.close();
     this.settled();
     this.kill();
     this.takeStandby(NaN);
     this.frames = [];
     this.audioChunks = [];
+    this.pending = Buffer.alloc(0);
+    this.audioBytes = this.credits = 0;
+    this.draining = false;
+    this.early = null;
   }
 }
 

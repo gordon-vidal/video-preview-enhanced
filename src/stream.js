@@ -775,11 +775,18 @@ class EncodedStream {
   }
 
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
     clearTimeout(this.startTimer);
     this.startTimer = null;
     this.kill();
     this.takeStandby(NaN);
+    this.vAll = [];
+    this.aStore = [];
+    this.pending = Buffer.alloc(0);
+    this.aRest = Buffer.alloc(0);
+    this.ogg = null;
+    this.waiting = null;
   }
 }
 
