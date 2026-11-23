@@ -180,7 +180,9 @@ submodules; never force-deletes.
 function gitRun(cwd, args) {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   if (r.error) throw r.error;
-  return { status: typeof r.status === 'number' ? r.status : 1, stdout: r.stdout || '', stderr: r.stderr || '' };
+  if (r.signal) throw new Error(`git ${args[0]} terminated by signal ${r.signal}`);
+  if (typeof r.status !== 'number') throw new Error(`git ${args[0]} exited without status`);
+  return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
 /**
@@ -267,8 +269,37 @@ function resolveBase(cwd, base, baseExplicit) {
   const localCommit = resolveCommit(`refs/heads/${base}`);
   if (localCommit) return { ref: base, commit: localCommit, branch: base };
   const anyCommit = resolveCommit(base);
-  if (anyCommit) return { ref: base, commit: anyCommit, branch: null };
+  if (anyCommit) {
+    // Preserve local branch identity for shorthands like `heads/release` or `@{-1}`.
+    const full = gitRun(cwd, ['rev-parse', '--symbolic-full-name', base]);
+    const fullRef = full.status === 0 ? full.stdout.trim() : '';
+    const branch = fullRef.startsWith('refs/heads/') ? fullRef.slice('refs/heads/'.length) : null;
+    return { ref: base, commit: anyCommit, branch };
+  }
   throw new Error(`unknown base ref: ${base}`);
+}
+
+/**
+ * Returns the local branch name reserved by an in-progress rebase or bisect in `gitDir`, if any.
+ * During a detached rebase/bisect, `git worktree list` omits `branch` even though `git branch -d` refuses deletion.
+ * @param {string|null|undefined} gitDir
+ * @returns {string|null}
+ */
+function inProgressBranch(gitDir) {
+  if (!gitDir) return null;
+  for (const rel of ['rebase-merge/head-name', 'rebase-apply/head-name']) {
+    const p = path.join(gitDir, rel);
+    if (!fs.existsSync(p)) continue;
+    const raw = fs.readFileSync(p, 'utf8').trim();
+    if (raw.startsWith('refs/heads/')) return raw.slice('refs/heads/'.length);
+  }
+  const bisect = path.join(gitDir, 'BISECT_START');
+  if (fs.existsSync(bisect)) {
+    const raw = fs.readFileSync(bisect, 'utf8').trim();
+    if (raw && !raw.startsWith('refs/')) return raw;
+    if (raw.startsWith('refs/heads/')) return raw.slice('refs/heads/'.length);
+  }
+  return null;
 }
 
 /**
@@ -347,15 +378,23 @@ function plan({ cwd, base, baseExplicit = base !== 'main' }) {
     const wtCopy = { ...wt, path: wt.path };
     /** @type {Decision} */
     let d;
+    /** @type {string|null} */
+    let reserved = null;
     try {
-      if (ctx.exists(wt.path)) wtCopy.gitDir = gitDirOf(wt.path);
+      if (ctx.exists(wt.path)) {
+        wtCopy.gitDir = gitDirOf(wt.path);
+        reserved = inProgressBranch(wtCopy.gitDir);
+      }
       d = classifyWorktree(wtCopy, ctx);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       errors.push({ kind: 'worktree', label: wt.path, error: msg });
       d = { action: 'skip', reason: `inspection error: ${msg}` };
     }
-    if (d.action === 'skip' && wt.branch) keptBranches.add(wt.branch);
+    if (d.action === 'skip') {
+      if (wt.branch) keptBranches.add(wt.branch);
+      if (reserved) keptBranches.add(reserved);
+    }
     plannedWorktrees.push({ path: wt.path, branch: wt.branch, head: wt.head, ...d });
   }
 

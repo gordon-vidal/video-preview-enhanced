@@ -233,6 +233,32 @@ function edgeCases() {
     assert.strictEqual(gc.isAncestor(repo, commitA, mainTip), true);
     assert.strictEqual(gc.isAncestor(repo, mainTip, commitA), false);
     assert.throws(() => gc.isAncestor(repo, '0000000000000000000000000000000000000000', mainTip));
+
+    // 6. --base heads/release preserves local branch identity so neither `release` nor its worktree is deleted.
+    git(repo, 'worktree', 'add', '-q', '-b', 'release', path.join(root, 'w-release'), mainTip);
+    const byHeads = run(repo, ['--base', 'heads/release', '--json']);
+    assert.strictEqual(byHeads.code, 0, byHeads.err);
+    const bhj = JSON.parse(byHeads.text);
+    const relWt = bhj.worktrees.find((w) => w.branch === 'release');
+    const relBr = bhj.branches.find((b) => b.name === 'release');
+    assert.strictEqual(relWt.action, 'skip');
+    assert.match(relWt.reason, /base branch/);
+    assert.strictEqual(relBr.action, 'skip');
+    assert.match(relBr.reason, /base branch/);
+
+    // 7. A branch reserved by an in-progress rebase (detached HEAD in linked worktree) is protected in dry-run.
+    git(repo, 'worktree', 'add', '-q', '-b', 'rebasing', path.join(root, 'w-rebase'), mainTip);
+    const rebaseDir = path.join(root, 'w-rebase');
+    const rebaseGitDir = path.resolve(rebaseDir, git(rebaseDir, 'rev-parse', '--git-dir'));
+    git(rebaseDir, 'checkout', '-q', '--detach', mainTip);
+    fs.mkdirSync(path.join(rebaseGitDir, 'rebase-merge'), { recursive: true });
+    fs.writeFileSync(path.join(rebaseGitDir, 'rebase-merge', 'head-name'), 'refs/heads/rebasing\n');
+    const rebPlan = run(repo, ['--json']);
+    assert.strictEqual(rebPlan.code, 0, rebPlan.err);
+    const rpj = JSON.parse(rebPlan.text);
+    const rebBr = rpj.branches.find((b) => b.name === 'rebasing');
+    assert.strictEqual(rebBr.action, 'skip', 'branch under active rebase must not be planned for deletion');
+    assert.match(rebBr.reason, /stays/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
   }
