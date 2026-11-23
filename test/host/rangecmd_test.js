@@ -292,6 +292,67 @@ assert.strictEqual(args.at(-1), 'target.mp4');
       existingFiles = [];
     }
 
+    // 11. Accepting preflight overwrite for clip_f000001.png does NOT authorize overwriting an unapproved off-grid clip_f000007.png.
+    grabbed.length = 0; written.length = 0; warnings.length = 0;
+    existingFiles = ['clip_f000001.png', 'clip_f000007.png'];
+    inputReply = '5';
+    let overwriteCalls = 0;
+    const origWarn = h.vscode.window.showWarningMessage;
+    h.vscode.window.showWarningMessage = async (msg) => {
+      warnings.push(msg);
+      if (msg.startsWith('Overwrite ')) {
+        overwriteCalls++;
+        return overwriteCalls === 1 ? 'Overwrite' : 'Cancel'; // approve preflight, decline off-grid
+      }
+      return origWarn(msg);
+    };
+    const normalPost2 = s.panel.webview.postMessage;
+    s.panel.webview.postMessage = (m) => {
+      if (m.type === 'exportGrab') {
+        grabbed.push(m.frame);
+        const settled = m.frame === 5 ? 6 : m.frame;
+        queueMicrotask(() => {
+          s.send({ type: 'exportFrame', page, id: m.id, frame: settled, data: Uint8Array.of(settled + 1) });
+        });
+        return origPost(m);
+      }
+      return normalPost2(m);
+    };
+    try {
+      await s.send({ type: 'exportRange', page, range: { fa: 0, fb: 10, fps: 30 } });
+      assert.strictEqual(warnings.length, 2);
+      assert.ok(warnings[0].startsWith('Overwrite 1 existing file?'), warnings[0]);
+      assert.ok(warnings[1].startsWith('Overwrite existing file clip_f000007.png?'), warnings[1]);
+      assert.deepStrictEqual(written, [['clip_f000001.png', 1]]);
+    } finally {
+      h.vscode.window.showWarningMessage = origWarn;
+      s.panel.webview.postMessage = normalPost2;
+      existingFiles = [];
+    }
+
+    // 12. Failed readDirectory still protects existing files via stat (including case-insensitive/concurrent files).
+    grabbed.length = 0; written.length = 0; warnings.length = 0;
+    const origReadDir = h.vscode.workspace.fs.readDirectory;
+    const origStat = h.vscode.workspace.fs.stat;
+    h.vscode.workspace.fs.readDirectory = async () => { throw new Error('EACCES'); };
+    h.vscode.workspace.fs.stat = async (uri) => {
+      if (path.basename(uri.fsPath).toLowerCase() === 'clip_f000006.png') return { type: 1, size: 10 };
+      const err = new Error('not found');
+      err.code = 'FileNotFound';
+      throw err;
+    };
+    inputReply = '5';
+    overwriteReply = 'Cancel';
+    try {
+      await s.send({ type: 'exportRange', page, range: { fa: 0, fb: 10, fps: 30 } });
+      assert.strictEqual(warnings.length, 1);
+      assert.ok(warnings[0].startsWith('Overwrite existing file clip_f000006.png?'), warnings[0]);
+      assert.deepStrictEqual(written, [['clip_f000001.png', 1]]);
+    } finally {
+      h.vscode.workspace.fs.readDirectory = origReadDir;
+      h.vscode.workspace.fs.stat = origStat;
+    }
+
     console.log('rangecmd: ok');
   } finally {
     s.panel.dispose();
