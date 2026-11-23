@@ -116,6 +116,8 @@ ${barHtml({ compare: true })}
 <script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
 ${large ? `<script nonce="${nonce}" src="${uri('membudget.js')}"></script>
 ` : ''}<script nonce="${nonce}" src="${uri('compare-grid.js')}"></script>
+<script nonce="${nonce}" src="${uri('compare-metrics.js')}"></script>
+<script nonce="${nonce}" src="${uri('compare-debug.js')}"></script>
 <script nonce="${nonce}" src="${uri('compare.js')}"></script>
 </body></html>`;
 }

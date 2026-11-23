@@ -59,6 +59,7 @@
   const largeGrid = Grid.isLarge(N);
   /** Metrics and the difference search: kept in code for a future advanced mode; only debug builds run them. */
   const INTERNAL = !!cfg.debug;
+  const { captureLuma, computeMetrics, ssim } = VpeCompareMetrics;
 
   const log = (/** @type {any[]} */ ...a) => vscode.postMessage({ type: 'log', msg: a.map(String).join(' ') });
   window.addEventListener('error', (e) => log('error:', e.message, `${e.filename}:${e.lineno}`));
@@ -188,7 +189,8 @@
     p.key = key;
     p.budget = () => budget;
     p.setLoop(false);
-    if (!largeGrid) captureLuma(p); // metrics are for 2 videos; a clone of every frame of 16 tiles is not free
+    // Metrics are for two videos. Cloning every frame in a large grid is expensive.
+    if (!largeGrid) captureLuma(p, typeof VpeGlRenderer !== 'undefined' ? VpeGlRenderer : undefined);
     if (quiet) {
       const streams = p.onStreams.bind(p);
       p.onStreams = (info) => streams({ ...info, audio: null });
@@ -200,92 +202,6 @@
     Object.defineProperty(p, 'behindUntil', { get: () => (p.isFollower ? 0 : p.behindRaw || 0), set: (v) => { p.behindRaw = v; }, configurable: true });
     engines[key] = p;
     return p;
-  }
-
-  /**
-   * Keeps the last drawn frame's source so metrics can use the decoded luma plane
-   * itself (exact, like ffmpeg) instead of luma recovered from RGB. Uses the
-   * renderer's explicit onFrame capture contract (media/gl-renderer.js).
-   * Software frames: a reference to the YUV object (read on demand; if a later
-   * frame path recycles or detaches its buffer, metrics fall back to RGB).
-   * WebCodecs frames: a clone of the VideoFrame (released when the next one is drawn).
-   */
-  function captureLuma(p) {
-    const g = p.gl;
-    if (!g) return;
-    const keep = (snap) => {
-      const old = p.lumaSrc;
-      if (old && old.vf) { try { old.vf.close(); } catch { /* closed */ } }
-      p.lumaSrc = snap;
-    };
-    const onFrame = (frame) => {
-      if (!frame) { keep(null); return; }
-      if (frame.yuv) { keep({ yuv: frame.yuv }); return; }
-      if (frame.vf) {
-        let c = null;
-        try { c = frame.vf.clone(); } catch { /* unsupported */ }
-        keep(c ? { vf: c } : null);
-      }
-    };
-    if (typeof VpeGlRenderer !== 'undefined' && typeof VpeGlRenderer.setCapture === 'function') {
-      VpeGlRenderer.setCapture(g, onFrame);
-    } else {
-      g.onFrame = onFrame;
-    }
-    if (typeof g.dispose !== 'function') {
-      const dispose = p.dispose.bind(p);
-      p.dispose = () => { keep(null); dispose(); };
-    }
-  }
-
-  /** The shown frame's luma plane as {data, w, h, depth}, or null when it can't be had. */
-  async function lumaOf(p) {
-    const s = p.lumaSrc;
-    if (!s) return null;
-    if (s.luma !== undefined) return s.luma;
-    let out = null;
-    try {
-      if (s.yuv) {
-        const f = s.yuv;
-        const depth = f.depth || 8;
-        const L = f.layout && f.layout[0];
-        if (L && f.data && f.data.byteLength) {
-          const w = f.width, h = f.height;
-          if (depth > 8) {
-            const src = new Uint16Array(f.data.buffer, f.data.byteOffset, f.data.byteLength >> 1);
-            const d = new Uint16Array(w * h);
-            const o = L.offset >> 1, st2 = L.stride >> 1;
-            for (let y = 0; y < h; y++) d.set(src.subarray(o + y * st2, o + y * st2 + w), y * w);
-            out = { data: d, w, h, depth };
-          } else {
-            const d = new Uint8Array(w * h);
-            for (let y = 0; y < h; y++) d.set(f.data.subarray(L.offset + y * L.stride, L.offset + y * L.stride + w), y * w);
-            out = { data: d, w, h, depth };
-          }
-        }
-      } else if (s.vf) {
-        const vf = s.vf;
-        // Planar or semi-planar 8-bit: plane 0 is luma.
-        if (/^(I420|I420A|I422|I444|NV12)$/.test(vf.format || '')) {
-          const vr = vf.visibleRect || { x: 0, y: 0, width: vf.codedWidth, height: vf.codedHeight };
-          const buf = new Uint8Array(vf.allocationSize());
-          const layout = await vf.copyTo(buf);
-          const L = layout[0];
-          const vw = vr.width, vh = vr.height;
-          const d = new Uint8Array(vw * vh);
-          for (let y = 0; y < vh; y++) {
-            const o = L.offset + (vr.y + y) * L.stride + vr.x;
-            d.set(buf.subarray(o, o + vw), y * vw);
-          }
-          out = { data: d, w: vw, h: vh, depth: 8 };
-        }
-      }
-    } catch (e) {
-      log(`luma read failed: ${e && e.message || e}`);
-      out = null;
-    }
-    if (p.lumaSrc === s) s.luma = out;
-    return out;
   }
 
   /** @type {any[]} the tiles' engines, indexed by the host's file order */
@@ -782,187 +698,8 @@
     return out;
   }
 
-  // ---- metrics ----------------------------------------------------------------------
-
-  const COPY_FS = `#version 300 es
-    precision highp float;
-    in vec2 uv; out vec4 o; uniform sampler2D t;
-    void main() { o = vec4(texture(t, uv).rgb, 1.0); }`;
-
-  /** Reads two pictures back at the first one's size and computes PSNR / SSIM on the CPU. */
-  class Metrics {
-    constructor() {
-      const cv = document.createElement('canvas');
-      cv.width = 4; cv.height = 4;
-      const gl = cv.getContext('webgl2', { alpha: false, antialias: false });
-      if (!gl) throw new Error('WebGL2 is not available');
-      this.gl = gl;
-      const { u } = glProgram(gl, COPY_FS);
-      gl.uniform1f(u('flip'), -1); // FBO row 0 = top of the picture, so rows read back top-down
-      gl.uniform1i(u('t'), 0);
-      this.tex = glTexture(gl, 0, gl.LINEAR);
-      this.fbo = gl.createFramebuffer();
-      this.rt = gl.createTexture();
-      this.w = 0; this.h = 0;
-    }
-    readBack(src, w, h, out) {
-      const gl = this.gl;
-      gl.bindTexture(gl.TEXTURE_2D, this.tex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, out);
-    }
-    /**
-     * @param {HTMLCanvasElement} a reference picture (its size is used)
-     * @param {HTMLCanvasElement} b scaled to a's size
-     * @param {{ssim?: boolean, matrix: number}} opt
-     */
-    measure(a, b, opt) {
-      const gl = this.gl;
-      const w = a.width, h = a.height;
-      if (!w || !h || !b.width) return null;
-      if (w !== this.w || h !== this.h) {
-        this.w = w; this.h = h;
-        gl.bindTexture(gl.TEXTURE_2D, this.rt);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.rt, 0);
-        gl.viewport(0, 0, w, h);
-        this.pa = new Uint8Array(w * h * 4);
-        this.pb = new Uint8Array(w * h * 4);
-        this.ya = new Uint8Array(w * h);
-        this.yb = new Uint8Array(w * h);
-      }
-      gl.activeTexture(gl.TEXTURE0);
-      this.readBack(a, w, h, this.pa);
-      this.readBack(b, w, h, this.pb);
-      return computeMetrics(this.pa, this.pb, this.ya, this.yb, w, h, opt);
-    }
-  }
-
-  /**
-   * PSNR of R, G, B and of luma Y, plus SSIM of Y when asked.
-   * Y is limited range (16-235), as the decoder had it: recovered from RGB with the
-   * reference frame's matrix weights and rounded.
-   */
-  function computeMetrics(pa, pb, ya, yb, w, h, opt) {
-    const [kr, kb] = opt.matrix === 2020 ? [0.2627, 0.0593] : opt.matrix === 709 ? [0.2126, 0.0722] : [0.299, 0.114];
-    const kg = 1 - kr - kb;
-    const s = 219 / 255;
-    let er = 0, eg = 0, eb = 0, ey = 0;
-    const n = w * h;
-    for (let i = 0, j = 0; i < n; i++, j += 4) {
-      const r1 = pa[j], g1 = pa[j + 1], b1 = pa[j + 2];
-      const r2 = pb[j], g2 = pb[j + 1], b2 = pb[j + 2];
-      const dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
-      er += dr * dr; eg += dg * dg; eb += db * db;
-      const y1 = Math.round(16 + s * (kr * r1 + kg * g1 + kb * b1));
-      const y2 = Math.round(16 + s * (kr * r2 + kg * g2 + kb * b2));
-      ya[i] = y1; yb[i] = y2;
-      const dy = y1 - y2;
-      ey += dy * dy;
-    }
-    const psnr = (mse) => (mse > 0 ? 10 * Math.log10((255 * 255) / mse) : Infinity);
-    const mseRgb = (er + eg + eb) / (3 * n);
-    const res = { psnrY: psnr(ey / n), psnrRGB: psnr(mseRgb), mseY: ey / n, mseRGB: mseRgb, ssimY: NaN, w, h };
-    if (opt.ssim) res.ssimY = ssim(ya, yb, w, h);
-    return res;
-  }
-
-  /**
-   * SSIM over 8x8 windows on a 4-pixel grid (sums of 4x4 blocks, combined 2x2),
-   * mean over all windows. C1 = (0.01*255)^2, C2 = (0.03*255)^2, unbiased variances.
-   */
-  function ssim(x, y, w, h, peak = 255) {
-    const bw = w >> 2, bh = h >> 2;
-    if (bw < 2 || bh < 2) return NaN;
-    const s1 = new Float64Array(bw * bh), s2 = new Float64Array(bw * bh), ss = new Float64Array(bw * bh), s12 = new Float64Array(bw * bh);
-    for (let by = 0; by < bh; by++) {
-      for (let bx = 0; bx < bw; bx++) {
-        let a1 = 0, a2 = 0, aa = 0, a12 = 0;
-        for (let yy = 0; yy < 4; yy++) {
-          let o = (by * 4 + yy) * w + bx * 4;
-          for (let xx = 0; xx < 4; xx++, o++) {
-            const p = x[o], q = y[o];
-            a1 += p; a2 += q; aa += p * p + q * q; a12 += p * q;
-          }
-        }
-        const k = by * bw + bx;
-        s1[k] = a1; s2[k] = a2; ss[k] = aa; s12[k] = a12;
-      }
-    }
-    const N = 64;
-    const C1 = (0.01 * peak) ** 2 * N * N;
-    const C2 = (0.03 * peak) ** 2 * N * (N - 1);
-    let sum = 0;
-    for (let by = 0; by < bh - 1; by++) {
-      for (let bx = 0; bx < bw - 1; bx++) {
-        const k = by * bw + bx;
-        const k2 = k + bw;
-        const S1 = s1[k] + s1[k + 1] + s1[k2] + s1[k2 + 1];
-        const S2 = s2[k] + s2[k + 1] + s2[k2] + s2[k2 + 1];
-        const SS = ss[k] + ss[k + 1] + ss[k2] + ss[k2 + 1];
-        const S12 = s12[k] + s12[k + 1] + s12[k2] + s12[k2 + 1];
-        const vars = SS * N - S1 * S1 - S2 * S2;
-        const covar = S12 * N - S1 * S2;
-        sum += ((2 * S1 * S2 + C1) * (2 * covar + C2)) / ((S1 * S1 + S2 * S2 + C1) * (vars + C2));
-      }
-    }
-    return sum / ((bw - 1) * (bh - 1));
-  }
-
-  /** PSNR (and SSIM) of two luma planes of the same size and depth. */
-  function lumaMetrics(la, lb, wantSsim) {
-    const a = la.data, b = lb.data;
-    let e = 0;
-    for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; e += d * d; }
-    const peak = (1 << la.depth) - 1;
-    const mse = e / a.length;
-    const r = { psnrY: mse > 0 ? 10 * Math.log10((peak * peak) / mse) : Infinity, mseY: mse, ssimY: NaN };
-    if (wantSsim) r.ssimY = ssim(a, b, la.w, la.h, peak);
-    return r;
-  }
-
-  /**
-   * Metrics of two engines' shown frames. Luma comes from the decoded planes when both
-   * have them at the same size and depth (exact); otherwise from the RGB pictures.
-   * RGB PSNR is always from the pictures as shown (B scaled to A's size).
-   */
-  async function pairMetrics(pa, pb, { ssim: wantSsim, rgb }) {
-    const [la, lb0] = await Promise.all([lumaOf(pa), lumaOf(pb)]);
-    const planes = !!(la && lb0 && la.depth === lb0.depth && (pa.gl.rot || 0) === (pb.gl.rot || 0));
-    const exact = planes && la.w === lb0.w && la.h === lb0.h;
-    // Another size: B's plane resized to A's (bilinear), still free of colour-matrix guesses.
-    const lb = planes && !exact ? resizeLuma(lb0, la.w, la.h) : lb0;
-    let m = null;
-    if (rgb || !planes) m = getMetrics().measure(pa.cv, pb.cv, { ssim: wantSsim && !planes, matrix: pa.shownMatrix(true) });
-    if (planes) m = { ...(m || { psnrRGB: NaN, w: pa.cv.width, h: pa.cv.height }), ...lumaMetrics(la, lb, wantSsim) };
-    if (m) m.exactY = exact;
-    return m;
-  }
-
-  /** Bilinear resize of a luma plane (pixel centres aligned), rounded to integers. */
-  function resizeLuma(l, w, h) {
-    const src = l.data, sw = l.w, sh = l.h;
-    const d = l.depth > 8 ? new Uint16Array(w * h) : new Uint8Array(w * h);
-    const fx = sw / w, fy = sh / h;
-    for (let y = 0; y < h; y++) {
-      const sy = Math.max(0, Math.min(sh - 1, (y + 0.5) * fy - 0.5));
-      const y0 = Math.floor(sy), y1 = Math.min(sh - 1, y0 + 1), ty = sy - y0;
-      for (let x = 0; x < w; x++) {
-        const sx = Math.max(0, Math.min(sw - 1, (x + 0.5) * fx - 0.5));
-        const x0 = Math.floor(sx), x1 = Math.min(sw - 1, x0 + 1), tx = sx - x0;
-        const a = src[y0 * sw + x0] * (1 - tx) + src[y0 * sw + x1] * tx;
-        const b = src[y1 * sw + x0] * (1 - tx) + src[y1 * sw + x1] * tx;
-        d[y * w + x] = Math.round(a * (1 - ty) + b * ty);
-      }
-    }
-    return { data: d, w, h, depth: l.depth };
-  }
-
   /** @type {Compositor|null} */ let comp = null;
-  /** @type {Metrics|null} */ let metrics = null;
-  const getMetrics = () => (metrics = metrics || new Metrics());
+  const { pairMetrics, hasReadback, resetReadback } = VpeCompareMetrics.install({ glProgram, glTexture, log });
 
   // ---- layout: cells and the pictures in them ---------------------------------------------
 
@@ -2539,9 +2276,10 @@
       delete engines[p.key];
     }
     renderer?.dispose?.({ loseContext: true });
-    for (const r of [comp, metrics]) r?.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    comp?.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    resetReadback();
     tiles = [];
-    clock = comp = metrics = renderer = scratch = null;
+    clock = comp = renderer = scratch = null;
   }
   window.addEventListener('pagehide', disposeEngines, { once: true });
 
@@ -2742,162 +2480,15 @@
     measure: (opt) => pairMetrics(tiles[0], tiles[1], { ssim: true, rgb: true, ...opt }),
   };
 
-  // Test hook (VPE_LOG only): the host forwards debug messages from the test runner.
-  function report() {
-    const per = (f) => tiles.map(f).join(',');
-    const g = Grid.gridFor(N, st.mode);
-    log(`compare report n=${N} mode=${st.mode} modes=${N > 2 ? 'grid' : 'side,split'} canvas=${canvas.width}x${canvas.height} grid=${g.cols}x${g.rows} max=${MAX_TILES} now=${Math.round(performance.now())}`
-      // WebGL contexts in use: the compositor, the shared renderer (5+ tiles), each engine's own (2-4 tiles), metrics.
-      + ` contexts=${[comp, renderer, metrics].filter(Boolean).length + tiles.filter((p) => p.gl && p.gl.gl).length}`
-      + ` frame=${clock ? clock.currentFrame() + 1 : '-'} clock=${st.clock} sound=${st.sound} muted=${st.muted} split=${st.split.toFixed(3)} swap=${N === 2 && st.order[0] === 1}`
-      + ` playing=${per((p) => (p.playing ? 1 : 0))} frames=${per((p) => (p.shownT === null ? '-' : frameOf(p) + 1))} shown=${per((p) => p.shownCount || 0)}`
-      + ` pts=${per((p) => p.shownT === null ? '-' : p.rel(p.shownT).toFixed(6))} srcs=${per((p) => (p.shownT === null || !p.shownMarkTime ? '-' : p.shownMarkTime().toFixed(6)))} targets=${per((p) => p.startT === null ? '-' : p.rel(p.pauseT).toFixed(6))}`
-      + ` synced=${synced()} native=${per((p) => (p.cfg.native ? 1 : 0))} heights=${per((p) => p.cv.height || 0)} fps=${per((p) => fpsOf(p).toFixed(2))}`
-      + ` widths=${per((p) => p.cv.width || 0)} stage=${tileSize().w}x${tileSize().h}`
-      + ` transport=${per((p) => p.frameStream ? 'stream' : p.cfg.native ? 'message' : '-')}`
-      + ` gains=${per((p) => (p.gain ? p.gain.gain.value.toFixed(2) : 'x'))} audio=${per((p) => (p.info && p.info.audio ? 1 : 0))}`
-      + ` offsets=${st.offsets.map((o) => `${o.v}${o.unit === 'ms' ? 'ms' : 'f'}`).join(',')} seekMax=${ui.seek.max}`
-      + ` picture=${st.pic.mode} zoom=${st.pic.zoom.toFixed(3)} cx=${st.pic.cx.toFixed(3)} cy=${st.pic.cy.toFixed(3)} factor=${frameFactor()} fulls=${cells.filter((c) => !c.add).map((c) => [c.full.x, c.full.y, c.full.w, c.full.h].map(Math.round).join('/')).join(';')} cells=${cells.filter((c) => !c.add).length} add=${cells.some((c) => c.add)} divider=${!!cellsEl.querySelector('#divider')} panel=${controls.view() || '-'} menu=${!ui.menu.hidden}`
-      + ` rate=${st.rate} loop=${st.loop} scan=${scanner.running ? 'running' : scanner.found ? `found:${scanner.found.frame + 1}` : '-'}`);
-  }
-  /** What the page shows, as JSON (test hook): the bar, the open panel, the menu, the tiles' overlays. */
-  function uiState() {
-    const text = (e) => (e ? (e.textContent || '').replace(/\s+/g, ' ').trim() : '');
-    const rect = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
-    const shown = (e) => !!e && !e.hidden && getComputedStyle(e).display !== 'none';
-    return {
-      bar: {
-        ids: [...ui.bar.querySelectorAll('button, input')].filter(shown).map((b) => b.id),
-        time: text(ui.time), play: ui.play.getAttribute('aria-label'), mute: ui.mute.title, rate: ui.rate.textContent,
-        cmpExpanded: ui.cmpBtn.getAttribute('aria-expanded'), cogExpanded: ui.cog.getAttribute('aria-expanded'),
-      },
-      panel: ui.panel.hidden ? null : {
-        view: controls.view(), label: ui.panel.getAttribute('aria-label'), text: text(ui.panel),
-        sliderRect: $('speedSlider') ? rect($('speedSlider')) : null,
-        rows: [...ui.panel.querySelectorAll('button')].map((b) => ({ label: b.getAttribute('aria-label') || text(b), pressed: b.getAttribute('aria-pressed'), checked: b.getAttribute('aria-checked') })),
-      },
-      sheet: ui.sheet.hidden ? null : text(ui.sheet),
-      active: document.activeElement?.id || document.activeElement?.getAttribute('aria-label'),
-      menu: ui.menu.hidden ? null : { tile: Number(ui.menu.dataset.tile), items: [...ui.menu.querySelectorAll('.mi')].map((b) => text(b)) },
-      cells: [...cellsEl.children].map((d) => ({
-        tile: d.dataset.tile === undefined ? (d.classList.contains('add') ? 'add' : '') : d.dataset.tile, rect: rect(d),
-        pills: [...d.querySelectorAll('.pill')].map((p) => text(p)), nudges: [...d.querySelectorAll('.nudge')].map((n) => text(n)),
-        moves: [...d.querySelectorAll('[data-act="move"]')].map((b) => ({
-          label: b.getAttribute('aria-label'), disabled: b.disabled, focused: b === document.activeElement,
-        })),
-        pillRects: [...d.querySelectorAll('.pill')].map(rect),
-        nudgeRects: [...d.querySelectorAll('.nudge')].map(rect),
-        moveRects: [...d.querySelectorAll('.move button')].map(rect),
-        picRect: (() => { const c = cells[[...cellsEl.children].indexOf(d)]; const o = cellsEl.getBoundingClientRect(); return c && c.pic ? [Math.round(o.left + c.pic.x), Math.round(o.top + c.pic.y), Math.round(c.pic.w), Math.round(c.pic.h)] : null; })(),
-        pics: [...d.querySelectorAll('.ov')].map((o) => rect(o)), oor: !!d.querySelector('.oor:not([hidden])'),
-      })),
-      divider: (() => { const dv = cellsEl.querySelector('#divider'); return dv ? { rect: rect(dv), value: dv.getAttribute('aria-valuenow') } : null; })(),
-      stage: rect(stage), toast: ui.toast.hidden ? '' : ui.toast.textContent,
-      toastRect: ui.toast.hidden ? null : rect(ui.toast), live: ui.live.textContent, hover,
-      reorder: { button: text(reorderBtn), hint: reorderHint.hidden ? '' : text(reorderHint) },
-      picture: {
-        ...st.pic, factor: frameFactor(), pct: picState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), pannable: stage.classList.contains('pannable'),
-        tiles: cells.filter((c) => !c.add).map((c) => ({ tiles: c.tiles, box: [c.x, c.y, c.w, c.h], full: [c.full.x, c.full.y, c.full.w, c.full.h], pic: [c.pic.x, c.pic.y, c.pic.w, c.pic.h] })),
-      },
-    };
-  }
-  if (cfg.debug) {
-    window.addEventListener('message', (e) => {
-      const m = e.data;
-      if (!m || m.type !== 'debug' || m.page !== cfg.page) return;
-      switch (m.action) {
-        case 'mode': setMode(m.mode); break;
-        case 'key': document.dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: !!m.shift, ctrlKey: !!m.ctrl, bubbles: true })); break;
-        case 'offset': setOffset(m.tile, Number(m.v), m.unit === 'f' ? 'frames' : m.unit); break;
-        case 'clock': setClock(m.tile); break;
-        case 'remove': removeTile(Number(m.tile)); break;
-        case 'sound': setSound(m.tile); break;
-        case 'step': step(m.d || 1); break;
-        case 'play': play(); break;
-        case 'pause': pause(); break;
-        case 'seek': pause(); seekClock(Number(m.t) || 0); break;
-        case 'scrub': {
-          ui.seek.value = String(Math.round(Number(ui.seek.max) * m.frac));
-          ui.seek.dispatchEvent(new Event('input'));
-          ui.seek.dispatchEvent(new Event('change'));
-          break;
-        }
-        case 'rate': setRate(m.rate); break;
-        case 'split': setSplit(Number(m.x)); break;
-        case 'panel': if (m.view) controls.show(m.view, m.view === 'main' ? ui.cog : ui.cmpBtn); else controls.closeAll(false); break;
-        case 'select': st.sel = tileOr0(m.tile); break;
-        case 'hover': hover = m.tile === null || m.tile === undefined ? null : tileOr0(m.tile); break;
-        case 'menu': { // right-click on a cell (its centre, or a fraction x of the stage width)
-          const r = stage.getBoundingClientRect();
-          const x = m.x !== undefined ? r.left + m.x * r.width : r.left + r.width / 2;
-          const y = m.y !== undefined ? r.top + m.y * r.height : r.top + r.height / 2;
-          const target = document.elementFromPoint(x, y) || stage;
-          target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 }));
-          break;
-        }
-        case 'menuPick': { // the menu item whose text starts with `label`
-          const b = [...ui.menu.querySelectorAll('.mi')].find((x) => (x.textContent || '').trim().startsWith(m.label));
-          if (b) /** @type {any} */ (b).click(); else log(`menuPick: no item ${m.label}`);
-          break;
-        }
-        case 'click': { // a button: CSS selector, or a panel / menu button by its text
-          let el = m.sel ? document.querySelector(m.sel) : null;
-          const name = (b) => (b.getAttribute('aria-label') || b.textContent || '').replace(/\s+/g, ' ').trim();
-          for (const where of ['#panel', '#menu', '#cells', '#bar']) if (!el && m.text) el = [...document.querySelectorAll(`${where} button`)].find((b) => name(b).startsWith(m.text)) || null;
-          if (el) /** @type {any} */ (el).click(); else log(`click: nothing for ${m.sel || m.text}`);
-          break;
-        }
-        case 'drag': { // the split divider dragged to fraction `x` of the picture, with pointer events
-          const dv = cellsEl.querySelector('#divider');
-          if (!dv) { log('drag: no divider'); break; }
-          const c = cells[0];
-          const r = stage.getBoundingClientRect();
-          const from = dv.getBoundingClientRect();
-          const y = from.top + from.height / 2;
-          const ev = (type, x) => dv.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 7, button: 0, isPrimary: true }));
-          ev('pointerdown', from.left + from.width / 2);
-          for (let k = 1; k <= 4; k++) ev('pointermove', r.left + c.pic.x + c.pic.w * (st.split + (m.x - st.split) * k / 4));
-          ev('pointerup', r.left + c.pic.x + c.pic.w * m.x);
-          break;
-        }
-        case 'dom': { // a mouse / pointer / wheel event at client (x, y), or at an explicit target
-          const target = m.target === 'document' ? document : m.target ? $(m.target) : document.elementFromPoint(m.x, m.y);
-          if (!target) { log(`dom: nothing at ${m.x},${m.y}`); break; }
-          if (m.ev === 'pointerdown') log(`dom target ${target.tagName}.${target.className} #${target.id}`);
-          const init = { bubbles: true, cancelable: true, clientX: m.x, clientY: m.y, button: m.button || 0, ctrlKey: !!m.ctrl, deltaY: m.deltaY || 0, pointerId: 1, isPrimary: true };
-          target.dispatchEvent(new (/^wheel/.test(m.ev) ? WheelEvent : /^pointer/.test(m.ev) ? PointerEvent : MouseEvent)(m.ev, init));
-          break;
-        }
-        case 'scan': if (m.thresh) st.thresh = Number(m.thresh); scanner.start(); break;
-        case 'leave': leave(m.tile); break;
-        case 'stageSize': { // CSS pixels, or device pixels with `physical`
-          const dpr = m.physical ? window.devicePixelRatio || 1 : 1;
-          stage.style.flex = m.w ? 'none' : '';
-          stage.style.width = m.w ? `${m.w / dpr}px` : '';
-          stage.style.height = m.h ? `${m.h / dpr}px` : '';
-          break;
-        }
-        case 'report': setTimeout(report, m.delay || 400); break;
-        case 'ui': setTimeout(() => log(`compare ui ${JSON.stringify({ id: m.id, ...uiState() })}`), m.delay || 50); break;
-        case 'a11y': { // names and states of the bar's buttons, the live region, focus
-          if (m.focus) { const f = document.querySelector(m.focus); if (f) /** @type {any} */ (f).focus(); }
-          if (m.click) { const c = document.querySelector(m.click); if (c) /** @type {any} */ (c).click(); }
-          const at = (el, n) => (el ? el.getAttribute(n) : null);
-          const ids = ['play', 'prev', 'next', 'seek', 'mute', 'volume', 'time', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full', 'divider'];
-          const a = /** @type {any} */ (document.activeElement);
-          log(`compare a11y ${JSON.stringify({
-            controls: Object.fromEntries(ids.map((k) => { const el = $(k); return [k, el ? { label: at(el, 'aria-label'), pressed: at(el, 'aria-pressed'), expanded: at(el, 'aria-expanded'), valuetext: at(el, 'aria-valuetext'), role: at(el, 'role') } : null]; })),
-            unnamed: [...document.querySelectorAll('button')].filter((b) => !(b.getAttribute('aria-label') || '').trim() && !/[A-Za-z]/.test(b.textContent || '')).map((b) => b.id || b.className),
-            live: ui.live ? ui.live.textContent : null, active: a ? a.id || a.className || a.tagName : '', panel: controls.view(),
-            muted: st.muted, loop: st.loop, playing: !!(clock && clock.playing),
-            ready: tiles.length === N && tiles.every((p) => p.shownT !== null) && ui.overlay.hidden,
-          })}`);
-          break;
-        }
-        default: break;
-      }
-    });
-  }
+  VpeCompareDebug.install({
+    cfg, log, Grid, N, MAX_TILES, st, canvas, stage, cellsEl, ui, controls,
+    scanner, reorderBtn, reorderHint, $, getState: () => ({ tiles, clock, cells, hover }),
+    contextCount: () => Number(!!comp) + Number(!!renderer) + Number(hasReadback()),
+    setHover: (value) => { hover = value; },
+    frameOf, fpsOf, synced, tileSize, frameFactor, picState, setMode, setOffset,
+    setClock, removeTile, setSound, step, play, pause, seekClock, setRate,
+    setSplit, tileOr0, leave,
+  });
 
   // Frames for native tiles come at the tile's size: tell the host how big a tile is.
   const tile = tileSize();
