@@ -410,6 +410,8 @@ function plan({ cwd, base, baseExplicit = base !== 'main' }) {
 
   // Also scan registered worktree admin directories directly so locked/offline checkouts (e.g. on a
   // disconnected drive) still reserve their in-progress rebase head-name and update-refs branches.
+  // Any error reading admin metadata marks the reservation scan incomplete and blocks branch deletion.
+  let reservationScanIncomplete = false;
   try {
     const commonRaw = git(primary, ['rev-parse', '--git-common-dir']);
     const commonDir = path.isAbsolute(commonRaw) ? commonRaw : path.resolve(primary, commonRaw);
@@ -417,10 +419,19 @@ function plan({ cwd, base, baseExplicit = base !== 'main' }) {
     if (fs.existsSync(adminRoot)) {
       for (const entry of fs.readdirSync(adminRoot, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
-        for (const branch of inProgressBranches(path.join(adminRoot, entry.name))) keptBranches.add(branch);
+        const adminDir = path.join(adminRoot, entry.name);
+        try {
+          for (const branch of inProgressBranches(adminDir)) keptBranches.add(branch);
+        } catch (e) {
+          reservationScanIncomplete = true;
+          errors.push({ kind: 'worktree', label: adminDir, error: e instanceof Error ? e.message : String(e) });
+        }
       }
     }
-  } catch { /* best-effort; accessible checkouts were already scanned above */ }
+  } catch (e) {
+    reservationScanIncomplete = true;
+    errors.push({ kind: 'worktree', label: primary, error: e instanceof Error ? e.message : String(e) });
+  }
 
   // Use %(refname:strip=2) with tab delimiters so local branch names are exact even when a tag shares the name.
   const refsRaw = git(primary, ['for-each-ref', '--format=%(refname:strip=2)%09%(objectname)%09%(upstream)', 'refs/heads']);
@@ -437,6 +448,7 @@ function plan({ cwd, base, baseExplicit = base !== 'main' }) {
         merged,
         keptBranches,
         safeDeleteBlocked: (_name, tip) => {
+          if (reservationScanIncomplete) return 'incomplete worktree reservation scan';
           // Match git branch -d's check so dry-run doesn't advertise deletions that git branch -d will refuse.
           if (upstreamRef) {
             const up = gitRun(primary, ['rev-parse', '--verify', '--quiet', `${upstreamRef}^{commit}`]);
