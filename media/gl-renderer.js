@@ -365,11 +365,14 @@
      */
     setTransfer(trc, prim) {
       if (this.disposed) return;
+      const tf = trc === 16 ? 1 : trc === 18 ? 2 : 0;
+      const peak = tf === 1 && this.hdrPeak > 203 ? this.hdrPeak : 1000;
+      const key = `${tf}/${prim}/${peak}`;
+      this.hdr = tf ? /** @type {number} */ (trc) : 0;
+      if (key === this.hdrKey) return;
+      this.hdrKey = key;
       const gl = this.gl;
       const t = transferParams(trc, prim, this.hdrPeak);
-      this.hdr = t.hdr;
-      if (t.key === this.hdrKey) return;
-      this.hdrKey = t.key;
       gl.uniform1i(this.uTf, t.tf);
       if (!t.tf) return;
       gl.uniform3fv(this.uEetf, t.eetf);
