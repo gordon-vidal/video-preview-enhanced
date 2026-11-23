@@ -38,7 +38,7 @@ const proxy = lazy(() => require('./proxy'));
 const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
 const { registerCompare, setPickHook } = require('./compare'); // compare mode (src/compare.js)
-const { barHtml, playFlashHtml } = require('./bar');
+const { playerHtml } = require('./player-html'); // the player page's HTML, CSP and script order
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy(() => require('./rangecmd')); // A-B frame export and ffmpeg command
@@ -1726,7 +1726,7 @@ class Session {
     // A link's frame applies to the first page only: a reload (file changed on disk) resumes instead.
     const goto = this.goto || null;
     this.goto = null;
-    const cfg = JSON.stringify({
+    const cfgObject = {
       page: ++this.page,
       autoplay: c.autoplay, loop: c.loop, prefs: prefsOf(c), canOpenExternal: this.canOpenExternal(), name: this.name, debug: !!logFile, resume: this.resumeAt(), goto,
       // A URL tab (Open Video URL…): file-only tools are off; the info panel names the host instead of a size.
@@ -1749,91 +1749,12 @@ class Session {
         noWebgl: !!logFile && process.env.VPE_NO_WEBGL === '1',
         // Tests (VPE_LOG only): VPE_THUMB_STRIP=0 leaves out the background seek-bar strip (CPU measurements).
       },
+    };
+    return playerHtml({
+      cspSource: w.cspSource, uri, base, loader: this.build.loader, nonce, cfg: cfgObject, sequence: !!this.sequence,
+      framePort: this.framePort, transport: nativeTransport(), debug: !!logFile,
+      canCompare: this.canCompare(), compareOpen: this.compareOpen(),
     });
-    const loopback = this.framePort ? `127.0.0.1:${this.framePort}` : '';
-    const transport = nativeTransport();
-    const frameSources = loopback ? [
-      ...((logFile || transport === 'http') ? [`http://${loopback}`] : []),
-      ...((logFile || transport === 'ws') ? [`ws://${loopback}`] : []),
-    ] : [];
-    const csp = [
-      "default-src 'none'",
-      `img-src ${w.cspSource} blob: data:`,
-      `media-src ${w.cspSource} blob: data:`,
-      `style-src ${w.cspSource}`,
-      // The decoder worker is created from a blob and imports libav.js and its WebAssembly.
-      `script-src 'nonce-${nonce}' ${w.cspSource} blob: 'wasm-unsafe-eval'`,
-      'worker-src blob:',
-      // Native frames from the localhost frame server (src/frameserver.js), local windows only.
-      ['connect-src', w.cspSource, 'blob:', ...frameSources].join(' '),
-    ].join('; ');
-    // The decoder's files (8 MB of WebAssembly) start downloading before the page's scripts load;
-    // engine.js takes the responses (self.vpeEarly). Not for image sequences (no decoder).
-    const stem = `${base}/${this.build.loader}`.replace(/\.js$/, '');
-    const early = this.sequence ? [] : [uri('decoder-worker.js'), `${base}/${this.build.loader}`, `${stem}.wasm.js`, `${stem}.wasm.wasm`];
-    const earlyJs = early.length ? `<script nonce="${nonce}">{const controller=new AbortController(), responses={};self.vpeEarly={controller,responses};for(const u of ${JSON.stringify(early).replace(/</g, '\\u003c')})responses[u]=fetch(u,{signal:controller.signal}).catch(()=>null);}</script>\n` : '';
-    return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="${csp};">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-${earlyJs}<link rel="stylesheet" href="${uri('player.css')}">
-</head><body>
-<script type="application/json" id="cfg">${cfg.replace(/</g, '\\u003c')}</script>
-<div id="stage" class="fit">
-  <canvas id="canvas" hidden role="img" aria-label="Video"></canvas>
-  <div id="subs" hidden></div>
-  <div id="overlay"><div id="message">Opening…</div><div id="hint"></div><button id="action" hidden></button></div>
-  ${playFlashHtml}
-  <div id="toast" hidden aria-hidden="true"></div>
-  <div id="notice" hidden>
-    <span id="noticeText"></span>
-    <button id="noticeAction"></button>
-    <button id="noticeSettings" class="noticeSecondary" hidden></button>
-    <button id="noticeHide" class="noticeSecondary" hidden></button>
-    <button id="noticeClose" title="Dismiss" aria-label="Dismiss">×</button>
-  </div>
-</div>
-${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
-<div id="startCompareBackdrop" hidden>
-  <div id="startCompareDialog" tabindex="-1" role="dialog" aria-modal="true" aria-label="Start comparison" aria-describedby="startCompareHint">
-    <p id="startCompareHint">Start Compare with this video, then click videos in the Explorer to add them.</p>
-    <div class="compare-actions">
-      <button id="cancelCompareBtn" type="button">Cancel</button>
-      <button id="confirmCompareBtn" type="button">Start comparison</button>
-    </div>
-  </div>
-</div>
-<div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
-<div id="sheet" hidden></div>
-<div id="ctxmenu" class="ctxmenu" role="menu" aria-label="Player menu" tabindex="-1" hidden></div>
-<div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
-<script nonce="${nonce}" src="${uri('membudget.js')}"></script>
-<script nonce="${nonce}" src="${uri('timestretch.js')}"></script>
-<script nonce="${nonce}" src="${uri('pool.js')}"></script>
-<script nonce="${nonce}" src="${uri('thumbs.js')}"></script>
-<script nonce="${nonce}" src="${uri('framestream.js')}"></script>
-<script nonce="${nonce}" src="${uri('hdr.js')}"></script>
-<script nonce="${nonce}" src="${uri('block-cache.js')}"></script>
-<script nonce="${nonce}" src="${uri('gl-renderer.js')}"></script>
-<script nonce="${nonce}" src="${uri('engine.js')}"></script>
-<script nonce="${nonce}" src="${uri('picture.js')}"></script>
-<script nonce="${nonce}" src="${uri('inspect.js')}"></script>
-<script nonce="${nonce}" src="${uri('scopes.js')}"></script>
-<script nonce="${nonce}" src="${uri('exactframe.js')}"></script>
-<script nonce="${nonce}" src="${uri('reduced-res-notice.js')}"></script>
-<script nonce="${nonce}" src="${uri('slow-notice.js')}"></script>
-<script nonce="${nonce}" src="${uri('subtitles.js')}"></script>
-<script nonce="${nonce}" src="${uri('tracks-menu.js')}"></script>
-<script nonce="${nonce}" src="${uri('xray.js')}"></script>
-<script nonce="${nonce}" src="${uri('modes.js')}"></script>
-<script nonce="${nonce}" src="${uri('range-drag.js')}"></script>
-<script nonce="${nonce}" src="${uri('controls.js')}"></script>
-<script nonce="${nonce}" src="${uri('ctxmenu.js')}"></script>
-<script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
-<script nonce="${nonce}" src="${uri('abloop.js')}"></script>
-<script nonce="${nonce}" src="${uri('debug-probe.js')}"></script>
-<script nonce="${nonce}" src="${uri('player.js')}"></script>
-</body></html>`;
   }
 
   /** Native ffmpeg seek-bar thumbnail (src/thumbhost.js); one at a time, answered with {type: 'thumb', id, ...}.

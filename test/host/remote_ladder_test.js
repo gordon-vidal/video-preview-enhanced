@@ -88,8 +88,8 @@ assert.ok(PCM_KBPS === 1536, `PCM ${PCM_KBPS}`);
   // After a step, restartVideo() clears settleAt until ffmpeg's first output (checked in the source).
   const src = require('fs').readFileSync(require.resolve('../../src/stream'), 'utf8');
   const restart = src.slice(src.indexOf('  restartVideo() {'), src.indexOf('  restartVideo() {') + 1200);
-  assert.match(restart, /this\.settleAt = Infinity/);
-  assert.match(src, /this\.settleAt = Date\.now\(\) \+ LINK_SETTLE_MS; \/\/ the buffer refills after any seek/);
+  assert.match(restart, /this\.link\.resetForRestart\(\)/);
+  assert.match(src, /this\.link\.resetForSeek\(Date\.now\(\)\); \/\/ the buffer refills after any seek/);
 }
 
 { // A read that outlasts the window (nothing delivered, kbps 0) is a link that slow: straight to the floor.

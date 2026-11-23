@@ -98,9 +98,14 @@ assert(!/require\('\.\/ctxmenu'\)|ctxCommand|ctxmenu\.register/.test(host), 'the
 assert(!page.includes('data-vscode-context') && !page.includes('updateMenuContext'), 'the page no longer feeds VS Code a context');
 
 // the host page: the menu element, its script (nonce, between controls.js and player.js), the CSS block at the end of player.css
-assert(/<div id="ctxmenu" class="ctxmenu" role="menu"[^>]* hidden><\/div>/.test(host), 'the page has #ctxmenu');
-assert(host.indexOf("uri('ctxmenu.js')") > host.indexOf("uri('controls.js')") && host.indexOf("uri('ctxmenu.js')") < host.indexOf("uri('player.js')"), 'ctxmenu.js loads after controls.js, before player.js');
-assert(host.includes('<script nonce="${nonce}" src="${uri(\'ctxmenu.js\')}"></script>'), 'ctxmenu.js carries the CSP nonce');
+const { playerHtml } = require('../../src/player-html');
+const html = playerHtml({
+  cspSource: 'csp:', uri: (...p) => 'u/' + p.join('/'), base: 'b', loader: 'l.js', nonce: 'N', cfg: {}, sequence: true,
+  transport: 'message', debug: false, canCompare: false, compareOpen: false,
+});
+assert(/<div id="ctxmenu" class="ctxmenu" role="menu"[^>]* hidden><\/div>/.test(html), 'the page has #ctxmenu');
+assert(html.indexOf('u/ctxmenu.js') > html.indexOf('u/controls.js') && html.indexOf('u/ctxmenu.js') < html.indexOf('u/player.js'), 'ctxmenu.js loads after controls.js, before player.js');
+assert(html.includes('<script nonce="N" src="u/ctxmenu.js"></script>'), 'ctxmenu.js carries the CSP nonce');
 const block = css.slice(css.indexOf('/* ==== Right-click menu'));
 assert(block.length > 0 && !/^#(bar|volume|row)\b/m.test(block), 'the #ctxmenu CSS is its own block at the end');
 for (const t of ['--vpe-panel-bg', '--vpe-panel-fg', '--vpe-panel-border', '--vpe-row-hover', '--vpe-sep', '--vpe-dim', '--vpe-mono']) assert(block.includes(t), `the menu uses ${t}`);
