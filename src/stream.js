@@ -225,7 +225,7 @@ class EncodedStream {
         if (m.hidden) this.setHidden(true);
         this.setView(m.view);
         return this.open();
-      case 'view': return this.setView(m);
+      case 'view': return this.setView(m, !!m.playing);
       case 'remoteAudioFailed': return this.audioFallback(m.message);
       case 'config':
         if (m.video !== 'webcodecs' && this.pr.video) { this.onFail('H.264 WebCodecs not available in this webview'); return undefined; }
@@ -278,10 +278,11 @@ class EncodedStream {
     });
   }
 
-  setView(view) {
+  /** `playing`: the page is playing, so a larger picture can start in-band instead of through a page seek. */
+  setView(view, playing = false) {
     if (!view || !(view.w > 0 && view.h > 0) || !Number.isFinite(view.w + view.h)) return;
     this.view = { w: view.w, h: view.h };
-    this.reSize();
+    this.reSize(playing);
   }
 
   setFit(on) { this.fitView = !!on; this.reSize(); }
@@ -294,16 +295,28 @@ class EncodedStream {
     return [540, 720, 1080, 1440, 2160].find((x) => x >= need) || Infinity;
   }
 
-  reSize() {
+  reSize(playing = false) {
     if (!this.fps) return;
     const { w, h } = this;
+    const queued = this.growQueued;
     this.sizeVideo();
     const grow = this.h > h;
-    this.resizePending = this.w !== w || this.h !== h;
-    if (this.resizePending) this.log(`remote stream: picture ${this.view?.w}x${this.view?.h}: frames ${w}x${h} -> ${this.w}x${this.h}${grow ? '' : ' at the next seek'}`);
+    const changed = this.w !== w || this.h !== h;
+    if (changed) this.log(`remote stream: picture ${this.view?.w}x${this.view?.h}: frames ${w}x${h} -> ${this.w}x${this.h}${grow ? '' : ' at the next seek'}`);
+    // Playing with ffmpeg running: the in-band IDR of a restart changes the size without a page seek, so the sound
+    // and the clock go on and the picture shown stays until the first larger frame (as for a quality step).
+    if (grow && playing && !this.hidden && !this.startTimer && this.proc) {
+      this.restartVideo();
+      return;
+    }
+    this.resizePending = changed;
+    // A smaller picture waits for a seek that needs ffmpeg anyway: a step back from memory need not restart it.
+    this.pendingShrink = changed && !grow;
     this.w = w;
     this.h = h;
-    if (grow) this.post({ type: 'refresh' });
+    // One page seek per growth: more view messages for the same size (zoom, resize jitter) add none.
+    this.growQueued = grow;
+    if (grow && !queued) this.post({ type: 'refresh' });
   }
 
   sizeVideo() {
@@ -315,6 +328,8 @@ class EncodedStream {
     const w = Math.round((v.width * this.h) / v.height);
     this.w = w - (w % 2);
     this.resizePending = false;
+    this.pendingShrink = false;
+    this.growQueued = false;
   }
 
   args(t, audio) {
@@ -632,7 +647,7 @@ class EncodedStream {
     // The page re-seeks when shown. An encoder just started at that frame can satisfy it.
     const startingHere = this.proc && this.proc.exitCode === null && !this.proc.signalCode
       && !this.gotOutput && this.aNext === 0 && t === this.base && t === this.vBase;
-    if (!this.resizePending && (startingHere || this.reuseHistory(t))) {
+    if ((!this.resizePending || this.pendingShrink) && (startingHere || this.reuseHistory(t))) {
       this.waiting = null;
       this.post({ type: 'seeked', gen: m.gen, t });
       return;
@@ -645,7 +660,7 @@ class EncodedStream {
     this.post({ type: 'seeked', gen: m.gen, t });
     clearTimeout(this.startTimer);
     this.startTimer = null;
-    if (this.hidden && !this.spawns) return;
+    if (this.hidden) return;
     const due = this.lastSpawnAt + SPAWN_GAP_MS;
     if (quiet && now >= due) { this.spawnNow(); return; }
     if (this.deferredSince === null) this.deferredSince = now;
