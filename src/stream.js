@@ -22,6 +22,7 @@ const {
 } = require('./transcode_args');
 const { encoderCacheKey } = require('./transcode_probe');
 const { effectiveMaxKbps } = require('./transcode_policy');
+const { LinkAdaptController, LINK_TIERS, LINK_SETTLE_MS } = require('./stream-adapt');
 
 const AUDIO_RATE = 48000;
 const MAX_QUEUED_SECONDS = 2; // packets read ahead of the webview before ffmpeg is paused
@@ -45,8 +46,6 @@ const HISTORY_MAX_S = 20;
 const AUDIO_LEAD_S = 2;
 const MAX_QUEUED_AUDIO = 4 * AUDIO_RATE * 4; // four seconds of unsent stereo s16le
 const MAX_AUDIO_BATCH = 256 * 1024;
-// Capped slow-link tiers (used when allowLinkAdapt is enabled on remote links).
-const LINK_TIERS = [null, { height: 720, kbps: 3000 }, { height: 480, kbps: 1200 }, { height: 360, kbps: 450 }];
 // Opus budget includes the 80 ms seek preroll repeated in each half-second batch.
 const PCM_KBPS = AUDIO_RATE * 4 * 8 / 1000;
 const OPUS_KBPS = 128;
@@ -69,12 +68,6 @@ async function audioEncoderFor(tools, exec = run) {
   })());
   return audioEncoders.get(key);
 }
-
-// Link samples (2 s windows from the webview) are ignored until this long after ffmpeg's first
-// output following a start, restart or seek, so its start-up stall is not taken for a slow link.
-const LINK_SETTLE_MS = 2500;
-// A window counts as link-limited only when the host waited for ffmpeg less than this share of the read time.
-const ENCODER_WAIT_SHARE = 0.5;
 
 class EncodedStream {
   constructor({
@@ -104,13 +97,7 @@ class EncodedStream {
     this.allowSoftwareFallback = allowSoftwareFallback !== false;
     this.pipelineMode = CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode';
     this.hidden = hidden;
-    this.tier = 0;
-    this.topKbps = 0;
-    this.topPeak = 0;
-    this.linkRun = 0;
-    this.lastLinkSample = 0;
-    this.settleAt = Infinity; // when link samples count again (see LINK_SETTLE_MS)
-    this.noticed = new Set(); // notices the user got already: 'quality', 'slow'
+    this.link = new LinkAdaptController(); // the quality ladder's state (src/stream-adapt.js)
     this.waitingSince = 0;
     this.gen = 0;
     this.proc = null;
@@ -122,6 +109,13 @@ class EncodedStream {
     this.startTimer = null;
     this.reset(0);
   }
+
+  /** The current link tier (0: uncapped); the ladder owns it. */
+  get tier() { return this.link.tier; }
+  set tier(v) { this.link.tier = v; }
+  /** When link samples count again; tests set it. */
+  get settleAt() { return this.link.settleAt; }
+  set settleAt(v) { this.link.settleAt = v; }
 
   /** Always: re-encoded, scaled, 8-bit. */
   lossy() { return true; }
@@ -344,7 +338,7 @@ class EncodedStream {
     this.audioPaused = false;
     this.waiting = null;
     this.gotOutput = false;
-    this.settleAt = Infinity;
+    this.link.waitForOutput();
   }
 
   startAt(t) {
@@ -403,7 +397,7 @@ class EncodedStream {
       if (proc !== this.proc) return;
       if (!this.gotOutput) {
         this.log(`live transcode: first bytes ${Date.now() - t0} ms after start${proc.adopted ? ' (prepared at the end)' : ''}`);
-        this.settleAt = Date.now() + LINK_SETTLE_MS;
+        this.link.noteFirstOutput(Date.now());
         if (this.spawns > 1) this.post({ type: 'transcodeInfo', transcode: this.transcodeInfo() });
       }
       this.gotOutput = true;
@@ -476,8 +470,7 @@ class EncodedStream {
     this.frameIndex = 0;
     this.pending = Buffer.alloc(0);
     this.gotOutput = false;
-    this.settleAt = Infinity;
-    this.linkRun = 0;
+    this.link.resetForRestart();
     this.videoEnded = false;
     this.spawnVideo();
   }
@@ -489,35 +482,17 @@ class EncodedStream {
   adapt(m) {
     if (!this.allowLinkAdapt) return;
     if (m.gen !== this.gen || (!this.proc && this.vNext === this.vAll.length)) return;
-    const now = Date.now();
-    if (now - this.lastLinkSample > 3500) this.linkRun = 0;
-    this.lastLinkSample = now;
-    if (now < this.settleAt) return; // ffmpeg start-up is in this window
-    if (!this.tier && m.videoKbps > 0) {
-      this.topKbps = this.topKbps ? 0.75 * this.topKbps + 0.25 * m.videoKbps : m.videoKbps;
-      this.topPeak = Math.max(m.videoKbps, 0.9 * this.topPeak);
-    }
-    const nextCap = LINK_TIERS[this.tier - 1]?.kbps ?? Math.max(3000, this.topKbps, this.topPeak);
     const pcm = this.pr.audio ? (this.audioEncoder ? OPUS_KBPS : PCM_KBPS) : 0;
-    const readMs = m.readMs ?? 0;
-    const linkLimited = !(readMs > 0) || (m.hostWaitMs || 0) < ENCODER_WAIT_SHARE * readMs;
-    const down = linkLimited && m.starved && (m.mediaRate < 0.95 || m.behind);
-    const up = this.tier > 0 && m.buffer >= 0.25 && !m.starved && !m.behind && m.kbps > 1.3 * (nextCap + pcm);
-    const step = down ? 1 : up ? -1 : 0;
-    const detail = `${Math.round(m.kbps)} kb/s delivered, ${m.buffer.toFixed(2)} s buffered${m.hostWaitMs ? `, ${Math.round(m.hostWaitMs)} of ${Math.round(readMs)} ms waiting for ffmpeg` : ''}`;
-    if (this.stats && (this.tier || m.starved)) this.log(`live transcode link: ${detail}, video ${m.mediaRate.toFixed(2)}x, starved=${m.starved}, behind=${m.behind}, link-limited=${linkLimited}, next profile ${Math.round(nextCap + pcm)} kb/s`);
-    const run_ = this.linkRun;
-    this.linkRun = step && (Math.sign(run_) === step ? run_ + step : step);
-    if (this.linkRun < 2 && this.linkRun > -4) return;
-    this.linkRun = 0;
+    const d = this.link.onSample(m, Date.now(), pcm);
+    if (!d) return;
+    const { down, detail } = d;
+    if (this.stats && (this.tier || m.starved)) this.log(`live transcode link: ${detail}, video ${m.mediaRate.toFixed(2)}x, starved=${m.starved}, behind=${m.behind}, link-limited=${d.linkLimited}, next profile ${Math.round(d.nextCap + pcm)} kb/s`);
+    if (d.change === 'none') return;
+    if (d.change === 'floor') { this.slowLink(detail); return; }
     const last = LINK_TIERS.length - 1;
-    if (down && this.tier === last) { this.slowLink(detail); return; }
-    let tier = this.tier + step;
-    if (down) while (tier < last && LINK_TIERS[tier].kbps + pcm > m.kbps) tier++;
-    this.tier = tier;
     this.sizeVideo();
     this.log(`remote stream: quality ${down ? 'down' : 'up'} to ${this.h}p (${detail})`);
-    if (down && tier === last && LINK_TIERS[last].kbps + pcm > m.kbps) this.slowLink(detail);
+    if (down && this.tier === last && LINK_TIERS[last].kbps + pcm > m.kbps) this.slowLink(detail);
     else if (down) this.notice('quality', `Slow connection: live transcode lowered the picture to ${this.h}p to keep playing. It goes back up when the connection allows.`);
     this.restartVideo();
   }
@@ -530,8 +505,7 @@ class EncodedStream {
 
   /** A notice in the webview, once per stream and kind. */
   notice(kind, text) {
-    if (this.noticed.has(kind)) return;
-    this.noticed.add(kind);
+    if (!this.link.firstNotice(kind)) return;
     this.post({ type: 'remoteNotice', kind, text });
   }
 
@@ -709,8 +683,7 @@ class EncodedStream {
   seek(m) {
     if (this.disposed) return;
     this.gen = m.gen;
-    this.linkRun = 0;
-    this.settleAt = Date.now() + LINK_SETTLE_MS; // the buffer refills after any seek, from memory or not
+    this.link.resetForSeek(Date.now()); // the buffer refills after any seek, from memory or not
     const idx = Math.max(0, Math.floor(m.t * this.fps + 1e-6));
     const t = idx / this.fps;
     this.seekT = t;

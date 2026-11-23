@@ -19,6 +19,8 @@
     "src/settings.js",
     "src/offers.js",
     "src/compare.js",
+    "src/player-html.js",
+    "src/stream-adapt.js",
     "src/thumbhost.js",
     "media/block-cache.js",
     "media/gl-renderer.js",

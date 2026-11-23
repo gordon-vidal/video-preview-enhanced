@@ -9,7 +9,7 @@
 
 const PLAYER = ['media/player.js', 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/player.css', 'src/bar.js'];
 const ENGINE = ['media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
-const HOST = ['src/extension.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
+const HOST = ['src/extension.js', 'src/player-html.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/nativepts.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
 const COMPARE = [
   'src/compare.js', 'src/comparemenu.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js',
@@ -100,7 +100,7 @@ module.exports = [
   {
     name: 'multiview-transcode',
     journey: 'Compare streams two tiles, shares their bitrate cap, and switches one tile to its original video',
-    sources: [...COMPARE, 'src/stream.js', 'src/transcode_policy.js', 'media/controls.js'],
+    sources: [...COMPARE, 'src/stream.js', 'src/stream-adapt.js', 'src/transcode_policy.js', 'media/controls.js'],
     steps: [{ case: 'multiview-transcode' }],
   },
   {
@@ -180,7 +180,7 @@ module.exports = [
   {
     name: 'remote-stream',
     journey: 'Remote windows: formats the GPU decoder can\'t play are re-encoded to H.264 by ffmpeg; seeks, scrubbing, the quality ladder, pixel tools',
-    sources: ['src/remotestream.js', 'src/stream.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/player.js'],
+    sources: ['src/remotestream.js', 'src/stream.js', 'src/stream-adapt.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', 'media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/player.js'],
     steps: [{ case: 'remote_stream' }, { case: 'remote_stream_long' }, { case: 'remote_stream_size' }, { case: 'remote_stream_fallback' }],
   },
   {

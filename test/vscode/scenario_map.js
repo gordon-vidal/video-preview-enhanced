@@ -23,7 +23,7 @@ const DEPENDENCIES = [
   { when: ['src/native.js', 'src/frameserver.js'], why: 'native ffmpeg transport and frame sizes', run: ['native', 'picture-size-native'] },
   { when: ['media/picture.js', 'media/inspect.js'], why: 'drawn picture size, zoom, pan', run: ['picture-size', 'compare', 'inspect'] },
   { when: ['media/compare.js', 'src/compare.js'], why: 'compare / multi-view', run: ['compare', 'multiview'] },
-  { when: ['src/remotestream.js'], why: 'remote stream', run: ['remote-stream'] },
+  { when: ['src/remotestream.js', 'src/stream-adapt.js'], why: 'remote stream', run: ['remote-stream'] },
   { when: ['src/urlsource.js'], why: 'URLs', run: ['url', 'url-native'] },
   { when: ['media/controls.js', 'media/range-drag.js', 'src/bar.js'], why: 'the bar, panels, keys', run: ['ui'] },
   { when: ['media/subtitles.js', 'media/tracks-menu.js'], why: 'subtitles, tracks', run: ['subtitles'] },
