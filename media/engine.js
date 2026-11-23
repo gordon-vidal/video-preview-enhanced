@@ -1955,11 +1955,25 @@ function createEngine(env) {
       if (!(gap > 0 && gap < 1.5 * f)) return false; // they don't end just before the frame stepped from
       const i = back.findIndex((x) => Math.abs(x.t - to) < 0.5 * f);
       if (i < 0) return false;
+      // Preserve the currently shown frame in the forward queue so a following step forward returns to N instead of
+      // skipping to N+1. If N was displayed from a GPU VideoFrame (shownFrame is null), clone it from lastShown; if
+      // N cannot be restored at all, fall back to a seek rather than consuming the backward cache.
+      let restore = null;
+      const needRestore = this.shownT !== null && Math.abs(this.shownT - base) < 1e-4
+        && !this.queue.some((x) => Math.abs(x.t - this.shownT) < 1e-4);
+      if (needRestore) {
+        const sf = this.shownFrame;
+        if (sf && sf.t === this.shownT) restore = sf;
+        else if (this.lastShown && this.lastShown.vf) {
+          try { restore = { t: this.shownT, vf: this.lastShown.vf.clone() }; } catch { return false; }
+        } else return false;
+      }
       const moved = back.splice(i);
       for (const x of moved) this.backBytes -= x.bytes;
-      // The shown frame goes back into the queue too, so the next step forward is in memory as well.
-      const sf = this.shownFrame;
-      if (sf && sf.t === this.shownT && !this.queue.includes(sf)) { this.keptBufs.add(sf.yuv.data.buffer); moved.push(sf); }
+      if (restore) {
+        if (restore.yuv) this.keptBufs.add(restore.yuv.data.buffer);
+        moved.push(restore);
+      }
       for (const x of moved) this.insert(x);
       if (this.cfg.debug || env.debug) log(`step back from memory to ${this.rel(moved[0].t).toFixed(3)} s (${back.length} more kept)`);
       this.pauseT = moved[0].t;

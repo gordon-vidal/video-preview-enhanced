@@ -1073,6 +1073,55 @@ test('dispose settles pending track waits, cancels queued track ops, guards audi
   assert.strictEqual((q.waits || []).length, 0, 'no waiter registered after dispose');
 });
 
+test('stepBack from a GPU VideoFrame preserves frame N so step-back then step-forward shows N -> N-1 -> N', () => {
+  const f = 1 / 30;
+  const tPrev = 1 - f;
+  const tCur = 1;
+  const tNext = 1 + f;
+  let closed = 0;
+  function makeVf(id) {
+    return {
+      id, format: 'NV12', codedWidth: 64, codedHeight: 64,
+      clone() { return makeVf(id); },
+      close() { closed++; },
+    };
+  }
+  const p = player({
+    playing: false, fps: 30, startT: 0, meta: { duration: 10 },
+    shownT: tCur, pauseT: tCur, seekTarget: null, keptBufs: new Set(),
+    back: [{ t: tPrev, yuv: { data: new Uint8Array(16) }, bytes: 16 }],
+    backBytes: 16,
+    queue: [{ t: tNext, vf: makeVf('N+1') }],
+  });
+  P.noteShown.call(p, { t: tCur, vf: makeVf('N') });
+  assert.strictEqual(p.shownFrame, null, 'GPU frame clears shownFrame');
+  assert.ok(p.lastShown && p.lastShown.vf, 'lastShown holds GPU clone');
+
+  // Step back: N -> N-1 (served from spilled back cache; N cloned into forward queue).
+  P.stepFrame.call(p, -1);
+  P.tick.call(p);
+  assert.ok(Math.abs(p.shownT - tPrev) < 1e-6, `expected N-1 (${tPrev}), got ${p.shownT}`);
+  assert.ok(p.queue.some((x) => Math.abs(x.t - tCur) < 1e-6), 'frame N restored into forward queue');
+
+  // Step forward: N-1 -> N (must NOT skip to N+1).
+  P.stepFrame.call(p, 1);
+  P.tick.call(p);
+  assert.ok(Math.abs(p.shownT - tCur) < 1e-6, `expected N (${tCur}), got ${p.shownT}`);
+  assert.strictEqual(p.lastShown.vf.id, 'N', 'displayed frame N, not N+1');
+  assert.ok(closed >= 1, 'released VideoFrame clones are closed');
+
+  // When N cannot be restored (no shownFrame and no lastShown.vf), stepBack returns false so stepFrame seeks.
+  const q = player({
+    playing: false, fps: 30, startT: 0, meta: { duration: 10 },
+    shownT: tCur, pauseT: tCur, seekTarget: null, shownFrame: null, lastShown: null,
+    back: [{ t: tPrev, yuv: { data: new Uint8Array(16) }, bytes: 16 }],
+    backBytes: 16,
+    queue: [{ t: tNext, vf: makeVf('N+1') }],
+  });
+  assert.strictEqual(P.stepBack.call(q, tPrev, tCur, f), false, 'falls back to seek when N cannot be restored');
+  assert.strictEqual(q.back.length, 1, 'back cache untouched on fallback');
+});
+
 (async () => {
   // A pending promise alone doesn't keep Node alive. Require the suite to finish.
   process.exitCode = 1;
