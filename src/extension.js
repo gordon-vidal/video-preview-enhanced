@@ -409,7 +409,6 @@ async function downloadRemoteFfmpeg() {
 }
 
 const DRIVER_NOTICE_KEY = 'videoPreviewEnhanced.nvencDriverNotice';
-let transcodeOfferPending = false;
 
 /** Shows a one-time notice per ffmpeg binary + NVIDIA driver when NVENC refuses an older driver. */
 function maybeShowDriverNotice(t, notice, nvidiaDriver) {
@@ -424,26 +423,6 @@ function maybeShowDriverNotice(t, notice, nvidiaDriver) {
   vscode.window.showInformationMessage(text, 'Set Up Optional ffmpeg').then((ans) => {
     if (ans === 'Set Up Optional ffmpeg') setupFfmpeg();
   }, () => {});
-}
-
-/** First remote video when transcode is 'ask': let the user pick Live transcode vs original quality. */
-async function maybeOfferRemoteTranscode(sess, remote, onAccept) {
-  if (transcodeOfferPending || sess.disposed) return;
-  transcodeOfferPending = true;
-  let answer;
-  try {
-    answer = await vscode.window.showInformationMessage(
-      transcodePolicy.remotePromptText(remote),
-      transcodePolicy.REMOTE_PROMPT_YES,
-      transcodePolicy.REMOTE_PROMPT_NO,
-    );
-  } finally { transcodeOfferPending = false; }
-  if (answer === transcodePolicy.REMOTE_PROMPT_YES) {
-    await setSetting('transcode', 'auto', vscode.ConfigurationTarget.Global);
-    if (!sess.disposed && onAccept) onAccept();
-  } else if (answer === transcodePolicy.REMOTE_PROMPT_NO) {
-    await setSetting('transcode', 'off', vscode.ConfigurationTarget.Global);
-  }
 }
 
 /** Shared hardware-first stream selection for the player and Compare. */
@@ -463,27 +442,6 @@ async function transcodeOptions(t, pr, c, remote, reprobe = true) {
     // Compare can exhaust simultaneous GPU sessions even when the cached open probe is valid.
     onEncoderFail: reprobe ? () => transcodeProbe.encoderFailed(t, enc, nvidiaDriver) : undefined,
   };
-}
-
-/** Local playback falling behind on raw frame transfer when transcode is 'ask': offer Live transcode. */
-async function maybeOfferLocalTranscode(sess) {
-  if (transcodeOfferPending || sess.disposed) return;
-  transcodeOfferPending = true;
-  let answer;
-  try {
-    answer = await vscode.window.showInformationMessage(
-      transcodePolicy.localOfferText(),
-      transcodePolicy.LOCAL_OFFER_YES,
-      transcodePolicy.LOCAL_OFFER_KEEP,
-      transcodePolicy.LOCAL_OFFER_NEVER,
-    );
-  } finally { transcodeOfferPending = false; }
-  if (answer === transcodePolicy.LOCAL_OFFER_YES) {
-    await setSetting('transcode', 'auto', vscode.ConfigurationTarget.Global);
-    if (!sess.disposed) { sess.forceTranscode = true; sess.reload('live transcode accepted'); }
-  } else if (answer === transcodePolicy.LOCAL_OFFER_NEVER) {
-    await setSetting('transcode', 'off', vscode.ConfigurationTarget.Global);
-  }
 }
 
 /**
@@ -842,7 +800,8 @@ function activate(context) {
   hwKnown = globalState.get(HW_KEY) || null;
   offers = createOffers({
     vscode, globalState, log, decide, probe, remoteff, setup, tools, config, probeRecordFor, probeRunning: () => !!probeRun, machine, runProbeUi,
-    setupFfmpeg, downloadRemoteFfmpeg, hostPlatform, hostArch, hostname: () => os.hostname(), sessions,
+    setupFfmpeg, turnOffTranscode: () => setSetting('transcode', 'off', vscode.ConfigurationTarget.Global), downloadRemoteFfmpeg,
+    hostPlatform, hostArch, hostname: () => os.hostname(), sessions,
   });
   // A method guessed from the stored GPUs produced no picture: maybe another GPU or driver now; detect again.
   onGuessFailed(() => { hwStale = true; hwPromise = null; });
@@ -978,7 +937,7 @@ function activate(context) {
     prefs: () => prefsOf(config()),
     setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
     setTranscodePref: (key, value) => setSetting(key, value, vscode.ConfigurationTarget.Global),
-    offerTranscode: (sess) => maybeOfferRemoteTranscode(sess, vscode.env.remoteName),
+    informTranscode: (sess) => offers.maybeInformTranscode(sess),
     setPref: (key, value) => (PREFS[key] && PREFS[key].values.includes(value) ? setSetting(key, value, prefTarget(key)) : undefined),
     // Leave compare: the player takes compare's place, at the kept video's moment.
     openPlayer: async (uri, t, viewColumn) => {
@@ -1016,10 +975,9 @@ function activate(context) {
           mode: c.transcode, remote, video: pr.video, compare: true,
           maxBitrateMbps: c.transcodeMaxBitrate, viewHeight: tile && tile.h,
         });
-        if (decision.action === 'prompt_remote') return { promptTranscode: true };
         if (decision.action === 'stream') {
           const stream = await transcodeOptions(t, pr, c, remoteLink, false);
-          if (stream) return { tools: t, probed: pr, maxHeight: maxStreamHeight, stream };
+          if (stream) return { tools: t, probed: pr, maxHeight: maxStreamHeight, stream, informTranscode: c.transcode !== 'always' };
         }
       }
       if (!rawAllowed) return null;
@@ -1996,17 +1954,7 @@ class Session {
       maxBitrateMbps: c.transcodeMaxBitrate,
       viewHeight: lastView && lastView.h > 0 ? lastView.h : 0,
       forced: !!opts.forced,
-      remotePrompted: !!this.remoteTranscodePrompted,
     });
-    if (decision.action === 'prompt_remote') {
-      this.remoteTranscodePrompted = true;
-      maybeOfferRemoteTranscode(this, remote, () => {
-        if (this.stale(gen)) return;
-        this.forceTranscode = true;
-        this.reload('live transcode accepted');
-      }).catch((e) => log(`remote transcode prompt failed: ${e && e.message || e}`));
-      return false;
-    }
     if (decision.action !== 'stream') return false;
     const isRemoteLink = (!!remote && remote !== 'wsl') || c.remoteStream === 'on';
     const stream = await transcodeOptions(t, pr, c, isRemoteLink);
@@ -2033,6 +1981,8 @@ class Session {
       },
     });
     this.post({ type: 'libav', meta: { size: stat.size, duration: 0, label: '', native: true } });
+    // The one-time notice, unless the user chose Always themselves; never blocks playback.
+    if (c.transcode !== 'always') offers.maybeInformTranscode(this).catch((e) => log(`live transcode notice failed: ${e && e.message || e}`));
     return true;
   }
 
@@ -2441,6 +2391,9 @@ class Session {
   /** Tile numbers playing through Live transcode (0 for this single player), for the clip export's early refusal. */
   liveTranscodeTiles() { return this.native instanceof remotestream.EncodedStream ? [0] : []; }
 
+  /** "Use original video" from the Live transcode notice: this tab only. */
+  useOriginalVideo() { this.useFullRes(); }
+
   /** The user took the early refusal's switch: the built-in decoder for this tab, so A and B are set again on exact times. */
   useOriginalForClips() { this.useFullRes(); }
 
@@ -2520,17 +2473,11 @@ class Session {
           sinceEventMs: m.sinceEventMs !== undefined ? Number(m.sinceEventMs) : transcodePolicy.STALL_SETTLE_MS,
           video: outputVideo,
           alreadyTranscoding: false,
-          promptedThisSession: !!this.localTranscodePrompted,
         });
         if (stallAction === 'switch') {
           log(`[${this.name}] live transcode: auto-switching after transfer stall`);
           this.forceTranscode = true;
           this.reload('live transcode auto');
-          return;
-        }
-        if (stallAction === 'prompt') {
-          this.localTranscodePrompted = true;
-          maybeOfferLocalTranscode(this).catch((e) => log(`local transcode prompt failed: ${e && e.message || e}`));
           return;
         }
         if (!hostKeepsUp) offers.maybeOfferProbe(this, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));

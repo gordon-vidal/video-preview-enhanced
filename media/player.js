@@ -45,7 +45,7 @@
     // The step buttons' size picked with their badge (kept over a reload, shared by all tabs); null: the setting stepButtons.
     stepSize: VpeControls.STEP_SIZES.includes(saved.stepSize) ? saved.stepSize
       : VpeControls.STEP_SIZES.includes(initPrefs.stepSize) ? initPrefs.stepSize : null,
-    transcode: (cfg.prefs && cfg.prefs.transcode) || 'ask',
+    transcode: (cfg.prefs && cfg.prefs.transcode) || 'auto',
     transcodeMaxBitrate: Number(cfg.prefs && cfg.prefs.transcodeMaxBitrate) || 0,
   };
   // Picture size for this tab (Fit, Fill, Stretch, 100 %): starts as the setting videoPreviewEnhanced.pictureSize; the button and Z change this tab only.
@@ -501,7 +501,7 @@
   function setTranscode(mode) {
     prefs.transcode = mode;
     vscode.postMessage({ type: 'transcodePref', mode });
-    toast(`Live transcode: ${mode === 'ask' ? 'Ask' : mode === 'auto' ? 'Auto' : mode === 'always' ? 'Always' : 'Off'}`);
+    toast(`Live transcode: ${mode === 'auto' ? 'Auto' : mode === 'always' ? 'Always' : 'Off'}`);
   }
   function setTranscodeMaxBitrate(mbps) {
     prefs.transcodeMaxBitrate = Number(mbps) || 0;

@@ -12,7 +12,7 @@ function make({ remote, trusted = true, tools = null, config = {}, answers = [],
   const store = new Map();
   const globalState = { get: (k) => store.get(k), update: async (k, v) => { store.set(k, v); } };
   const shown = [];
-  const calls = { setup: 0, download: 0, probeUi: [], toolsCalls: 0 };
+  const calls = { off: 0, setup: 0, download: 0, probeUi: [], toolsCalls: 0 };
   const queue = [...answers];
   const gates = []; // resolvers of messages left hanging (popup "showing")
   const env = { remote, trusted, hang: false };
@@ -35,12 +35,13 @@ function make({ remote, trusted = true, tools = null, config = {}, answers = [],
     vscode, globalState, log: (m) => logs.push(m), decide, probe, remoteff,
     setup: { downloadSizeMB: (os, arch) => (os ? `${os}-${arch}-80` : '90') },
     tools: async () => { calls.toolsCalls++; return tools; },
-    config: () => ({ gpuDecoding: true, decoder: 'auto', transcode: 'ask', ...config }),
+    config: () => ({ gpuDecoding: true, decoder: 'auto', transcode: 'auto', ...config }),
     probeRecordFor: () => (probeRecord ? { complete: true } : null),
     probeRunning: () => probeRunning,
     machine: async () => ({ gpus: [] }),
     runProbeUi: async (t, hw, o) => { calls.probeUi.push(o); return 'rec'; },
     setupFfmpeg: () => { calls.setup++; },
+    turnOffTranscode: async () => { calls.off++; },
     downloadRemoteFfmpeg: async () => { calls.download++; },
     hostPlatform: () => 'linux', hostArch: () => 'x64', hostname: () => 'devbox', sessions,
   });
@@ -257,6 +258,33 @@ const sample = { ratio: 0.4, native: false };
   t.env.hang = false; t.gates[0](remoteff.OFFER_LATER); await Promise.all([p1, p2]);
   assert.strictEqual(t.shown.length, 1);
   assert.strictEqual(t.offers.popupPending(), false);
+
+  // ---- Live transcode: one non-blocking notice the first time it starts, never again ----
+  const informed = require('../../src/transcode_policy');
+  let used = 0;
+  const tab = { name: 'a.mp4', disposed: false, useOriginalVideo: () => { used++; } };
+  t = make({ answers: [undefined] });
+  await t.offers.maybeInformTranscode(tab);
+  assert.strictEqual(t.shown.length, 1);
+  assert.deepStrictEqual(t.shown[0], [informed.informText(), 'Use original video', 'Turn off']);
+  assert.ok(t.store.get(informed.INFORM_KEY), 'remembered in globalState');
+  await t.offers.maybeInformTranscode(tab);
+  assert.strictEqual(t.shown.length, 1, 'not a second time');
+  assert.strictEqual(used + t.calls.off, 0, 'dismissing changes nothing');
+  // A new session (flag already stored) shows nothing.
+  t = make({ answers: ['Turn off'] });
+  t.store.set(informed.INFORM_KEY, 1);
+  await t.offers.maybeInformTranscode(tab);
+  assert.strictEqual(t.shown.length, 0);
+  // Two tiles starting at once show it once; the buttons act.
+  t = make({ answers: ['Use original video'] });
+  await Promise.all([t.offers.maybeInformTranscode(tab), t.offers.maybeInformTranscode(tab)]);
+  assert.strictEqual(t.shown.length, 1);
+  assert.strictEqual(used, 1, '"Use original video" is this tab only');
+  assert.strictEqual(t.calls.off, 0);
+  t = make({ answers: ['Turn off'] });
+  await t.offers.maybeInformTranscode(tab);
+  assert.strictEqual(t.calls.off, 1, '"Turn off" sets transcode to off');
 
   console.log('offers tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

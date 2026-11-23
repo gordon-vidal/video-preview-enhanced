@@ -561,15 +561,13 @@
         "videoPreviewEnhanced.transcode": {
           "type": "string",
           "enum": [
-            "ask",
             "auto",
             "always",
             "off"
           ],
-          "default": "ask",
+          "default": "auto",
           "scope": "machine",
           "enumDescriptions": [
-            "Ask once when Live transcode is needed (locally when raw frame transfer falls behind, or on first remote video) and remember your choice.",
             "Automatically use Live transcode when needed (over remote links, or locally when raw frame transfer falls behind).",
             "Always start with Live transcode for non-HDR files that qualify (avoids startup stutter on 4K60 or fluctuating SSH links).",
             "Never use Live transcode."

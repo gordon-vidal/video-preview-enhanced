@@ -118,7 +118,13 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
   assert.strictEqual(policy.resolveSetting({ transcode: 'ask', transcodeExplicit: false, remoteStream: 'off', remoteStreamExplicit: true }), 'off');
   assert.strictEqual(policy.resolveSetting({ transcode: 'ask', transcodeExplicit: false, remoteStream: 'on', remoteStreamExplicit: true }), 'always');
   assert.strictEqual(policy.resolveSetting({ transcode: 'auto', transcodeExplicit: true, remoteStream: 'off', remoteStreamExplicit: true }), 'auto');
-  assert.strictEqual(policy.resolveSetting({ transcode: 'ask', transcodeExplicit: false }), 'ask');
+  assert.strictEqual(policy.resolveSetting({ transcode: 'auto', transcodeExplicit: false }), 'auto');
+  assert.strictEqual(policy.resolveSetting({}), 'auto', 'the default is auto');
+  // The retired 'ask' (stored by older versions) behaves as 'auto'; 'off' and 'always' stay as set.
+  assert.strictEqual(policy.resolveSetting({ transcode: 'ask', transcodeExplicit: true }), 'auto');
+  assert.strictEqual(policy.resolveSetting({ transcode: 'ask', transcodeExplicit: false }), 'auto');
+  assert.strictEqual(policy.resolveSetting({ transcode: 'off', transcodeExplicit: true }), 'off');
+  assert.deepStrictEqual(policy.MODES, ['auto', 'always', 'off']);
 
   // Remote SSH: high-bitrate 4K H.264 (20 Mb/s) qualifies; low-bitrate 1080p H.264 (3 Mb/s) stays direct.
   const h264High = { codec: 'h264', pixFmt: 'yuv420p', width: 3840, height: 2160, fps: 6, bitRate: 20e6 };
@@ -126,7 +132,9 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
   assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'auto', remote: 'ssh-remote', video: h264High }).action, 'stream');
   assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'auto', remote: 'ssh-remote', video: h264Low }).action, 'skip');
   assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'auto', remote: 'ssh-remote', video: h264Low, maxBitrateMbps: 2 }).action, 'stream', 'explicit cap below source bitrate triggers remote transcode');
-  assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'ask', remote: 'ssh-remote', video: h264High }).action, 'prompt_remote');
+  // No blocking ask step: a qualifying remote video streams at once; off never does.
+  assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'auto', remote: 'ssh-remote', video: h264High }).action, 'stream');
+  assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'off', remote: 'ssh-remote', video: h264High }).action, 'skip');
   // Locally, 8-bit H.264 always stays direct on WebCodecs.
   assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'always', remote: undefined, video: h264High }).action, 'skip');
   // HDR stays on exact/raw path in v1.
@@ -134,11 +142,12 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
 
   // Local stall detector separates transfer bottleneck (hostKeepsUp=true) from decode bottleneck (hostKeepsUp=false).
   const baseStall = {
-    mode: 'ask', slowWindows: 3, hostKeepsUp: true, playing: true, rate: 1, hidden: false,
+    mode: 'auto', slowWindows: 3, hostKeepsUp: true, playing: true, rate: 1, hidden: false,
     sinceEventMs: 2000, video: { codec: 'hevc', width: 3840, height: 2160, fps: 60 },
-    alreadyTranscoding: false, promptedThisSession: false,
+    alreadyTranscoding: false,
   };
-  assert.strictEqual(policy.evaluateLocalStall(baseStall), 'prompt');
+  assert.strictEqual(policy.evaluateLocalStall(baseStall), 'switch', 'auto switches without asking');
+  assert.strictEqual(policy.evaluateLocalStall({ ...baseStall, mode: 'off' }), 'none');
   assert.strictEqual(policy.evaluateLocalStall({ ...baseStall, mode: 'auto' }), 'switch');
   assert.strictEqual(policy.evaluateLocalStall({ ...baseStall, hostKeepsUp: false }), 'none', 'decode bottleneck does not trigger transcode');
   assert.strictEqual(policy.evaluateLocalStall({ ...baseStall, slowWindows: 2 }), 'none');
@@ -208,7 +217,7 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     const highRate = { ...source, codec: 'hevc', pixFmt: 'yuv420p' };
     const direct = { ...highRate, codec: 'h264' };
     assert.strictEqual(policy.shouldTranscodeOnOpen({ compare: true, mode: 'auto', video: highRate }).action, 'stream');
-    assert.strictEqual(policy.shouldTranscodeOnOpen({ compare: true, mode: 'ask', video: highRate }).action, 'skip');
+    assert.strictEqual(policy.shouldTranscodeOnOpen({ compare: true, mode: 'off', video: highRate }).action, 'skip');
     assert.strictEqual(policy.shouldTranscodeOnOpen({ compare: true, mode: 'auto', video: direct }).action, 'skip');
     assert.strictEqual(policy.shouldTranscodeOnOpen({ compare: true, mode: 'always', video: direct }).action, 'stream');
     const tile = { w: 1920, h: 1080, cols: 2, rows: 2 };
@@ -368,7 +377,7 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     assert.strictEqual(policy.evaluateLocalStall({
       mode: 'auto', slowWindows: 3, hostKeepsUp: false, playing: true, rate: 1, hidden: false,
       sinceEventMs: 2000, video: { codec: 'hevc', width: 3840, height: 2160, fps: 60 },
-      alreadyTranscoding: false, promptedThisSession: false,
+      alreadyTranscoding: false,
     }), 'none');
 
     const transferLimited = { frames: [[], []], draining: false, proc: { stdout: { isPaused: () => false } }, lastBackpressureAt: 0 };

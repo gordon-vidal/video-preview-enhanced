@@ -133,7 +133,7 @@ class CompareSession {
    */
   constructor(context, uris, {
     log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn,
-    start, openPlayer, setPref, setPlaybackPrefs, prefs, copyText, addMode, setTranscodePref, offerTranscode, menu, exportClips,
+    start, openPlayer, setPref, setPlaybackPrefs, prefs, copyText, addMode, setTranscodePref, informTranscode, menu, exportClips,
   }) {
     if (api) vscode = api;
     this.logRaw = log;
@@ -148,7 +148,7 @@ class CompareSession {
     this.setPlaybackPrefs = setPlaybackPrefs || null;
     this.prefs = prefs || (() => null);
     this.setTranscodePref = setTranscodePref;
-    this.offerTranscode = offerTranscode;
+    this.informTranscode = informTranscode;
     this.exportClips = exportClips;
     this.addMode = addMode || null;
     this.menu = menu;
@@ -264,10 +264,6 @@ class CompareSession {
         ]);
         if (this.disposed || epoch !== this.epoch) return undefined;
         this.decisions = decisions;
-        if (!this.transcodePrompted && decisions.some((d) => d?.promptTranscode) && this.offerTranscode) {
-          this.transcodePrompted = true;
-          this.offerTranscode(this).catch((e) => this.log(`live transcode prompt failed: ${e.message}`));
-        }
         const heights = this.tileHeights();
         const outputs = this.transcodeOutputs();
         const maxQueued = Grid.nativeQueuePerTile(this.nativeQueue(), this.files.length);
@@ -413,11 +409,17 @@ class CompareSession {
       },
     });
     this.natives[i] = stream;
+    // The one-time "Live transcode is on" notice (once ever, see offers.maybeInformTranscode); never blocks the tile.
+    // Not when the user chose Always themselves.
+    if (this.informTranscode && d.informTranscode) this.informTranscode(this).catch((e) => this.log(`live transcode notice failed: ${e.message}`));
     return 'transcode';
   }
 
   /** Tile numbers playing through Live transcode, for the clip export's early refusal. */
   liveTranscodeTiles() { return this.natives.flatMap((n, i) => (n instanceof EncodedStream ? [i] : [])); }
+
+  /** "Use original video" from the Live transcode notice: every tile playing through it. */
+  useOriginalVideo() { this.useOriginalForClips(this.liveTranscodeTiles()); }
 
   useOriginalForClips(tiles) { for (const i of tiles) this.useOriginalTile(i); }
 

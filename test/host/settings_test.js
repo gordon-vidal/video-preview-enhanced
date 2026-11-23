@@ -46,6 +46,10 @@ const PB = 'videoPreviewEnhanced.playbackPrefs';
   assert.strictEqual(t.s.prefTarget('jump.shift'), 1);
 
   // setSetting: success writes the setting and clears a stale fallback.
+  t = make({ values: { transcode: 'ask' } });
+  assert.strictEqual(t.s.config().transcode, 'auto', 'a stored ask (retired) behaves as auto');
+  t = make({ values: { transcode: 'off' } });
+  assert.strictEqual(t.s.config().transcode, 'off');
   t = make();
   t.store.set(FB, { whenSlow: 'skip', other: 1 });
   assert.strictEqual(await t.s.setSetting('whenSlow', 'every', 1), true);
@@ -90,7 +94,7 @@ const PB = 'videoPreviewEnhanced.playbackPrefs';
   t = make();
   let c = t.s.config();
   assert.strictEqual(c.nativeMaxHeight, 1080); assert.strictEqual(c.nativeMaxAuto, true);
-  assert.strictEqual(c.pictureSize, 'fit'); assert.strictEqual(c.transcode, 'ask'); assert.strictEqual(c.hdrOutput, 'auto');
+  assert.strictEqual(c.pictureSize, 'fit'); assert.strictEqual(c.transcode, 'auto'); assert.strictEqual(c.hdrOutput, 'auto');
   assert.strictEqual(c.jumps['jump.arrow'], 5);
   t = make({ values: { nativeMaxHeight: 720, pictureSize: 'bogus', hdrOutput: 'off', transcodeMaxBitrate: -3, 'jump.ctrl': 30 } });
   c = t.s.config();
@@ -98,7 +102,7 @@ const PB = 'videoPreviewEnhanced.playbackPrefs';
   assert.strictEqual(c.pictureSize, 'fit'); assert.strictEqual(c.hdrOutput, 'off'); assert.strictEqual(c.transcodeMaxBitrate, 0);
   assert.strictEqual(c.jumps['jump.ctrl'], 30);
 
-  // config().transcode precedence: explicit transcode > explicit remoteStream > default 'ask'.
+  // config().transcode precedence: explicit transcode > explicit remoteStream > default 'auto'.
   t = make({ values: { remoteStream: 'on' } });
   assert.strictEqual(t.s.config().transcode, 'always', 'only the older remoteStream is set');
   t = make({ values: { remoteStream: 'on', transcode: 'off' } });

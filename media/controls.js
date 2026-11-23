@@ -376,9 +376,9 @@ const VpeControls = (() => {
       }
       if (s.picture) f.appendChild(btn('row', 'Picture size', () => show('picture'), { icon: ICON.picture, value: `${PIC.name(s.picture.mode)}${s.picture.pct !== null ? ` · ${s.picture.pct}%` : ''}`, chev: true, aria: { 'aria-label': `Picture size, ${PIC.name(s.picture.mode)}` } }));
       if (s.transcode) {
-        const tm = s.transcode.mode || 'ask';
+        const tm = s.transcode.mode || 'auto';
         const mbps = s.transcode.maxBitrateMbps > 0 ? ` · ${s.transcode.maxBitrateMbps} Mb/s` : '';
-        const modeName = tm === 'ask' ? 'Ask' : tm === 'auto' ? 'Auto' : tm === 'always' ? 'Always' : 'Off';
+        const modeName = tm === 'auto' ? 'Auto' : tm === 'always' ? 'Always' : 'Off';
         f.appendChild(btn('row', 'Live transcode', () => show('transcode'), { icon: ICON.quality, value: `${modeName}${mbps}`, chev: true, aria: { 'aria-label': `Live transcode, ${modeName}${mbps}` } }));
       }
       // Tools that are neither inspection nor A–B (Compare): a row of their own.
@@ -588,9 +588,8 @@ const VpeControls = (() => {
       const f = document.createDocumentFragment();
       f.appendChild(head('Live transcode'));
       f.appendChild(el('div', 'pnote', 'Default for all videos on this machine. Switching can reload the current tab.'));
-      const tc = s.transcode || { mode: 'ask', maxBitrateMbps: 0, active: false };
+      const tc = s.transcode || { mode: 'auto', maxBitrateMbps: 0, active: false };
       f.appendChild(radios('Live transcode mode', [
-        { label: 'Ask', sub: 'Prompt when needed', checked: tc.mode === 'ask', pick: () => env.act.setTranscode('ask') },
         { label: 'Auto', sub: 'Switch automatically', checked: tc.mode === 'auto', pick: () => env.act.setTranscode('auto') },
         { label: 'Always', sub: 'Start transcoded', checked: tc.mode === 'always', pick: () => env.act.setTranscode('always') },
         { label: 'Off', sub: 'Never transcode', checked: tc.mode === 'off', pick: () => env.act.setTranscode('off') },

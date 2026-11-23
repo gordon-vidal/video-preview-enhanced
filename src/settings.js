@@ -127,9 +127,9 @@ function createSettings({ vscode, getState, log, transcodePolicy, sessions, comp
         const ri = (c.inspect && c.inspect('remoteStream')) || {};
         const gs = getState();
         const fb = (gs && gs.get(FALLBACK_KEY)) || {};
-        const rawTranscode = settingOr(c, 'transcode', 'ask');
+        const rawTranscode = settingOr(c, 'transcode', 'auto');
         const rawRemote = c.get('remoteStream', 'auto');
-        const tExp = ti.globalValue !== undefined || ti.workspaceValue !== undefined || ti.workspaceFolderValue !== undefined || fb.transcode !== undefined || rawTranscode !== 'ask';
+        const tExp = ti.globalValue !== undefined || ti.workspaceValue !== undefined || ti.workspaceFolderValue !== undefined || fb.transcode !== undefined || (rawTranscode !== 'auto' && rawTranscode !== 'ask');
         const rExp = ri.globalValue !== undefined || ri.workspaceValue !== undefined || ri.workspaceFolderValue !== undefined || rawRemote !== 'auto';
         return transcodePolicy.resolveSetting({
           transcode: rawTranscode,
