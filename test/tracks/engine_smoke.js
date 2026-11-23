@@ -49,6 +49,7 @@ if (!usePool) delete globalThis.DecoderPool;
 else { const P = globalThis.DecoderPool; globalThis.DecoderPool = class extends P { postMessage(m, tr) { super.postMessage(m && m.type === 'init' ? { ...m, ...realInit } : m, tr); } }; }
 
 // ---- engine --------------------------------------------------------------------
+globalThis.VpeBlockCache = require('../../media/block-cache');
 const src = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'engine.js'), 'utf8');
 vm.runInThisContext(`${src}\nglobalThis.createEngine = createEngine;`, { filename: 'engine.js' });
 let size = 0;

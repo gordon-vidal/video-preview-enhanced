@@ -133,8 +133,7 @@ function createXray(env) {
     if (s.worker) s.worker.terminate();
     const p = s.p;
     if (p.sideReaders) p.sideReaders.delete('xray');
-    if (p.wantReads) p.wantReads.delete('xray');
-    if (p.readerPos) p.readerPos.delete('xray');
+    p.dropBlockReader?.('xray');
     s.worker = null;
     s.opened = false;
     s.busy = false;

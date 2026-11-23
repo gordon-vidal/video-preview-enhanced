@@ -1,11 +1,10 @@
-/* global DecoderPool, ThumbService, FrameStream, VpeHdr */
+/* global DecoderPool, ThumbService, FrameStream, VpeHdr, VpeBlockCache */
 // @ts-check
 // Decode-only playback engine for the webview. Demuxing and software decoding
 // run in decoder-worker.js (libav.js / WebAssembly); H.264 and VP8 go to the
 // browser's hardware decoder (WebCodecs). Frames are drawn with WebGL, sound is
 // played with WebAudio, which is also the clock. Nothing is ever re-encoded.
 'use strict';
-/** @import { ReadBlockRequest } from '../tools/read-block-contract.js' */
 /** @import { ThumbRequest } from '../tools/page-work-contract.js' */
 
 /* exported createEngine, matrixBySize */
@@ -610,110 +609,25 @@ function createEngine(env) {
     }
 
     // Data for the worker's file reads comes from the extension host.
-    // ---- file blocks: cache + read-ahead -------------------------------------
-    // The worker reads the file through its block device. Blocks come from the
-    // extension host; over SSH/WSL each one costs a round trip, so several are kept
-    // in flight ahead of the reader and cached here.
-
-    initBlocks() {
-      // Remote windows and URLs (each block is a round trip, or an HTTP range request): larger blocks, more ahead.
-      // A large compare grid: small blocks for every tile, or 16 remote tiles would hold 16 x 24 MB.
-      const big = (this.cfg.remote || this.cfg.net) && !this.cfg.largeGrid;
-      this.blockSize = big ? 4 << 20 : 1 << 20;
-      this.readAhead = big ? 4 : 1;
-      this.blocks = new Map(); // aligned pos -> Uint8Array
-      this.inflight = new Set();
-      this.wantReads = new Map(); // reader id (pool worker, 0 for one worker) -> {pos, len} it waits for
-      this.readerPos = new Map(); // reader id -> last read position, for cache eviction
-      this.blockBytes = 0;
-    }
-
-    // checkJs: start
-    /** @param {number} bpos */
-    requestBlock(bpos) {
-      if (bpos < 0 || bpos >= this.meta.size || this.blocks.has(bpos) || this.inflight.has(bpos)) return;
-      this.inflight.add(bpos);
-      (this.reqAt = this.reqAt || new Map()).set(bpos, performance.now());
-      vscode.postMessage(/** @satisfies {ReadBlockRequest} */ ({
-        type: 'readBlock', page: env.page, pos: bpos, len: this.blockSize,
-      }));
-    }
-    // checkJs: end
-
-    /** A block the host could not read: the reads waiting for it fail (an empty block is a read error). */
-    failReads(bpos) {
-      for (const [rid, w] of this.wantReads) {
-        if (Math.floor(w.pos / this.blockSize) * this.blockSize !== bpos) continue;
-        this.wantReads.delete(rid);
-        this.sendBlock(rid, { type: 'block', pos: w.pos, data: new Uint8Array(0), rid });
-      }
-    }
-
-    /** No answer for a block within 15 s: ask once more, then fail the read. */
-    retryReads() {
-      this.readTimer = 0;
-      if (!this.wantReads.size) return;
-      for (const w of [...this.wantReads.values()]) {
-        const bpos = Math.floor(w.pos / this.blockSize) * this.blockSize;
-        if (!this.inflight.has(bpos) || performance.now() - this.reqAt.get(bpos) < 15000) continue;
-        this.inflight.delete(bpos);
-        this.retried = this.retried || new Set();
-        if (this.retried.has(bpos)) { log(`block ${bpos} not read`); this.failReads(bpos); continue; }
-        this.retried.add(bpos);
-        this.requestBlock(bpos);
-      }
-      this.readTimer = setTimeout(() => this.retryReads(), 5000);
+    blockReader() {
+      return this.blockCache ??= VpeBlockCache.create({
+        page: env.page, size: this.meta.size, budget: this.mem.blocks,
+        largeBlocks: !!((this.cfg.remote || this.cfg.net) && !this.cfg.largeGrid),
+        request: (message) => vscode.postMessage(message),
+        send: (rid, message, transfer) => this.sendBlock(rid, message, transfer),
+        log,
+      });
     }
 
     onWorkerRead(pos, len, rid = 0) {
-      if (!this.blocks) this.initBlocks();
-      this.wantReads.set(rid, { pos, len });
-      this.readerPos.set(rid, pos);
-      const first = Math.floor(pos / this.blockSize) * this.blockSize;
-      for (let k = 0; k <= this.readAhead; k++) this.requestBlock(first + k * this.blockSize);
-      this.answerReads();
-      if (!this.readTimer) this.readTimer = setTimeout(() => this.retryReads(), 5000);
+      if (!this.disposed) this.blockReader().read(pos, len, rid);
     }
 
-    /**
-     * @param {number} pos
-     * @param {Uint8Array} data
-     * @param {string} [error]
-     */
     onBlock(pos, data, error) {
-      if (!this.blocks) this.initBlocks();
-      this.inflight.delete(pos);
-      if (error || !data || !data.byteLength) { log(`block ${pos}: ${error || 'no data'}`); this.failReads(pos); return; }
-      if (this.blocks.has(pos)) this.blockBytes -= this.blocks.get(pos).byteLength; // a retry answered twice
-      this.blocks.set(pos, data);
-      this.blockBytes += data.byteLength;
-      // Keep about 64 MB (more with several readers); drop the blocks furthest from every reader.
-      const limit = Math.max(this.mem.blocks, this.readerPos.size * (this.readAhead + 2) * this.blockSize);
-      const readers = [...this.readerPos.values()];
-      const dist = (k) => Math.min(...readers.map((r) => Math.abs(k - r)));
-      while (this.blockBytes > limit && this.blocks.size > this.readAhead + 2) {
-        let far = null;
-        let farD = -1;
-        for (const k of this.blocks.keys()) { const d = dist(k); if (d > farD) { far = k; farD = d; } }
-        this.blockBytes -= this.blocks.get(far).byteLength;
-        this.blocks.delete(far);
-      }
-      this.answerReads();
+      if (!this.disposed) this.blockReader().receive(pos, data, error);
     }
 
-    answerReads() {
-      for (const [rid, w] of this.wantReads) {
-        const bpos = Math.floor(w.pos / this.blockSize) * this.blockSize;
-        const b = this.blocks.get(bpos);
-        if (!b) continue;
-        this.wantReads.delete(rid);
-        // Send from the block containing pos; the worker copies, so slice a fresh buffer.
-        const data = b.slice(w.pos - bpos);
-        this.sendBlock(rid, { type: 'block', pos: w.pos, data, rid }, [data.buffer]);
-        // Keep the pipeline full (not for the thumbnail reader: it jumps around).
-        if (rid !== 'thumbs') for (let k = 1; k <= this.readAhead; k++) this.requestBlock(bpos + k * this.blockSize);
-      }
-    }
+    dropBlockReader(rid) { this.blockCache?.dropReader(rid); }
 
     async onWorker(m) {
       if (this.disposed) return;
@@ -722,7 +636,7 @@ function createEngine(env) {
       switch (m.type) {
         case 'ready': mark('libavReady'); this.worker.postMessage({ type: 'open', size: this.meta.size }); break;
         case 'read': this.onWorkerRead(m.pos, m.len, m.rid); break;
-        case 'readers': if (this.readerPos) for (const rid of m.drop) { this.readerPos.delete(rid); this.wantReads.delete(rid); } break;
+        case 'readers': for (const rid of m.drop) this.dropBlockReader(rid); break;
         case 'streams': mark('streams'); await this.onStreams(m.info); break;
         case 'link': this.openFrameStream(m); break; // native: the frame server's address, before 'streams'
         case 'transport': this.recoverFrameStream(m); break;
@@ -2645,7 +2559,7 @@ function createEngine(env) {
         libav: this.libavBlobs, size: this.meta.size, duration: this.meta.duration, startT,
         fps: this.fps, rotation: this.cfg.rotation || 0, remote: !!this.cfg.remote, log, cap: this.mem.thumbs,
         onRead: (pos, len) => this.thumbRead(pos, len),
-        onIdle: () => { if (this.readerPos) this.readerPos.delete('thumbs'); },
+        onIdle: () => this.blockCache?.forgetPosition('thumbs'),
         busy: () => this.thumbsBusy(),
         request: this.cfg.native ? (t, w, h) => this.hostThumb(t - startT, w, h).then((r) => (r && r.data ? { ...r, kt: t } : null)) : undefined,
       });
@@ -2691,11 +2605,7 @@ function createEngine(env) {
 
     /** A thumbnail-worker read: like onWorkerRead, but only the block it needs (no read-ahead). */
     thumbRead(pos, len) {
-      if (!this.blocks) this.initBlocks();
-      this.wantReads.set('thumbs', { pos, len });
-      this.readerPos.set('thumbs', pos);
-      this.requestBlock(Math.floor(pos / this.blockSize) * this.blockSize);
-      this.answerReads();
+      this.onWorkerRead(pos, len, 'thumbs');
     }
 
     /** Playback needs the CPU: decoding is behind, or little is decoded ahead while playing. */
@@ -2786,7 +2696,7 @@ function createEngine(env) {
         this.remoteAudioPending.clear();
       }
       this.gen++; // late decoder outputs and worker messages of the old generation are dropped
-      clearTimeout(this.readTimer);
+      this.blockCache?.dispose();
       clearTimeout(this.acTimer);
       clearTimeout(this.acWakeTimer);
       this.endSteps();

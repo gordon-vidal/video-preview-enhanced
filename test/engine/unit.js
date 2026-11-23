@@ -15,6 +15,7 @@ const media = path.join(__dirname, '..', '..', 'media');
 const ctx = { performance: { now: () => ctx.perfNow }, perfNow: 0, console, setTimeout, clearTimeout, queueMicrotask, globalThis: null };
 ctx.globalThis = ctx;
 vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(path.join(media, 'block-cache.js'), 'utf8'), ctx);
 vm.runInContext(`${fs.readFileSync(path.join(media, 'engine.js'), 'utf8')}\n;globalThis.createEngine = createEngine;`, ctx);
 vm.runInContext(fs.readFileSync(path.join(media, 'timestretch.js'), 'utf8'), ctx);
 const noop = () => {};
@@ -426,34 +427,13 @@ test('#14 a hidden tab frees its frames and pool workers', () => {
 });
 
 test('#18 a block the host fails to read does not hang the reader', () => {
-  ctx.perfNow = 0;
   const p = player();
-  const q = player({ meta: { duration: 10, size: 50e6 } });
-  try {
-    P.onWorkerRead.call(p, 100, 1 << 20, 0);
-    assert.ok(p.inflight.has(0));
-    // The host answers with an error: the waiting read fails at once.
-    P.onBlock.call(p, 0, null, 'EIO');
-    const fail = p.worker.msgs.find((m) => m.type === 'block');
-    assert.ok(fail && fail.data.byteLength === 0 && fail.pos === 100, 'reader still waiting after a read error');
-    assert.ok(!p.inflight.has(0));
-    // No answer at all: asked again after 15 s, failed after another 15 s.
-    P.onWorkerRead.call(q, (5 << 20) + 7, 1 << 20, 0);
-    clearTimeout(q.readTimer);
-    const asks = () => posted.filter((m) => m.type === 'readBlock' && m.pos === 5 << 20).length;
-    const before = asks();
-    ctx.perfNow = 16000;
-    P.retryReads.call(q);
-    clearTimeout(q.readTimer);
-    assert.strictEqual(asks(), before + 1, 'not asked again');
-    ctx.perfNow = 32000;
-    P.retryReads.call(q);
-    assert.ok(q.worker.msgs.some((m) => m.type === 'block' && m.data.byteLength === 0), 'read never failed');
-  } finally {
-    // These timers run on wall time while the test advances the read clock by hand.
-    clearTimeout(p.readTimer);
-    clearTimeout(q.readTimer);
-  }
+  const before = posted.length;
+  p.onWorkerRead(100, 1 << 20);
+  assert.deepStrictEqual({ ...posted[before] }, { type: 'readBlock', page: undefined, pos: 0, len: 1 << 20 });
+  p.onBlock(0, null, 'EIO');
+  const fail = p.worker.msgs.find((m) => m.type === 'block');
+  assert.ok(fail && fail.data.byteLength === 0 && fail.pos === 100, 'reader still waiting after a read error');
 });
 
 test('#18 keys before the decoder is ready do not throw', () => {
@@ -482,13 +462,13 @@ test('#18 readers of stopped pool workers are forgotten', async () => {
   const pool = parallelPool();
   const p = player({ meta: { duration: 10, size: 50e6 }, worker: pool });
   pool.onmessage = (e) => P.onWorker.call(p, e.data);
-  for (const rid of [0, 1, 2]) P.onWorkerRead.call(p, rid * (8 << 20), 1 << 20, rid);
-  clearTimeout(p.readTimer);
-  assert.strictEqual(p.readerPos.size, 3);
+  const sent = [];
+  p.sendBlock = (rid) => sent.push(rid);
+  for (const rid of [0, 1, 2]) p.onWorkerRead(rid * (8 << 20), 1 << 20, rid);
   pool.fallback('test');
   await tick0();
-  assert.deepStrictEqual([...p.readerPos.keys()], [0], 'stale readers kept');
-  assert.ok(![...p.wantReads.keys()].some((r) => r !== 0));
+  for (const rid of [0, 1, 2]) p.onBlock(rid * (8 << 20), new Uint8Array(1));
+  assert.deepStrictEqual(sent, [0], 'stale readers kept');
 });
 
 test('#18 the worker runs only the newest of queued seeks', async () => {

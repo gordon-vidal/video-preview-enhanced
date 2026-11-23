@@ -103,6 +103,7 @@ ${barHtml({ compare: true })}
 <script nonce="${nonce}" src="${uri('timestretch.js')}"></script>
 <script nonce="${nonce}" src="${uri('framestream.js')}"></script>
 <script nonce="${nonce}" src="${uri('hdr.js')}"></script>
+<script nonce="${nonce}" src="${uri('block-cache.js')}"></script>
 <script nonce="${nonce}" src="${uri('engine.js')}"></script>
 <script nonce="${nonce}" src="${uri('picture.js')}"></script>
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>

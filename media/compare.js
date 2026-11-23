@@ -2652,7 +2652,7 @@
         break;
       case 'block': {
         const p = engines[m.key];
-        if (p) p.onBlock(m.pos, m.data);
+        if (p) p.onBlock(m.pos, m.data, m.error);
         break;
       }
       case 'resize': {
