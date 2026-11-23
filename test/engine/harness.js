@@ -53,6 +53,8 @@ globalThis.DecoderPool = class extends BasePool { postMessage(m, tr) { super.pos
 for (const f of ['membudget.js', 'hdr.js']) vm.runInThisContext(fs.readFileSync(path.join(MEDIA, f), 'utf8'), { filename: path.join(MEDIA, f) });
 globalThis.VpeBlockCache = require('../../media/block-cache');
 globalThis.VpeGlRenderer = require('../../media/gl-renderer');
+globalThis.VpeCodecUtils = require('../../media/codec-utils');
+globalThis.VpeDecoderBoot = require('../../media/decoder-boot');
 const src = fs.readFileSync(path.join(MEDIA, 'engine.js'), 'utf8');
 vm.runInThisContext(`${src}\nglobalThis.createEngine = createEngine;`, { filename: path.join(MEDIA, 'engine.js') });
 

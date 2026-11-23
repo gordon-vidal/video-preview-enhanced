@@ -1,4 +1,4 @@
-/* global createEngine, VpeControls, VpeModes */
+/* global createEngine, VpeControls, VpeModes, VpeCompareCompositor */
 // @ts-check
 // Compare / multi-view: 2-16 videos (up to compare.maxVideos) on one
 // transport, frame accurate, with the player's own bar and panels (docs/notes/compare-ui.md, the approved
@@ -181,7 +181,7 @@
       onReady: () => onEngineReady(key),
       onMeta: () => onEngineMeta(key),
       wake: () => wakeLoop(),
-      createRenderer: largeGrid && !quiet ? (Renderer) => sharedRenderer(Renderer, cv, file) : undefined,
+      createRenderer: largeGrid && !quiet ? (Renderer) => comp.sharedRenderer(Renderer, cv, file) : undefined,
     };
     const eng = createEngine(env);
     const p = new eng.LibavPlayer({ size: sizes[file], duration: 0, label: '', native: !quiet && !!nativeTiles[file] },
@@ -404,232 +404,21 @@
   }
   const skip = (s) => { if (clock) { seekClock(clock.currentTime() + s); toast(`${s > 0 ? '+' : ''}${s} s`); } };
 
-  // ---- compositor ---------------------------------------------------------------
-
-  const VS = `#version 300 es
-    in vec2 p; out vec2 uv; uniform float flip;
-    void main() { uv = vec2(p.x * 0.5 + 0.5, 0.5 - flip * p.y * 0.5); gl_Position = vec4(p, 0.0, 1.0); }`;
-
-  function glProgram(gl, fsSrc) {
-    const sh = (type, src) => {
-      const s = gl.createShader(type);
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || 'shader');
-      return s;
-    };
-    const prog = gl.createProgram();
-    gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
-    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fsSrc));
-    gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog) || 'link');
-    gl.useProgram(prog);
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, 'p');
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    const u = (n) => gl.getUniformLocation(prog, n);
-    return { prog, u };
-  }
-  function glTexture(gl, unit, filter) {
-    const t = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE0 + unit);
-    gl.bindTexture(gl.TEXTURE_2D, t);
-    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, filter], [gl.TEXTURE_MAG_FILTER, filter], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
-    return t;
-  }
-
-  // Each tile is drawn into its own rectangle of the stage-sized canvas (viewport), the split's second
-  // tile clipped to the right of the divider (scissor). Tile i's picture is texture slot i.
-  const SLOTS = N;
-  const DRAW_FS = `#version 300 es
-    precision highp float;
-    in vec2 uv; out vec4 o; uniform sampler2D t; uniform vec4 win;
-    void main() { o = vec4(texture(t, win.xy + uv * win.zw).rgb, 1.0); }`;
-
-  class Compositor {
-    constructor(cv) {
-      const gl = cv.getContext('webgl2', { preserveDrawingBuffer: true, alpha: false, antialias: false });
-      if (!gl) throw new Error('WebGL2 is not available');
-      this.gl = gl;
-      this.cv = cv;
-      const { u } = glProgram(gl, DRAW_FS);
-      gl.uniform1i(u('t'), 0);
-      gl.uniform1f(u('flip'), 1);
-      this.uwin = u('win'); // the part of the picture a rectangle shows (zoomed in, only a crop of it is on screen)
-      this.tex = [];
-      this.size = [];
-      for (let i = 0; i < SLOTS; i++) {
-        // Mipmapped: a 4K picture in a 960-pixel cell is averaged, not sampled every fourth pixel.
-        const t = glTexture(gl, 0, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-        this.tex.push(t);
-        this.size.push([0, 0]);
-      }
-    }
-    /** Uploads tile `slot`'s engine canvas. */
-    upload(slot, src) {
-      const gl = this.gl;
-      if (!src.width || !src.height || slot >= SLOTS) return;
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, this.tex[slot]);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
-      gl.generateMipmap(gl.TEXTURE_2D);
-      this.size[slot] = [src.width, src.height];
-    }
-    /**
-     * @param {number} w canvas width (device pixels)
-     * @param {number} h canvas height
-     * @param {{slot: number, x: number, y: number, w: number, h: number, clipX?: number, win?: number[], nearest?: boolean}[]} rects device pixels from the top left
-     */
-    draw(w, h, rects) {
-      const gl = this.gl;
-      if (this.cv.width !== w || this.cv.height !== h) { this.cv.width = w; this.cv.height = h; }
-      gl.disable(gl.SCISSOR_TEST);
-      gl.viewport(0, 0, w, h);
-      gl.clearColor(0, 0, 0, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.activeTexture(gl.TEXTURE0);
-      for (const r of rects) {
-        if (!this.size[r.slot][0] || r.w < 1 || r.h < 1) continue;
-        const y = h - r.y - r.h;
-        gl.bindTexture(gl.TEXTURE_2D, this.tex[r.slot]);
-        // Enlarged to twice or more: single pixels, as the player's nearest-neighbour zoom.
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, r.nearest ? gl.NEAREST : gl.LINEAR);
-        const w4 = r.win || [0, 0, 1, 1];
-        gl.uniform4f(this.uwin, w4[0], w4[1], w4[2], w4[3]);
-        gl.viewport(Math.round(r.x), Math.round(y), Math.round(r.w), Math.round(r.h));
-        if (r.clipX !== undefined) {
-          gl.enable(gl.SCISSOR_TEST);
-          gl.scissor(Math.round(r.clipX), Math.round(y), Math.max(0, Math.round(r.x + r.w - r.clipX)), Math.round(r.h));
-        } else gl.disable(gl.SCISSOR_TEST);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      }
-      gl.disable(gl.SCISSOR_TEST);
-    }
-  }
-
-  // A WebGL context per engine plus the compositor's would pass Chromium's 16 per page (the oldest is
-  // lost). From 5 tiles on, one renderer on a scratch canvas draws each tile's frame when its engine
-  // shows it, and the result goes straight into that tile's compositor texture; the engine's own
-  // canvas only keeps the size (no context). Buffer recycling and colour state stay per tile.
-  let scratch = null, renderer = null;
-  function sharedRenderer(Renderer, cv, slot) {
-    if (!renderer) {
-      scratch = document.createElement('canvas');
-      renderer = new Renderer(scratch);
-      renderer.maxPixels = Grid.texturePixels(N); // all tiles' textures together: one 4K picture
-    }
-    let rotation = 0;
-    let held = null;
-    const out = {
-      norm16: renderer.norm16, hdrPeak: 0, hdr: 0, onUploaded: null, onFrame: null, twin: null, gl: null,
-      get rot() { return rotation; },
-      setRotation(deg) { rotation = [90, 180, 270].includes(deg) ? deg : 0; },
-      prepareNative(w, h) {
-        const r = rotation % 180 ? [h, w] : [w, h];
-        const c = Grid.capSize(r[0], r[1], renderer ? renderer.maxPixels : 0);
-        if (cv.width !== c.w || cv.height !== c.h) { cv.width = c.w; cv.height = c.h; }
-      },
-      drawYuv(f) { draw(() => renderer.drawYuv(f)); },
-      drawFrame(vf) { draw(() => renderer.drawFrame(vf)); },
-      dispose() {
-        if (out.onFrame) {
-          const fn = out.onFrame;
-          out.onFrame = null;
-          fn(null);
-        }
-        out.onUploaded = null;
-        out.twin = null;
-        held = null;
-      },
-    };
-    function draw(render) {
-      if (!renderer || !comp) return;
-      renderer.setRotation(rotation);
-      renderer.hdrPeak = out.hdrPeak;
-      renderer.heldBuf = held;
-      renderer.onUploaded = out.onUploaded;
-      renderer.onFrame = out.onFrame;
-      render();
-      renderer.onFrame = null;
-      held = renderer.heldBuf;
-      out.hdr = renderer.hdr;
-      if (cv.width !== scratch.width || cv.height !== scratch.height) { cv.width = scratch.width; cv.height = scratch.height; }
-      comp.upload(slot, scratch);
-    }
-    return out;
-  }
-
-  /** @type {Compositor|null} */ let comp = null;
+  const { Compositor, glProgram, glTexture } = VpeCompareCompositor;
+  /** @type {InstanceType<typeof Compositor>|null} */ let comp = null;
   const { pairMetrics, hasReadback, resetReadback } = VpeCompareMetrics.install({ glProgram, glTexture, log });
 
   // ---- layout: cells and the pictures in them ---------------------------------------------
-
-  /** A tile's display aspect: its engine canvas once it has drawn, else the file's size, else 16:9. */
-  function aspectOf(i) {
-    const p = tiles[i];
-    if (p && p.cv && p.cv.width && p.cv.height) return p.cv.width / p.cv.height;
-    if (p && p.meta && p.meta.width && p.meta.height) return p.meta.width / p.meta.height;
-    return 16 / 9;
-  }
-  const fitRect = (x, y, w, h, a) => {
-    let fw = w, fh = w / a;
-    if (fh > h) { fh = h; fw = h * a; }
-    return { x: x + (w - fw) / 2, y: y + (h - fh) / 2, w: fw, h: fh };
-  };
-  const GAP = 2;
-  /** Tile i's drawn size (its canvas, else the file's) and the video's own size (what 100 % shows). */
-  function tileNat(i) {
-    const p = tiles[i];
-    if (p && p.cv && p.cv.width && p.cv.height) return { w: p.cv.width, h: p.cv.height };
-    if (p && p.meta && p.meta.width && p.meta.height) return { w: p.meta.width, h: p.meta.height };
-    return { w: 1600, h: 900 };
-  }
-  const tileSrc = (i) => {
-    const p = tiles[i];
-    const stream = p?.info?.remoteStream;
-    return Pic.sourceSize(tileNat(i), stream
-      ? { w: stream.sourceWidth, h: stream.sourceHeight }
-      : { w: p?.meta?.width, h: p?.meta?.height });
-  };
+  const { esc } = Grid;
+  const aspectOf = (i) => Grid.aspectOf(tiles[i]);
+  const tileNat = (i) => Grid.tileNat(tiles[i]);
+  const tileSrc = (i) => Grid.tileSrc(tiles[i], Pic);
   const picOpts = () => ({ dpr: window.devicePixelRatio || 1 });
-  /** Tile i in a cell (x, y, w, h): `full` is the whole picture with the shared view applied, `pic` the part of it inside the cell. */
-  function placed(i, x, y, w, h) {
-    const r = Pic.rectOf(st.pic, tileNat(i), tileSrc(i), { w, h }, picOpts());
-    const full = { x: x + r.x, y: y + r.y, w: r.w, h: r.h };
-    const x0 = Math.max(x, full.x), y0 = Math.max(y, full.y), x1 = Math.min(x + w, full.x + full.w), y1 = Math.min(y + h, full.y + full.h);
-    return { full, pic: { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) } };
-  }
-  /**
-   * The cells in CSS pixels of the stage: {x, y, w, h, tiles: [i] or [left, right] (split) or [] (the add cell), pic}.
-   */
-  function computeCells(order = displayOrder()) {
-    const W = stage.clientWidth, H = stage.clientHeight;
-    if (st.mode === 'split') {
-      const [l, r] = order;
-      return [{ x: 0, y: 0, w: W, h: H, tiles: [l, r], split: true, ...placed(l, 0, 0, W, H) }];
-    }
-    if (st.mode === 'side') {
-      const w = (W - GAP) / 2;
-      return order.map((i, k) => ({ x: k * (w + GAP), y: 0, w, h: H, tiles: [i], ...placed(i, k * (w + GAP), 0, w, H) }));
-    }
-    const { cols, rows } = Grid.gridFor(N, 'grid');
-    const w = (W - GAP * (cols - 1)) / cols, h = (H - GAP * (rows - 1)) / rows;
-    const out = [];
-    // The first empty cell adds a video (3 of 4; in a larger grid while the setting allows more).
-    for (let k = 0, count = Grid.gridCellCount(N, MAX_TILES, cols, rows); k < count; k++) {
-      const x = (k % cols) * (w + GAP), y = Math.floor(k / cols) * (h + GAP);
-      if (k < N) out.push({ x, y, w, h, tiles: [order[k]], ...placed(order[k], x, y, w, h) });
-      else out.push({ x, y, w, h, tiles: [], add: true, pic: { x, y, w, h }, full: { x, y, w, h } });
-    }
-    return out;
-  }
+  const pictureRect = (view, i, w, h) => Pic.rectOf(view, tileNat(i), tileSrc(i), { w, h }, picOpts());
+  const computeCells = (order = displayOrder()) => Grid.computeCells({
+    order, mode: st.mode, width: stage.clientWidth, height: stage.clientHeight, maxTiles: MAX_TILES,
+    pictureRect: (i, w, h) => pictureRect(st.pic, i, w, h),
+  });
   /** @type {any[]} */
   let cells = [];
 
@@ -648,16 +437,7 @@
     close: SVG('<path d="M7 7l10 10M17 7L7 17"></path>', 14),
     split: SVG('<path d="M9 7l-5 5 5 5M15 7l5 5-5 5"></path>', 14),
   };
-  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-  /** Offset text: short ("0", "+3 f", "−40 ms") for the nudge and the panel rows, long ("In step", "+3 frames") for the page. */
-  function offText(i, long) {
-    const o = st.offsets[i];
-    if (!o || !o.v) return long ? 'In step' : '0';
-    const sg = o.v > 0 ? '+' : '−';
-    const a = Math.abs(o.v);
-    if (o.unit === 'ms') return `${sg}${Math.round(a * 10) / 10} ms`;
-    return `${sg}${a}${long ? (a === 1 ? ' frame' : ' frames') : ' f'}`;
-  }
+  const offText = (i, long = false) => Grid.offText(st.offsets[i], long);
 
   let cellsKey = '';
   /** Builds the cells' DOM when the structure changes; positions them on every layout. */
@@ -855,7 +635,7 @@
 
   function present(now) {
     if (!clock || clock.shownT === null) return;
-    if (!comp) comp = new Compositor(canvas);
+    if (!comp) comp = new Compositor(canvas, N, Grid);
     if (canvas.hidden) canvas.hidden = false;
     const paused = !clock.playing;
     const cRel = clock.rel(clock.shownT);
@@ -946,7 +726,7 @@
     // Large-grid textures are filled directly by the shared renderer.
     presentedMarks = [];
     for (const { slot, w, h } of rects) {
-      if (w < 1 || h < 1 || !comp.size[slot][0]) continue;
+      if (w < 1 || h < 1 || !comp.hasPicture(slot)) continue;
       presentedMarks[slot] = largeGrid ? VpeCompareRange.snapshotTile(tiles[slot], fpsOf(tiles[slot])) : uploadedMarks[slot];
     }
   }
@@ -985,14 +765,7 @@
    */
   function frameFactor() {
     if (st.pic.mode === 'fit' && Pic.plain(st.pic)) return 1;
-    let f = 0;
-    for (const c of computeCells(st.order)) {
-      if (c.add) continue;
-      const i = c.tiles[0];
-      const fit = Pic.rectOf(Pic.fresh('fit'), tileNat(i), tileSrc(i), { w: c.w, h: c.h }, picOpts());
-      if (fit.w > 0 && fit.h > 0) f = Math.max(f, c.full.w / fit.w, c.full.h / fit.h);
-    }
-    return Math.round(Math.max(0.1, Math.min(64, f || 1)) * 100) / 100;
+    return Grid.frameFactor(computeCells(st.order), (i, w, h) => pictureRect(Pic.fresh('fit'), i, w, h));
   }
   let lastTileSize, sizeTimer;
   function requestTileSize() {
@@ -2142,12 +1915,11 @@
       } catch (e) { log(`dispose ${p.key}: ${e && e.message || e}`); }
       delete engines[p.key];
     }
-    renderer?.dispose?.({ loseContext: true });
-    comp?.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    comp?.dispose();
     resetReadback();
     tiles = [];
     sync.setClock(st.clock, st.loop);
-    clock = comp = renderer = scratch = null;
+    clock = comp = null;
   }
   window.addEventListener('pagehide', disposeEngines, { once: true });
 
@@ -2259,7 +2031,7 @@
         nativeTiles = m.native || nativeTiles;
         try {
           // The shared renderer of a large grid draws into the compositor's textures from the first frame.
-          if (largeGrid && !comp) comp = new Compositor(canvas);
+          if (largeGrid && !comp) comp = new Compositor(canvas, N, Grid);
           tiles = names.map((_, i) => makeEngine(KEYS[i], { quiet: false, budget: memory.frames }));
           setClock(st.clock, true);
         } catch (err) {
@@ -2346,7 +2118,7 @@
   VpeCompareDebug.install({
     cfg, log, Grid, N, MAX_TILES, st, canvas, stage, cellsEl, ui, controls,
     scanner, reorderBtn, reorderHint, $, getState: () => ({ tiles, clock, cells, hover }),
-    contextCount: () => Number(!!comp) + Number(!!renderer) + Number(hasReadback()),
+    contextCount: () => (comp?.contextCount ?? 0) + Number(hasReadback()),
     setHover: (value) => { hover = value; },
     frameOf, fpsOf, synced, tileSize, frameFactor, picState, setMode, setOffset,
     setClock, removeTile, setSound, step, play, pause, seekClock, setRate,

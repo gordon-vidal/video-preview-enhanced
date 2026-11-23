@@ -5,6 +5,35 @@
 const assert = require('assert');
 const path = require('path');
 const Grid = require('../../media/compare-grid');
+
+assert.deepStrictEqual(Grid.fitRect(10, 20, 100, 100, 2), { x: 10, y: 45, w: 100, h: 50 });
+assert.deepStrictEqual(Grid.fitRect(10, 20, 100, 100, 0.5), { x: 35, y: 20, w: 50, h: 100 });
+{
+  const pictureRect = (_, w, h) => ({ x: -w / 2, y: -h / 2, w: w * 2, h: h * 2 });
+  const opts = { width: 202, height: 102, maxTiles: 4, pictureRect };
+  const grid = Grid.computeCells({ ...opts, mode: 'grid', order: [2, 0, 1] });
+  assert.deepStrictEqual(grid.map(({ x, y, tiles }) => [x, y, tiles]), [
+    [0, 0, [2]], [102, 0, [0]], [0, 52, [1]], [102, 52, []],
+  ]);
+  assert.deepStrictEqual(grid[1].pic, { x: 102, y: 0, w: 100, h: 50 });
+  assert.deepStrictEqual(grid[1].full, { x: 52, y: -25, w: 200, h: 100 });
+  assert.strictEqual(grid[3].add, true);
+  assert.strictEqual(Grid.computeCells({ ...opts, mode: 'grid', order: [2, 0, 1], maxTiles: 3 }).length, 3);
+  const side = Grid.computeCells({ ...opts, mode: 'side', order: [1, 0] });
+  assert.deepStrictEqual(side.map(({ x, w, tiles }) => [x, w, tiles]), [[0, 100, [1]], [102, 100, [0]]]);
+  const split = Grid.computeCells({ ...opts, mode: 'split', order: [1, 0] });
+  assert.deepStrictEqual(split.map(({ split, tiles }) => [split, tiles]), [[true, [1, 0]]]);
+  assert.strictEqual(Grid.frameFactor(grid, (_, w, h) => ({ w, h })), 2);
+  assert.strictEqual(Grid.frameFactor(grid, () => ({ w: 1, h: 1 })), 64);
+  assert.strictEqual(Grid.frameFactor(grid, () => ({ w: 0, h: 0 })), 1);
+}
+assert.strictEqual(Grid.offText(undefined), '0');
+assert.strictEqual(Grid.offText({ v: 0 }, true), 'In step');
+assert.strictEqual(Grid.offText({ v: 1, unit: 'frames' }, true), '+1 frame');
+assert.strictEqual(Grid.offText({ v: 2, unit: 'frames' }, true), '+2 frames');
+assert.strictEqual(Grid.offText({ v: 2, unit: 'frames' }), '+2 f');
+assert.strictEqual(Grid.offText({ v: -40.24, unit: 'ms' }), '−40.2 ms');
+assert.strictEqual(Grid.esc('<a href="b&c">'), '&lt;a href=&quot;b&amp;c&quot;&gt;');
 const { budgets } = require('../../media/membudget');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS } = require('../../src/decide');
 
@@ -250,6 +279,14 @@ const uri = (...p) => `https://webview/${p.join('/')}`;
 const page = (n) => compareHtml({ uri, cspSource: 'x', nonce: 'n', cfg: { names: Array(n).fill('v.mp4') }, frameSource: '' });
 for (let n = 2; n <= 16; n++) {
   const html = page(n);
+  const scripts = [...html.matchAll(/<script nonce="n" src="https:\/\/webview\/([^"]+)"><\/script>/g)]
+    .map((match) => match[1]);
+  for (const [dependency, entry] of [
+    ['codec-utils.js', 'engine.js'], ['decoder-boot.js', 'engine.js'], ['compare-compositor.js', 'compare.js'],
+  ]) {
+    assert.ok(scripts.includes(dependency) && scripts.indexOf(dependency) < scripts.indexOf(entry),
+      `${n}: ${dependency} loads with a nonce before ${entry}`);
+  }
   assert.ok(html.indexOf('compare-grid.js') > 0 && html.indexOf('compare-grid.js') < html.indexOf('compare.js"'), `${n}: compare-grid.js before compare.js`);
   assert.strictEqual(html.includes('membudget.js'), n > 4, `${n}: membudget.js`);
   assert.strictEqual(html.includes('id="cells" class="dense"'), n > 4, `${n}: dense layout`);

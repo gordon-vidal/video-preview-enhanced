@@ -22,6 +22,8 @@ async function droppedStream(outstandingSeek) {
   const ctx = { performance, FrameStream: { open(opts) { callbacks = opts; return { close: noop }; } } };
   ctx.VpeBlockCache = require('../../media/block-cache');
   ctx.VpeGlRenderer = require('../../media/gl-renderer');
+  ctx.VpeCodecUtils = require('../../media/codec-utils');
+  ctx.VpeDecoderBoot = require('../../media/decoder-boot');
   const engine = vm.runInNewContext(`${fs.readFileSync(path.join(__dirname, '../../media/engine.js'), 'utf8')}\ncreateEngine`, ctx);
   const player = Object.assign(Object.create(engine({ log: noop, onMeta: noop }).LibavPlayer.prototype), {
     info: { video: { ...probed.video, sourceWidth: 3840, sourceHeight: 2160 } },

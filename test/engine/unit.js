@@ -17,6 +17,9 @@ ctx.globalThis = ctx;
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(media, 'block-cache.js'), 'utf8'), ctx);
 vm.runInContext(fs.readFileSync(path.join(media, 'gl-renderer.js'), 'utf8'), ctx);
+for (const file of ['codec-utils.js', 'decoder-boot.js']) {
+  vm.runInContext(fs.readFileSync(path.join(media, file), 'utf8'), ctx, { filename: file });
+}
 vm.runInContext(`${fs.readFileSync(path.join(media, 'engine.js'), 'utf8')}\n;globalThis.createEngine = createEngine;`, ctx);
 vm.runInContext(fs.readFileSync(path.join(media, 'timestretch.js'), 'utf8'), ctx);
 const noop = () => {};

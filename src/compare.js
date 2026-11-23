@@ -105,6 +105,8 @@ ${barHtml({ compare: true })}
 <script nonce="${nonce}" src="${uri('hdr.js')}"></script>
 <script nonce="${nonce}" src="${uri('block-cache.js')}"></script>
 <script nonce="${nonce}" src="${uri('gl-renderer.js')}"></script>
+<script nonce="${nonce}" src="${uri('codec-utils.js')}"></script>
+<script nonce="${nonce}" src="${uri('decoder-boot.js')}"></script>
 <script nonce="${nonce}" src="${uri('engine.js')}"></script>
 <script nonce="${nonce}" src="${uri('picture.js')}"></script>
 <script nonce="${nonce}" src="${uri('modes.js')}"></script>
@@ -116,6 +118,7 @@ ${barHtml({ compare: true })}
 <script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
 ${large ? `<script nonce="${nonce}" src="${uri('membudget.js')}"></script>
 ` : ''}<script nonce="${nonce}" src="${uri('compare-grid.js')}"></script>
+<script nonce="${nonce}" src="${uri('compare-compositor.js')}"></script>
 <script nonce="${nonce}" src="${uri('compare-metrics.js')}"></script>
 <script nonce="${nonce}" src="${uri('compare-debug.js')}"></script>
 <script nonce="${nonce}" src="${uri('compare-sync.js')}"></script>
