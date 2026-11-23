@@ -635,6 +635,7 @@
     "theme": "dark"
   },
   "scripts": {
+    "review": "node tools/review.js",
     "typecheck": "node tools/check-js.js",
     "test": "node test/run.js unit engine vscode",
     "test:unit": "node test/run.js unit",

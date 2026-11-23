@@ -61,4 +61,5 @@ media/libav-vpe/BUILD-FLAGS.txt
 
 # Review launcher (docs/REVIEW.md)
 review.cmd
+review.sh
 tools/**
