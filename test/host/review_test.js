@@ -356,7 +356,9 @@ function fakeVsCode(dir) {
   } else {
     fs.writeFileSync(path.join(bin, 'code'), '#!/bin/sh\n'
       + 'case " $* " in *" --new-window "*)\n'
-      + '  env | grep -E "^VPE_(SIMULATE|FFMPEG)" > "$FAKE_DIR/launch-env.txt"; echo $$ > "$FAKE_DIR/pid"; exec sleep 60;;\n'
+      + '  env | grep -E "^VPE_(SIMULATE|FFMPEG)" > "$FAKE_DIR/launch-env.txt"; echo $$ > "$FAKE_DIR/pid"\n'
+      + '  if [ -n "$FAKE_STUBBORN" ]; then trap "" TERM; sleep 60; exit; fi # ignores SIGTERM, as do its children\n'
+      + '  exec sleep 60;;\n'
       + 'esac\n'
       + 'exec node "$FAKE_DIR/cli.js" "$@"\n', { mode: 0o755 });
   }
@@ -416,6 +418,56 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
       assert(!alive(pid), 'VS Code was stopped before the clean-up');
       assert(!fs.existsSync(profile), 'profile removed after Ctrl+C');
       assert(/Cleaned up/.test(r.out()));
+
+      // a VS Code that does not stop: nothing is deleted while it may still be using the profile
+      fs.rmSync(pidFile);
+      const stubborn = startReview(['--installed', pkg], { ...env, FAKE_STUBBORN: '1' });
+      await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8').trim(), 'the stubborn VS Code');
+      const stubbornPid = Number(fs.readFileSync(pidFile, 'utf8'));
+      const stubbornProfile = profileOf(stubborn.out());
+      stubborn.child.kill('SIGTERM');
+      const end2 = await stubborn.done;
+      try {
+        assert.strictEqual(end2.code, 130, stubborn.out() + stubborn.err());
+        assert(alive(stubbornPid), 'still running');
+        assert(fs.existsSync(path.join(stubbornProfile, 'user-data')), 'profile kept');
+        assert(!/Cleaned up/.test(stubborn.out()), 'nothing deleted');
+        assert(stubborn.out().includes(`could not confirm that VS Code has exited; ${stubbornProfile}`), stubborn.out());
+        assert(stubborn.out().includes(`Kept: ${stubbornProfile}`));
+      } finally {
+        try { process.kill(-stubbornPid, 'SIGKILL'); } catch { /* gone */ }
+        fs.rmSync(stubbornProfile, { recursive: true, force: true });
+      }
+    }
+
+    // stopVsCode: true only when the whole tree is gone, false (quickly, here) when that is not confirmed
+    const { spawn } = require('child_process');
+    const detached = process.platform !== 'win32';
+    const start = (args) => {
+      const c = spawn(args[0], args.slice(1), { detached, stdio: 'ignore' });
+      return { c, exited: new Promise((resolve) => c.once('exit', resolve)) };
+    };
+    const idle = ['-e', 'setInterval(() => {}, 1000)'];
+    let p = start([process.execPath, ...idle]);
+    await until(() => p.c.pid, 'the child');
+    assert.strictEqual(await review.stopVsCode(p.c, p.exited, 5000), true, 'a running child is stopped');
+    assert(!alive(p.c.pid));
+    assert.strictEqual(await review.stopVsCode(p.c, p.exited, 5000), true, 'an already exited child is fine');
+    assert.strictEqual(await review.stopVsCode(null, null), true, 'nothing started');
+    if (process.platform !== 'win32') {
+      // the leader obeys SIGTERM but a member of its process group ignores it: not confirmed
+      p = start(['/bin/sh', '-c', '(trap "" TERM; exec sleep 30) & exec sleep 30']);
+      await sleep(300);
+      const t0 = Date.now();
+      assert.strictEqual(await review.stopVsCode(p.c, p.exited, 600), false, 'a surviving group member is not confirmed');
+      assert(Date.now() - t0 < 5000);
+      try { process.kill(-p.c.pid, 'SIGKILL'); } catch { /* gone */ }
+      // a child that ignores SIGTERM
+      p = start(['/bin/sh', '-c', 'trap "" TERM; sleep 30']);
+      await sleep(300);
+      assert.strictEqual(await review.stopVsCode(p.c, p.exited, 600), false, 'a child that stays is not confirmed');
+      try { process.kill(-p.c.pid, 'SIGKILL'); } catch { /* gone */ }
+      await p.exited;
     }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   console.log('review_test: ok');

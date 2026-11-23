@@ -639,22 +639,19 @@ async function launch(o) {
     if (fs.existsSync(work)) note(`could not fully remove ${work}`); else say(`Cleaned up ${work}`);
     keep = true; // once
   };
-  // Ctrl+C: stop VS Code first and wait for it, so clean-up does not race its open files.
-  let child = null, exited = Promise.resolve(), signalled = false;
-  const stopChild = async () => {
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    try {
-      if (IS_WIN) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
-      else process.kill(-child.pid, 'SIGTERM'); // its own process group (detached below)
-    } catch { try { child.kill(); } catch { /* already gone */ } }
-    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 10000))]);
-  };
-  const onSignal = async () => {
-    if (signalled) return;
-    signalled = true;
-    await stopChild();
-    cleanup();
-    process.exit(130);
+  // Ctrl+C: from the first signal on, this path alone cleans up, and only once VS Code is confirmed gone.
+  let child = null, exited = Promise.resolve(), shutdown = null;
+  const onSignal = () => {
+    shutdown = shutdown || (async () => {
+      if (await stopVsCode(child, exited)) cleanup();
+      else {
+        keep = true; // the profile and the worktree may still be in use
+        note(`could not confirm that VS Code has exited; ${work} (profile, worktree) is left in place. `
+          + 'Remove it yourself once VS Code is closed.');
+        cleanup();
+      }
+      process.exit(130);
+    })();
   };
   process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal);
   try {
@@ -716,9 +713,40 @@ async function launch(o) {
       await Promise.race([exited, new Promise((_, reject) => child.once('error', reject))]);
     }
   } finally {
+    if (shutdown) await shutdown; // never returns: it exits the process
     process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal);
     cleanup();
   }
+}
+
+/**
+ * Stops the VS Code process tree started as `child` and resolves true only once nothing of it is left (so its
+ * profile can be deleted): on Windows taskkill succeeded (or found nothing) and the child exited; elsewhere the child
+ * exited and its whole process group is gone. False when that is not confirmed within `timeoutMs`.
+ */
+async function stopVsCode(child, exited, timeoutMs = 10000) {
+  if (!child) return true;
+  const deadline = Date.now() + timeoutMs;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const gone = () => child.exitCode !== null || child.signalCode !== null;
+  const groupAlive = () => {
+    try { process.kill(-child.pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+  };
+  if (!gone()) {
+    if (IS_WIN) {
+      const r = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+      if (r.error || (r.status !== 0 && r.status !== 128)) return false; // 128: no such process
+    } else {
+      try { process.kill(-child.pid, 'SIGTERM'); } catch (e) { if (e.code !== 'ESRCH') return false; }
+    }
+    await Promise.race([exited, sleep(Math.max(0, deadline - Date.now()))]);
+    if (!gone()) return false;
+  }
+  while (!IS_WIN && groupAlive()) { // the child is its own process group leader (spawned detached)
+    if (Date.now() >= deadline) return false;
+    await sleep(50);
+  }
+  return true;
 }
 
 /** The default REVIEW.md: what was started and a tick list of the clips. */
@@ -777,5 +805,5 @@ if (require.main === module) {
 
 module.exports = {
   parseArgs, linkEnv, createUiState, applyKey, renderUi, stateToArgs, parseKeys, readVsixVersion, LINKS,
-  mergeMenuArgs, cleanEnv, makeWorkDir,
+  mergeMenuArgs, cleanEnv, makeWorkDir, stopVsCode,
 };
