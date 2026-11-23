@@ -25,6 +25,7 @@ const HOST_MEDIA = { 'avi_scan_test.js': ['s_mjpeg.avi', 's_xvid.avi'], 'wav_par
 const TIMEOUTS = {
   'test/avi_test.js': 20000,
   'test/bitmapsubs/run.js': 20000,
+  'test/engine/continuity_fuzz.js': 60000,
   'test/engine/formats_4k.js': 90000,
   'test/engine/formats_cases.js': 45000,
   'test/engine/formats_media.js': 120000,
@@ -114,6 +115,7 @@ const TIMEOUTS = {
 const STALLS = {
   'test/avi_test.js': 20000,
   'test/bitmapsubs/run.js': 20000,
+  'test/engine/continuity_fuzz.js': 30000,
   'test/engine/formats_4k.js': 45000,
   'test/engine/formats_cases.js': 30000,
   'test/engine/formats_media.js': 35000,
@@ -226,6 +228,7 @@ const engine = [
   // media/engine.js (the product's player), one file per clip set so they run in parallel.
   ...fs.readdirSync(path.join(__dirname, 'engine')).filter((f) => /^(frames|formats)_\w+\.js$/.test(f) && !/_lib\.js$/.test(f)).sort()
     .map((f) => ({ file: rel('test/engine', f), needs: ['ffmpeg'], sources: ENGINE_SRC })),
+  { file: 'test/engine/continuity_fuzz.js', needs: ['ffmpeg'], sources: ENGINE_SRC },
   { file: 'test/tracks/run.js', needs: ['ffmpeg'], sources: ['media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'test/tracks'] },
   { file: 'test/tracks/engine_smoke.js', needs: ['ffmpeg'], sources: [...ENGINE_SRC, 'test/tracks'] },
   { file: 'test/bitmapsubs/run.js', needs: ['ffmpeg'], sources: ['media/subtitles.js', 'media/decoder-worker.js', 'media/libav-vpe'] },
