@@ -408,6 +408,20 @@ function plan({ cwd, base, baseExplicit = base !== 'main' }) {
     plannedWorktrees.push({ path: wt.path, branch: wt.branch, head: wt.head, ...d });
   }
 
+  // Also scan registered worktree admin directories directly so locked/offline checkouts (e.g. on a
+  // disconnected drive) still reserve their in-progress rebase head-name and update-refs branches.
+  try {
+    const commonRaw = git(primary, ['rev-parse', '--git-common-dir']);
+    const commonDir = path.isAbsolute(commonRaw) ? commonRaw : path.resolve(primary, commonRaw);
+    const adminRoot = path.join(commonDir, 'worktrees');
+    if (fs.existsSync(adminRoot)) {
+      for (const entry of fs.readdirSync(adminRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        for (const branch of inProgressBranches(path.join(adminRoot, entry.name))) keptBranches.add(branch);
+      }
+    }
+  } catch { /* best-effort; accessible checkouts were already scanned above */ }
+
   // Use %(refname:strip=2) with tab delimiters so local branch names are exact even when a tag shares the name.
   const refsRaw = git(primary, ['for-each-ref', '--format=%(refname:strip=2)%09%(objectname)%09%(upstream)', 'refs/heads']);
   /** @type {PlannedBranch[]} */

@@ -267,6 +267,16 @@ function edgeCases() {
     for (const branch of ['rebasing', ...queued]) {
       assert.strictEqual(git(repo, 'rev-parse', `refs/heads/${branch}`), mainTip);
     }
+
+    // Locked offline worktree: checkout path is gone, admin dir remains; plan still skips all reserved branches.
+    git(repo, 'worktree', 'lock', rebaseDir);
+    fs.rmSync(rebaseDir, { recursive: true, force: true, maxRetries: 3 });
+    assert.strictEqual(fs.existsSync(rebaseDir), false);
+    const offlinePlan = gc.plan({ cwd: repo, base: 'main' });
+    assert.deepStrictEqual(offlinePlan.errors, []);
+    for (const branch of ['rebasing', ...queued]) {
+      assert.strictEqual(offlinePlan.branches.find((b) => b.name === branch).action, 'skip', `offline ${branch}`);
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
   }
