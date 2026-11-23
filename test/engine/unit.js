@@ -1036,6 +1036,59 @@ test('WebCodecs keeps only visible packets in a generated two-edit MP4', async (
   }
 });
 
+test('dispose settles pending track waits, cancels queued track ops, guards audioConfig, and drops step-back/lastShown', async () => {
+  // Case A: disposed while waiting on worker reply, with a second track op queued behind it.
+  let terminated = 0;
+  let vfClosed = 0;
+  const p = player({
+    audioId: 0,
+    subId: null,
+    info: { tracks: { audio: [{ id: 0, codec: 'aac' }, { id: 1, codec: 'opus' }], sub: [{ id: 2, codec: 'subrip', kind: 'text' }] } },
+    back: [{ yuv: new Uint8Array(16), bytes: 16 }],
+    backBytes: 16,
+    lastShown: { vf: { close() { vfClosed++; } }, yuv: new Uint8Array(16) },
+    worker: { msgs: [], postMessage(m) { this.msgs.push(m); }, terminate() { terminated++; } },
+  });
+  const subP = P.selectSub.call(p, 2);
+  const audioP = P.selectAudio.call(p, 1);
+  await tick0();
+  assert.strictEqual(p.worker.msgs.length, 1);
+  assert.strictEqual(p.worker.msgs[0].type, 'selectSub');
+  P.dispose.call(p);
+  P.dispose.call(p); // idempotent
+  const [r1, r2] = await Promise.allSettled([subP, audioP]);
+  assert.strictEqual(r1.status, 'rejected');
+  assert.strictEqual(r1.reason && r1.reason.disposed, true);
+  assert.strictEqual(r2.status, 'rejected');
+  assert.strictEqual(r2.reason && r2.reason.disposed, true);
+  assert.strictEqual(p.worker.msgs.length, 1, 'queued selectAudio must not post after dispose');
+  assert.strictEqual(terminated, 1);
+  assert.strictEqual(p.waits.length, 0);
+  assert.strictEqual(p.back.length, 0);
+  assert.strictEqual(p.backBytes, 0);
+  assert.strictEqual(vfClosed, 1);
+  assert.strictEqual(p.lastShown, null);
+
+  // Case B: disposed while selectAudio is awaiting audioConfig().
+  let resolveConf;
+  const q = player({
+    audioId: 0,
+    info: { tracks: { audio: [{ id: 0, codec: 'aac' }, { id: 1, codec: 'opus' }], sub: [] } },
+    audioConfig: () => new Promise((r) => { resolveConf = r; }),
+    worker: { msgs: [], postMessage(m) { this.msgs.push(m); }, terminate() {} },
+  });
+  const aP = P.selectAudio.call(q, 1);
+  await tick0();
+  assert.ok(resolveConf, 'audioConfig should be in flight');
+  P.dispose.call(q);
+  resolveConf({ mode: 'soft', conf: null });
+  const [ra] = await Promise.allSettled([aP]);
+  assert.strictEqual(ra.status, 'rejected');
+  assert.strictEqual(ra.reason && ra.reason.disposed, true);
+  assert.strictEqual(q.worker.msgs.length, 0, 'no worker message after dispose during audioConfig');
+  assert.strictEqual((q.waits || []).length, 0, 'no waiter registered after dispose');
+});
+
 (async () => {
   // A pending promise alone doesn't keep Node alive. Require the suite to finish.
   process.exitCode = 1;

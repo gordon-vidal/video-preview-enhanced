@@ -1763,8 +1763,8 @@
           break;
         }
         case 'track': {
-          if (player && m.sub !== undefined && player.selectSub) player.selectSub(m.sub);
-          if (player && m.audio !== undefined && player.selectAudio) player.selectAudio(m.audio);
+          if (player && m.sub !== undefined && player.selectSub) Promise.resolve(player.selectSub(m.sub)).catch(() => {});
+          if (player && m.audio !== undefined && player.selectAudio) Promise.resolve(player.selectAudio(m.audio)).catch(() => {});
           break;
         }
         case 'a11y': { // roles, names and states of the controls, the live region, focus (`focus`: a selector to focus first)

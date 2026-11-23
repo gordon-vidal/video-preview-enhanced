@@ -95,7 +95,10 @@ function createTracksUi(env) {
     const want = embeddedId(sel);
     const wantId = want === null ? null : (subTracks().find((t) => String(t.id) === want) || { id: null }).id;
     if ((tracks.subId === undefined ? null : tracks.subId) !== wantId) {
-      try { p.selectSub(wantId); tracks.subId = wantId; } catch (e) { env.log(`selectSub failed: ${e}`); }
+      try {
+        Promise.resolve(p.selectSub(wantId)).catch((e) => { if (!e || !e.disposed) env.log(`selectSub failed: ${e}`); });
+        tracks.subId = wantId;
+      } catch (e) { env.log(`selectSub failed: ${e}`); }
     }
   }
 
@@ -162,7 +165,7 @@ function createTracksUi(env) {
     const p = eng && typeof eng.tracks === 'function' ? eng : player();
     if (p) { try { tracks = p.tracks(); } catch { /* ignore */ } }
     if (p && tracks && audioPref !== null && tracks.audioId !== audioPref && (tracks.audio || []).some((a) => a.id === audioPref) && p.selectAudio) {
-      p.selectAudio(audioPref).catch((e) => env.log(`selectAudio failed: ${e}`));
+      p.selectAudio(audioPref).catch((e) => { if (!e || !e.disposed) env.log(`selectAudio failed: ${e}`); });
     }
     autoChoose();
     changed();
@@ -331,7 +334,7 @@ function createTracksUi(env) {
       refreshTracks();
       toast(`Audio: ${i >= 0 ? trackLabel(list[i], i, 'Track').main : id}`);
       changed();
-    }, (e) => { env.log(`selectAudio failed: ${e}`); toast('Could not switch the audio track'); });
+    }, (e) => { if (e && e.disposed) return; env.log(`selectAudio failed: ${e}`); toast('Could not switch the audio track'); });
   }
   function cycleAudio() {
     refreshTracks();

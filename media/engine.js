@@ -1005,13 +1005,14 @@ function createEngine(env) {
      * the worker re-reads from its end, and sound before that is dropped (audioKeepUntil).
      */
     audioToSoft(why) {
-      if (this.aToSoft) return undefined;
+      if (this.aToSoft || this.disposed) return undefined;
       this.aToSoft = true;
       const codec = this.info.audio.codec;
       wcFailed.add(`audio-${codec}`);
       vscode.postMessage({ type: 'wcFailed', codec: `audio-${codec}`, reason: why });
       log(`${why}; the built-in decoder takes over the sound`);
       return this.trackOp(async () => {
+        if (this.disposed) return;
         this.loopCache = null;
         const now = this.now();
         if (this.adec) { try { this.adec.close(); } catch { /* closed */ } this.adec = null; }
@@ -1021,13 +1022,14 @@ function createEngine(env) {
         const reply = this.waitWorker('audioSelected', 'selectAudio');
         this.worker.postMessage({ type: 'selectAudio', id: this.audioId, mode: 'soft', t: from });
         let r;
-        try { r = await reply; } catch (e) { log(`sound to the built-in decoder failed: ${e && e.message || e}`); return; }
+        try { r = await reply; } catch (e) { if (e && e.disposed) return; log(`sound to the built-in decoder failed: ${e && e.message || e}`); return; }
+        if (this.disposed) return;
         this.amode = r.audio;
         this.aconf = null;
         if (r.audioError) log(r.audioError);
         if (r.rewound) { this.eof = false; this.catchUp = true; this.rewinds = (this.rewinds || 0) + 1; this.readVT = undefined; }
         this.pump();
-      });
+      }).catch((e) => { if (!e || !e.disposed) throw e; });
     }
 
     ensureAudio() {
@@ -2481,8 +2483,13 @@ function createEngine(env) {
       };
     }
 
+    disposedError() {
+      return Object.assign(new Error('player disposed'), { disposed: true });
+    }
+
     /** Waits for the worker's answer of this type (or its error from `where`). */
     waitWorker(type, where) {
+      if (this.disposed) return Promise.reject(this.disposedError());
       return new Promise((res, rej) => (this.waits = this.waits || []).push({ type, where, res, rej }));
     }
 
@@ -2495,7 +2502,10 @@ function createEngine(env) {
 
     /** One track change at a time. */
     trackOp(fn) {
-      this.trackChain = (this.trackChain || Promise.resolve()).catch(() => {}).then(fn);
+      this.trackChain = (this.trackChain || Promise.resolve()).catch(() => {}).then(() => {
+        if (this.disposed) throw this.disposedError();
+        return fn();
+      });
       return this.trackChain;
     }
 
@@ -2507,6 +2517,7 @@ function createEngine(env) {
         if (this.cfg.native) throw new Error('switching the sound needs the built-in decoder');
         if (id === this.audioId) return this.tracks();
         const { mode, conf } = await this.audioConfig(tr);
+        if (this.disposed) throw this.disposedError();
         const now = this.now();
         const prev = this.audioId;
         this.loopCache = null;
@@ -2521,6 +2532,7 @@ function createEngine(env) {
         this.worker.postMessage({ type: 'selectAudio', id, mode, t: now });
         let r;
         try { r = await reply; } catch (e) { this.audioId = prev; throw e; }
+        if (this.disposed) throw this.disposedError();
         this.amode = r.audio;
         this.aconf = conf;
         this.info.audio = tr;
@@ -2553,6 +2565,7 @@ function createEngine(env) {
         this.worker.postMessage({ type: 'selectSub', id: want, t: this.now() });
         let r;
         try { r = await reply; } catch (e) { this.subId = prev; throw e; }
+        if (this.disposed) throw this.disposedError();
         if (r.rewound) { this.eof = false; this.catchUp = true; this.rewinds = (this.rewinds || 0) + 1; this.readVT = undefined; }
         if (r.error) { log(r.error); toast(`Subtitles: ${tr ? tr.codec : ''} is not in the built-in decoder`); }
         if (tr) log(`subtitle track ${want} (${tr.codec}, ${tr.kind})${r.rewound ? '' : ', not rewound'}`);
@@ -2774,7 +2787,11 @@ function createEngine(env) {
       clearTimeout(this.readTimer);
       clearTimeout(this.acTimer);
       clearTimeout(this.acWakeTimer);
-      this.clearStepGoal();
+      this.endSteps();
+      if (this.waits && this.waits.length) {
+        const err = this.disposedError();
+        for (const w of this.waits.splice(0)) w.rej(err);
+      }
       if (this.thumbs) this.thumbs.dispose();
       if (this.hostThumbWait) {
         for (const done of this.hostThumbWait.values()) done(null);
@@ -2785,6 +2802,7 @@ function createEngine(env) {
       if (this.ac) this.ac.close().catch(() => {});
       for (const f of this.queue) this.release(f);
       if (this.lastShown && this.lastShown.vf) this.lastShown.vf.close();
+      this.lastShown = null;
       this.queue = [];
       if (this.hold) { this.release(this.hold); this.hold = null; }
       for (const d of [this.vdec, this.adec]) if (d && d.state !== 'closed') { try { d.close(); } catch { /* closed */ } }
