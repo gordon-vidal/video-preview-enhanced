@@ -799,7 +799,8 @@ function createEngine(env) {
     /** Native: tell the host the picture area's size (player.js calls this when the stage resizes or the picture is zoomed). */
     nativeView(zoomed) {
       const view = this.meta.native && !this.disposed && this.worker ? pictureArea(zoomed) : null;
-      if (view) this.worker.postMessage({ type: 'view', ...view, ...(zoomed ? { zoomed: true } : {}) });
+      // Live transcode: while playing, a larger picture starts in the host without a seek (sound and clock go on).
+      if (view) this.worker.postMessage({ type: 'view', ...view, ...(zoomed ? { zoomed: true } : {}), ...(this.remoteStream && this.playing ? { playing: true } : {}) });
     }
 
     updateNativeSize() {
