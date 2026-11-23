@@ -549,12 +549,16 @@
       cellsKey = key;
       cellsEl.textContent = '';
       for (const c of cells) {
-        const d = document.createElement(c.add ? 'button' : 'div');
+        const d = document.createElement('div');
         d.className = `cell${c.add ? ' add' : ''}${c.split ? ' split' : ''}`;
         if (c.add) {
-          d.dataset.act = 'add';
-          d.setAttribute('aria-label', 'Add video');
-          d.innerHTML = `<span class="addcell">${ICONS.plus}<span>Add video</span></span>`;
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'addcell';
+          btn.dataset.act = 'add';
+          btn.setAttribute('aria-label', 'Add video');
+          btn.innerHTML = `${ICONS.plus}<span>Add video</span>`;
+          d.appendChild(btn);
         } else if (c.split) {
           d.dataset.tile = 'split';
           d.innerHTML = `<div class="ov L" data-side="L"></div><div class="ov R" data-side="R"></div><div class="move L"></div><div class="move R"></div><div class="oor" hidden>One side has no picture at this moment</div>`
@@ -1961,16 +1965,17 @@
   stage.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || tileDrag || panDrag) return;
     const target = /** @type {any} */ (e.target);
-    if (target.closest('#divider, #splitter, #menu, .move, .tbtn, .mute-mini, .sync-pill, .cell.add')) return;
+    if (target.closest('#divider, #splitter, #menu, .move, .tbtn, .mute-mini, .sync-pill, .addcell')) return;
     const hit = cellAt(e.clientX, e.clientY);
-    if (!hit || hit.c.add) return;
     const fromZoomHandle = !!target.closest('[data-zoom-drag="1"]');
-    const ref = clock ? Pic.panCell(cells, hit.c) : null;
+    const panBase = hit ? hit.c : clockCell();
+    const ref = clock && panBase ? Pic.panCell(cells, panBase) : null;
     if (ref && !fromZoomHandle) {
-      panDrag = { x: e.clientX, y: e.clientY, pic: st.pic, hit: { ...hit, c: ref, i: ref.tiles[0] }, moved: false, id: e.pointerId };
+      const h = hit || { c: ref, i: ref.tiles[0], px: ref.w / 2, py: ref.h / 2 };
+      panDrag = { x: e.clientX, y: e.clientY, pic: st.pic, hit: { ...h, c: ref, i: ref.tiles[0] }, moved: false, id: e.pointerId };
       return;
     }
-    if (st.mode === 'split' || hit.c.split) return;
+    if (!hit || hit.c.add || st.mode === 'split' || hit.c.split) return;
     const video = hit.c.tiles[0];
     const fromIdx = st.order.indexOf(video);
     if (fromIdx < 0) return;

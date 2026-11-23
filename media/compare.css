@@ -219,13 +219,22 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
               width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
 }
 
-/* The first unused slot in Equal Grid adds one video (shows on hover). */
-.cell.add { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: #8a8a8a; display: flex; align-items: center; justify-content: center; }
-.addcell { display: flex; flex-direction: column; align-items: center; gap: 6px; opacity: 0; transition: opacity 120ms; }
-.cell.add:hover .addcell, .cell.add:focus-visible .addcell { opacity: 1; }
+/* The first unused slot in Equal Grid has a centered Add video button (shows on hover); the empty area keeps normal stage gestures. */
+.cell.add { border: 0; background: none; padding: 0; cursor: default; display: flex; align-items: center; justify-content: center; }
+#stage.pannable .cell.add { cursor: move; }
+#stage.pannable.panning .cell.add { cursor: grabbing; }
+.addcell {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px 16px; border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: color-mix(in srgb, var(--vscode-editorWidget-background, #14161c) 82%, transparent);
+  color: var(--vscode-foreground, #d4d4d8); font: inherit; font-size: 12px; cursor: pointer;
+  opacity: 0; transition: opacity 120ms, background 120ms, border-color 120ms, color 120ms;
+}
+.cell.add:hover .addcell, .addcell:focus-visible { opacity: 1; }
+.addcell:hover { background: rgba(255, 255, 255, 0.14); color: #fff; border-color: rgba(255, 255, 255, 0.28); }
 #cells.dense .addcell {
-  box-sizing: border-box; max-width: 100%; gap: 3px; padding: 3px 6px; border-radius: 6px; font-size: 12px;
-  background: var(--vscode-editorWidget-background, #141414); color: var(--vscode-foreground, #e8e8e8);
+  box-sizing: border-box; max-width: 100%; gap: 3px; padding: 4px 8px; border-radius: 6px; font-size: 11px;
 }
 
 /* Split: the divider (drag it, or ← → when focused). */
