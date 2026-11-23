@@ -49,6 +49,9 @@ const membudget = require('../media/membudget.js'); // decoder pool and frame ca
 const urlsource = lazy(() => require('./urlsource')); // Open Video URL… (docs/notes/url-stream.md)
 const { createSettings, PREFS } = require('./settings'); // settings, player prefs, globalState fallback
 const { createOffers } = require('./offers'); // onboarding, hint, GPU test and remote ffmpeg offers
+const { createAssociations } = require('./associations'); // default viewer for MP4/WebM, file icons
+const { createFrameLink, sameFile, hlsPlanText } = require('./framelink'); // frame links, native frame sizes, log texts
+const { createDebugCommands } = require('./debug-cmd'); // the VPE_LOG test hook (<log>.cmd)
 
 const HIDE_SLOW_PLAYBACK_NOTICE = 'videoPreviewEnhanced.hideSlowPlaybackNotice';
 const HIDE_REDUCED_RES_NOTICE = 'videoPreviewEnhanced.hideReducedResNotice';
@@ -77,15 +80,6 @@ const FS_SCHEMES = new Set(['file', 'vscode-remote']);
 const logFile = process.env.VPE_LOG || '';
 // Tests (with VPE_LOG only): decoder pool options for the webview, e.g. {"workers":4,"budget":1e9}.
 const debugPool = (() => { try { return logFile && process.env.VPE_POOL ? JSON.parse(process.env.VPE_POOL) : undefined; } catch { return undefined; } })();
-// Commands the test hook may run: opening files and closing editors only, not the
-// ones that change settings or install things (makeDefault, setupFfmpeg…).
-const DEBUG_COMMANDS = new Set([
-  'videoPreviewEnhanced.openWith', 'videoPreviewEnhanced.playSequence', 'videoPreviewEnhanced.compareWith',
-  'videoPreviewEnhanced.addToCompareFromPlayer',
-  'videoPreviewEnhanced.showLog', 'workbench.action.closeActiveEditor', 'workbench.action.closeAllEditors', 'workbench.action.reloadWindow',
-  'notifications.clearAll', 'videoPreviewEnhanced.exportRange', 'videoPreviewEnhanced.addFromExplorer', 'videoPreviewEnhanced.stopAddFromExplorer', 'workbench.files.action.refreshFilesExplorer',
-  'videoPreviewEnhanced.exportVideoRange', 'videoPreviewEnhanced.exportCompareVideoRange',
-]);
 const sessions = new Set();
 const compareSessions = new Set(); // open compare panels (src/compare.js)
 const clipExports = new WeakSet();
@@ -106,6 +100,10 @@ function log(msg) {
 const { prefTarget, rememberPlaybackPrefs, prefsOf, config, setSetting } = createSettings({
   vscode, getState: () => globalState, log, transcodePolicy, sessions, compareSessions,
 });
+const { makeDefault, undoDefault, autoDefault, fileIcons } = createAssociations({ vscode, getState: () => globalState, log });
+const {
+  gotoFrom, parseLink, remoteAuthority, localTarget, frameLink, nativeHeights, fitsView, nativeKey, nativeHeight, probeSummary, urlBase,
+} = createFrameLink({ vscode, config, decide, nativeTransport, probe, urlsource, parseFragment });
 
 const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
 
@@ -184,17 +182,6 @@ function probeRecordFor(t) {
   if (!r || !r.complete || !t) return null;
   if (r.ffmpeg !== t.version || r.ffmpegPath !== t.ffmpeg || !!r.cpuOnly !== !config().gpuDecoding) return null;
   return r;
-}
-
-/** One-line result for a notification: how many formats play in real time, with what. */
-function probeSummary(rec) {
-  const all = Object.entries(rec.results);
-  const rt = all.filter(([, r]) => r.fps >= probe.CLIP_FPS * 1.2);
-  const methods = [...new Set(all.map(([, r]) => r.method).filter((m) => m && m !== 'none'))];
-  const slow = all.filter(([, r]) => r.fps < probe.CLIP_FPS * 1.2)
-    .map(([c, r]) => `${c.replace(/\/(\d+)\//, ' $1-bit ').replace(/ 2160$/, ' 4K').replace(/ 1080$/, ' 1080p')}: ${r.fps} fps`);
-  return `ffmpeg plays ${rt.length} of ${all.length} tested formats in real time here (30 fps)` +
-    `${methods.length ? `, decoding on the GPU with ${methods.join(', ')} where that is fast enough` : ', on the CPU'}.${slow.length ? ` Slower: ${slow.join('; ')}.` : ''}`;
 }
 
 /**
@@ -296,18 +283,6 @@ function nativeTransport() {
   return /^(message|http|ws|fail)$/.test(t || '') ? t : 'http';
 }
 
-/**
- * Native frame size caps: { stream: over the frame server, message: by postMessage (the fallback,
- * and every remote window) }. nativeMaxHeight set: that, for both (720 at most in WSL). Automatic
- * (0, the default): over the frame server, full resolution up to 2160p when the frames fit what it
- * carries at the video's frame rate (decide.streamHeight: 4K30 in full, 4K60 at 1440p), 1080p by
- * postMessage. v: the ffprobe'd video stream, when known.
- */
-function nativeHeights(c = config(), v = null) {
-  const message = vscode.env.remoteName === 'wsl' ? Math.min(720, c.nativeMaxHeight) : c.nativeMaxHeight;
-  return { stream: c.nativeMaxAuto ? decide.streamHeight(v) : c.nativeMaxHeight, message };
-}
-
 // The last player's picture area in device pixels (NativeDecoder fitView): the size an ffmpeg started before its page guesses.
 // Kept in globalState (LAST_VIEW_KEY) too, so the first video of the next session starts at the right size.
 let lastView = null;
@@ -333,28 +308,6 @@ function flushView() {
 
 /** How long an ffmpeg started before the page waits for it (Session.startNativeEarly). */
 const EARLY_NATIVE_MS = 15000;
-
-/** Same file (size and modification time) as when it was probed. */
-function sameFile(a, b) {
-  return !!a && !!b && a.size === b.size && a.mtimeMs === b.mtimeMs;
-}
-
-/** The launch parameters open() must confirm before keeping an early native decoder. */
-/** Native frames sized to the player's picture: the automatic nativeMaxHeight with sizeFramesToView on. */
-function fitsView(c = config()) {
-  return c.nativeMaxAuto && c.sizeFramesToView;
-}
-
-function nativeKey(t, pr, d, c, framePort) {
-  const h = nativeHeights(c, pr.video);
-  return JSON.stringify([t.ffmpeg, t.version, pr.video ? [pr.video.index, pr.video.codec, pr.video.width, pr.video.height, pr.video.fps] : null, pr.audio ? pr.audio.index : null, d.method, h.stream, h.message, fitsView(c), framePort ? nativeTransport() : 'message']);
-}
-
-/** The frame height native playback will most likely use here (for the decision's log line). */
-function nativeHeight(c = config(), v = null) {
-  const h = nativeHeights(c, v);
-  return nativeTransport() === 'message' ? h.message : h.stream;
-}
 
 /** Proxy for downloads: http.proxy / HTTPS_PROXY tunnelled here; otherwise VS Code's own routing applies. */
 function proxyAgent() {
@@ -674,123 +627,6 @@ function libavBuild(extUri) {
   return { dir, loader, variant: 'vpe' };
 }
 
-// MP4/WebM: VS Code's built-in preview also claims them, so the player is only an "option" for these
-// (package.json). Every other supported format is priority "default" already. On first activation the
-// player is made the default for these too, by writing workbench.editorAssociations (user settings).
-const DEFAULT_PATTERNS = ['*.mp4', '*.webm', '*.MP4', '*.WEBM'];
-const OURS = 'videoPreviewEnhanced.playerOptional';
-const AUTO_DEFAULT_KEY = 'videoPreviewEnhanced.autoDefault';
-const isOurs = (v) => typeof v === 'string' && v.startsWith('videoPreviewEnhanced.');
-
-/** User-level associations only (workspace values are never copied into user settings). */
-function userAssociations() {
-  const i = vscode.workspace.getConfiguration('workbench').inspect('editorAssociations') || {};
-  const g = i.globalValue;
-  return g && typeof g === 'object' && !Array.isArray(g) ? { ...g } : {};
-}
-function effectiveAssociation(p) {
-  const all = vscode.workspace.getConfiguration('workbench').get('editorAssociations');
-  return all && typeof all === 'object' && !Array.isArray(all) ? all[p] : undefined;
-}
-
-/**
- * The command: fills every MP4/WebM pattern that is missing (an entry the user set to another editor
- * stays). on=false removes only entries pointing at this player. Returns the patterns changed.
- */
-async function makeDefault(on, { silent = false } = {}) {
-  const assoc = userAssociations();
-  const changed = [];
-  for (const p of DEFAULT_PATTERNS) {
-    if (on) { if (assoc[p] === undefined) { assoc[p] = OURS; changed.push(p); } }
-    else if (isOurs(assoc[p])) { delete assoc[p]; changed.push(p); }
-  }
-  try {
-    if (changed.length) await vscode.workspace.getConfiguration('workbench').update('editorAssociations', assoc, vscode.ConfigurationTarget.Global);
-  } catch (e) {
-    log(`editorAssociations: write failed: ${e && e.message || e}`);
-    return [];
-  }
-  if (!silent) vscode.window.showInformationMessage(on
-    ? 'Video Preview Enhanced now opens MP4 and WebM files. Undo with "Video Preview: Use VS Code\'s Preview for MP4/WebM".'
-    : 'MP4 and WebM open in VS Code\'s own preview again.');
-  return changed;
-}
-
-/** Undo: removes our entries and forgets what autoDefault added (patterns stay "seen": it never re-adds them). */
-async function undoDefault({ silent = false } = {}) {
-  await makeDefault(false, { silent });
-  const st = globalState.get(AUTO_DEFAULT_KEY);
-  if (st) await globalState.update(AUTO_DEFAULT_KEY, { ...st, added: [] });
-}
-
-/**
- * Once per install, and again when an update adds patterns: fills workbench.editorAssociations for the
- * patterns VS Code's built-in preview claims, without asking. A pattern the user already set (to anything,
- * in any scope) is left alone. Runs in untrusted workspaces too: it only touches user settings.
- * State: { seen: patterns handled, added: patterns written by us }.
- */
-async function autoDefault() {
-  try {
-    const st = globalState.get(AUTO_DEFAULT_KEY) || { seen: [], added: [] };
-    const todo = DEFAULT_PATTERNS.filter((p) => !st.seen.includes(p));
-    if (!todo.length) return;
-    const assoc = userAssociations();
-    const added = [];
-    for (const p of todo) {
-      if (assoc[p] === undefined && effectiveAssociation(p) === undefined) { assoc[p] = OURS; added.push(p); }
-    }
-    if (added.length) await vscode.workspace.getConfiguration('workbench').update('editorAssociations', assoc, vscode.ConfigurationTarget.Global);
-    await globalState.update(AUTO_DEFAULT_KEY, { seen: [...st.seen, ...todo], added: [...st.added, ...added] });
-    // No notification: installing this extension is the request for a better video preview.
-    // The command "Use VS Code's Preview for MP4/WebM" (undoDefault) still reverts it.
-    if (added.length) log(`default viewer for ${added.join(', ')} (undo: the "Use VS Code's Preview for MP4/WebM" command)`);
-  } catch (e) {
-    log(`autoDefault failed: ${e && e.message || e}`); // never shown; the command still works
-  }
-}
-
-// ---- file icons ----
-// Seti (VS Code's default file icon theme) gives only some video extensions its pink video icon. The manifest
-// contributes a language "vpe-video" (no extensions of its own, no name, so not in the language picker) whose icon
-// is a copy of Seti's; this maps the rest of the player's formats to it with files.associations (user settings).
-// Not .mts (TypeScript's module extension, so a mapping would break .mts source files) and not .ts.
-const FILE_ICON_EXTS = ['mkv', 'flv', 'mpeg', 'm2ts', 'wmv', '3gp', 'm4v', 'vob', 'divx', 'asf', 'mxf', 'y4m'];
-const FILE_ICON_LANG = 'vpe-video';
-const FILE_ICONS_KEY = 'videoPreviewEnhanced.fileIcons'; // globalState: { added: [patterns we wrote], seen: [patterns handled] }
-
-async function fileIcons({ force = false } = {}) {
-  try {
-    const on = vscode.workspace.getConfiguration('videoPreviewEnhanced').get('overrideFileIcons', true);
-    const cfg = vscode.workspace.getConfiguration('files');
-    const g = (cfg.inspect('associations') || {}).globalValue;
-    const assoc = g && typeof g === 'object' && !Array.isArray(g) ? { ...g } : {};
-    const eff = cfg.get('associations');
-    const st = globalState.get(FILE_ICONS_KEY) || { added: [], seen: [] };
-    let added = [...st.added];
-    let seen = [...st.seen];
-    let changed = false;
-    if (on) {
-      for (const ext of FILE_ICON_EXTS) {
-        const p = `*.${ext}`;
-        if (!force && seen.includes(p)) continue; // the user may have removed it on purpose
-        if (!seen.includes(p)) seen.push(p);
-        const other = eff && typeof eff === 'object' && !Array.isArray(eff) ? eff[p] : undefined;
-        if (assoc[p] === undefined && other === undefined) { assoc[p] = FILE_ICON_LANG; if (!added.includes(p)) added.push(p); changed = true; }
-      }
-    } else {
-      for (const p of added) if (assoc[p] === FILE_ICON_LANG) { delete assoc[p]; changed = true; }
-      added = [];
-      seen = [];
-    }
-    if (changed) await cfg.update('associations', assoc, vscode.ConfigurationTarget.Global);
-    // Every window start runs this: write only when the record changed (a globalState write is a disk round trip).
-    if (JSON.stringify(st) !== JSON.stringify({ added, seen })) await globalState.update(FILE_ICONS_KEY, { added, seen });
-  } catch (e) {
-    log(`fileIcons failed: ${e && e.message || e}`); // never shown
-  }
-}
-// ---- end file icons ----
-
 /** Export commands: ask the active player for its A-B range (it replies with 'exportRange' or 'ffmpegRange'). */
 function askRange(then) {
   const s = [...sessions].find((x) => x.panel.active) || (lastActive && !lastActive.disposed ? lastActive : null);
@@ -917,25 +753,11 @@ function workspaceFolder() {
   return f && f.length ? f[0].uri : undefined;
 }
 
-/** A file-name stem for frames saved from a URL player. */
-function urlBase(url) {
-  return urlsource.displayName(url).replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_').slice(0, 60) || 'video';
-}
-
 /** Network options for src/urlsource.js: proxy (http.proxy / HTTPS_PROXY, like the ffmpeg download) and the variant cap. */
 function netOpts() {
   const h = vscode.workspace.getConfiguration('http');
   const cfg = { proxy: h.get('proxy') || '', strictSSL: h.get('proxyStrictSSL', true), env: process.env };
   return { agentFor: proxy.agentFactory(cfg), proxyFor: (u) => proxy.proxyFor(u, cfg), maxHeight: 1080 };
-}
-
-/** The log's words for an HLS plan: the variant and how it was chosen. */
-function hlsPlanText(plan) {
-  if (!plan.master) return plan.playlist.encrypted ? ', AES-128' : '';
-  const v = plan.variant;
-  const rate = plan.throughput ? `, measured ${(plan.throughput / 1e6).toFixed(1)} Mb/s` : '';
-  return `, ${plan.variants.length} variants, ${plan.auto ? 'auto' : 'chosen'}: ${v.width}x${v.height} ${v.bandwidth} b/s${rate}` +
-    `${plan.master.media.length ? `, ${plan.master.media.length} renditions` : ''}${plan.master.iframes.length ? `, ${plan.master.iframes.length} I-frame playlists` : ''}${plan.playlist.encrypted ? ', AES-128' : ''}`;
 }
 
 /** The first 256 KB of an HLS plan's stream (init segment and first segment), for urlsource.streamStart. */
@@ -1215,239 +1037,14 @@ function activate(context) {
   });
   // ---- end compare mode ----
 
-  // Test hook: with VPE_LOG set, JSON lines appended to <log>.cmd are sent to
-  // open players (debug actions) or run as commands.
-  if (logFile) {
-    const cmdFile = `${logFile}.cmd`;
-    let seen = 0;
-    fs.watchFile(cmdFile, { interval: 300 }, () => {
-      fs.readFile(cmdFile, 'utf8', (err, text) => {
-        if (err) return;
-        const lines = text.split(String.fromCharCode(10)).map((l) => l.trim()).filter(Boolean);
-        for (const line of lines.slice(seen)) {
-          try {
-            const c = JSON.parse(line);
-            if (c.command) {
-              if (DEBUG_COMMANDS.has(c.command)) vscode.commands.executeCommand(c.command, c.arg ? vscode.Uri.file(c.arg) : undefined);
-              else log(`debug command not allowed: ${c.command}`);
-              continue;
-            }
-            if (c.openUrl) { openUrl(context, String(c.openUrl), c.where === 'side' || c.where === 'window' ? c.where : 'active').catch((e) => log(`debug openUrl: ${e && e.stack || e}`)); continue; } // tests: skips the input box
-            if (c.compareFiles) { // 2-4 files into compare: the command takes the selection form (uri, uris)
-              const list = c.compareFiles.map((f) => vscode.Uri.file(f));
-              vscode.commands.executeCommand('videoPreviewEnhanced.compare', list[0], list);
-              continue;
-            }
-            if (c.startCompare || c.addToCompare) { // primary resource, then the selection
-              const action = c.startCompare ? 'startCompare' : 'addToCompare';
-              const list = c[action].map((f) => vscode.Uri.file(f));
-              vscode.commands.executeCommand(`videoPreviewEnhanced.${action}`, list[0], list.length > 1 ? list : undefined)
-                .then(() => log(`debug done ${c.id || ''} ${action}`), (e) => log(`debug ${action} failed: ${e.message}`));
-              continue;
-            }
-            if (c.pickCompare) { // tests: the next compare quick pick logs its rows and picks one (label part, or Browse…)
-              setPickHook(async (items) => {
-                setPickHook(null);
-                log(`debug comparepick ${JSON.stringify(items.map((i) => i.label))}`);
-                return items.find((i) => i.uri && i.label.includes(c.pickCompare)) || undefined;
-              });
-              continue;
-            }
-            if (c.openFile) { // tests: opens a file as an Explorer click would (a preview tab in the active group)
-              vscode.commands.executeCommand('vscode.open', vscode.Uri.file(c.openFile), { preview: c.preview !== false, preserveFocus: c.preserveFocus !== false })
-                .then(() => log(`debug done ${c.id || ''} openFile`), (e) => log(`debug openFile failed: ${e && e.message || e}`));
-              continue;
-            }
-            if (c.openWithBurst) { // tests: several files opened at once through vscode.openWith, as an Explorer multi-selection does
-              for (const f of c.openWithBurst) vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(f), c.viewType || 'videoPreviewEnhanced.player', { preview: false, preserveFocus: true }).then(undefined, (e) => log(`debug openWithBurst failed: ${e && e.message || e}`));
-              continue;
-            }
-            if (c.compareAdd) { for (const s of compareSessions) s.addUris(c.compareAdd.map((f) => vscode.Uri.file(f))); continue; }
-            // Scenario tests (test/vscode/scenarios.js) run many checks in one VS Code: between them they change
-            // user settings, the extension host's environment (the VPE_* test switches, PATH) and clear the stored
-            // state, as a fresh profile would have. Each answers "debug done <id>" once applied.
-            if (c.settings) {
-              const cfg = vscode.workspace.getConfiguration();
-              Promise.all(Object.entries(c.settings).map(([k, v]) => cfg.update(k, v === null ? undefined : v, vscode.ConfigurationTarget.Global)))
-                .then(() => log(`debug done ${c.id} settings`), (e) => log(`debug done ${c.id} settings failed: ${e && e.message || e}`));
-              continue;
-            }
-            if (c.env) {
-              for (const [k, v] of Object.entries(c.env)) { if (v === null) delete process.env[k]; else process.env[k] = String(v); }
-              toolsPromise = null; // PATH may have gained or lost ffmpeg
-              log(`debug done ${c.id} env`);
-              continue;
-            }
-            if (c.resetState) {
-              const keys = context.globalState.keys();
-              Promise.all(keys.map((k) => context.globalState.update(k, undefined)))
-                .then(() => log(`debug done ${c.id} resetState ${keys.length}`), (e) => log(`debug done ${c.id} resetState failed: ${e && e.message || e}`));
-              continue;
-            }
-            if (c.tabs) { // the editor tabs, for tests (compare takes a player's place)
-              const tabs = vscode.window.tabGroups.all.map((g) => g.tabs.map((t) => ({ label: t.label, active: t.isActive, viewType: t.input && t.input.viewType ? String(t.input.viewType) : '' })));
-              log(`tabs ${JSON.stringify(tabs)}`);
-              continue;
-            }
-            if (c.compareReplace) { for (const s of compareSessions) s.replaceUri(Number(c.compareReplace.index), vscode.Uri.file(c.compareReplace.file)); continue; }
-            if (c.compareWith) { // Start Compare from a player, with the open dialog's result supplied by the test
-              const from = [...sessions].find((s) => !s.url && !s.sequence && (!c.name || s.name.includes(c.name)));
-              if (from) {
-                testCompareFiles = c.compareWith.map((f) => vscode.Uri.file(f));
-                vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', from.uri, { t: Number(c.t) || 0 })
-                  .catch((e) => log(`debug compareWith failed: ${e.message}`));
-              }
-              continue;
-            }
-            if (c.compare) { for (const s of compareSessions) s.post({ ...c, type: 'debug' }); continue; }
-            if (c.pickSubtitles) {
-              for (const s of sessions) if (s.name === c.name) s.testPickSubtitles = c.pickSubtitles.map((f) => vscode.Uri.file(f));
-              log('debug subtitles picker ready');
-              continue;
-            }
-            if (c.bench) {
-              // Throughput of extension host -> webview messages (raw-frame transport test).
-              for (const sess of sessions) if (!c.name || sess.name.includes(c.name)) {
-                const size = c.size || 3110400;
-                sess.post({ type: 'benchStart', count: c.count || 60, size });
-                for (let i = 0; i < (c.count || 60); i++) sess.post({ type: 'bench', i, data: new Uint8Array(size) });
-              }
-              continue;
-            }
-            if (c.benchFs) { benchFrameServer(c); continue; }
-            if (c.action === 'remoteStreamKill') {
-              for (const s of sessions) if (s.name === c.name && s.native instanceof remotestream.RemoteStream) s.native.proc?.kill("SIGKILL");
-              continue;
-            }
-            if (c.action === 'defaultKeybindings') {
-              // VS Code's default keybindings for the given keys (docs/notes/ui-simple.md: which player keys a workbench command also gets).
-              vscode.commands.executeCommand('workbench.action.openDefaultKeybindingsFile').then(async () => {
-                await new Promise((r) => setTimeout(r, 1500));
-                const ed = vscode.window.activeTextEditor;
-                const text = ed ? ed.document.getText() : '';
-                const want = new Set((c.keys || []).map((k) => String(k).toLowerCase()));
-                const found = [];
-                for (const m of text.matchAll(/\{\s*"key":\s*"([^"]+)",\s*"command":\s*"([^"]+)"(?:,\s*"when":\s*"((?:[^"\\]|\\.)*)")?/g)) {
-                  if (want.has(m[1].toLowerCase()) || [...want].some((w) => m[1].toLowerCase().startsWith(`${w} `))) found.push({ key: m[1], command: m[2], when: m[3] || '' });
-                }
-                log(`debug keybindings ${JSON.stringify({ size: text.length, found })}`);
-                await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-              }, (e) => log(`debug keybindings failed: ${e && e.message || e}`));
-              continue;
-            }
-            if (c.action === 'tabs') {
-              const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs.map((t) => ({ label: t.label, active: t.isActive })));
-              log(`debug tabs: ${JSON.stringify(tabs)}`);
-              continue;
-            }
-            for (const s of sessions) if (!c.name || s.name.includes(c.name)) s.post({ ...c, type: 'debug' }); // type last: a line can't pose as another message
-          } catch { log(`bad debug command: ${line}`); }
-        }
-        seen = lines.length;
-      });
-    });
-    context.subscriptions.push({ dispose: () => fs.unwatchFile(cmdFile) });
-  }
+  // Test hook: with VPE_LOG set, JSON lines appended to <log>.cmd are sent to open players or run as commands.
+  createDebugCommands({
+    vscode, fs, log, logFile, sessions, compareSessions, frameserver, remotestream, setPickHook, openUrl,
+    resetTools: () => { toolsPromise = null; }, // PATH may have gained or lost ffmpeg
+    setCompareFiles: (files) => { testCompareFiles = files; },
+  }).install(context);
   T_ACTIVATED = Date.now();
   if (logFile) log(`activated: module load ${T_ACTIVATE - T_LOAD} ms, activate() ${T_ACTIVATED - T_ACTIVATE} ms, pid ${process.pid}`);
-}
-
-/**
- * Test hook: throughput of the localhost frame server (src/frameserver.js) into the webview.
- * c: { benchFs: 'ws'|'http', size, count, name }. The webview logs "benchFs: ... MB/s".
- */
-function benchFrameServer(c) {
-  if (c.benchFs !== 'http' && c.benchFs !== 'ws') return;
-  const size = c.size || 3110400;
-  const count = c.count || 60;
-  let data;
-  for (const sess of sessions) {
-    if (c.name && !sess.name.includes(c.name)) continue;
-    if (!sess.framePort || !sess.webviewOrigin) continue;
-    data ||= Buffer.alloc(size, 7);
-    const ch = new frameserver.Channel({
-      origin: sess.webviewOrigin,
-      expiresIn: 60000,
-      onClose: () => sess.benchChannels.delete(ch),
-      onConnect: () => {
-        let i = 0;
-        const pump = () => {
-          while (i < count && ch.connected) {
-            ch.sendFrame(0, i / 30, 0, 0, 0, data);
-            i++;
-            if (ch.buffered > 4 * size) { ch.onDrain(pump); return; }
-          }
-          if (i >= count) ch.sendEnd(0);
-        };
-        pump();
-      },
-      onLost: () => ch.close(),
-    });
-    sess.benchChannels.add(ch);
-    const urls = ch.urls();
-    sess.post({ type: 'benchFs', mode: c.benchFs, url: urls[c.benchFs], count, size });
-  }
-}
-
-/** Seek target from a link query or fragment: `t` (seconds or 1:02.5) and/or `frame` (1-based, as the player shows it). */
-function gotoFrom(text) {
-  const g = parseFragment(text);
-  return g.t !== undefined || g.frame !== undefined ? g : null;
-}
-
-/**
- * vscode://<publisher>.<name>/open?frame=N&t=S&file=<path> (or uri=<full URI> for remote files):
- * opens the file in this player at that frame, or seeks an already open one.
- * The file comes last and runs to the end, so paths with & or + survive (VS Code has
- * already decoded the query once).
- */
-function parseLink(query) {
-  const m = /(?:^|&)(file|uri)=(.*)$/s.exec(query);
-  if (!m) return null;
-  const target = m[1] === 'uri' ? vscode.Uri.parse(m[2]) : vscode.Uri.file(m[2]);
-  return { target, goto: gotoFrom(query.slice(0, m.index)) };
-}
-
-// This window's remote authority (ssh-remote+host, wsl+Ubuntu), learned once.
-let windowAuthority = '';
-
-/**
- * The remote authority of this window, or '' in a local window or when unknown.
- * The remote extension host sees its files as file: URIs, so a frame link has to
- * name the host itself. env.remoteAuthority is proposed API (it throws for us);
- * a webview resource URI carries the same authority, encoded into its host name
- * (vscode-remote+<authority, non-alphanumerics as -xxxx>.vscode-resource...).
- */
-function remoteAuthority(webview) {
-  const name = vscode.env.remoteName;
-  if (!name) return '';
-  if (windowAuthority) return windowAuthority;
-  let a = '';
-  try { a = vscode.env.remoteAuthority || ''; } catch { a = ''; }
-  if (!a && webview) {
-    try {
-      const host = String(webview.asWebviewUri(vscode.Uri.file('/')).authority || '');
-      const m = /^vscode-remote\+((?:[A-Za-z0-9]|-[0-9a-f]{4})+)\./.exec(host);
-      if (m) a = m[1].replace(/-([0-9a-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-    } catch { a = ''; }
-  }
-  if (a && a.startsWith(`${name}+`)) windowAuthority = a;
-  return windowAuthority;
-}
-
-/**
- * Maps a link target to a URI this extension host can open: vscode-remote links
- * only in the window connected to that host (where they are plain files);
- * null when the link belongs to another machine.
- */
-function localTarget(target) {
-  if (target.scheme !== 'vscode-remote') return target;
-  const name = vscode.env.remoteName;
-  const auth = String(target.authority || '').toLowerCase();
-  const here = remoteAuthority(null).toLowerCase();
-  // Before any player has opened, the authority may be unknown: the remote kind must still match.
-  const ok = here ? auth === here : !!name && auth.startsWith(`${name.toLowerCase()}+`);
-  return ok ? target.with({ scheme: 'file', authority: '' }) : null;
 }
 
 async function openLink(link) {
@@ -1482,17 +1079,6 @@ async function openLink(link) {
   if (g) pendingGoto.set(key, { g, until: now + PENDING_GOTO_MS });
   const viewType = /\.(mp4|webm)$/i.test(target.path) ? 'videoPreviewEnhanced.playerOptional' : 'videoPreviewEnhanced.player';
   await vscode.commands.executeCommand('vscode.openWith', target, viewType);
-}
-
-/**
- * The link that reopens this file at a frame; a local path where possible, so it
- * reads well. In a remote window it names the host (uri=vscode-remote://<authority>/path).
- */
-function frameLink(context, uri, frame, t, webview) {
-  const auth = uri.scheme === 'file' ? remoteAuthority(webview) : '';
-  if (auth) uri = vscode.Uri.from({ scheme: 'vscode-remote', authority: auth, path: uri.path });
-  const where = uri.scheme === 'file' ? `file=${encodeURIComponent(uri.fsPath)}` : `uri=${encodeURIComponent(uri.toString())}`;
-  return `${vscode.env.uriScheme}://${context.extension.id}/open?frame=${frame}&t=${t}&${where}`;
 }
 
 class Session {
