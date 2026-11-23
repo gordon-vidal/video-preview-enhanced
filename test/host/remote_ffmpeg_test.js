@@ -127,6 +127,32 @@ function listAll(dir) {
     assert.strictEqual(arm.files[0].name, 'ffmpeg-n8.0-latest-linuxarm64-lgpl-8.0.tar.xz', 'arm64: the arm64 build');
     assert.strictEqual(arm.files[0].url, `${base}latest/ffmpeg-n8.0-latest-linuxarm64-lgpl-8.0.tar.xz`);
     await assert.rejects(rf.chooseRemoteBuild('ia32', { base }), /no ffmpeg download for Linux ia32/);
+    // The remote host's NVIDIA driver caps the release line, as in the local setup (n9.0 needs NVENC driver 610+).
+    const lines = ['n9.0', 'n8.1', 'n7.1'].map((n) => `ffmpeg-${n}-latest-linux64-lgpl-${n.slice(1)}.tar.xz`);
+    for (const n of lines) files.set(n, Buffer.from(n));
+    const hwOf = (nvidiaDriver, extra = {}) => async () => ({
+      os: 'linux', arch: 'x64', vaapi: false, nvidiaDriver, gpus: nvidiaDriver ? [{ vendor: 'nvidia', name: 'RTX', driver: nvidiaDriver }] : [], ...extra,
+    });
+    const pickFor = async (detect) => (await rf.chooseRemoteBuild('x64', { base, detect })).files[0].name;
+    assert.strictEqual(await pickFor(hwOf('570.133.07')), lines[1], 'NVIDIA 570: n8.1, not n9.0');
+    assert.strictEqual(await pickFor(hwOf('550.54.14')), lines[2], 'NVIDIA 550: n7.1');
+    assert.strictEqual(await pickFor(hwOf('610.10')), lines[0], 'NVIDIA 610: newest');
+    assert.strictEqual(await pickFor(hwOf(null, { vaapi: true, gpus: [{ vendor: 'intel', name: 'UHD', driver: '' }] })), lines[0], 'VA-API only: newest');
+    assert.strictEqual(await pickFor(hwOf(null)), lines[0], 'no GPU: newest LGPL static');
+    assert.strictEqual(await pickFor(async () => { throw new Error('lspci missing'); }), lines[0], 'failed detection: newest');
+    assert.strictEqual(await pickFor(hwOf('550.54.14', { gpus: [{ vendor: 'intel', name: 'UHD', driver: '' }] })), lines[0], 'driver without an NVIDIA GPU is ignored');
+    const withGpu = await rf.chooseRemoteBuild('x64', { base, detect: hwOf(null, { vaapi: true, gpus: [{ vendor: 'intel', name: 'UHD', driver: '' }] }) });
+    assert.match(withGpu.note, /Intel Quick Sync, VA-API/, 'the build note names the remote GPU decoders');
+    for (const n of lines) files.delete(n);
+
+    // The offer says what Live transcode does and that the build is matched to the host.
+    const text = rf.offerText({ codec: 'hevc', host: 'box', mb: 135 });
+    assert.match(text, /^HEVC plays in the built-in decoder in this window/);
+    assert.match(text, /Live transcode decodes it there .*GPU.* streams a lighter H\.264 version/);
+    assert.match(text, /LGPL build matched to box's GPU driver/);
+    assert.ok(!/remote stream/i.test(text), 'no pre-Live-transcode wording');
+    assert.match(rf.offerText({ host: 'box', mb: 135 }), /^This video plays/);
+
     // https only, except the loopback test server.
     await assert.rejects(setup.chooseBuild({ os: 'linux', arch: 'x64', gpus: [] }, { base: 'http://example.com/' }), /https only/);
 
@@ -200,7 +226,7 @@ function listAll(dir) {
     await x.soft();
     await x.s.until(() => x.h.context.globalState.get(managed), 10000);
     assert.strictEqual(x.offers.length, 1, 'asked once');
-    assert.match(x.offers[0].text, /HEVC plays in the built-in decoder.*Download ffmpeg \(~135 MB, LGPL build, no admin\)/);
+    assert.match(x.offers[0].text, /HEVC plays in the built-in decoder.*Live transcode.*Download ffmpeg \(~135 MB, LGPL build matched to .*, no admin\)/);
     assert.deepStrictEqual(x.offers[0].items, [rf.OFFER_DOWNLOAD, rf.OFFER_LATER, rf.OFFER_NEVER]);
     const rec = x.h.context.globalState.get(managed);
     assert.ok(rec.ffmpeg.startsWith(storage2) && /linuxarm64/.test(rec.ffmpeg), rec.ffmpeg);
