@@ -11,7 +11,7 @@ window and, with a virtual clock, in Node without waiting.
 | Two pipes | `down` (host to page) and `up` (page to host), each with its own rate (Mb/s) |
 | Byte budget | A message takes `bytes / rate` to send; a FIFO queue per direction, so one large batch delays everything behind it, and every player and Compare tile on the simulator shares the same pipes |
 | Delay | Half the RTT each way, so a small request and its reply cost one RTT; seeded jitter (`seed`, default 1) varies each message by up to +-`jitter / 2` |
-| Blackouts | `blackout=<ms>/<every ms>`: the first opens one period after the start. Nothing is sent or delivered inside one; the backlog drains in order afterwards (nothing dropped or reordered) |
+| Blackouts | `blackout=<ms>/<every ms>` (whole milliseconds, shorter than the period): the first opens one period after the start. Nothing is sent or delivered inside one; the backlog drains in order afterwards (nothing dropped or reordered) |
 | Size of a message | `estimateMessageBytes`: binary payloads at their length, strings as UTF-8, the rest as JSON |
 
 Presets: `fast-ssh` (25 Mb/s, 15 ms), `typical-ssh` (8 Mb/s, 40 ms), `slow-ssh` (2.5 Mb/s, 80 ms),

@@ -354,6 +354,46 @@ function rig(spec, opts = {}) {
   assert.deepStrictEqual(log, []);
 }
 
+{ // Blackouts are whole milliseconds with at least 1 ms open per period, so a deadline always has a way out
+  // (0.5/1 once left none: every rounded deadline fell inside a blackout and the search never ended).
+  assert.throws(() => parseLinkSpec('mbps=1,blackout=0.5/1'), /whole milliseconds/);
+  assert.throws(() => parseLinkSpec('mbps=1,blackout=1/2.5'), /whole milliseconds/);
+  assert.throws(() => createLinkSimulator({ downMbps: 1, blackoutDurationMs: 0.5, blackoutEveryMs: 1 }), /whole milliseconds/);
+  assert.throws(() => createLinkSimulator({ downMbps: 1, blackoutDurationMs: 1, blackoutEveryMs: 1 }), /needs a period longer/);
+  assert.deepStrictEqual(
+    (({ blackoutDurationMs, blackoutEveryMs }) => [blackoutDurationMs, blackoutEveryMs])(parseLinkSpec('mbps=1,blackout=1/2')),
+    [1, 2],
+  );
+  // The tightest allowed blackout: every message sent at any moment arrives, in order, outside a blackout.
+  const { clock, sim, log, down } = rig('mbps=8,rtt=0,jitter=0,blackout=1/2');
+  for (let i = 0; i < 30; i++) { down(`m${i}`, bytes(i % 3 * 400)); clock.advance(1); }
+  clock.runAll();
+  assert.strictEqual(log.length, 30);
+  assert.deepStrictEqual(log.map((e) => e[1]), Array.from({ length: 30 }, (_, i) => `m${i}`));
+  assert.ok(log.every((e) => e[2] < 2 || e[2] % 2 === 1), `none lands inside a blackout: ${log.map((e) => e[2])}`);
+  sim.dispose();
+}
+
+{ // sim.dispose() closes its channels too: their handles are released at once, without a channel.dispose().
+  const { clock, sim, log, down, up } = rig('mbps=8,rtt=40');
+  const a = sim.wrapChannel('A');
+  const b = sim.wrapChannel('B');
+  down('A0', bytes(500000), a);
+  up('B0', bytes(1000), b);
+  down('B1', bytes(1000), b);
+  assert.deepStrictEqual([a.pending(), b.pending()], [1, 2]);
+  sim.dispose();
+  assert.deepStrictEqual([a.pending(), b.pending()], [0, 0], 'no channel keeps a handle');
+  assert.strictEqual(a.sendDown({}, () => assert.fail('after dispose')), null);
+  const late = sim.wrapChannel('late');
+  assert.strictEqual(late.sendUp({}, () => assert.fail('after dispose')), null, 'a channel made afterwards is closed');
+  assert.strictEqual(late.pending(), 0);
+  a.dispose(); // still fine on its own
+  clock.advance(5000);
+  assert.deepStrictEqual(log, []);
+  assert.strictEqual(clock.pending(), 0);
+}
+
 { // A callback that throws does not stop the messages behind it (the host's own handler reports its errors).
   const errors = [];
   const { clock, sim, log, down } = rig('mbps=8,rtt=0', { onError: (e) => errors.push(e.message) });

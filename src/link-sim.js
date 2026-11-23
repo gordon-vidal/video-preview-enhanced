@@ -85,6 +85,11 @@ function normalizeConfig(raw) {
   const upMbps = num('upMbps', raw.upMbps ?? raw.downMbps, true);
   const blackoutEveryMs = num('blackoutEveryMs', raw.blackoutEveryMs ?? 0, false);
   const blackoutDurationMs = num('blackoutDurationMs', raw.blackoutDurationMs ?? 0, false);
+  // Whole milliseconds, with at least 1 ms open in every period: deliveries are whole-ms deadlines, so a blackout
+  // shorter than that, or a period with no open millisecond, could leave no deadline outside a blackout.
+  if (!Number.isInteger(blackoutEveryMs) || !Number.isInteger(blackoutDurationMs)) {
+    throw new Error(`link simulator: blackout times are whole milliseconds (got ${blackoutDurationMs} ms every ${blackoutEveryMs} ms)`);
+  }
   if (blackoutEveryMs > 0 && blackoutDurationMs >= blackoutEveryMs) {
     throw new Error(`link simulator: a ${blackoutDurationMs} ms blackout needs a period longer than that (got ${blackoutEveryMs} ms)`);
   }
@@ -344,6 +349,9 @@ function createLinkSimulator(config, opts = {}) {
     return { at, bytes, cancel };
   };
 
+  /** Channels still open (wrapChannel): the simulator's dispose() closes them, so none keeps its handles. */
+  const channels = new Set();
+
   /** Stops every pending delivery: nothing arrives after this, and the simulator takes no more messages. */
   const dispose = () => {
     disposed = true;
@@ -353,6 +361,7 @@ function createLinkSimulator(config, opts = {}) {
       for (const item of d.queue) item.deliver = null;
       d.queue.length = 0;
     }
+    for (const channel of [...channels]) channel.dispose();
   };
 
   /** @param {Dir} d */
@@ -372,7 +381,7 @@ function createLinkSimulator(config, opts = {}) {
     wrapChannel: (/** @type {string} */ id) => {
       /** @type {Set<LinkSend>} */
       const mine = new Set();
-      let closed = false;
+      let closed = disposed;
       /** @param {Dir} d */
       const via = (d) => (/** @type {unknown} */ msg, /** @type {() => void} */ deliver) => {
         if (closed) return null;
@@ -385,14 +394,16 @@ function createLinkSimulator(config, opts = {}) {
         mine.add(handle);
         return handle;
       };
-      return {
+      const channel = {
         id,
         sendDown: via(down),
         sendUp: via(up),
         /** Messages of this channel still in flight. */
         pending: () => mine.size,
-        dispose: () => { closed = true; for (const h of [...mine]) h.cancel(); },
+        dispose: () => { closed = true; channels.delete(channel); for (const h of [...mine]) h.cancel(); },
       };
+      if (!closed) channels.add(channel);
+      return channel;
     },
     /** @returns {LinkStats} */
     stats: () => ({
