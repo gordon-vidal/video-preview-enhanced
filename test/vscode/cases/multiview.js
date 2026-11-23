@@ -201,7 +201,7 @@ module.exports = [{
     await vs.waitLog(opened(3), { from, timeout: 30000, what: 'compare opened with 3' });
     let r = await until(allShown, 45000);
     ok(allShown(r), `3 tiles: not every tile shows a frame (${r && r.frames})`);
-    ok(r.n === '3' && r.mode === 'grid' && r.modes === 'grid', `3 tiles: n=${r.n} mode=${r.mode} modes=${r.modes}`);
+    ok(r.n === '3' && r.mode === 'grid' && r.modes === 'spotlight,grid', `3 tiles: n=${r.n} mode=${r.mode} modes=${r.modes}`);
     ok(r.add === 'true', 'the "Add video" fourth cell is not there');
     ok(r.cells === '3', `cells=${r.cells}`);
     from = vs.mark();
@@ -349,14 +349,14 @@ module.exports = [{
     ok(Math.abs(nums(r.frames)[0] - aFrame) <= 1, `A (the new clock) shows #${nums(r.frames)[0]}, was #${aFrame} before its clock C was removed`);
     await h.closeClip(vs);
 
-    // ---- 2 videos: side by side, split; an ms offset on B ----
+    // ---- 2 videos: spotlight, grid, split; an ms offset on B ----
     ok = t('pair/views-and-offset');
     from = vs.mark();
     vs.send({ compareFiles: [files[0], files[2]] });
     await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened with 2' });
     r = await until(allShown, 45000);
-    ok(r.n === '2' && r.modes === 'side,split', `2 tiles: n=${r.n} modes=${r.modes}`);
-    for (const mode of ['split', 'side']) {
+    ok(r.n === '2' && r.modes === 'spotlight,grid,split', `2 tiles: n=${r.n} modes=${r.modes}`);
+    for (const mode of ['spotlight', 'split', 'grid']) {
       act({ action: 'mode', mode });
       await h.sleep(500);
       r = await report();
@@ -599,6 +599,7 @@ module.exports = [{
 
     ok = t('large/compact-overlays');
     act({ action: 'stageSize', w: 400, h: 240 });
+    act({ action: 'syncMode', on: true });
     const compact = await ui(2);
     ok(compact.stage[2] === 400 && compact.stage[3] === 240, `compact stage: ${compact.stage}`);
     for (const cell of compact.cells) {
@@ -606,8 +607,8 @@ module.exports = [{
       const inside = ([left, top, width, height]) => width > 0 && height > 0
         && left >= x && top >= y && left + width <= x + w && top + height <= y + h;
       const [pill] = cell.pillRects, [nudge] = cell.nudgeRects;
-      ok(pill && nudge && inside(pill) && inside(nudge) && pill[1] + pill[3] <= nudge[1],
-        `tile ${cell.tile}: pill ${pill} and nudge ${nudge} must stack inside ${cell.rect}`);
+      ok(pill && nudge && inside(pill) && inside(nudge),
+        `tile ${cell.tile}: pill ${pill} and sync nudge ${nudge} must fit inside ${cell.rect}`);
     }
 
     ok = t('large/close');
@@ -721,47 +722,31 @@ module.exports = [{
         const arrow = u.cells[1].moves.find((b) => b.focused);
         ok(arrow?.label === `Move ${CLIPS[2]} earlier`, `focus did not follow the video: ${JSON.stringify(arrow)}`);
       });
-      click('#reorderBtn');
+      // Direct drag (always-on, no Reorder mode toggle needed).
       const grid = u.cells;
       pointer('pointerdown', grid[1].rect);
       pointer('pointermove', grid[0].rect);
       u = await ui();
       await results.run('reorder/drag-preview', (ok) => {
-        ok(u.reorder.button === 'Done' && u.reorder.hint.includes('Drag tiles'), `mode: ${JSON.stringify(u.reorder)}`);
         ok(order(u) === '2,0,1,add', `preview order: ${order(u)}`);
       });
       pointer('pointerup', grid[0].rect);
-      act({ action: 'key', key: '+' });
-      act({ action: 'key', key: 'Escape' });
       act({ action: 'panel', view: 'cmp' });
       u = await ui();
       await results.run('reorder/commit', (ok) => {
         ok(order(u) === '2,0,1,add', `committed order: ${order(u)}`);
-        ok(u.reorder.button === 'Reorder' && !u.reorder.hint, 'Escape should leave Reorder mode');
         const rows = (u.panel?.rows || []).map((r) => r.label).filter((label) => /^[A-C]:/.test(label));
         ok(rows[0]?.startsWith(`A: ${CLIPS[2]}, clock`) && rows[1]?.startsWith(`B: ${CLIPS[0]}`),
           `clock or panel order changed: ${rows}`);
         ok(rows[2] === `C: ${CLIPS[1]}, sound, offset +3 frames`, `sound or offset changed: ${rows}`);
       });
-      click('#reorderBtn');
+      act({ action: 'panel' });
       pointer('pointerdown', grid[0].rect);
       pointer('pointermove', grid[2].rect);
-      click('#reorderBtn');
+      act({ action: 'key', key: 'Escape' });
       u = await ui();
-      await results.run('reorder/done-cancels-drag', (ok) => {
-        ok(u.reorder.button === 'Reorder' && order(u) === '2,0,1,add', `Done during drag: ${order(u)}`);
-      });
-      click('#reorderBtn');
-      u = await ui();
-      await results.run('reorder/switch-tabs', async (ok) => {
-        ok(u.reorder.button === 'Done', 'Reorder mode was not active before switching tabs');
-        const opening = await h.openClip(vs, files[3]);
-        await vs.waitLog(/\[vp9_1080p\.webm\] webview: first frame shown/, { from: opening, timeout: 45000 });
-        const closing = vs.mark();
-        vs.send({ command: 'workbench.action.closeActiveEditor' });
-        await vs.waitLog(/\[vp9_1080p\.webm\] session closed/, { from: closing, timeout: 10000 });
-        const after = await ui();
-        ok(after.reorder.button === 'Reorder' && order(after) === '2,0,1,add', `after switching tabs: ${order(after)}`);
+      await results.run('reorder/esc-cancels-drag', (ok) => {
+        ok(order(u) === '2,0,1,add', `Esc during drag: ${order(u)}`);
       });
       from = vs.mark();
       vs.send({ compareAdd: [files[3]] });
@@ -795,13 +780,13 @@ module.exports = [{
           ok(pic && pic[3] < ch - 20, `tile ${cell.tile} is letterboxed (picture ${pic}, cell ${cell.rect})`);
           if (!pic || cell.moveRects.length !== 2) { ok(false, `tile ${cell.tile}: moves ${JSON.stringify(cell.moveRects)}`); continue; }
           const [px, py, pw, ph] = pic;
-          // The arrows' box (both buttons) lies inside the picture, in its bottom-right corner (at most 8 px from the edges).
+          // The keyboard reorder arrows sit inside the picture's top-left corner.
           const left = Math.min(...cell.moveRects.map((r) => r[0])), top = Math.min(...cell.moveRects.map((r) => r[1]));
           const right = Math.max(...cell.moveRects.map((r) => r[0] + r[2])), bottom = Math.max(...cell.moveRects.map((r) => r[1] + r[3]));
           ok(left >= px - 1 && top >= py - 1 && right <= px + pw + 1 && bottom <= py + ph + 1,
             `tile ${cell.tile}: arrows ${[left, top, right, bottom]} leave their picture ${pic}`);
-          ok(py + ph - bottom <= 8 && px + pw - right <= 8,
-            `tile ${cell.tile}: arrows ${[left, top, right, bottom]} are far from their picture's corner ${pic}`);
+          ok(top - py <= 10 && left - px <= 10,
+            `tile ${cell.tile}: arrows ${[left, top, right, bottom]} are far from their picture's top-left corner ${pic}`);
           ok(cx <= px + 1 && cy <= py + 1 && cw >= pw - 1, `tile ${cell.tile}: picture ${pic} sits inside its cell ${cell.rect}`);
         }
       });

@@ -12,7 +12,7 @@
    *   Grid: {gridFor: (count: number, mode: string) => {cols: number, rows: number}},
    *   N: number,
    *   MAX_TILES: number,
-   *   st: {mode: string, clock: number, sound: number, muted: boolean, split: number, order: number[],
+   *   st: {mode: string, dock: string, heroRatio: number, clock: number, sound: number, muted: boolean, split: number, order: number[],
    *     offsets: {v: number, unit: string}[], pic: {mode: string, zoom: number, cx: number, cy: number},
    *     rate: number, loop: boolean, sel: number, thresh: number},
    *   canvas: HTMLCanvasElement,
@@ -22,10 +22,8 @@
    *   controls: { show: (view: string, anchor: HTMLElement) => void, closeAll: (restoreFocus: boolean) => void,
    *     view: () => string | null },
    *   scanner: {start: () => void, running: boolean, found: {frame: number} | null},
-   *   reorderBtn: HTMLElement,
-   *   reorderHint: HTMLElement,
    *   $: (id: string) => HTMLElement | null,
-   *   getState: () => {tiles: any[], clock: any, cells: Cell[], hover: number | null},
+   *   getState: () => {tiles: any[], clock: any, cells: Cell[], hover: number | null, syncMode: boolean, statsIds: Set<number>},
    *   contextCount: () => number,
    *   setHover: (tile: number | null) => void,
    *   frameOf: (player: any) => number,
@@ -35,6 +33,9 @@
    *   frameFactor: () => number,
    *   picState: () => {pct: number | null},
    *   setMode: (mode: string) => void,
+   *   setDock: (dock: string) => void,
+   *   setHeroRatio: (ratio: number) => void,
+   *   setSyncMode: (on: boolean) => void,
    *   setOffset: (tile: number, value: number, unit: string) => void,
    *   setClock: (tile: number) => void,
    *   removeTile: (tile: number) => void,
@@ -54,8 +55,8 @@
   function install(deps) {
     const {
       cfg, log, Grid, N, MAX_TILES, st, canvas, stage, cellsEl, ui, controls,
-      scanner, reorderBtn, reorderHint, $, getState, contextCount, setHover,
-      frameOf, fpsOf, synced, tileSize, frameFactor, picState, setMode, setOffset,
+      scanner, $, getState, contextCount, setHover,
+      frameOf, fpsOf, synced, tileSize, frameFactor, picState, setMode, setDock, setHeroRatio, setSyncMode, setOffset,
       setClock, removeTile, setSound, step, play, pause, seekClock, setRate,
       setSplit, tileOr0, leave,
     } = deps;
@@ -63,10 +64,10 @@
 
     // Test hook (VPE_LOG only): the host forwards debug messages from the test runner.
     function report() {
-      const { tiles, clock, cells } = getState();
+      const { tiles, clock, cells, syncMode } = getState();
       const per = (f) => tiles.map(f).join(',');
       const g = Grid.gridFor(N, st.mode);
-      log(`compare report n=${N} mode=${st.mode} modes=${N > 2 ? 'grid' : 'side,split'} canvas=${canvas.width}x${canvas.height} grid=${g.cols}x${g.rows} max=${MAX_TILES} now=${Math.round(performance.now())}`
+      log(`compare report n=${N} mode=${st.mode} dock=${st.dock} heroRatio=${st.heroRatio.toFixed(2)} syncMode=${syncMode} modes=${N > 2 ? 'spotlight,grid' : 'spotlight,grid,split'} canvas=${canvas.width}x${canvas.height} grid=${g.cols}x${g.rows} max=${MAX_TILES} now=${Math.round(performance.now())}`
         // WebGL contexts in use: the compositor, the shared renderer (5+ tiles), each engine's own (2-4 tiles), metrics.
         + ` contexts=${contextCount() + tiles.filter((p) => p.gl && p.gl.gl).length}`
         + ` frame=${clock ? clock.currentFrame() + 1 : '-'} clock=${st.clock} sound=${st.sound} muted=${st.muted} split=${st.split.toFixed(3)} swap=${N === 2 && st.order[0] === 1}`
@@ -82,10 +83,12 @@
     }
     /** What the page shows, as JSON (test hook): the bar, the open panel, the menu, the tiles' overlays. */
     function uiState() {
-      const { cells, hover } = getState();
+      const { cells, hover, syncMode, statsIds } = getState();
       const text = (e) => (e ? (e.textContent || '').replace(/\s+/g, ' ').trim() : '');
       const rect = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
       const shown = (e) => !!e && !e.hidden && getComputedStyle(e).display !== 'none';
+      const splitter = $('splitter');
+      const addPop = $('addPop');
       return {
         bar: {
           ids: [...ui.bar.querySelectorAll('button, input')].filter(shown).map((b) => b.id),
@@ -100,22 +103,30 @@
         sheet: ui.sheet.hidden ? null : text(ui.sheet),
         active: document.activeElement?.id || document.activeElement?.getAttribute('aria-label'),
         menu: ui.menu.hidden ? null : { tile: Number(ui.menu.dataset.tile), items: [...ui.menu.querySelectorAll('.mi')].map((b) => text(b)) },
+        addPop: addPop && !addPop.hidden ? text(addPop) : null,
         cells: [...cellsEl.children].map((/** @type {HTMLElement} */ d) => ({
           tile: d.dataset.tile === undefined ? (d.classList.contains('add') ? 'add' : '') : d.dataset.tile, rect: rect(d),
           pills: [...d.querySelectorAll('.pill')].map((p) => text(p)), nudges: [...d.querySelectorAll('.nudge')].map((n) => text(n)),
           moves: [...d.querySelectorAll('[data-act="move"]')].map((/** @type {HTMLButtonElement} */ b) => ({
             label: b.getAttribute('aria-label'), disabled: b.disabled, focused: b === document.activeElement,
           })),
+          hasSpot: !!d.querySelector('[data-act="spot"]'),
+          hasRm: !!d.querySelector('[data-act="remove"]'),
+          rmConfirm: !!d.querySelector('[data-act="remove"].confirm'),
+          statsOpen: d.classList.contains('show-stats'),
+          ended: d.classList.contains('ended'),
           pillRects: [...d.querySelectorAll('.pill')].map(rect),
           nudgeRects: [...d.querySelectorAll('.nudge')].map(rect),
           moveRects: [...d.querySelectorAll('.move button')].map(rect),
           picRect: (() => { const c = cells[[...cellsEl.children].indexOf(d)]; const o = cellsEl.getBoundingClientRect(); return c && c.pic ? [Math.round(o.left + c.pic.x), Math.round(o.top + c.pic.y), Math.round(c.pic.w), Math.round(c.pic.h)] : null; })(),
-          pics: [...d.querySelectorAll('.ov')].map((o) => rect(o)), oor: !!d.querySelector('.oor:not([hidden])'),
+          pics: [...d.querySelectorAll('.ov')].map((o) => rect(o)), oor: !!d.querySelector('.oor:not([hidden])') || d.classList.contains('ended'),
         })),
         divider: (() => { const dv = cellsEl.querySelector('#divider'); return dv ? { rect: rect(dv), value: dv.getAttribute('aria-valuenow') } : null; })(),
+        splitter: splitter && !splitter.hidden ? { rect: rect(splitter), value: splitter.getAttribute('aria-valuenow'), dir: splitter.classList.contains('v') ? 'v' : 'h' } : null,
         stage: rect(stage), toast: ui.toast.hidden ? '' : ui.toast.textContent,
         toastRect: ui.toast.hidden ? null : rect(ui.toast), live: ui.live.textContent, hover,
-        reorder: { button: text(reorderBtn), hint: reorderHint.hidden ? '' : text(reorderHint) },
+        syncMode, stats: [...statsIds],
+        spotlight: { mode: st.mode, dock: st.dock, heroRatio: st.heroRatio },
         picture: {
           ...st.pic, factor: frameFactor(), pct: picState().pct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), pannable: stage.classList.contains('pannable'),
           tiles: cells.filter((c) => !c.add).map((c) => ({ tiles: c.tiles, box: [c.x, c.y, c.w, c.h], full: [c.full.x, c.full.y, c.full.w, c.full.h], pic: [c.pic.x, c.pic.y, c.pic.w, c.pic.h] })),
@@ -127,6 +138,9 @@
       if (!m || m.type !== 'debug' || m.page !== cfg.page) return;
       switch (m.action) {
         case 'mode': setMode(m.mode); break;
+        case 'dock': setDock(m.dock); break;
+        case 'heroRatio': setHeroRatio(Number(m.ratio)); break;
+        case 'syncMode': setSyncMode(!!m.on); break;
         case 'key': document.dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: !!m.shift, ctrlKey: !!m.ctrl, bubbles: true })); break;
         case 'offset': setOffset(m.tile, Number(m.v), m.unit === 'f' ? 'frames' : m.unit); break;
         case 'clock': setClock(m.tile); break;

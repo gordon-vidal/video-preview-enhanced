@@ -3,112 +3,223 @@ body.compare #stage { background: #000; overflow: hidden; user-select: none; -we
 body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 #cells { position: absolute; inset: 0; }
 
-/* One cell per tile (2x2, side by side, or the split's single picture); its overlay covers the tile's picture. */
-.cell { position: absolute; box-sizing: border-box; }
-/* A picture larger than its cell (Fill, 100 %, zoom) is dragged, all tiles together. */
-#stage.pannable .cell:not(.add) { cursor: grab; }
-#stage.pannable.panning .cell:not(.add) { cursor: grabbing; }
-.ov { position: absolute; pointer-events: none; opacity: 0; transition: opacity 120ms; }
-.cell:hover .ov, .cell:focus-within .ov { opacity: 1; }
-.ov > * { pointer-events: auto; }
-.pill, .nudge { --chip: color-mix(in srgb, var(--vscode-editorWidget-background, #141414) 86%, transparent); }
-.pill {
-  position: absolute; top: 10px; display: flex; align-items: center; gap: 7px; height: 26px; padding: 0 9px 0 5px;
-  max-width: calc(70% - 10px); box-sizing: border-box; border: 0; border-radius: 6px; cursor: pointer;
-  font: inherit; color: var(--vscode-foreground, #e8e8e8); background: var(--chip);
+/* One cell per tile (Spotlight, Equal Grid, or Split's single picture); its overlay covers the tile's picture. */
+.cell { position: absolute; box-sizing: border-box; overflow: hidden; }
+.cell:not(.add):not(.split) { cursor: grab; touch-action: none; }
+#stage.tile-dragging, #stage.tile-dragging .cell:not(.add) { cursor: grabbing; }
+/* A picture larger than its cell (Fill, 100 %, zoom) pans all tiles in lockstep; the ⋮⋮ name pill still drags tiles. */
+#stage.pannable .cell:not(.add) { cursor: move; }
+#stage.pannable.panning, #stage.pannable.panning .cell:not(.add) { cursor: grabbing; }
+#stage.zoomed .tile-bottom-pill { cursor: grab; }
+#stage.zoomed .tile-bottom-pill:active { cursor: grabbing; }
+
+.cell.lifted {
+  z-index: 30;
+  cursor: grabbing;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.68), 0 0 0 2px var(--vscode-focusBorder, #3b82f6);
+  border-radius: 6px;
 }
-.pill.left { left: 10px; }
-.pill.right { right: 10px; }
-.pill:hover { background: var(--vscode-editorWidget-background, #2d2d2e); }
+
+.ov { position: absolute; pointer-events: none; opacity: 0; transition: opacity 140ms ease; z-index: 4; }
+.cell:hover .ov,
+.cell.confirming .ov,
+#stage.sync-mode .ov,
+.cell:focus-within .ov { opacity: 1; }
+.ov > * { pointer-events: auto; }
+
+/* Top-right minimal monochrome window controls (Make Spotlight + inline two-click Remove). */
+.tile-top-acts {
+  position: absolute; top: 7px; right: 7px; z-index: 6;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.tbtn {
+  height: 22px; min-width: 22px; padding: 0 5px; border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: color-mix(in srgb, var(--vscode-editorWidget-background, #14161c) 82%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--vscode-foreground, #e4e4e7);
+  font: 600 11px/1 var(--vscode-font-family, system-ui, sans-serif);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.tbtn:hover { background: rgba(255, 255, 255, 0.18); color: #fff; border-color: rgba(255, 255, 255, 0.28); }
+.tbtn.rm:hover { background: rgba(220, 38, 38, 0.88); border-color: transparent; color: #fff; }
+.tbtn.rm.confirm { background: #dc2626; border-color: #f87171; color: #fff; padding: 0 8px; }
+
+/* Floating bottom-left identity + monochrome info & mute pill (no heavy shaded bar). */
+.tile-bottom-pill, .pill {
+  position: absolute; left: 7px; bottom: 7px; z-index: 6;
+  display: inline-flex; align-items: center; gap: 5px;
+  max-width: calc(100% - 14px); height: 26px; padding: 0 5px 0 4px; box-sizing: border-box;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background, #101216) 80%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--vscode-foreground, #f4f4f5);
+  font: inherit; font-size: 11.5px;
+}
+.pill.right { left: auto; right: 7px; }
+.pill-open {
+  display: inline-flex; align-items: center; gap: 5px; min-width: 0;
+  border: 0; padding: 0 2px 0 0; margin: 0; background: none; color: inherit; font: inherit; cursor: inherit;
+}
 .pill .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.pill .fr { color: var(--vpe-dim); font-size: 11.5px; }
+.pill .fr { color: var(--vpe-dim); font-size: 10.5px; flex: none; }
+.zoom-grip {
+  display: none; color: rgba(255, 255, 255, 0.65); font-size: 11px; letter-spacing: -1px;
+  padding: 0 2px; line-height: 1; flex: none;
+}
+#stage.zoomed .zoom-grip { display: inline-flex; }
+
+.ltr {
+  width: 17px; height: 17px; flex: none; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: #fff;
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.55));
+}
 .ico { display: inline-flex; flex: none; color: var(--vpe-dim); }
 .ico.dim { opacity: 0.5; }
-.ltr {
-  width: 18px; height: 18px; flex: none; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 600; color: var(--vscode-foreground, #fff);
-  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.4));
-}
-.nudge {
-  position: absolute; top: 10px; display: flex; align-items: center; height: 26px; overflow: hidden; border-radius: 6px; background: var(--chip);
-}
-.nudge.left { left: 10px; }
-.nudge.right { right: 10px; }
-.nudge.below { top: 42px; }
-.nudge button { height: 26px; min-width: 26px; padding: 0 6px; border: 0; background: none; cursor: pointer; font: inherit; color: var(--vscode-foreground, #e8e8e8); }
-.nudge button:hover { background: var(--vpe-hover); }
-.nudge .offv { font-family: var(--vpe-mono); font-size: 11.5px; min-width: 44px; }
 
-/* Stack controls inside each dense cell so the filename and offset never compete for width. */
+/* Monochrome inline mini buttons inside the bottom-left pill (info + mute). */
+.mute-mini {
+  width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--vpe-dim, #94a3b8); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  transition: background 120ms, color 120ms;
+}
+.mute-mini:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.mute-mini.on { color: var(--vscode-foreground, #f4f4f5); }
+.mute-mini.info-on { background: color-mix(in srgb, var(--vscode-focusBorder, #3b82f6) 32%, transparent); color: #93c5fd; }
+
+/* Per-tile "Stats for nerds" translucent monospace HUD (top-left inside tile, mismatches in amber). */
+.tile-stats {
+  position: absolute; top: 7px; left: 7px; z-index: 6;
+  display: none; grid-template-columns: auto auto; column-gap: 10px; row-gap: 2px;
+  padding: 6px 8px; border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background, #101216) 84%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-family: var(--vpe-mono, ui-monospace, monospace); font-size: 10.5px; line-height: 1.35;
+  color: var(--vscode-foreground, #e4e4e7); pointer-events: none;
+}
+.cell.show-stats .tile-stats { display: grid; }
+.tile-stats .k { color: var(--vpe-dim, #94a3b8); }
+.tile-stats .v { text-align: right; white-space: nowrap; }
+.tile-stats .v.diff { color: #fbbf24; font-weight: 600; }
+
+/* On-demand Sync mode per-tile offset stepper (bottom-right, hidden unless #stage.sync-mode). */
+.sync-pill, .nudge {
+  position: absolute; bottom: 7px; right: 7px; z-index: 7;
+  display: none; align-items: center; gap: 3px; height: 24px; padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vscode-editorWidget-background, #0c0e14) 90%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #60a5fa) 55%, transparent);
+  font-family: var(--vpe-mono, monospace); font-size: 11px; color: var(--vscode-foreground, #e4e4e7);
+}
+.nudge.left { left: 7px; right: auto; bottom: 38px; }
+.nudge.right.below { bottom: 38px; }
+#stage.sync-mode .sync-pill,
+#stage.sync-mode .nudge { display: inline-flex; }
+.sync-pill button, .nudge button {
+  min-width: 19px; height: 19px; padding: 0 3px; border-radius: 999px; border: 0;
+  background: rgba(255, 255, 255, 0.1); color: inherit; cursor: pointer; font: inherit;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.sync-pill button:hover, .nudge button:hover { background: var(--vscode-button-background, #3b82f6); color: var(--vscode-button-foreground, #fff); }
+.sync-pill .offv, .nudge .offv { background: transparent; min-width: 30px; padding: 0 4px; font-family: var(--vpe-mono, monospace); font-size: 11px; }
+.sync-pill .offv:hover, .nudge .offv:hover { background: rgba(255, 255, 255, 0.12); color: inherit; }
+
+/* Dense cells (5+ tiles): compact pills and buttons so small tiles stay readable. */
 #cells.dense .cell { isolation: isolate; }
-#cells.dense .ov {
-  box-sizing: border-box; padding: 4px; display: grid; justify-items: start; align-content: start;
-  grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 22px)); gap: 3px; z-index: 1;
+#cells.dense .tile-bottom-pill, #cells.dense .pill {
+  left: 4px; bottom: 4px; height: 22px; gap: 4px; padding: 0 4px 0 3px; font-size: 11px; max-width: calc(100% - 8px);
 }
-#cells.dense :is(.pill, .nudge) {
-  position: static; height: 100%; max-width: 100%; min-width: 0; overflow: hidden;
-}
-#cells.dense .pill { gap: 4px; padding: 0 5px 0 3px; font-size: 12px; }
-#cells.dense .pill .ltr { width: 16px; height: 16px; }
-#cells.dense .pill .ico svg { width: 12px; height: 12px; }
-#cells.dense .pill .fr { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#cells.dense .nudge button { height: 100%; min-width: 22px; padding: 0 4px; }
-#cells.dense .nudge .offv { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#cells.dense .tile-top-acts { top: 4px; right: 4px; }
+#cells.dense .tbtn { height: 20px; min-width: 20px; border-radius: 5px; }
+#cells.dense .ltr { width: 15px; height: 15px; font-size: 9.5px; }
+#cells.dense .mute-mini { width: 18px; height: 18px; }
+#cells.dense .sync-pill, #cells.dense .nudge { bottom: 4px; right: 4px; height: 21px; font-size: 10.5px; }
+#cells.dense .tile-stats { top: 4px; left: 4px; padding: 4px 6px; font-size: 9.5px; }
+#cells.dense .pill:focus-visible { outline-color: var(--vscode-focusBorder); }
 
-/* Remove from Compare (3 videos or more): the top-right corner, the offset nudge moved left to make room. */
-.rm {
-  position: absolute; top: 10px; right: 10px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px;
-  display: grid; place-items: center; cursor: pointer; color: var(--vscode-foreground, #e8e8e8);
-  background: color-mix(in srgb, var(--vscode-editorWidget-background, #141414) 86%, transparent);
-}
-.rm:hover { background: var(--vscode-inputValidation-errorBackground, #5a1d1d); }
-.ov.removable .nudge.right:not(.below) { right: 44px; }
-#cells.dense .ov.removable { padding-right: 30px; }
-#cells.dense .rm { top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 5px; }
-/* Reorder mode keeps × (it removes the tile and never starts a drag; media/compare.js reorderInert). */
-#stage.reordering .ov > .rm { pointer-events: auto; z-index: 2; cursor: pointer; }
-body.vscode-high-contrast .rm, body.vscode-high-contrast-light .rm { outline: 1px solid var(--vscode-contrastBorder, transparent); }
-
-/* Reorder drag: the lifted tile above the others, with a shadow (its picture is drawn on the canvas below). */
-.cell.lifted { z-index: 3; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55); border-radius: 2px; }
-
+/* Keyboard-accessible reorder arrows (shown on focus-within for keyboard users, unobtrusive otherwise). */
 .move {
-  /* Insets from media/compare.js layoutCells: the picture's corner, so a letterboxed tile's arrows stay on its picture. */
-  position: absolute; right: calc(var(--pic-r, 0px) + 4px); bottom: calc(var(--pic-b, 0px) + 4px); z-index: 2; display: flex; gap: 2px;
-  color: var(--vscode-editorWidget-foreground, #e8e8e8); opacity: 0; pointer-events: none;
+  position: absolute; left: calc(var(--pic-l, 0px) + 7px); top: calc(var(--pic-t, 0px) + 7px);
+  z-index: 5; display: flex; gap: 2px; opacity: 0; pointer-events: none;
 }
-.move.L { left: calc(var(--pic-l, 0px) + 4px); right: auto; }
-.cell:hover .move, .cell:focus-within .move { opacity: 1; pointer-events: auto; }
+.cell:focus-within .move { opacity: 1; pointer-events: auto; }
+.cell.show-stats .move { top: auto; bottom: calc(var(--pic-b, 0px) + 38px); }
 .move button {
-  display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px;
-  background: var(--vscode-editorWidget-background, #252526); color: inherit; cursor: pointer;
+  display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px;
+  background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-editorWidget-foreground, #e8e8e8); cursor: pointer;
 }
 .move button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, #454545); }
 .move button:disabled { color: var(--vscode-disabledForeground, #999); cursor: default; }
-#row #reorderBtn { min-width: 60px; padding: 0 6px; font-size: 12px; }
-#reorderHint {
-  position: absolute; top: 4px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 16px);
-  box-sizing: border-box; padding: 3px 8px; border-radius: 6px; text-align: center; font-size: 12px;
-  background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-editorWidget-foreground, #e8e8e8);
-  pointer-events: none; z-index: 4;
-}
-#stage.reordering .cell:not(.add) {
-  cursor: grab; touch-action: none; user-select: none;
-  outline: 1px dashed var(--vscode-focusBorder, #007fd4); outline-offset: -2px;
-}
-#stage.reorder-drag, #stage.reorder-drag .cell:not(.add) { cursor: grabbing; }
-#stage.reordering .ov { opacity: 1; }
-#stage.reordering .nudge { visibility: hidden; }
-#stage.reordering :is(.pill, #divider) { cursor: inherit; }
-.reordering .cell :is(.ov > *, #divider) { pointer-events: none; }
 
+/* Out-of-range / Ended clip overlay: quiet dark matte with subtle diagonal hatch. */
+.ended-ov {
+  position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0.018) 8px,
+    rgba(0, 0, 0, 0.18) 8px, rgba(0, 0, 0, 0.18) 16px
+  ), #0d0f14;
+  display: none; align-items: center; justify-content: center;
+}
+.cell.ended .ended-ov { display: flex; }
+.ended-badge {
+  font-size: 11px; color: #8a8a93;
+  background: rgba(0, 0, 0, 0.48); border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 3px 9px; border-radius: 999px;
+}
 .oor {
-  position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; pointer-events: none;
-  color: #8a8a8a; font-size: 13px;
+  position: absolute; left: 0; right: 0; top: 12px; text-align: center; pointer-events: none;
+  color: #8a8a8a; font-size: 13px; z-index: 3;
 }
-.cell.split .oor { top: 12px; transform: none; }
 
-/* The first unused slot adds one video (shows on hover). */
+/* Spotlight resizable splitter handle (10%-90%). */
+.splitter {
+  position: absolute; z-index: 24; display: flex; align-items: center; justify-content: center;
+  touch-action: none;
+}
+.splitter[hidden] { display: none; }
+.splitter.h { cursor: ns-resize; }
+.splitter.v { cursor: ew-resize; }
+.splitter-bar {
+  border-radius: 999px; background: rgba(255, 255, 255, 0.22);
+  transition: background 120ms, transform 120ms;
+}
+.splitter.h .splitter-bar { width: 42px; height: 4px; }
+.splitter.v .splitter-bar { width: 4px; height: 42px; }
+.splitter:hover .splitter-bar,
+.splitter:focus-visible .splitter-bar,
+.splitter.dragging .splitter-bar { background: var(--vscode-focusBorder, #3b82f6); transform: scale(1.15); }
+
+/* Drag & 4-sided edge docking skeletons. */
+.skeleton {
+  position: absolute; border-radius: 6px;
+  border: 2px dashed var(--vscode-focusBorder, #3b82f6);
+  background: color-mix(in srgb, var(--vscode-focusBorder, #3b82f6) 16%, transparent);
+  pointer-events: none; z-index: 26;
+  display: flex; align-items: center; justify-content: center;
+  transition: left 140ms cubic-bezier(0.2, 0, 0, 1), top 140ms cubic-bezier(0.2, 0, 0, 1),
+              width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
+}
+.skeleton-label {
+  background: rgba(15, 23, 42, 0.92); color: #93c5fd;
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+}
+.skeleton-sub {
+  position: absolute; border-radius: 6px;
+  border: 1.5px dashed rgba(148, 163, 184, 0.45);
+  background: rgba(148, 163, 184, 0.08);
+  pointer-events: none; z-index: 25;
+  transition: left 140ms cubic-bezier(0.2, 0, 0, 1), top 140ms cubic-bezier(0.2, 0, 0, 1),
+              width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
+}
+
+/* The first unused slot in Equal Grid adds one video (shows on hover). */
 .cell.add { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: #8a8a8a; display: flex; align-items: center; justify-content: center; }
 .addcell { display: flex; flex-direction: column; align-items: center; gap: 6px; opacity: 0; transition: opacity 120ms; }
 .cell.add:hover .addcell, .cell.add:focus-visible .addcell { opacity: 1; }
@@ -118,7 +229,7 @@ body.vscode-high-contrast .rm, body.vscode-high-contrast-light .rm { outline: 1p
 }
 
 /* Split: the divider (drag it, or ← → when focused). */
-#divider { position: absolute; width: 24px; margin-left: -12px; cursor: ew-resize; display: flex; justify-content: center; touch-action: none; }
+#divider { position: absolute; width: 24px; margin-left: -12px; cursor: ew-resize; display: flex; justify-content: center; touch-action: none; z-index: 8; }
 #divider::before { content: ''; width: 2px; height: 100%; background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25); }
 #divider .h {
   position: absolute; top: 50%; width: 26px; height: 26px; margin-top: -13px; box-sizing: border-box; border-radius: 50%;
@@ -126,13 +237,61 @@ body.vscode-high-contrast .rm, body.vscode-high-contrast-light .rm { outline: 1p
   background: rgba(20, 20, 20, 0.86); border: 2px solid rgba(255, 255, 255, 0.85);
 }
 
+/* Grouped Compare Capsule inside the bottom player bar (#bar #row). */
+#cmpGroup.cmp-group {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px 3px; margin: 0 3px; border-radius: 7px;
+  background: color-mix(in srgb, var(--vscode-focusBorder, #3b82f6) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #60a5fa) 32%, transparent);
+}
+#cmpGroup .ib { height: 24px; min-width: 24px; width: 26px; border-radius: 5px; }
+#cmpGroup .ib[aria-pressed="true"],
+#cmpGroup .ib.active {
+  background: var(--vpe-on-bg, var(--vscode-button-background, #3b82f6));
+  color: var(--vpe-on-fg, var(--vscode-button-foreground, #fff));
+}
+#cmpGroup .ib:disabled { opacity: 0.4; cursor: default; }
+#cmpGroup .cmp-sep { width: 1px; height: 14px; background: color-mix(in srgb, var(--vscode-foreground, #fff) 18%, transparent); margin: 0 2px; flex: none; }
+
+/* Add popover anchored above the Compare capsule in the player bar. */
+.add-pop {
+  position: fixed; bottom: 52px; right: 120px; z-index: 15; width: 240px; box-sizing: border-box;
+  background: var(--vpe-panel-bg, rgba(20, 22, 30, 0.96));
+  color: var(--vpe-panel-fg, var(--vscode-foreground, #e4e4e7));
+  border: 1px solid var(--vpe-panel-border, rgba(255, 255, 255, 0.16));
+  border-radius: 9px; padding: 5px;
+  box-shadow: 0 12px 32px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
+}
+.add-pop button {
+  width: 100%; text-align: left; background: transparent; border: 0; color: inherit;
+  padding: 7px 9px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+.add-pop button:hover, .add-pop button:focus-visible { background: var(--vpe-row-hover, rgba(255, 255, 255, 0.09)); }
+.add-pop .kbd { font-size: 10.5px; color: var(--vpe-dim, #94a3b8); font-family: var(--vpe-mono, monospace); }
+.add-pop .note {
+  font-size: 11px; color: var(--vpe-dim, #94a3b8); padding: 6px 9px 4px;
+  border-top: 1px solid var(--vpe-sep, rgba(255, 255, 255, 0.08)); margin-top: 4px; line-height: 1.35;
+}
+
+/* Responsive narrow-width fallbacks for the Compare capsule (all controls remain in #cmpBtn panel). */
+@media (max-width: 640px) {
+  #cmpGroup.cmp-group { padding: 1px 2px; gap: 1px; margin: 0 1px; }
+  #cmpGroup .cmp-sep { display: none; }
+}
+@media (max-width: 500px) {
+  #addPopBtn, #syncModeBtn { display: none; }
+}
+@media (max-width: 400px) {
+  #layoutSpotlightBtn, #layoutGridBtn, #layoutSplitBtn { display: none; }
+}
+
 /* The bar: the clock video's letter before the time. */
 #row #time .who { color: var(--vpe-dim); margin-right: 0.45em; }
 #row #time .who:empty { display: none; }
 
 /* Leave room above the shared toast for Compare's mode hint. */
-body.compare #toast { --toast-top: 36px; z-index: 4; }
-/* Dense grids (many small tiles): a compact toast, so it covers less of the top row's labels and offsets. */
+body.compare #toast { --toast-top: 36px; z-index: 12; }
 body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 
 /* The Compare panel and its per-video page (media/controls.js pages added by media/compare.js). */
@@ -146,8 +305,8 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 .panel .row .val.mono { font-size: 12px; min-width: 34px; text-align: right; }
 .panel .row.head .ltr { margin-right: 4px; }
 .panel .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
-.panel .row .seg { width: 166px; }
-.panel .seg .chip { white-space: nowrap; padding: 0 10px; }
+.panel .row .seg { width: 196px; }
+.panel .seg .chip { white-space: nowrap; padding: 0 8px; }
 .panel.info .seg .chip, .panel.info .seg button {
   height: 26px; border-radius: 5px; font-size: 11.5px; background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border);
 }
@@ -158,7 +317,7 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 
 /* A tile's right-click menu (VS Code's menu colours). */
 #menu {
-  position: fixed; z-index: 7; min-width: 250px; padding: 4px 0; display: flex; flex-direction: column;
+  position: fixed; z-index: 16; min-width: 250px; padding: 4px 0; display: flex; flex-direction: column;
   color: var(--vscode-menu-foreground, var(--vscode-foreground)); background: var(--vscode-menu-background, #252526);
   border: 1px solid var(--vscode-menu-border, #454545); border-radius: 6px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
   font-size: 13px;
@@ -172,9 +331,16 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 #menu .mi:hover .h, #menu .mi:focus .h { color: inherit; }
 #menu .msep { height: 1px; margin: 4px 10px; background: var(--vscode-menu-separatorBackground, #454545); }
 
-body.vscode-high-contrast .pill, body.vscode-high-contrast .nudge { outline: 1px solid var(--vscode-contrastBorder, transparent); }
-body.vscode-high-contrast-light #cells.dense :is(.pill, .nudge) {
+body.vscode-high-contrast .pill,
+body.vscode-high-contrast .tbtn,
+body.vscode-high-contrast .sync-pill,
+body.vscode-high-contrast #cmpGroup.cmp-group,
+body.vscode-high-contrast-light .tbtn {
   outline: 1px solid var(--vscode-contrastBorder, transparent);
 }
-body #cells.dense .pill:focus-visible { outline-color: var(--vscode-focusBorder); }
-@media (prefers-reduced-motion: reduce) { .ov, .addcell { transition: none; } }
+body.vscode-high-contrast-light #cells.dense :is(.pill, .sync-pill) {
+  outline: 1px solid var(--vscode-contrastBorder, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ov, .addcell, .skeleton, .skeleton-sub { transition: none; }
+}

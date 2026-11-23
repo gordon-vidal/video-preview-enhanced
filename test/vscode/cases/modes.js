@@ -117,8 +117,8 @@ module.exports = {
       await h.sleep(250);
     }
     ok(c && c.canvas && !/^0x/.test(c.canvas), `compare never drew a frame (${c && c.canvas})`);
-    ok(c && c.modes === 'side,split', `views: ${c && c.modes}, expected side,split`);
-    for (const mode of ['side', 'split', 'toggle', 'wipe']) {
+    ok(c && c.modes === 'spotlight,grid,split', `views: ${c && c.modes}, expected spotlight,grid,split`);
+    for (const mode of ['spotlight', 'grid', 'split', 'toggle', 'wipe']) {
       vs.send({ compare: true, action: 'mode', mode });
       // The toggle view is gone (it keeps the view); an older 'wipe' is the split.
       const want = mode === 'toggle' ? 'split' : mode === 'wipe' ? 'split' : mode;
