@@ -259,6 +259,11 @@ function createEngine(env) {
     constructor(meta, cfg) {
       this.meta = meta;
       this.cfg = cfg;
+      if (cfg.videoOnly) this.slowWarned = true;
+      /** @type {(() => number) | null} */
+      this.followerClock = null;
+      /** @type {number | undefined} */
+      this.frameBudget = undefined;
       this.fps = 0;
       this.n = 0;
       this.gen = 0;
@@ -293,7 +298,7 @@ function createEngine(env) {
       this.ac = null;
       this.gain = null;
       this.rate = 1;
-      this.loop = true;
+      this.loopEnabled = true;
       this.whenSlow = cfg.whenSlow === 'skip' ? 'skip' : 'every';
       this.volume = 1;
       this.muted = false;
@@ -424,6 +429,7 @@ function createEngine(env) {
     }
 
     async onStreams(info) {
+      if (this.cfg.videoOnly) info = { ...info, audio: null };
       this.info = info;
       if (!this.meta.duration && info.duration) this.meta.duration = info.duration;
       const v = info.video;
@@ -1287,8 +1293,32 @@ function createEngine(env) {
     /** Native ffmpeg (also the remote stream) or WebCodecs: decoding much faster than real time (pump's paused read-ahead). */
     fastDecoder() { return !!this.cfg.native || this.vmode === 'webcodecs'; }
 
+    // checkJs: start
+    /** Override the decoded-frame budget for this tile. @param {number} budget */
+    setBudget(budget) { this.frameBudget = budget; }
+    // checkJs: end
+
     /** Memory for decoded frames: ~400 MB on 32 GB (about 130 frames of 1080p, 30 of 4K), less on smaller machines (memFor). */
-    budget() { return this.hidden ? 0 : this.mem.frames; }
+    budget() { return this.frameBudget ?? (this.hidden ? 0 : this.mem.frames); }
+
+    /** Whether decoded frames span the requested playback position. */
+    hasQueuedTime(time, lead) {
+      return this.queue[0]?.t <= time + lead && this.queue[this.queue.length - 1].t >= time;
+    }
+
+    /** Presentation readiness for lockstep sync, distinct from the idle frame-loop check settled(). */
+    syncState() {
+      const { startT, shownT, pauseT, seekTarget, eof, gen } = this;
+      const fps = this.fps || 30;
+      const nextQueuedT = this.queue[0]?.t ?? null;
+      const due = pauseT + 0.25 / fps;
+      const ready = seekTarget === null && shownT !== null && startT !== null;
+      return Object.freeze({
+        startT, shownT, pauseT, seekTarget, nextQueuedT, eof, gen, fps, shownCount: this.shownCount || 0,
+        firstFrameReady: ready && shownT === startT && due < startT + 0.75 / fps,
+        settled: ready && shownT <= due + 1e-6 && (nextQueuedT === null ? eof : nextQueuedT > due),
+      });
+    }
 
     /** A full pass from the start can share its decoded frames with the playback queue. */
     beginLoopCache() {
@@ -1544,8 +1574,38 @@ function createEngine(env) {
       if (this.playing && this.anchoredOnAudio !== this.audioMaster()) this.anchor(now);
     }
 
+    // checkJs: start
+    /** Follow an external media clock during playback. Null resumes the engine's own clock.
+     * @param {(() => number) | null} clockFn
+     */
+    setFollowerMode(clockFn) {
+      if (clockFn === this.followerClock) return;
+      const time = this.playing ? this.now() : this.pauseT;
+      this.followerClock = clockFn;
+      if (clockFn) {
+        this.loopCache = null;
+        this.behindUntil = 0;
+        this.waitPic = false;
+      }
+      if (this.playing) this.holdAt(clockFn ? clockFn() : time);
+    }
+
+    /** Restart sound and anchor the local clock at an absolute media timestamp. @param {number} mediaTime */
+    holdAt(mediaTime) {
+      this.stopAudio();
+      this.anchor(mediaTime);
+    }
+
+    /** Move the paused playhead without discarding decoded frames. @param {number} mediaTime */
+    retargetPaused(mediaTime) {
+      if (!this.playing) this.pauseT = mediaTime;
+    }
+    // checkJs: end
+
     now() {
-      if (!this.playing || this.acWaking) return this.pauseT;
+      if (!this.playing) return this.pauseT;
+      if (this.followerClock) return this.followerClock();
+      if (this.acWaking) return this.pauseT;
       // An accurate seek holds the clock until its frame is decoded (a slow seek is not "behind").
       if (this.seekTarget !== null && this.vmode !== 'none') return this.pauseT;
       if (this.anchoredOnAudio) return this.anchorMedia + (this.ac.currentTime - this.anchorAc) * this.rate;
@@ -1638,7 +1698,7 @@ function createEngine(env) {
       let now = this.now();
       // Re-anchor when the clock source changes (audio started, rate changed).
       if (this.playing && this.anchoredOnAudio !== this.audioMaster()) { this.anchor(now); }
-      const limit = this.playing && this.seekTarget === null && loopRange ? loopRange.end + 1e-6 : Infinity;
+      const limit = !this.followerClock && this.playing && this.seekTarget === null && loopRange ? loopRange.end + 1e-6 : Infinity;
       if (limit !== Infinity && (!this.queue.length || this.queue[0].t > limit)) {
         // Present B before wrapping, even when the next picture is already due after a delayed tick.
         const next = this.queue[0]?.t ?? (this.eof && this.lastT !== undefined
@@ -1657,7 +1717,8 @@ function createEngine(env) {
       }
       // Every frame, no sound driving the clock, nothing decoded to show: the clock waits at the next
       // frame's time instead of running on past the frozen picture (and snapping back when it comes).
-      if (this.playing && this.vmode !== 'none' && !this.audioMaster() && (this.whenSlow === 'every' || this.autoEvery) && !this.queue.length && !this.eof
+      if (!this.followerClock && this.playing && this.vmode !== 'none' && !this.audioMaster()
+        && (this.whenSlow === 'every' || this.autoEvery) && !this.queue.length && !this.eof
         && this.seekTarget === null && this.shownT !== null && !this.hidden && now > this.shownT + (this.waitPic ? 1 / (this.fps || 30) : 0.25)) {
         if (!this.waitPic) { this.waitPic = true; if (!this.slowWarned) log(`waiting for the picture at ${this.rel(this.shownT).toFixed(2)} s (no sound drives the clock)`); }
         this.behindUntil = performance.now() + 3000;
@@ -1686,7 +1747,7 @@ function createEngine(env) {
         if (this.playing && now - show.t > 1 / (this.fps || 30)) this.late = (this.late || 0) + 1;
         // Decoding can't keep up (e.g. 4K HEVC in WebAssembly): let the clock wait for
         // the picture instead of running away, so playback slows down but stays whole.
-        if (this.playing && now - show.t > 0.25 && this.vmode !== 'none') {
+        if (!this.followerClock && this.playing && now - show.t > 0.25 && this.vmode !== 'none') {
           this.behindUntil = performance.now() + 3000;
           if (!this.slowWarned) {
             this.slowWarned = true;
@@ -2099,7 +2160,9 @@ function createEngine(env) {
       if (this.pauseT !== undefined && !this.playing) this.pauseT = now;
       if (!this.canStretch(r) && this.amode !== 'none') toast('Sound plays at 0.25×–4× only');
     }
-    setLoop(l) { this.loop = l; if (!l) this.loopCache = null; }
+    get loop() { return this.loopEnabled && !this.followerClock; }
+    set loop(l) { this.setLoop(l); }
+    setLoop(l) { this.loopEnabled = l; if (!l) this.loopCache = null; }
     setVolume(volume, muted) {
       this.volume = volume;
       this.muted = muted;

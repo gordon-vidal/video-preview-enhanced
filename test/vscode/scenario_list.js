@@ -13,7 +13,7 @@ const HOST = ['src/extension.js', 'src/player-html.js', 'src/decide.js', 'src/sn
 const NATIVE = ['src/native.js', 'src/nativepts.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
 const COMPARE = [
   'src/compare.js', 'src/comparemenu.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js',
-  'media/compare.js', 'media/compare-metrics.js', 'media/compare-debug.js', 'media/timefmt.js',
+  'media/compare.js', 'media/compare-sync.js', 'media/compare-metrics.js', 'media/compare-debug.js', 'media/timefmt.js',
   'media/compare.css', 'media/compare-grid.js', 'media/range-drag.js',
 ];
 

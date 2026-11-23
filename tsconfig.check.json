@@ -30,6 +30,7 @@
     "media/timefmt.js",
     "media/debug-probe.js",
     "media/compare-metrics.js",
+    "media/compare-sync.js",
     "media/compare-debug.js",
     "media/player.js"
   ],
