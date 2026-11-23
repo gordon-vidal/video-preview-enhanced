@@ -3,43 +3,42 @@
 // (src/compare.js compareHtml), so both look and behave the same (docs/notes/ui-simple.md, docs/notes/compare-ui.md).
 // Compare leaves out CC and the player's Compare button, and adds its own panel and reorder buttons.
 
-// Every bar icon: a 20 px box on a 24-unit grid, one stroke width with round caps and joins, in the text colour.
-// Transport glyphs (frame steps, play, pause) are solid: the same outline, filled, so their corners match the rest.
-const STROKE = '1.4';
-const svg = (body, cls = '', solid = false) => {
+// Every bar icon: an 18 px box on a 24-unit grid with 1.6 stroke (= 1.20 px rendered) and uniform ~14.4-15u vertical span.
+const STROKE = '1.6';
+const svg = (body, cls = '') => {
   const variant = cls ? ' class="' + cls + '"' : '';
-  return '<svg' + variant + ' width="20" height="20" viewBox="0 0 24 24" fill="' + (solid ? 'currentColor' : 'none') + '"' +
+  return '<svg' + variant + ' width="18" height="18" viewBox="0 0 24 24" fill="none"' +
     ' stroke="currentColor" stroke-width="' + STROKE + '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     body + '</svg>';
 };
-const svg16 = (body) => '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">' + body + '</svg>';
 
 const frame = '<rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/>';
 const icons = {
-  prev: svg('<path d="M6 6.5v11M18 6.5v11L9.5 12Z"/>', '', true),
-  play: svg('<path d="M7.5 5v14L19 12Z"/>', 'i-play', true),
-  pause: svg('<rect x="6.5" y="5.5" width="3.5" height="13" rx=".5"/><rect x="14" y="5.5" width="3.5" height="13" rx=".5"/>', 'i-pause', true),
-  next: svg('<path d="M18 6.5v11M6 6.5v11L14.5 12Z"/>', '', true),
+  prev: svg('<path d="M5 4.8v14.4M19 4.8v14.4L8.8 12Z"/>'),
+  play: svg('<path d="M7 4.8v14.4L19 12Z"/>', 'i-play'),
+  pause: svg('<rect x="5.5" y="4.8" width="4.2" height="14.4" rx="1.2"/><rect x="14.3" y="4.8" width="4.2" height="14.4" rx="1.2"/>', 'i-pause'),
+  next: svg('<path d="M19 4.8v14.4M5 4.8v14.4L15.2 12Z"/>'),
   sound: svg('<path d="M3.5 9.5H7l5-4v13l-5-4H3.5ZM15.5 9a4.2 4.2 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/>', 'i-sound'),
   muted: svg('<path d="M3.5 9.5H7l5-4v13l-5-4H3.5ZM15.5 9.5l5 5m0-5-5 5"/>', 'i-muted'),
   cc: svg('<rect x="3" y="5" width="18" height="14" rx="2"/>' +
     '<path d="M10.5 10h-2a1.5 1.5 0 0 0-1.5 1.5v1A1.5 1.5 0 0 0 8.5 14h2m6.5-4h-2a1.5 1.5 0 0 0-1.5 1.5v1A1.5 1.5 0 0 0 15 14h2"/>'),
   compare: svg(frame + '<path d="M12 4.5v15"/>'),
-  cmpPanel: svg16('<path d="M6 4h8M6 8h8M6 12h8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
-    '<circle cx="2.8" cy="4" r="1" fill="currentColor"/><circle cx="2.8" cy="8" r="1" fill="currentColor"/><circle cx="2.8" cy="12" r="1" fill="currentColor"/>'),
-  spotlight: svg16('<rect x="1.5" y="1.5" width="13" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/>' +
-    '<rect x="1.5" y="11.5" width="5.5" height="3" rx="0.9" stroke="currentColor" stroke-width="1.4"/>' +
-    '<rect x="9" y="11.5" width="5.5" height="3" rx="0.9" stroke="currentColor" stroke-width="1.4"/>'),
-  grid: svg16('<rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.4"/>' +
-    '<rect x="9" y="1.5" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.4"/>' +
-    '<rect x="1.5" y="9" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.4"/>' +
-    '<rect x="9" y="9" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.4"/>'),
-  split: svg16('<rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4"/>' +
-    '<line x1="8" y1="1.2" x2="8" y2="14.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'),
-  plus: svg16('<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'),
-  sync: svg16('<rect x="1.5" y="3.5" width="9" height="3.2" rx="1" stroke="currentColor" stroke-width="1.4"/>' +
-    '<rect x="5.5" y="9.3" width="9" height="3.2" rx="1" stroke="currentColor" stroke-width="1.4"/>' +
-    '<line x1="8" y1="1.5" x2="8" y2="14.5" stroke="currentColor" stroke-width="1.4" stroke-dasharray="1.5 1.5"/>'),
+  cmpPanel: svg('<path d="M9.5 6.5h10M9.5 12h10M9.5 17.5h10"/>' +
+    '<circle cx="5.2" cy="6.5" r="0.9" fill="currentColor" stroke="none"/>' +
+    '<circle cx="5.2" cy="12" r="0.9" fill="currentColor" stroke="none"/>' +
+    '<circle cx="5.2" cy="17.5" r="0.9" fill="currentColor" stroke="none"/>'),
+  spotlight: svg('<rect x="4" y="4.5" width="16" height="9.5" rx="1.6"/>' +
+    '<rect x="4" y="16.5" width="6.8" height="3.2" rx="0.9"/>' +
+    '<rect x="13.2" y="16.5" width="6.8" height="3.2" rx="0.9"/>'),
+  grid: svg('<rect x="4" y="4" width="6.8" height="6.8" rx="1.3"/>' +
+    '<rect x="13.2" y="4" width="6.8" height="6.8" rx="1.3"/>' +
+    '<rect x="4" y="13.2" width="6.8" height="6.8" rx="1.3"/>' +
+    '<rect x="13.2" y="13.2" width="6.8" height="6.8" rx="1.3"/>'),
+  split: svg('<rect x="4" y="5" width="16" height="14" rx="1.6"/><path d="M12 3v18"/>'),
+  plus: svg('<path d="M12 5.5v13M5.5 12h13"/>'),
+  sync: svg('<rect x="4" y="6" width="11.5" height="4.2" rx="1.1"/>' +
+    '<rect x="8.5" y="13.8" width="11.5" height="4.2" rx="1.1"/>' +
+    '<path d="M12 3.5v17" stroke-dasharray="1.8 2.2"/>'),
   about: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-9.5v.01"/>'),
   settings: svg('<circle cx="12" cy="12" r="3"/>' +
     '<path d="M10 3h4l.7 2.6 2.1 1.2 2.6-.7 2 3.5-1.9 1.9v2.4l1.9 1.9-2 3.5-2.6-.7-2.1 1.2L14 22h-4l-.7-2.2-2.1-1.2-2.6.7-2-3.5 1.9-1.9v-2.4L2.6 9.6l2-3.5 2.6.7 2.1-1.2Z" transform="translate(0 -.5)"/>'),

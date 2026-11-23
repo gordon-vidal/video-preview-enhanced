@@ -13,7 +13,7 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
     const html = barHtml({ compareOpen: label === 'Add to Compare' });
     const button = html.match(/<button id="startCompareBtn"[^>]*>(.*?)<\/button>/)[0];
     assert.ok(button.includes(`title="${label}" aria-label="${label}"`));
-    assert.match(button, /<svg[^>]*viewBox="0 0 24 24"[^>]*stroke-width="1\.7"[^>]*><rect x="2\.5" y="4\.5" width="19" height="15" rx="1\.5"\/><path d="M12 4\.5v15"\/><\/svg><\/button>$/);
+    assert.match(button, /<svg[^>]*viewBox="0 0 24 24"[^>]*stroke-width="1\.6"[^>]*><rect x="2\.5" y="4\.5" width="19" height="15" rx="1\.5"\/><path d="M12 4\.5v15"\/><\/svg><\/button>$/);
   }
 
   const native = reducedResNotice({

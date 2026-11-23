@@ -468,8 +468,8 @@
     sound: (s) => SVG('<path d="M3.5 9.5H7l5-4v13l-5-4H3.5ZM15.5 9a4.2 4.2 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"></path>', s),
     muted: SVG('<path d="M3.5 9.5H7l5-4v13l-5-4H3.5ZM15.5 9.5l5 5m0-5-5 5"></path>', 13),
     info: SVG('<circle cx="12" cy="12" r="9"></circle><path d="M12 11v6m0-9.5v.01"></path>', 13),
-    // Promote to Spotlight: 68% Hairline Dimmed Strip (brightens to 100% on hover).
-    spot: '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="8" rx="1.5" stroke="currentColor" stroke-width="1.15" opacity="0.68"/><rect x="1.5" y="11.5" width="5.5" height="3" rx="0.9" stroke="currentColor" stroke-width="1.15" opacity="0.25"/><rect x="9" y="11.5" width="5.5" height="3" rx="0.9" stroke="currentColor" stroke-width="1.15" opacity="0.25"/></svg>',
+    // Promote to Spotlight (child tile corner, 14x14px on 24x24 grid, 68% hairline brightening to 100% on hover).
+    spot: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4.5" width="16" height="9.5" rx="1.6" opacity="0.68"/><rect x="4" y="16.5" width="6.8" height="3.2" rx="0.9" opacity="0.25"/><rect x="13.2" y="16.5" width="6.8" height="3.2" rx="0.9" opacity="0.25"/></svg>',
     plus: SVG('<path d="M12 5v14M5 12h14"></path>', 18),
     swap: SVG('<path d="M4 8h15M15 4l4 4-4 4M20 16H5M9 12l-4 4 4 4"></path>', 18),
     view: SVG('<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M12 5v14"></path>', 18),
@@ -664,8 +664,22 @@
         d.classList.toggle('show-stats', showStats);
         const statsEl = d.querySelector('.tile-stats');
         if (statsEl && showStats) {
-          const rows = Grid.tileStatsRows(tileStats(i), i === order[0] ? null : refStats);
-          statsEl.innerHTML = rows.map((row) => `<span class="k">${row.key}</span><span class="v${row.diff ? ' diff' : ''}">${esc(row.value)}</span>`).join('');
+          const f = factsOf(i);
+          const refFacts = i === order[0] ? null : factsOf(order[0]);
+          const refMap = refFacts ? new Map(refFacts.rows) : null;
+          const stRows = Grid.tileStatsRows(tileStats(i), i === order[0] ? null : refStats);
+          const framesRow = stRows.find((r) => r.key === 'Frames');
+          const rows = [...f.rows];
+          if (framesRow && framesRow.value !== '—') rows.splice(1, 0, ['Frames', framesRow.value]);
+          const diffOf = (label, value) => {
+            if (i === order[0]) return false;
+            if (label === 'Frames') return !!framesRow?.diff;
+            if (label === 'Picture') return stRows.some((r) => (r.key === 'Size' || r.key === 'FPS') && r.diff);
+            if (label === 'Video') return !!stRows.find((r) => r.key === 'Codec')?.diff;
+            return !!(refMap && refMap.has(label) && refMap.get(label) !== value && (label === 'Quality'));
+          };
+          statsEl.innerHTML = `<div class="itop"><div class="iname">${esc(f.title)}</div>${f.sub ? `<div class="isub">${esc(f.sub)}</div>` : ''}</div>`
+            + `<dl class="igrid">${rows.map(([rk, rv]) => `<dt>${esc(rk)}</dt><dd${diffOf(rk, rv) ? ' class="diff"' : ''}>${esc(rv)}</dd>`).join('')}</dl>`;
         }
       }
     });
