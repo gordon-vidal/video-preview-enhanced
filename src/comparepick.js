@@ -6,6 +6,8 @@
 
 const VIDEO_EXT = /\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i;
 const RECENT_MAX = 20;
+const FOLDER_MAX_DEPTH = 16;
+const FOLDER_MAX_DIRS = 1000;
 const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 /** `recent` with `uri` moved to the front (strings, newest first, at most RECENT_MAX). */
@@ -55,6 +57,50 @@ function folderVideos(names) {
 }
 
 /**
+ * Recursively collect video URIs under `rootUri` in natural order (videos in each folder before its
+ * subfolders; subfolders visited in natural name order). Skips symlinked directories and bounds depth
+ * and directory count so circular links or huge trees cannot stall the host.
+ * @template T
+ * @param {T} rootUri
+ * @param {(dir: T) => Promise<[string, number][]>} readDirectory
+ * @param {(dir: T, name: string) => T} joinPath
+ * @param {{ dir?: number, symlink?: number, maxDepth?: number, maxDirs?: number }} [opts]
+ * @returns {Promise<T[]>}
+ */
+async function collectFolderVideos(rootUri, readDirectory, joinPath, opts = {}) {
+  const dir = opts.dir ?? 2;
+  const symlink = opts.symlink ?? 64;
+  const maxDepth = opts.maxDepth ?? FOLDER_MAX_DEPTH;
+  const maxDirs = opts.maxDirs ?? FOLDER_MAX_DIRS;
+  const out = [];
+  let visited = 0;
+  const walk = async (folder, depth) => {
+    if (visited >= maxDirs) return;
+    visited++;
+    let entries;
+    try { entries = await readDirectory(folder); } catch { return; }
+    const fileNames = [];
+    const subDirs = [];
+    for (const [name, type] of entries || []) {
+      if (type & dir) {
+        if (!(type & symlink)) subDirs.push(name);
+      } else {
+        fileNames.push(name);
+      }
+    }
+    for (const name of folderVideos(fileNames)) out.push(joinPath(folder, name));
+    if (depth >= maxDepth) return;
+    subDirs.sort((a, b) => coll.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0));
+    for (const name of [...new Set(subDirs)]) {
+      if (visited >= maxDirs) break;
+      await walk(joinPath(folder, name), depth + 1);
+    }
+  };
+  await walk(rootUri, 0);
+  return out;
+}
+
+/**
  * What a Start / Add to Compare command acts on. Explorer passes (clicked, selectedArray); the editor tab menu passes
  * (clicked, { groupId, editorIndex }), so the selection comes from the tab strip: when the clicked tab is one of
  * several selected tabs of its group, all selected video tabs in tab order, otherwise just the clicked one.
@@ -97,4 +143,7 @@ function planAddToCompare({ videos, compare, player, max, key }) {
   };
 }
 
-module.exports = { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare, compareTargets, VIDEO_EXT, RECENT_MAX };
+module.exports = {
+  pickRows, pushRecent, droppedVideos, folderVideos, collectFolderVideos,
+  planAddToCompare, compareTargets, VIDEO_EXT, RECENT_MAX,
+};

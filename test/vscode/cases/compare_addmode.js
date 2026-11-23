@@ -117,9 +117,21 @@ module.exports = [{
         await wait(opened(4), append, 'mixed selection appends two unique folder files');
         await onlyCompare();
         await h.closeClip(vs);
+        const nestedRoot = path.join(dir, 'recording');
+        fs.mkdirSync(path.join(nestedRoot, 'cam1'), { recursive: true });
+        fs.mkdirSync(path.join(nestedRoot, 'cam2'), { recursive: true });
+        fs.copyFileSync(files[0], path.join(nestedRoot, 'cam1', 'video.mp4'));
+        fs.copyFileSync(files[1], path.join(nestedRoot, 'cam2', 'video.webm'));
+        const nested = startCompare([nestedRoot]);
+        const nestedLine = await wait(opened(2), nested, 'two videos from subfolders');
+        assert(/video\.mp4.*video\.webm/.test(nestedLine), `subfolder order: ${nestedLine}`);
+        await wait(/webview: begin:/, nested, 'Compare ready for subfolders');
+        assert(!vs.lines.slice(nested).some((l) => modeOn.test(l)), 'a nested folder must open Compare with Add Mode off');
+        await onlyCompare();
+        await h.closeClip(vs);
         const folder = startCompare([dir]);
-        const line = await wait(opened(2), folder, 'two files from a folder');
-        assert(/clip2\.mp4.*clip10\.webm/.test(line), `folder order: ${line}`);
+        const line = await wait(opened(4), folder, 'four files from folder and subfolders');
+        assert(/clip2\.mp4.*clip10\.webm.*video\.mp4.*video\.webm/.test(line), `folder order: ${line}`);
         await wait(/webview: begin:/, folder, 'Compare ready');
         assert(!vs.lines.slice(folder).some((l) => modeOn.test(l)), 'a folder must open Compare with Add Mode off');
         await onlyCompare();
@@ -201,8 +213,7 @@ module.exports = [{
         assert(tabs.length === 3 && tabs.some(isCompare), `tabs after switching: ${JSON.stringify(tabs)}`);
       });
     } finally {
-      for (const file of [first, second, notes]) if (fs.existsSync(file)) fs.unlinkSync(file);
-      fs.rmdirSync(dir);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
     return results;
   },

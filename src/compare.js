@@ -25,7 +25,7 @@ const Grid = require('../media/compare-grid');
 const frameserver = require('./frameserver');
 const { barHtml, playFlashHtml } = require('./bar');
 const { toggleFocusMode, noteFocusModeExited } = require('./focus-mode');
-const { pickRows, pushRecent, droppedVideos, folderVideos, planAddToCompare, compareTargets } = require('./comparepick');
+const { pickRows, pushRecent, droppedVideos, collectFolderVideos, planAddToCompare, compareTargets } = require('./comparepick');
 const { createAddMode, startsInAddMode, addToCompareOrigin } = require('./addmode');
 const { createCompareMenu } = require('./comparemenu');
 const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('./burst');
@@ -915,11 +915,15 @@ function registerCompare(context, deps) {
     if (!(uri instanceof vscode.Uri) || !FS_SCHEMES.has(uri.scheme)) return [];
     try {
       const dir = vscode.FileType.Directory;
+      const symlink = vscode.FileType.SymbolicLink ?? 64;
       const stat = await vscode.workspace.fs.stat(uri);
       if (!(stat.type & dir)) return VIDEO_EXT.test(uri.path) ? [uri] : [];
-      const entries = await vscode.workspace.fs.readDirectory(uri);
-      const names = folderVideos(entries.filter(([, type]) => !(type & dir)).map(([name]) => name));
-      return names.map((name) => vscode.Uri.joinPath(uri, name));
+      return await collectFolderVideos(
+        uri,
+        (folder) => vscode.workspace.fs.readDirectory(folder),
+        (folder, name) => vscode.Uri.joinPath(folder, name),
+        { dir, symlink },
+      );
     } catch {
       return [];
     }

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Right-clicking a folder in the Explorer and choosing **Start Compare** or **Add to Compare** now includes videos in subfolders (e.g. `recording/cam1/video.mp4`), in natural folder and file order.
 - Pick a local video with **Open Video File…**, or open it in a separate editor group or window with **Play to the Side** and **Play in New Window**.
 - Open Video URL: closing or reloading a URL tab now stops its downloads at once (page inspection, HLS playlists, segments, keys and range reads), and native ffmpeg now checks the certificate of an HTTPS URL (`-tls_verify 1`), unless `http.proxyStrictSSL` is off.
 
