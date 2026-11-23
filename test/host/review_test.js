@@ -286,4 +286,137 @@ if (process.platform === 'win32') {
     '-DryRun', 'no-such-ref-xyz'], { encoding: 'utf8', cwd: os.tmpdir(), windowsHide: true });
   assert.notStrictEqual(badPs.status, 0, 'ps1 wrapper passes the exit code');
 }
-console.log('review_test: ok');
+
+// ---- regressions: what the menu keeps, temp folders, environment, quitting ----
+
+// Ctrl+C quits, also while typing a ref
+assert.strictEqual(press(fresh(), 'e', 'x', 'ctrl-c').action, 'quit');
+
+// Launch from the menu keeps what the menu cannot change (--dry-run, --media, --checklist, --code, --no-wait)
+{
+  const original = review.parseArgs(['--ui', '--dry-run', '--media', 'm', '--checklist', 'c.md', '--code', '1.1.1',
+    '--no-wait', '--keep', 'HEAD']);
+  const menu = review.stateToArgs(press(review.createUiState({ args: original, platform: 'win32' }), 'right').state);
+  const merged = review.mergeMenuArgs(original, menu);
+  assert.strictEqual(merged.dryRun && merged.noWait, true);
+  assert.deepStrictEqual([merged.media, merged.checklist, merged.code], ['m', 'c.md', '1.1.1']);
+  assert.strictEqual(merged.keep, true, 'menu choices still come from the menu');
+  assert.strictEqual(merged.target, 'main', 'target from the menu (HEAD -> next)');
+  const off = review.mergeMenuArgs(original, ['main', '--dev']);
+  assert.strictEqual(off.keep, false, 'a menu choice turned off stays off');
+  const asked = review.mergeMenuArgs(review.parseArgs(['--ui']), ['main', '--dry-run']); // the menu's own D key
+  assert.strictEqual(asked.dryRun, true);
+  assert.strictEqual(review.mergeMenuArgs(review.parseArgs(['--ui']), ['main']).dryRun, false);
+}
+
+// every run gets its own folder, even in the same second
+{
+  const a = review.makeWorkDir('20990101-000000'), b = review.makeWorkDir('20990101-000000');
+  try {
+    assert.notStrictEqual(a, b);
+    assert(fs.statSync(a).isDirectory() && fs.statSync(b).isDirectory() && fs.readdirSync(a).length === 0);
+    assert(/vpe-review-20990101-000000-.+$/.test(path.basename(a)));
+  } finally { fs.rmSync(a, { recursive: true, force: true }); fs.rmSync(b, { recursive: true, force: true }); }
+  const before = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('vpe-review-')).length;
+  dry('HEAD');
+  assert.strictEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('vpe-review-')).length, before,
+    'a dry run creates nothing');
+  const refused = node('no-such-ref-xyz');
+  assert.notStrictEqual(refused.status, 0);
+  assert.strictEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('vpe-review-')).length, before,
+    'a refused target leaves no folder behind');
+}
+
+// simulation variables from the parent shell never leak in
+{
+  const env = review.cleanEnv({ PATH: '/x', Path2: 'y', VSCODE_PID: '1', vscode_ipc: '2', ELECTRON_RUN_AS_NODE: '1',
+    VPE_SIMULATE_LINK: 'slow-ssh', VPE_SIMULATE_REMOTE: 'ssh-remote', VPE_FFMPEG_SEARCH: 'off', VPE_OTHER: 'keep' });
+  assert.deepStrictEqual(env, { PATH: '/x', Path2: 'y', VPE_OTHER: 'keep' });
+}
+
+// ---- real runs against a fake VS Code (nothing visible starts) ----
+const FAKE_CLI = `
+const fs = require('fs');
+if (process.argv[2] === '--version') { console.log('9.9.9'); process.exit(0); }
+fs.writeFileSync(process.env.FAKE_OUT, JSON.stringify({ args: process.argv.slice(2), ras: process.env.ELECTRON_RUN_AS_NODE,
+  env: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^VPE_(SIMULATE|FFMPEG)/.test(k))) }));
+`;
+
+/** A VS Code stand-in. Windows: Code.exe is node itself and bin\\code.cmd is laid out like the real one (Code.exe plus
+ *  cli.js), so install goes through the cli; Linux/macOS: a `code` script that sleeps when launched. */
+function fakeVsCode(dir) {
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'cli.js'), FAKE_CLI);
+  if (process.platform === 'win32') {
+    const exe = path.join(dir, 'Code.exe');
+    try { fs.linkSync(process.execPath, exe); } catch { fs.copyFileSync(process.execPath, exe); }
+    fs.writeFileSync(path.join(bin, 'code.cmd'), '@echo off\r\nsetlocal\r\nset VSCODE_DEV=\r\nset ELECTRON_RUN_AS_NODE=1\r\n'
+      + '"%~dp0..\\Code.exe" "%~dp0..\\cli.js" %*\r\n');
+  } else {
+    fs.writeFileSync(path.join(bin, 'code'), '#!/bin/sh\n'
+      + 'case " $* " in *" --new-window "*)\n'
+      + '  env | grep -E "^VPE_(SIMULATE|FFMPEG)" > "$FAKE_DIR/launch-env.txt"; echo $$ > "$FAKE_DIR/pid"; exec sleep 60;;\n'
+      + 'esac\n'
+      + 'exec node "$FAKE_DIR/cli.js" "$@"\n', { mode: 0o755 });
+  }
+  return bin;
+}
+
+function startReview(args, env) {
+  const child = require('child_process').spawn(process.execPath, [script, ...args], { env, cwd: os.tmpdir(), windowsHide: true });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', (d) => { stdout += d; });
+  child.stderr.on('data', (d) => { stderr += d; });
+  const done = new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+  return { child, done, out: () => stdout, err: () => stderr };
+}
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function until(fn, what, ms = 30000) {
+  for (let t = 0; t < ms; t += 100) { const v = fn(); if (v) return v; await sleep(100); }
+  throw new Error(`timed out waiting for ${what}`);
+}
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+(async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-review-fake-'));
+  try {
+    const bin = fakeVsCode(dir);
+    const env = { ...process.env, FAKE_DIR: dir, FAKE_OUT: path.join(dir, 'install.json'),
+      VPE_SIMULATE_LINK: 'slow-ssh', VPE_SIMULATE_REMOTE: 'stale', VPE_FFMPEG_SEARCH: 'off', VSCODE_FAKE: '1' };
+    const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+    env[pathKey] = bin + path.delimiter + (env[pathKey] || '');
+    const pkg = path.join(dir, 'a%TEMP%b.vsix'); // '%TEMP%' must reach VS Code as is, not be expanded by cmd.exe
+    fs.writeFileSync(pkg, 'not a package');
+    const profileOf = (text) => (/profile\s+: (.+?)  \(user-data/.exec(text) || [])[1];
+
+    const r = startReview(['--installed', '--link', 'remote', pkg], env);
+    if (process.platform === 'win32') {
+      const end = await r.done;
+      assert.strictEqual(end.code, 0, r.out() + r.err());
+      const seen = JSON.parse(fs.readFileSync(env.FAKE_OUT, 'utf8'));
+      assert(seen.args.includes(pkg), `install got the literal path: ${seen.args}`);
+      assert.strictEqual(seen.ras, '1', 'cli runs as node');
+      assert.deepStrictEqual(seen.env, { VPE_SIMULATE_REMOTE: 'ssh-remote' }, 'stale link variables are replaced');
+      assert(!fs.existsSync(profileOf(r.out())), 'normal exit cleans up');
+    } else {
+      // no signal handling on Windows consoles to test: Ctrl+C there is the same code path via taskkill
+      const pidFile = path.join(dir, 'pid');
+      await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8').trim(), 'the fake VS Code to start');
+      const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+      const profile = profileOf(r.out());
+      assert(profile && fs.existsSync(profile), 'profile exists while VS Code runs');
+      assert.deepStrictEqual(fs.readFileSync(path.join(dir, 'launch-env.txt'), 'utf8').trim().split('\n'),
+        ['VPE_SIMULATE_REMOTE=ssh-remote'], 'stale link and ffmpeg variables are replaced');
+      assert.deepStrictEqual(JSON.parse(fs.readFileSync(env.FAKE_OUT, 'utf8')).env, { VPE_SIMULATE_REMOTE: 'ssh-remote' });
+      assert(alive(pid));
+      r.child.kill('SIGINT');
+      const end = await r.done;
+      assert.strictEqual(end.code, 130, r.out() + r.err());
+      assert(!alive(pid), 'VS Code was stopped before the clean-up');
+      assert(!fs.existsSync(profile), 'profile removed after Ctrl+C');
+      assert(/Cleaned up/.test(r.out()));
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  console.log('review_test: ok');
+})().catch((e) => { console.error(e); process.exit(1); });

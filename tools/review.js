@@ -140,6 +140,7 @@ function applyKey(state, key) {
   const s = { ...state, v: { ...state.v } };
   const done = (action = null) => ({ state: s, action });
 
+  if (key === 'ctrl-c') return done('quit'); // also while typing a ref
   if (s.edit !== null) { // typing a ref or .vsix path
     if (key === 'enter') { if (s.edit.trim()) s.target = s.edit.trim(); s.edit = null; }
     else if (key === 'esc') s.edit = null;
@@ -270,15 +271,39 @@ function git(cwd, ...args) {
   return { ok: r.status === 0, out: (r.stdout || '').trim(), raw: r.stdout || '' };
 }
 
-/** Runs a program to completion; .cmd/.bat files (code.cmd, npx.cmd) go through cmd.exe. */
+/** Runs a program to completion; .cmd/.bat files (npx.cmd) go through cmd.exe. */
 function run(file, args, opts = {}) {
   if (IS_WIN && /\.(cmd|bat)$/i.test(file)) {
+    // cmd.exe expands %NAME% even inside quotes and there is no way to escape it on a command line.
+    if ([file, ...args].some((a) => a.includes('%'))) {
+      fail(`cannot pass '%' in an argument to ${file}: ${args.join(' ')}`);
+    }
     const plain = (a) => /^[\w@.:=/\\-]+$/.test(a); // flags stay bare; paths with spaces or & ( ) get quotes
     const line = `"${[file, ...args].map((a) => (plain(a) ? a : q(a))).join(' ')}"`;
     return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', line],
       { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true, ...opts });
   }
   return spawnSync(file, args, { encoding: 'utf8', windowsHide: true, ...opts });
+}
+
+/** Windows: the Code.exe and cli.js that VS Code's bin\code.cmd starts, read from the script (null if it differs). */
+function parseCodeCmd(cli) {
+  let text;
+  try { text = fs.readFileSync(cli, 'utf8'); } catch { return null; }
+  const m = /"%~dp0([^"]*Code\.exe)"\s+"%~dp0([^"]*cli\.js)"/i.exec(text);
+  const dir = path.dirname(cli);
+  return m ? { exe: path.resolve(dir, m[1]), script: path.resolve(dir, m[2]) } : null;
+}
+
+/** Runs VS Code's command-line interface. On Windows it starts what code.cmd would, without cmd.exe (which would
+ *  expand a %NAME% in a path argument). */
+function runCode(cli, args, env) {
+  const p = IS_WIN && /\.cmd$/i.test(cli) ? parseCodeCmd(cli) : null;
+  if (p) {
+    return spawnSync(p.exe, [p.script, ...args],
+      { encoding: 'utf8', windowsHide: true, env: { ...env, ELECTRON_RUN_AS_NODE: '1' } });
+  }
+  return run(cli, args, { env });
 }
 
 function which(name) {
@@ -362,7 +387,7 @@ function resolveVsCode(o, getCode) {
     r.exe = IS_WIN ? path.join(path.dirname(path.dirname(cli)), 'Code.exe') : cli;
     if (IS_WIN && !isFile(r.exe)) fail(`Code.exe not found next to ${cli}`);
     r.wait = !IS_WIN; // the `code` script returns at once unless told to wait
-    const v = run(cli, ['--version']);
+    const v = runCode(cli, ['--version'], cleanEnv());
     r.version = `${(v.stdout || '').split(/\r?\n/)[0]} (installed)`;
     return r;
   }
@@ -416,13 +441,22 @@ function stamp(d = new Date()) {
   return `${date}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
 }
 
-/** The environment of the launched VS Code: no VSCODE_* / ELECTRON_RUN_AS_NODE leaking in from a VS Code terminal. */
-function cleanEnv() {
+// Set by this launcher only: a value inherited from the parent shell must not leak into the run.
+const OWN_ENV = ['ELECTRON_RUN_AS_NODE', 'VPE_SIMULATE_LINK', 'VPE_SIMULATE_REMOTE', 'VPE_FFMPEG_SEARCH'];
+
+/** The environment of the launched VS Code: no VSCODE_* / ELECTRON_RUN_AS_NODE leaking in from a VS Code terminal,
+ *  and none of the simulation variables (--link and --no-ffmpeg add theirs afterwards). */
+function cleanEnv(parent = process.env) {
   const env = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (!/^VSCODE_/i.test(k) && k.toUpperCase() !== 'ELECTRON_RUN_AS_NODE') env[k] = v;
+  for (const [k, v] of Object.entries(parent)) {
+    if (!/^VSCODE_/i.test(k) && !OWN_ENV.includes(k.toUpperCase())) env[k] = v;
   }
   return env;
+}
+
+/** A new, empty temp folder for one run; mkdtemp makes the name unique even within the same second. */
+function makeWorkDir(when = stamp()) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), `vpe-review-${when}-`));
 }
 
 /**
@@ -460,14 +494,9 @@ function hideFfmpeg(o, env, work, dryRun) {
 async function launch(o) {
   const toolRoot = path.resolve(__dirname, '..');
   const main = findMain(toolRoot);
-  const work = path.join(os.tmpdir(), `vpe-review-${stamp()}`);
-  const src = path.join(work, 'src'); // temp worktree (when needed)
-  const userData = path.join(work, 'user-data');
-  const extDir = path.join(work, 'extensions');
-  const videos = path.join(work, 'videos');
   const isVsix = isVsixPath(o.target);
 
-  // 1. target
+  // 1. target. buildDir stays '' when the temp worktree (made once the temp folder exists) is the source.
   let vsix = '', buildDir = '', sha = '', short = '', version = '', describe = '';
   if (isVsix) {
     if (!isFile(o.target)) fail(`no such .vsix: ${o.target}`);
@@ -482,7 +511,6 @@ async function launch(o) {
     short = git(main, 'rev-parse', '--short=7', sha).out;
     describe = `${o.target} @ ${short}`;
     const wt = worktreeOf(main, o.target); // a worktree that has this branch checked out?
-    buildDir = src;
     if (wt) {
       const dirtyCount = git(wt, 'status', '--porcelain').raw.split(/\r?\n/).filter(Boolean).length;
       if (o.dirty) {
@@ -492,14 +520,13 @@ async function launch(o) {
           + 'Use --dirty to include them.');
       }
     } else if (o.dirty) note(`--dirty: no worktree has '${o.target}' checked out; using the committed state.`);
-    if (buildDir !== src) {
+    if (buildDir) {
       sha = git(buildDir, 'rev-parse', 'HEAD').out;
       short = `${git(buildDir, 'rev-parse', '--short=7', 'HEAD').out}-dirty`;
       version = JSON.parse(fs.readFileSync(path.join(buildDir, 'package.json'), 'utf8')).version;
     } else {
       version = JSON.parse(git(main, 'show', `${sha}:package.json`).raw).version;
     }
-    vsix = path.join(work, `vpe-${short}.vsix`);
   }
 
   // 3a. VS Code
@@ -523,13 +550,22 @@ async function launch(o) {
   const sidecarSrc = findMedia('cases/long_20s.mp4');
   const srt = [toolRoot, main].map((r) => path.join(r, 'test', 'subtitles', 'fixtures', 'overlap.srt'))
     .find(isFile) || '';
-  const openFolder = o.media || videos;
   if (o.media && !isDir(o.media)) fail(`--media folder not found: ${o.media}`);
   if (o.checklist && !isFile(o.checklist)) fail(`--checklist file not found: ${o.checklist}`);
+
+  // The run's own temp folder, made only now that nothing can be refused any more (a dry run just names one).
+  const work = o.dryRun ? path.join(os.tmpdir(), `vpe-review-${stamp()}-XXXXXX`) : makeWorkDir();
+  const src = path.join(work, 'src'); // temp worktree (when needed)
+  const userData = path.join(work, 'user-data');
+  const extDir = path.join(work, 'extensions');
+  const videos = path.join(work, 'videos');
+  const openFolder = o.media || videos;
   const reviewMd = path.join(openFolder, 'REVIEW.md');
+  const needWorktree = !isVsix && !buildDir;
+  if (needWorktree) buildDir = src;
+  if (!isVsix) vsix = path.join(work, `vpe-${short}.vsix`);
 
   // summary
-  const needWorktree = !isVsix && buildDir === src;
   const needBuild = !o.dev && !isVsix;
   const extra = linkEnv(o.link);
   say();
@@ -603,10 +639,25 @@ async function launch(o) {
     if (fs.existsSync(work)) note(`could not fully remove ${work}`); else say(`Cleaned up ${work}`);
     keep = true; // once
   };
-  const onSignal = () => { cleanup(); process.exit(130); };
+  // Ctrl+C: stop VS Code first and wait for it, so clean-up does not race its open files.
+  let child = null, exited = Promise.resolve(), signalled = false;
+  const stopChild = async () => {
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    try {
+      if (IS_WIN) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+      else process.kill(-child.pid, 'SIGTERM'); // its own process group (detached below)
+    } catch { try { child.kill(); } catch { /* already gone */ } }
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 10000))]);
+  };
+  const onSignal = async () => {
+    if (signalled) return;
+    signalled = true;
+    await stopChild();
+    cleanup();
+    process.exit(130);
+  };
   process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal);
   try {
-    fs.mkdirSync(work, { recursive: true });
     const env = cleanEnv();
     if (o.noFfmpeg || o.noFfmpegOnPath) hideFfmpeg(o, env, work, false);
     Object.assign(env, extra);
@@ -634,7 +685,7 @@ async function launch(o) {
     fs.writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
     if (!o.dev) {
       cmd(installCmd);
-      const r = run(vs.cli, installArgs, { env });
+      const r = runCode(vs.cli, installArgs, env);
       for (const l of `${r.stdout || ''}${r.stderr || ''}`.split(/\r?\n/).filter(Boolean)) say(`  ${l}`);
       if (r.status !== 0) fail('installing the VSIX failed');
     }
@@ -657,11 +708,12 @@ async function launch(o) {
     say('Launching VS Code ...');
     for (const l of envLines) say(l);
     cmd(launchCmd);
-    const child = spawn(vs.exe, launchArgs, { env, stdio: 'ignore', detached: o.noWait });
+    child = spawn(vs.exe, launchArgs, { env, stdio: 'ignore', detached: o.noWait || !IS_WIN });
+    exited = new Promise((resolve) => child.once('exit', resolve));
     if (o.noWait) {
       child.unref(); keep = true; note(`--no-wait: leaving ${work} in place; delete it yourself.`);
     } else {
-      await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', () => resolve()); });
+      await Promise.race([exited, new Promise((_, reject) => child.once('error', reject))]);
     }
   } finally {
     process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal);
@@ -688,6 +740,15 @@ function defaultChecklist({ o, describe, version, sha, vs, items, missing, sidec
   return md;
 }
 
+/** The menu's choice as options, plus what was given on the command line and the menu cannot change
+ *  (--dry-run, --media, --checklist, --code, --no-wait). */
+function mergeMenuArgs(original, picked) {
+  const o = parseArgs(picked);
+  for (const k of ['media', 'checklist', 'code', 'noWait']) o[k] = original[k];
+  o.dryRun = o.dryRun || original.dryRun;
+  return o;
+}
+
 async function cli(argv) {
   let o = parseArgs(argv);
   if (o.help) { say(USAGE); return; }
@@ -702,7 +763,7 @@ async function cli(argv) {
     } catch { /* no git: only main and HEAD */ }
     const picked = await runUi(createUiState({ branches, args: argv.length ? o : null }));
     if (!picked) return;
-    o = parseArgs(picked);
+    o = mergeMenuArgs(o, picked);
   }
   await launch(o);
 }
@@ -716,4 +777,5 @@ if (require.main === module) {
 
 module.exports = {
   parseArgs, linkEnv, createUiState, applyKey, renderUi, stateToArgs, parseKeys, readVsixVersion, LINKS,
+  mergeMenuArgs, cleanEnv, makeWorkDir,
 };
