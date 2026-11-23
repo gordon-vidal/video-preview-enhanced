@@ -462,6 +462,15 @@ body.idle { cursor: none; }
   color: var(--vscode-button-foreground, #fff);
 }
 .mono { font-family: var(--vpe-mono); font-size: 12px; white-space: nowrap; }
+#row #remoteLiveBtn {
+  height: 24px; min-width: 0; padding: 0 8px; margin-right: 4px; border-radius: 12px;
+  font-size: 11px; line-height: 1; white-space: nowrap;
+  background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-sep);
+}
+#row #remoteLiveBtn:hover, #row #remoteLiveBtn.open {
+  background: var(--vpe-hover); border-color: var(--vpe-accent); color: var(--vscode-foreground);
+}
+#row #remoteLiveBtn.adapting { border-color: var(--vpe-accent); }
 #row #rate { font-family: var(--vpe-mono); font-size: 12.5px; min-width: 42px; }
 #tracks .ccline { position: relative; display: flex; }
 #tracks.on .ccline::after {
@@ -492,6 +501,7 @@ body.idle { cursor: none; }
    "Narrow bar"). Play, the step buttons, the time, Settings and Fullscreen stay longest. */
 @media (max-width: 640px) {
   #row button.rng, #row #infoBtn, #row #time #dur { display: none; }
+  #row #remoteLiveBtn { display: none; }
 }
 @media (max-width: 500px) {
   #row #tracks, #row #startCompareBtn { display: none; }

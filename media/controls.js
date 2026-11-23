@@ -314,9 +314,37 @@ const VpeControls = (() => {
   }
 
   /**
+   * The remote Live transcode chip (#remoteLiveBtn): shown only in remote windows while a video plays through
+   * Live transcode, so a local window stays quiet. It names the picture height and bitrate cap, or the quality
+   * ladder's direction while it changes, and opens the Live transcode page (Auto / Always / Off, max bitrate).
+   * @param {{ remote?: boolean, active?: boolean, height?: number, transcode?: any }} o
+   */
+  function remoteChipState(o) {
+    if (!o || !o.remote || !o.active) return { visible: false, text: '', title: '', ariaLabel: '', adapting: false };
+    const tc = o.transcode || {};
+    const dir = tc.adaptingDir === 'down' ? 'down' : tc.adaptingDir === 'up' ? 'up' : null;
+    const h = Number(tc.h || o.height) || 0;
+    const res = h > 0 ? `${h}p` : '';
+    const kbps = Number(tc.maxKbps) || 0;
+    const rate = kbps >= 1000 ? `${+(kbps / 1000).toFixed(1)} Mb/s` : kbps > 0 ? `${Math.round(kbps)} kb/s` : '';
+    const lowered = tc.tier > 0;
+    let text;
+    let ariaLabel;
+    if (dir) {
+      text = `Live · Adapting ${dir === 'down' ? '↓' : '↑'}`;
+      ariaLabel = `Live transcode adapting quality ${dir}. Open Live transcode settings`;
+    } else {
+      text = ['Live', res ? (lowered ? `${res} ↓` : res) : '', rate].filter(Boolean).join(' · ');
+      ariaLabel = `Live transcode active${res ? `, ${res}` : ''}${lowered ? ' (adapted down)' : ''}${rate ? `, max ${rate}` : ''}. Open Live transcode settings`;
+    }
+    const title = `${tc.label || 'Live transcode active'}. Click to adjust mode or max bitrate`;
+    return { visible: true, text, title, ariaLabel, adapting: !!(dir || lowered) };
+  }
+
+  /**
    * @param {{
    *   panel: HTMLElement, sheet: HTMLElement, bar: HTMLElement,
-   *   buttons: { cog: HTMLElement, info: HTMLElement, rate: HTMLElement, tracks: HTMLElement, keys: HTMLElement },
+   *   buttons: { cog: HTMLElement, info: HTMLElement, rate: HTMLElement, tracks: HTMLElement, keys: HTMLElement, remoteLive?: HTMLElement },
    *   get: () => any, act: Record<string, (...a: any[]) => void>,
    * }} env
    */
@@ -692,8 +720,9 @@ const VpeControls = (() => {
     function sync() {
       const set = (b, on) => { if (b) { b.setAttribute('aria-expanded', String(on)); b.classList.toggle('open', on); } };
       const own = view && VIEWS[view] ? VIEWS[view].button : null;
-      set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'ab' || view === 'inspect' || view === 'picture' || view === 'transcode' || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
-      for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks', 'stepPrev', 'stepNext'].includes(k)) set(b, !!own && own === k);
+      set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'ab' || view === 'inspect' || view === 'picture' || (view === 'transcode' && opener !== buttons.remoteLive) || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
+      for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks', 'stepPrev', 'stepNext', 'remoteLive'].includes(k)) set(b, !!own && own === k);
+      set(buttons.remoteLive, view === 'transcode' && opener === buttons.remoteLive);
       set(buttons.stepPrev, view === 'step' && opener === buttons.stepPrev);
       set(buttons.stepNext, view === 'step' && opener === buttons.stepNext);
       set(buttons.info, view === 'info');
@@ -836,7 +865,7 @@ const VpeControls = (() => {
   return {
     create, createToast, createPlayFlash, drawRangeMarks, drawRangeButtons, facts, keyGroups, qualityRows, qualityLabel,
     clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
-    STEP_SIZES, stepName, stepBadge, stepSizeOf, stepAmount, drawStepBadges, holdVolumeOpen,
+    STEP_SIZES, stepName, stepBadge, stepSizeOf, stepAmount, drawStepBadges, holdVolumeOpen, remoteChipState,
   };
 })();
 

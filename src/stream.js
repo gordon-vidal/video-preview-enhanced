@@ -30,9 +30,11 @@ const SEEK_QUIET_MS = 60;
 // ...and at most once per this while it goes on, never deferring a seek longer than SEEK_MAX_DEFER_MS.
 const SPAWN_GAP_MS = 200;
 const SEEK_MAX_DEFER_MS = 400;
-// A seek back by at most STEP_BACK_SPAN_S from the stream's start restarts STEP_BACK_LEAD_S before the target.
-const STEP_BACK_SPAN_S = 2;
+// A seek back by at most STEP_BACK_SPAN_S from the stream's start restarts STEP_BACK_LEAD_S (REMOTE_STEP_BACK_LEAD_S on
+// remote links) before the target, so the next backward steps (wheel notches) are served from the packets held.
+const STEP_BACK_SPAN_S = 4;
 const STEP_BACK_LEAD_S = 1;
+const REMOTE_STEP_BACK_LEAD_S = 2.5;
 // Sound sent at most this far past the picture sent.
 const AUDIO_LEAD_S = 2;
 const MAX_AUDIO_BATCH = 256 * 1024;
@@ -40,6 +42,21 @@ const MAX_AUDIO_BATCH = 256 * 1024;
 const PCM_KBPS = AUDIO_RATE * 4 * 8 / 1000;
 const OPUS_KBPS = 128;
 const audioEncoders = new Map();
+
+/**
+ * Where ffmpeg restarts for a seek to t (pure). A seek back just before the packets held starts the step-back
+ * lead (REMOTE_STEP_BACK_LEAD_S on remote links) earlier; any other seek starts at t.
+ * @param {number} t
+ * @param {{ from: number, base: number, hasPackets: boolean, fps: number, remote?: boolean }} s
+ *   from: time of the first packet held; base: time the stream started at
+ */
+function stepBackStart(t, { from, base, hasPackets, fps, remote = false }) {
+  const near = (x) => t < x && x - t <= STEP_BACK_SPAN_S;
+  if (!(hasPackets && t < from && (near(from) || near(base)))) return t;
+  const lead = remote ? REMOTE_STEP_BACK_LEAD_S : STEP_BACK_LEAD_S;
+  const idx = Math.max(0, Math.floor(t * fps + 1e-6));
+  return Math.max(0, idx - Math.round(fps * lead)) / fps;
+}
 
 function opusArgs(encoder) {
   return ['-c:a', encoder, '-strict', '-2', '-b:a', '96k',
@@ -68,7 +85,7 @@ class EncodedStream {
   }) {
     // Packets and sound read, and the history for seeks back (src/stream-buffer.js). The fields it owns are
     // reachable as this.vAll, this.aNext ... (accessors below the class).
-    this.buf = new SeekHistoryBuffer({ hasAudio: !!(probed && probed.audio), audioEncoder });
+    this.buf = new SeekHistoryBuffer({ hasAudio: !!(probed && probed.audio), audioEncoder, remote: !!remote });
     this.tools = tools;
     this.file = file;
     this.post = post;
@@ -143,30 +160,52 @@ class EncodedStream {
     this.setMaxBitrateMbps(n);
   }
 
-  /** Compare owns the output size. Apply size and bitrate together, keeping the audio cursor. */
-  setCompareOutput(height, kbps) {
+  /**
+   * Compare owns the output size. Apply size and bitrate together, keeping the audio cursor.
+   * With `deferGrow`, a taller output is not started here: the next seek spawns ffmpeg at the new size (the
+   * picture shown meanwhile keeps its size) and true tells the caller to make that seek (message 'resize'),
+   * so a paused, zoomed tile gets a crisp frame from a single ffmpeg start.
+   * @returns {boolean} the output grew and the caller should refresh the tile
+   */
+  setCompareOutput(height, kbps, { deferGrow = false } = {}) {
     const mbps = kbps / 1000;
-    if (this.maxHeight === height && this.maxBitrateMbps === mbps) return;
+    if (this.maxHeight === height && this.maxBitrateMbps === mbps) return false;
+    const { w, h } = this;
     this.maxHeight = height;
     this.maxBitrateMbps = mbps;
     this.takeStandby(NaN);
-    if (!this.fps || this.disposed) return;
+    if (!this.fps || this.disposed) return false;
+    if (deferGrow && !this.hidden) {
+      this.sizeVideo();
+      if (this.h > h) {
+        this.w = w;
+        this.h = h;
+        this.resizePending = true;
+        return true;
+      }
+    }
     if (!this.hidden && !this.startTimer && this.proc) {
       this.sizeVideo();
       this.restartVideo();
     } else {
       this.resizePending = true;
     }
+    return false;
   }
 
-  /** Current pipeline metadata for ⓘ (About this video) and stats. */
-  transcodeInfo() {
+  /** Current pipeline metadata for ⓘ (About this video), stats and the remote status chip. */
+  transcodeInfo(extra = null) {
     const cap = this.activeCapKbps();
     return {
       encoder: this.videoEncoder,
       mode: this.pipelineMode,
       remote: this.remote,
       maxKbps: cap,
+      w: this.w,
+      h: this.h,
+      tier: this.tier,
+      adapting: this.tier > 0,
+      adaptingDir: extra && extra.adaptingDir ? extra.adaptingDir : null,
       label: pipelineLabel({
         encoder: this.videoEncoder,
         mode: this.pipelineMode,
@@ -474,6 +513,7 @@ class EncodedStream {
     this.log(`remote stream: quality ${down ? 'down' : 'up'} to ${this.h}p (${detail})`);
     if (down && this.tier === last && LINK_TIERS[last].kbps + pcm > m.kbps) this.slowLink(detail);
     else if (down) this.notice('quality', `Slow connection: live transcode lowered the picture to ${this.h}p to keep playing. It goes back up when the connection allows.`);
+    this.post({ type: 'transcodeInfo', transcode: this.transcodeInfo({ adaptingDir: down ? 'down' : 'up' }) });
     this.restartVideo();
   }
 
@@ -598,9 +638,7 @@ class EncodedStream {
       return;
     }
     const from = this.vAll.length ? this.vAll[0].t : this.base;
-    const near = (x) => t < x && x - t <= STEP_BACK_SPAN_S;
-    const back = this.vAll.length && t < from && (near(from) || near(this.base));
-    const start = back ? Math.max(0, idx - Math.round(this.fps * STEP_BACK_LEAD_S)) / this.fps : t;
+    const start = stepBackStart(t, { from, base: this.base, hasPackets: this.vAll.length > 0, fps: this.fps, remote: this.remote });
     this.sizeVideo();
     this.reset(start);
     this.aNext = Math.max(0, Math.round((t - start) * AUDIO_RATE));
@@ -666,6 +704,10 @@ module.exports = {
   PCM_KBPS,
   OPUS_KBPS,
   LINK_SETTLE_MS,
+  STEP_BACK_SPAN_S,
+  STEP_BACK_LEAD_S,
+  REMOTE_STEP_BACK_LEAD_S,
+  stepBackStart,
   audioEncoderFor,
   opusArgs,
 };

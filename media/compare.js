@@ -46,6 +46,7 @@
     mute: $('mute'), volume: $('volume'), rate: $('rate'), cog: $('cog'), infoBtn: $('infoBtn'), picBtn: $('picBtn'), cmpBtn: $('cmpBtn'), full: $('full'),
     panel: $('panel'), sheet: $('sheet'), menu: $('menu'), toast: $('toast'), live: $('live'), abMarks: $('abMarks'),
     abA: $('abA'), abB: $('abB'), setABtn: $('setABtn'), setBBtn: $('setBBtn'), prevSize: $('prevSize'), nextSize: $('nextSize'),
+    remoteLiveBtn: $('remoteLiveBtn'),
     overlay: $('overlay'), message: $('message'), hint: $('hint'),
   };
   const names = cfg.names || ['A', 'B'];
@@ -287,6 +288,26 @@
       : null;
     vscode.postMessage({ type: 'clipRange', ranges, clock: st.clock, order: st.order });
   }
+  /** The bar's remote Live transcode chip (remote windows only, while a tile plays through it; media/controls.js). */
+  function updateRemoteChip() {
+    const b = ui.remoteLiveBtn;
+    if (!b) return;
+    const live = tiles.filter((p) => p && p.remoteStream);
+    const primary = live.find((p) => p.info && p.info.transcode && p.info.transcode.adaptingDir)
+      || (clock && clock.remoteStream ? clock : live[0]);
+    const st = VpeControls.remoteChipState({
+      remote: !!(cfg.engine && cfg.engine.remote),
+      active: live.length > 0,
+      transcode: primary && primary.info && primary.info.transcode,
+      height: primary && primary.info && primary.info.video && primary.info.video.height,
+    });
+    b.hidden = !st.visible;
+    if (!st.visible) return;
+    b.textContent = st.text;
+    b.title = st.title;
+    b.setAttribute('aria-label', st.ariaLabel);
+    b.classList.toggle('adapting', st.adapting);
+  }
   function onEngineReady(key) {
     if (key.length > 1) { scanner.onReady(key); return; }
     const p = engines[key];
@@ -295,11 +316,13 @@
       else p.setHidden(!visible);
     }
     updateMuteUi();
+    updateRemoteChip();
     if (tiles.length === N && tiles.every((p) => p.vmode !== undefined) && !begun) begin();
   }
   function onEngineMeta(key) {
     if (clock && key === clock.key) ui.seek.max = String(Math.max(0, (clock.n || 1) - 1));
     infoDirty = true;
+    updateRemoteChip();
     if (controls.view() === 'info' && KEYS[st.infoSel] === key) controls.refresh();
     if (largeGrid && key === KEYS[0]) requestTileSize(); // the first tile's shape sizes the native tiles
     if (sync.updateFps(key, begun, st.offsets.some((o) => o.unit === 'frames' && o.v))) refreshPanel();
@@ -757,6 +780,7 @@
       // A large grid's first tile may be built-in (no ffprobe on the host): the page says its shape.
       ...(largeGrid ? { aspect: Math.round(aspectOf(0) * 1e4) / 1e4 } : {}),
       rate: st.rate, factor: frameFactor(),
+      zoom: Math.round(Math.max(0.1, Math.min(64, st.pic.zoom || 1)) * 100) / 100,
     };
   }
   /**
@@ -771,13 +795,15 @@
   function requestTileSize() {
     if (!begun || !nativeTiles.some(Boolean)) return;
     clearTimeout(sizeTimer);
+    // A transcoded tile restarts ffmpeg when it resizes: wait longer than for raw frames (smooth Ctrl+wheel zoom).
+    const delay = nativeTiles.includes('transcode') ? 300 : 150;
     sizeTimer = setTimeout(() => {
       const tile = tileSize();
       const key = JSON.stringify(tile);
       if (!tile.w || !tile.h || key === lastTileSize) return;
       lastTileSize = key;
       vscode.postMessage({ type: 'tileSize', tile });
-    }, 150);
+    }, delay);
   }
   new ResizeObserver(() => { layoutDirty = true; requestTileSize(); if (!clock) layoutCells(); }).observe(stage);
   window.addEventListener('resize', requestTileSize);
@@ -1193,7 +1219,7 @@
 
   const controls = VpeControls.create({
     panel: ui.panel, sheet: ui.sheet, bar: ui.bar,
-    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, cmp: ui.cmpBtn, tracks: null, stepPrev: ui.prevSize, stepNext: ui.nextSize },
+    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, cmp: ui.cmpBtn, tracks: null, stepPrev: ui.prevSize, stepNext: ui.nextSize, remoteLive: ui.remoteLiveBtn },
     get: () => ({
       rate: st.rate, loop: st.loop, jump: prefs.jump, stepButtons: prefs.stepButtons, stepSize: VpeControls.stepSizeOf(prefs), picture: picState(), compare: { soundLabel: `from ${tileLabel(st.sound)}` },
       abLabel: ab.label(fmtAB),
@@ -1670,6 +1696,7 @@
   ui.rate.onclick = () => controls.toggle('speed', ui.rate);
   ui.rate.addEventListener('wheel', (e) => { e.preventDefault(); bumpRate(e.deltaY < 0 ? 1 : -1); }, { passive: false });
   ui.cog.onclick = () => controls.toggle('main', ui.cog);
+  if (ui.remoteLiveBtn) ui.remoteLiveBtn.onclick = (e) => { e.stopPropagation(); controls.toggle('transcode', ui.remoteLiveBtn); };
   ui.infoBtn.onclick = () => controls.toggle('info', ui.infoBtn);
   ui.infoBtn.title = 'About these videos  I';
   ui.infoBtn.setAttribute('aria-label', 'About these videos');

@@ -24,6 +24,7 @@ const { budgets } = require('../media/membudget');
 const Grid = require('../media/compare-grid');
 const frameserver = require('./frameserver');
 const { barHtml, playFlashHtml } = require('./bar');
+const { assetTags, inlineAssetsFor } = require('./player-html');
 const { toggleFocusMode, noteFocusModeExited } = require('./focus-mode');
 const { pickRows, pushRecent, droppedVideos, collectFolderVideos, planAddToCompare, compareTargets } = require('./comparepick');
 const { createAddMode, startsInAddMode, addToCompareOrigin } = require('./addmode');
@@ -59,28 +60,40 @@ const fileOfKey = (key) => {
 const FS_SCHEMES = new Set(['file', 'vscode-remote']);
 const fileKey = (uri) => uri.with({ query: '', fragment: '' }).toString();
 
+/** The compare page's scripts in load order (the large grid's membudget.js only when it is one). */
+function compareScripts(large) {
+  return [
+    'timestretch.js', 'framestream.js', 'hdr.js', 'block-cache.js', 'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js',
+    'engine.js', 'picture.js', 'modes.js', 'range-drag.js', 'controls.js', 'abloop.js', 'comparerange.js', 'stepgoal.js',
+    'timefmt.js', ...(large ? ['membudget.js'] : []),
+    'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js', 'compare-debug.js', 'compare-sync.js', 'compare.js',
+  ];
+}
+
 /**
  * The compare page. Pure, so tests can render it without VS Code:
- * uri(...p) maps a media/ path to a webview URL.
+ * uri(...p) maps a media/ path to a webview URL. inlineCss / inlineScripts: see src/player-html.js.
  */
-function compareHtml({ uri, cspSource, nonce, cfg, frameSource }) {
+function compareHtml({ uri, cspSource, nonce, cfg, frameSource, inlineCss, inlineScripts }) {
   const large = Grid.isLarge((cfg.names || []).length);
   const csp = [
     "default-src 'none'",
     `img-src ${cspSource} blob: data:`,
     `media-src ${cspSource} blob: data:`,
-    `style-src ${cspSource}`,
+    `style-src 'nonce-${nonce}' ${cspSource}`,
     `script-src 'nonce-${nonce}' ${cspSource} blob: 'wasm-unsafe-eval'`,
     'worker-src blob:',
     ['connect-src', cspSource, 'blob:', frameSource].filter(Boolean).join(' '),
   ].join('; ');
+  const { styles, scripts } = assetTags({
+    uri, nonce, cssFiles: ['player.css', 'compare.css'], scriptFiles: compareScripts(large), inlineCss, inlineScripts,
+  });
   const json = JSON.stringify(cfg).replace(/</g, '\\u003c');
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp};">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="${uri('player.css')}">
-<link rel="stylesheet" href="${uri('compare.css')}">
+${styles}
 </head><body class="compare">
 <script type="application/json" id="cfg">${json}</script>
 <div id="stage">
@@ -100,29 +113,7 @@ ${barHtml({ compare: true })}
 <div id="sheet" hidden></div>
 <div id="menu" role="menu" aria-label="Video actions" hidden></div>
 <div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
-<script nonce="${nonce}" src="${uri('timestretch.js')}"></script>
-<script nonce="${nonce}" src="${uri('framestream.js')}"></script>
-<script nonce="${nonce}" src="${uri('hdr.js')}"></script>
-<script nonce="${nonce}" src="${uri('block-cache.js')}"></script>
-<script nonce="${nonce}" src="${uri('gl-renderer.js')}"></script>
-<script nonce="${nonce}" src="${uri('codec-utils.js')}"></script>
-<script nonce="${nonce}" src="${uri('decoder-boot.js')}"></script>
-<script nonce="${nonce}" src="${uri('engine.js')}"></script>
-<script nonce="${nonce}" src="${uri('picture.js')}"></script>
-<script nonce="${nonce}" src="${uri('modes.js')}"></script>
-<script nonce="${nonce}" src="${uri('range-drag.js')}"></script>
-<script nonce="${nonce}" src="${uri('controls.js')}"></script>
-<script nonce="${nonce}" src="${uri('abloop.js')}"></script>
-<script nonce="${nonce}" src="${uri('comparerange.js')}"></script>
-<script nonce="${nonce}" src="${uri('stepgoal.js')}"></script>
-<script nonce="${nonce}" src="${uri('timefmt.js')}"></script>
-${large ? `<script nonce="${nonce}" src="${uri('membudget.js')}"></script>
-` : ''}<script nonce="${nonce}" src="${uri('compare-grid.js')}"></script>
-<script nonce="${nonce}" src="${uri('compare-compositor.js')}"></script>
-<script nonce="${nonce}" src="${uri('compare-metrics.js')}"></script>
-<script nonce="${nonce}" src="${uri('compare-debug.js')}"></script>
-<script nonce="${nonce}" src="${uri('compare-sync.js')}"></script>
-<script nonce="${nonce}" src="${uri('compare.js')}"></script>
+${scripts}
 </body></html>`;
 }
 
@@ -237,7 +228,15 @@ class CompareSession {
     };
     this.start = 0;
     this.replaced = undefined;
-    return compareHtml({ uri, cspSource: w.cspSource, nonce: crypto.randomBytes(16).toString('base64'), cfg, frameSource: this.frameSource });
+    const { inlineCss, inlineScripts } = inlineAssetsFor(this.media.fsPath, {
+      cssFiles: ['player.css', 'compare.css'],
+      scriptFiles: compareScripts(Grid.isLarge(this.names.length)),
+      inlineScripts: !!vscode.env.remoteName,
+    });
+    return compareHtml({
+      uri, cspSource: w.cspSource, nonce: crypto.randomBytes(16).toString('base64'), cfg, frameSource: this.frameSource,
+      inlineCss, inlineScripts,
+    });
   }
 
   post(msg) { if (!this.disposed) this.webview.postMessage({ ...msg, page: this.page }); }
@@ -388,9 +387,13 @@ class CompareSession {
 
   resizeTranscodes() {
     if (!this.decisions) return;
+    // A tile whose picture grows (zoomed in) is not restarted at once: the page seeks it once (message 'resize'),
+    // so a paused, zoomed tile shows a crisp frame after a single ffmpeg spawn.
+    const grown = [];
     this.transcodeOutputs().forEach((o, i) => {
-      if (o) this.natives[i]?.setCompareOutput(o.height, o.kbps);
+      if (o && this.natives[i]?.setCompareOutput(o.height, o.kbps, { deferGrow: true })) grown.push(i);
     });
+    if (grown.length) this.post({ type: 'resize', tiles: grown });
   }
 
   startTranscode(i, d, output, epoch) {
@@ -1037,4 +1040,4 @@ function registerCompare(context, deps) {
   };
 }
 
-module.exports = { registerCompare, setPickHook, compareHtml, CompareSession, fileOfKey, MAX_TILES, maxVideos };
+module.exports = { registerCompare, setPickHook, compareHtml, compareScripts, CompareSession, fileOfKey, MAX_TILES, maxVideos };

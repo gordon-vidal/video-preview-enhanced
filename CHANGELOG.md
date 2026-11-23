@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Remote-SSH: faster start, sharper zoomed Compare, quicker steps back, status chip** (design note `docs/notes/ssh-adaptive-streaming.md`). The player and Compare inline their CSS (no unstyled flash) and, in remote windows, their small scripts (fewer round trips); a transcoded Compare tile zoomed in 1.5× or more grows toward the source's size within the shared bitrate cap and refreshes once for a crisp paused frame; Live transcode keeps more history (15 s remote, 8 s local) and steps back from memory more often; and in remote windows a compact **Live** chip in the bar shows the picture size and bitrate cap (or that quality is adapting) and opens ⚙ › Live transcode.
 - **Live transcode is now automatic** (`videoPreviewEnhanced.transcode` defaults to `auto`; the `ask` mode is retired and a stored `ask` behaves as `auto`). Nothing asks before it starts; the first time it does, one non-blocking notice explains it and offers **Use original video** or **Turn off**, and never appears again. `off`, the per-tab **Use original video** and ⚙ › Live transcode work as before.
 - Right-clicking a folder in the Explorer and choosing **Start Compare** or **Add to Compare** now includes videos in subfolders (e.g. `recording/cam1/video.mp4`), in natural folder and file order.
 - **Export Frames (A–B)…** now prompts for an optional frame stride (default `1` for every frame, or `N` for every Nth frame); the 300-frame confirmation and 2,000-frame cap apply to the exported frame count while file names keep each frame's 1-based video index.

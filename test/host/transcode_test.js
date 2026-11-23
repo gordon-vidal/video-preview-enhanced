@@ -10,7 +10,8 @@ const probe = require('../../src/transcode_probe');
 const policy = require('../../src/transcode_policy');
 const setup = require('../../src/setup');
 const ff = require('../../src/ffmpeg');
-const { EncodedStream } = require('../../src/stream');
+const { EncodedStream, stepBackStart, REMOTE_STEP_BACK_LEAD_S, STEP_BACK_LEAD_S } = require('../../src/stream');
+const { historyKeepTime, REMOTE_HISTORY_S, HISTORY_S } = require('../../src/stream-buffer');
 const { NativeDecoder } = require('../../src/native');
 const controls = require('../../media/controls');
 const { load: loadMockVscode } = require('./mock_vscode');
@@ -451,6 +452,63 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     assert.strictEqual(probed, true, 'legacy unversioned noGpu record is ignored and re-probed');
     assert.strictEqual(r.encoder, null);
     assert.strictEqual(bag[probe.ENCODER_KEY][key].v, probe.ENCODER_CACHE_VER, 'new cache record carries ENCODER_CACHE_VER');
+  }
+
+  // ---- Zoom-aware Compare tile sizing, SSH step-back lead/history, and Remote status chip ----
+  {
+    const src4k = { width: 3840, height: 2160, fps: 30 };
+    const baseCell = { w: 1920, h: 1080, cols: 2, rows: 2 };
+    assert.deepStrictEqual(policy.compareTileSize(src4k, 2160, { ...baseCell, factor: 1, zoom: 1 }), { w: 960, h: 540, fps: 30 });
+    // Sub-threshold zoom (< 1.5) in Fit mode stays at cell size to avoid ffmpeg restarts.
+    assert.deepStrictEqual(policy.compareTileSize(src4k, 2160, { ...baseCell, factor: 1.2, zoom: 1.2 }), { w: 960, h: 540, fps: 30 });
+    // Zoom >= 1.5 upgrades resolution toward source, capped at source/maxHeight, while bitrate budget stays shared.
+    const z2 = policy.compareTileSize(src4k, 2160, { ...baseCell, factor: 2, zoom: 2 });
+    assert.deepStrictEqual(z2, { w: 1920, h: 1080, fps: 30 });
+    const z4 = policy.compareTileSize(src4k, 2160, { ...baseCell, factor: 4, zoom: 4 });
+    assert.deepStrictEqual(z4, { w: 3840, h: 2160, fps: 30 });
+    assert.deepStrictEqual(policy.compareCapsKbps([z2, z2], 10, true), [5000, 5000], 'zoomed tiles stay within shared cap');
+    // Zooming back to Fit steps down to base cell size.
+    assert.deepStrictEqual(policy.compareTileSize(src4k, 2160, { ...baseCell, factor: 1, zoom: 1 }), { w: 960, h: 540, fps: 30 });
+
+    // setCompareOutput with deferGrow returns true on height growth without spawning early.
+    const s = new EncodedStream({
+      tools: {}, file: 'x.mkv', post: () => {}, log: () => {}, remote: true, maxHeight: 540,
+      encoder: 'h264_nvenc', cpuEncoder: null,
+      probed: { duration: 30, video: { index: 0, codec: 'hevc', width: 3840, height: 2160, fps: 30 }, audio: null },
+    });
+    s.fps = 30;
+    s.sizeVideo();
+    assert.strictEqual(s.h, 540);
+    let restarted = 0;
+    s.restartVideo = () => { restarted++; };
+    assert.strictEqual(s.setCompareOutput(1080, 5000, { deferGrow: true }), true, 'growth deferred for crisp refresh');
+    assert.strictEqual(s.resizePending, true);
+    assert.strictEqual(restarted, 0, 'no double restart on deferred growth');
+    s.sizeVideo();
+    assert.strictEqual(s.h, 1080);
+    assert.strictEqual(s.setCompareOutput(540, 5000, { deferGrow: true }), false, 'shrink is not a deferred grow');
+    s.dispose();
+
+    // Host step-back lead & GOP history retention.
+    assert.strictEqual(stepBackStart(9.5, { from: 10, base: 10, hasPackets: true, fps: 30, remote: false }), 9.5 - STEP_BACK_LEAD_S);
+    assert.strictEqual(stepBackStart(9.5, { from: 10, base: 10, hasPackets: true, fps: 30, remote: true }), 9.5 - REMOTE_STEP_BACK_LEAD_S);
+    assert.strictEqual(stepBackStart(2.0, { from: 10, base: 10, hasPackets: true, fps: 30, remote: true }), 2.0, 'far seek has no step-back lead');
+    assert.strictEqual(historyKeepTime(40, 40, false), 40 - HISTORY_S);
+    assert.strictEqual(historyKeepTime(40, 40, true), 40 - REMOTE_HISTORY_S);
+
+    // Remote status chip state: remote-only, active-only, shows resolution/cap or adapting direction.
+    assert.strictEqual(controls.remoteChipState({ remote: false, active: true, transcode: { h: 1080, maxKbps: 6000 } }).visible, false);
+    assert.strictEqual(controls.remoteChipState({ remote: true, active: false }).visible, false);
+    const activeChip = controls.remoteChipState({ remote: true, active: true, transcode: { h: 1080, maxKbps: 6000, tier: 0, label: 'NVENC' } });
+    assert.strictEqual(activeChip.visible, true);
+    assert.strictEqual(activeChip.text, 'Live · 1080p · 6 Mb/s');
+    assert.strictEqual(activeChip.adapting, false);
+    const adaptChip = controls.remoteChipState({ remote: true, active: true, transcode: { h: 720, maxKbps: 3000, tier: 1, adaptingDir: 'down' } });
+    assert.strictEqual(adaptChip.text, 'Live · Adapting ↓');
+    assert.strictEqual(adaptChip.adapting, true);
+    const tieredChip = controls.remoteChipState({ remote: true, active: true, transcode: { h: 720, maxKbps: 3000, tier: 1 } });
+    assert.strictEqual(tieredChip.text, 'Live · 720p ↓ · 3 Mb/s');
+    assert.strictEqual(tieredChip.adapting, true);
   }
 
   console.log('transcode_test: ok');

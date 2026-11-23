@@ -12,10 +12,12 @@ const AUD = Buffer.from([0, 0, 1, 9]); // access unit delimiter (h264_metadata=a
 const AUD_PREFIX = AUD.subarray(0, 3);
 // A seek this far past the last packet read, with ffmpeg still running, waits for it instead of restarting.
 const REUSE_AHEAD_S = 0.5;
-// Packets kept for seeks back without a restart: HISTORY_S behind the last one sent, and from
-// SEEK_KEEP_S before the last seek target, but never more than HISTORY_MAX_S behind the last sent.
-const HISTORY_S = 5;
-const SEEK_KEEP_S = 1.5;
+// Packets kept for seeks back without a restart: HISTORY_S (REMOTE_HISTORY_S on remote links, where a restart
+// costs a round trip and a new encode) behind the last one sent, and from SEEK_KEEP_S before the last seek
+// target, but never more than HISTORY_MAX_S behind the last sent.
+const HISTORY_S = 8;
+const REMOTE_HISTORY_S = 15;
+const SEEK_KEEP_S = 3;
 const HISTORY_MAX_S = 20;
 const MAX_QUEUED_AUDIO = 4 * AUDIO_RATE * 4; // four seconds of unsent stereo s16le
 
@@ -23,12 +25,25 @@ const MAX_QUEUED_AUDIO = 4 * AUDIO_RATE * 4; // four seconds of unsent stereo s1
  * @typedef {{ kind: 'packet', t: number, key: boolean, idr: boolean, data: Uint8Array }} VideoPacket
  */
 
+/**
+ * The time before which packets (up to the keyframe at or before it) may be dropped.
+ * @param {number} lastT time of the last packet sent
+ * @param {number} seekT the last seek target
+ * @param {boolean} [remote]
+ */
+function historyKeepTime(lastT, seekT, remote = false) {
+  const hist = remote ? REMOTE_HISTORY_S : HISTORY_S;
+  return Math.max(lastT - HISTORY_MAX_S, Math.min(lastT - hist, seekT - SEEK_KEEP_S));
+}
+
 class SeekHistoryBuffer {
   /**
-   * @param {{ fps?: number, hasAudio: boolean, audioEncoder?: string | null }} o
-   *   fps: the output frame rate (set once known); audioEncoder: the Opus encoder, null for s16 PCM
+   * @param {{ fps?: number, hasAudio: boolean, audioEncoder?: string | null, remote?: boolean }} o
+   *   fps: the output frame rate (set once known); audioEncoder: the Opus encoder, null for s16 PCM;
+   *   remote: the link is a remote one (a longer history is kept)
    */
-  constructor({ fps = 0, hasAudio, audioEncoder = null }) {
+  constructor({ fps = 0, hasAudio, audioEncoder = null, remote = false }) {
+    this.remote = remote;
     this.fps = fps;
     this.hasAudio = hasAudio;
     this.audioEncoder = audioEncoder;
@@ -134,7 +149,7 @@ class SeekHistoryBuffer {
   trim() {
     if (!this.vNext) return;
     const lastT = this.vAll[this.vNext - 1].t;
-    const keepT = Math.max(lastT - HISTORY_MAX_S, Math.min(lastT - HISTORY_S, this.seekT - SEEK_KEEP_S));
+    const keepT = historyKeepTime(lastT, this.seekT, this.remote);
     let k = -1;
     for (let i = this.vNext - 1; i >= 0; i--) if (this.vAll[i].key && this.vAll[i].t <= keepT) { k = i; break; }
     if (k > 0) {
@@ -179,4 +194,6 @@ class SeekHistoryBuffer {
 }
 // checkJs: end
 
-module.exports = { SeekHistoryBuffer, AUDIO_RATE, MAX_QUEUED_AUDIO };
+module.exports = {
+  SeekHistoryBuffer, AUDIO_RATE, MAX_QUEUED_AUDIO, HISTORY_S, REMOTE_HISTORY_S, SEEK_KEEP_S, HISTORY_MAX_S, historyKeepTime,
+};

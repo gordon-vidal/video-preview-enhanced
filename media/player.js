@@ -19,7 +19,7 @@
     infoBtn: $('infoBtn'), full: $('full'), cog: $('cog'), picBtn: $('picBtn'),
     panel: $('panel'), sheet: $('sheet'), toast: $('toast'), abMarks: $('abMarks'), tracks: $('tracks'),
     abA: $('abA'), abB: $('abB'), setABtn: $('setABtn'), setBBtn: $('setBBtn'),
-    prevSize: $('prevSize'), nextSize: $('nextSize'),
+    prevSize: $('prevSize'), nextSize: $('nextSize'), remoteLiveBtn: $('remoteLiveBtn'),
   };
 
   const log = (/** @type {any[]} */ ...a) => vscode.postMessage({ type: 'log', msg: a.map(String).join(' ') });
@@ -993,7 +993,7 @@
     getState: () => ({ rate, volume, muted, loop }),
     setMuteUi: (m) => { if (m !== muted) setMute(m, false); },
     onReady: (p) => { begin(p, p.meta); },
-    onMeta: (p) => { ui.seek.max = String(Math.max(0, p.n - 1)); updateMuteUi(); if (controls) controls.refresh(); },
+    onMeta: (p) => { ui.seek.max = String(Math.max(0, p.n - 1)); updateMuteUi(); updateRemoteChip(); if (controls) controls.refresh(); },
     onTracks: (p) => subs.onTracks(p),
   });
 
@@ -1114,10 +1114,28 @@
     showMessage('Switching quality…');
     vscode.postMessage({ type: 'quality', pick });
   }
+  /** The bar's remote Live transcode chip (remote windows only, while the stream plays; media/controls.js remoteChipState). */
+  function updateRemoteChip() {
+    const b = ui.remoteLiveBtn;
+    if (!b) return;
+    const p = player;
+    const st = VpeControls.remoteChipState({
+      remote: !!(cfg.engine && cfg.engine.remote),
+      active: !!(p && p.remoteStream),
+      transcode: p && p.info && p.info.transcode,
+      height: p && p.info && p.info.video && p.info.video.height,
+    });
+    b.hidden = !st.visible;
+    if (!st.visible) return;
+    b.textContent = st.text;
+    b.title = st.title;
+    b.setAttribute('aria-label', st.ariaLabel);
+    b.classList.toggle('adapting', st.adapting);
+  }
   const pictureState = () => { const v = insp.picture(); return { mode: v.mode, pct: player && player.meta && player.meta.width ? insp.zoomPercent() : null, zoomed: v.zoom !== 1 }; };
   controls = VpeControls.create({
     panel: ui.panel, sheet: ui.sheet, bar: ui.bar, onShow: () => ctxMenu.close(false),
-    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, tracks: ui.tracks, stepPrev: ui.prevSize, stepNext: ui.nextSize },
+    buttons: { cog: ui.cog, info: ui.infoBtn, rate: ui.rate, tracks: ui.tracks, stepPrev: ui.prevSize, stepNext: ui.nextSize, remoteLive: ui.remoteLiveBtn },
     get: () => {
       const d = subs.panelData();
       return {
@@ -1159,6 +1177,7 @@
     },
   });
   ui.cog.onclick = (e) => { e.stopPropagation(); controls.toggle('main', ui.cog); };
+  if (ui.remoteLiveBtn) ui.remoteLiveBtn.onclick = (e) => { e.stopPropagation(); controls.toggle('transcode', ui.remoteLiveBtn); };
   ui.infoBtn.onclick = (e) => { e.stopPropagation(); controls.toggle('info', ui.infoBtn); };
   ui.rate.onclick = (e) => { e.stopPropagation(); controls.toggle('speed', ui.rate); };
   ui.rate.addEventListener('wheel', (e) => { e.preventDefault(); bumpRate(e.deltaY < 0 ? 1 : -1); }, { passive: false });

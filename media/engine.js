@@ -1884,28 +1884,62 @@ function createEngine(env) {
       this.dropBack();
     }
 
+    /** The memory steps back may use: remote Live transcode keeps more, as a miss costs a seek over the link. */
+    backBudget() { return this.remoteStream ? Math.round(this.budget() * 0.65) : this.budget() / 2; }
+
+    /** Puts a decoded frame in this.back in time order; the oldest go when it is over backBudget(). */
+    insertBack(fr, f) {
+      if (!this.back) this.dropBack();
+      const back = this.back;
+      let i = back.length;
+      while (i > 0 && back[i - 1].t > fr.t) i--;
+      if (i > 0 && Math.abs(back[i - 1].t - fr.t) <= 1e-4) { this.release(fr); return; } // already kept
+      if (i === back.length) {
+        const prev = back[back.length - 1];
+        if (prev && fr.t - prev.t > 1.5 * f) this.dropBack(); // a gap: start a new run
+        this.back.push(fr);
+      } else {
+        back.splice(i, 0, fr);
+      }
+      this.backBytes += fr.bytes;
+      const cap = this.backBudget();
+      while (this.back.length && this.backBytes > cap) this.backBytes -= this.back.shift().bytes;
+    }
+
     /** Keeps a decoded frame (paused, in memory, consecutive with the kept ones) for steps back; else lets it go. */
     keepBack(fr) {
       const f = 1 / (this.fps || 30);
       // (Compare steps its tiles by seeking them: no frames kept there.)
-      if (this.playing || this.hidden || this.cfg.noStepBack || !fr.yuv || fr.vf || fr.spilling) { this.release(fr); return; }
-      if (!this.back) this.dropBack();
-      const prev = this.back[this.back.length - 1];
-      if (prev && (fr.t <= prev.t + 1e-4 || fr.t - prev.t > 1.5 * f)) this.dropBack(); // a gap: start a new run
-      this.back.push(fr);
-      this.backBytes += fr.bytes;
-      const cap = this.budget() / 2;
-      while (this.back.length && this.backBytes > cap) this.backBytes -= this.back.shift().bytes;
+      if (this.playing || this.hidden || this.cfg.noStepBack || fr.spilling) { this.release(fr); return; }
+      if (fr.vf) {
+        // Remote Live transcode decodes to WebCodecs frames, which hold the decoder's surfaces: the frames just
+        // before a paused seek target are copied to memory (a few at a time) so that consecutive steps back are
+        // served from here, not from another seek and decode of the GOP over the link.
+        const near = this.remoteStream && !this.noSpill && this.seekTarget !== null
+          && this.seekTarget - fr.t <= 3 && (this.backSpilling || 0) < 4;
+        if (!near) { this.release(fr); return; }
+        const gen = this.gen;
+        const run = this.backGen || 0;
+        this.backSpilling = (this.backSpilling || 0) + 1;
+        this.toMemory(fr).then(() => {
+          if (gen === this.gen && run === (this.backGen || 0) && !this.playing && !this.hidden && fr.yuv && !fr.vf) this.insertBack(fr, f);
+          else this.release(fr);
+        }, () => { this.release(fr); }).finally(() => {
+          this.backSpilling = Math.max(0, (this.backSpilling || 1) - 1);
+        });
+        return;
+      }
+      if (!fr.yuv) { this.release(fr); return; }
+      this.insertBack(fr, f);
     }
 
-    dropBack() { this.back = []; this.backBytes = 0; }
+    dropBack() { this.back = []; this.backBytes = 0; this.backGen = (this.backGen || 0) + 1; }
 
     /** Before a paused step forward to frame time t: the shown frame and the decoded ones passed are kept for steps back. */
     keepPassed(t) {
-      if (this.vmode === 'webcodecs') return; // their frames hold the decoder's surfaces
       const sf = this.shownFrame;
-      const passed = this.queue.filter((x) => x.t < t - 1e-4);
-      if (sf && sf.t === this.shownT && sf.t < t - 1e-4 && !this.queue.includes(sf)) {
+      const passed = this.queue.filter((x) => x.t < t - 1e-4 && x.yuv && !x.vf); // (WebCodecs frames still on the GPU stay)
+      if (sf && sf.yuv && !sf.vf && sf.t === this.shownT && sf.t < t - 1e-4 && !this.queue.includes(sf)) {
         this.keptBufs.add(sf.yuv.data.buffer); // shown: else its buffer goes back to the decoder after the next upload
         passed.push(sf);
       }

@@ -63,8 +63,8 @@ function testTrim() {
   b.vNext = b.vAll.length;
   b.seekT = 39;
   b.trim();
-  // Last sent at 39.9 s: keep HISTORY_S (5 s) behind it, from the keyframe at or before 34.9 s = 34.0 s.
-  assert.equal(b.vAll[0].t, 34);
+  // Last sent at 39.9 s: keep HISTORY_S (8 s) behind it, from the keyframe at or before 31.9 s = 31.0 s.
+  assert.equal(b.vAll[0].t, 31);
   assert.ok(b.vAll[0].key, 'history starts on a keyframe');
   assert.equal(b.vNext, b.vAll.length, 'cursor moved with the cut');
 
@@ -73,12 +73,19 @@ function testTrim() {
   c.vNext = c.vAll.length;
   c.seekT = 30;
   c.trim();
-  assert.equal(c.vAll[0].t, 28, 'seek target 30 s keeps from 28.5 s: the keyframe at 28 s');
+  assert.equal(c.vAll[0].t, 27, 'seek target 30 s keeps from 27 s (SEEK_KEEP_S 3 s): the keyframe at 27 s');
   const d = filled(40, 10, {});
   d.vNext = d.vAll.length;
   d.seekT = 0;
   d.trim();
   assert.equal(d.vAll[0].t, 19, 'never more than 20 s behind the last sent (39.9 s): the keyframe at 19 s');
+
+  // A remote link keeps REMOTE_HISTORY_S (15 s): from the keyframe at or before 24.9 s = 24.0 s.
+  const r = filled(40, 10, { remote: true });
+  r.vNext = r.vAll.length;
+  r.seekT = 39;
+  r.trim();
+  assert.equal(r.vAll[0].t, 24, 'remote history: 15 s behind the last sent');
 
   // Nothing sent: nothing cut.
   const e = filled(40, 10, {});

@@ -39,7 +39,7 @@ const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
 const { EarlyProbeController } = require('./early-probe');
 const { registerCompare, setPickHook } = require('./compare'); // compare mode (src/compare.js)
-const { playerHtml } = require('./player-html'); // the player page's HTML, CSP and script order
+const { playerHtml, inlineAssetsFor, SCRIPTS: PLAYER_SCRIPTS } = require('./player-html'); // the player page's HTML, CSP and script order
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy(() => require('./rangecmd')); // A-B frame export and ffmpeg command
@@ -1326,10 +1326,15 @@ class Session {
         // Tests (VPE_LOG only): VPE_THUMB_STRIP=0 leaves out the background seek-bar strip (CPU measurements).
       },
     };
+    // The page's CSS is inlined; on remote hosts (every webview resource is an SSH round trip) so are the small scripts.
+    const { inlineCss, inlineScripts } = inlineAssetsFor(media.fsPath, {
+      cssFiles: ['player.css'], scriptFiles: PLAYER_SCRIPTS, inlineScripts: !!vscode.env.remoteName,
+    });
     return playerHtml({
       cspSource: w.cspSource, uri, base, loader: this.build.loader, nonce, cfg: cfgObject, sequence: !!this.sequence,
       framePort: this.framePort, transport: nativeTransport(), debug: !!logFile,
       canCompare: this.canCompare(), compareOpen: this.compareOpen(),
+      inlineCss, inlineScripts,
     });
   }
 

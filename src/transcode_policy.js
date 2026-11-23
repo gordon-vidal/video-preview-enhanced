@@ -12,6 +12,7 @@ const STALL_WINDOWS = 3;
 const STALL_SETTLE_MS = 1500;
 const REMOTE_H264_AUTO_BPS = 12e6; // 12 Mb/s: transcode high-bitrate H.264 over remote links
 const REMOTE_H264_DOWNSCALE_BPS = 6e6; // 6 Mb/s when downscaling > 1.3x over remote links
+const ZOOM_UPGRADE_THRESHOLD = 1.5; // Compare tiles upgrade toward the source's size when zoomed in this far
 
 /**
  * Resolves the effective Live transcode mode (`auto | always | off`),
@@ -103,9 +104,18 @@ function compareCapsKbps(tiles, maxBitrateMbps, split = true) {
   return tiles.map(() => Math.max(MIN_BITRATE_KBPS, Math.floor(share)));
 }
 
-/** Fit an encoded tile in source orientation, independently of the raw-frame transport budget. */
-function compareTileSize(video, maxHeight, { w, h, cols, rows, factor, actual } = {}, rotated = false) {
-  const scale = Math.max(0.1, Math.min(64, Number(factor) || 1));
+/**
+ * Fit an encoded tile in source orientation, independently of the raw-frame transport budget.
+ * `zoom` is the page's picture zoom: below ZOOM_UPGRADE_THRESHOLD a zoom in Fit mode keeps the cell's size (a small
+ * Ctrl+wheel tweak must not restart ffmpeg); from there the tile grows toward the source (capped at the video's
+ * height and maxHeight), and the shared bitrate cap (compareCapsKbps) still applies. Zooming back to Fit shrinks it.
+ */
+function compareTileSize(video, maxHeight, { w, h, cols, rows, factor, zoom, actual } = {}, rotated = false) {
+  const factorScale = Math.max(0.1, Math.min(64, Number(factor) || 1));
+  const z = Number(zoom) > 0 ? Math.max(0.1, Math.min(64, Number(zoom))) : 0;
+  let scale = factorScale;
+  if (z >= ZOOM_UPGRADE_THRESHOLD) scale = Math.max(factorScale, z);
+  else if (z > 1 && factorScale <= z + 0.05) scale = 1;
   const cellW = !actual && w > 0 ? w * scale / Math.max(1, Number(cols) || 1) : Infinity;
   const cellH = !actual && h > 0 ? h * scale / Math.max(1, Number(rows) || 1) : Infinity;
   const [width, height] = rotated ? [cellH, cellW] : [cellW, cellH];
@@ -205,6 +215,7 @@ module.exports = {
   STALL_FPS_RATIO,
   STALL_WINDOWS,
   STALL_SETTLE_MS,
+  ZOOM_UPGRADE_THRESHOLD,
   resolveSetting,
   isHdr,
   exceedsRawTransfer,

@@ -368,7 +368,7 @@ async function withFfmpeg(tools) {
     assert.ok(Math.abs(st.video[0].t - 150) < 1e-9 && st.video[0].key);
     assert.deepStrictEqual(st.seeked.at(-1), { type: 'seeked', gen: st.gen, t: 150 });
     assert.strictEqual(st.audio[0].t, 150);
-    // A step back before the stream's start: one restart 1 s earlier (sound from the target), then steps back from memory.
+    // A step back before the stream's start: one restart REMOTE_STEP_BACK_LEAD_S (2.5 s) earlier (sound from the target), then steps back from memory.
     await sleep(300);
     st.hold = false;
     st.holdAt = 157; // paused: the webview reads 7 s past the shown frame (small packets) before it stops asking
@@ -379,10 +379,12 @@ async function withFfmpeg(tools) {
       if (st.hold && !st.audio.length) st.rs.handle({ type: 'more', gen: st.gen, limit: st.limit });
     }
     assert.strictEqual(st.rs.spawns, spawns + 2);
-    assert.ok(Math.abs(st.video[0].t - 148.96) < 1e-9 && st.video[0].key, `stream from 1 s before: ${st.video[0].t}`);
+    const { REMOTE_STEP_BACK_LEAD_S } = require('../../src/stream');
+    const expectedStart = (Math.floor(149.97 * 25 + 1e-6) - Math.round(25 * REMOTE_STEP_BACK_LEAD_S)) / 25;
+    assert.ok(Math.abs(st.video[0].t - expectedStart) < 1e-9 && st.video[0].key, `stream from ${REMOTE_STEP_BACK_LEAD_S} s before: ${st.video[0].t}`);
     assert.ok(Math.abs(st.audio[0].t - 149.96) < 1e-9, `sound from the target: ${st.audio[0].t}`);
     await sleep(300);
-    for (const t of [149.93, 149.89, 149.5]) {
+    for (const t of [149.93, 149.89, 149.5, 148.0]) {
       st.seek(t);
       while (!st.video.length) await sleep(20);
       assert.ok(st.video[0].t <= t && st.video[0].key, `${t}: from a keyframe before`);

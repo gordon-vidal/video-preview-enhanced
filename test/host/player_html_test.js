@@ -3,7 +3,14 @@
 // the CSP (connect-src loopback ports per transport), the nonce on every script, the load order of the
 // scripts, the early decoder downloads and the config (goto, resume) that media/player.js reads.
 const assert = require('assert');
-const { playerHtml, frameSourcesOf, SCRIPTS } = require('../../src/player-html');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const {
+  playerHtml, frameSourcesOf, SCRIPTS,
+  INLINE_SCRIPT_MAX_BYTES, escapeStyle, escapeScript, inlineAssetsFor,
+} = require('../../src/player-html');
+const { compareHtml } = require('../../src/compare');
 
 const uri = (...p) => `vsc:/media/${p.join('/')}`;
 const input = (more = {}) => ({
@@ -32,7 +39,7 @@ const connect = (html) => csp(html).split('; ').find((d) => d.startsWith('connec
     "default-src 'none'",
     'img-src vsc-src: blob: data:',
     'media-src vsc-src: blob: data:',
-    'style-src vsc-src:',
+    "style-src 'nonce-NONCE123' vsc-src:",
     "script-src 'nonce-NONCE123' vsc-src: blob: 'wasm-unsafe-eval'",
     'worker-src blob:',
   ]);
@@ -77,6 +84,50 @@ const connect = (html) => csp(html).split('; ').find((d) => d.startsWith('connec
 
 { // The Compare button state reaches the bar.
   assert.notStrictEqual(playerHtml(input({ canCompare: true })), playerHtml(input({ canCompare: false })));
+}
+
+{ // Zero-FOUC inlined CSS and remote inlined small scripts keep CSP nonce and escape closing tags.
+  const html = playerHtml(input({
+    inlineCss: ['body{color:red}</style><script>x'],
+    inlineScripts: { 'modes.js': 'const s="</script><!--";' },
+  }));
+  assert.ok(!html.includes('<link rel="stylesheet"'), 'inlined CSS replaces link tag');
+  assert.ok(html.includes('<style nonce="NONCE123">body{color:red}<\\/style><script>x</style>'));
+  assert.ok(html.includes('<script nonce="NONCE123" data-src="modes.js">const s="<\\/script><\\!--";</script>'));
+  assert.strictEqual(escapeStyle('a</STYLE>b'), 'a<\\/style>b');
+  assert.strictEqual(escapeScript('a</SCRIPT><!--b'), 'a<\\/script><\\!--b');
+
+  // Compare HTML also allows nonce'd styles and inlines CSS + small scripts cleanly.
+  const cmp = compareHtml({
+    uri, cspSource: 'vsc-src:', nonce: 'CMPNONCE', cfg: { names: ['a.mp4', 'b.mp4'] }, frameSource: '',
+    inlineCss: ['body{margin:0}', '.cell{color:#fff}'],
+    inlineScripts: { 'timefmt.js': 'self.VpeTime={};' },
+  });
+  assert.ok(csp(cmp).includes("style-src 'nonce-CMPNONCE' vsc-src:"));
+  assert.ok(!cmp.includes('<link rel="stylesheet"'));
+  assert.ok(cmp.includes('<style nonce="CMPNONCE">body{margin:0}</style>'));
+  assert.ok(cmp.includes('<style nonce="CMPNONCE">.cell{color:#fff}</style>'));
+  assert.ok(cmp.includes('<script nonce="CMPNONCE" data-src="timefmt.js">self.VpeTime={};</script>'));
+
+  // inlineAssetsFor caches disk reads and only inlines scripts <= INLINE_SCRIPT_MAX_BYTES when enabled.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-inline-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'a.css'), 'body{background:#000}');
+    fs.writeFileSync(path.join(dir, 'small.js'), 'const a=1;');
+    fs.writeFileSync(path.join(dir, 'big.js'), 'x'.repeat(INLINE_SCRIPT_MAX_BYTES + 16));
+    const localAssets = inlineAssetsFor(dir, { cssFiles: ['a.css'], scriptFiles: ['small.js', 'big.js'], inlineScripts: false });
+    assert.deepStrictEqual(localAssets.inlineCss, ['body{background:#000}']);
+    assert.deepStrictEqual(localAssets.inlineScripts, {});
+    const remoteAssets = inlineAssetsFor(dir, { cssFiles: ['a.css'], scriptFiles: ['small.js', 'big.js'], inlineScripts: true });
+    assert.deepStrictEqual(remoteAssets.inlineCss, ['body{background:#000}']);
+    assert.deepStrictEqual(remoteAssets.inlineScripts, { 'small.js': 'const a=1;' });
+    // Cached in memory even if overwritten on disk.
+    fs.writeFileSync(path.join(dir, 'a.css'), 'changed');
+    const cached = inlineAssetsFor(dir, { cssFiles: ['a.css'], scriptFiles: [], inlineScripts: false });
+    assert.deepStrictEqual(cached.inlineCss, ['body{background:#000}']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 console.log('player_html_test: ok');

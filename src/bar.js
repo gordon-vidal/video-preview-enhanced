@@ -74,6 +74,7 @@ function barHtml({ compare = false, canCompare = true, compareOpen = false } = {
     <button id="setABtn" class="ib rng" title="Set range start (A)" aria-label="Set range start (A)" aria-pressed="false" aria-keyshortcuts="A">${rangeLabel('A')}</button>
     <button id="setBBtn" class="ib rng" title="Set range end (B)" aria-label="Set range end (B)" aria-pressed="false" aria-keyshortcuts="B">${rangeLabel('B')}</button>
     <span class="spacer"></span>
+    <button id="remoteLiveBtn" class="ib live-chip mono" title="Live transcode settings" aria-label="Live transcode settings" aria-expanded="false" aria-controls="panel" hidden></button>
 ${compare ? '    <button id="reorderBtn" class="ib" aria-controls="cells">Reorder</button>\n' : ''}
 ${compare ? '' : `    <button id="tracks" class="ib" title="Subtitles  C" aria-label="Subtitles" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="C" hidden><span class="ccline">${icons.cc}</span></button>
 `}
