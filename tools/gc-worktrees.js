@@ -416,16 +416,20 @@ function plan({ cwd, base, baseExplicit = base !== 'main' }) {
     const commonRaw = git(primary, ['rev-parse', '--git-common-dir']);
     const commonDir = path.isAbsolute(commonRaw) ? commonRaw : path.resolve(primary, commonRaw);
     const adminRoot = path.join(commonDir, 'worktrees');
-    if (fs.existsSync(adminRoot)) {
-      for (const entry of fs.readdirSync(adminRoot, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        const adminDir = path.join(adminRoot, entry.name);
-        try {
-          for (const branch of inProgressBranches(adminDir)) keptBranches.add(branch);
-        } catch (e) {
-          reservationScanIncomplete = true;
-          errors.push({ kind: 'worktree', label: adminDir, error: e instanceof Error ? e.message : String(e) });
-        }
+    let entries = [];
+    try {
+      entries = fs.readdirSync(adminRoot, { withFileTypes: true });
+    } catch (e) {
+      if (!e || /** @type {{ code?: string }} */ (e).code !== 'ENOENT') throw e;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const adminDir = path.join(adminRoot, entry.name);
+      try {
+        for (const branch of inProgressBranches(adminDir)) keptBranches.add(branch);
+      } catch (e) {
+        reservationScanIncomplete = true;
+        errors.push({ kind: 'worktree', label: adminDir, error: e instanceof Error ? e.message : String(e) });
       }
     }
   } catch (e) {
