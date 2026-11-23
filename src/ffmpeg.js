@@ -230,8 +230,10 @@ function isUrlInput(input) {
  * ffmpeg rejects `-tls_verify` with "Option not found" on plain http:// inputs) and the proxy (http.proxy),
  * only for http(s) URLs. ffmpeg's OpenSSL/GnuTLS builds do not check the server certificate by default
  * (Windows schannel builds do), so `-tls_verify 1` enforces verification on the initial HTTPS URL unless
- * the user turned http.proxyStrictSSL off (strictSSL false: a proxy that re-signs HTTPS traffic). Note:
- * ffmpeg's HLS/DASH demuxers do not copy `tls_verify` onto sub-requests to other origins.
+ * the user turned http.proxyStrictSSL off (strictSSL false: a proxy that re-signs HTTPS traffic). Caveats on
+ * OpenSSL/GnuTLS builds: (1) ffmpeg's HLS/DASH demuxers do not copy `tls_verify` onto sub-requests to other
+ * origins; (2) OpenSSL's `tls_open` checks the certificate chain for IP-literal URLs but skips peer-name
+ * matching on numeric IP hosts (the host's own initial inspect connection still checks IP SANs).
  */
 function inputArgs(input) {
   if (isUrlInput(input)) {

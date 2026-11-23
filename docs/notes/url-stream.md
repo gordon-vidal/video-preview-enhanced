@@ -180,8 +180,10 @@ and extending `HlsFile` instead. Done for steps 1-4 of that plan:
   certificate on the initial HTTPS URL is refused ("Peer certificate failed verification"), and plain http URLs decode
   normally. Caveats: (1) on OpenSSL/GnuTLS builds whose default is unverified, ffmpeg's HLS and DASH demuxers do not
   propagate `tls_verify` to sub-requests on other origins (segments/keys opened on fresh connections fall back to the
-  backend default); (2) verification needs the system CA store (a build without one fails on every HTTPS URL, and the
-  user sees ffmpeg's error) (`test/host/urlsource_abort_test.js`).
+  backend default); (2) on OpenSSL builds, `-tls_verify 1` validates the certificate chain for IP-literal HTTPS URLs
+  but skips peer-name matching for numeric IP hosts (the extension host's own initial request still checks IP SANs);
+  (3) verification needs the system CA store (a build without one fails on every HTTPS URL, and the user sees ffmpeg's
+  error) (`test/host/urlsource_abort_test.js`).
 - Cancellation: each page load has one `AbortSignal` (`pageAbort`); it goes through `inspect`, `hlsOpen`, the
   `HttpFile` / `HlsFile` reads (range, segment, key) and the subtitle fetches. An abort destroys the requests
   and rejects with an `AbortError`; the files also close themselves when the signal aborts (`linkSignal`). All
