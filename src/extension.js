@@ -37,6 +37,7 @@ const remoteff = lazy(() => require('./remoteff')); // ffmpeg downloaded on the 
 const proxy = lazy(() => require('./proxy'));
 const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
+const { EarlyProbeController } = require('./early-probe');
 const { registerCompare, setPickHook } = require('./compare'); // compare mode (src/compare.js)
 const { playerHtml } = require('./player-html'); // the player page's HTML, CSP and script order
 const { parseFragment } = require('../media/inspect.js');
@@ -305,9 +306,6 @@ function flushView() {
   const s = storedView();
   if (lastView && globalState && !(s && s.w === lastView.w && s.h === lastView.h)) globalState.update(LAST_VIEW_KEY, lastView);
 }
-
-/** How long an ffmpeg started before the page waits for it (Session.startNativeEarly). */
-const EARLY_NATIVE_MS = 15000;
 
 /** Proxy for downloads: http.proxy / HTTPS_PROXY tunnelled here; otherwise VS Code's own routing applies. */
 function proxyAgent() {
@@ -1154,11 +1152,38 @@ class Session {
   startEarly() {
     if (!this.panel.visible || this.earlyStarted || this.opened || this.disposed || this.loadGen) return;
     this.earlyStarted = true;
-    // ffmpeg's lookup and ffprobe run while the webview loads; open() takes the result (first page
-    // only). When they choose native ffmpeg, it starts too (startNativeEarly).
-    const early = this.sequence ? null : this.probeEarly();
-    this.early = early;
-    if (early) early.result.then((e) => this.startNativeEarly(early, e)).catch((e) => log(`[${this.name}] early native start: ${e && e.stack || e}`));
+    // ffmpeg's lookup and ffprobe run while the webview loads; open() claims the result (first page
+    // only). When they choose native ffmpeg, it starts too (src/early-probe.js).
+    const c = config();
+    this.early = null;
+    if (this.sequence || !FS_SCHEMES.has(this.uri.scheme) || !this.nativePossible(c) || c.transcode === 'always' || this.forceTranscode) return;
+    this.early = new EarlyProbeController(this.earlyDeps()).start(this.file);
+  }
+
+  /** What the early probe needs from this session (the race itself is src/early-probe.js). */
+  earlyDeps() {
+    return {
+      name: this.name, log, verbose: !!logFile,
+      stat: (file) => fs.promises.stat(file),
+      isAvi: (file) => /\.avi$/i.test(file),
+      scanAvi: (signal) => this.scanAvi(signal),
+      tools,
+      gpus: (t) => gpusForMethod(t, config()),
+      failedBefore: (st) => decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, st),
+      // Settings can change while it runs: asked again before each step.
+      eligible: () => { const c = config(); return this.nativePossible(c) && c.transcode !== 'always' && !this.forceTranscode; },
+      sniff: (file, st, signal) => (/\.(mkv|webm)$/i.test(file) ? sniffNativeMatroska : sniffNativeMp4)(file, st, signal),
+      probe: (t, file, signal) => ff.probe(t, file, signal),
+      decide: (t, pr, stat) => {
+        const c = config();
+        const d = this.decideNative(c, t, pr, stat);
+        const allowed = c.transcode !== 'always' && !this.forceTranscode && this.nativePossible(c);
+        if (d.use !== 'native') return { native: false, allowed };
+        return { native: true, allowed, method: d.method, key: nativeKey(t, pr, d, c, this.framePort), make: () => this.newNative(t, pr, d, c) };
+      },
+      mark: (what) => { this.t[what] = Date.now(); },
+      onAbort: (ctl) => { if (this.early === ctl) this.early = null; },
+    };
   }
 
   /** Reload when the file is rewritten (render or capture loops), keeping the position. */
@@ -1565,43 +1590,33 @@ class Session {
   }
 
   async open() {
-    const early = this.opened ? null : this.early;
+    const ctl = this.opened ? null : this.early;
     this.opened = true;
     // A reload while this runs (probe, AVI scan) starts a second open() for the new page.
     const gen = this.loadGen;
     const { signal } = this.pageAbort;
     // The page owns the claimed decoder while it waits for the probe.
-    const r = { nd: this.earlyNd };
-    const discard = () => {
-      const nd = r.nd;
-      r.nd = null;
-      if (nd) { log(`[${this.name}] native: early ffmpeg stopped: not used`); nd.dispose(); }
-    };
-    signal.addEventListener('abort', discard, { once: true });
-    this.earlyNd = null;
-    clearTimeout(this.earlyTimer);
+    const early = ctl ? ctl.claim(signal) : null;
     try {
-      return await this.openPage(gen, early, r, signal);
+      return await this.openPage(gen, early, signal);
     } finally {
-      if (early) early.abort.abort();
-      if (this.early === early) this.early = null;
-      signal.removeEventListener('abort', discard);
-      discard();
+      if (early) early.release();
+      if (this.early === ctl) this.early = null;
     }
   }
 
-  /** open() for page gen. early: the session's probe (or null); r.nd: the early native decoder (taken by clearing r.nd). */
-  async openPage(gen, early, r, signal) {
+  /** open() for page gen. early: the claimed early probe of the session (or null; src/early-probe.js). */
+  async openPage(gen, early, signal) {
     // git:, vscode-vfs: and other virtual files: fsPath would name a different file (git: the working tree).
     if (this.url) return this.openUrlPage(gen, signal);
     if (!FS_SCHEMES.has(this.uri.scheme)) return this.fail(new Error(`Can't play ${this.uri.scheme}: files`), 'Open the file from the Explorer instead.');
     offers.maybeOnboard().catch((e) => log(`onboarding failed: ${e && e.message || e}`));
     const stat = await fs.promises.stat(this.file);
     if (this.stale(gen)) return undefined;
-    if (early && !sameFile(await early.stat, stat)) early.abort.abort();
+    if (early && !sameFile(await early.stat, stat)) early.cancelProbe();
     if (this.stale(gen)) return undefined;
     if (/\.avi$/i.test(this.file)) {
-      const info = await (early && !early.abort.signal.aborted ? early.avi : this.scanAvi(signal));
+      const info = await (early && !early.aborted ? early.aviInfo : this.scanAvi(signal));
       if (this.stale(gen)) return undefined;
       // MJPEG (with PCM sound) plays straight from the file: each frame is a JPEG.
       if (this.playsMjpeg(info)) return this.startMjpeg(info, stat, signal);
@@ -1612,20 +1627,20 @@ class Session {
     const remote = vscode.env.remoteName;
     // Live transcode "always" (or forced for this session): stream before raw native ffmpeg, in any window.
     if (c.transcode === 'always' || this.forceTranscode) {
-      if (early) early.abort.abort();
+      if (early) early.cancelProbe();
       if (await this.tryRemoteStream(gen, stat, null, { forced: !!this.forceTranscode })) return undefined;
     }
     let probed = null; // ffmpeg and its probe of the file, for the stream below
     const nativePossible = this.nativePossible(c);
-    if (!nativePossible && early) early.abort.abort();
+    if (!nativePossible && early) early.cancelProbe();
     if (this.stale(gen)) return undefined;
     if (nativePossible) {
       // The probe started with the session (probeEarly), for the first page only and only for the
       // same file (size and date): a reload or a rewritten file is probed again.
       let e = null;
-      if (early && !early.abort.signal.aborted) {
+      if (early && !early.aborted) {
         log(`[${this.name}] waiting for early ffprobe`);
-        e = await early.result.catch(() => null);
+        e = await early.probed.catch(() => null);
       }
       if (this.stale(gen)) return undefined;
       const t = e ? e.t : await tools();
@@ -1650,17 +1665,9 @@ class Session {
           // The ffmpeg started before the page when it was started for this same decision; else one
           // starts now (still before the page's transport is known: NativeDecoder.open() restarts it
           // if the frame size changes).
-          let nd = r.nd;
-          r.nd = null;
-          const sameProbe = nd && (nd.pr === pr || (nd.guessed && e && e.pr === pr && sameFile(e.stat, stat)));
-          if (sameProbe && !nd.disposed && !nd.failed && nd.decided === nativeKey(t, pr, d, c, this.framePort) &&
-              (!nd.guessed || (nd.method === d.method && nd.pr.video?.pixFmt === pr.video?.pixFmt))) {
-            nd.pr = pr;
-            log(`[${this.name}] native: using the ffmpeg started before the page`);
-          } else {
-            if (nd) { log(`[${this.name}] native: early ffmpeg stopped: ${nd.failed ? 'it failed' : 'the decision changed'}`); nd.dispose(); }
-            nd = this.newNative(t, pr, d, c);
-          }
+          let nd = early && early.claimNative(nativeKey(t, pr, d, c, this.framePort), { pr, method: d.method, stat });
+          if (nd) log(`[${this.name}] native: using the ffmpeg started before the page`);
+          else nd = this.newNative(t, pr, d, c);
           nd.attach({
             post: (msg) => { if (!signal.aborted) this.post({ type: 'nd', m: msg }); },
             postRaw: (msg) => { if (!signal.aborted) this.post(msg); },
@@ -1919,44 +1926,6 @@ class Session {
     return c.decoder !== 'builtin' && !this.fullRes && !this.noRemoteStream && vscode.workspace.isTrusted && nativeAllowedHere();
   }
 
-  /** First visible page only: ffmpeg lookup and ffprobe overlap the webview's load. */
-  probeEarly() {
-    const c = config();
-    if (!FS_SCHEMES.has(this.uri.scheme) || !this.nativePossible(c) || c.transcode === 'always' || this.forceTranscode) return null;
-    const abort = new AbortController();
-    const stat = fs.promises.stat(this.file).catch(() => null);
-    // The page reuses this scan, unless the file changed. Only probe AVI after ruling out the frame player.
-    const scan = /\.avi$/i.test(this.file) ? stat.then((st) => st && !abort.signal.aborted ? this.scanAvi(abort.signal) : null) : null;
-    const result = Promise.all([stat, scan, scan ? null : tools()]).then(async ([st, info, found]) => {
-      if (abort.signal.aborted || !st || (info && info.isMjpeg)) return null;
-      if (decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, st)) return null;
-      const t = scan ? await tools() : found;
-      const current = config();
-      if (abort.signal.aborted || !this.nativePossible(current) || current.transcode === 'always' || this.forceTranscode) return null;
-      if (!t) return { t };
-      let probing = true;
-      const gpus = gpusForMethod(t, current); // the method depends on them before any GPU test (hardware.detect, no decoding)
-      if (!this.opened) {
-        // The header is tentative. Run both reads at once so a slow sniff never delays ffprobe.
-        const sniff = /\.(mkv|webm)$/i.test(this.file) ? sniffNativeMatroska : sniffNativeMp4;
-        Promise.all([sniff(this.file, st, abort.signal), gpus]).then(([pr]) => {
-          if (pr && probing && !this.opened && !abort.signal.aborted) this.tryStartNativeEarly(t, pr, st, true);
-        }).catch((e) => log(`[${this.name}] early native start: ${e && e.stack || e}`));
-      }
-      this.t.probeStart = Date.now();
-      if (logFile) log(`[${this.name}] early ffprobe started`);
-      try {
-        const [pr] = await Promise.all([ff.probe(t, this.file, abort.signal), gpus]);
-        if (abort.signal.aborted) return null;
-        this.t.probeDone = Date.now();
-        return { t, pr, stat: st };
-      }
-      catch (err) { return abort.signal.aborted ? null : { t, err }; }
-      finally { probing = false; }
-    });
-    return { abort, stat, avi: scan, result };
-  }
-
   /** decide.decide() for native ffmpeg on this file (open() and the early start ask the same). */
   decideNative(c, t, pr, stat) {
     const d = decide.decide({
@@ -1987,53 +1956,11 @@ class Session {
     return nd;
   }
 
-  /**
-   * Native ffmpeg started as soon as the early probe chooses it, before the page is ready (its
-   * spawn and first decode, 300-450 ms at 4K, overlap the page load). open() uses it when it
-   * decides the same; anything else (another decoder, a reload, the file changed, the tab
-   * closed, no page within EARLY_NATIVE_MS) stops it.
-   */
-  async startNativeEarly(p, e) {
-    const usable = () => !this.disposed && !this.opened && this.early === p && (!this.earlyNd || this.earlyNd.guessed);
-    if (!e || !e.t || !e.pr || e.err || !e.stat || !usable()) return;
-    const stat = await fs.promises.stat(this.file).catch(() => null);
-    if (!usable() || !sameFile(e.stat, stat)) return;
-    // A decoder started from the header guess: keep it when the probe agrees, else replace it now
-    // instead of letting the wrong one run until the page opens (review 2026-11-19-5 #1).
-    const nd = this.earlyNd;
-    if (nd) {
-      const c = config();
-      const d = this.decideNative(c, e.t, e.pr, stat);
-      if (d.use === 'native' && !nd.disposed && !nd.failed && nd.decided === nativeKey(e.t, e.pr, d, c, this.framePort) &&
-          nd.method === d.method && nd.pr.video?.pixFmt === e.pr.video?.pixFmt) return;
-      this.earlyNd = null;
-      clearTimeout(this.earlyTimer);
-      log(`[${this.name}] native: early ffmpeg stopped: the probe disagrees with the header guess`);
-      nd.dispose();
-    }
-    this.tryStartNativeEarly(e.t, e.pr, stat, false);
-  }
-
-  tryStartNativeEarly(t, pr, stat, guessed) {
-    const c = config();
-    // Live transcode "always" (or forced) streams first; pixel tools want the built-in decoder.
-    if (c.transcode === 'always' || this.forceTranscode || !this.nativePossible(c)) return;
-    const d = this.decideNative(c, t, pr, stat);
-    if (d.use !== 'native') return;
-    this.earlyNd = this.newNative(t, pr, d, c);
-    this.earlyNd.guessed = guessed;
-    if (guessed && logFile) log(`[${this.name}] native: guessed ${pr.video.codec} from the header`);
-    this.earlyTimer = setTimeout(() => this.dropEarly(`no page within ${EARLY_NATIVE_MS / 1000} s`), EARLY_NATIVE_MS);
-  }
-
   /** Forgets the session's early probe and stops the early ffmpeg (why: logged). */
   dropEarly(why) {
-    if (this.early) this.early.abort.abort();
+    const early = this.early;
     this.early = null;
-    clearTimeout(this.earlyTimer);
-    const nd = this.earlyNd;
-    this.earlyNd = null;
-    if (nd) { log(`[${this.name}] native: early ffmpeg stopped: ${why}`); nd.dispose(); }
+    if (early) early.abort(why);
   }
 
   /** Tests: the host's part of the start-up timeline (epoch ms), once per page. */

@@ -25,6 +25,7 @@
     "src/associations.js",
     "src/framelink.js",
     "src/debug-cmd.js",
+    "src/early-probe.js",
     "src/thumbhost.js",
     "media/block-cache.js",
     "media/gl-renderer.js",

@@ -77,7 +77,7 @@ What each suspect turned out to be:
    the 12 player scripts) and the **WebAssembly decoder starts while the host decides**
    (`engine.preload()` after `ready`; the player takes it over with the messages it sent so far).
    Native ffmpeg and the MJPEG frame player drop it. libav.js fetch 30–100 → 0–30 ms.
-2. **ffmpeg lookup and ffprobe start with the session** (`Session.probeEarly`), in parallel with
+2. **ffmpeg lookup and ffprobe start with the session** (`EarlyProbeController`, src/early-probe.js), in parallel with
    the webview's creation and page load; `open()` takes the result for the first page (a reload
    probes again). Host decision on path C: 48–137 → 1–24 ms (up to 75–150 ms when ffprobe is slow
    on a loaded machine: then it outlasts the page load).
@@ -111,7 +111,7 @@ Before, ffmpeg was spawned only after the page's `ready`, the host's decision, t
 and the frame server negotiation (the transport decides the frame size): 31–52 ms after the
 decision, and its own start (spawn, demux, first 4K frame) took 340–400 ms after that.
 
-Now (`Session.startNativeEarly`, `NativeDecoder.prestart` / `attach`):
+Now (`EarlyProbeController`, `NativeDecoder.prestart` / `attach`):
 
 - As soon as the early ffprobe is back, the host makes the same decision `open()` will make
   (`decideNative`) and, when it is native ffmpeg, spawns it at the frame server's size (the

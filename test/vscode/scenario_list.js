@@ -9,7 +9,7 @@
 
 const PLAYER = ['media/player.js', 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/frame-player.js', 'media/player.css', 'src/bar.js'];
 const ENGINE = ['media/engine.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
-const HOST = ['src/extension.js', 'src/player-html.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
+const HOST = ['src/extension.js', 'src/early-probe.js', 'src/player-html.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/nativepts.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
 const COMPARE = [
   'src/compare.js', 'src/comparemenu.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js',
