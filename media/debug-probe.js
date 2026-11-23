@@ -122,8 +122,9 @@
    * Test hook (debug only): WebCodecs support matrix in this webview, here and in a worker.
    * @param {any} win
    * @param {any} doc
+   * @param {Set<() => void>} [activeCleanups]
    */
-  async function wcProbe(win, doc) {
+  async function wcProbe(win, doc, activeCleanups) {
     const C = {
       h264: ['avc1.640033', 3840, 2160], hevc8: ['hvc1.1.6.L153.B0', 3840, 2160], hevc10: ['hvc1.2.4.L153.B0', 3840, 2160],
       vp8: ['vp8', 1920, 1080], vp9: ['vp09.00.51.08', 3840, 2160], vp9_10: ['vp09.02.51.10', 3840, 2160],
@@ -160,10 +161,34 @@
     const page = await run();
     /** @type {any} */
     let worker = null;
+    /** @type {string | null} */
+    let url = null;
+    const UrlApi = (win && win.URL) || URL;
+    const WorkerCtor = (win && win.Worker) || Worker;
+    const BlobCtor = (win && win.Blob) || Blob;
     try {
-      const url = URL.createObjectURL(new Blob([`${src};run().then((r)=>postMessage(r),(e)=>postMessage(String(e)));`], { type: 'text/javascript' }));
-      worker = await new Promise((res) => { const w = new Worker(url); w.onmessage = (e) => { res(e.data); w.terminate(); }; w.onerror = (e) => res(`worker error ${e.message}`); });
-    } catch (e) { worker = `no worker: ${e}`; }
+      url = UrlApi.createObjectURL(new BlobCtor([`${src};run().then((r)=>postMessage(r),(e)=>postMessage(String(e)));`], { type: 'text/javascript' }));
+      worker = await new Promise((res) => {
+        const w = new WorkerCtor(url);
+        let settled = false;
+        /** @param {any} val */
+        const finish = (val) => {
+          if (settled) return;
+          settled = true;
+          if (activeCleanups) activeCleanups.delete(cancel);
+          try { w.terminate(); } catch { /* ignore */ }
+          if (url) { try { UrlApi.revokeObjectURL(url); } catch { /* ignore */ } url = null; }
+          res(val);
+        };
+        const cancel = () => finish('cancelled');
+        if (activeCleanups) activeCleanups.add(cancel);
+        w.onmessage = (/** @type {any} */ e) => finish(e.data);
+        w.onerror = (/** @type {any} */ e) => finish(`worker error ${e && e.message || e}`);
+      });
+    } catch (e) {
+      if (url) { try { UrlApi.revokeObjectURL(url); } catch { /* ignore */ } url = null; }
+      worker = `no worker: ${e}`;
+    }
     // <video>/MSE (not used by the player; shows what the webview's media stack has).
     const T = {
       h264: 'video/mp4; codecs="avc1.640028"', hevc: 'video/mp4; codecs="hvc1.1.6.L120.90"', av1: 'video/mp4; codecs="av01.0.08M.08"',
@@ -206,6 +231,8 @@
     /** @type {any} */
     let rafId = null;
     const pendingTimers = new Set();
+    /** @type {Set<() => void>} */
+    const activeProbeCleanups = new Set();
 
     const state = {
       samples: 0,
@@ -224,7 +251,7 @@
       pageErrors: /** @type {string[]} */ ([]),
     };
 
-    /** @type {{ player: any, gen: any, at: number, t: number, frame: number, shownCount: number } | null} */
+    /** @type {{ player: any, gen: any, at: number, t: number, frame: number, shownCount: number, reanchorCount: number } | null} */
     let prev = null;
     /** @type {any} */
     let trackedPlayer = null;
@@ -316,8 +343,8 @@
         prev = null;
       } else if (p.gen !== trackedGen) {
         trackedGen = p.gen;
-        // In LibavPlayer, shownT still holds the pre-seek picture until shownCount increments for the new gen.
-        awaitingGenFrame = isEngine && shownCount >= 0 && shownCount === genBaseShownCount;
+        // Both LibavPlayer (shownT) and FramePlayer (shown) hold the pre-seek picture until shownCount advances.
+        awaitingGenFrame = shownCount >= 0 && shownCount === genBaseShownCount;
         genBaseShownCount = shownCount;
         prev = null;
       }
@@ -328,12 +355,14 @@
         return;
       }
       const t = Number(p.currentTime());
-      const frame = Number(p.currentFrame());
-      if (!Number.isFinite(t) || !Number.isFinite(frame)) return;
+      // For FramePlayer, sample the actually drawn frame (`shown`) rather than clock-derived `currentFrame()`.
+      const frame = !isEngine && typeof p.shown === 'number' ? p.shown : Number(p.currentFrame());
+      const reanchorCount = typeof p.reanchorCount === 'number' ? p.reanchorCount : 0;
+      if (!Number.isFinite(t) || !Number.isFinite(frame) || frame < 0) return;
       state.samples++;
       if (!prev) {
         state.segments++;
-        prev = { player: p, gen: p.gen, at: now, t, frame, shownCount };
+        prev = { player: p, gen: p.gen, at: now, t, frame, shownCount, reanchorCount };
         return;
       }
       const dtMs = Math.max(0, now - prev.at);
@@ -351,15 +380,15 @@
         }
       }
       const dt = t - prev.t;
-      const behind = !!(p.behindUntil && p.behindUntil >= now);
-      const backTol = behind ? BACKWARD_BEHIND_TOLERANCE_SEC : BACKWARD_CLOCK_TOLERANCE_SEC;
+      const reanchored = reanchorCount !== prev.reanchorCount;
+      const backTol = reanchored ? BACKWARD_BEHIND_TOLERANCE_SEC : BACKWARD_CLOCK_TOLERANCE_SEC;
       if (dt < -1e-6 && -dt > state.maxBackwardSec) state.maxBackwardSec = -dt;
       if (dt < -backTol) state.backwardClockJumps++;
       const rate = Number(p.rate) > 0 ? Number(p.rate) : 1;
       const expectedMax = (dtMs / 1000) * rate + FORWARD_CLOCK_TOLERANCE_SEC;
       if (dt > state.maxClockJumpSec) state.maxClockJumpSec = dt;
       if (dt > expectedMax) state.unexpectedClockJumps++;
-      prev = { player: p, gen: p.gen, at: now, t, frame, shownCount };
+      prev = { player: p, gen: p.gen, at: now, t, frame, shownCount, reanchorCount };
     }
 
     function wake() {
@@ -660,7 +689,12 @@
             `frame=${p.currentFrame() + 1} t=${p.currentTime().toFixed(3)} playing=${p.isPlaying()}`);
         }, m.delay || 300);
       }
-      if (m.action === 'wcprobe') wcProbe(win, doc).then((r) => log(`wcprobe ${JSON.stringify(r)}`), (err) => log(`wcprobe failed: ${err}`));
+      if (m.action === 'wcprobe') {
+        wcProbe(win, doc, activeProbeCleanups).then(
+          (r) => { if (!disposed) log(`wcprobe ${JSON.stringify(r)}`); },
+          (err) => { if (!disposed) log(`wcprobe failed: ${err}`); },
+        );
+      }
       if (m.action === 'report') {
         scheduleTimeout(() => {
           const p = getPlayer();
@@ -722,6 +756,8 @@
       clearIntervalFn(statusTimer);
       for (const id of pendingTimers) clearTimeoutFn(id);
       pendingTimers.clear();
+      for (const cancel of Array.from(activeProbeCleanups)) cancel();
+      activeProbeCleanups.clear();
       prev = null;
       if (win.removeEventListener) {
         win.removeEventListener('message', onMessage);

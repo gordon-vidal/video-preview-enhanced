@@ -170,6 +170,7 @@
       /** @type {Map<number, ImageBitmap>} */ this.bitmaps = new Map();
       /** @type {Set<number>} */ this.inflight = new Set();
       this.shown = -1;
+      this.shownCount = 0;
       this.ctx = canvas.getContext('2d');
       if (meta.width) { canvas.width = meta.width; canvas.height = meta.height; }
       canvas.hidden = false;
@@ -248,6 +249,7 @@
           }
           this.ctx.drawImage(bmp, 0, 0);
           this.shown = target;
+          this.shownCount++;
         }
       }
     }

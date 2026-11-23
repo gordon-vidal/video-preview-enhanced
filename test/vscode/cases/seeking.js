@@ -62,7 +62,9 @@ module.exports = [{
           // Near the target: no further than the wall time since the seek allows (correct under any load).
           const wall = (Date.now() - t0) / 1000;
           ok(s.t < 1.0 + wall + 0.3, `seek while playing went to ${s.t}, ${wall.toFixed(2)} s after asking for 1.0`);
-          await P.checkTelemetry(ok, `seek/${name} continuity`, { minSamples: 1 });
+          await P.telemetry({ reset: true });
+          await P.waitState((x) => x.telemetry && x.telemetry.samples >= 2 && x.telemetry.activeMs > 0, { timeout: 5000, what: 'post-seek continuity samples' });
+          await P.checkTelemetry(ok, `seek/${name} continuity`, { minSamples: 2, minActiveMs: 0.1 });
         });
 
         // Reuse the open s_h264.mp4 editor for edges and A-B loop instead of opening it three times.

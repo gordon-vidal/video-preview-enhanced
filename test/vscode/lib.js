@@ -106,12 +106,13 @@ class Player {
    * - max single-tick frame gap within `maxFrameGap` (default 45 frames: generous enough for hidden-desktop
    *   Windows runner scheduling jitter, while catching runaway frame-skipping bugs)
    */
-  async checkTelemetry(ok, label = this.name, { minSamples = 2, maxFrameGap = 45, reset = false } = {}) {
+  async checkTelemetry(ok, label = this.name, { minSamples = 2, minActiveMs = 0, maxFrameGap = 45, reset = false } = {}) {
     const tm = await this.telemetry({ reset });
     const pe = pageError(this.vs, this.fromMark, this.name);
     const errs = [...(pe ? [pe] : []), ...(tm.pageErrors || [])];
     ok(errs.length === 0, `${label}: page errors: ${errs.join('; ')}`);
     ok(tm.samples >= minSamples, `${label}: expected >= ${minSamples} passive 60Hz samples, got ${tm.samples}`);
+    if (minActiveMs > 0) ok(tm.activeMs >= minActiveMs, `${label}: expected >= ${minActiveMs} ms active continuity sampling, got ${tm.activeMs} ms`);
     ok(tm.backwardFrames === 0, `${label}: ${tm.backwardFrames} backward frame jumps during playback`);
     ok(tm.backwardClockJumps === 0, `${label}: ${tm.backwardClockJumps} backward clock jumps (max -${Number(tm.maxBackwardSec || 0).toFixed(3)} s)`);
     ok(tm.unexpectedClockJumps === 0, `${label}: ${tm.unexpectedClockJumps} unexpected forward clock jumps (max +${Number(tm.maxClockJumpSec || 0).toFixed(3)} s)`);

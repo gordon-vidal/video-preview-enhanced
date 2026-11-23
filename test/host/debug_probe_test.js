@@ -422,6 +422,82 @@ function createHarness(initialPlayer = null) {
   assert.equal(tm.backwardClockJumps, 0);
   assert.equal(tm.unexpectedClockJumps, 0);
 
+  // Timer-clock re-anchor allowance: only the single interval where reanchorCount increments gets the 300ms tolerance;
+  // setting behindUntil alone (late-frame flag during audio-driven playback) must NOT hide a 200ms backward jump.
+  h.probe.resetTelemetry();
+  p.reanchorCount = 0;
+  p.behindUntil = 0;
+  t = 1.5;
+  frame = 45;
+  shownCount = 70;
+  h.stepRaf(16.67); // baseline
+  // Intentional re-anchor (e.g. waitPic / every-frame mode): -0.2s allowed on this single sample interval.
+  p.reanchorCount = 1;
+  t = 1.3;
+  h.stepRaf(16.67);
+  tm = h.probe.telemetry();
+  assert.equal(tm.backwardClockJumps, 0, 'intentional timer-clock re-anchor within 300ms is allowed');
+  // Late-frame behindUntil flag ONLY (no reanchorCount increment): -0.2s must be caught!
+  p.behindUntil = h.now + 3000;
+  t = 1.1;
+  h.stepRaf(16.67);
+  tm = h.probe.telemetry();
+  assert.equal(tm.backwardClockJumps, 1, 'late-frame behindUntil without re-anchor must not hide a 200ms backward jump');
+
+  // Bitmap FramePlayer (no .queue): samples actually drawn `shown` rather than clock-derived `currentFrame()`,
+  // so a cache miss followed by a multi-frame jump is detected as a frame gap, and generation changes wait for `shownCount`.
+  let fpPlaying = true;
+  let fpT = 0;
+  let fpGen = 0;
+  let fpShown = 0;
+  let fpShownCount = 1;
+  const fp = {
+    fps: 30,
+    n: 90,
+    rate: 1,
+    bitmaps: new Map(),
+    get gen() { return fpGen; },
+    get shown() { return fpShown; },
+    get shownCount() { return fpShownCount; },
+    isPlaying: () => fpPlaying,
+    currentTime: () => fpT,
+    currentFrame: () => Math.floor(fpT * 30),
+    play: () => { fpPlaying = true; },
+    pause: () => { fpPlaying = false; },
+  };
+  h.setPlayer(fp);
+  h.probe.resetTelemetry();
+  h.stepRaf(16.67); // baseline: shown=0
+  // Clock advances through frames 1..4 while canvas stays frozen on 0 (cache miss).
+  for (let k = 1; k <= 4; k++) {
+    fpT = k / 30;
+    h.stepRaf(33.33);
+  }
+  // Now frame 5 arrives and draws: canvas jumps 0 -> 5 (4 dropped frames).
+  fpT = 5 / 30;
+  fpShown = 5;
+  fpShownCount++;
+  h.stepRaf(33.33);
+  tm = h.probe.telemetry();
+  assert.equal(tm.frameGaps, 1, 'bitmap player cache-miss skip is detected via shown');
+  assert.equal(tm.droppedFrames, 4);
+  assert.equal(tm.maxFrameGap, 4);
+  // Generation change on bitmap player waits for first post-seek draw (shownCount increment) before comparing.
+  fpGen++;
+  fpT = 0.03;
+  h.stepRaf(16.67); // lingering pre-seek shown=5, shownCount unchanged
+  fpShown = 1;
+  fpShownCount++;
+  h.stepRaf(16.67); // first post-seek draw: new baseline at shown=1
+  fpT = 0.06;
+  fpShown = 2;
+  fpShownCount++;
+  h.stepRaf(33.33);
+  tm = h.probe.telemetry();
+  assert.equal(tm.backwardFrames, 0, 'bitmap player gen change waits for first post-seek draw');
+  assert.equal(tm.segments, 2);
+
+  h.setPlayer(p);
   // Pausing stops the RAF loop cleanly on the next tick.
   h.sendDebug({ action: 'pause' });
   h.stepRaf(16.67);

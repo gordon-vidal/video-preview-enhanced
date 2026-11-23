@@ -2009,6 +2009,7 @@ function createEngine(env) {
         && this.seekTarget === null && this.shownT !== null && !this.hidden && now > this.shownT + (this.waitPic ? 1 / (this.fps || 30) : 0.25)) {
         if (!this.waitPic) { this.waitPic = true; if (!this.slowWarned) log(`waiting for the picture at ${this.rel(this.shownT).toFixed(2)} s (no sound drives the clock)`); }
         this.behindUntil = performance.now() + 3000;
+        this.reanchorCount = (this.reanchorCount || 0) + 1;
         this.anchor(this.shownT + 1 / (this.fps || 30));
         now = this.now();
       } else if (this.queue.length) this.waitPic = false;
@@ -2063,6 +2064,7 @@ function createEngine(env) {
           if (this.whenSlow === 'every' || this.autoEvery) {
             // Show every frame: the clock waits for the picture.
             this.stopAudio();
+            this.reanchorCount = (this.reanchorCount || 0) + 1;
             this.anchor(show.t);
             now = show.t;
           } else if (!this.remoteStream && now - show.t > 0.6 && !this.skipping && !(this.nonRef && performance.now() - this.nonRefAt < 2000)) {
