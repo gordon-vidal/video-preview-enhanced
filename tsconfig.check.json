@@ -21,6 +21,7 @@
     "src/compare.js",
     "src/player-html.js",
     "src/stream-adapt.js",
+    "src/stream-buffer.js",
     "src/associations.js",
     "src/framelink.js",
     "src/debug-cmd.js",
@@ -34,6 +35,7 @@
     "media/debug-probe.js",
     "media/compare-metrics.js",
     "media/compare-debug.js",
+    "media/frame-player.js",
     "media/player.js"
   ],
   "exclude": ["media/libav-vpe"]
