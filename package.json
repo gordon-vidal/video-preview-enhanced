@@ -104,6 +104,21 @@
     ],
     "commands": [
       {
+        "command": "videoPreviewEnhanced.openVideoFile",
+        "title": "Open Video File…",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.playToSide",
+        "title": "Play to the Side",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.playInNewWindow",
+        "title": "Play in New Window",
+        "category": "Video Preview"
+      },
+      {
         "command": "videoPreviewEnhanced.openWith",
         "title": "Open with Video Preview Enhanced",
         "category": "Video Preview"
@@ -214,6 +229,16 @@
     "menus": {
       "explorer/context": [
         {
+          "command": "videoPreviewEnhanced.playToSide",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
+          "group": "navigation@21"
+        },
+        {
+          "command": "videoPreviewEnhanced.playInNewWindow",
+          "when": "resourceScheme == file && !explorerResourceIsFolder && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
+          "group": "navigation@22"
+        },
+        {
           "command": "videoPreviewEnhanced.openWith",
           "when": "resourceExtname =~ /^\\.(mp4|webm)$/i",
           "group": "navigation@20"
@@ -230,6 +255,16 @@
         }
       ],
       "editor/title/context": [
+        {
+          "command": "videoPreviewEnhanced.playToSide",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
+          "group": "navigation@21"
+        },
+        {
+          "command": "videoPreviewEnhanced.playInNewWindow",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i",
+          "group": "navigation@22"
+        },
         {
           "command": "videoPreviewEnhanced.startCompare",
           "when": "!videoPreviewEnhanced.compareOpen && (resourceExtname =~ /^\\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i)",

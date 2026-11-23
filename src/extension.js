@@ -11,6 +11,9 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { serveBlock, readFileBlock } = require('./read-block');
+const {
+  VIDEO_EXT, MOVE_TO_NEW_WINDOW, videoPickerOptions, isLocalFile, videoColumn, localVideoTarget, playerViewType,
+} = require('./open-video');
 // Modules a feature needs (URLs, ffmpeg setup and download, A-B export, AVI, the remote stream) load on first use:
 // a window start pays only for what it runs. The proxy forwards property reads to the real module.
 const lazy = (load) => { let m; return new Proxy({}, { get: (_, k) => (m || (m = load()))[k] }); };
@@ -68,7 +71,6 @@ const POSITIONS_KEY = 'videoPreviewEnhanced.positions';
 // Schemes whose fsPath is the real file for this (workspace) extension host: local
 // files, and files on the remote machine in SSH/WSL/container windows.
 const FS_SCHEMES = new Set(['file', 'vscode-remote']);
-const VIDEO_EXT = /\.(avi|mkv|mov|wmv|flv|mpe?g|m2ts|mts|3gp|ogv|m4v|vob|divx|asf|mxf|y4m|mp4|webm)$/i;
 // Test logging and the debug command hook: only the VPE_LOG env var turns them on.
 // Never a setting: a workspace could point it at any file and run commands.
 const logFile = process.env.VPE_LOG || '';
@@ -959,18 +961,49 @@ async function openUrl(context, url, where = 'active') {
   const c = urlsource.checkUrl(url);
   if (c.error) { vscode.window.showWarningMessage(`Video Preview: ${c.error}`); return undefined; }
   await urlsource.rememberUrl(globalState, c.url);
-  const column = where === 'side' ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active;
+  const column = videoColumn(where, vscode.ViewColumn);
   const panel = vscode.window.createWebviewPanel(URL_VIEW_TYPE, urlsource.displayName(c.url), { viewColumn: column, preserveFocus: false }, { retainContextWhenHidden: true, enableFindWidget: false });
   panel.iconPath = new vscode.ThemeIcon('globe');
   const sess = new Session(context, { url: c.url }, panel);
   if (where === 'window') {
     // The new panel is the active editor: move it (the webview moves with its context kept).
-    try { await vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow'); }
+    try { await vscode.commands.executeCommand(MOVE_TO_NEW_WINDOW); }
     catch (e) { log(`open URL in a new window: ${e && e.message || e}`); }
   }
   log(`[${sess.name}] URL tab opened (${where})`);
   await sess.show();
   return sess;
+}
+
+/** @param {import('./open-video').OpenTarget} where @param {unknown} [clicked] */
+async function openLocalVideo(where, clicked) {
+  const activeInput = () => vscode.window.tabGroups?.activeTabGroup.activeTab?.input;
+  let moving = false;
+  try {
+    const target = localVideoTarget(where, clicked, activeInput()?.uri ?? vscode.window.activeTextEditor?.document.uri)
+      ?? (await vscode.window.showOpenDialog(videoPickerOptions()))?.[0];
+    if (target === undefined) return;
+    if (!isLocalFile(target)) {
+      void vscode.window.showWarningMessage('Video Preview: choose a local video file.');
+      return;
+    }
+    const viewType = playerViewType(target);
+    await vscode.commands.executeCommand('vscode.openWith', target, viewType, {
+      viewColumn: videoColumn(where, vscode.ViewColumn), preview: false, preserveFocus: false,
+    });
+    if (where === 'window') {
+      moving = true;
+      // The move command acts on the active tab. Focus can change while openWith is running.
+      const input = activeInput();
+      if (input?.viewType !== viewType || input.uri?.toString() !== target.toString()) {
+        throw new Error('the video tab is no longer active');
+      }
+      await vscode.commands.executeCommand(MOVE_TO_NEW_WINDOW);
+    }
+  } catch (e) {
+    const action = moving ? 'open the video in a new window' : 'open the video file';
+    void vscode.window.showErrorMessage(`Video Preview: could not ${action}: ${e?.message || e}`);
+  }
 }
 
 function activate(context) {
@@ -1014,6 +1047,9 @@ function activate(context) {
       const target = uri || (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri);
       if (target) vscode.commands.executeCommand('vscode.openWith', target, 'videoPreviewEnhanced.player');
     }),
+    vscode.commands.registerCommand('videoPreviewEnhanced.openVideoFile', () => openLocalVideo('active')),
+    vscode.commands.registerCommand('videoPreviewEnhanced.playToSide', (uri) => openLocalVideo('side', uri)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.playInNewWindow', (uri) => openLocalVideo('window', uri)),
     vscode.commands.registerCommand('videoPreviewEnhanced.playSequence', async (uri) => {
       let target = uri;
       if (!target) {
@@ -1119,7 +1155,7 @@ function activate(context) {
     openPlayer: async (uri, t, viewColumn) => {
       const key = uri.with({ fragment: '' }).toString();
       if (t > 0) pendingGoto.set(key, { g: { t }, until: Date.now() + PENDING_GOTO_MS });
-      const viewType = /\.(mp4|webm)$/i.test(uri.path) ? 'videoPreviewEnhanced.playerOptional' : 'videoPreviewEnhanced.player';
+      const viewType = playerViewType(uri);
       await vscode.commands.executeCommand('vscode.openWith', uri, viewType, { viewColumn, preview: false });
     },
     engineCfg: (w) => {

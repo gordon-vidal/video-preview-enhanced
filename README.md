@@ -65,7 +65,7 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 
 ## Quick start
 
-1. **Play:** Double-click a video in the VS Code Explorer.
+1. **Play:** Double-click a video in the VS Code Explorer or choose **Video Preview: Open Video File…** from the Command Palette.
 2. **Step:** Pause and press `,` or `.`. Press `?` for all shortcuts.
 3. **Compare:** Click **Compare** in the player's bar, or right-click a video, folder or selection and choose **Start Compare**.
 4. **Play heavier footage:** Run **Video Preview: Set Up Optional ffmpeg** from the Command Palette.

@@ -11,6 +11,8 @@ Most palette commands are under **Video Preview**. The Compare actions below use
 | Use Video Preview Enhanced for MP4/WebM | Opens MP4 and WebM in this player by default |
 | Use VS Code's Preview for MP4/WebM | Undoes that |
 | Open with Video Preview Enhanced | Explorer context menu on an MP4 or WebM file (not in the Command Palette) |
+| Open Video File… | Pick a local file from the Command Palette. Choose **All Files** to show other extensions. |
+| Play to the Side / Play in New Window | Open a local video in the editor group beside the current one or in a new window. Use the Explorer or editor tab context menu for a specific file. From the Command Palette, uses the active local video or opens the file picker. |
 | Start Compare | When no Compare is open, starts one from the Explorer selection. From the player title or Command Palette, opens the file picker. |
 | Add to Compare | When a Compare is open, adds the Explorer selection or the player's video to the most recently active Compare. Available in the Command Palette while a file player is active. |
 | Start Compare / Add to Compare | In the player's right-click menu: the same as the bar's Compare button (Start Compare asks first; Add to Compare adds this video to the open Compare). |
