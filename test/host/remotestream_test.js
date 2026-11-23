@@ -292,7 +292,13 @@ async function withFfmpeg(tools) {
     try {
       st.holdAt = 3;
       await st.rs.open(); st.more();
-      await until(() => st.hold && st.audio.length, 'Opus picture and sound before pause');
+      // Opus sound is sent in >= 0.5 s chunks and comes from its own ffmpeg, so on a slow runner the picture can
+      // reach holdAt before any sound is ready. The host only answers a 'more', so a webview that is short of sound
+      // asks again (as in section 2 below); a driver that stops asking at holdAt would wait for ever.
+      await until(() => {
+        if (st.hold && !st.audio.length) st.more();
+        return st.hold && st.audio.length;
+      }, 'Opus picture and sound before pause');
       const spawns = st.rs.spawns;
       st.hold = false; st.seek(2.519);
       await until(() => st.audio.length, 'Opus from memory');
