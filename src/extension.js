@@ -42,6 +42,7 @@ const { barHtml, playFlashHtml } = require('./bar');
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy(() => require('./rangecmd')); // A-B frame export and ffmpeg command
+const exclusiveWrite = lazy(() => require('./exclusivewrite')); // create-only frame writes (no overwrite race)
 const clipExport = lazy(() => require('./clipexport'));
 const { syntheticRefusal } = require('./clipsource');
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
@@ -2811,15 +2812,29 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     });
   }
 
-  /** Every frame of A-B as `<video>_f000123.png` in a folder the user picks (written through workspace.fs: remote too). */
+  /** Every frame (or every Nth frame) of A-B as `<video>_f000123.png` in a folder the user picks (written through workspace.fs: remote too). */
   async exportRange(range) {
     const { signal } = this.pageAbort;
     if (this.exporting) { vscode.window.showInformationMessage('Video Preview: an export is already running.'); return; }
     const problem = rangecmd.rangeProblem(range);
     if (problem) { vscode.window.showInformationMessage(`Video Preview: ${problem}`); return; }
-    const count = range.fb - range.fa + 1;
+    let stride = 1;
+    if (range.stride !== undefined) {
+      stride = rangecmd.parseStride(range.stride);
+    } else if (logFile && process.env.VPE_EXPORT_DIR && process.env.VPE_EXPORT_STRIDE === undefined) {
+      stride = 1;
+    } else {
+      const raw = logFile && process.env.VPE_EXPORT_DIR
+        ? process.env.VPE_EXPORT_STRIDE
+        : vscode.window.showInputBox ? await vscode.window.showInputBox(rangecmd.strideInputOptions(range)) : '1';
+      if (signal.aborted || raw === undefined) return;
+      const strideErr = rangecmd.strideProblem(raw);
+      if (strideErr) { vscode.window.showWarningMessage(`Video Preview: ${strideErr}`); return; }
+      stride = rangecmd.parseStride(raw);
+    }
+    const count = rangecmd.rangeFrameCount(range, stride);
     if (count > rangecmd.MAX_FRAMES) {
-      vscode.window.showWarningMessage(`Video Preview: A-B holds ${count} frames; export takes at most ${rangecmd.MAX_FRAMES}. Shorten the loop, or use "Copy ffmpeg Command for A–B".`);
+      vscode.window.showWarningMessage(`Video Preview: A-B holds ${count} frames${stride > 1 ? ` at stride ${stride}` : ''}; export takes at most ${rangecmd.MAX_FRAMES}. Shorten the loop, or use "Copy ffmpeg Command for A–B".`);
       return;
     }
     if (count > rangecmd.CONFIRM_FRAMES) {
@@ -2849,15 +2864,41 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
     if (signal.aborted || !pick || !pick.length) return;
     const folder = pick[0];
     // Ask before writing over frames exported before.
-    let existing = 0;
+    const caseInsensitive = folder.scheme === 'file' && (process.platform === 'win32' || process.platform === 'darwin');
+    const nameKey = (n) => (caseInsensitive ? n.toLowerCase() : n);
+    const hasStat = typeof vscode.workspace.fs.stat === 'function';
+    const fileExists = async (uri) => {
+      try {
+        await vscode.workspace.fs.stat(uri);
+        return true;
+      } catch (e) {
+        if (e && (e.code === 'FileNotFound' || e.code === 'ENOENT')) return false;
+        throw e;
+      }
+    };
+    let existingNames = null;
+    const plannedCollisions = [];
     try {
-      const names = new Set((await vscode.workspace.fs.readDirectory(folder)).map(([n]) => n));
-      for (let k = range.fa; k <= range.fb; k++) if (names.has(rangecmd.frameFileName(base, k + 1))) existing++;
-    } catch { /* unreadable: writing reports the problem */ }
+      existingNames = new Set((await vscode.workspace.fs.readDirectory(folder)).map(([n]) => nameKey(n)));
+      for (const k of rangecmd.rangeFrames(range, stride)) {
+        const n = rangecmd.frameFileName(base, k + 1);
+        if (existingNames.has(nameKey(n))) plannedCollisions.push(n);
+      }
+    } catch (e) {
+      if (signal.aborted) return;
+      if (!hasStat) {
+        vscode.window.showErrorMessage(`Video Preview: could not read ${folder.scheme === 'file' ? folder.fsPath : folder.toString()}: ${e && e.message ? e.message : String(e)}`);
+        return;
+      }
+      // Directory listing failed; each destination URI is checked individually via stat before writing.
+    }
     if (signal.aborted) return;
-    if (existing) {
+    const approvedOverwrites = new Set();
+    if (plannedCollisions.length) {
+      const existing = plannedCollisions.length;
       const ok = await vscode.window.showWarningMessage(`Overwrite ${existing} existing file${existing === 1 ? '' : 's'}?`, { modal: true, detail: `${folder.scheme === 'file' ? folder.fsPath : folder.toString()} already holds ${existing === 1 ? 'a frame' : 'frames'} of this range.` }, 'Overwrite');
       if (ok !== 'Overwrite') return;
+      for (const n of plannedCollisions) approvedOverwrites.add(nameKey(n));
     }
     if (signal.aborted || this.exporting) return; // another export started while the dialogs were open
     this.exporting = signal;
@@ -2874,6 +2915,7 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
         signal.addEventListener('abort', cancel, { once: true });
         if (signal.aborted || token?.isCancellationRequested) cancel();
         try {
+          const end = range.fa + count * stride;
           let last = -1; // the last frame written
           for (let k = range.fa; k <= range.fb && !work.aborted;) {
             if (!this.panel.visible) {
@@ -2898,13 +2940,33 @@ ${barHtml({ canCompare: this.canCompare(), compareOpen: this.compareOpen() })}
             // VFR or gapped video: the seek can settle on a neighbour. Name the file from the frame shown; skip repeats.
             const shown = Number.isInteger(r.frame) ? r.frame : k;
             if (shown > last && shown >= range.fa && shown <= range.fb) {
-              await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, rangecmd.frameFileName(base, shown + 1)), new Uint8Array(r.data));
+              const name = rangecmd.frameFileName(base, shown + 1);
+              const dest = vscode.Uri.joinPath(folder, name);
+              const key = nameKey(name);
+              if (!approvedOverwrites.has(key)) {
+                const collides = (existingNames && existingNames.has(key)) || (hasStat && await fileExists(dest));
+                if (work.aborted) break;
+                if (collides) {
+                  const ok = await vscode.window.showWarningMessage(`Overwrite existing file ${name}?`, { modal: true, detail: `${folder.scheme === 'file' ? folder.fsPath : folder.toString()} already holds ${name}.` }, 'Overwrite');
+                  if (work.aborted || ok !== 'Overwrite') { controller.abort(); break; }
+                  approvedOverwrites.add(key);
+                }
+              }
+              const bytes = new Uint8Array(r.data);
+              let res = await exclusiveWrite.writeNew(vscode.workspace.fs, dest, bytes, { overwrite: approvedOverwrites.has(key) });
+              if (res === 'exists') {
+                // Appeared after the checks above (another export or program): never replace it unasked.
+                const ok = await vscode.window.showWarningMessage(`Overwrite existing file ${name}?`, { modal: true, detail: `${folder.scheme === 'file' ? folder.fsPath : folder.toString()} already holds ${name}.` }, 'Overwrite');
+                if (work.aborted || ok !== 'Overwrite') { controller.abort(); break; }
+                approvedOverwrites.add(key);
+                res = await exclusiveWrite.writeNew(vscode.workspace.fs, dest, bytes, { overwrite: true });
+              }
               done++;
               if (work.aborted) break;
               last = shown;
             }
-            const next = Math.max(k + 1, shown + 1);
-            progress.report({ increment: (100 * (Math.min(next, range.fb + 1) - k)) / count, message: `${done} / ${count}` });
+            const next = rangecmd.nextRangeFrame(k, shown, stride);
+            progress.report({ increment: (100 * ((Math.min(next, end) - k) / stride)) / count, message: `${done} / ${count}` });
             k = next;
           }
         } finally {

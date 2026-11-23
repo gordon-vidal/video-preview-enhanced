@@ -44,6 +44,7 @@ function makeVscode(settings = {}) {
       showInformationMessage: async () => undefined,
       showWarningMessage: async () => undefined,
       showErrorMessage: async () => undefined,
+      showInputBox: async (o) => (o && o.value !== undefined ? o.value : undefined),
     },
     commands: {
       registerCommand: (id, fn) => { commands[id] = fn; return { dispose() {} }; },
