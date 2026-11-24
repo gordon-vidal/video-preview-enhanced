@@ -17,14 +17,14 @@
 }
 #row .folder-cap button.cap-count.open { background: var(--vpe-hover); }
 
-/* ---- Fold-out tab at the picture's right edge: revealed near the edge, opened by a click only (20 x 84 px ribbon
-   with a 12 px chevron; when open, the resize seam stays clean and closing uses the header ×, bar 2/5, or Esc). ---- */
+/* ---- Edge tabs (20 x 84 px ribbons with a 12 px chevron): both stay hidden until the pointer is near the right
+   edge (collapsed) or the rail's left seam (open), so the picture stays unobstructed while watching. ---- */
 .edge-zone {
   position: absolute; top: 0; right: 0; bottom: 0; width: 48px; z-index: 4;
   display: flex; align-items: center; justify-content: flex-end; pointer-events: none;
 }
 .edge-zone[hidden] { display: none; }
-.edge-shelf {
+.edge-shelf, .rail-collapse-tab {
   appearance: none; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
   height: 84px; width: 20px; padding: 0; border-radius: 7px 0 0 7px;
   background: var(--vpe-surface-float);
@@ -33,11 +33,19 @@
   color: var(--vscode-foreground);
   box-shadow: -2px 2px 10px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
   cursor: pointer;
-  opacity: 0; transform: translateX(6px); pointer-events: none;
+  opacity: 0; pointer-events: none;
   transition: opacity 150ms ease, transform 150ms ease, border-color 120ms;
 }
+.edge-shelf { transform: translateX(6px); }
 .edge-zone.near .edge-shelf, .edge-shelf:focus-visible { opacity: 1; transform: translateX(0); pointer-events: auto; }
-.edge-shelf:hover { border-color: var(--vpe-bd-active); }
+.edge-shelf:hover, .rail-collapse-tab:hover { border-color: var(--vpe-bd-active); }
+.rail-collapse-tab {
+  position: absolute; left: -20px; top: 50%; transform: translateY(-50%) translateX(6px);
+  z-index: 8;
+}
+.rail.near-seam .rail-collapse-tab, .rail-collapse-tab:focus-visible {
+  opacity: 1; transform: translateY(-50%) translateX(0); pointer-events: auto;
+}
 
 /* ---- The rail: one DOM, docked (default) or overlaid (setting folderRail.layout) ---- */
 .rail {
@@ -189,7 +197,7 @@
 body.idle .edge-zone { display: none; }
 
 body.vscode-high-contrast .r-row:hover, body.vscode-high-contrast .r-row.active { outline: 1px dashed var(--vscode-contrastActiveBorder, transparent); outline-offset: -1px; }
-@media (prefers-reduced-motion: reduce) { .edge-shelf { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .edge-shelf, .rail-collapse-tab { transition: none; } }
 
 /* Narrow panes (the capsule's own step is in media/player.css's narrow-bar ladder): a docked rail would leave
    little picture, so it overlays instead. */

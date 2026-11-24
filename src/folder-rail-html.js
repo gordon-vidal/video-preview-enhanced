@@ -8,8 +8,9 @@
 // Icons on the bar's 24-unit grid with the bar's 1.6 stroke (src/bar.js).
 const icon = (size, body, sw = '1.6') => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 const ICONS = {
-  // The fold-out edge tab's chevron: 12 px on a 20 x 84 px ribbon, large enough to grab on purpose.
+  // The edge tabs' chevrons: 12 px on 20 x 84 px ribbons, revealed near the edge/seam.
   open: icon(12, '<path d="M15 18l-6-6 6-6"/>', '2'),
+  fold: icon(12, '<path d="M9 18l6-6-6-6"/>', '2'),
   close: icon(12, '<path d="M18 6L6 18M6 6l12 12"/>'),
   check: icon(9, '<path d="M20 6L9 17l-5-5"/>', '2.6'),
 };
@@ -27,6 +28,7 @@ function folderRailHtml() {
   return `<div id="railEdge" class="edge-zone" hidden><button id="railOpenTab" class="edge-shelf" type="button" title="Open folder rail" aria-label="Open folder rail" tabindex="-1">${ICONS.open}</button></div>
 <aside id="rail" class="rail dock" aria-label="Folder" hidden>
   <div id="railResizer" class="resizer" title="Drag to resize" aria-hidden="true"></div>
+  <button id="railFoldTab" class="rail-collapse-tab" type="button" title="Close folder rail" aria-label="Close folder rail">${ICONS.fold}</button>
   <div class="r-head">
     <div id="railCrumb" class="r-crumb"></div>
     <button id="railClose" class="r-btn r-close" type="button" title="Close (Esc)" aria-label="Close folder rail">${ICONS.close}</button>

@@ -107,7 +107,7 @@
     const $ = (/** @type {string} */ id) => /** @type {any} */ (doc.getElementById(id));
     const rail = $('rail'), list = $('railList'), main = $('main'), stage = $('stage');
     const cap = $('folderCap'), capCount = $('capCount'), capPrev = $('capPrev'), capNext = $('capNext');
-    const edge = $('railEdge'), openTab = $('railOpenTab'), closeBtn = $('railClose');
+    const edge = $('railEdge'), openTab = $('railOpenTab'), foldTab = $('railFoldTab'), closeBtn = $('railClose');
     const filter = $('railFilter'), playableBtn = $('railPlayable'), colHead = $('railColHead'), colBtn = $('railColBtn');
     const colMenu = $('railColMenu'), endMenu = $('railEndMenu'), endBtn = $('railEndBtn'), endVal = $('railEndVal');
     const pos = $('railPos'), crumb = $('railCrumb'), resizer = $('railResizer');
@@ -168,6 +168,7 @@
     // Opened from the keyboard (a click with no pointer, detail 0): focus goes to the list; a mouse click leaves it.
     const byKey = (/** @type {any} */ e) => e.detail === 0;
     openTab.addEventListener('click', (/** @type {MouseEvent} */ e) => { e.stopPropagation(); setOpen(true, { focus: byKey(e) }); });
+    foldTab.addEventListener('click', (/** @type {Event} */ e) => { e.stopPropagation(); setOpen(false, { refocus: true }); });
     closeBtn.addEventListener('click', (/** @type {Event} */ e) => { e.stopPropagation(); setOpen(false, { refocus: true }); });
     capCount.addEventListener('click', (/** @type {MouseEvent} */ e) => { e.stopPropagation(); setOpen(!open, { focus: !open && byKey(e) }); });
     capPrev.addEventListener('click', (/** @type {Event} */ e) => { e.stopPropagation(); go(-1); });
@@ -194,18 +195,26 @@
       setOpen(!!c.open);
     }
 
-    // ---- the fold-out tab: revealed near the right edge of the picture, opened by a click only ----
+    // ---- the edge tabs: revealed near the right edge (closed) or the rail's left seam (open), click only ----
+    let nearSeam = false;
     main.addEventListener('pointermove', (/** @type {PointerEvent} */ e) => {
       const r = main.getBoundingClientRect();
       const t = /** @type {any} */ (e.target);
+      const busy = e.buttons !== 0 || !!(t && t.closest && t.closest('#scopes'))
+        || stage.classList.contains('panning') || doc.body.classList.contains('idle');
       const on = nearEdge({
         x: e.clientX, right: r.right, open, buttons: e.buttons,
         overScopes: !!(t && t.closest && t.closest('#scopes')),
         panning: stage.classList.contains('panning'), idle: doc.body.classList.contains('idle'),
       });
       if (on !== near) { near = on; edge.classList.toggle('near', on); }
+      const seam = open && !busy && !drag && Math.abs(e.clientX - rail.getBoundingClientRect().left) <= 36;
+      if (seam !== nearSeam) { nearSeam = seam; rail.classList.toggle('near-seam', seam); }
     }, { passive: true });
-    main.addEventListener('pointerleave', () => { if (near) { near = false; edge.classList.remove('near'); } }, { passive: true });
+    main.addEventListener('pointerleave', () => {
+      if (near) { near = false; edge.classList.remove('near'); }
+      if (nearSeam) { nearSeam = false; rail.classList.remove('near-seam'); }
+    }, { passive: true });
 
     // ---- resize from the left edge ----
     let drag = null;

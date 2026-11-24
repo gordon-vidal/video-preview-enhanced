@@ -86,6 +86,8 @@ Preview mode (32 px rows with thumbnails): not built yet, and no button for it i
 
 - **Recursive search in the rail's filter:** match names in subfolders too (bounded walk, cancellable like the
   metadata work), with the folder shown on the matching rows.
-- **Rethink how Compare is entered** now that the rail exists: the split between the Compare view and the single
-  player (the Compare button's confirmation, Add Mode), seamless adding from the rail, drag and drop from the rail
-  onto the picture or a tile, and adding automatically from the rail while a Compare is open.
+- **Unify Compare view and the regular player view:** merge their UI elements and interaction model so Compare and
+  single-video playback aren't two completely separate worlds — including showing the Folder Rail consistently in
+  Compare (adding clips to the active Compare directly from the rail), rethinking the Enter Compare gesture (the
+  Compare button's confirmation, Add Mode), drag-and-drop onto the picture or tiles, and auto-adding opened videos
+  while Compare is active.
