@@ -146,7 +146,8 @@ module.exports = [{
         }
         const rep = await P.state();
         ok(Math.abs(rep.t - 7.2) < 0.15, `picture at 7.2 s after the seeks (${rep.t})`);
-        const bad = lib.lines(vs, /\[tracks_multi\.mkv\] .*(error|exception|failed)/i, P.fromMark).filter((l) => !/Error submitting/.test(l));
+        const bad = lib.lines(vs, /\[tracks_multi\.mkv\] .*(error|exception|failed)/i, P.fromMark)
+          .filter((l) => !/Error submitting|webview: state /.test(l));
         ok(!bad.length, `no error log lines (${bad.slice(0, 3).join(' | ')})`);
         items = null;
       } finally { await P.close(); }

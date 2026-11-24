@@ -149,7 +149,9 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 #cells.dense .tbtn { height: 20px; min-width: 20px; border-radius: 5px; }
 #cells.dense .ltr { width: 15px; height: 15px; font-size: 9.5px; }
 #cells.dense .mute-mini { width: 18px; height: 18px; }
-#cells.dense .sync-pill, #cells.dense .nudge { bottom: 4px; right: 4px; height: 21px; font-size: 10.5px; }
+#cells.dense .sync-pill, #cells.dense .nudge { bottom: 4px; right: 4px; height: 21px; padding: 0 2px; gap: 1px; font-size: 10px; max-width: calc(100% - 8px); box-sizing: border-box; }
+#cells.dense .sync-pill button, #cells.dense .nudge button { min-width: 15px; height: 17px; padding: 0 2px; }
+#cells.dense .sync-pill .offv, #cells.dense .nudge .offv { min-width: 20px; padding: 0 2px; font-size: 9.5px; }
 #cells.dense .tile-stats { top: 30px; left: 4px; padding: 4px 6px; font-size: 9.5px; }
 #cells.dense .pill:focus-visible { outline-color: var(--vscode-focusBorder); }
 
