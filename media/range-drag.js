@@ -3,7 +3,32 @@
 
 /** Keep range drags on the input even outside the webview. Native keyboard input stays enabled. */
 const VpeRangeDrag = {
-  bind(input, onEnd = () => {}) {
+  bindSeek(input, { preview, finish, commit }) {
+    let pending = null;
+    const drag = VpeRangeDrag.bind(input, (event) => {
+      const target = pending;
+      pending = null;
+      finish();
+      if (target !== null && event?.type === 'pointerup') commit(target);
+    }, () => {
+      if (pending === null) {
+        pending = Number(input.value);
+        preview(pending);
+      }
+    });
+    input.addEventListener('input', () => {
+      const frame = Number(input.value);
+      if (drag.dragging()) {
+        pending = frame;
+        preview(frame);
+      } else {
+        commit(frame);
+      }
+    });
+    return drag;
+  },
+
+  bind(input, onEnd = () => {}, onStart = () => {}) {
     const win = input.ownerDocument.defaultView;
     const emit = (type) => input.dispatchEvent(new win.Event(type, { bubbles: true }));
     let pointerId = null;
@@ -53,6 +78,7 @@ const VpeRangeDrag = {
       win.addEventListener('blur', stop);
       input.addEventListener('lostpointercapture', finish);
       move(e);
+      onStart();
     });
 
     return { dragging: () => pointerId !== null, stop };

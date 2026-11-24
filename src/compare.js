@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const { rotationOf } = require('./rotation');
 const { serveBlock, readFileBlock } = require('./read-block');
 const { NativeDecoder } = require('./native');
+const { nativeThumb } = require('./thumbhost');
 const { EncodedStream } = require('./stream');
 const { MODES, compareCapsKbps, compareTileSize } = require('./transcode_policy');
 const { budgets } = require('../media/membudget');
@@ -63,7 +64,7 @@ const fileKey = (uri) => uri.with({ query: '', fragment: '' }).toString();
 /** The compare page's scripts in load order (the large grid's membudget.js only when it is one). */
 function compareScripts(large) {
   return [
-    'timestretch.js', 'framestream.js', 'hdr.js', 'block-cache.js', 'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js',
+    'timestretch.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js', 'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js',
     'engine.js', 'picture.js', 'modes.js', 'range-drag.js', 'controls.js', 'abloop.js', 'comparerange.js', 'stepgoal.js',
     'timefmt.js', ...(large ? ['membudget.js'] : []),
     'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js', 'compare-debug.js', 'compare-sync.js', 'compare.js',
@@ -181,6 +182,7 @@ class CompareSession {
     });
     panel.onDidDispose(() => this.dispose());
     panel.onDidChangeViewState(() => {
+      if (!panel.visible) this.thumbJob?.controller.abort();
       this.post({ type: 'visible', visible: panel.visible, active: panel.active });
       if (panel.active) this.menu?.activated(this);
     });
@@ -213,6 +215,8 @@ class CompareSession {
   }
 
   closeFiles() {
+    this.thumbJob?.controller.abort();
+    this.thumbJob = null;
     // A reload or a second 'ready' makes any native probe still in flight stale (review 2026-11-19 #1).
     this.epoch = (this.epoch || 0) + 1;
     for (const n of this.natives) if (n) n.dispose();
@@ -317,6 +321,7 @@ class CompareSession {
         this.panel.title = this.title();
         return undefined;
       case 'readBlock': return this.readBlock(m.key, m.pos, m.len);
+      case 'thumb': return this.sendThumb(m);
       case 'nd': {
         const i = TILE_KEYS.indexOf(m.key);
         const n = m.key?.length === 1 && this.natives[i];
@@ -464,6 +469,31 @@ class CompareSession {
     this.decisions[i] = null;
     this.post({ type: 'originalTile', index: i, notice });
     this.resizeTranscodes();
+  }
+
+  async sendThumb(m) {
+    if (m.cancel) {
+      const job = this.thumbJob;
+      if (job?.key === m.key && job.id === m.id) job.controller.abort();
+      return;
+    }
+    this.thumbJob?.controller.abort();
+    const job = { key: m.key, id: m.id, controller: new AbortController() };
+    this.thumbJob = job;
+    const decoder = this.natives[TILE_KEYS.indexOf(m.key)];
+    let result = null;
+    try {
+      if (decoder instanceof NativeDecoder && this.panel.visible) {
+        result = await nativeThumb(decoder, m, this.log, job.controller.signal);
+      }
+    } catch (e) {
+      this.log(`thumbnail: ${e.message}`);
+    } finally {
+      if (this.thumbJob === job) {
+        this.thumbJob = null;
+        if (!job.controller.signal.aborted) this.post({ type: 'thumb', page: m.page, key: m.key, id: m.id, ...result });
+      }
+    }
   }
 
   /** Fit the composited view to the stage, then scale all native outputs together to fit the link. */

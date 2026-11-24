@@ -22,20 +22,20 @@ function fitBox(w, h, bw, bh) {
 /** ffmpeg arguments for one thumbnail at `t` seconds (from the file's start). */
 // -noaccurate_seek and passthrough timing: the keyframe before T has a time before the cut, and
 // would otherwise be dropped (with every other frame skipped, nothing would come out).
-function thumbArgs(file, t, w, h, legacy) {
+function thumbArgs(file, t, w, h, legacy, stream = 'v:0') {
   // -threads 2 (decoder and filters): one keyframe needs no more, and ffmpeg's default (~40 threads on 8 cores)
   // next to playback made the desktop stutter (2026-11-20).
-  return ['-hide_banner', '-loglevel', 'error', '-nostdin', '-noautorotate', '-skip_frame', 'nokey', '-noaccurate_seek',
-    '-threads', '2', '-ss', Math.max(0, t).toFixed(3), '-i', file, '-filter_threads', '1', '-map', '0:v:0', '-an', '-sn', '-dn',
+  return ['-hide_banner', '-loglevel', 'info', '-nostats', '-copyts', '-nostdin', '-noautorotate', '-skip_frame', 'nokey', '-noaccurate_seek',
+    '-threads', '2', '-ss', Math.max(0, t).toFixed(3), '-i', file, '-filter_threads', '1', '-map', `0:${stream}`, '-an', '-sn', '-dn',
     ...(legacy ? ['-vsync', '0'] : ['-fps_mode', 'passthrough']), '-frames:v', '1',
-    '-vf', `scale=${w}:${h}:flags=bilinear`, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'];
+    '-vf', `scale=${w}:${h}:flags=bilinear,showinfo`, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'];
 }
 
 /**
- * Decodes one thumbnail. Resolves {w, h, data: Buffer (RGBA)} or null.
+ * Decodes one thumbnail. Resolves {kt, w, h, data: Buffer (RGBA)} or null.
  * @param {{ffmpeg: string, legacy?: boolean}} tools
  * @param {string} file
- * @param {{w: number, h: number}} src video size (before rotation)
+ * @param {{w: number, h: number, index?: number, lead?: number}} src video size (before rotation)
  * @param {number} t seconds from the start
  * @param {number} bw box width
  * @param {number} bh box height
@@ -47,13 +47,14 @@ function decodeThumb(tools, file, src, t, bw, bh, log, signal) {
   const { w, h } = fitBox(src.w, src.h, bw, bh);
   const want = w * h * 4;
   return new Promise((resolve) => {
-    const proc = lowerPriority(spawn(tools.ffmpeg, thumbArgs(file, t, w, h, tools.legacy), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+    const proc = lowerPriority(spawn(tools.ffmpeg, thumbArgs(file, t + (src.lead || 0), w, h, tools.legacy, src.index), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
     const parts = [];
     let got = 0;
     let err = '';
+    let kt = null;
     // checkJs: start
     let settled = false;
-    /** @param {{w: number, h: number, data: Uint8Array} | null} result */
+    /** @param {{kt: number|null, w: number, h: number, data: Uint8Array} | null} result */
     const finish = (result) => {
       if (settled) return;
       settled = true;
@@ -71,15 +72,39 @@ function decodeThumb(tools, file, src, t, bw, bh, log, signal) {
     const timer = setTimeout(cancel, 8000);
     signal?.addEventListener('abort', cancel, { once: true });
     // checkJs: end
-    proc.stdout.on('data', (d) => { if (!settled) { parts.push(d); got += d.length; } });
-    proc.stderr.on('data', (d) => { if (!settled && err.length < 2000) err += d; });
+    proc.stdout.on('data', (d) => {
+      if (settled || got >= want) return;
+      const part = d.subarray(0, want - got);
+      parts.push(part);
+      got += part.length;
+    });
+    proc.stderr.on('data', (d) => {
+      if (settled) return;
+      err = (err + d).slice(-8192);
+      const match = err.match(/Parsed_showinfo_[^\r\n]*\bpts_time:\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?=\s)/i);
+      if (kt === null && match) kt = Number(match[1]);
+    });
     proc.on('error', (e) => { if (log && !signal?.aborted) log(`thumb ffmpeg: ${e.message}`); finish(null); });
     proc.on('close', () => {
       if (settled) return;
       if (got < want) { if (log && err) log(`thumb at ${t.toFixed(2)} s: ${err.trim().slice(0, 300)}`); finish(null); return; }
-      finish({ w, h, data: Buffer.concat(parts, got).subarray(0, want) });
+      finish({ kt, w, h, data: Buffer.concat(parts, got).subarray(0, want) });
     });
   });
 }
 
-module.exports = { decodeThumb, thumbArgs, fitBox };
+/** Shared request handling for the player and Compare. */
+function nativeThumb(decoder, request, log, signal) {
+  const v = decoder.pr?.video;
+  const { t, w, h } = request;
+  if (!v || !decoder.file || !Number.isFinite(t) ||
+      !Number.isInteger(w) || w <= 0 || w > 160 || !Number.isInteger(h) || h <= 0 || h > 160) return null;
+  const src = { w: v.sourceWidth || v.width, h: v.sourceHeight || v.height, index: v.index, lead: v.lead };
+  return decodeThumb(decoder.tools, decoder.file, src, t, w, h, log, signal).then((r) => {
+    if (!r) return null;
+    const rel = Number.isFinite(r.kt) && Number.isFinite(v.startTime) ? r.kt - v.startTime : null;
+    return { w: r.w, h: r.h, data: new Uint8Array(r.data), kt: r.kt, rel };
+  });
+}
+
+module.exports = { decodeThumb, thumbArgs, fitBox, nativeThumb };

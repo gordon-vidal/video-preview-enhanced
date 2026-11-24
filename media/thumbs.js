@@ -37,7 +37,7 @@ class ThumbService {
    * @param {number} [o.radius] neighbouring places filled each side of the pointer (default 4)
    * @param {(msg: string) => void} [o.log]
    * @param {number} [o.cap] bytes of thumbnails kept
-   * @param {(t: number, w: number, h: number) => Promise<any>} [o.request]
+   * @param {(t: number, w: number, h: number, signal: AbortSignal) => Promise<any>} [o.request]
    *   decodes one thumbnail elsewhere (native ffmpeg in the extension host) instead of the libav.js
    *   worker; resolves {kt, w, h, data (RGBA)} or null
    */
@@ -48,11 +48,13 @@ class ThumbService {
     this.step = Math.max(o.duration / 200, 1 / (o.fps || 30));
     this.box = this.rot === 90 || this.rot === 270 ? { w: 120, h: 160 } : { w: 160, h: 120 };
     this.cap = o.cap > 0 ? o.cap : 30e6; // bytes of thumbnails kept (less on small machines: media/membudget.js)
-    /** @type {Map<number, {bmp: ImageBitmap, w: number, h: number, bytes: number}>} keyframe time -> picture (LRU order) */
+    /** @type {Map<number|string, {bmp: ImageBitmap, w: number, h: number, bytes: number}>} keyframe time -> picture (LRU order) */
     this.cache = new Map();
     this.bytes = 0;
-    /** @type {Map<number, number|null>} grid slot -> keyframe time (null: none found) */
+    /** @type {Map<number, number|string|null>} grid slot -> keyframe time (null: none found) */
     this.slotKt = new Map();
+    this.coverage = new Map();
+    this.epoch = 0;
     this.worker = null;
     this.state = 'off'; // off | starting | ready | failed
     this.id = 0;
@@ -87,9 +89,10 @@ class ThumbService {
    * Pointer at `rel` seconds on the bar. cb(picture | null) is called with the
    * cached picture at once, or later when it is decoded (only if still wanted).
    */
-  hover(rel, cb) {
+  hover(rel, cb, scrub = false) {
     if (this.state === 'failed') return;
     const slot = Math.max(0, Math.min(Math.floor(this.o.duration / this.step), Math.round(rel / this.step)));
+    this.scrub = scrub;
     this.cb = cb;
     this.want = slot;
     this.lastHover = performance.now();
@@ -101,20 +104,19 @@ class ThumbService {
     }
     if (hit && this.nextNear() === null) return; // exact picture and neighbours cached: no work, no worker
     this.start();
-    // Latest hover wins: a running request for another place is cancelled at once;
-    // otherwise ask 40 ms after the first move (the timer reads the newest position).
+    // Let the active decode finish. Only the latest pending position gets dispatched.
     if (this.inflight) { this.kick(); return; }
     if (!this.debounce) this.debounce = setTimeout(() => { this.debounce = 0; this.kick(); }, 40);
   }
 
   /** Pointer left the bar. */
-  leave() {
+  leave(immediate = false) {
     this.want = null;
     this.cb = null;
     clearTimeout(this.debounce);
     this.debounce = 0;
-    // Stop at once: a running worker request is cancelled (a native ffmpeg one ends within a
-    // fraction of a second; its picture is still cached).
+    if (immediate || this.o.request && this.inflight) { this.stop(); return; }
+    // Ordinary hover can keep the warm context after cancelling the packet scan.
     if (this.inflight && this.worker && !this.inflight.cancelSent) {
       this.inflight.cancelSent = true;
       this.worker.postMessage({ type: 'cancel', below: this.inflight.id + 1 });
@@ -124,32 +126,40 @@ class ThumbService {
 
   /** @returns {{bmp: ImageBitmap, w: number, h: number, rot: number} | null} */
   lookup(slot) {
-    if (!this.slotKt.has(slot)) return null;
-    const kt = this.slotKt.get(slot);
+    let kt = this.slotKt.get(slot);
+    if (kt === undefined || kt === null || !this.cache.has(kt)) {
+      const target = this.o.startT + slot * this.step;
+      for (const [anchor, end] of this.coverage) {
+        if (anchor <= target && target <= end && (kt == null || !this.cache.has(kt) || anchor > kt)) kt = anchor;
+      }
+    }
     const e = kt === null || kt === undefined ? null : this.cache.get(kt);
     if (!e) return null;
     // Recently used last.
-    this.cache.delete(/** @type {number} */ (kt));
-    this.cache.set(/** @type {number} */ (kt), e);
+    this.cache.delete(/** @type {number|string} */ (kt));
+    this.cache.set(/** @type {number|string} */ (kt), e);
     return { bmp: e.bmp, w: e.w, h: e.h, rot: this.rot };
   }
 
   async start() {
     if (this.state !== 'off') return;
     this.state = 'starting';
+    const epoch = this.epoch;
     this.t0 = performance.now();
     if (this.o.request) { this.state = 'ready'; this.kick(); return; }
     try {
       const res = await fetch(this.o.workerSrcUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const url = URL.createObjectURL(new Blob([await res.text()], { type: 'text/javascript' }));
-      this.worker = new Worker(url);
-      this.worker.onmessage = (e) => this.onMessage(e.data);
-      this.worker.onerror = (e) => this.fail(`worker error: ${e.message}`);
+      const source = await res.text();
+      if (epoch !== this.epoch) return;
+      const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+      try { this.worker = new Worker(url); } finally { URL.revokeObjectURL(url); }
+      this.worker.onmessage = (e) => { if (epoch === this.epoch) this.onMessage(e.data); };
+      this.worker.onerror = (e) => { if (epoch === this.epoch) this.fail(`worker error: ${e.message}`); };
       this.log(`starting worker (source fetched in ${Math.round(performance.now() - this.t0)} ms)`);
       this.worker.postMessage({ type: 'init', ...this.o.libav });
     } catch (e) {
-      this.fail(String(e && /** @type {any} */ (e).message || e));
+      if (epoch === this.epoch) this.fail(String(e && /** @type {any} */ (e).message || e));
     }
   }
 
@@ -161,6 +171,8 @@ class ThumbService {
 
   /** Frees the worker (and its WebAssembly memory); the next hover starts it again. */
   stop() {
+    this.epoch++;
+    this.inflight?.abort?.abort();
     clearTimeout(this.idleTimer);
     clearTimeout(this.debounce);
     this.debounce = 0;
@@ -173,9 +185,11 @@ class ThumbService {
 
   dispose() {
     this.state = 'failed';
-    this.stop();
+    this.leave(true);
     for (const e of this.cache.values()) e.bmp.close();
     this.cache.clear();
+    this.coverage.clear();
+    this.slotKt.clear();
     this.bytes = 0;
   }
 
@@ -207,14 +221,7 @@ class ThumbService {
   kick() {
     if (this.state !== 'ready' || (!this.worker && !this.o.request)) return;
     clearTimeout(this.idleTimer);
-    if (this.inflight) {
-      // A newer hover makes the running request stale (unless it is that slot).
-      if (this.worker && this.want !== null && this.inflight.slot !== this.want && !this.inflight.cancelSent) {
-        this.inflight.cancelSent = true;
-        this.worker.postMessage({ type: 'cancel', below: this.inflight.id + 1 });
-      }
-      return;
-    }
+    if (this.inflight) return;
     let slot = null;
     let prefetch = false;
     if (this.want === null) {
@@ -238,7 +245,11 @@ class ThumbService {
     }
     this.inflight = { id: ++this.id, slot, prefetch, t: performance.now() };
     this.stats.requests++;
-    if (this.o.request) { this.requestHost(this.inflight); return; }
+    if (this.o.request) {
+      this.inflight.abort = new AbortController();
+      this.requestHost(this.inflight);
+      return;
+    }
     this.worker.postMessage({ type: 'thumb', id: this.id, t: this.o.startT + slot * this.step, w: this.box.w, h: this.box.h });
   }
 
@@ -256,22 +267,23 @@ class ThumbService {
     return out;
   }
 
-  /** Native backend: one thumbnail from the extension host (a stale answer is still cached). */
+  /** Native backend: one cancellable thumbnail from the extension host. */
   async requestHost(req) {
     let r = null;
-    try { r = await /** @type {any} */ (this.o.request)(this.o.startT + req.slot * this.step, this.box.w, this.box.h); } catch (e) { this.log(`host: ${e && /** @type {any} */ (e).message || e}`); }
-    if (this.state === 'failed') return;
-    this.onThumb({ id: req.id, kt: r && typeof r.kt === 'number' ? r.kt : null, w: r && r.w, h: r && r.h, data: r && r.data, ms: Math.round(performance.now() - req.t) });
+    try {
+      r = await this.o.request(this.o.startT + req.slot * this.step, this.box.w, this.box.h, req.abort.signal);
+    } catch (e) { this.log(`host: ${e}`); }
+    this.onThumb({ ...r, id: req.id, ms: Math.round(performance.now() - req.t) });
   }
 
   /** The nearest place around the pointer without a picture (within the radius), or null. */
   nextNear() {
-    if (this.o.remote || this.want === null) return null;
+    if (this.scrub || this.o.remote || this.want === null) return null;
     const last = Math.floor(this.o.duration / this.step);
     const rad = this.o.radius ?? 4;
     for (let d = 1; d <= rad; d++) {
       for (const s of [this.want + d, this.want - d]) {
-        if (s >= 0 && s <= last && !this.slotKt.has(s)) return s;
+        if (s >= 0 && s <= last && !this.lookup(s) && this.slotKt.get(s) !== null) return s;
       }
     }
     return null;
@@ -280,24 +292,45 @@ class ThumbService {
   async onThumb(m) {
     const req = this.inflight;
     if (!req || req.id !== m.id) return;
-    this.inflight = null;
-    if (!m.cancelled) {
-      this.slotKt.set(req.slot, m.kt === undefined ? null : m.kt);
-      if (m.data && m.kt !== null) {
-        this.stats.decoded++;
-        const ms = Math.round(performance.now() - req.t);
-        this.stats.ms.push(ms);
-        if (this.stats.decoded <= 5) this.log(`${m.w}x${m.h} at ${m.kt.toFixed(2)} s in ${ms} ms (worker ${m.ms} ms)${req.prefetch ? ', prefetch' : ''}`);
+    if (!m.cancelled && !req.cancelSent) {
+      const wantedHit = this.want !== null && this.lookup(this.want);
+      const target = this.o.startT + req.slot * this.step;
+      // A timestamp-less picture is reusable at this slot only.
+      const kt = Number.isFinite(m.kt) ? m.kt : `slot:${req.slot}`;
+      const bytes = m.w * m.h * 4;
+      if (m.data && Number.isInteger(m.w) && Number.isInteger(m.h) &&
+          m.w > 0 && m.w <= this.box.w && m.h > 0 && m.h <= this.box.h &&
+          bytes <= this.cap && m.data.byteLength === bytes) {
         try {
-          const bmp = await createImageBitmap(new ImageData(new Uint8ClampedArray(m.data.buffer, m.data.byteOffset, m.w * m.h * 4), m.w, m.h));
-          this.add(m.kt, { bmp, w: m.w, h: m.h, bytes: m.w * m.h * 4 });
+          const pixels = new Uint8ClampedArray(m.data.buffer, m.data.byteOffset, bytes);
+          const bmp = await createImageBitmap(new ImageData(pixels, m.w, m.h));
+          if (this.inflight !== req) { bmp.close(); return; }
+          if (req.cancelSent) bmp.close();
+          else {
+            this.add(kt, { bmp, w: m.w, h: m.h, bytes });
+            this.stats.decoded++;
+            if (this.stats.ms.length === 200) this.stats.ms.shift();
+            this.stats.ms.push(Math.round(performance.now() - req.t));
+          }
         } catch (e) { this.log(`bitmap failed: ${e}`); }
       }
-      if (this.want === req.slot && this.cb) {
-        const hit = this.lookup(req.slot);
-        if (hit) this.cb(hit);
+      if (!req.cancelSent && this.cache.has(kt)) {
+        this.slotKt.set(req.slot, kt);
+        if (m.covered && Number.isFinite(m.kt) && kt <= target) {
+          this.coverage.set(kt, Math.max(target, this.coverage.get(kt) ?? kt));
+        }
+        if (this.want !== null && this.cb && (!wantedHit || this.want === req.slot)) {
+          const hit = this.lookup(this.want);
+          if (hit) this.cb(hit);
+        }
+      } else if (!req.cancelSent) {
+        this.slotKt.set(req.slot, null);
       }
+      if (!this.cache.has(kt) && Number.isFinite(m.kt)) this.post({ type: 'forget', kt });
+    } else if (Number.isFinite(m.kt) && !this.cache.has(m.kt)) {
+      this.post({ type: 'forget', kt: m.kt });
     }
+    if (this.inflight === req) this.inflight = null;
     this.kick();
   }
 
@@ -309,6 +342,7 @@ class ThumbService {
     for (const [k, v] of this.cache) {
       if (this.bytes <= this.cap) break;
       this.cache.delete(k);
+      this.coverage.delete(k);
       this.bytes -= v.bytes;
       v.bmp.close();
       if (this.worker) this.worker.postMessage({ type: 'forget', kt: k });

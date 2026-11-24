@@ -32,7 +32,7 @@ self.onmessage = (e) => {
     if (libav) libav.ff_block_reader_dev_send('in', m.pos, m.data.byteLength ? m.data : null);
     return;
   }
-  // Acted on at once, between libav calls: a newer hover makes older requests stale.
+  // Acted on between libav calls so leaving the bar stops the scan.
   if (m.type === 'cancel') { cancelBelow = Math.max(cancelBelow, m.below); return; }
   if (m.type === 'forget') { known.delete(m.kt); return; }
   serial(async () => {
@@ -128,11 +128,13 @@ async function thumb(m) {
   if (stale()) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
   let frames = [];
   let kt = null;
+  let covered = false;
   // Formats without an index (MPEG-TS, some MKV) can land past the keyframe:
   // step back (2, 6, 14 s ...) and finally to the start before giving up.
   for (let back = 0, tries = 0; !frames.length && tries < 6; tries++) {
     const t = m.t - back;
-    if ((await seekTo(Math.max(0, t), t > 0 ? 'max' : 'min')) < 0 && t > 0) await seekTo(t, 'min');
+    const landed = await seekTo(Math.max(0, t), t > 0 ? 'max' : 'min');
+    if (landed < 0 && t > 0) await seekTo(t, 'min');
     await libav.avcodec_flush_buffers(V.c);
     for (let n = 0; n < MAX_PACKETS && !frames.length; n++) {
       if (stale()) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
@@ -142,7 +144,8 @@ async function thumb(m) {
       if (key.length) {
         const p = key[0];
         kt = packetTime(p);
-        if (kt !== null && known.has(kt)) { post({ type: 'thumb', id: m.id, kt, known: true, ms: Date.now() - t0 }); return; }
+        covered = tries === 0 && landed >= 0 && kt !== null && kt <= m.t;
+        if (kt !== null && known.has(kt)) { post({ type: 'thumb', id: m.id, kt, covered, known: true, ms: Date.now() - t0 }); return; }
         // Decode just this packet and drain the decoder (no reordering wait).
         frames = await libav.ff_decode_multi(V.c, V.pkt, V.frame, [p], { fin: true, ignoreErrors: true, copyoutFrame: 'ptr' });
         await libav.avcodec_flush_buffers(V.c);
@@ -157,7 +160,7 @@ async function thumb(m) {
     const out = await scale(frames[0], m.w, m.h);
     if (kt === null) kt = out.t;
     if (kt !== null) known.add(kt);
-    post({ type: 'thumb', id: m.id, kt, w: out.w, h: out.h, data: out.data, ms: Date.now() - t0 }, [out.data.buffer]);
+    post({ type: 'thumb', id: m.id, kt, covered, w: out.w, h: out.h, data: out.data, ms: Date.now() - t0 }, [out.data.buffer]);
   } finally {
     for (const f of frames) await libav.av_frame_free_js(f);
   }

@@ -80,8 +80,7 @@ async function main() {
   const finalAt = final.length ? t0 + final[0].at : performance.now();
   const sweepAsked = sent.filter((m) => m.type === 'thumb' && m.at <= finalAt).length;
   if (process.env.THUMBS_LOG) console.log(JSON.stringify(sent.map((m) => ({ ty: m.type, id: m.id, t: m.t, at: m.at }))));
-  // Each move while a request runs sends a newer one that supersedes it (latest hover wins), so requests can
-  // outnumber the moves; what costs is decoding: far fewer decodes than positions.
+  // Each move replaces the pending target while the active decode finishes.
   check('sweep: few decodes (stale requests dropped)', svc.stats.decoded <= 20, `${svc.stats.decoded} decoded, ${sweepAsked} requests, ${sent.filter((m) => m.type === 'cancel').length} cancels for 60 positions`);
   check('picture size', final[0] && final[0].p.w === 160 && final[0].p.h > 0, final[0] ? `${final[0].p.w}x${final[0].p.h}` : '');
 
@@ -113,6 +112,22 @@ async function main() {
   const l0 = sent.filter((m) => m.type === 'thumb').length;
   await sleep(2500);
   check('no decoding after the pointer left', sent.filter((m) => m.type === 'thumb').length === l0, `${sent.filter((m) => m.type === 'thumb').length - l0} requests`);
+  // Use a fresh cache so a different slot inside the observed range cannot be a slot hit.
+  svc.dispose();
+  svc = new globalThis.ThumbService({ ...svc.o });
+  svc.hover(duration * 0.6, () => {}, true);
+  for (let i = 0; i < 400 && !svc.coverage.size; i++) await sleep(10);
+  const [anchor, end] = svc.coverage.entries().next().value || [];
+  const revisit = Math.ceil(anchor / svc.step);
+  check('observed range contains an unrequested slot', revisit * svc.step < end && !svc.slotKt.has(revisit));
+  svc.leave(true);
+  const readsBefore = reads.length;
+  let immediate = false;
+  svc.hover(revisit * svc.step, () => { immediate = true; }, true);
+  await sleep(100);
+  check('cached random-access range needs no reads or worker restart',
+    immediate && svc.stats.requests === 1 && reads.length === readsBefore && !svc.worker);
+
   const ms = svc.stats.ms.slice().sort((x, y) => x - y);
   if (ms.length) console.log(`decode latency (decoded requests): median ${ms[Math.floor(ms.length / 2)]} ms, max ${ms[ms.length - 1]} ms over ${ms.length}`);
 

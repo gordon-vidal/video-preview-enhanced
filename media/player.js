@@ -170,9 +170,8 @@
     const playing = player.isPlaying();
     const dur = player.meta.duration || 0;
     const step = scrubbing ? null : player.pendingStep?.();
-    // The slider still holds the drag target after the frame loop consumes pendingSeekFrame.
     if (player.seekTarget == null) player.seekGoalFrame = null;
-    const dragFrame = scrubbing ? pendingSeekFrame ?? Number(ui.seek.value) : player.seekGoalFrame ?? null;
+    const dragFrame = scrubbing ? Number(ui.seek.value) : player.seekGoalFrame ?? null;
     const f = dragFrame ?? (step ? player.frameAt(step.t) : player.currentFrame());
     const t = dragFrame !== null ? Math.min(dur || Infinity, dragFrame / (player.frameNumberRate?.() || player.fps || 30))
       : step ? Math.max(0, Math.min(dur || Infinity, player.rel(step.t))) : player.currentTime();
@@ -250,8 +249,6 @@
   let lastSave = 0;
   let lastSaved = '';
   // Slider seeks: only the newest is kept, applied once the previous one has landed (native ffmpeg starts a process per seek).
-  let pendingSeekFrame = null;
-  let lastSeekAt = 0;
   // The frame loop rests while nothing can change on its own: paused, the engine settled (no seek,
   // read or decode under way), no drag, no tool that draws by itself, and nothing changed for
   // REST_AFTER_MS. Input events, messages (host, workers) and decoder outputs wake it (wakeLoop);
@@ -279,13 +276,13 @@
     if (!p) return 'no player';
     if (typeof p.settled !== 'function') return 'frame player';
     const e = !p.settled() ? `engine(${['playing', 'requesting', 'catchUp', 'skipping', 'firstShown', 'eof'].map((k) => `${k}=${!!p[k]}`).join(',')},seek=${p.seekTarget},q=${p.queue.length},vq=${p.vdec ? p.vdec.decodeQueueSize : '-'},aq=${p.adec ? p.adec.decodeQueueSize : '-'})` : '';
-    return [e, scrubbing && 'scrubbing', pendingSeekFrame !== null && 'seek pending', seekDragger.dragging() && 'seek drag', volumeDragger.dragging() && 'volume drag',
+    return [e, scrubbing && 'scrubbing', seekDragger.dragging() && 'seek drag', volumeDragger.dragging() && 'volume drag',
       !insp.idle() && 'inspector', scopes.mode() && 'scopes', xray && xray.isShown() && 'xray'].filter(Boolean).join(' ');
   }
   /** Whether the loop may rest now (see REST_AFTER_MS). */
   function restful() {
     return !!player && typeof player.settled === 'function' && player.settled() && !player.isPlaying()
-      && !scrubbing && pendingSeekFrame === null && !seekDragger.dragging() && !volumeDragger.dragging()
+      && !scrubbing && !seekDragger.dragging() && !volumeDragger.dragging()
       && insp.idle() && !scopes.mode() && !(xray && xray.isShown()) && !exactNeeded();
   }
   function frameLoop(now) {
@@ -293,20 +290,12 @@
     loopStats.frames++;
     let changed = false;
     if (player) {
-      // The remote stream restarts ffmpeg on the remote host per seek: wait for the last seek's frame
-      // (up to 1.5 s, by how long the last one took) so each restart shows its frame instead of being cut off.
-      const wait = player.remoteStream ? Math.min(1500, Math.max(250, 1.25 * (player.lastSeekMs || 0))) : 250;
-      if (pendingSeekFrame !== null && (player.seekTarget === undefined || player.seekTarget === null || now - lastSeekAt > wait)) {
-        player.seekFrame(pendingSeekFrame);
-        pendingSeekFrame = null;
-        lastSeekAt = now;
-      }
       player.tick(now);
       exactTick(now);
       insp.tick(now);
       scopes.tick(now);
       subs.tick();
-      { const to = ab.wrapTarget(player.currentTime(), player.isPlaying()); if (to !== null) player.seekTime(to); }
+      if (!scrubbing) { const to = ab.wrapTarget(player.currentTime(), player.isPlaying()); if (to !== null) player.seekTime(to); }
       changed = updateUi();
       if (xray) xray.chapterTicks();
       updateStatus();
@@ -333,6 +322,8 @@
   requestAnimationFrame(frameLoop);
 
   function disposePlayer() {
+    seekDragger.stop();
+    hideTip(true);
     const previous = player;
     player = null;
     previous?.dispose();
@@ -764,10 +755,34 @@
   ui.mute.onclick = () => setMute(!muted);
   ui.volume.addEventListener('input', () => { if (hasAudio()) setVolume(Number(ui.volume.value)); });
   ui.volume.addEventListener('wheel', (e) => { if (!hasAudio()) return; e.preventDefault(); setVolume(volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(volume * 100)}%`); }, { passive: false });
-  const seekDragger = VpeRangeDrag.bind(ui.seek, (e) => {
-    const r = ui.seek.getBoundingClientRect();
-    if (e?.type !== 'pointerup' || e.clientX < r.left || e.clientX > r.right ||
-      e.clientY < r.top - 4 || e.clientY > r.bottom + 4) hideTip();
+  const seekDragger = VpeRangeDrag.bindSeek(ui.seek, {
+    preview(frame) {
+      if (!player) return;
+      if (!scrubbing) {
+        scrubbing = true;
+        player.clearStepGoal?.();
+        player.beginScrub?.();
+      }
+      updateUi();
+      wakeLoop();
+      const r = ui.seek.getBoundingClientRect();
+      const max = Number(ui.seek.max) || 0;
+      if (max > 0) showTip(r.left + (frame / max) * r.width);
+    },
+    finish() {
+      if (scrubbing) player?.endScrub?.();
+      scrubbing = false;
+      hideTip(true);
+      wakeLoop();
+    },
+    commit(frame) {
+      if (!player) return;
+      if (player.commitScrubFrame) player.commitScrubFrame(frame);
+      else player.seekFrame(frame);
+      player.seekGoalFrame = player.seekTarget == null ? null : frame;
+      updateUi();
+      wakeLoop();
+    },
   });
   const volumeDragger = VpeRangeDrag.bind(ui.volume);
   VpeControls.holdVolumeOpen(ui.volume);
@@ -776,26 +791,6 @@
     // A live stream shows only the time since it started (no timecode or frame count to cycle to).
     if (player && player.meta && player.meta.live) { toast('Live stream'); return; }
     timeMode = (timeMode + 1) % 3; lastUi = ''; updateUi(); postPlaybackPrefs(); toast(['Time', 'Timecode', 'Frame number'][timeMode]); };
-  ui.seek.addEventListener('input', () => {
-    scrubbing = true;
-    player?.clearStepGoal?.();
-    pendingSeekFrame = Number(ui.seek.value);
-    updateUi();
-    wakeLoop();
-  });
-  ui.seek.addEventListener('change', () => {
-    scrubbing = false;
-    if (!player) return;
-    const frame = pendingSeekFrame ?? Number(ui.seek.value);
-    if (pendingSeekFrame !== null) {
-      player.seekFrame(frame);
-      pendingSeekFrame = null;
-      lastSeekAt = performance.now();
-    }
-    // A seek sent during the drag may still be decoding when the thumb is released.
-    player.seekGoalFrame = player.seekTarget == null ? null : frame;
-    wakeLoop();
-  });
   // Hover tip: time and frame, with a keyframe thumbnail above it (engine.js thumbnail(), thumbs.js).
   const thumbBox = document.createElement('div');
   thumbBox.id = 'thumb';
@@ -805,12 +800,6 @@
   ui.tip.parentElement.appendChild(thumbBox);
   let thumbShown = false;
   // Dragging (mouse held on the bar): the tip and thumbnail follow the slider value, also off the bar.
-  ui.seek.addEventListener('input', () => {
-    if (!seekDragger.dragging()) return; // keyboard on the focused slider: no tip
-    const r = ui.seek.getBoundingClientRect();
-    const max = Number(ui.seek.max) || 0;
-    if (max > 0) showTip(r.left + (Number(ui.seek.value) / max) * r.width);
-  });
   ui.seek.addEventListener('mousemove', (e) => { if (!seekDragger.dragging()) showTip(e.clientX); });
   function showTip(clientX) {
     // Until the frame count is known (slow 4K decoding), the tip shows the time from the duration.
@@ -829,22 +818,23 @@
       thumbBox.style.left = `${Math.max(half, Math.min(r.width - half, px))}px`;
     };
     // The last picture stays up until the one for this position arrives.
-    const asked = player.thumbnail && player.thumbnail(t, (/** @type {any} */ p) => {
-      if (ui.tip.hidden) return;
+    const source = player;
+    const asked = source.thumbnail && source.thumbnail(t, (/** @type {any} */ p) => {
+      if (ui.tip.hidden || player !== source) return;
       ThumbService.draw(thumbCv, p);
       thumbBox.hidden = false;
       thumbShown = true;
       place();
-    });
+    }, scrubbing);
     if (!asked) thumbBox.hidden = true;
     else if (thumbShown) place();
   }
   ui.seek.addEventListener('mouseleave', () => { if (!seekDragger.dragging()) hideTip(); });
-  function hideTip() {
+  function hideTip(immediate = false) {
     ui.tip.hidden = true;
     thumbBox.hidden = true;
     thumbShown = false;
-    if (player && player.thumbnailLeave) player.thumbnailLeave();
+    if (player && player.thumbnailLeave) player.thumbnailLeave(immediate);
   }
   // A click on the picture closes an open panel or the shortcuts sheet; otherwise it plays / pauses.
   stage.addEventListener('click', () => { if (controls && (controls.consumeDismiss() || controls.anyOpen() || ctxMenu.consumeDismiss())) { controls.closeAll(false); return; } togglePlay(); });
@@ -901,6 +891,7 @@
   let resumeOnShow = false;
   function setVisible(visible) {
     if (!player) return;
+    if (!visible) { seekDragger.stop(); hideTip(true); }
     if (player.setHidden) player.setHidden(!visible);
     if (!visible) {
       resumeOnShow = resumeOnShow || player.isPlaying();

@@ -187,7 +187,7 @@ async function inspectUrl() {
 
 async function exportAndThumb(file, replace) {
   const thumbhost = require('../../src/thumbhost');
-  const { decodeThumb } = thumbhost;
+  const { nativeThumb } = thumbhost;
   const started = deferred();
   const finished = deferred();
   const grab = deferred();
@@ -196,7 +196,7 @@ async function exportAndThumb(file, replace) {
   let kills = 0;
   let writes = 0;
   let progressDisposals = 0;
-  thumbhost.decodeThumb = (...args) => {
+  thumbhost.nativeThumb = (...args) => {
     thumbnailCalls++;
     args.at(-1).addEventListener('abort', () => {
       thumbCancels++;
@@ -236,25 +236,24 @@ async function exportAndThumb(file, replace) {
     const page = pageOf(s);
     const exporting = s.send({ type: 'exportRange', page, range: { fa: 0, fb: 1, fps: 30 } });
     const { id } = await grab.promise;
-    await s.send({ type: 'thumb', page, id: 1, t: 0, w: 20, h: 20 });
+    const thumbnail = s.send({ type: 'thumb', page, id: 1, t: 0, w: 20, h: 20 });
     await started.promise;
-    await s.send({ type: 'thumb', page, id: 2, t: 1, w: 20, h: 20 });
     s.posted.length = 0;
     await replace(s);
     await s.send({ type: 'exportFrame', page, id, frame: 0, data: Uint8Array.of(1) });
     await s.send({ type: 'thumb', page, id: 1, t: 0, w: 20, h: 20 });
-    await exporting;
+    await Promise.all([exporting, thumbnail]);
     await s.send({ type: 'exportFrame', page, id, frame: 0, data: Uint8Array.of(1) });
     assert.deepEqual(s.posted, []);
     assert.equal(kills, 1, 'the native process serving the export is killed once');
     assert.equal(progressDisposals, 1, 'the cancelled frame wait releases progress once');
     assert.equal(writes, 0);
-    assert.equal(thumbnailCalls, 1, 'queued thumbnails never start after cancellation');
+    assert.equal(thumbnailCalls, 1, 'a stale page cannot restart thumbnails');
     assert.equal(thumbCancels, 1, 'the in-flight thumbnail is cancelled once');
   } finally {
     s.panel.dispose();
     h.dispose();
-    thumbhost.decodeThumb = decodeThumb;
+    thumbhost.nativeThumb = nativeThumb;
   }
 }
 

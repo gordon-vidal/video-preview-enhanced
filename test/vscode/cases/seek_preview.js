@@ -3,8 +3,8 @@
 //   idle:    after open nothing is decoded (no thumbnail service, no request, no worker, no ffmpeg
 //            thumbnail process) until the first hover, also not 4 s after the first frame
 //   hover:   a thumbnail shows up on hover (the exact keyframe; neighbours fill while the pointer stays)
-//   drag:    while the slider is dragged (synthetic: pointerdown, input events, then change + pointerup)
-//            the thumbnail follows the slider and changes, and the main picture moves
+//   drag:    while the slider is dragged (synthetic: pointerdown, input events, then pointerup)
+//            the thumbnail follows the slider and changes, and the main picture holds its committed frame
 //   stop:    after the pointer leaves and after the drag ends, no further thumbnail request is made
 //   exact:   on release the picture is exactly the frame under the slider (ffmpeg reference), and
 //            a later seek and frame step stay exact
@@ -56,21 +56,22 @@ async function previewChecks(vs, h, file, R, label) {
       const still = (await P.state()).strip;
       ok(still.requests === afterLeave && !still.hovering, `after leaving no further decoding (${afterLeave} -> ${still.requests} requests)`);
 
-      // 3. Drag: pointerdown on the bar, slider input events, the thumbnail follows; the picture moves live.
+      // 3. Drag: pointerdown on the bar, slider input events, the thumbnail follows; the committed frame stays visible.
       const before = await P.report();
       P.dom('pointerdown', sx + sw * 0.1, sy + sh / 2, { target: 'seek' });
       const sigs = new Set();
+      let previousSig;
       const frames = new Set();
       for (const frac of [0.15, 0.3, 0.45, 0.6, 0.75, 0.9]) {
         await P.ask('scrub', { frac });
-        const s = await P.waitState((x) => !x.thumb.hidden && x.thumb.w > 0, { timeout: 15000, what: `drag thumbnail at ${frac}`, interval: 50 });
+        const s = await P.waitState((x) => !x.thumb.hidden && x.thumb.w > 0 && x.thumb.sig !== previousSig, { timeout: 15000, what: `drag thumbnail at ${frac}`, interval: 50 });
         sigs.add(s.thumb.sig);
+        previousSig = s.thumb.sig;
         await lib.sleep(250);
         frames.add((await P.report()).frame0);
       }
       ok(sigs.size >= 4, `the thumbnail changes while dragging (${sigs.size} pictures for 6 places)`);
-      // It moves during the drag (the first sample, 250 ms after the first move, may still show the old frame on a busy machine).
-      ok(frames.size >= 2 && [...frames].some((f) => f !== before.frame0), `the main picture moves while dragging (frames ${[...frames]}, before ${before.frame0})`);
+      ok(frames.size === 1 && frames.has(before.frame0), `the main picture holds its committed frame while dragging (frames ${[...frames]}, before ${before.frame0})`);
       r.drag = { pictures: sigs.size, frames: [...frames] };
 
       // 4. Release: exactly the frame under the slider.

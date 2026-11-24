@@ -163,3 +163,18 @@ prefetch after the pointer leaves would require a product decision.
   Verify click, pointer cancel, keyboard, zoom, audio resume, hiding/reopening and stale
   replies. Include inspection, copy/export and rapid reverse steps after landing. Judge
   VFR against decoded presentation timestamps, never against nominal FPS multiplication.
+
+## Implementation and benchmark
+
+The single player and Compare hold their committed pictures during a seek-bar drag and use the existing
+tooltip dimensions for keyframe previews. Compare previews the clock tile and applies the tile offsets
+through its existing exact synchronization path on release. The tooltip needs one small canvas in
+Compare and uses the same position above the time tip, with the existing seek bar keys and accessible name.
+Cached preview coverage is limited to observed anchors and requested targets. Preview cancellation leaves
+Live transcode exact seeking on its existing history and restart path.
+
+Run `node test/thumbs/scrub_bench.js` with ffmpeg on PATH and both Git LFS clips present. This measures
+20 decode misses per clip with the same targets on each backend. The WASM worker has already opened its
+demuxer and decoder. Each native request starts a new process. Times include local reads and return of
+scaled RGBA. Webview presentation, native hardware decode and shared block-cache behavior are outside
+this benchmark.

@@ -3,12 +3,12 @@
 
 (function (root) {
   // checkJs: start
-  /** @typedef {{frame: number, time: number}} Goal */
+  /** @typedef {{frame: number, time: number, exact?: boolean}} Goal */
   /** @typedef {{totalFrames: number, rate: number, duration: number}} Bounds */
   /** @typedef {Bounds & {frame: number}} Position */
 
   /**
-   * The first request seeks immediately. After the burst window, the latest step or scrub
+   * The first request seeks immediately. After the burst window, the latest step
    * target supersedes an obsolete seek.
    * @template Timer
    * @param {{dispatch: (goal: Goal) => void, now: () => number,
@@ -49,16 +49,16 @@
     }
 
     /** @param {number} frame @param {Bounds} bounds */
-    function aim(frame, { rate, duration }) {
-      goal = { frame, time: Math.min(duration > 0 ? duration : Infinity, frame / rate) };
+    function aim(frame, { rate, duration }, exact = false) {
+      goal = { frame, time: Math.min(duration > 0 ? duration : Infinity, frame / rate), ...(exact ? { exact } : {}) };
       dispatchPending();
     }
 
     return {
       get goal() { return goal; },
-      /** @param {number} frame @param {Bounds} bounds */
-      set(frame, bounds) {
-        aim(clampFrame(frame, bounds.totalFrames), bounds);
+      /** @param {number} frame @param {Bounds} bounds @param {boolean} [exact] */
+      set(frame, bounds, exact) {
+        aim(clampFrame(frame, bounds.totalFrames), bounds, exact);
       },
       /** @param {number} delta @param {Position} position */
       step(delta, position) {
@@ -66,7 +66,7 @@
         const target = clampFrame(base + delta, position.totalFrames);
         if (target !== base) aim(target, position);
       },
-      /** Commit the last scrub target on release without waiting for the burst window. */
+      /** Dispatch the latest queued target immediately. */
       flush,
       /** Called after the clock has presented the picture for the dispatched seek. */
       settle() {

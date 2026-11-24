@@ -148,13 +148,17 @@ async function runSuiteA(rng, tmpDir) {
       session.native = native;
       const request = { page: session.page, id: 1, t: 0, w: 80, h: 48 };
       const before = children.length;
-      session.sendThumb(request);
-      session.sendThumb({ ...request, id: 2 });
-      const thumbs = session.thumbChain;
-      await Promise.resolve();
+      const cancelled = session.sendThumb(request);
+      const firstChild = children.at(-1);
+      session.sendThumb({ ...request, cancel: true });
+      assert.strictEqual(firstChild.kills, 1);
+      await within(cancelled, 1000, 'release cancellation without child close');
+      assert.strictEqual(children.length, before + 1);
+
+      const thumbs = session.sendThumb({ ...request, id: 2 });
       const child = children.at(-1);
       const childCount = children.length;
-      assert.strictEqual(childCount, before + 1);
+      assert.strictEqual(childCount, before + 2);
       child.stdout.emit('data', Buffer.alloc(128));
       // Include a waiter with a separate signal, as range exports use their own controller.
       const exportReply = session.grabFrame(0, new AbortController().signal);
@@ -162,11 +166,11 @@ async function runSuiteA(rng, tmpDir) {
       const posts = second.posted.length;
       endPage();
       assert.strictEqual(session.exportWait.size, 0);
-      assert.strictEqual(session.thumbChain, null);
+      assert.strictEqual(session.thumbJob, null);
       assert.strictEqual(child.kills, 1);
       assert.deepStrictEqual(await exportReply, { error: 'export cancelled' });
       await within(thumbs, 1000, 'thumbnail cancellation without child close');
-      assert.strictEqual(children.length, childCount, 'cancelled queued thumbnail must not spawn');
+      assert.strictEqual(children.length, childCount, 'teardown must not restart thumbnails');
       assert.strictEqual(second.posted.length, posts, 'cancelled thumbnails must not reply');
     }
     session.dispose();
@@ -332,7 +336,7 @@ async function runSuiteA(rng, tmpDir) {
       assert.strictEqual(currentSession.watchTimer, null);
       assert.strictEqual(currentSession.watcher, null);
       assert.strictEqual(currentSession.frames, null);
-      assert.strictEqual(currentSession.thumbChain, null);
+      assert.strictEqual(currentSession.thumbJob, null);
 
       assert.strictEqual(
         s.posted.length,

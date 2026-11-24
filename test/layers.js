@@ -224,6 +224,7 @@ const unit = [
   { file: 'test/unit/frame_player_test.js', sources: ['media/frame-player.js', 'media/player.js'] },
   { file: 'test/unit/comparerange_test.js', sources: ['media/comparerange.js', 'media/compare.js'] },
   { file: 'test/unit/gl_renderer_test.js', sources: ['media/gl-renderer.js', 'media/engine.js', 'media/compare-compositor.js', 'media/compare.js'] },
+  { file: 'test/unit/scrub_drag_test.js', sources: ['media/range-drag.js', 'media/player.js', 'media/compare.js'] },
   { file: 'test/unit/stepgoal_test.js', sources: ['media/stepgoal.js', 'media/compare-sync.js', 'media/compare.js'] },
   { file: 'test/unit/compare_sync_test.js', sources: ['media/compare-sync.js', 'media/engine.js', 'media/stepgoal.js'] },
   { file: 'test/unit/timefmt_test.js', sources: ['media/timefmt.js', 'media/player.js', 'media/compare.js'] },
@@ -237,6 +238,7 @@ const engine = [
   // media/engine.js (the product's player), one file per clip set so they run in parallel.
   ...fs.readdirSync(path.join(__dirname, 'engine')).filter((f) => /^(frames|formats)_\w+\.js$/.test(f) && !/_lib\.js$/.test(f)).sort()
     .map((f) => ({ file: rel('test/engine', f), needs: ['ffmpeg'], sources: ENGINE_SRC })),
+  { file: 'test/engine/scrub.js', needs: ['ffmpeg'], media: ['s_h264.mp4'], sources: ENGINE_SRC },
   { file: 'test/engine/continuity_fuzz.js', needs: ['ffmpeg'], sources: ENGINE_SRC },
   { file: 'test/engine/chaos.js', needs: ['ffmpeg'], sources: [...ENGINE_SRC, 'test/media/make_heavy_media.js'],
     ...(process.env.VPE_HEAVY_MEDIA === '1' ? { timeout: 180000 } : {}) },

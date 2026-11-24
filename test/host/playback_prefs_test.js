@@ -166,7 +166,7 @@ function slice(src, from, to) {
       vm.runInContext([
         slice(playerSrc, '  const saved = vscode.getState() || {};', '  const actionBtn ='),
         slice(playerSrc, '  function postPlaybackPrefs()', '  /** Z (and the Picture size button)'),
-        slice(playerSrc, '  ui.time.onclick = () => {', '  ui.seek.addEventListener(\'input\''),
+        slice(playerSrc, '  ui.time.onclick = () => {', '  // Hover tip:'),
         slice(playerSrc, '  setRate(rate, false);', '\n\n  // Controls hide'),
       ].join('\n'), ctx);
       vm.runInContext(`player = {
