@@ -651,10 +651,16 @@ function rail(fsys, o = {}) {
       assert.strictEqual(cfg().rail.width, 250, 'the resized width is preserved on the new page');
       assert.deepStrictEqual(cfg().railCarry, { open: true, filter: 'a ' }, 'the rail comes back open with its live filter');
       await rail({ op: 'filter', filter: '' });
-      // The same video again: no duplicate.
+      // Clicking a video already in Compare removes it (down to 2, which stays with a toast).
+      await rail({ op: 'activate', gen: list.gen, id: id('a 10.mov'), rail: { open: true } });
+      assert.deepStrictEqual(names(), ['a 1.mp4', 'a 2.mkv'], 'clicking an in-Compare video removes it');
+      assert.strictEqual(cfg().toast, 'Removed from Compare');
       await rail({ op: 'activate', gen: list.gen, id: id('a 1.mp4'), rail: { open: true } });
-      assert.strictEqual(cmp.files.length, 3);
-      assert.ok(posts.some((m) => m.type === 'toast' && m.text === 'Already in Compare'));
+      assert.deepStrictEqual(names(), ['a 1.mp4', 'a 2.mkv'], 'cannot drop below 2 videos');
+      assert.ok(posts.some((m) => m.type === 'toast' && m.text === 'Compare needs at least 2 videos'));
+      // Re-add a 10.mov so the rest of the test runs with 3 videos.
+      await rail({ op: 'activate', gen: list.gen, id: id('a 10.mov'), rail: { open: true } });
+      assert.deepStrictEqual(names(), ['a 1.mp4', 'a 2.mkv', 'a 10.mov']);
       // The new page opens the rail: the added video is marked too; a reorder sends the marks again.
       await rail({ op: 'open' });
       list = lists().pop();

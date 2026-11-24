@@ -363,7 +363,7 @@
         row.id = `rail-${e.id.replace('.', '-')}`;
         row.setAttribute('role', 'option');
         row.setAttribute('aria-selected', String(active || inCmp));
-        if (inCmp) row.title = 'In Compare';
+        if (inCmp) row.title = 'In Compare — click to remove';
         row.dataset.id = e.id;
         const ic = doc.createElement('span');
         ic.className = 'r-ico';

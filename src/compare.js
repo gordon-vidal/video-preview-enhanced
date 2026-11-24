@@ -259,13 +259,27 @@ class CompareSession {
     }, m);
   }
 
-  /** A rail video row: added once (no duplicate), up to compare.maxVideos; a toast says which. */
+  /** A rail video row: toggles membership in this Compare (adds up to compare.maxVideos, or removes down to 2). */
   railAdd(file) {
     const uri = this.uriOf(file);
+    const key = fileKey(uri);
+    const idx = this.uris.findIndex((u) => fileKey(u) === key);
+    if (idx >= 0) {
+      if (this.uris.length <= 2) {
+        this.post({ type: 'toast', text: 'Compare needs at least 2 videos', ms: 2500 });
+        return false;
+      }
+      this.log(`remove ${this.names[idx]}`);
+      this.originalTiles.splice(idx, 1);
+      this.order = Grid.orderAfterRemoval(this.order, idx);
+      this.nextToast = 'Removed from Compare';
+      this.reload(this.uris.filter((_, j) => j !== idx));
+      return true;
+    }
     const max = maxVideos();
-    const plan = planFolderCompare({ videoKeys: [fileKey(uri)], compareKeys: this.uris.map(fileKey), max });
+    const plan = planFolderCompare({ videoKeys: [key], compareKeys: this.uris.map(fileKey), max });
     if (plan.action === 'add') { this.addUris([uri], 'Added to Compare'); return true; }
-    this.post({ type: 'toast', text: plan.action === 'full' ? `Compare is full (${max} videos)` : 'Already in Compare', ms: 2500 });
+    this.post({ type: 'toast', text: `Compare is full (${max} videos)`, ms: 2500 });
     return false;
   }
 
