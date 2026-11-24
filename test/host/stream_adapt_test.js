@@ -18,7 +18,11 @@ const make = () => {
 
 { // Fresh: tier 0, and no sample counts until ffmpeg's first output.
   const c = new LinkAdaptController();
-  assert.deepStrictEqual(c.state(), { tier: 0, topKbps: 0, topPeak: 0, linkRun: 0, lastLinkSample: 0, settleAt: Infinity, noticed: [] });
+  assert.deepStrictEqual(c.state(), {
+    tier: 0, topKbps: 0, topPeak: 0, fastKbps: 0, slowKbps: 0,
+    linkRun: 0, upRun: 4, lastUpgradeAt: -Infinity,
+    lastLinkSample: 0, settleAt: Infinity, noticed: [],
+  });
   assert.strictEqual(c.onSample(bad(100), 1e9, 0), null);
   assert.strictEqual(c.state().lastLinkSample, 1e9, 'the sample time is noted even while settling');
 }
@@ -43,25 +47,27 @@ const make = () => {
   assert.strictEqual(c.state().settleAt, Infinity);
 }
 
-{ // Step down at linkRun >= 2: one bad window is not enough, the second steps.
+{ // Step down at linkRun >= 2: one mild bad window is not enough, the second steps to intermediate 1080p @ 5500.
   const { c, feed } = make();
-  assert.strictEqual(feed(bad(5000)).change, 'none');
+  assert.deepStrictEqual(LINK_TIERS[1], { height: 1080, kbps: 5500 }, 'intermediate 1080p cap tier before 720p');
+  assert.strictEqual(feed(bad(6000)).change, 'none');
   assert.strictEqual(c.state().linkRun, 1);
-  const d = feed(bad(5000));
+  const d = feed(bad(6000));
   assert.strictEqual(d.change, 'tier');
   assert.ok(d.down);
+  assert.strictEqual(d.panic, false);
   assert.strictEqual(c.tier, 1);
   assert.strictEqual(c.state().linkRun, 0, 'the run restarts after a step');
 }
 
 { // A good window in between breaks the run; a gap between samples (paused player) does too.
   const { c, feed, now } = make();
-  feed(bad(5000));
-  feed(good(5000)); // tier 0: neither bad nor up
+  feed(bad(6000));
+  feed(good(6000)); // tier 0: neither bad nor up
   assert.strictEqual(c.state().linkRun, 0);
-  feed(bad(5000));
+  feed(bad(6000));
   assert.strictEqual(c.tier, 0);
-  c.onSample(bad(5000), now() + 4000, 0); // 4 s after the last: run restarts at 1
+  c.onSample(bad(6000), now() + 4000, 0); // 4 s after the last: run restarts at 1
   assert.strictEqual(c.tier, 0);
 }
 
@@ -71,10 +77,14 @@ const make = () => {
   const d = feed(bad(1500), 1536);
   assert.strictEqual(d.change, 'tier');
   assert.strictEqual(c.tier, last);
+  // Without sound 4 Mb/s fits 720p (3 Mb/s) but not 1080p (5.5 Mb/s).
+  const m = make();
+  m.feed(bad(4000)); m.feed(bad(4000));
+  assert.strictEqual(m.c.tier, 2);
   // Without sound 2 Mb/s fits 480p (1.2 Mb/s) but not 720p (3 Mb/s).
   const b = make();
   b.feed(bad(2000)); b.feed(bad(2000));
-  assert.strictEqual(b.c.tier, 2);
+  assert.strictEqual(b.c.tier, 3);
   // At the floor a due step down is reported as 'floor', and the tier stays.
   const f = make();
   f.feed(bad(100), 1536); f.feed(bad(100), 1536);
@@ -84,34 +94,110 @@ const make = () => {
   assert.strictEqual(f.c.tier, last);
 }
 
-{ // Step up at linkRun <= -4: four good windows with 30% headroom over the next tier, not three.
+{ // 1-window panic step-down on severe starvation (buffer < 0.1 s and mediaRate < 0.5).
   const { c, feed } = make();
-  c.tier = 2;
+  const d = feed(bad(4000, { buffer: 0.05, mediaRate: 0.3 }));
+  assert.strictEqual(d.panic, true);
+  assert.strictEqual(d.change, 'tier');
+  assert.strictEqual(c.tier, 2, '4 Mb/s skips 1080p (5.5 Mb/s) straight to 720p on panic');
+  // Boundary: mediaRate === 0.5 or buffer === 0.1 is NOT a panic (waits for 2 windows).
+  const b1 = make();
+  const d1 = b1.feed(bad(4000, { buffer: 0.05, mediaRate: 0.5 }));
+  assert.strictEqual(d1.panic, false);
+  assert.strictEqual(d1.change, 'none');
+  const b2 = make();
+  const d2 = b2.feed(bad(4000, { buffer: 0.1, mediaRate: 0.2 }));
+  assert.strictEqual(d2.panic, false);
+  assert.strictEqual(d2.change, 'none');
+  // Slow encoder (not link-limited) never triggers panic step-down.
+  const enc = make();
+  const de = enc.feed(bad(500, { buffer: 0.01, mediaRate: 0.1, readMs: 1500, hostWaitMs: 1200 }));
+  assert.strictEqual(de.linkLimited, false);
+  assert.strictEqual(de.panic, false);
+  assert.strictEqual(de.change, 'none');
+  assert.strictEqual(enc.c.tier, 0);
+}
+
+{ // Step up at linkRun <= -4: four good windows with 30% headroom over the next tier and >= 0.8 s buffer.
+  const { c, feed } = make();
+  c.tier = 3; // 480p -> next is 720p (3000 kb/s, needs > 3900)
   for (let i = 0; i < 3; i++) assert.strictEqual(feed(good(5000)).change, 'none');
   assert.strictEqual(c.state().linkRun, -3);
   assert.strictEqual(feed(good(5000)).change, 'tier');
-  assert.strictEqual(c.tier, 1);
+  assert.strictEqual(c.tier, 2);
   assert.strictEqual(c.state().linkRun, 0);
-  // Not enough headroom over 720p's 3000 kb/s (1.3 x 3000 = 3900): stays.
-  for (let i = 0; i < 6; i++) feed(good(3800));
-  assert.strictEqual(c.tier, 1);
-  // A window with a low buffer is neither good nor bad and breaks the run.
+  // Not enough headroom over 1080p's 5500 kb/s (1.3 x 5500 = 7150): stays.
+  for (let i = 0; i < 6; i++) feed(good(7000));
+  assert.strictEqual(c.tier, 2);
+  // Upgrade buffer guard raised to 0.8 s: 0.5 s (previously allowed at 0.25 s) breaks the run.
   const r = make();
-  r.c.tier = 2;
+  r.c.tier = 3;
   for (let i = 0; i < 3; i++) r.feed(good(5000));
-  r.feed(good(5000, { buffer: 0.1 }));
-  r.feed(good(5000));
-  assert.strictEqual(r.c.tier, 2);
+  r.feed(good(5000, { buffer: 0.5 }));
+  assert.strictEqual(r.c.state().linkRun, 0, 'buffer < 0.8 s resets upgrade run');
+  r.feed(good(5000, { buffer: 0.8 }));
+  assert.strictEqual(r.c.state().linkRun, -1, 'buffer === 0.8 s counts toward upgrade');
+  assert.strictEqual(r.c.tier, 3);
   // Never above tier 0.
   const t0 = make();
   for (let i = 0; i < 8; i++) t0.feed(good(50000));
   assert.strictEqual(t0.c.tier, 0);
 }
 
+{ // Dual-EWMA smoothing: a brief throughput burst after a slow link does not trigger premature upgrade.
+  const { c, feed } = make();
+  c.tier = 3; // 480p -> next is 720p (needs > 3900)
+  feed(good(2000)); // seed fast=2000, slow=2000
+  const burst = feed(good(10000)); // fast=6000, slow=3600 -> min(fast, slow) = 3600 <= 3900
+  assert.strictEqual(burst.fastKbps, 6000);
+  assert.strictEqual(burst.slowKbps, 3600);
+  assert.strictEqual(c.state().linkRun, 0, 'slow EWMA blocks single-window burst from starting upgrade run');
+  // Sustained high throughput lifts slow EWMA above 3900 and upgrades after 4 qualifying windows.
+  for (let i = 0; i < 3; i++) assert.strictEqual(feed(good(10000)).change, 'none');
+  assert.strictEqual(feed(good(10000)).change, 'tier');
+  assert.strictEqual(c.tier, 2);
+}
+
+{ // Exponential oscillation backoff: dropping within 10 s of an upgrade doubles upRun (4 -> 8 -> 16, capped at 16).
+  const { c, feed } = make();
+  c.tier = 3;
+  for (let i = 0; i < 4; i++) feed(good(6000));
+  assert.strictEqual(c.tier, 2, 'first upgrade uses UP_RUN=4');
+  assert.strictEqual(c.state().upRun, 4);
+  // Re-starves within 10 s (panic 1-window drop at +2 s): upRun doubles to 8.
+  feed(bad(2000, { buffer: 0.05, mediaRate: 0.3 }));
+  assert.strictEqual(c.tier, 3);
+  assert.strictEqual(c.state().upRun, 8, 'oscillation doubles upRun to 8');
+  // Needs 8 qualifying good windows now (fast=4000, slow=5200 -> already above 3900).
+  for (let i = 0; i < 7; i++) {
+    assert.strictEqual(feed(good(8000)).change, 'none', `stays at tier 3 before 8 good windows (step ${i + 1})`);
+  }
+  assert.strictEqual(c.state().linkRun, -7, '7 qualifying windows still not enough when upRun=8');
+  assert.strictEqual(c.tier, 3);
+  assert.strictEqual(feed(good(8000)).change, 'tier', '8th qualifying window upgrades');
+  assert.strictEqual(c.tier, 2, '8th qualifying window upgrades');
+  // Drops again within 10 s: upRun doubles to 16 (MAX_UP_RUN).
+  feed(bad(2000, { buffer: 0.05, mediaRate: 0.3 }));
+  assert.strictEqual(c.tier, 3);
+  assert.strictEqual(c.state().upRun, 16, 'second oscillation doubles upRun to 16');
+  // Staying stable past 10 s after an upgrade resets upRun back to 4.
+  const s = make();
+  s.c.tier = 3;
+  for (let i = 0; i < 4; i++) s.feed(good(6000));
+  s.feed(bad(2000, { buffer: 0.05, mediaRate: 0.3 }));
+  assert.strictEqual(s.c.state().upRun, 8);
+  while (s.c.tier === 3) s.feed(good(8000));
+  assert.strictEqual(s.c.tier, 2);
+  // 6 stable samples = 12 s > 10 s oscillation window -> upRun resets to 4.
+  for (let i = 0; i < 6; i++) s.feed(good(6000));
+  assert.strictEqual(s.c.state().upRun, 4, 'stable playback past 10 s resets upRun to 4');
+}
+
 { // A slow encoder (the host waited for ffmpeg most of the read) is not a slow link.
   const { c, feed } = make();
   for (let i = 0; i < 6; i++) assert.strictEqual(feed(bad(1500, { readMs: 1500, hostWaitMs: 1200 })).linkLimited, false);
   assert.strictEqual(c.tier, 0);
+  assert.strictEqual(c.state().fastKbps, 0, 'encoder-limited windows do not pollute link EWMA');
   assert.strictEqual(feed(bad(0, { readMs: 0 })).linkLimited, true, 'a read that outlasts the window is the link');
 }
 
@@ -122,10 +208,10 @@ const make = () => {
   const s = c.state();
   assert.strictEqual(s.topKbps, 0.75 * 8000 + 0.25 * 4000);
   assert.strictEqual(s.topPeak, 0.9 * 8000);
-  feed(bad(5000)); feed(bad(5000)); // down to tier 1 (the link carries 720p)
+  feed(bad(6000)); feed(bad(6000)); // down to tier 1 (1080p @ 5500)
   assert.strictEqual(c.tier, 1);
   const before = c.state();
-  assert.strictEqual(feed(good(500, { videoKbps: 1 })).nextCap, Math.max(3000, before.topKbps, before.topPeak), 'tier 1: next is the uncapped rate');
+  assert.strictEqual(feed(good(500, { videoKbps: 1 })).nextCap, Math.max(5500, before.topKbps, before.topPeak), 'tier 1: next is the uncapped rate');
   assert.strictEqual(c.state().topKbps, before.topKbps, 'not updated below the top tier');
 }
 

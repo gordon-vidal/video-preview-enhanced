@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Seek-bar drags show a keyframe preview and hold the main picture until an exact seek on release. Compare previews its clock tile.
+- Live transcode (remote): smarter adaptive bitrate (dual-EWMA bandwidth smoothing, 1-window panic step-down, 0.8 s upgrade guard with oscillation backoff, intermediate 1080p @ 5.5 Mb/s tier) and keep hardware GPU decoding active on stepped-down tiers.
 
 ## 0.10.1 (2026-11-24)
 

@@ -1,20 +1,39 @@
 'use strict';
 // The Live transcode stream's quality ladder (EncodedStream.adapt in src/stream.js), without ffmpeg or the
 // webview: it takes the webview's 2 s link samples and decides when the picture steps down or back up.
-// Down after two bad windows in a row (skipping tiers the link cannot carry), up after four good ones.
+// Uses dual fast/slow EWMA bandwidth estimates (hls.js style), a 1-window panic step-down on severe
+// starvation, an 0.8 s upgrade buffer guard, and exponential oscillation backoff.
 // EncodedStream applies what it decides (resize, restart ffmpeg, notices).
 
 // checkJs: start
 /** Capped slow-link tiers (used when allowLinkAdapt is enabled on remote links). Index 0 is "no cap". */
-const LINK_TIERS = [null, { height: 720, kbps: 3000 }, { height: 480, kbps: 1200 }, { height: 360, kbps: 450 }];
+const LINK_TIERS = [
+  null,
+  { height: 1080, kbps: 5500 },
+  { height: 720, kbps: 3000 },
+  { height: 480, kbps: 1200 },
+  { height: 360, kbps: 450 },
+];
+const TOP_TIER_CAP_KBPS = 5500;
 // Link samples (2 s windows from the webview) are ignored until this long after ffmpeg's first
 // output following a start, restart or seek, so its start-up stall is not taken for a slow link.
 const LINK_SETTLE_MS = 2500;
 // A window counts as link-limited only when the host waited for ffmpeg less than this share of the read time.
 const ENCODER_WAIT_SHARE = 0.5;
-// Windows in a row: this many bad ones step down, this many good ones step up.
+// Dual EWMA smoothing factors (fast tracks drops quickly; slow resists brief SSH throughput bursts).
+const EWMA_FAST_ALPHA = 0.5;
+const EWMA_SLOW_ALPHA = 0.2;
+// Windows in a row: this many bad ones step down (1 on panic starvation), this many good ones step up.
 const DOWN_RUN = 2;
 const UP_RUN = 4;
+const MAX_UP_RUN = 16;
+// Severe starvation: step down after 1 window instead of waiting for DOWN_RUN.
+const PANIC_BUFFER_S = 0.1;
+const PANIC_MEDIA_RATE = 0.5;
+// Require enough buffer before stepping up so restart latency does not immediately rebuffer.
+const UP_BUFFER_S = 0.8;
+// A step-down within this window after a step-up doubles `upRun` (up to MAX_UP_RUN) to damp oscillation.
+const OSCILLATION_WINDOW_MS = 10000;
 // A gap longer than this between samples ends the run (the player was paused or hidden).
 const SAMPLE_GAP_MS = 3500;
 
@@ -33,7 +52,10 @@ const SAMPLE_GAP_MS = 3500;
 /**
  * @typedef {object} LinkDecision
  * @property {boolean} down the window was bad (true) rather than good (false)
+ * @property {boolean} panic 1-window panic step-down triggered on severe starvation
  * @property {number} nextCap kb/s of the profile above the current tier (the top rate at tier 0)
+ * @property {number} fastKbps fast EWMA link throughput estimate in kb/s
+ * @property {number} slowKbps slow EWMA link throughput estimate in kb/s
  * @property {boolean} linkLimited
  * @property {string} detail the window in words, for logs and notices
  * @property {'none' | 'tier' | 'floor'} change 'tier': `tier` was changed; 'floor': a step down was due at the lowest tier
@@ -44,7 +66,12 @@ class LinkAdaptController {
     this.tier = 0;
     this.topKbps = 0;
     this.topPeak = 0;
+    this.fastKbps = 0;
+    this.slowKbps = 0;
+    this.bwSamples = 0;
     this.linkRun = 0; // + bad windows in a row, - good ones
+    this.upRun = UP_RUN; // consecutive good windows required to step up (backs off on oscillation)
+    this.lastUpgradeAt = -Infinity; // ms timestamp of last step-up
     this.lastLinkSample = 0;
     this.settleAt = Infinity; // when link samples count again (see LINK_SETTLE_MS)
     /** Notices the user got already: 'quality', 'slow'. */
@@ -78,7 +105,9 @@ class LinkAdaptController {
 
   state() {
     return {
-      tier: this.tier, topKbps: this.topKbps, topPeak: this.topPeak, linkRun: this.linkRun,
+      tier: this.tier, topKbps: this.topKbps, topPeak: this.topPeak,
+      fastKbps: this.fastKbps, slowKbps: this.slowKbps,
+      linkRun: this.linkRun, upRun: this.upRun, lastUpgradeAt: this.lastUpgradeAt,
       lastLinkSample: this.lastLinkSample, settleAt: this.settleAt, noticed: [...this.noticed],
     };
   }
@@ -100,24 +129,55 @@ class LinkAdaptController {
       this.topKbps = this.topKbps ? 0.75 * this.topKbps + 0.25 * videoKbps : videoKbps;
       this.topPeak = Math.max(videoKbps, 0.9 * this.topPeak);
     }
-    const nextCap = LINK_TIERS[this.tier - 1]?.kbps ?? Math.max(3000, this.topKbps, this.topPeak);
     const readMs = m.readMs ?? 0;
     const linkLimited = !(readMs > 0) || (m.hostWaitMs || 0) < ENCODER_WAIT_SHARE * readMs;
+    if (linkLimited) {
+      if (this.bwSamples === 0) {
+        this.fastKbps = m.kbps;
+        this.slowKbps = m.kbps;
+      } else {
+        this.fastKbps = EWMA_FAST_ALPHA * m.kbps + (1 - EWMA_FAST_ALPHA) * this.fastKbps;
+        this.slowKbps = EWMA_SLOW_ALPHA * m.kbps + (1 - EWMA_SLOW_ALPHA) * this.slowKbps;
+      }
+      this.bwSamples++;
+    }
+    const nextCap = LINK_TIERS[this.tier - 1]?.kbps ?? Math.max(TOP_TIER_CAP_KBPS, this.topKbps, this.topPeak);
     const down = linkLimited && m.starved && (m.mediaRate < 0.95 || m.behind);
-    const up = this.tier > 0 && m.buffer >= 0.25 && !m.starved && !m.behind && m.kbps > 1.3 * (nextCap + pcm);
+    const panic = down && m.buffer < PANIC_BUFFER_S && m.mediaRate < PANIC_MEDIA_RATE;
+    const upKbps = Math.min(this.fastKbps, this.slowKbps);
+    const up = this.tier > 0 && linkLimited && m.buffer >= UP_BUFFER_S && !m.starved && !m.behind
+      && upKbps > 1.3 * (nextCap + pcm);
+    if (!down && this.lastUpgradeAt !== -Infinity && now - this.lastUpgradeAt > OSCILLATION_WINDOW_MS) {
+      this.upRun = UP_RUN;
+      this.lastUpgradeAt = -Infinity;
+    }
     const step = down ? 1 : up ? -1 : 0;
     const detail = `${Math.round(m.kbps)} kb/s delivered, ${m.buffer.toFixed(2)} s buffered${m.hostWaitMs ? `, ${Math.round(m.hostWaitMs)} of ${Math.round(readMs)} ms waiting for ffmpeg` : ''}`;
     /** @type {LinkDecision} */
-    const decision = { down, nextCap, linkLimited, detail, change: 'none' };
+    const decision = {
+      down, panic, nextCap, fastKbps: this.fastKbps, slowKbps: this.slowKbps,
+      linkLimited, detail, change: 'none',
+    };
     const run = this.linkRun;
     this.linkRun = step && (Math.sign(run) === step ? run + step : step);
-    if (this.linkRun < DOWN_RUN && this.linkRun > -UP_RUN) return decision;
+    const downNeed = panic ? 1 : DOWN_RUN;
+    if (this.linkRun < downNeed && this.linkRun > -this.upRun) return decision;
     this.linkRun = 0;
     const last = LINK_TIERS.length - 1;
-    if (down && this.tier === last) { decision.change = 'floor'; return decision; }
-    let tier = this.tier + step;
-    if (down) while (tier < last && LINK_TIERS[tier].kbps + pcm > m.kbps) tier++;
-    this.tier = tier;
+    if (down) {
+      if (now - this.lastUpgradeAt <= OSCILLATION_WINDOW_MS) {
+        this.upRun = Math.min(MAX_UP_RUN, this.upRun * 2);
+        this.lastUpgradeAt = -Infinity;
+      }
+      if (this.tier === last) { decision.change = 'floor'; return decision; }
+      let tier = this.tier + 1;
+      while (tier < last && (LINK_TIERS[tier]?.kbps ?? 0) + pcm > this.fastKbps) tier++;
+      this.tier = tier;
+      decision.change = 'tier';
+      return decision;
+    }
+    this.tier = Math.max(0, this.tier - 1);
+    this.lastUpgradeAt = now;
     decision.change = 'tier';
     return decision;
   }
