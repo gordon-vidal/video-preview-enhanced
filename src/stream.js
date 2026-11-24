@@ -45,6 +45,8 @@ const MAX_AUDIO_BATCH = 256 * 1024;
 const PCM_KBPS = AUDIO_RATE * 4 * 8 / 1000;
 const OPUS_KBPS = 128;
 const audioEncoders = new Map();
+// Largest video batch per reply on a remote link (see answer()).
+const REMOTE_BATCH_BYTES = 128 * 1024;
 
 /**
  * Where ffmpeg restarts for a seek to t (pure). A seek back just before the packets held starts the step-back
@@ -853,7 +855,9 @@ class EncodedStream {
     if (!m) return;
     if (this.restored) this.continueRegion();
     const gen = this.gen;
-    const limit = Math.min(m.limit || 384 * 1024, this.tier ? 128 * 1024 : Infinity);
+    // A remote link keeps at most REMOTE_BATCH_BYTES in flight even at tier 0: the pipe is a FIFO, so a seek's reply
+    // waits behind every old-generation byte already queued (4 Mb/s SSH: 384 KB x several batches = seconds).
+    const limit = Math.min(m.limit || 384 * 1024, this.tier || this.remote ? REMOTE_BATCH_BYTES : Infinity);
     const videoUntil = m.videoUntil ?? Infinity;
     // Leave the boundary frame unsent until the replacement can supply it. If a read needs that frame
     // before the replacement is ready, use the usual restart at the first unsent timestamp.

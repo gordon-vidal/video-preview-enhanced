@@ -299,12 +299,14 @@ class ThumbService {
       // A timestamp-less picture is reusable at this slot only.
       const kt = Number.isFinite(m.kt) ? m.kt : `slot:${req.slot}`;
       const bytes = m.w * m.h * 4;
+      const jpeg = m.fmt === 'jpeg';
+      // A JPEG reply (native ffmpeg) is a few KB on the wire; the cache still holds the decoded w*h*4 bitmap.
       if (m.data && Number.isInteger(m.w) && Number.isInteger(m.h) &&
           m.w > 0 && m.w <= this.box.w && m.h > 0 && m.h <= this.box.h &&
-          bytes <= this.cap && m.data.byteLength === bytes) {
+          bytes <= this.cap && (jpeg ? m.data.byteLength > 0 : m.data.byteLength === bytes)) {
         try {
-          const pixels = new Uint8ClampedArray(m.data.buffer, m.data.byteOffset, bytes);
-          const bmp = await createImageBitmap(new ImageData(pixels, m.w, m.h));
+          const bmp = await createImageBitmap(jpeg ? new Blob([m.data], { type: 'image/jpeg' })
+            : new ImageData(new Uint8ClampedArray(m.data.buffer, m.data.byteOffset, bytes), m.w, m.h));
           if (this.inflight !== req) { bmp.close(); return; }
           if (req.cancelSent) bmp.close();
           else {

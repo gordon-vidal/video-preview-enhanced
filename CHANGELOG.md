@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Snappier seeks over slow remote links:** the Live transcode pipe now carries at most 128 KB of picture per reply on remote links, so a seek no longer waits behind seconds of old-position data; seek-bar previews from the host travel as small JPEGs (about 3 KB instead of about 58 KB), and a seek still pending after 200 ms makes the seek bar pulse softly (static with reduced motion) so the click visibly registered.
 - **Live transcode resolution:** ⚙ › Live transcode › Resolution fixes this video's picture at Auto, 1080p, 720p, 480p or 360p (and 1440p / 2160p for larger sources); a fixed height stays put whatever the connection does (no automatic step down or up), Auto sizes it to the view and adapts to the link as before. **Save … as default** stores it in `videoPreviewEnhanced.transcodeResolution` for new tabs. The bar chip and ⓘ say when a resolution is fixed.
 - **Live transcode stepping back over slow links:** after a pause, stepping back through a GOP is served from memory for the whole GOP (it kept only the last few pictures), a step back waits briefly for those pictures instead of sending the same GOP again, and quick wheel notches during a remote seek send one seek once the wheel rests instead of one every 80 ms.
 - **Opening a video:** the time no longer counts up while the first picture loads and then jumps back to 0.

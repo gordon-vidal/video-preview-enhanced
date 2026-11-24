@@ -1423,16 +1423,42 @@ function createEngine(env) {
     }
     // checkJs: end
 
+    /**
+     * Why the playhead is where it is, in one place (now(), tick() and audioMayRun() read this instead of each
+     * repeating the booleans). Order matters: the first match wins.
+     *  scrubbing: the seek bar holds a picture; paused: not playing; playing: the clock advances (a follower
+     *  tile's clock is its leader's); loading: no picture yet (opening, autoplay); seeking: an accurate seek holds
+     *  the clock until its frame is decoded (a slow seek is not "behind"); waking: the audio context is resuming.
+     *  Sound-only files (vmode 'none') are never loading or seeking.
+     * @returns {'scrubbing' | 'paused' | 'loading' | 'seeking' | 'waking' | 'playing'}
+     */
+    playbackPhase() {
+      if (this.scrubHeldT !== undefined) return 'scrubbing';
+      if (!this.playing) return 'paused';
+      if (this.followerClock) return 'playing';
+      if (this.shownT === null && this.vmode !== 'none') return 'loading';
+      if (this.seekTarget !== null && this.vmode !== 'none') return 'seeking';
+      if (this.acWaking) return 'waking';
+      return 'playing';
+    }
+
+    /** True while now() advances; every other phase holds it at pauseT (or scrubHeldT). */
+    clockRunning() { return this.playbackPhase() === 'playing'; }
+
+    /** Sound may be queued: the clock runs, or only the audio context is still waking (not loading or seeking). */
+    audioMayRun() {
+      const phase = this.playbackPhase();
+      if (phase === 'waking') return true;
+      // A follower's clock is its leader's: its own pending seek never held sound back.
+      return phase === 'playing' && !(this.followerClock && this.seekTarget !== null && this.vmode !== 'none');
+    }
+
     now() {
-      if (this.scrubHeldT !== undefined) return this.scrubHeldT;
-      if (!this.playing) return this.pauseT;
+      const phase = this.playbackPhase();
+      if (phase === 'scrubbing') return this.scrubHeldT;
+      if (phase === 'paused') return this.pauseT;
       if (this.followerClock) return this.followerClock();
-      if (this.acWaking) return this.pauseT;
-      // No picture yet (opening, autoplay): the clock holds where it starts instead of running on while the first
-      // frame loads and snapping back when it draws (tick() restarts it then). Sound-only files run as before.
-      if (this.shownT === null && this.vmode !== 'none') return this.pauseT;
-      // An accurate seek holds the clock until its frame is decoded (a slow seek is not "behind").
-      if (this.seekTarget !== null && this.vmode !== 'none') return this.pauseT;
+      if (phase !== 'playing') return this.pauseT;
       if (this.anchoredOnAudio) return this.anchorMedia + (this.ac.currentTime - this.anchorAc) * this.rate;
       return this.anchorMedia + ((performance.now() - this.anchorPerf) / 1000) * this.rate;
     }
@@ -1556,14 +1582,14 @@ function createEngine(env) {
         now = this.now();
       } else if (this.queue.length) this.waitPic = false;
       // Before the first picture the clock holds (now()): sound starts with it.
-      const firstPending = this.playing && this.shownT === null && this.vmode !== 'none' && !this.followerClock;
+      const firstPending = this.playbackPhase() === 'loading';
       if (firstPending && this.seekTarget === null && this.queue.length && !this.queue[0].spilling && this.queue[0].t > now) {
         // The first decoded picture starts after the held time (a seek target between frames): start there.
         this.pauseT = this.queue[0].t;
         this.anchor(this.pauseT);
         now = this.pauseT;
       }
-      if (this.playing && (this.seekTarget === null || this.vmode === 'none') && !firstPending) this.scheduleAudio(now);
+      if (this.audioMayRun()) this.scheduleAudio(now);
       // Drop sound that is already behind the playhead (also when audio isn't playing).
       while (this.audio.length && this.audio[0].t + this.audio[0].dur < now - 0.5 && !this.audio[0].src) this.audio.shift();
       // Show the newest frame that is due; drop older ones.
@@ -2471,7 +2497,7 @@ function createEngine(env) {
       if (m.page !== env.page) return;
       const done = this.hostThumbWait && this.hostThumbWait.get(m.id);
       if (!done) return;
-      done(m.data ? { rel: m.rel, w: m.w, h: m.h, data: new Uint8Array(m.data) } : null);
+      done(m.data ? { rel: m.rel, w: m.w, h: m.h, fmt: m.fmt, data: new Uint8Array(m.data) } : null);
     }
 
     /** Tests: thumbnail service counters, or null while no hover has made it. */

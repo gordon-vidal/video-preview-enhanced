@@ -168,6 +168,10 @@
 
   let scrubbing = false;
   let lastUi = '';
+  const SEEK_PENDING_MS = 200;
+  /** @type {number | null} */
+  let seekPendingSince = null;
+  const seekRow = /** @type {HTMLElement} */ (ui.seek.parentElement);
   /** Writes the bar from the player's state; true when the time, frame or play state shown changed. */
   function updateUi() {
     if (!player) return false;
@@ -175,6 +179,13 @@
     const dur = player.meta.duration || 0;
     const step = scrubbing ? null : player.pendingStep?.();
     if (player.seekTarget == null) player.seekGoalFrame = null;
+    // A seek that has not landed after SEEK_PENDING_MS (a slow remote link) shows on the bar at once (CSS .seeking).
+    if (player.seekTarget == null) { seekPendingSince = null; seekRow.classList.remove('seeking'); }
+    else {
+      const t0 = performance.now();
+      seekPendingSince ??= t0;
+      if (t0 - seekPendingSince > SEEK_PENDING_MS) seekRow.classList.add('seeking');
+    }
     const dragFrame = scrubbing ? Number(ui.seek.value) : player.seekGoalFrame ?? null;
     const f = dragFrame ?? (step ? player.frameAt(step.t) : player.currentFrame());
     const t = dragFrame !== null ? Math.min(dur || Infinity, dragFrame / (player.frameNumberRate?.() || player.fps || 30))

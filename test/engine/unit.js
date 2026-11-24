@@ -1348,6 +1348,43 @@ test('remote Live transcode: quick step notches during a seek coalesce into one 
   assert.strictEqual(remote.seekBackCount, 10);
 });
 
+test('playbackPhase(): one source of truth for a held or running clock', () => {
+  ctx.perfNow = 0;
+  const phase = (extra) => { const p = player({ playing: true, shownT: 0, ...extra }); return [p, P.playbackPhase.call(p)]; };
+  assert.strictEqual(P.playbackPhase.call(player({ scrubHeldT: 3, playing: true })), 'scrubbing', 'scrub beats everything');
+  assert.strictEqual(P.playbackPhase.call(player({ playing: false })), 'paused');
+  assert.strictEqual(phase({ shownT: null })[1], 'loading', 'playing, no picture yet');
+  assert.strictEqual(phase({ shownT: null, vmode: 'none' })[1], 'playing', 'sound-only files never load a picture');
+  assert.strictEqual(phase({ seekTarget: 5 })[1], 'seeking');
+  assert.strictEqual(phase({ seekTarget: 5, vmode: 'none' })[1], 'playing', 'sound-only files never wait for a frame');
+  assert.strictEqual(phase({ acWaking: true })[1], 'waking');
+  assert.strictEqual(phase({ shownT: null, seekTarget: 5, acWaking: true })[1], 'loading', 'loading wins over seeking and waking');
+  assert.strictEqual(phase({ seekTarget: 5, acWaking: true })[1], 'seeking');
+  assert.strictEqual(phase({ followerClock: () => 7, seekTarget: 5, shownT: null })[1], 'playing', 'a follower runs on its leader');
+  // clockRunning() and now() agree: only 'playing' advances.
+  const [run] = phase({});
+  P.anchor.call(run, 1);
+  ctx.perfNow = 500;
+  assert.strictEqual(P.clockRunning.call(run), true);
+  assert.ok(Math.abs(P.now.call(run) - 1.5) < 1e-9, 'running clock advances');
+  for (const extra of [{ seekTarget: 5, pauseT: 2 }, { acWaking: true, pauseT: 2 }, { shownT: null, pauseT: 2 }]) {
+    const [held] = phase(extra);
+    P.anchor.call(held, 1);
+    assert.strictEqual(P.clockRunning.call(held), false);
+    assert.strictEqual(P.now.call(held), 2, 'a held clock stays at pauseT');
+  }
+  assert.strictEqual(P.now.call(player({ scrubHeldT: 3 })), 3);
+  assert.strictEqual(P.now.call(player({ pauseT: 4 })), 4);
+  assert.strictEqual(P.now.call(player({ playing: true, shownT: 0, followerClock: () => 7, seekTarget: 5 })), 7);
+  // Sound may be queued while running or while only the audio context wakes; never while loading or seeking.
+  assert.strictEqual(P.audioMayRun.call(phase({})[0]), true);
+  assert.strictEqual(P.audioMayRun.call(phase({ acWaking: true })[0]), true);
+  assert.strictEqual(P.audioMayRun.call(phase({ seekTarget: 5 })[0]), false);
+  assert.strictEqual(P.audioMayRun.call(phase({ shownT: null })[0]), false);
+  assert.strictEqual(P.audioMayRun.call(player({ playing: false })), false);
+  assert.strictEqual(P.audioMayRun.call(player({ scrubHeldT: 1, playing: true, shownT: 0 })), false);
+});
+
 (async () => {
   // A pending promise alone doesn't keep Node alive. Require the suite to finish.
   process.exitCode = 1;

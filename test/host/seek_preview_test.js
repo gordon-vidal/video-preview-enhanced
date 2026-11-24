@@ -182,6 +182,23 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
       for (let i = 0; i < r.data.length; i += 4) sum += r.data[i] + r.data[i + 1] + r.data[i + 2];
       assert.ok(sum > 0, 'not black');
     }
+    // The host sends JPEG (a few KB) instead of RGBA (~58 KB) over the RPC pipe, with the same keyframe timestamp.
+    for (const t of [0, 7.5, 19.5]) {
+      const raw = await th.decodeThumb({ ffmpeg: 'ffmpeg' }, clip, { w: 1920, h: 1080 }, t, 160, 120);
+      const j = await th.decodeThumb({ ffmpeg: 'ffmpeg' }, clip, { w: 1920, h: 1080 }, t, 160, 120, undefined, undefined, 'jpeg');
+      assert.ok(j, `jpeg thumbnail at ${t} s`);
+      assert.deepStrictEqual([j.data[0], j.data[1]], [0xff, 0xd8], 'a JPEG file');
+      assert.deepStrictEqual([j.data[j.data.length - 2], j.data[j.data.length - 1]], [0xff, 0xd9], 'a complete JPEG file');
+      assert.ok(j.data.length * 8 < raw.data.length, `jpeg ${j.data.length} B is far smaller than rgba ${raw.data.length} B`);
+      assert.ok(j.data.length < 20 * 1024, `jpeg ${j.data.length} B stays small`);
+      assert.strictEqual(j.kt, raw.kt, 'same real keyframe timestamp');
+      assert.deepStrictEqual([j.w, j.h], [160, 90]);
+    }
+    const viaHost = await th.nativeThumb({ pr: { video: { width: 1920, height: 1080, index: 0, startTime: 0 } }, file: clip, tools: { ffmpeg: 'ffmpeg' } },
+      { t: 7.5, w: 160, h: 120 });
+    assert.strictEqual(viaHost.fmt, 'jpeg', 'host replies are tagged jpeg');
+    assert.ok(Number.isFinite(viaHost.kt) && viaHost.rel === viaHost.kt, `kt ${viaHost.kt} / rel ${viaHost.rel} kept`);
+    assert.ok(th.thumbArgs('a.mp4', 1, 160, 90, false, 'v:0', 'jpeg').includes('mjpeg'));
     assert.strictEqual(await th.decodeThumb({ ffmpeg: 'ffmpeg' }, path.join(root, 'missing.mp4'), { w: 1920, h: 1080 }, 0, 160, 120), null, 'missing file: null');
     console.log(`native thumbnails (long_20s.mp4): ${ms.join(', ')} ms`);
   } else console.log('skip: ffmpeg or test/media/cases/long_20s.mp4 missing (native thumbnail decode)');
@@ -219,13 +236,14 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
       assert.ok(r, 'Live transcode thumbnail');
       assert.ok(Number.isFinite(r.kt) && r.kt <= 7.5, `real keyframe time ${r.kt}`);
       assert.strictEqual(r.rel, r.kt - 0, 'rel = kt - source start');
-      assert.strictEqual(r.data.length, r.w * r.h * 4);
+      assert.strictEqual(r.fmt, 'jpeg');
+      assert.ok(r.data.length > 0 && r.data.length < r.w * r.h * 4 / 8, 'compact JPEG reply');
       lt.dispose();
       // The page-side cache then answers the whole visited range without another host request.
       let asks = 0;
       const svc = new ThumbService({
         duration: 20, startT: 0, size: 1e6, fps: 30, cap: 30e6, log: () => {}, busy: () => false, idleMs: 50,
-        request: async (t, w, h) => { asks++; return { ...r, kt: r.kt, covered: true, w, h, data: new Uint8Array(w * h * 4) }; },
+        request: async (t, w, h) => { asks++; return { ...r, fmt: undefined, kt: r.kt, covered: true, w, h, data: new Uint8Array(w * h * 4) }; },
       });
       svc.hover(7.5, () => {}, true);
       await tick(30);
