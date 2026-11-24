@@ -132,7 +132,7 @@ class CompareSession {
    */
   constructor(context, uris, {
     log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn,
-    start, openPlayer, setPref, setPlaybackPrefs, prefs, copyText, addMode, setTranscodePref, informTranscode, menu, exportClips, linkSim,
+    start, goto, mode, openPlayer, setPref, setPlaybackPrefs, prefs, copyText, addMode, setTranscodePref, informTranscode, menu, exportClips, linkSim,
   }) {
     if (api) vscode = api;
     this.logRaw = log;
@@ -153,6 +153,8 @@ class CompareSession {
     this.menu = menu;
     this.copyText = copyText || ((t) => vscode.env.clipboard.writeText(t));
     this.start = start > 0 ? start : 0; // the player's position when it turned into compare (first page only)
+    this.goto = goto || null; // link seek target ({ frame?, t? }, first page only)
+    this.mode = mode || null; // link layout mode ('grid' | 'spotlight' | 'split', first page only)
     this.replaced = undefined; // the tile a "Replace video…" just changed (its offset starts at 0)
     this.noNative = new Set(); // files native ffmpeg failed on: built-in from then on
     this.originalTiles = []; // indexed by tile occurrence, including duplicate URIs
@@ -242,10 +244,14 @@ class CompareSession {
       debug: ec.debug,
       prefs: this.transcodePrefs,
       start: this.start,
+      goto: this.goto,
+      mode: this.mode,
       replaced: this.replaced,
       maxVideos: maxVideos(),
     };
     this.start = 0;
+    this.goto = null;
+    this.mode = null;
     this.replaced = undefined;
     const { inlineCss, inlineScripts } = inlineAssetsFor(this.media.fsPath, {
       cssFiles: ['player.css', 'compare.css'],
@@ -672,7 +678,7 @@ function registerCompare(context, deps) {
    * Opens compare; `from` (a player Session) is replaced in its tab, `t` is where it was. `origin` says how it was
    * started, which decides whether Add Mode starts on (src/addmode.js startsInAddMode: only on explicit add-more intent).
    */
-  const open = async (list, { from, t, viewColumn: col, origin } = {}) => {
+  const open = async (list, { from, t, goto, mode, viewColumn: col, origin } = {}) => {
     for (const u of list) {
       if (!FS_SCHEMES.has(u.scheme)) {
         vscode.window.showWarningMessage(`Video Preview: can't compare ${u.toString()} (not a file).`);
@@ -696,7 +702,7 @@ function registerCompare(context, deps) {
     if (deps.recent) for (const u of [...list].reverse()) deps.recent.set(pushRecent(deps.recent.get(), u.toString()));
     const viewColumn = from && from.panel ? from.panel.viewColumn : col;
     const session = new CompareSession(context, list, {
-      ...deps, transport, frameSource, pick: pickMany, viewColumn, start: t, addMode: addModeApi, menu,
+      ...deps, transport, frameSource, pick: pickMany, viewColumn, start: t, goto, mode, addMode: addModeApi, menu,
     });
     if (startsInAddMode({ origin, count: list.length })) armAddMode(session);
     session.panel.onDidDispose(() => deps.compareOpenChanged?.());
@@ -1096,8 +1102,22 @@ function registerCompare(context, deps) {
       return open([a, ...files.slice(0, max - 1)], { from, t });
     }),
   );
+  const openCompareLink = async (uris, { goto, mode } = {}) => {
+    const max = maxVideos();
+    if (uris.length > max) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
+    const shown = uris.slice(0, max);
+    const keys = shown.map(fileKey);
+    for (const sess of compareSessions) {
+      if (sess.disposed || sess.uris.length !== keys.length) continue;
+      if (!sess.uris.every((u, i) => fileKey(u) === keys[i])) continue;
+      sess.panel.reveal();
+      if (goto || mode) sess.post({ type: 'goto', ...(goto || {}), ...(mode ? { mode } : {}) });
+      return sess;
+    }
+    return open(shown, { goto, mode, origin: 'link' });
+  };
   return {
-    claimOpen, noteOpen, holdOpen, toggleAddMode, stopAddMode,
+    claimOpen, noteOpen, holdOpen, toggleAddMode, stopAddMode, openCompareLink,
     addFromPlayer: (player, t, confirmStart) => addToCompare(player.uri, undefined, { from: player, t, confirmStart }),
   };
 }

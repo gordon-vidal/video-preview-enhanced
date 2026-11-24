@@ -31,7 +31,7 @@ Hover over the seek bar to see the picture at that moment, and drag to scrub thr
 
 ## And much more
 
-- **Go to any frame:** step frame by frame in any video, jump to a frame number or timecode, and copy a link that opens the video at that exact frame.
+- **Go to any frame & deep links:** step frame by frame, jump to a frame or timecode, and open exact frames or synced A/B comparisons from clickable `vscode://` links in terminals, logs, or AI coding agents ([agent prompt & link guide](docs/agents.md)).
 - **Scopes:** waveform, RGB parade, vectorscope and histogram.
 - **Pixel inspector:** zoom in and read the RGB and Y / U / V values under the cursor.
 - **Codec X‑ray:** every frame as a bar, with its type (I, P, B), size and bitrate. Click one to go there.
@@ -70,4 +70,4 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 3. **Compare:** Click **Compare** in the player's bar, or right-click a video, folder or selection and choose **Start Compare**.
 4. **Play heavier footage:** Run **Video Preview: Set Up Optional ffmpeg** from the Command Palette.
 
-Details: [features](docs/features.md) · [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [FAQ](docs/faq.md) · [all docs](docs/) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md)
+Details: [features](docs/features.md) · [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [agents & deep links](docs/agents.md) · [FAQ](docs/faq.md) · [all docs](docs/) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md)

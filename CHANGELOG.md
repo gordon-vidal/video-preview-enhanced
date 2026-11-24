@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Compare deep links & AI agent guide:** `vscode://gordon-vidal.video-preview-enhanced/compare?frame=N&mode=split&file=...&file=...` opens two or more videos in a synchronized Compare view at the requested frame/timestamp and layout (`grid`, `spotlight`, or `split`), or reveals and seeks an already-open Compare panel for those files. Added `docs/agents.md` with a copy-paste prompt for `AGENTS.md` / `CLAUDE.md`.
+
 ## 0.11.0 (2026-11-24)
 
 Fast drag-scrubbing with keyframe previews and cached timeline ranges, plus a major Remote-SSH Live transcode upgrade: smarter adaptive bitrate with hardware decode preserved on stepped-down tiers, hardware-first remote HDR → SDR tone-mapping, zero-stall dual-overlap encoder transitions, and lossless host-side Direct Stream for compatible H.264 video.

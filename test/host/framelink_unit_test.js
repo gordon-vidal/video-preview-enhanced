@@ -27,10 +27,28 @@ assert.strictEqual(local.gotoFrom('x=1'), null);
 assert.strictEqual(local.frameLink(ctx, Uri.file('/v/a b.mp4'), 5, 1.5, null), 'vscode://pub.name/open?frame=5&t=1.5&file=%2Fv%2Fa%20b.mp4');
 assert.strictEqual(local.localTarget(Uri.parse('vscode-remote://ssh-remote+h/x.mp4')), null, 'a remote link in a local window');
 
+// Compare links: multiple files (even with & in names), optional frame/t/mode, remote URIs.
+const cmp = local.parseCompareLink('frame=142&t=4.73&mode=split&file=/v/a&1.mp4&file=/v/b&2.mp4');
+assert.deepStrictEqual(cmp.targets.map((u) => u.fsPath), ['/v/a&1.mp4', '/v/b&2.mp4']);
+assert.deepStrictEqual(cmp.goto, { frame: 142, t: 4.73 });
+assert.strictEqual(cmp.mode, 'split');
+assert.strictEqual(local.parseCompareLink('layout=wipe&file=/a.mp4&file=/b.mp4').mode, 'split');
+assert.strictEqual(local.parseCompareLink('mode=spotlight&file=/a.mp4&file=/b.mp4').mode, 'spotlight');
+assert.strictEqual(local.parseCompareLink('mode=unknown&file=/a.mp4&file=/b.mp4').mode, null);
+assert.strictEqual(local.parseCompareLink('frame=10'), null);
+assert.strictEqual(
+  local.compareLink(ctx, [Uri.file('/v/a b.mp4'), Uri.file('/v/c.mp4')], { frame: 10, mode: 'split' }),
+  'vscode://pub.name/compare?frame=10&mode=split&file=%2Fv%2Fa%20b.mp4&file=%2Fv%2Fc.mp4',
+);
+
 const remote = make({ remoteName: 'ssh-remote', remoteAuthority: 'ssh-remote+h' });
 assert.strictEqual(remote.localTarget(Uri.parse('vscode-remote://ssh-remote+h/x.mp4')).scheme, 'file');
 assert.strictEqual(remote.localTarget(Uri.parse('vscode-remote://ssh-remote+other/x.mp4')), null);
 assert.match(remote.frameLink(ctx, Uri.file('/x.mp4'), 1, 0, null), /&uri=vscode-remote%3A%2F%2Fssh-remote%2Bh%2Fx\.mp4$/);
+assert.match(
+  remote.compareLink(ctx, [Uri.file('/a.mp4'), Uri.file('/b.mp4')], { frame: 3 }),
+  /^vscode:\/\/pub\.name\/compare\?frame=3&uri=vscode-remote%3A%2F%2Fssh-remote%2Bh%2Fa\.mp4&uri=vscode-remote%3A%2F%2Fssh-remote%2Bh%2Fb\.mp4$/,
+);
 
 // Frame-size caps: automatic goes through decide.streamHeight; WSL's postMessage cap is 720 at most.
 assert.deepStrictEqual(local.nativeHeights({ nativeMaxAuto: true, nativeMaxHeight: 0 }, null), { stream: 2160, message: 0 });

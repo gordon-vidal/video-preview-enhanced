@@ -117,6 +117,71 @@ async function follow(h, text) {
     await s3.until(() => s3.panel.webview.html !== html0, 4000);
     assert.ok(/"goto":null/.test(s3.panel.webview.html), 'reloaded page has no goto');
     s3.panel.dispose();
+
+    // /compare deep links: opens a Compare panel with goto & mode, reuses an existing panel for the same files,
+    // and enforces the same remote-host and file-type hardening as /open.
+    const fileB = path.join(os.tmpdir(), `vpe link ${process.pid}#2.mkv`);
+    fs.writeFileSync(fileB, Buffer.alloc(1000));
+    try {
+      h = load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin', 'videoPreviewEnhanced.compare.maxVideos': 2 } });
+      const created = [];
+      h.vscode.window.createWebviewPanel = (_type, title) => {
+        const posted = [];
+        const listeners = {};
+        let revealed = 0;
+        const panel = {
+          title, visible: true, viewColumn: 1,
+          webview: {
+            cspSource: 'vscode-resource:', html: '',
+            asWebviewUri: (u) => ({ toString: () => `https://webview/${u.path}` }),
+            postMessage: (m) => { posted.push(m); return Promise.resolve(true); },
+            onDidReceiveMessage: (fn) => { listeners.msg = fn; },
+          },
+          onDidDispose: (fn) => { (listeners.dispose = listeners.dispose || []).push(fn); },
+          onDidChangeViewState: (fn) => { listeners.viewState = fn; },
+          reveal() { revealed++; },
+          dispose() { for (const fn of listeners.dispose || []) fn(); },
+          get revealed() { return revealed; },
+          posted,
+        };
+        created.push(panel);
+        return panel;
+      };
+      const cfgOf = (panel) => JSON.parse(/<script type="application\/json" id="cfg">([^<]*)<\/script>/.exec(panel.webview.html)[1]);
+      const cmpUrl = `vscode://gordon-vidal.video-preview-enhanced/compare?frame=42&mode=split&file=${encodeURIComponent(file)}&file=${encodeURIComponent(fileB)}`;
+      let rc = await follow(h, cmpUrl);
+      assert.strictEqual(rc.warned.length, 0, `no warning for valid compare link: ${rc.warned}`);
+      assert.strictEqual(created.length, 1, 'compare panel opened');
+      const cfg1 = cfgOf(created[0]);
+      assert.deepStrictEqual(cfg1.goto, { frame: 42 }, 'compare panel gets goto');
+      assert.strictEqual(cfg1.mode, 'split', 'compare panel gets mode');
+
+      // Following a link for the same pair reveals the existing panel and sends a goto message.
+      const cmpUrl2 = `vscode://gordon-vidal.video-preview-enhanced/compare?t=3.5&mode=grid&file=${encodeURIComponent(file)}&file=${encodeURIComponent(fileB)}`;
+      rc = await follow(h, cmpUrl2);
+      assert.strictEqual(created.length, 1, 'existing compare panel reused');
+      assert.strictEqual(created[0].revealed, 1, 'existing compare panel revealed');
+      const gotoMsg = created[0].posted.find((m) => m.type === 'goto');
+      assert.ok(gotoMsg && gotoMsg.t === 3.5 && gotoMsg.mode === 'grid', `goto message sent: ${JSON.stringify(gotoMsg)}`);
+      created[0].dispose();
+
+      // Hardening: fewer than two files, non-video files, UNC paths, http URLs, and foreign remote hosts are refused.
+      for (const bad of [
+        `vscode://x/compare?file=${encodeURIComponent(file)}`,
+        `vscode://x/compare?file=${encodeURIComponent(file)}&file=${encodeURIComponent(path.join(os.tmpdir(), 'notes.txt'))}`,
+        ...(process.platform === 'win32' ? [`vscode://x/compare?file=${encodeURIComponent(file)}&file=${encodeURIComponent(String.raw`\\server\share\clip.mkv`)}`] : []),
+        `vscode://x/compare?file=${encodeURIComponent(file)}&uri=${encodeURIComponent('https://example.com/clip.mkv')}`,
+        `vscode://x/compare?uri=${encodeURIComponent('vscode-remote://ssh-remote+box/a.mkv')}&uri=${encodeURIComponent('vscode-remote://ssh-remote+box/b.mkv')}`,
+      ]) {
+        const before = created.length;
+        rc = await follow(h, bad);
+        assert.strictEqual(created.length, before, `compare refused: ${bad}`);
+        assert.strictEqual(rc.warned.length, 1, `compare warned: ${bad}`);
+      }
+      h.dispose();
+    } finally {
+      fs.unlinkSync(fileB);
+    }
     console.log('frame link: ok');
   } finally {
     fs.unlinkSync(file);

@@ -113,7 +113,7 @@ const { prefTarget, rememberPlaybackPrefs, prefsOf, config, setSetting } = creat
 });
 const { makeDefault, undoDefault, autoDefault, fileIcons } = createAssociations({ vscode, getState: () => globalState, log });
 const {
-  gotoFrom, parseLink, remoteAuthority, localTarget, frameLink, nativeHeights, fitsView, nativeKey, nativeHeight, probeSummary, urlBase,
+  gotoFrom, parseLink, parseCompareLink, remoteAuthority, localTarget, frameLink, nativeHeights, fitsView, nativeKey, nativeHeight, probeSummary, urlBase,
 } = createFrameLink({ vscode, config, decide, nativeTransport, probe, urlsource, parseFragment });
 
 const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
@@ -1032,25 +1032,45 @@ function activate(context) {
   if (logFile) log(`activated: module load ${T_ACTIVATE - T_LOAD} ms, activate() ${T_ACTIVATED - T_ACTIVATE} ms, pid ${process.pid}`);
 }
 
-async function openLink(link) {
-  log(`link: ${link.toString(true)}`);
-  if (link.path !== '/open') return;
-  const parsed = parseLink(link.query);
-  if (!parsed) { vscode.window.showWarningMessage('Video Preview: the link names no file.'); return; }
-  const { goto: g } = parsed;
-  const target = localTarget(parsed.target);
+function resolveLinkTarget(rawTarget) {
+  const target = localTarget(rawTarget);
   if (!target) {
-    vscode.window.showWarningMessage(`Video Preview: this frame link is for ${parsed.target.authority || 'another machine'}. Open it in a window connected there.`);
-    return;
+    return { error: `Video Preview: this frame link is for ${rawTarget.authority || 'another machine'}. Open it in a window connected there.` };
   }
   // Links come from anywhere (a chat, a web page): only video files on a real file
   // system, never a share on another machine (opening \\host\share reaches out to it).
   const unc = !!target.authority || /^[\\/]{2}/.test(target.fsPath || '');
   if (!FS_SCHEMES.has(target.scheme) || unc || !VIDEO_EXT.test(target.path)) {
     log(`link refused: ${target.toString()}`);
-    vscode.window.showWarningMessage('Video Preview: frame links only open video files (no network shares or other schemes).');
+    return { error: 'Video Preview: frame links only open video files (no network shares or other schemes).' };
+  }
+  return { target };
+}
+
+async function openLink(link) {
+  log(`link: ${link.toString(true)}`);
+  if (link.path === '/compare') {
+    const parsed = parseCompareLink(link.query);
+    if (!parsed || parsed.targets.length < 2) {
+      vscode.window.showWarningMessage('Video Preview: a compare link needs at least two video files.');
+      return;
+    }
+    const targets = [];
+    for (const raw of parsed.targets) {
+      const r = resolveLinkTarget(raw);
+      if (r.error) { vscode.window.showWarningMessage(r.error); return; }
+      targets.push(r.target);
+    }
+    if (compareApi) await compareApi.openCompareLink(targets, { goto: parsed.goto, mode: parsed.mode });
     return;
   }
+  if (link.path !== '/open') return;
+  const parsed = parseLink(link.query);
+  if (!parsed) { vscode.window.showWarningMessage('Video Preview: the link names no file.'); return; }
+  const { goto: g } = parsed;
+  const r = resolveLinkTarget(parsed.target);
+  if (r.error) { vscode.window.showWarningMessage(r.error); return; }
+  const { target } = r;
   const key = target.with({ fragment: '' }).toString();
   for (const sess of sessions) {
     if (sess.uri.toString() !== key) continue;

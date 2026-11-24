@@ -59,6 +59,36 @@ function createFrameLink(deps) {
     return { target, goto: gotoOf(query.slice(0, m.index)) };
   }
 
+  /**
+   * vscode://<publisher>.<name>/compare?frame=N&t=S&mode=split&file=<a.mp4>&file=<b.mp4> (or uri=<full URI>):
+   * opens two or more videos in a synchronized Compare view, optionally at a frame/time and layout mode.
+   * Splits on known parameter boundaries so file paths containing `&` survive.
+   * @param {string} query
+   */
+  function parseCompareLink(query) {
+    const targets = [];
+    const gotoParts = [];
+    let mode = null;
+    for (const part of String(query || '').split(/&(?=(?:file|uri|frame|t|mode|layout)=)/)) {
+      const eq = part.indexOf('=');
+      if (eq <= 0) continue;
+      const k = part.slice(0, eq);
+      const v = part.slice(eq + 1);
+      if (!v) continue;
+      if (k === 'file') targets.push(vscode.Uri.file(v));
+      else if (k === 'uri') {
+        try { targets.push(vscode.Uri.parse(v)); } catch { /* malformed URI skipped */ }
+      } else if (k === 'frame' || k === 't') gotoParts.push(part);
+      else if (k === 'mode' || k === 'layout') {
+        const m = v.toLowerCase();
+        if (m === 'grid' || m === 'spotlight') mode = m;
+        else if (m === 'split' || m === 'wipe') mode = 'split';
+      }
+    }
+    if (!targets.length) return null;
+    return { targets, goto: gotoOf(gotoParts.join('&')), mode };
+  }
+
   // This window's remote authority (ssh-remote+host, wsl+Ubuntu), learned once.
   let windowAuthority = '';
 
@@ -120,6 +150,25 @@ function createFrameLink(deps) {
   }
 
   /**
+   * Builds a compare link for two or more files, optionally at a frame/time and layout mode.
+   * @param {{ extension: { id: string } }} context
+   * @param {any[]} uris
+   * @param {{ frame?: number, t?: number, mode?: string, webview?: any }} [opts]
+   */
+  function compareLink(context, uris, opts = {}) {
+    const parts = [];
+    if (opts.frame !== undefined) parts.push(`frame=${opts.frame}`);
+    if (opts.t !== undefined) parts.push(`t=${opts.t}`);
+    if (opts.mode === 'grid' || opts.mode === 'spotlight' || opts.mode === 'split') parts.push(`mode=${opts.mode}`);
+    const auth = remoteAuthority(opts.webview || null);
+    for (let uri of uris) {
+      if (uri.scheme === 'file' && auth) uri = vscode.Uri.from({ scheme: 'vscode-remote', authority: auth, path: uri.path });
+      parts.push(uri.scheme === 'file' ? `file=${encodeURIComponent(uri.fsPath)}` : `uri=${encodeURIComponent(uri.toString())}`);
+    }
+    return `${vscode.env.uriScheme}://${context.extension.id}/compare?${parts.join('&')}`;
+  }
+
+  /**
    * Native frame size caps: { stream: over the frame server, message: by postMessage (the fallback,
    * and every remote window) }. nativeMaxHeight set: that, for both (720 at most in WSL). Automatic
    * (0, the default): over the frame server, full resolution up to 2160p when the frames fit what it
@@ -174,7 +223,7 @@ function createFrameLink(deps) {
   }
 
   return {
-    gotoFrom: gotoOf, parseLink, remoteAuthority, localTarget, frameLink,
+    gotoFrom: gotoOf, parseLink, parseCompareLink, remoteAuthority, localTarget, frameLink, compareLink,
     nativeHeights, fitsView, nativeKey, nativeHeight, probeSummary, urlBase,
   };
 }

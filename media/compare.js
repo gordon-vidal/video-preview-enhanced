@@ -99,8 +99,9 @@
   const rawVol = saved.volume !== undefined ? Number(saved.volume) : initPrefs.volume !== undefined ? Number(initPrefs.volume) : 1;
   const Pic = VpePicture;
   const initialMode = () => {
-    if (saved.mode === 'spotlight' && N >= 2) return 'spotlight';
-    if (N === 2 && (saved.mode === 'split' || saved.mode === 'wipe')) return 'split';
+    const m = cfg.mode || saved.mode;
+    if (m === 'spotlight' && N >= 2) return 'spotlight';
+    if (N === 2 && (m === 'split' || m === 'wipe')) return 'split';
     return 'grid';
   };
   const st = {
@@ -350,10 +351,27 @@
     applyVolume();
     clock.setLoop(st.loop);
     ui.seek.max = String(Math.max(0, (clock.n || 1) - 1));
-    if (saved.t > 0) pendingStart = saved.t;
+    if (!pendingGoto && saved.t > 0) pendingStart = saved.t;
     log(`begin: ${tiles.map((p, i) => `${KEYS[i]} ${p.meta.width}x${p.meta.height} ${p.vmode}${p.cfg.native ? ' native' : ''}`).join(', ')}; clock ${KEYS[st.clock]}, sound ${KEYS[st.sound]}`);
   }
   let pendingStart = 0;
+  /** @type {{ frame?: number, t?: number } | null} */
+  let pendingGoto = cfg.goto || null;
+
+  /** Seeks the clock to a link target ({ frame?, t? }, frame 1-based) and pauses. */
+  function applyGoto(g) {
+    if (!clock || !g) return;
+    pause();
+    if (g.frame !== undefined && clock.fps > 0 && clock.n > 0) {
+      const f = Math.max(0, Math.min(Math.max(0, clock.n - 1), g.frame - 1));
+      seekTile(st.clock, f);
+      toast(`Frame ${f + 1}`);
+    } else if (g.t !== undefined) {
+      const t = Math.max(0, clock.meta && clock.meta.duration ? Math.min(g.t, clock.meta.duration) : g.t);
+      seekClock(t);
+      toast(fmtTime(t));
+    }
+  }
 
   function setClock(i, quiet) {
     clearStep();
@@ -2437,7 +2455,7 @@
     window.addEventListener(ev, wakeLoop, { capture: true, passive: true });
   }
   function restful() {
-    return !!clock && tiles.length === N && begun && !clock.playing && !pendingStart && !scanner.running && !sync.waiting
+    return !!clock && tiles.length === N && begun && !clock.playing && !pendingStart && !pendingGoto && !scanner.running && !sync.waiting
       && !waitSince && !viewDirty && !layoutDirty && !infoDirty && !scrubbing && !tilesMoving && tiles.every((p) => typeof p.settled === 'function' && p.settled());
   }
 
@@ -2457,7 +2475,8 @@
           if (playing) play();
         }
         if (begun && visible && !scrubbing) {
-          if (pendingStart && tiles.every((p) => p.startT !== null)) { seekClock(pendingStart); pendingStart = 0; }
+          if (pendingGoto && tiles.every((p) => p.startT !== null)) { const g = pendingGoto; pendingGoto = null; applyGoto(g); }
+          else if (pendingStart && tiles.every((p) => p.startT !== null)) { seekClock(pendingStart); pendingStart = 0; }
           if (stepGoal.goal && sync.clockStepReady) stepGoal.settle();
           if (clock.playing) sync.syncPlaying();
         }
@@ -2520,6 +2539,16 @@
     if (!m || m.page !== cfg.page) return;
     switch (m.type) {
       case 'abQuery': exportAB(); break;
+      case 'goto':
+        if (m.mode === 'spotlight' && N >= 2) setMode('spotlight');
+        else if (N === 2 && (m.mode === 'split' || m.mode === 'wipe')) setMode('split');
+        else if (m.mode === 'grid') setMode('grid');
+        if (m.frame !== undefined || m.t !== undefined) {
+          const g = { ...(m.frame !== undefined ? { frame: m.frame } : {}), ...(m.t !== undefined ? { t: m.t } : {}) };
+          if (begun && tiles.every((p) => p.startT !== null)) applyGoto(g);
+          else { pendingGoto = g; wakeLoop(); }
+        }
+        break;
       case 'toast': toast(String(m.text || ''), Math.min(10000, Number(m.ms)) || undefined); break;
       case 'addMode':
         if (m.on) { finishTileDrag(false); closeAddPop(); }

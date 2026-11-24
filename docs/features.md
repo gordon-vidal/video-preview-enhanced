@@ -53,6 +53,14 @@ vscode://gordon-vidal.video-preview-enhanced/open?frame=1432&t=47.7833&file=C%3A
 
 Opening it from a browser, a terminal, an issue or a chat opens the file in this player at that frame. `t` is the middle of the frame in seconds and `frame` is the frame number; either alone works. Remote files use `uri=` with the full VS Code URI instead of `file=`. Links in Markdown files can point into a video too: `[the glitch](clips/run.mkv#t=47.8)` or `#frame=1432`.
 
+**Compare links & AI agents.** `/compare` links open two or more videos in a synchronized Compare view at a given frame and layout (`grid`, `spotlight`, or `split`):
+
+```
+vscode://gordon-vidal.video-preview-enhanced/compare?frame=142&mode=split&file=%2Fpath%2Fbefore.mp4&file=%2Fpath%2Fafter.mp4
+```
+
+See [Deep links for AI coding agents & scripts](agents.md) for all parameters and a copy-paste prompt for `AGENTS.md` / `CLAUDE.md`.
+
 **Stats overlay** (`Shift+I`). Decoder, pixel format, frames shown per second, dropped frames, decode speed, queue, audio clock and cache.
 
 **Scopes** (`W`). A panel in the corner with the scope of the frame on screen; `W` again goes to the next one, then off.
