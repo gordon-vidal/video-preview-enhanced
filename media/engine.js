@@ -1543,14 +1543,14 @@ function createEngine(env) {
       // Every frame (no sound driving the clock) or a starved remote Live transcode stream (network blackout):
       // hold the clock at the next frame's time instead of running on past the frozen picture and snapping back.
       const remoteStarved = this.remoteStream && !this.queue.length && !this.eof
-        && now > this.shownT + 1 / (this.fps || 30);
+        && now > this.shownT + (this.waitPic ? 1 / (this.fps || 30) : 0.15);
       const localStarved = !this.remoteStream && !this.audioMaster() && (this.whenSlow === 'every' || this.autoEvery)
         && !this.queue.length && !this.eof && now > this.shownT + (this.waitPic ? 1 / (this.fps || 30) : 0.25);
       if (!this.followerClock && this.playing && this.vmode !== 'none'
         && this.seekTarget === null && this.shownT !== null && !this.hidden && (remoteStarved || localStarved)) {
         if (!this.waitPic) { this.waitPic = true; if (!this.slowWarned) log(`waiting for the picture at ${this.rel(this.shownT).toFixed(2)} s (${remoteStarved ? 'remote stream buffering' : 'no sound drives the clock'})`); }
         if (remoteStarved) this.stopAudio();
-        this.behindUntil = performance.now() + 3000;
+        else this.behindUntil = performance.now() + 3000;
         this.reanchorCount = (this.reanchorCount || 0) + 1;
         this.anchor(this.shownT + 1 / (this.fps || 30));
         now = this.now();
