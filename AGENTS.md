@@ -11,6 +11,16 @@ decoders, picked per file: VS Code's WebCodecs (H.264/VP8), a built-in FFmpeg-as
 (libav.js, LGPL) and an optional native ffmpeg the user installs. Plain JavaScript, no runtime or
 build dependencies, no build step. Works locally, in WSL and over Remote-SSH.
 
+### Known VS Code platform limits (do not re-propose)
+
+- **WebCodecs video is H.264 (8-bit 4:2:0) and VP8 only:** VS Code explicitly allowlists only H.264
+  and VP8 in webviews (`src/vs/base/common/media.ts`, `microsoft/vscode#344372`). Even though stock
+  Electron supports HEVC, VP9, and AV1, real VS Code webviews return unsupported for all three.
+  Already built, measured, and dropped — see [docs/notes/webcodecs-hevc-vp9-av1.md](docs/notes/webcodecs-hevc-vp9-av1.md).
+- **WebCodecs audio & WASM threads:** Real VS Code webviews do **not** support `AudioDecoder` for
+  AAC or Opus, and webviews are not cross-origin isolated (no `SharedArrayBuffer`, so no pthreads
+  in WebAssembly).
+
 ## Repo map
 
 | Path | What |
