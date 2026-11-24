@@ -132,6 +132,7 @@ class ThumbService {
       for (const [anchor, end] of this.coverage) {
         if (anchor <= target && target <= end && (kt == null || !this.cache.has(kt) || anchor > kt)) kt = anchor;
       }
+      if (kt !== null && kt !== undefined && this.cache.has(kt)) this.slotKt.set(slot, kt);
     }
     const e = kt === null || kt === undefined ? null : this.cache.get(kt);
     if (!e) return null;
