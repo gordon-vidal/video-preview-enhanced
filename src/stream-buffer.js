@@ -20,9 +20,12 @@ const REMOTE_HISTORY_S = 15;
 const SEEK_KEEP_S = 3;
 const HISTORY_MAX_S = 20;
 const MAX_QUEUED_AUDIO = 4 * AUDIO_RATE * 4; // four seconds of unsent stereo s16le
+const MAX_REGIONS = 4;
 
 /**
  * @typedef {{ kind: 'packet', t: number, key: boolean, idr: boolean, data: Uint8Array }} VideoPacket
+ * @typedef {{ base: number, vBase: number, frameIndex: number, vAll: VideoPacket[], aStore: any[],
+ *   aEnd: number, head: Uint8Array | undefined, videoEnded: boolean, audioEnded: boolean, bytes: number }} Region
  */
 
 /**
@@ -38,15 +41,20 @@ function historyKeepTime(lastT, seekT, remote = false) {
 
 class SeekHistoryBuffer {
   /**
-   * @param {{ fps?: number, hasAudio: boolean, audioEncoder?: string | null, remote?: boolean }} o
+   * @param {{ fps?: number, hasAudio: boolean, audioEncoder?: string | null, remote?: boolean, cacheBytes?: number }} o
    *   fps: the output frame rate (set once known); audioEncoder: the Opus encoder, null for s16 PCM;
    *   remote: the link is a remote one (a longer history is kept)
    */
-  constructor({ fps = 0, hasAudio, audioEncoder = null, remote = false }) {
+  constructor({ fps = 0, hasAudio, audioEncoder = null, remote = false, cacheBytes = (remote ? 32 : 12) * 1024 ** 2 }) {
     this.remote = remote;
     this.fps = fps;
     this.hasAudio = hasAudio;
     this.audioEncoder = audioEncoder;
+    this.cacheBytes = cacheBytes;
+    /** @type {Region[]} */
+    this.regions = [];
+    this.regionBytes = 0;
+    this.configuration = '';
     this.seekT = 0; // the last seek target (trim keeps SEEK_KEEP_S before it)
     this.reset(0);
   }
@@ -59,18 +67,83 @@ class SeekHistoryBuffer {
     /** @type {VideoPacket[]} */
     this.vAll = []; // packets read: history already sent, and packets not sent yet
     this.vNext = 0; // index in vAll of the next packet to send
+    this.aNext = 0; // next sample to send
+    this.aSeg = 0;
+    this.resetAudio(0);
+    this.pending = Buffer.alloc(0); // video bytes not yet cut into packets
+    this.resetTs();
+  }
+
+  /** Starts a fresh audio parser at a sample offset relative to base, discarding prior audio. */
+  resetAudio(offset) {
     /** @type {any[]} */
-    this.aStore = []; // sound read
-    this.aEnd = 0; // samples read
+    this.aStore = [];
+    this.aEnd = offset;
+    this.resumeAudio(offset);
+  }
+
+  /**
+   * Starts a fresh audio parser at a sample offset relative to base while preserving existing
+   * audio history in aStore (so backward seeks right after resuming still hit memory).
+   */
+  resumeAudio(offset) {
+    const seg = ++this.aSeg;
+    this.aEnd = Math.max(this.aEnd || 0, offset);
     /** @type {any} */
-    this.ogg = this.audioEncoder ? new OggOpus((/** @type {any} */ p) => {
+    const ogg = this.audioEncoder ? new OggOpus((/** @type {any} */ p) => {
+      p.s += offset;
+      p.seg = seg;
+      p.head = ogg.head;
       this.aStore.push(p);
       this.aEnd = Math.max(this.aEnd, p.s + p.n);
     }) : null;
-    this.aRest = Buffer.alloc(0); // bytes of a partial sample
-    this.aNext = 0; // next sample to send
-    this.pending = Buffer.alloc(0); // video bytes not yet cut into packets
-    this.resetTs();
+    this.ogg = ogg;
+    this.aRest = Buffer.alloc(0);
+  }
+
+  setConfiguration(configuration) {
+    if (configuration === this.configuration) return;
+    this.invalidateRegions();
+    this.configuration = configuration;
+  }
+
+  invalidateRegions() {
+    this.regions.length = 0;
+    this.regionBytes = 0;
+  }
+
+  archive(videoEnded, audioEnded) {
+    if (!this.configuration || !this.vAll.some((p) => p.key)
+      || (this.hasAudio && !this.aStore.length)) return;
+    const head = this.ogg?.head;
+    const bytes = this.vAll.reduce((n, p) => n + p.data.byteLength, head?.byteLength ?? 0)
+      + this.aStore.reduce((n, p) => n + p.b.byteLength, 0);
+    if (bytes > this.cacheBytes) return;
+    const { base, vBase, frameIndex, vAll, aStore, aEnd } = this;
+    this.regions.push({ base, vBase, frameIndex, vAll, aStore, aEnd, head, videoEnded, audioEnded, bytes });
+    this.regionBytes += bytes;
+    while (this.regions.length > MAX_REGIONS || this.regionBytes > this.cacheBytes) {
+      this.regionBytes -= this.regions.shift().bytes;
+    }
+  }
+
+  /** Swaps in the most recent region covering t. Parser fragments belong to the stopped processes. */
+  restore(t, videoEnded, audioEnded) {
+    for (let i = this.regions.length - 1; i >= 0; i--) {
+      const region = this.regions[i];
+      const { base, vBase, frameIndex, vAll, aStore, aEnd, head } = region;
+      const k = this.seekIndex(vAll, t, false, true);
+      const sample = Math.round((t - base) * AUDIO_RATE);
+      if (k < 0 || (this.hasAudio && (sample < 0 || sample < aStore[0].s || sample >= aEnd))) continue;
+      this.regions.splice(i, 1);
+      this.regionBytes -= region.bytes;
+      this.archive(videoEnded, audioEnded);
+      this.reset(base);
+      Object.assign(this, { vBase, frameIndex, vAll, vNext: k, aStore, aEnd, aNext: Math.max(0, sample) });
+      if (this.ogg) this.ogg.head = head;
+      return { at: vAll[k].t, videoEnded: region.videoEnded, audioEnded: region.audioEnded };
+    }
+    return null;
   }
 
   /** Resets MPEG-TS demux state (used for Direct Stream `-c:v copy` PTS-preserving framing). */
@@ -200,12 +273,19 @@ class SeekHistoryBuffer {
     if (n < 1) return [];
     if (this.audioEncoder) {
       if (!audioEnded && n < AUDIO_RATE / 2) return [];
-      const packets = this.aStore.filter((p) => p.s + p.n > from - 3840 && p.s < hi);
+      const first = this.aStore.find((p) => p.s + p.n > from && p.s < hi);
+      if (!first) return [];
+      const seg = first.seg;
+      const segEnd = this.aStore.reduce((m, p) => (p.seg === seg ? Math.max(m, p.s + p.n) : m), from);
+      const batchHi = Math.min(hi, segEnd);
+      const batchN = batchHi - from;
+      if (batchN < 1) return [];
+      const packets = this.aStore.filter((p) => p.seg === seg && p.s + p.n > from - 3840 && p.s < batchHi);
       if (!packets.length) return [];
-      this.aNext = hi;
+      this.aNext = batchHi;
       return [{ kind: 'opus', t: this.base + from / AUDIO_RATE, sampleRate: AUDIO_RATE,
-        head: this.ogg.head, packets: packets.map((p) => new Uint8Array(p.b)),
-        skip: from - packets[0].s, samples: n }];
+        head: first.head || this.ogg.head, packets: packets.map((p) => new Uint8Array(p.b)),
+        skip: from - packets[0].s, samples: batchN }];
     }
     const data = new Uint8Array(n * 4);
     for (const c of this.aStore) {
@@ -237,26 +317,33 @@ class SeekHistoryBuffer {
    * A seek to t that memory can serve: points the send cursors at the keyframe at or before t and returns its
    * time; null when t is outside what is held (the caller restarts ffmpeg).
    * @param {number} t
-   * @param {{ hasProc: boolean, running: boolean, videoEnded: boolean }} s the video process
+   * @param {{ hasProc: boolean, running: boolean, videoEnded: boolean, detached?: boolean, restored?: boolean }} s
    */
-  reuse(t, { hasProc, running, videoEnded }) {
-    if (!this.vAll.length || (!hasProc && !videoEnded)) return null;
-    const eps = 0.25 / this.fps;
-    const last = this.vAll[this.vAll.length - 1].t;
-    if (t > last + eps && !(running && t <= last + REUSE_AHEAD_S)) return null;
-    let k = -1;
-    for (let i = this.vAll.length - 1; i >= 0; i--) if (this.vAll[i].key && this.vAll[i].t <= t + eps) { k = i; break; }
+  reuse(t, { hasProc, running, videoEnded, detached, restored }) {
+    if (!this.vAll.length || (!hasProc && !videoEnded && !restored)) return null;
+    const k = this.seekIndex(this.vAll, t, running, restored && !hasProc);
     if (k < 0) return null;
     const s = Math.max(0, Math.round((t - this.base) * AUDIO_RATE));
     const have = this.aStore.length ? this.aStore[0].s : this.aEnd;
-    if (this.hasAudio && s < have) return null;
+    if (this.hasAudio && (s < have || (detached && (t < this.base || s >= this.aEnd)))) return null;
     this.vNext = k;
     this.aNext = s;
     return this.vAll[k].t;
   }
 
+  /** @param {VideoPacket[]} packets */
+  seekIndex(packets, t, running, archived = false) {
+    if (!packets.length) return -1;
+    const eps = archived ? 1e-9 : 0.25 / this.fps;
+    const last = archived ? packets.reduce((max, p) => Math.max(max, p.t), -Infinity) : packets[packets.length - 1].t;
+    if (t > last + eps && !(running && t <= last + REUSE_AHEAD_S)) return -1;
+    for (let i = packets.length - 1; i >= 0; i--) if (packets[i].key && packets[i].t <= t + eps) return i;
+    return -1;
+  }
+
   /** Frees everything held. */
   clear() {
+    this.setConfiguration('');
     this.vAll = [];
     this.aStore = [];
     this.pending = Buffer.alloc(0);

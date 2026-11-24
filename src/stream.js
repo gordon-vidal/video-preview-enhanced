@@ -193,13 +193,14 @@ class EncodedStream {
     const next = Number(mbps) > 0 ? Number(mbps) : 0;
     if (next === this.maxBitrateMbps) return;
     this.maxBitrateMbps = next;
+    this.buf.invalidateRegions();
     this.takeStandby(NaN);
     this.log(`live transcode: max bitrate ${next > 0 ? `${next} Mb/s` : 'auto'}`);
-    // Only restart an actively running video pipeline; deferred seeks and hidden tabs pick up the new cap on spawn.
+    // Only restart an actively running (or restored cached) video pipeline; deferred seeks and hidden tabs pick up the new cap on spawn.
     if (!this.fps && !this.disposed && this.pr && this.pr.video) {
       this.pipelineMode = this.defaultPipelineMode();
-    } else if (this.fps && !this.disposed && !this.hidden && !this.startTimer && this.proc) {
-      this.transitionVideo(this.playing);
+    } else if (this.fps && !this.disposed && !this.hidden && !this.startTimer && (this.proc || (this.restored && !this.videoEnded))) {
+      this.transitionVideo(this.playing && !!this.proc);
     }
   }
 
@@ -222,6 +223,7 @@ class EncodedStream {
     const { w, h } = this;
     this.maxHeight = height;
     this.maxBitrateMbps = mbps;
+    this.buf.invalidateRegions();
     this.takeStandby(NaN);
     this.cancelOverlap();
     if (this.disposed) return false;
@@ -241,7 +243,7 @@ class EncodedStream {
         return true;
       }
     }
-    if (!this.hidden && !this.startTimer && this.proc) {
+    if (!this.hidden && !this.startTimer && (this.proc || (this.restored && !this.videoEnded))) {
       this.sizeVideo();
       this.restartVideo();
     } else {
@@ -322,6 +324,7 @@ class EncodedStream {
     this.startTimer = null;
     this.deferredSince = null;
     this.takeStandby(NaN);
+    this.buf.invalidateRegions();
     this.reset(this.base);
     if (had) this.log('live transcode: tab hidden, ffmpeg stopped until it is shown');
   }
@@ -377,6 +380,7 @@ class EncodedStream {
     this.sizeVideo();
     const grow = this.h > h;
     const changed = this.w !== w || this.h !== h;
+    if (changed) this.buf.invalidateRegions();
     if (changed) this.log(`remote stream: picture ${this.view?.w}x${this.view?.h}: frames ${w}x${h} -> ${this.w}x${this.h}${grow ? '' : ' at the next seek'}`);
     // Playing with ffmpeg running: the in-band IDR of a restart changes the size without a page seek, so the sound
     // and the clock go on and the picture shown stays until the first larger frame (as for a quality step).
@@ -404,7 +408,7 @@ class EncodedStream {
     this.growQueued = false;
   }
 
-  args(t, audio) {
+  args(t, audio, { exactAudio = false } = {}) {
     const v = this.pr.video;
     if (!audio && this.useDirectStream()) {
       this.pipelineMode = 'direct-stream';
@@ -425,7 +429,7 @@ class EncodedStream {
     });
     if (!audio) { this.pipelineMode = pipe.mode; this.tonemapKind = pipe.tonemap; }
     const args = ['-hide_banner', '-nostdin', '-v', 'error', ...pipe.pre];
-    if (t > 0) args.push('-ss', Math.max(0, t - 0.0005).toFixed(4));
+    if (t > 0) args.push('-ss', (audio && exactAudio ? t : Math.max(0, t - 0.0005)).toFixed(audio && exactAudio ? 6 : 4));
     args.push('-noautorotate', '-protocol_whitelist', 'file', '-i', this.file);
     // Keep the outputs in separate processes: a full PCM pipe must not stall video (or vice
     // versa), and changing the video encoder must not move the audio sample clock.
@@ -444,6 +448,7 @@ class EncodedStream {
   reset(t) {
     this.kill();
     this.buf.reset(t);
+    this.restored = false;
     this.videoEnded = false;
     this.audioEnded = !this.pr.audio;
     this.audioPaused = false;
@@ -462,6 +467,7 @@ class EncodedStream {
     if (!this.audioEncoder) return;
     this.log(`live transcode: Opus failed (${why}); using s16 PCM`);
     this.audioEncoder = null;
+    this.buf.setConfiguration('');
     this.takeStandby(NaN);
     this.reset(this.base);
     this.post({ type: 'refresh' });
@@ -476,8 +482,12 @@ class EncodedStream {
     this.deferredSince = null;
     if (this.resizePending) this.sizeVideo();
     this.spawnVideo();
-    if (!this.pr.audio) return;
-    const proc = this.launch(this.base, true);
+    this.buf.setConfiguration(this.cacheConfiguration());
+    if (this.pr.audio) this.spawnAudio(this.base);
+  }
+
+  spawnAudio(t, exact = false) {
+    const proc = this.launch(t, true, { exactAudio: exact });
     this.audioProc = proc;
     proc.stdout.on('data', (d) => {
       if (proc !== this.audioProc) return;
@@ -670,6 +680,7 @@ class EncodedStream {
     for (const packet of buf.vAll) this.vAll.push(packet);
     buf.clear();
     this.pipelineMode = mode;
+    this.buf.setConfiguration(''); // This active buffer now contains two video configurations.
     this.gotOutput = true;
     this.link.resetForRestart();
     this.link.noteFirstOutput(Date.now());
@@ -709,6 +720,7 @@ class EncodedStream {
     this.gotOutput = false;
     this.link.resetForRestart();
     this.videoEnded = false;
+    this.buf.setConfiguration('');
     this.spawnVideo();
   }
 
@@ -726,6 +738,8 @@ class EncodedStream {
     if (this.stats && (this.tier || m.starved)) this.log(`live transcode link: ${detail}, video ${m.mediaRate.toFixed(2)}x, starved=${m.starved}, behind=${m.behind}, link-limited=${d.linkLimited}, next profile ${Math.round(d.nextCap + pcm)} kb/s`);
     if (d.change === 'none') return;
     if (d.change === 'floor') { this.slowLink(detail); return; }
+    this.buf.invalidateRegions();
+    this.takeStandby(NaN);
     const last = LINK_TIERS.length - 1;
     this.sizeVideo();
     this.log(`remote stream: quality ${down ? 'down' : 'up'} to ${this.h}p (${detail})`);
@@ -748,8 +762,8 @@ class EncodedStream {
     this.post({ type: 'remoteNotice', kind, text });
   }
 
-  launch(t, audio = false) {
-    const argv = this.args(t, audio);
+  launch(t, audio = false, opts = undefined) {
+    const argv = this.args(t, audio, opts);
     const proc = lowerPriority(spawn(this.tools.ffmpeg, argv, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
     proc.t = t;
     proc.directStream = !audio && this.pipelineMode === 'direct-stream';
@@ -761,7 +775,11 @@ class EncodedStream {
 
   prepareLoop() {
     if (this.standby || this.disposed) return;
+    const mode = this.pipelineMode;
+    const tonemap = this.tonemapKind;
     const sb = this.launch(0);
+    this.pipelineMode = mode;
+    this.tonemapKind = tonemap;
     this.standby = sb;
     sb.timer = setTimeout(() => { if (this.standby === sb) { this.standby = null; sb.kill('SIGKILL'); } }, 20000);
   }
@@ -793,6 +811,7 @@ class EncodedStream {
   answer() {
     const m = this.waiting;
     if (!m) return;
+    if (this.restored) this.continueRegion();
     const gen = this.gen;
     const limit = Math.min(m.limit || 384 * 1024, this.tier ? 128 * 1024 : Infinity);
     const videoUntil = m.videoUntil ?? Infinity;
@@ -815,15 +834,16 @@ class EncodedStream {
       : Math.round((vT + AUDIO_LEAD_S - this.base) * AUDIO_RATE);
     const aHi = Math.min(this.aEnd, aCap, this.audioEncoder ? this.aNext + AUDIO_RATE / 2 : Infinity,
       this.tier ? this.aNext + Math.floor(MAX_AUDIO_BATCH / 4) : Infinity);
+    const canSendAudioTail = this.audioEnded || (this.restored && !this.audioProc);
     if (end === this.vNext && (aHi - this.aNext < 1
-      || (this.audioEncoder && !this.audioEnded && aHi - this.aNext < AUDIO_RATE / 2))) {
+      || (this.audioEncoder && !canSendAudioTail && aHi - this.aNext < AUDIO_RATE / 2))) {
       if (tail && this.audioEnded) { this.waiting = null; this.post({ type: 'batch', gen, eof: true, video: [], audio: [], hostWaitMs: Date.now() - this.waitingSince }); }
       return;
     }
     this.waiting = null;
     const video = this.vAll.slice(this.vNext, end);
     this.vNext = end;
-    const audio = this.buf.takeAudio(aHi, this.audioEnded);
+    const audio = this.buf.takeAudio(aHi, canSendAudioTail);
     this.buf.trim();
     this.account(video.length, bytes, audio);
     if (this.proc && this.proc.stdout.isPaused() && this.vAll.length - this.vNext < (MAX_QUEUED_SECONDS * this.fps) / 2) this.proc.stdout.resume();
@@ -871,6 +891,9 @@ class EncodedStream {
     }
     const from = this.vAll.length ? this.vAll[0].t : this.base;
     const start = stepBackStart(t, { from, base: this.base, hasPackets: this.vAll.length > 0, fps: this.fps, remote: this.remote });
+    if (!interruptedOverlap && !this.resizePending && this.buf.configuration === this.cacheConfiguration()) {
+      this.buf.archive(this.videoEnded, this.audioEnded);
+    }
     this.sizeVideo();
     this.reset(start);
     this.aNext = Math.max(0, Math.round((t - start) * AUDIO_RATE));
@@ -887,13 +910,51 @@ class EncodedStream {
 
   /** A seek served from the packets held: no ffmpeg restart. */
   reuseHistory(t) {
+    if (this.buf.configuration && this.buf.configuration !== this.cacheConfiguration()) return false;
     const proc = this.proc;
     const running = !!proc && proc.exitCode === null && !proc.signalCode;
-    const at = this.buf.reuse(t, { hasProc: !!proc, running, videoEnded: this.videoEnded });
-    if (at === null) return false;
+    let at = this.buf.reuse(t, { hasProc: !!proc, running, videoEnded: this.videoEnded,
+      detached: this.restored && !this.audioProc, restored: this.restored });
+    if (at === null) {
+      const region = this.buf.restore(t, this.videoEnded, this.audioEnded);
+      if (!region) return false;
+      this.kill();
+      this.takeStandby(NaN);
+      clearTimeout(this.startTimer);
+      this.startTimer = null;
+      this.deferredSince = null;
+      this.restored = true;
+      this.videoEnded = region.videoEnded;
+      this.audioEnded = region.audioEnded;
+      this.audioPaused = false;
+      at = region.at;
+    }
     this.waiting = null;
     this.log(`remote stream: seek to ${t.toFixed(3)} s from memory (keyframe at ${at.toFixed(3)} s), no restart`);
     return true;
+  }
+
+  cacheConfiguration() {
+    // Direct Stream (-c:v copy) restarts in milliseconds without re-encoding and can have
+    // B-frame DTS/PTS reorder, so only transcode regions are archived in the GOP LRU cache.
+    if (this.pipelineMode === 'direct-stream') return '';
+    return JSON.stringify([this.w, this.h, this.activeCapKbps(), this.tier, this.maxBitrateMbps,
+      this.pipelineMode, this.audioEncoder, this.encoder, this.tonemapKind]);
+  }
+
+  /** A restored region has no producer. Restart each unfinished pipe on demand at its own boundary. */
+  continueRegion() {
+    if (!this.proc && !this.videoEnded && this.vNext === this.vAll.length) {
+      this.vBase = this.nextVideoTime();
+      this.frameIndex = 0;
+      this.gotOutput = false;
+      this.spawnVideo();
+    }
+    if (!this.audioProc && !this.audioEnded && this.aNext >= this.aEnd) {
+      this.buf.resumeAudio(this.aNext);
+      this.spawnAudio(this.base + this.aNext / AUDIO_RATE, true);
+    }
+    if ((this.proc || this.videoEnded) && (this.audioProc || this.audioEnded)) this.restored = false;
   }
 
   kill() {

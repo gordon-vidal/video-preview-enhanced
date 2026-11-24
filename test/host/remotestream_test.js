@@ -432,6 +432,70 @@ async function withFfmpeg(tools) {
       st.rs.dispose();
     }
   }
+  // Jump between two regions, then read past the cached picture and sound into a live continuation.
+  {
+    const st = driver(tools, file, pr, { encoder: 'libx264' });
+    const videoEnds = [];
+    const post = st.rs.post;
+    st.rs.post = (m) => {
+      if (m.type === 'batch' && m.gen === st.gen && m.videoEnd) videoEnds.push(m.gen);
+      return post(m);
+    };
+    const holdAt = (t) => { st.hold = false; st.holdAt = t; };
+    const ready = (t) => until(() => st.hold && st.rs.base + st.rs.aEnd / 48000 > t, `paused at ${t} with audio`);
+    try {
+      st.limit = 2048;
+      holdAt(3);
+      await st.rs.open();
+      st.more();
+      await ready(3);
+      holdAt(153);
+      st.seek(150);
+      await ready(153);
+      const spawns = st.rs.spawns;
+      const launch = st.rs.launch;
+      const launches = [];
+      st.rs.launch = (t, audio) => { launches.push({ t, audio: !!audio }); return launch.call(st.rs, t, audio); };
+      for (const t of [1, 151, 1]) {
+        holdAt(t + 0.5);
+        st.seek(t);
+        await until(() => st.hold && st.audio.length, `archived picture and sound at ${t}`);
+        assert.ok(st.video[0].key && st.video[0].t <= t);
+        assert.strictEqual(st.audio[0].t, t);
+        assert.strictEqual(st.rs.spawns, spawns);
+        assert.deepStrictEqual(launches, [], 'neither ffmpeg pipe starts on a cache hit');
+      }
+      assert.strictEqual(st.rs.proc, null);
+      assert.strictEqual(st.rs.videoEnded, false);
+      const videoAt = st.rs.vBase + st.rs.frameIndex / pr.video.fps;
+      const audioAt = st.rs.base + st.rs.aEnd / 48000;
+      holdAt(Math.max(videoAt, audioAt) + 1);
+      st.more();
+      await until(() => {
+        if (!st.hold) return false;
+        if (st.audio.some((a) => a.t >= audioAt)) return true;
+        // The independent audio process may still be starting when the picture reaches the hold point.
+        if (!st.rs.audioProc || st.rs.aEnd > st.rs.aNext) st.more();
+        return false;
+      }, 'both pipes resume beyond their cached data');
+      assert.deepStrictEqual(launches.find((p) => !p.audio), { t: videoAt, audio: false });
+      assert.deepStrictEqual(launches.find((p) => p.audio), { t: audioAt, audio: true });
+      for (let i = 1; i < st.video.length; i++) {
+        assert.ok(Math.abs(st.video[i].t - st.video[i - 1].t - 1 / pr.video.fps) < 1e-9, 'continuation has no picture gap');
+      }
+      let audioT = 1;
+      for (const a of st.audio) {
+        assert.ok(Math.abs(a.t - audioT) < 1e-9, 'continuation has no audio gap');
+        audioT += a.planes[0].length / a.sampleRate;
+      }
+      assert.deepStrictEqual(videoEnds, []);
+      assert.strictEqual(st.eof, false);
+      assert.deepStrictEqual(st.fails, []);
+      out.regionReuse = 'A–B bounce without spawns, continuous picture and PCM past the cached boundary';
+    } finally {
+      st.rs.dispose();
+    }
+  }
   // 3. Scrubbing: 25 seeks 25 ms apart start ffmpeg only a few times; the last target is what comes.
   {
     const st = driver(tools, file, pr);

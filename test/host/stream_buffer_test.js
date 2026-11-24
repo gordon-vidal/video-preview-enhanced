@@ -161,6 +161,112 @@ function testResetAndClear() {
   assert.equal(b.pending.length + b.aRest.length, 0);
 }
 
+function addRegion(b, t, { videoEnded = false, audioEnded = !b.hasAudio, audioSeconds = 0 } = {}) {
+  b.reset(t);
+  feed(b, AUD_TO_AUD);
+  b.split(true);
+  if (audioSeconds) b.addAudio(Buffer.alloc(audioSeconds * AUDIO_RATE * 4));
+  b.archive(videoEnded, audioEnded);
+  b.reset(0);
+}
+
+function testRegionBounce() {
+  const b = fresh();
+  b.setConfiguration('cpu');
+  addRegion(b, 10);
+  addRegion(b, 30, { videoEnded: true });
+  assert.equal(b.restore(20, false, true), null);
+  assert.equal(b.restore(30.201, false, true), null, 'an archive cannot read ahead');
+  for (let i = 0; i < 3; i++) {
+    assert.deepEqual(b.restore(10.1, true, true), { at: 10, videoEnded: false, audioEnded: true });
+    assert.equal(b.vAll[b.vNext].key, true);
+    assert.equal(b.vBase + b.frameIndex / FPS, 10.3, 'unfinished picture resumes at the first missing frame');
+    assert.deepEqual(b.restore(30.2, false, true), { at: 30, videoEnded: true, audioEnded: true });
+  }
+}
+
+function testRegionEviction() {
+  const b = fresh({ cacheBytes: 2 * AUD_TO_AUD.length });
+  b.setConfiguration('cpu');
+  addRegion(b, 10);
+  addRegion(b, 20);
+  assert.ok(b.restore(10, false, true));
+  b.archive(false, true);
+  addRegion(b, 30);
+  assert.equal(b.restore(20, false, true), null, 'the least recently used region is evicted by bytes');
+  assert.ok(b.restore(10, false, true));
+  b.clear();
+  assert.equal(b.restore(30, false, true), null);
+  assert.equal(b.regionBytes, 0);
+
+  const c = fresh();
+  c.setConfiguration('cpu');
+  for (let i = 1; i <= 5; i++) addRegion(c, i);
+  assert.equal(c.restore(1, false, true), null, 'at most four regions');
+  assert.ok(c.restore(2, false, true));
+}
+
+function testRegionConfiguration() {
+  const b = fresh();
+  const configuration = [1920, 1080, 5000, 0, 'cpu', null];
+  for (const [field, changed] of [[0, 1280], [1, 720], [2, 2100], [3, 1], [4, 'gpu-full'], [5, 'libopus']]) {
+    b.setConfiguration(JSON.stringify(configuration));
+    addRegion(b, 10);
+    const next = configuration.slice();
+    next[field] = changed;
+    b.setConfiguration(JSON.stringify(next));
+    assert.equal(b.restore(10, false, true), null, `configuration change at field ${field}`);
+    assert.equal(b.regionBytes, 0);
+  }
+}
+
+function testRegionAudioCoverage() {
+  const b = fresh({ hasAudio: true });
+  b.setConfiguration('cpu');
+  addRegion(b, 10, { audioSeconds: 0.2 });
+  assert.equal(b.restore(10.2, false, false), null, 'audio must cover the target sample');
+  assert.deepEqual(b.restore(10.1, false, false), { at: 10, videoEnded: false, audioEnded: false });
+  assert.equal(b.aNext, AUDIO_RATE / 10);
+  const [audio] = b.takeAudio(b.aEnd, true);
+  assert.equal(audio.t, 10.1);
+  assert.equal(audio.data.length, AUDIO_RATE * 4 / 10);
+  b.resetAudio(b.aNext);
+  b.addAudio(Buffer.alloc(4));
+  assert.equal(b.takeAudio(b.aEnd, false)[0].t, 10.2);
+  const small = fresh({ hasAudio: true, cacheBytes: AUD_TO_AUD.length });
+  small.setConfiguration('cpu');
+  addRegion(small, 10, { audioSeconds: 0.2 });
+  assert.equal(small.restore(10, false, false), null, 'audio counts toward the byte budget');
+
+  const trimmed = fresh({ hasAudio: true });
+  trimmed.setConfiguration('cpu');
+  trimmed.reset(10);
+  feed(trimmed, AUD_TO_AUD);
+  trimmed.split(true);
+  trimmed.resetAudio(AUDIO_RATE / 10);
+  trimmed.addAudio(Buffer.alloc(AUDIO_RATE * 4));
+  trimmed.archive(false, false);
+  trimmed.reset(0);
+  assert.equal(trimmed.restore(10, false, false), null, 'trimmed audio cannot cover an earlier target');
+  assert.ok(trimmed.restore(10.1, false, false));
+}
+
+function testResumeAudioPreservesHistory() {
+  const b = fresh({ hasAudio: true });
+  b.setConfiguration('cpu');
+  addRegion(b, 10, { audioSeconds: 0.2 });
+  assert.deepEqual(b.restore(10.1, false, false), { at: 10, videoEnded: false, audioEnded: false });
+  const [first] = b.takeAudio(b.aEnd, true);
+  assert.equal(first.t, 10.1);
+  // Resuming audio appends at aEnd while keeping earlier audio chunks for backward seeks.
+  b.resumeAudio(b.aNext);
+  b.addAudio(Buffer.alloc(AUDIO_RATE * 4 / 10));
+  const [continued] = b.takeAudio(b.aEnd, false);
+  assert.equal(continued.t, 10.2);
+  assert.equal(b.reuse(10.05, { hasProc: true, running: true, videoEnded: false }), 10, 'backward seek after audio resume still hits memory');
+  assert.equal(b.takeAudio(AUDIO_RATE / 10, false)[0].t, 10.05);
+}
+
 function testSplitMpegTs() {
   // Build minimal 188-byte TS packets carrying two H.264 PES units with B-frame PTS (0.12 s then 0.04 s).
   const tsPkt = (pid, pusi, payload) => {
@@ -200,7 +306,9 @@ function testSplitMpegTs() {
   assert.ok(Math.abs(b.vAll[1].t - 0.04) < 1e-4);
 }
 
-for (const t of [testSplitAcrossChunks, testPacketTimes, testSplitMpegTs, testTrim, testTrimSound, testAddAudio, testReuse, testResetAndClear]) {
+for (const t of [testSplitAcrossChunks, testPacketTimes, testSplitMpegTs, testTrim, testTrimSound, testAddAudio,
+  testReuse, testResetAndClear, testRegionBounce, testRegionEviction, testRegionConfiguration, testRegionAudioCoverage,
+  testResumeAudioPreservesHistory]) {
   t();
   console.log(`ok  ${t.name}`);
 }
