@@ -375,55 +375,62 @@ async function withFfmpeg(tools) {
   // 2. A seek back inside the two GOPs kept is served from memory: no new ffmpeg, from the keyframe before it.
   {
     const st = driver(tools, file, pr);
-    st.limit = 8 * 1024; // a few frames per batch, as 1080p frames would be
-    st.holdAt = 3; // the webview stops asking at 3 s (its queue is full)
-    await st.rs.handle({ type: 'open' });
-    st.rs.handle({ type: 'more', gen: 0, limit: st.limit });
-    while (!st.hold) await sleep(20);
-    await sleep(100);
-    const spawns = st.rs.spawns;
-    st.hold = false;
-    st.seek(2.519); // 1 ms before the next frame: picture and PCM must use the same floor.
-    // Picture and sound come from separate ffmpeg processes; on a busy machine the sound can be behind the
-    // picture, and then its first batches follow the picture's. Wait for both (as the cold seek below does).
-    await until(() => st.video.length >= 30 && st.audio.length, 'picture and sound after the seek from memory');
-    assert.strictEqual(st.rs.spawns, spawns, 'seek back from memory: no restart');
-    assert.ok(st.logs.some((l) => /from memory/.test(l)));
-    assert.deepStrictEqual(st.seeked.at(-1), { type: 'seeked', gen: st.gen, t: 2.48 });
-    assert.ok(st.video[0].key && st.video[0].t <= 2.5 + 1e-9 && st.video[0].t > 0.5, `from the keyframe before 2.5 s: ${st.video[0].t}`);
-    assert.ok(Math.abs(st.audio[0].t - 2.48) < 1e-9, `sound from frame 62 (2.48 s): ${st.audio[0].t}`);
-    // Contiguous from there.
-    for (let i = 1; i < st.video.length; i++) assert.ok(Math.abs(st.video[i].t - st.video[i - 1].t - 1 / 25) < 1e-6, `contiguous after a seek from memory (${i})`);
-    // Far forward: a restart.
-    st.seek(150.039);
-    await until(() => st.video.length && st.audio.length, 'cold seek picture and PCM');
-    assert.strictEqual(st.rs.spawns, spawns + 1);
-    assert.ok(Math.abs(st.video[0].t - 150) < 1e-9 && st.video[0].key);
-    assert.deepStrictEqual(st.seeked.at(-1), { type: 'seeked', gen: st.gen, t: 150 });
-    assert.strictEqual(st.audio[0].t, 150);
-    // A step back before the stream's start: one restart REMOTE_STEP_BACK_LEAD_S (2.5 s) earlier (sound from the target), then steps back from memory.
-    await sleep(300);
-    st.hold = false;
-    st.holdAt = 157; // paused: the webview reads 7 s past the shown frame (small packets) before it stops asking
-    st.seek(149.97);
-    for (let i = 0; !st.hold || !st.audio.length; i++) {
-      assert.ok(i < 500, 'packets and sound after the step back');
-      await sleep(20);
-      if (st.hold && !st.audio.length) st.rs.handle({ type: 'more', gen: st.gen, limit: st.limit });
+    try {
+      st.limit = 8 * 1024; // a few frames per batch, as 1080p frames would be
+      st.holdAt = 3; // the webview stops asking at 3 s (its queue is full)
+      await st.rs.handle({ type: 'open' });
+      st.rs.handle({ type: 'more', gen: 0, limit: st.limit });
+      while (!st.hold) await sleep(20);
+      await sleep(100);
+      const spawns = st.rs.spawns;
+      st.hold = false;
+      st.seek(2.519); // 1 ms before the next frame: picture and PCM must use the same floor.
+      // Picture and sound come from separate ffmpeg processes; on a busy machine the sound can be behind the
+      // picture, and then its first batches follow the picture's. Wait for both (as the cold seek below does).
+      await until(() => st.video.length >= 30 && st.audio.length, 'picture and sound after the seek from memory');
+      assert.strictEqual(st.rs.spawns, spawns, 'seek back from memory: no restart');
+      assert.ok(st.logs.some((l) => /from memory/.test(l)));
+      assert.deepStrictEqual(st.seeked.at(-1), { type: 'seeked', gen: st.gen, t: 2.48 });
+      assert.ok(st.video[0].key && st.video[0].t <= 2.5 + 1e-9 && st.video[0].t > 0.5, `from the keyframe before 2.5 s: ${st.video[0].t}`);
+      assert.ok(Math.abs(st.audio[0].t - 2.48) < 1e-9, `sound from frame 62 (2.48 s): ${st.audio[0].t}`);
+      // Contiguous from there.
+      for (let i = 1; i < st.video.length; i++) assert.ok(Math.abs(st.video[i].t - st.video[i - 1].t - 1 / 25) < 1e-6, `contiguous after a seek from memory (${i})`);
+      // Far forward: a restart.
+      st.seek(150.039);
+      await until(() => st.video.length && st.audio.length, 'cold seek picture and PCM');
+      assert.strictEqual(st.rs.spawns, spawns + 1);
+      assert.ok(Math.abs(st.video[0].t - 150) < 1e-9 && st.video[0].key);
+      assert.deepStrictEqual(st.seeked.at(-1), { type: 'seeked', gen: st.gen, t: 150 });
+      assert.strictEqual(st.audio[0].t, 150);
+      // A step back before the stream's start: one restart REMOTE_STEP_BACK_LEAD_S (2.5 s) earlier (sound from the target), then steps back from memory.
+      await sleep(300);
+      st.hold = false;
+      st.holdAt = 157; // paused: the webview reads 7 s past the shown frame (small packets) before it stops asking
+      st.seek(149.97);
+      for (let i = 0; !st.hold || !st.audio.length; i++) {
+        assert.ok(i < 500, 'packets and sound after the step back');
+        await sleep(20);
+        // Only ask for another batch once sound has arrived; polling `more` while audio ffmpeg is still starting
+        // on a busy CI runner pumps video past 167 s and evicts the 147.46 s lead from HISTORY_MAX_S (20 s).
+        if (st.hold && !st.audio.length && st.rs.aEnd > st.rs.aNext) {
+          st.rs.handle({ type: 'more', gen: st.gen, limit: st.limit });
+        }
+      }
+      assert.strictEqual(st.rs.spawns, spawns + 2);
+      const { REMOTE_STEP_BACK_LEAD_S } = require('../../src/stream');
+      const expectedStart = (Math.floor(149.97 * 25 + 1e-6) - Math.round(25 * REMOTE_STEP_BACK_LEAD_S)) / 25;
+      assert.ok(Math.abs(st.video[0].t - expectedStart) < 1e-9 && st.video[0].key, `stream from ${REMOTE_STEP_BACK_LEAD_S} s before: ${st.video[0].t}`);
+      assert.ok(Math.abs(st.audio[0].t - 149.96) < 1e-9, `sound from the target: ${st.audio[0].t}`);
+      await sleep(300);
+      for (const t of [149.93, 149.89, 149.5, 148.0]) {
+        st.seek(t);
+        while (!st.video.length) await sleep(20);
+        assert.ok(st.video[0].t <= t && st.video[0].key, `${t}: from a keyframe before`);
+      }
+      assert.strictEqual(st.rs.spawns, spawns + 2, 'steps back from memory');
+    } finally {
+      st.rs.dispose();
     }
-    assert.strictEqual(st.rs.spawns, spawns + 2);
-    const { REMOTE_STEP_BACK_LEAD_S } = require('../../src/stream');
-    const expectedStart = (Math.floor(149.97 * 25 + 1e-6) - Math.round(25 * REMOTE_STEP_BACK_LEAD_S)) / 25;
-    assert.ok(Math.abs(st.video[0].t - expectedStart) < 1e-9 && st.video[0].key, `stream from ${REMOTE_STEP_BACK_LEAD_S} s before: ${st.video[0].t}`);
-    assert.ok(Math.abs(st.audio[0].t - 149.96) < 1e-9, `sound from the target: ${st.audio[0].t}`);
-    await sleep(300);
-    for (const t of [149.93, 149.89, 149.5, 148.0]) {
-      st.seek(t);
-      while (!st.video.length) await sleep(20);
-      assert.ok(st.video[0].t <= t && st.video[0].key, `${t}: from a keyframe before`);
-    }
-    assert.strictEqual(st.rs.spawns, spawns + 2, 'steps back from memory');
-    st.rs.dispose();
   }
   // 3. Scrubbing: 25 seeks 25 ms apart start ffmpeg only a few times; the last target is what comes.
   {
