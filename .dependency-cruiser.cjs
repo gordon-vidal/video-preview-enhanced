@@ -15,6 +15,19 @@ module.exports = {
       to: { path: '^src/' },
     },
     {
+      name: 'no-player-to-decoder-entrypoints',
+      severity: 'error',
+      from: { path: '^media/', pathNot: '-worker\\.js$' },
+      // The page starts these via workers and receives decoded data through messages.
+      to: { path: '^media/(?:[^/]+-worker\\.js$|libav-vpe/)' },
+    },
+    {
+      name: 'no-media-node-builtins',
+      severity: 'error',
+      from: { path: '^media/' },
+      to: { dependencyTypes: ['core'] },
+    },
+    {
       name: 'pure-logic-dependencies',
       severity: 'error',
       from: {
@@ -25,8 +38,7 @@ module.exports = {
     },
   ],
   options: {
-    exclude: '^media/libav-vpe/',
     // Keep imports into installed packages visible to the rules without scanning package contents.
-    doNotFollow: '(^|/)node_modules/',
+    doNotFollow: '(?:^media/libav-vpe/|(^|/)node_modules/)',
   },
 };

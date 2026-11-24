@@ -2,6 +2,146 @@
 const assert = require('node:assert/strict');
 const { createLinkSimulator } = require('../../src/link-sim');
 const { createVirtualClock } = require('../lib/virtual-clock');
+const { EncodedStream } = require('../../src/stream');
+const { LinkSessionMemory } = require('../../src/stream-adapt');
+
+const BATCH_BYTES = 128 * 1024;
+const REQUEST = new Uint8Array(64);
+const FPS = 25;
+
+function playback(preset, clock, sim, memory, duration, seekAt = Infinity) {
+  const channel = sim.wrapChannel('playback');
+  const started = clock.now();
+  const switches = [];
+  let generation = 0;
+  const stream = new EncodedStream({
+    tools: {}, file: 'test.mkv', log() {}, maxHeight: 2160,
+    probed: { duration: 120, video: { codec: 'hevc', width: 3840, height: 2160, fps: FPS } },
+    initialLink: memory.read(started), onLinkUpdate: (snapshot) => memory.update(snapshot),
+    post(batch) {
+      if (batch.type === 'seeked') {
+        channel.sendDown(batch, pull);
+        return;
+      }
+      if (batch.type !== 'batch') return;
+      const bytes = batch.video.reduce((sum, packet) => sum + packet.data.byteLength, 0);
+      assert.ok(bytes > 0 && bytes <= BATCH_BYTES, `${preset}: ${bytes} video bytes per batch`);
+      channel.sendDown(batch, () => {
+        if (batch.gen !== generation) return;
+        pending = false;
+        buffer += batch.video.length / FPS;
+        windowBytes += bytes;
+        windowFrames += batch.video.length;
+        windowRead += clock.now() - requested;
+        if (seeking) {
+          seekLatency = clock.now() - seekStarted;
+          seeking = false;
+        }
+      });
+    },
+  });
+  const initialHeight = stream.h;
+  stream.fps = FPS;
+  // The encoder is an immediately available packet source. The production seek still resets it.
+  stream.spawnNow = () => stream.link.noteFirstOutput(clock.now());
+  stream.transitionVideo = () => {
+    switches.push(clock.now() - started);
+    stream.link.resetForRestart();
+    stream.link.noteFirstOutput(clock.now());
+    packets = makePackets();
+    stream.vAll = [];
+    stream.vNext = 0;
+  };
+  function makePackets() {
+    const kbps = stream.activeCapKbps() || 9500;
+    const data = Buffer.alloc(Math.ceil(kbps * 1000 / 8 / FPS));
+    return Array.from({ length: 16 }, (_, i) => ({ t: i / FPS, data, idr: i === 0 }));
+  }
+  let packets = makePackets();
+  let buffer = 0;
+  let pending = false;
+  let requested = 0;
+  let seekStarted;
+  let seekLatency;
+  let seeking = false;
+  let playing = false;
+  let startupStalls = 0;
+  let windowBytes = 0;
+  let windowFrames = 0;
+  let windowRead = 0;
+  let lowTicks = 0;
+  let bufferSum = 0;
+  stream.link.noteFirstOutput(started);
+
+  function pull() {
+    pending = true;
+    requested = clock.now();
+    const gen = generation;
+    channel.sendUp(REQUEST, () => {
+      if (gen !== stream.gen) return;
+      if (stream.vNext === stream.vAll.length || seeking) {
+        stream.vAll = packets;
+        stream.vNext = 0;
+      }
+      stream.more({ gen, limit: 384 * 1024 });
+    });
+  }
+
+  for (let elapsed = 20; elapsed <= duration; elapsed += 20) {
+    clock.advance(20);
+    if (!seekStarted && elapsed >= seekAt && sim.stats().downPending) {
+      seekStarted = clock.now();
+      seeking = true;
+      pending = true;
+      buffer = 0;
+      const seek = { type: 'seek', gen: ++generation, t: 75, playing: true };
+      channel.sendUp(seek, () => stream.seek(seek));
+    }
+    if (!playing && buffer >= 0.5) playing = true;
+    if (playing && !seeking) {
+      if (elapsed <= 4000 && buffer < 0.02) startupStalls++;
+      buffer = Math.max(0, buffer - 0.02);
+    }
+    if (buffer < 0.2) lowTicks++;
+    bufferSum += buffer;
+    if (!pending && buffer < 3.25) pull();
+    if (elapsed % 2000 === 0) {
+      // Deliver the same feedback as the page: throughput during reads and media delivered per window.
+      const sample = { gen: generation, kbps: windowRead ? windowBytes * 8 / windowRead : 0,
+        videoKbps: stream.activeCapKbps() || 9500, mediaRate: windowFrames / FPS / 2,
+        buffer: bufferSum / 100, starved: lowTicks > 60, behind: false, readMs: windowRead, hostWaitMs: 0 };
+      Date.now = clock.now;
+      try { stream.adapt(sample); } finally { Date.now = wallNow; }
+      windowBytes = windowFrames = windowRead = lowTicks = bufferSum = 0;
+    }
+  }
+  assert.ok(playing, `${preset}: playback started`);
+  channel.dispose();
+  stream.dispose();
+  assertDrained(clock, sim, channel);
+  return { switches, initialHeight, startupStalls, seekLatency };
+}
+
+const wallNow = Date.now;
+for (const preset of ['flaky-ssh', 'typical-ssh', 'slow-ssh']) {
+  const clock = createVirtualClock();
+  const sim = createLinkSimulator(preset, { clock });
+  const memory = new LinkSessionMemory();
+  const result = playback(preset, clock, sim, memory, 60_000, 31_800);
+  const { downMbps, upMbps, rttMs, jitterMs, blackoutDurationMs } = sim.config;
+  const ceiling = 2 * BATCH_BYTES * 8 / (downMbps * 1000) + 2 * REQUEST.byteLength * 8 / (upMbps * 1000)
+    + 2 * (rttMs + jitterMs) + blackoutDurationMs + 6;
+  assert.ok(result.seekLatency > 0 && result.seekLatency <= ceiling,
+    `${preset}: seek took ${result.seekLatency} ms, ceiling ${ceiling} ms`);
+  if (preset === 'flaky-ssh') {
+    assert.ok(result.switches.length <= 2, `${preset}: switches at ${result.switches}`);
+    const next = playback(preset, clock, sim, memory, 4000);
+    assert.ok(next.initialHeight <= 720, `second video opened at ${next.initialHeight}p`);
+    assert.equal(next.startupStalls, 0, 'second video stays buffered after first playback');
+  } else {
+    assert.deepEqual(result.switches.filter((at) => at > 12_000), [], `${preset}: tier holds after settling`);
+  }
+}
 
 function assertDrained(clock, sim, channel) {
   assert.equal(channel.pending(), 0, 'channel has no pending deliveries');

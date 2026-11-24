@@ -43,8 +43,15 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 When changing clocks, stepping, caching or streaming, verify the affected behavior under simulated
 `slow-ssh` and `flaky-ssh` in Layer 1 or 2 with a virtual clock. A zero-latency local SSD run cannot
 exercise RTT, bandwidth contention or blackouts. The Layer 1
-[slow-link UX tests](../test/host/slow_link_ux_test.js) model first-frame delivery, the cost of redundant
-seek traffic on the FIFO pipe and cancellation when a tab closes.
+[slow-link UX tests](../test/host/slow_link_ux_test.js) drive the production batcher and adaptation ladder over
+virtual SSH links. They check tier changes over a virtual minute, the starting quality and stalls for a second
+video, and seek delivery behind an outstanding batch. They also cover delayed first-frame delivery, coalesced
+seeks and cancellation when a tab closes.
+
+[Host wire and cleanup tests](../test/host/child_cleanup_test.js) exercise the 128 KiB video payload cap,
+the 25 KiB JPEG thumbnail cap, and child-process teardown after tab disposal, overlapping seeks and URL
+cancellation. [Engine contracts](../test/engine/unit.js) exercise fragmented packet assembly, playback phases,
+clock monotonicity, A/V drift and frame ownership in Node.
 
 ## Rules
 
@@ -102,7 +109,7 @@ node test/run.js unit engine vscode --changed     # only what covers the files c
 node test/run.js engine --grep frames_            # only matching files / scenarios
 ```
 
-`verify:fast` runs typecheck, dependency rules, Knip, source syntax checks, and the personal-data
+`verify:fast` runs typecheck, dependency rules (including the webview boundary), Knip, source syntax checks, and the personal-data
 and Markdown link checks. The development tools require Node 20.19+ on the Node 20 line.
 Dependency rules cover statically resolvable imports. Knip reports on `src/` and reads test imports
 so test-only consumers count. Its CommonJS analysis can miss unused members in shorthand

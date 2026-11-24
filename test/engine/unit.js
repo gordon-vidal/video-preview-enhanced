@@ -39,7 +39,7 @@ function player(extra) {
     meta: { duration: 10, size: 1e6 }, cfg: {}, mem: budgets(), fps: 30, n: 300, gen: 0, startT: 0, queue: [], audio: [], sources: new Set(),
     requesting: false, eof: false, playing: false, pauseT: 0, shownT: null, seekTarget: null, hold: null, tsSeen: [],
     vdec: null, adec: null, outCount: 0, ac: null, rate: 1, loop: true, whenSlow: 'every', volume: 1, muted: false,
-    gl: { drawFrame: noop, drawYuv: noop }, vmode: 'soft', amode: 'soft', worker: { msgs: [], postMessage(m) { this.msgs.push(m); } },
+    gl: { drawFrame: noop, drawYuv: noop }, vmode: 'soft', amode: 'soft', worker: { msgs: [], postMessage(m) { this.msgs.push(m); }, terminate: noop },
   });
   // Getters on the prototype (decodeRate, mediaRate) can't be assigned: stub them as own values.
   for (const [k, val] of Object.entries(extra || {})) {
@@ -57,6 +57,53 @@ const frame = (t) => ({ t, yuv: {}, bytes: 1 });
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
+
+test('remote playback holds through loading and seeking and never rewinds during a blackout', () => {
+  ctx.perfNow = 0;
+  const p = player({ remoteStream: true, amode: 'none', pump: noop, sampleRemoteLink: noop });
+  p.play();
+  for (; ctx.perfNow < 3000; ctx.perfNow += 10) {
+    p.tick();
+    assert.strictEqual(p.playbackPhase(), 'loading');
+    assert.strictEqual(p.now(), 0);
+  }
+  p.addFrame(frame(0));
+  p.tick();
+  assert.strictEqual(p.playbackPhase(), 'playing');
+  for (let i = 1; i <= 30; i++) {
+    p.addFrame(frame(i / 30));
+    ctx.perfNow = 3000 + i * 1000 / 30;
+    p.tick();
+  }
+  let previous = p.now();
+  for (let t = 4010; t <= 5500; t += 10) {
+    ctx.perfNow = t;
+    assert.ok(p.now() >= previous, 'reading the clock between render ticks must be monotonic');
+    previous = p.now();
+    p.tick();
+    assert.ok(p.now() >= previous, 'starvation must not rewind the clock');
+    previous = p.now();
+  }
+  assert.ok(p.waitPic, 'the blackout reached the starvation path');
+  assert.ok(previous <= p.shownT + 0.15 + 1e-6, 'playhead stayed near the frozen picture');
+  p.addFrame(frame(1.133));
+  p.tick();
+  assert.ok(p.shownT > 1 && p.now() >= previous, 'picture and clock resume together');
+
+  p.seekAbs(5);
+  for (let i = 0; i < 20; i++) {
+    ctx.perfNow += 10;
+    p.tick();
+    assert.strictEqual(p.playbackPhase(), 'seeking');
+    assert.strictEqual(p.now(), 5);
+  }
+  p.addFrame(frame(5));
+  p.tick();
+  p.pause();
+  ctx.perfNow += 1000;
+  assert.strictEqual(p.playbackPhase(), 'paused');
+  assert.strictEqual(p.now(), 5);
+});
 
 test('shown frame numbers tolerate rounded PTS without advancing for snapped rates', () => {
   const rounded = player({ startT: 0.007, shownT: 0.073, fps: 30, info: { video: { fps: 30 } } });
@@ -881,6 +928,34 @@ test('unmuting after playing on a suspended AudioContext hands the clock to audi
   ac.currentTime = 0.52;
   assert.ok(Math.abs(L.prototype.now.call(p) - 5.533) < 1e-6, `audio clock at ${L.prototype.now.call(p)}`);
   assert.deepStrictEqual(muteUiCalls, [true, false], 'resuming the AudioContext clears the transient autoplay mute UI');
+
+  // Compare the timestamp actually issued to Web Audio with the picture actually drawn.
+  const picture = (t) => { p.addFrame(frame(t)); p.tick(); };
+  const drift = (chunk, label) => {
+    const { when, offset } = chunk.src.started;
+    const audioClock = chunk.t + offset + ac.currentTime - when;
+    assert.ok(Math.abs(audioClock - p.shownT) <= 1 / 30, `${label}: audio ${audioClock}, video ${p.shownT}`);
+  };
+  for (let i = 0; i <= 12; i++) {
+    ac.currentTime = 0.52 + i / 30;
+    ctx.perfNow = 5533 + i * 1000 / 30;
+    picture(5.533 + i / 30);
+    drift(p.audio.at(-1), 'steady playback after unmute');
+  }
+  src.onended();
+  ac.currentTime += 1.5;
+  ctx.perfNow += 1500;
+  const beforeDry = p.now();
+  picture(beforeDry);
+  assert.strictEqual(p.anchoredOnAudio, false, 'dry audio hands off to the timer');
+  assert.ok(Math.abs(p.shownT - beforeDry) <= 1 / 30, 'picture follows the handoff');
+  ctx.perfNow += 100;
+  ac.currentTime += 0.1;
+  const recoveredAt = p.now();
+  p.addAudio(recoveredAt - 0.02, 48000, [new Float32Array(48000)]);
+  picture(recoveredAt);
+  assert.strictEqual(p.anchoredOnAudio, true, 'recovered audio becomes master again');
+  drift(p.audio.at(-1), 'recovery');
 });
 
 test('pausing while wakeAudio is still resuming keeps acRest so the next play does not self-mute', async () => {
@@ -1265,6 +1340,72 @@ function gpuFrame(t, copies, closed) {
 }
 const settle = () => new Promise((r) => setImmediate(r));
 async function finishCopies(copies) { while (copies.length) { copies.shift()(); await settle(); } }
+
+test('decoder burst, seek, hide and dispose close every created VideoFrame', async () => {
+  const copies = [];
+  const closed = [];
+  const created = [];
+  const oldDecoder = ctx.VideoDecoder;
+  ctx.VideoDecoder = class {
+    constructor({ output }) { this.output = output; }
+    configure() {}
+    close() { this.state = 'closed'; }
+  };
+  const p = player({ remoteStream: true, vmode: 'webcodecs', amode: 'none', noSpill: true, pump: noop });
+  function output(decoder, timestamp) {
+    const { vf } = gpuFrame(timestamp, copies, closed);
+    vf.timestamp = timestamp;
+    const close = vf.close.bind(vf);
+    vf.close = () => {
+      assert.notStrictEqual(vf.format, null, 'each frame closes exactly once');
+      close();
+    };
+    created.push(timestamp);
+    decoder.output(vf);
+  }
+  try {
+    p.makeVideoDecoder();
+    const first = p.vdec;
+    for (let i = 0; i < 40; i++) output(first, i * 80_000);
+    p.seekAbs(4);
+    output(first, 7_999_998); // A decode callback already queued before the seek.
+    assert.strictEqual(closed.length, created.length, 'seek drains old frames and late callbacks');
+
+    const second = p.vdec;
+    for (let i = 0; i < 5; i++) output(second, 8_000_000 + i * 80_000);
+    p.setHidden(true);
+    await finishCopies(copies);
+    assert.strictEqual(closed.length, created.length, 'hide drains the queued frames');
+
+    p.setHidden(false);
+    const last = p.vdec;
+    for (let i = 0; i < 5; i++) output(last, 8_000_002 + i * 80_000);
+    p.dispose();
+    output(last, 9_000_000);
+    await finishCopies(copies);
+    assert.deepStrictEqual(closed.sort(), created.sort(), 'disposal leaves no live frames');
+  } finally {
+    ctx.VideoDecoder = oldDecoder;
+  }
+});
+
+test('remote batch reassembles one large access unit across reads and drops stale fragments', async () => {
+  let pulls = 0;
+  const batches = [];
+  const p = player({ pump() { pulls++; }, onBatch(batch) { batches.push(batch); } });
+  const part = (gen, offset, data) => ({
+    gen, video: [{ t: 4, data: Uint8Array.from(data) }], audio: [], fragment: { offset, total: 4 },
+  });
+  await p.receiveRemoteBatch(part(0, 0, [1, 2]));
+  assert.strictEqual(pulls, 1);
+  assert.strictEqual(batches.length, 0, 'partial access units never reach the decoder');
+  p.seekAbs(4);
+  await p.receiveRemoteBatch(part(0, 2, [3, 4]));
+  assert.strictEqual(batches.length, 0);
+  await p.receiveRemoteBatch(part(1, 0, [5, 6]));
+  await p.receiveRemoteBatch(part(1, 2, [7, 8]));
+  assert.deepStrictEqual(Array.from(batches[0].video[0].data), [5, 6, 7, 8]);
+});
 
 test('remote Live transcode reads further ahead within the existing frame budget', () => {
   const p = player({

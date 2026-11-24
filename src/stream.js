@@ -498,6 +498,7 @@ class EncodedStream {
     this.audioEnded = !this.pr.audio;
     this.audioPaused = false;
     this.waiting = null;
+    this.videoFragment = null;
     this.gotOutput = false;
     this.link.waitForOutput();
   }
@@ -758,6 +759,7 @@ class EncodedStream {
     this.proc = null;
     this.stopProcess(proc);
     const next = this.nextVideoTime();
+    this.videoFragment = null;
     this.vBase = Math.round(next * this.fps) / this.fps;
     this.vAll.length = this.vNext;
     this.frameIndex = 0;
@@ -868,19 +870,38 @@ class EncodedStream {
     // A remote link keeps at most REMOTE_BATCH_BYTES in flight even at tier 0: the pipe is a FIFO, so a seek's reply
     // waits behind every old-generation byte already queued (4 Mb/s SSH: 384 KB x several batches = seconds).
     const limit = Math.min(m.limit || 384 * 1024, this.tier || this.remote ? REMOTE_BATCH_BYTES : Infinity);
-    const videoUntil = m.videoUntil ?? Infinity;
-    // Leave the boundary frame unsent until the replacement can supply it. If a read needs that frame
-    // before the replacement is ready, use the usual restart at the first unsent timestamp.
+    const first = this.vAll[this.vNext];
+    const fragment = this.videoFragment;
+    // Leave the boundary frame unsent until the replacement can supply it.
     const boundary = this.overlap ? this.overlap.spliceT - 0.5 / this.fps : Infinity;
-    if (this.vAll[this.vNext]?.t >= boundary) {
+    if (first?.t >= boundary) {
       this.overlapFallback('replacement missed the splice point');
       return;
     }
+    let lastPiece;
+    if (this.remote && first && first.data.byteLength > REMOTE_BATCH_BYTES) {
+      // Pull one piece at a time so a seek only waits for the piece already on the FIFO.
+      const offset = fragment?.packet === first ? fragment.offset : 0;
+      const data = first.data.slice(offset, offset + REMOTE_BATCH_BYTES);
+      const next = offset + data.byteLength;
+      const done = next === first.data.byteLength;
+      const piece = { video: [{ ...first, data }], fragment: { offset, total: first.data.byteLength } };
+      if (!done) {
+        this.videoFragment = { packet: first, offset: next };
+        this.waiting = null;
+        this.account(0, data.byteLength, []);
+        this.post({ type: 'batch', gen, ...piece, audio: [], hostWaitMs: Date.now() - this.waitingSince });
+        return;
+      }
+      lastPiece = piece;
+    }
+    this.videoFragment = null;
+    const videoUntil = m.videoUntil ?? Infinity;
     // Even at the top tier, picture must not outrun the half second of Opus we can send per reply.
     const frameLimit = this.pr.audio && (this.tier || this.audioEncoder) ? Math.max(1, Math.floor(this.fps / 2)) : Infinity;
-    let end = this.vNext;
-    let bytes = 0;
-    while (end < this.vAll.length && this.vAll[end].t < boundary && end - this.vNext < frameLimit
+    let end = this.vNext + (lastPiece ? 1 : 0);
+    let bytes = lastPiece ? lastPiece.video[0].data.byteLength : 0;
+    while (!lastPiece && end < this.vAll.length && this.vAll[end].t < boundary && end - this.vNext < frameLimit
       && (end === this.vNext || (this.vAll[end].t <= videoUntil && bytes + this.vAll[end].data.length <= limit))) bytes += this.vAll[end++].data.length;
     const vT = end > 0 ? this.vAll[end - 1].t + 1 / this.fps : this.base;
     const tail = this.videoEnded && this.vNext === this.vAll.length;
@@ -895,7 +916,7 @@ class EncodedStream {
       return;
     }
     this.waiting = null;
-    const video = this.vAll.slice(this.vNext, end);
+    const video = lastPiece ? lastPiece.video : this.vAll.slice(this.vNext, end);
     this.vNext = end;
     const audio = this.buf.takeAudio(aHi, canSendAudioTail);
     this.buf.trim();
@@ -905,7 +926,8 @@ class EncodedStream {
       this.audioPaused = false;
       this.audioProc.stdout.resume();
     }
-    this.post({ type: 'batch', gen, video, audio, videoEnd: this.videoEnded && this.vNext === this.vAll.length, hostWaitMs: Date.now() - this.waitingSince });
+    this.post({ type: 'batch', gen, video, ...(lastPiece ? { fragment: lastPiece.fragment } : {}), audio,
+      videoEnd: this.videoEnded && this.vNext === this.vAll.length, hostWaitMs: Date.now() - this.waitingSince });
   }
 
   account(n, bytes) {
@@ -924,6 +946,7 @@ class EncodedStream {
 
   seek(m) {
     if (this.disposed) return;
+    this.videoFragment = null;
     const interruptedOverlap = !!this.overlap;
     this.cancelOverlap();
     if (m.playing !== undefined) this.playing = !!m.playing;
@@ -1031,6 +1054,7 @@ class EncodedStream {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.videoFragment = null;
     clearTimeout(this.startTimer);
     this.startTimer = null;
     this.kill();

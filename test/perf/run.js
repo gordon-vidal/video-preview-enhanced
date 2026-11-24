@@ -66,33 +66,54 @@ function flatten(o, prefix = '', out = {}, depth = 0) {
   }
   if (typeof o === 'object') {
     for (const [k, v] of Object.entries(o)) {
-      if (['ok', 'problems', 'retried', 'skipped', 'pid', 'at', 'started', 'id', 'gen', 'seq'].includes(k)) continue;
+      if (['ok', 'problems', 'retried', 'skipped', 'pid', 'at', 'started', 'id', 'gen', 'seq', 'othersLoad'].includes(k)) continue;
       flatten(v, `${prefix}${prefix ? '.' : ''}${k}`, out, depth + 1);
     }
   }
   return out;
 }
 
+function memoryMb(key, bench) {
+  const name = key.split('.').pop();
+  return /mb$/i.test(name)
+    || (name !== 'ffmpegCount' && /(?:^|\.)(?:mem|memory)\./i.test(key))
+    || (/^memory(?:-|$)/.test(bench) && /\.(?:before|paused|peak)\.(?:total|extHost|webview|webviewWs|gpu|ffmpeg)$/.test(key));
+}
+
 /** +1: higher is better, -1: lower is better, 0: unknown (not judged). */
-function direction(key) {
+function direction(key, bench) {
   const k = key.split('.').pop();
   if (/fps|perSec|per_s|speed|mbs|mbps|pps|speedup|throughput|rate$/i.test(k)) return 1;
+  if (memoryMb(key, bench)) return -1;
   if (/ms$|Ms$|^ms|mb$|MB$|bytes|cpu|load|rss|mem|secs?$|time|private|workingSet/i.test(k)) return -1;
   // Start-up phases (startup.js: milliseconds named by the phase).
   if (/^(total|activate|webviewCreate|pageLoad|hostDecide|openStreams|configure|firstFrame|workerInit|libav\w*)$|To[A-Z]\w*$|^probeTo|^spawnTo|^sendTo|^connect/.test(k)) return -1;
   return 0;
 }
 
-function compare(now, before) {
+function noiseFloor(key, d, bench) {
+  const name = key.split('.').pop();
+  if (d === 1) return 1;
+  if (/bytes|^rss$|^private$|^workingSet$/i.test(name)) return 20e6;
+  if (memoryMb(key, bench)) return 20;
+  if (/secs?$|seconds$/i.test(name)) return 0.025;
+  if (/cpu|load|mem/i.test(name) || /\.cpu\./.test(key)) return 1;
+  return 25; // Milliseconds, including the named startup phases.
+}
+
+function compare(now, before, bench) {
   const rows = [];
   for (const [k, v] of Object.entries(now)) {
+    if (k.split('.').includes('othersLoad')) continue;
     const b = before ? before[k] : undefined;
-    const d = direction(k);
+    const d = direction(k, bench);
     let change = null; let gross = false;
     if (typeof b === 'number' && b !== 0) {
       change = (v - b) / Math.abs(b);
-      if (d === -1 && change > GROSS) gross = true;
-      if (d === 1 && v < b / (1 + GROSS)) gross = true;
+      if (Math.abs(v - b) > noiseFloor(k, d, bench)) {
+        if (d === -1 && change > GROSS) gross = true;
+        if (d === 1 && v < b / (1 + GROSS)) gross = true;
+      }
     }
     rows.push({ k, v, b, change, d, gross });
   }
@@ -174,7 +195,7 @@ async function main() {
       const host = os.hostname();
       const rec = { bench: b.name, host, cpus: os.cpus().length, cpu: os.cpus()[0] && os.cpus()[0].model, started: new Date(t0).toISOString(), seconds: Math.round((Date.now() - t0) / 1000), loadBefore, underLoad: loadBefore !== null && loadBefore > 25, failed: r.failed, metrics: r.metrics, raw: r.raw };
       const prev = previous(b.name, host, opt('--against'));
-      const rows = compare(r.metrics, prev && !prev.underLoad ? prev.metrics : prev && prev.metrics);
+      const rows = compare(r.metrics, prev && prev.metrics, b.name);
       for (const x of rows.filter((y) => y.d !== 0 || y.b !== undefined).slice(0, 400)) {
         console.log(`${x.gross ? 'GROSS' : '     '} ${x.k.padEnd(70).slice(0, 70)} ${fmt(x.v).padStart(9)}  ${x.b === undefined ? '' : `was ${fmt(x.b).padStart(9)}  ${x.change === null ? '' : `${x.change >= 0 ? '+' : ''}${(x.change * 100).toFixed(1)} %`}`}`);
       }

@@ -51,7 +51,7 @@ function decodeThumb(tools, file, src, t, bw, bh, log, signal, format = 'rgba') 
   const { w, h } = fitBox(src.w, src.h, bw, bh);
   const jpeg = format === 'jpeg';
   const want = jpeg ? 0 : w * h * 4;
-  const MAX_JPEG = 256 * 1024;
+  const MAX_JPEG = 25 * 1024;
   return new Promise((resolve) => {
     const proc = lowerPriority(spawn(tools.ffmpeg, thumbArgs(file, t + (src.lead || 0), w, h, tools.legacy, src.index, format), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
     const parts = [];
@@ -79,8 +79,9 @@ function decodeThumb(tools, file, src, t, bw, bh, log, signal, format = 'rgba') 
     signal?.addEventListener('abort', cancel, { once: true });
     // checkJs: end
     proc.stdout.on('data', (d) => {
-      if (settled || (jpeg ? got >= MAX_JPEG : got >= want)) return;
-      const part = jpeg ? d.subarray(0, MAX_JPEG - got) : d.subarray(0, want - got);
+      if (settled || (jpeg ? got > MAX_JPEG : got >= want)) return;
+      // Keep one overflow byte so an oversized JPEG cannot be mistaken for a complete one.
+      const part = jpeg ? d.subarray(0, MAX_JPEG + 1 - got) : d.subarray(0, want - got);
       parts.push(part);
       got += part.length;
     });
@@ -93,7 +94,7 @@ function decodeThumb(tools, file, src, t, bw, bh, log, signal, format = 'rgba') 
     proc.on('error', (e) => { if (log && !signal?.aborted) log(`thumb ffmpeg: ${e.message}`); finish(null); });
     proc.on('close', () => {
       if (settled) return;
-      if (jpeg ? got < 4 || got >= MAX_JPEG || parts[0][0] !== 0xff || parts[0][1] !== 0xd8 : got < want) { if (log && err) log(`thumb at ${t.toFixed(2)} s: ${err.trim().slice(0, 300)}`); finish(null); return; }
+      if (jpeg ? got < 4 || got > MAX_JPEG || parts[0][0] !== 0xff || parts[0][1] !== 0xd8 : got < want) { if (log && err) log(`thumb at ${t.toFixed(2)} s: ${err.trim().slice(0, 300)}`); finish(null); return; }
       finish({ kt, w, h, data: jpeg ? Buffer.concat(parts, got) : Buffer.concat(parts, got).subarray(0, want) });
     });
   });

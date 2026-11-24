@@ -608,11 +608,25 @@ function createEngine(env) {
         const w = this.remoteWindow;
         if (w && this.remoteReadAt >= w.eligibleSince) {
           w.videoBytes += videoBytes;
-          w.frames += m.video.length;
+          w.frames += m.fragment && m.fragment.offset + videoBytes < m.fragment.total ? 0 : m.video.length;
           w.bytes += bytes;
           w.readMs += performance.now() - this.remoteReadAt;
           w.hostWaitMs += m.hostWaitMs || 0; // the host waiting for its ffmpeg, not the link
         }
+        if (m.fragment) {
+          const { offset, total } = m.fragment;
+          const packet = m.video[0];
+          if (offset === 0) this.remoteFragment = new Uint8Array(total);
+          this.remoteFragment.set(packet.data, offset);
+          if (offset + videoBytes === total) {
+            m.video = [{ ...packet, data: this.remoteFragment }];
+            this.remoteFragment = null;
+          } else {
+            this.requesting = false;
+            this.pump();
+            return;
+          }
+        } else this.remoteFragment = null;
         try {
           if (m.audio.some((it) => it.kind === 'opus')) m.audio = await this.decodeRemoteAudio(m.audio);
           if (this.disposed || m.gen !== this.gen) return;
@@ -1466,9 +1480,14 @@ function createEngine(env) {
       if (phase === 'paused') return this.pauseT;
       if (this.followerClock) return this.followerClock();
       if (phase !== 'playing') return this.pauseT;
-      if (this.anchoredOnAudio) return this.anchorMedia + (this.ac.currentTime - this.anchorAc) * this.rate;
-      return this.anchorMedia + ((performance.now() - this.anchorPerf) / 1000) * this.rate;
+      const elapsed = this.anchoredOnAudio ? this.ac.currentTime - this.anchorAc
+        : (performance.now() - this.anchorPerf) / 1000;
+      const time = this.anchorMedia + elapsed * this.rate;
+      return this.remoteStream && !this.hidden && !this.eof && !this.queue.length && this.shownT !== null
+        ? Math.min(time, this.remotePictureLimit()) : time;
     }
+
+    remotePictureLimit() { return this.shownT + Math.max(0.15, 1 / (this.fps || 30)); }
 
     anchor(t) {
       this.anchorMedia = t;
@@ -1578,7 +1597,7 @@ function createEngine(env) {
       // Every frame (no sound driving the clock) or a starved remote Live transcode stream (network blackout):
       // hold the clock at the next frame's time instead of running on past the frozen picture and snapping back.
       const remoteStarved = this.remoteStream && !this.queue.length && !this.eof
-        && now > this.shownT + (this.waitPic ? 1 / (this.fps || 30) : 0.15);
+        && now >= this.remotePictureLimit();
       const localStarved = !this.remoteStream && !this.audioMaster() && (this.whenSlow === 'every' || this.autoEvery)
         && !this.queue.length && !this.eof && now > this.shownT + (this.waitPic ? 1 / (this.fps || 30) : 0.25);
       if (!this.followerClock && this.playing && this.vmode !== 'none'
@@ -1587,7 +1606,7 @@ function createEngine(env) {
         if (remoteStarved) this.stopAudio();
         else this.behindUntil = performance.now() + 3000;
         this.reanchorCount = (this.reanchorCount || 0) + 1;
-        this.anchor(this.shownT + 1 / (this.fps || 30));
+        this.anchor(remoteStarved ? now : this.shownT + 1 / (this.fps || 30));
         now = this.now();
       } else if (this.queue.length) this.waitPic = false;
       // Before the first picture the clock holds (now()): sound starts with it.
@@ -1598,7 +1617,7 @@ function createEngine(env) {
         this.anchor(this.pauseT);
         now = this.pauseT;
       }
-      if (this.audioMayRun()) this.scheduleAudio(now);
+      if (this.audioMayRun() && !(this.remoteStream && this.waitPic)) this.scheduleAudio(now);
       // Drop sound that is already behind the playhead (also when audio isn't playing).
       while (this.audio.length && this.audio[0].t + this.audio[0].dur < now - 0.5 && !this.audio[0].src) this.audio.shift();
       // Show the newest frame that is due; drop older ones.
@@ -1866,6 +1885,7 @@ function createEngine(env) {
       this.gen++;
       this.loopCache = null;
       this.remoteWindow = null;
+      this.remoteFragment = null;
       this.remoteVideoEnd = false;
       if (t === (this.startT || 0)) this.beginLoopCache();
       this.resetRate();
@@ -2617,6 +2637,7 @@ function createEngine(env) {
     dispose() {
       if (this.disposed) return;
       this.disposed = true;
+      this.remoteFragment = null;
       this.loopCache = null;
       if (this.hdrOutput && this.hdrOutput.out) { this.hdrOutput.out.dispose(); this.gl.twin = null; }
       if (this.boot) this.boot.drop();

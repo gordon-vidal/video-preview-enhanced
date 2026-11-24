@@ -120,7 +120,9 @@ measurements (`h.scenario` unset), each in a fresh instance (start-up per decode
 native transfer, the invisible optimisations, cpu-4k per ffmpeg method, remote-stream soak, transfer benches);
 Node benches are the decode-route benchmark, the thumbnail worker and the ffmpeg probe. Every number is printed
 with its change against the previous result of the same bench on the same machine (`test/perf/results/`);
-worse by more than 50 % is flagged GROSS. The run holds the benchmark lock of `test/benchq.js`, so nothing else
+GROSS requires both the 50% relative regression threshold and a change above the metric's noise floor (25 ms for
+timings, 20 MB for memory and one unit for rates and load percentages). The comparison excludes `othersLoad`.
+The run holds the benchmark lock of `test/benchq.js`, so nothing else
 measures meanwhile, and `test/run.js` waits for it before layers 2 and 3. Run it on a quiet machine: a bench
 started while other processes use more than 25 % CPU is marked "under load" and not counted.
 

@@ -20,7 +20,8 @@ function element(parent) {
   const listeners = {};
   const attributes = {};
   return {
-    attributes, hidden: true, dataset: {}, style: {}, children: [], classList: { toggle: noop },
+    attributes, parentElement: parent, hidden: true, dataset: {}, style: {}, children: [],
+    classList: { toggle: noop, add: noop, remove: noop },
     addEventListener(type, fn) { listeners[type] = fn; },
     dispatch(type, event = {}) {
       let stopped = false;
@@ -81,7 +82,9 @@ function element(parent) {
   const notice = element(stage);
   const noticeClose = element(notice);
   const elements = { notice, noticeClose };
-  const ui = Object.fromEntries(['seek', 'now', 'dur', 'play', 'time', 'buffered', 'setABtn', 'setBBtn', 'abA', 'abB', 'tip'].map((id) => [id, element()]));
+  const ui = Object.fromEntries(['now', 'dur', 'play', 'time', 'buffered', 'setABtn',
+    'setBBtn', 'abA', 'abB', 'tip'].map((id) => [id, element()]));
+  ui.seek = element(element());
   ui.play.focus = noop;
   notice.contains = () => false;
   const player = {

@@ -315,6 +315,7 @@ async function probeRun(tools, input, signal) {
   if (!url && await isPlaylistFile(input)) throw new Error('the file is a text playlist or manifest (DASH, HLS, ffconcat), not a video: native ffmpeg is not used for it');
   signal?.throwIfAborted();
   const r = await run(tools.ffprobe, ['-v', 'error', ...inputArgs(input).slice(0, -2), '-print_format', 'json', '-show_format', '-show_streams', ...inputArgs(input).slice(-2)], url ? 60000 : 30000, signal);
+  signal?.throwIfAborted();
   if (r.code !== 0) throw new Error(`ffprobe failed: ${r.stderr.trim() || r.code}`);
   const j = JSON.parse(r.stdout);
   const streams = j.streams || [];
