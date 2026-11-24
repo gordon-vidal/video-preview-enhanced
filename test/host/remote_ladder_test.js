@@ -66,11 +66,11 @@ assert.ok(PCM_KBPS === 1536, `PCM ${PCM_KBPS}`);
   // Not enough headroom over 1080p (5.5 Mb/s -> needs > 7.15 Mb/s): stays.
   for (let i = 0; i < 6; i++) rec.adapt(good(6500));
   assert.strictEqual(rec.tier, 2);
-  // A low-buffer window (< 0.8 s) breaks a run of good ones.
+  // A low-buffer window (< 0.35 s) breaks a run of good ones.
   const { rs: r2 } = stream({ audio: false });
   r2.tier = 3; r2.sizeVideo();
   for (let i = 0; i < 3; i++) r2.adapt(good(5000));
-  r2.adapt(bad(5000, { starved: false, mediaRate: 1, buffer: 0.5 })); // not good (buffer < 0.8 s), not bad
+  r2.adapt(bad(5000, { starved: false, mediaRate: 1, buffer: 0.25 })); // not good (buffer < 0.35 s), not bad
   r2.adapt(good(5000));
   assert.strictEqual(r2.tier, 3);
 }

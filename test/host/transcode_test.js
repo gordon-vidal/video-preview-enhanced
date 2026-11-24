@@ -845,7 +845,8 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
         assert.deepStrictEqual(fails, [], `${path.basename(clip)} no failures`);
         assert.ok(packets.length >= 24, `${path.basename(clip)} delivered ${packets.length} packets`);
         assert.strictEqual(packets[0].key, true, `${path.basename(clip)} starts on IDR keyframe`);
-        assert.ok(Math.abs(packets[0].t) < 0.01, `${path.basename(clip)} first packet PTS near 0 (got ${packets[0].t})`);
+        // Allow small container start offset (e.g. ~21 ms AAC priming in Matroska on Linux ffmpeg).
+        assert.ok(Math.abs(packets[0].t) < 0.1, `${path.basename(clip)} first packet PTS near 0 (got ${packets[0].t})`);
         assert.ok(args.parseSpsProfileLevel(packets[0].data), `${path.basename(clip)} keyframe carries in-band SPS`);
         // Verify B-frame PTS are preserved (non-monotonic decode order, distinct timestamps).
         const hasReorder = packets.some((p, i) => i > 0 && p.t < packets[i - 1].t);
