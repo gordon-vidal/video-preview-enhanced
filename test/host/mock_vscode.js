@@ -24,7 +24,12 @@ function makeVscode(settings = {}) {
       const enc = (x) => x.split('/').map(encodeURIComponent).join('/');
       return `${this.scheme}://${this.authority}${enc(this.path)}${this.query ? `?${this.query}` : ''}${this.fragment ? `#${this.fragment}` : ''}`;
     }
-    with(c) { return Object.assign(Object.assign(new Uri(this.scheme, this.fsPath), this), c); }
+    with(c) {
+      const u = Object.assign(Object.assign(new Uri(this.scheme, this.fsPath), this), c);
+      // A new path is a new file (as in VS Code): its fsPath follows ('/C:/x' -> 'C:\x' on Windows).
+      if (c && c.path !== undefined && c.path !== this.path) u.fsPath = path.normalize(process.platform === 'win32' ? c.path.replace(/^\/(?=[a-zA-Z]:)/, '') : c.path);
+      return u;
+    }
   }
   const providers = {};
   const commands = {};

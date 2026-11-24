@@ -103,6 +103,19 @@ const pendingGoto = new Map();
 // vscode.openWith, and the file metadata (ffprobe) the rails of every tab share.
 const railHandoffs = folderRail.createHandoffs();
 const railMeta = folderRail.createMetaCache();
+/** ffprobe (cached by size and date) for the rail's Duration column and hover card; none in Restricted Mode. */
+async function railProbe(file, signal) {
+  if (!vscode.workspace.isTrusted || config().decoder === 'builtin') return null;
+  const t = await tools();
+  if (!t || signal.aborted) return null;
+  const pr = await ff.probe(t, file, signal);
+  return { duration: pr.duration, width: pr.video && pr.video.width, height: pr.video && pr.video.height, codec: pr.video && pr.video.codec };
+}
+/** The rail's remembered look (width, column, Playable formats), shared by every player and Compare. */
+const railPrefs = {
+  get: () => globalState.get(folderRail.RAIL_PREFS_KEY),
+  set: (v) => globalState.update(folderRail.RAIL_PREFS_KEY, v),
+};
 let adoptSeq = 0;
 // How long an open target may take to apply a folder navigation (its player may still be opening). Without its
 // answer the source tab stays open: nothing is closed on a guess.
@@ -936,6 +949,7 @@ function activate(context) {
       if (e.affectsConfiguration('videoPreviewEnhanced.folderRail.layout')) {
         const layout = config().railLayout;
         for (const s of sessions) if (s.railAllowed()) s.post({ type: 'rail', op: 'layout', layout });
+        for (const c of compareSessions) if (c.railDir && c.railDir()) c.post({ type: 'rail', op: 'layout', layout });
       }
       if (Object.keys(PREFS).some((k) => e.affectsConfiguration(`videoPreviewEnhanced.${k}`))
         || e.affectsConfiguration('videoPreviewEnhanced.transcode')
@@ -979,6 +993,11 @@ function activate(context) {
     lastActivePlayer: () => lastActive,
     // Videos compared lately (uri strings): the quick pick on key D lists them first.
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
+    // The folder rail in Compare: the same controller, metadata cache, probe and remembered look as the player's.
+    rail: {
+      cache: railMeta, probe: railProbe, prefs: railPrefs, layout: () => config().railLayout,
+      caseless: process.platform === 'win32' || process.platform === 'darwin',
+    },
     // Compare's bar and panels are the player's: the same jump sizes, written the same way.
     prefs: () => prefsOf(config()),
     setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
@@ -1267,15 +1286,7 @@ class Session {
     this.rail = folderRail.createFolderRail({
       fs: fs.promises, post: (m) => this.post(m), cache: railMeta, authority: this.uri.authority || '',
       current: () => this.file, caseless: process.platform === 'win32' || process.platform === 'darwin',
-      log: (m) => log(`[${this.name}] ${m}`),
-      // ffprobe (cached by size and date) for the Duration column and the hover card; none in Restricted Mode.
-      probe: async (file, signal) => {
-        if (!vscode.workspace.isTrusted || config().decoder === 'builtin') return null;
-        const t = await tools();
-        if (!t || signal.aborted) return null;
-        const pr = await ff.probe(t, file, signal);
-        return { duration: pr.duration, width: pr.video && pr.video.width, height: pr.video && pr.video.height, codec: pr.video && pr.video.codec };
-      },
+      log: (m) => log(`[${this.name}] ${m}`), probe: railProbe,
     });
     return this.rail;
   }
@@ -1291,31 +1302,17 @@ class Session {
   async onRail(m) {
     const ctl = this.railCtl();
     if (!ctl) return undefined;
-    switch (m.op) {
-      case 'open':
-        this.railOpen = true;
-        return ctl.browse(this.railBrowse || ctl.dir() || path.dirname(this.file));
-      case 'close':
-        this.railOpen = false;
-        ctl.cancel();
-        return undefined;
-      case 'visible': ctl.setVisible(m.gen, m.ids); return undefined;
-      case 'hover': ctl.setHover(m.gen, m.id); return undefined;
-      case 'self': ctl.seed(this.file, m); return undefined;
-      case 'prefs': {
-        const prev = folderRail.sanitizeRailPrefs(globalState.get(folderRail.RAIL_PREFS_KEY));
-        const next = folderRail.sanitizeRailPrefs({ ...prev, ...(m.width !== undefined ? { width: m.width } : {}), ...(m.column !== undefined ? { column: m.column } : {}), ...(m.playable !== undefined ? { playable: m.playable } : {}) });
-        return globalState.update(folderRail.RAIL_PREFS_KEY, next);
-      }
-      default: break;
-    }
-    const e = ctl.entry(m.gen, m.id);
-    if (!e) return undefined; // an old listing (the folder changed meanwhile) or not an id of ours
-    if (m.op === 'browse' && (e.kind === 'dir' || e.kind === 'up')) { this.railBrowse = e.path; return ctl.browse(e.path); }
-    if (m.op === 'activate' && e.kind === 'video') return this.navigate(e.path, { rail: m.rail });
-    if (m.op === 'compare' && e.kind === 'video' && compareApi) return compareApi.compareRow(this, this.uriOf(e.path), Number(m.t) || 0);
-    if (m.op === 'compareFolder' && e.kind === 'dir' && compareApi) return compareApi.compareFolderRow(this, this.uriOf(e.path));
-    return undefined;
+    return folderRail.routeRailMessage({
+      ctl, prefs: railPrefs,
+      startDir: () => this.railBrowse || ctl.dir() || path.dirname(this.file),
+      setOpen: (open) => { this.railOpen = open; },
+      setBrowse: (d) => { this.railBrowse = d; },
+      seed: (msg) => ctl.seed(this.file, msg),
+      // A video plays in this tab's place; its Compare button compares it with this one; a folder's, all of its videos.
+      onVideo: (e, msg) => this.navigate(e.path, { rail: msg.rail }),
+      onCompareVideo: (e, msg) => (compareApi ? compareApi.compareRow(this, this.uriOf(e.path), Number(msg.t) || 0) : undefined),
+      onCompareFolder: (e) => (compareApi ? compareApi.compareFolderRow(this, this.uriOf(e.path)) : undefined),
+    }, m);
   }
 
   /** Opens the next (d = 1) or previous (d = -1) video of the playing file's folder, in this tab's place. */

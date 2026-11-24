@@ -27,7 +27,7 @@ const DEPENDENCIES = [
   { when: ['src/urlsource.js'], why: 'URLs', run: ['url', 'url-native'] },
   { when: ['media/controls.js', 'media/range-drag.js', 'src/bar.js'], why: 'the bar, panels, keys', run: ['ui'] },
   { when: ['media/subtitles.js', 'media/tracks-menu.js'], why: 'subtitles, tracks', run: ['subtitles'] },
-  { when: ['src/folder-rail.js', 'media/folder-rail.js', 'media/autoplay.js'], why: 'folder rail, Autoplay, tab swap', run: ['folder-rail', 'ui'] },
+  { when: ['src/folder-rail.js', 'media/folder-rail.js', 'media/autoplay.js'], why: 'folder rail, Autoplay, tab swap', run: ['folder-rail', 'ui', 'compare'] },
 ];
 
 /**

@@ -279,6 +279,7 @@ async function neighbourOf(fs, file, d, pathMod = nodePath) {
  * @param {(h: any) => void} [deps.clearTimer]
  * @param {(msg: string) => void} [deps.log]
  * @param {() => string | null} [deps.current]  the playing file (its row is marked)
+ * @param {() => string[]} [deps.members]    Compare: the files it shows (their rows are marked "in Compare")
  * @param {boolean} [deps.caseless]          paths compare case-insensitively (Windows)
  */
 function createFolderRail(deps) {
@@ -382,12 +383,14 @@ function createFolderRail(deps) {
     const playing = deps.current ? deps.current() : null;
     const same = (/** @type {string} */ a, /** @type {string|null|undefined} */ b) => !!b && (a === b || (caseless && a.toLowerCase() === b.toLowerCase()));
     const current = list.find((e) => e.kind === 'video' && same(e.path, playing));
+    const members = memberIds(list, same);
     // Walked up out of a folder: the page puts its cursor on that folder's row.
     const from = prev ? list.find((e) => e.kind === 'dir' && same(e.path, prev)) : undefined;
     const msg = {
       type: 'rail', op: 'list', gen: g, crumb: crumbOf(d), root: !(parent && parent !== d),
       entries: list.map((e) => ({ id: e.id, name: e.name, kind: e.kind })),
       ...(current ? { current: current.id } : {}), ...(from ? { from: from.id } : {}),
+      ...(deps.members ? { members, count: deps.members().length } : {}),
     };
     post(msg);
     pump();
@@ -402,6 +405,13 @@ function createFolderRail(deps) {
     if (w === work && !disposed) return false;
     if (suspended) relist = true;
     return true;
+  }
+
+  /** Compare: the ids of the listed videos it shows. */
+  function memberIds(/** @type {Entry[]} */ list, /** @type {(a: string, b: string) => boolean} */ same) {
+    if (!deps.members) return [];
+    const files = deps.members();
+    return list.filter((e) => e.kind === 'video' && files.some((f) => same(e.path, f))).map((e) => e.id);
   }
 
   /** The folder's name and its parent's, for the header ("videos / codecs"). */
@@ -532,6 +542,12 @@ function createFolderRail(deps) {
       }
       pump();
     },
+    /** Compare's videos changed (added, removed, reordered): the page marks the rows of the ones it now shows. */
+    refreshMembers() {
+      if (disposed || !deps.members || !gen || suspended) return;
+      const same = (/** @type {string} */ a, /** @type {string} */ b) => a === b || (caseless && a.toLowerCase() === b.toLowerCase());
+      post({ type: 'rail', op: 'members', gen, ids: memberIds([...entries.values()], same), count: deps.members().length });
+    },
     /** What the session knows of a file already (the playing video's duration and size): not probed again. */
     seed(/** @type {string} */ file, /** @type {any} */ m) {
       const got = pick(m || {});
@@ -569,10 +585,58 @@ function createFolderRail(deps) {
     stats: () => ({ ...stats, statWant: statWant.size, probeWant: probeWant.size, statBusy, probeBusy, suspended, relist }),
   };
 }
+/**
+ * A page's rail message (media/folder-rail.js), for any host: the single player (src/extension.js Session) and
+ * Compare (src/compare.js CompareSession). Listing, metadata and remembered look are the same; what a row does is
+ * the host's (play it in this tab, add it to this Compare, ...). Ids are checked against the current listing: the
+ * page never sends a path.
+ *
+ * host: startDir() the folder the rail shows when opened; setBrowse(dir) the folder walked into (kept for the next
+ * open, a reload, a handoff); prefs the remembered look (globalState); onVideo a click on a video row;
+ * onCompareVideo a video row's Compare button (or D); onCompareFolder a folder row's "Compare all videos in folder"
+ * (or D).
+ * @param {{
+ *   ctl: ReturnType<typeof createFolderRail>,
+ *   startDir: () => string,
+ *   setOpen: (open: boolean) => void,
+ *   setBrowse: (dir: string) => void,
+ *   prefs: { get(): any, set(v: any): any },
+ *   seed?: (m: any) => void,
+ *   onVideo?: (e: Entry, m: any) => any,
+ *   onCompareVideo?: (e: Entry, m: any) => any,
+ *   onCompareFolder?: (e: Entry, m: any) => any,
+ * }} host
+ * @param {any} m
+ */
+async function routeRailMessage(host, m) {
+  const { ctl } = host;
+  switch (m && m.op) {
+    case 'open': host.setOpen(true); return ctl.browse(host.startDir());
+    case 'close': host.setOpen(false); ctl.cancel(); return undefined;
+    case 'visible': ctl.setVisible(m.gen, m.ids); return undefined;
+    case 'hover': ctl.setHover(m.gen, m.id); return undefined;
+    case 'self': if (host.seed) host.seed(m); return undefined;
+    case 'prefs': {
+      const prev = sanitizeRailPrefs(host.prefs.get());
+      return host.prefs.set(sanitizeRailPrefs({
+        ...prev, ...(m.width !== undefined ? { width: m.width } : {}), ...(m.column !== undefined ? { column: m.column } : {}),
+        ...(m.playable !== undefined ? { playable: m.playable } : {}),
+      }));
+    }
+    default: break;
+  }
+  const e = ctl.entry(m && m.gen, m && m.id);
+  if (!e) return undefined; // an old listing (the folder changed meanwhile) or not an id of ours
+  if (m.op === 'browse' && (e.kind === 'dir' || e.kind === 'up')) { host.setBrowse(e.path); return ctl.browse(e.path); }
+  if (m.op === 'activate' && e.kind === 'video' && host.onVideo) return host.onVideo(e, m);
+  if (m.op === 'compare' && e.kind === 'video' && host.onCompareVideo) return host.onCompareVideo(e, m);
+  if (m.op === 'compareFolder' && e.kind === 'dir' && host.onCompareFolder) return host.onCompareFolder(e, m);
+  return undefined;
+}
 // checkJs: end
 
 module.exports = {
   ON_END, COLUMNS, LAYOUTS, WIDTH, RAIL_PREFS_KEY,
   naturalCompare, isPlayable, resolveOnEnd, sanitizeRailPrefs, sanitizeRailCarry, planCompareRow, planFolderCompare,
-  createHandoffs, createMetaCache, playableIn, neighbourOf, createFolderRail,
+  createHandoffs, createMetaCache, playableIn, neighbourOf, createFolderRail, routeRailMessage,
 };

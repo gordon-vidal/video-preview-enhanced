@@ -152,6 +152,47 @@ module.exports = [{
         ok(/\(3 videos\) -> open/.test(line), `folder compare: ${line}`);
         await vs.waitLog(/compare: .*n1\.mp4 <-> .*n2\.mp4 <-> .*n3\.mp4/, { from, timeout: 15000, what: 'a Compare of the three videos' });
       });
+
+      await R.run('compare/rail', async (ok) => {
+        // The rail in Compare: opened from the edge tab (no bar capsule), the compared clips marked, a click adds one.
+        const act = (o) => vs.send({ compare: true, ...o });
+        let uiId = 0;
+        const ui = async () => {
+          const id = ++uiId;
+          const from = vs.mark();
+          act({ action: 'ui', id, delay: 60 });
+          const line = await vs.waitLog(new RegExp(`webview: compare ui \\{"id":${id},`), { from, timeout: 10000, what: 'compare ui' });
+          return JSON.parse(/webview: compare ui (\{.*\})/.exec(line)[1]);
+        };
+        const until = async (pred, what, timeout = 15000) => {
+          const end = Date.now() + timeout;
+          let s = null;
+          while (Date.now() < end) { try { s = await ui(); if (pred(s)) return s; } catch { /* page reloading */ } await h.sleep(250); }
+          throw new Error(`TIMEOUT waiting for ${what}; last: ${JSON.stringify(s && s.rail)}`);
+        };
+        let s = await until((x) => x.rail && !x.rail.open, 'the Compare page with its rail');
+        ok(s.rail.cap.hidden && s.rail.openTabIndex === 0, `no capsule; the edge tab is a Tab stop: ${JSON.stringify([s.rail.cap, s.rail.openTabIndex])}`);
+        ok(!s.bar.ids.includes('capCount'), 'no capsule on the bar');
+        act({ action: 'click', sel: '#railOpenTab' });
+        s = await until((x) => x.rail.open && x.rail.rows.length >= 4, 'the rail listing in Compare');
+        const rows = s.rail.rows;
+        ok(rows.filter((x) => x.inCompare).map((x) => x.name).join() === 'n1.mp4,n2.mp4,n3.mp4', `marked: ${rows.filter((x) => x.inCompare).map((x) => x.name)}`);
+        ok(s.rail.pos === '3 in Compare' && s.rail.autoplay !== undefined, `footer: ${s.rail.pos}`);
+        // Up one folder, then a video of it (not in Compare): added; the page reloads with the rail open and marked.
+        act({ action: 'click', sel: '#railList .r-row[title="Parent folder"]' });
+        s = await until((x) => x.rail.rows.some((r) => r.name === 'neigh'), 'the parent folder in Compare');
+        const extra = s.rail.rows.find((r) => r.kind === 'video' && /^s_h264\.mp4$/.test(r.name)) || s.rail.rows.find((r) => r.kind === 'video');
+        const from = vs.mark();
+        act({ action: 'click', sel: `#rail-${extra.id.replace('.', '-')}` });
+        await vs.waitLog(new RegExp(`compare .*\\] add ${lib.esc(extra.name)}`), { from, timeout: 15000, what: `${extra.name} added` });
+        s = await until((x) => x.rail && x.rail.open && x.rail.rows.some((r) => r.name === extra.name && r.inCompare), 'the added clip marked after the reload', 20000);
+        ok(s.rail.pos === '4 in Compare', `footer after the add: ${s.rail.pos}`);
+        // Clicking it again: already in Compare (a toast, no reload).
+        act({ action: 'click', sel: `#railList .r-row.in-cmp[aria-selected="true"]` });
+        await h.sleep(600);
+        s = await ui();
+        ok(s.rail.pos === '4 in Compare', 'no duplicate');
+      });
     } finally { await h.closeClip(vs); }
     return R.out;
   },

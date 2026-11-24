@@ -80,7 +80,7 @@ module.exports = [
   {
     name: 'folder-rail',
     journey: 'The folder rail and the bar capsule: open docked, resize, browse up and back, the column menu, the edge tab, a right-click on |▶ swaps the tab with the rail state, Autoplay plays the next video once',
-    sources: [...PLAYER, ...RAIL, 'src/extension.js', 'src/settings.js'],
+    sources: [...PLAYER, ...RAIL, 'src/extension.js', 'src/settings.js', 'src/compare.js', 'media/compare.js', 'media/compare.css'],
     steps: [{ case: 'folder-rail' }],
   },
   {

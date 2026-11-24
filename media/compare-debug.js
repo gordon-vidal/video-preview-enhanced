@@ -101,6 +101,8 @@
           rows: [...ui.panel.querySelectorAll('button')].map((b) => ({ label: b.getAttribute('aria-label') || text(b), pressed: b.getAttribute('aria-pressed'), checked: b.getAttribute('aria-checked') })),
         },
         sheet: ui.sheet.hidden ? null : text(ui.sheet),
+        // The folder rail (media/folder-rail.js snapshot), when the page has one.
+        rail: /** @type {any} */ (window).vpeCompare?.railState?.() ?? null,
         active: document.activeElement?.id || document.activeElement?.getAttribute('aria-label'),
         menu: ui.menu.hidden ? null : { tile: Number(ui.menu.dataset.tile), items: [...ui.menu.querySelectorAll('.mi')].map((b) => text(b)) },
         addPop: addPop && !addPop.hidden ? text(addPop) : null,

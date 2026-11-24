@@ -100,13 +100,21 @@
    *   cfg: { layout?: string, width?: number, column?: string, playable?: boolean },
    *   getOnEnd: () => string, setOnEnd: (mode: string) => void, label: (mode: string) => string,
    *   time?: () => number,
+   *   compare?: boolean, busy?: () => boolean,
    * }} env
    */
   function create(env) {
     const { doc, post, toast } = env;
     const $ = (/** @type {string} */ id) => /** @type {any} */ (doc.getElementById(id));
     const rail = $('rail'), list = $('railList'), main = $('main'), stage = $('stage');
-    const cap = $('folderCap'), capCount = $('capCount'), capPrev = $('capPrev'), capNext = $('capNext');
+    // Compare has no bar capsule: stand-ins that are never shown keep one code path (the edge tab opens the rail).
+    const stand = (/** @type {string} */ tag) => { const x = doc.createElement(tag); x.hidden = true; return x; };
+    const cap = $('folderCap') || stand('div'), capCount = $('capCount') || stand('button');
+    const capPrev = $('capPrev') || stand('button'), capNext = $('capNext') || stand('button');
+    const compare = !!env.compare;
+    /** Compare: the ids of the listed videos it shows, and how many it shows. */
+    let members = new Set();
+    let memberCount = 0;
     const edge = $('railEdge'), openTab = $('railOpenTab'), foldTab = $('railFoldTab'), closeBtn = $('railClose');
     const filter = $('railFilter'), playableBtn = $('railPlayable'), colHead = $('railColHead'), colBtn = $('railColBtn');
     const colMenu = $('railColMenu'), endMenu = $('railEndMenu'), endBtn = $('railEndBtn'), endVal = $('railEndVal');
@@ -200,10 +208,12 @@
     main.addEventListener('pointermove', (/** @type {PointerEvent} */ e) => {
       const r = main.getBoundingClientRect();
       const t = /** @type {any} */ (e.target);
-      const busy = e.buttons !== 0 || !!(t && t.closest && t.closest('#scopes'))
+      // The page's own drags (Compare: a tile being moved, the spotlight split) keep both tabs away too.
+      const pageBusy = !!(env.busy && env.busy());
+      const busy = e.buttons !== 0 || !!(t && t.closest && t.closest('#scopes')) || pageBusy
         || stage.classList.contains('panning') || doc.body.classList.contains('idle');
       const on = nearEdge({
-        x: e.clientX, right: r.right, open, buttons: e.buttons,
+        x: e.clientX, right: r.right, open, buttons: e.buttons || (pageBusy ? 1 : 0),
         overScopes: !!(t && t.closest && t.closest('#scopes')),
         panning: stage.classList.contains('panning'), idle: doc.body.classList.contains('idle'),
       });
@@ -347,10 +357,12 @@
       for (const e of shown) {
         const row = doc.createElement('div');
         const active = e.id === snap.current;
-        row.className = `r-row${active ? ' active' : ''}${e.kind === 'file' ? ' dim' : ''}`;
+        const inCmp = members.has(e.id);
+        row.className = `r-row${active ? ' active' : ''}${inCmp ? ' in-cmp' : ''}${e.kind === 'file' ? ' dim' : ''}`;
         row.id = `rail-${e.id.replace('.', '-')}`;
         row.setAttribute('role', 'option');
-        row.setAttribute('aria-selected', String(active));
+        row.setAttribute('aria-selected', String(active || inCmp));
+        if (inCmp) row.title = 'In Compare';
         row.dataset.id = e.id;
         const ic = doc.createElement('span');
         ic.className = 'r-ico';
@@ -362,7 +374,8 @@
         else name.title = e.name;
         row.append(ic, name);
         // A video: compare it with the playing one; a folder: compare all its videos.
-        const canCompare = (e.kind === 'video' && !active) || e.kind === 'dir';
+        // (In Compare a click on a video adds it; only folders keep the button there.)
+        const canCompare = (e.kind === 'video' && !active && !compare) || e.kind === 'dir';
         /** @type {HTMLElement|null} */
         let col = null;
         if (column !== 'none' && e.kind !== 'up') {
@@ -504,6 +517,7 @@
         case 'list': {
           const keep = snap.crumb === m.crumb ? cur : null;
           snap = { gen: m.gen, crumb: String(m.crumb || ''), entries: Array.isArray(m.entries) ? m.entries : [], current: m.current || null, error: m.error };
+          if (compare) { members = new Set(Array.isArray(m.members) ? m.members : []); memberCount = Number(m.count) || 0; showCount(); }
           metas = new Map();
           cur = keep;
           // Walked out of a folder: the cursor on that folder's row.
@@ -526,6 +540,19 @@
           break;
         }
         case 'pos': setPos(Number(m.index), Number(m.count)); break;
+        case 'members': {
+          // Compare's videos changed: mark the rows it now shows, without rebuilding the list.
+          if (m.gen !== snap.gen || !Array.isArray(m.ids)) break;
+          members = new Set(m.ids);
+          memberCount = Number(m.count) || 0;
+          for (const [id, r] of rows) {
+            const on = members.has(id);
+            r.row.classList.toggle('in-cmp', on);
+            r.row.setAttribute('aria-selected', String(on || id === snap.current));
+          }
+          showCount();
+          break;
+        }
         case 'layout': layout = m.layout === 'overlay' ? 'overlay' : 'dock'; applyLayout(); break;
         case 'show': if (m.open) setOpen(true); break;
       }
@@ -541,6 +568,9 @@
     }
     function refreshOnEnd() { endVal.textContent = env.label(env.getOnEnd()).replace('Play next in folder', 'Next'); }
     refreshOnEnd();
+    /** Compare's footer: how many videos it shows (no Autoplay there). */
+    function showCount() { if (compare) pos.textContent = memberCount ? `${memberCount} in Compare` : ''; }
+    if (compare) endBtn.hidden = true;
 
     edge.hidden = false;
     updateOpener();
@@ -559,7 +589,7 @@
         stageRect: (() => { const r = stage.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
         rows: [...rows.values()].map((r) => {
           const b = /** @type {HTMLElement | null} */ (r.row.querySelector('.r-cmp'));
-          return { id: r.e.id, name: r.e.name, kind: r.e.kind, col: r.col ? r.col.textContent : '', active: r.e.id === snap.current, cmp: b ? b.title : '' };
+          return { id: r.e.id, name: r.e.name, kind: r.e.kind, col: r.col ? r.col.textContent : '', active: r.e.id === snap.current, inCompare: members.has(r.e.id), cmp: b ? b.title : '' };
         }),
         openTabIndex: openTab.tabIndex, capVisible: capVisible(),
         openTabRect: (() => { const r = openTab.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),

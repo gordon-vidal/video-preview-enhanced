@@ -609,5 +609,79 @@ function rail(fsys, o = {}) {
     }
   }
 
+  // ---- the folder rail in Compare (src/compare.js CompareSession): the same controller; rows add to this Compare ----
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe_rail_cmp_'));
+    for (const n of ['a 1.mp4', 'a 2.mkv', 'a 3.webm', 'a 10.mov']) fs.writeFileSync(path.join(dir, n), Buffer.alloc(64));
+    fs.mkdirSync(path.join(dir, 'more'));
+    for (const n of ['deep 1.mp4', 'deep 2.mp4']) fs.writeFileSync(path.join(dir, 'more', n), Buffer.alloc(64));
+    try {
+      const h = load({ settings: { 'videoPreviewEnhanced.compare.maxVideos': 5 } });
+      h.vscode.FileType = { File: 1, Directory: 2, SymbolicLink: 64 };
+      h.vscode.workspace.fs.stat = async (u) => ({ type: fs.statSync(u.fsPath).isDirectory() ? 2 : 1 });
+      h.vscode.workspace.fs.readDirectory = async (u) => fs.readdirSync(u.fsPath, { withFileTypes: true }).map((d) => [d.name, d.isDirectory() ? 2 : 1]);
+      const posts = [];
+      let viewState = null;
+      const webview = { cspSource: 'vscode-resource:', asWebviewUri: (u) => u, postMessage(m) { posts.push(m); }, onDidReceiveMessage() {} };
+      const panel = { webview, visible: true, onDidDispose() {}, onDidChangeViewState(fn) { viewState = fn; }, dispose() {} };
+      h.vscode.window.createWebviewPanel = () => panel;
+      const files = ['a 1.mp4', 'a 2.mkv'].map((n) => h.vscode.Uri.file(path.join(dir, n)));
+      const cmp = await h.vscode._commands['videoPreviewEnhanced.compare'](null, files);
+      const cfg = () => webviewConfig(webview);
+      const names = () => cmp.files.map((f) => path.basename(f));
+      assert.ok(cfg().rail && cfg().rail.layout === 'dock', 'Compare gets the rail, docked by default');
+      assert.match(webview.html, /<div id="main">\s*<div id="stage">[\s\S]*<aside id="rail"/, '#main holds the stage and the rail');
+      assert.match(webview.html, /folder-rail\.js/);
+      assert.doesNotMatch(webview.html, /id="folderCap"/, 'no bar capsule in Compare');
+      const rail = (m) => cmp.onMessage({ type: 'rail', ...m });
+      const lists = () => posts.filter((m) => m.type === 'rail' && m.op === 'list');
+      await rail({ op: 'open' });
+      let list = lists().pop();
+      assert.strictEqual(list.crumb.split(' / ').pop(), path.basename(dir), "the first video's folder");
+      const id = (n, l = list) => l.entries.find((e) => e.name === n).id;
+      assert.deepStrictEqual(list.members.sort(), [id('a 1.mp4'), id('a 2.mkv')].sort(), 'both compared videos are marked');
+      assert.strictEqual(list.count, 2);
+      assert.ok(!('current' in list), 'no single playing row in Compare');
+      // A video row: added (the page reloads, so the next page says it and keeps the rail as it was).
+      await rail({ op: 'activate', gen: list.gen, id: id('a 10.mov'), rail: { open: true, width: 250, filter: '' } });
+      assert.deepStrictEqual(names(), ['a 1.mp4', 'a 2.mkv', 'a 10.mov']);
+      assert.strictEqual(cfg().toast, 'Added to Compare');
+      assert.deepStrictEqual(cfg().railCarry, { open: true, width: 250, filter: '' }, 'the rail comes back open on the new page');
+      // The same video again: no duplicate.
+      await rail({ op: 'activate', gen: list.gen, id: id('a 1.mp4'), rail: { open: true } });
+      assert.strictEqual(cmp.files.length, 3);
+      assert.ok(posts.some((m) => m.type === 'toast' && m.text === 'Already in Compare'));
+      // The new page opens the rail: the added video is marked too; a reorder sends the marks again.
+      await rail({ op: 'open' });
+      list = lists().pop();
+      assert.deepStrictEqual(list.members.length, 3);
+      await cmp.onMessage({ type: 'tileOrder', order: [2, 0, 1] });
+      const marks = posts.filter((m) => m.type === 'rail' && m.op === 'members').pop();
+      assert.ok(marks && marks.ids.includes(id('a 10.mov')) && marks.count === 3, 'members after a reorder');
+      // A folder row: its videos join (no duplicates), up to compare.maxVideos (5 here).
+      await rail({ op: 'compareFolder', gen: list.gen, id: id('more') });
+      assert.deepStrictEqual(names(), ['a 1.mp4', 'a 2.mkv', 'a 10.mov', 'deep 1.mp4', 'deep 2.mp4']);
+      assert.match(String(cfg().toast), /^Added 2 from more to Compare/);
+      // Full: a toast, nothing added.
+      await rail({ op: 'activate', gen: list.gen, id: id('a 3.webm'), rail: { open: true } });
+      assert.strictEqual(cmp.files.length, 5);
+      assert.ok(posts.some((m) => m.type === 'toast' && /Compare is full \(5 videos\)/.test(m.text)));
+      // Stale ids and paths do nothing.
+      await rail({ op: 'activate', gen: list.gen - 1, id: id('a 3.webm') });
+      await rail({ op: 'activate', gen: list.gen, id: path.join(dir, 'a 3.webm') });
+      assert.strictEqual(cmp.files.length, 5);
+      // Hidden: the rail's work stops; shown again with the rail open: it goes on.
+      panel.visible = false; viewState();
+      assert.strictEqual(cmp.rail.stats().suspended, true, 'suspended while hidden');
+      panel.visible = true; viewState();
+      assert.strictEqual(cmp.rail.stats().suspended, false, 'resumed when shown');
+      cmp.dispose();
+      assert.strictEqual(cmp.rail, null, 'disposed with the panel');
+      h.dispose();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
   console.log('folder rail: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

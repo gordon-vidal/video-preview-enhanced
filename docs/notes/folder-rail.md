@@ -42,6 +42,22 @@ see a clip's length or size before opening it, no "play the next one" and no qui
   page's right-click menu is unchanged (no Next / Previous Video entries: the menu is about the moment shown and is
   already ten items long).
 
+## In Compare
+
+The same rail (markup, script, styles and host controller; `routeRailMessage` routes both pages' messages) in
+Compare's page, beside or over the tiles (`folderRail.layout`). It starts in the first video's folder.
+
+- No bar capsule and no Autoplay picker: the 20×84 px tab at the right edge opens it (it is a Tab stop in Compare),
+  and the footer says how many videos Compare holds.
+- The videos Compare shows are marked (a quieter fill and bar than the player's playing row); the marks follow adds,
+  removals and reordering.
+- A click on a video row (or `D` on it) adds it to this Compare through its own add path: once, up to
+  `compare.maxVideos`, with "Added to Compare", "Already in Compare" or "Compare is full". A folder row's button (or
+  `D`) adds that folder's videos. Adding reloads Compare's page; the rail comes back as it was (open, width,
+  filter, folder) and the new page says what was added.
+- The edge tabs stay away while a tile is dragged to a new place, the spotlight split is dragged, the picture is
+  panned, and in fullscreen with the bar hidden. Hiding or closing the Compare tab stops the rail's work.
+
 ## Host side (src/folder-rail.js, ADR 0001 seam)
 
 - Async `readdir` gives names and kinds at once; sizes and dates follow from a pool of 4 `stat` calls; ffprobe runs
