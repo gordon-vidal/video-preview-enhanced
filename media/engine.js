@@ -1905,9 +1905,11 @@ function createEngine(env) {
     stepFrame(d, noWait = false) {
       this.seekGoalFrame = null;
       this.pause();
+      let retryDeadline = 0;
       if (this.backRetry) {
-        // Notches while a step back waits for its copies: one step by the sum.
+        // Notches while a step back waits for its copies: one step by the sum, keeping the first deadline.
         d += this.backRetry.d;
+        retryDeadline = this.backRetry.deadline;
         clearTimeout(this.backRetry.timer);
         this.backRetry = null;
         if (!d) return;
@@ -1930,11 +1932,14 @@ function createEngine(env) {
         else if (!this.eof || this.queue.length) { to = Math.min(last, base + d * f); seek = this.rel(base) + d * f; }
         else return;
       } else {
-        if (!waiting && !noWait && this.seekTarget === null && (this.backSpilling || 0) > 0 && this.back && this.back.length) {
-          // The GOP just decoded is still being copied for steps back: wait for it (BACK_WAIT_MS at most) rather
-          // than seek, which would drop it and send the same GOP over the link again.
-          const r = { d, gen: this.gen };
-          r.timer = setTimeout(() => this.runBackRetry(r), BACK_WAIT_MS);
+        const nowWait = performance.now();
+        const deadline = retryDeadline || (nowWait + BACK_WAIT_MS);
+        const remain = deadline - nowWait;
+        if (!waiting && !noWait && remain > 0 && this.seekTarget === null && (this.backSpilling || 0) > 0) {
+          // The GOP just decoded is still being copied for steps back (even before the first copy finishes):
+          // wait up to the original BACK_WAIT_MS deadline rather than seek and re-send the GOP over the link.
+          const r = { d, gen: this.gen, deadline };
+          r.timer = setTimeout(() => this.runBackRetry(r), remain);
           this.backRetry = r;
           return;
         }

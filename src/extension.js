@@ -2055,10 +2055,11 @@ class Session {
       return false;
     }
     log(`[${this.name}] decoder: remote stream / live transcode (${stream.encoder}, decode=${stream.decodeMethod}, ${remote || 'local'} window): ${pr.video.codec} ${pr.video.pixFmt} ${pr.video.width}x${pr.video.height}`);
+    if (this.transcodeHeight === undefined) this.transcodeHeight = c.transcodeResolution;
     this.native = new remotestream.EncodedStream({
       ...stream, tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), probed: pr,
       stats: !!logFile, maxBitrateMbps: c.transcodeMaxBitrate, allowLinkAdapt: isRemoteLink,
-      resolution: this.transcodeHeight !== undefined ? this.transcodeHeight : c.transcodeResolution,
+      resolution: this.transcodeHeight,
       rotation: rotationOf(this.file),
       post: (msg) => {
         if (!signal.aborted) this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg });

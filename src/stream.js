@@ -486,6 +486,7 @@ class EncodedStream {
     this.kill();
     this.buf.reset(t);
     this.restored = false;
+    this.mixedHistoryFrom = null;
     this.videoEnded = false;
     this.audioEnded = !this.pr.audio;
     this.audioPaused = false;
@@ -718,6 +719,7 @@ class EncodedStream {
     buf.clear();
     this.pipelineMode = mode;
     this.buf.setConfiguration(''); // This active buffer now contains two video configurations.
+    this.mixedHistoryFrom = spliceT;
     this.gotOutput = true;
     this.link.resetForRestart();
     this.link.noteFirstOutput(Date.now());
@@ -758,6 +760,7 @@ class EncodedStream {
     this.link.resetForRestart();
     this.videoEnded = false;
     this.buf.setConfiguration('');
+    this.mixedHistoryFrom = this.vBase;
     this.spawnVideo();
   }
 
@@ -948,6 +951,7 @@ class EncodedStream {
   /** A seek served from the packets held: no ffmpeg restart. */
   reuseHistory(t) {
     if (this.buf.configuration && this.buf.configuration !== this.cacheConfiguration()) return false;
+    if (this.mixedHistoryFrom !== null && this.mixedHistoryFrom !== undefined && t < this.mixedHistoryFrom - 0.25 / this.fps) return false;
     const proc = this.proc;
     const running = !!proc && proc.exitCode === null && !proc.signalCode;
     let at = this.buf.reuse(t, { hasProc: !!proc, running, videoEnded: this.videoEnded,
