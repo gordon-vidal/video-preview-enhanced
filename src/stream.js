@@ -25,6 +25,7 @@ const { LinkAdaptController, LINK_TIERS, LINK_SETTLE_MS } = require('./stream-ad
 const { SeekHistoryBuffer, AUDIO_RATE, MAX_QUEUED_AUDIO } = require('./stream-buffer');
 
 const MAX_QUEUED_SECONDS = 2; // packets read ahead of the webview before ffmpeg is paused
+const OVERLAP_LEAD_S = 1;
 // Seeks: a burst (the seek bar dragged, keys held) starts ffmpeg once it pauses this long...
 const SEEK_QUIET_MS = 60;
 // ...and at most once per this while it goes on, never deferring a seek longer than SEEK_MAX_DEFER_MS.
@@ -76,12 +77,27 @@ async function audioEncoderFor(tools, exec = run) {
   return audioEncoders.get(key);
 }
 
+function spliceKeyframe(packet) {
+  if (!packet.idr) return false;
+  const data = Buffer.from(packet.data.buffer, packet.data.byteOffset, packet.data.byteLength);
+  const prefix = Buffer.from([0, 0, 1]);
+  let sps = false;
+  let pps = false;
+  for (let i = data.indexOf(prefix); i >= 0 && i + 3 < data.length; i = data.indexOf(prefix, i + 3)) {
+    const type = data[i + 3] & 31;
+    if (type === 7) sps = true;
+    if (type === 8) pps = true;
+    if (type === 5) return sps && pps;
+  }
+  return false;
+}
+
 class EncodedStream {
   constructor({
     tools, file, post, log, maxHeight, probed, onFail, stats, encoder, device,
     cpuEncoder: cpu, decodeMethod = 'none', onEncoderFail, audioEncoder = null,
     fitView = true, maxKbps = 0, maxBitrateMbps = 0, allowLinkAdapt = true, remote = true,
-    allowSoftwareFallback = true, hidden = false,
+    allowSoftwareFallback = true, hidden = false, allowOverlap = true,
   }) {
     // Packets and sound read, and the history for seeks back (src/stream-buffer.js). The fields it owns are
     // reachable as this.vAll, this.aNext ... (accessors below the class).
@@ -107,6 +123,9 @@ class EncodedStream {
     this.allowSoftwareFallback = allowSoftwareFallback !== false;
     this.pipelineMode = CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode';
     this.hidden = hidden;
+    this.allowOverlap = allowOverlap;
+    this.playing = false;
+    this.overlap = null;
     this.link = new LinkAdaptController(); // the quality ladder's state (src/stream-adapt.js)
     this.waitingSince = 0;
     this.gen = 0;
@@ -151,7 +170,9 @@ class EncodedStream {
     this.takeStandby(NaN);
     this.log(`live transcode: max bitrate ${next > 0 ? `${next} Mb/s` : 'auto'}`);
     // Only restart an actively running video pipeline; deferred seeks and hidden tabs pick up the new cap on spawn.
-    if (this.fps && !this.disposed && !this.hidden && !this.startTimer && this.proc) this.restartVideo();
+    if (this.fps && !this.disposed && !this.hidden && !this.startTimer && this.proc) {
+      this.transitionVideo(this.playing);
+    }
   }
 
   /** Live-update the max bitrate cap in kb/s (0 = Auto). */
@@ -174,6 +195,7 @@ class EncodedStream {
     this.maxHeight = height;
     this.maxBitrateMbps = mbps;
     this.takeStandby(NaN);
+    this.cancelOverlap();
     if (!this.fps || this.disposed) return false;
     if (deferGrow && !this.hidden) {
       this.sizeVideo();
@@ -226,6 +248,7 @@ class EncodedStream {
         this.setView(m.view);
         return this.open();
       case 'view': return this.setView(m, !!m.playing);
+      case 'playback': this.playing = !!m.playing; return undefined;
       case 'remoteAudioFailed': return this.audioFallback(m.message);
       case 'config':
         if (m.video !== 'webcodecs' && this.pr.video) { this.onFail('H.264 WebCodecs not available in this webview'); return undefined; }
@@ -309,7 +332,7 @@ class EncodedStream {
     // Playing with ffmpeg running: the in-band IDR of a restart changes the size without a page seek, so the sound
     // and the clock go on and the picture shown stays until the first larger frame (as for a quality step).
     if (grow && playing && !this.hidden && !this.startTimer && this.proc) {
-      this.restartVideo();
+      this.transitionVideo(true);
       return;
     }
     this.resizePending = changed;
@@ -426,8 +449,25 @@ class EncodedStream {
     this.proc = proc;
     this.spawns++;
     this.lastSpawnAt = Date.now();
+    this.watchVideo(proc);
+    const cap = this.activeCapKbps();
+    this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${cap ? `, ${cap} kb/s cap` : ''})`);
+  }
+
+  watchVideo(proc, overlap = null) {
     const t0 = Date.now();
     proc.stdout.on('data', (d) => {
+      if (overlap && overlap === this.overlap) {
+        const { buf } = overlap;
+        buf.pending = buf.pending.length ? Buffer.concat([buf.pending, d]) : d;
+        buf.split(false);
+        if (buf.vAll.length) {
+          if (!spliceKeyframe(buf.vAll[0])) return this.overlapFallback('replacement did not start with SPS/PPS and IDR');
+          proc.stdout.pause();
+          this.spliceVideo();
+        }
+        return;
+      }
       if (proc !== this.proc) return;
       if (!this.gotOutput) {
         this.log(`live transcode: first bytes ${Date.now() - t0} ms after start${proc.adopted ? ' (prepared at the end)' : ''}`);
@@ -437,10 +477,15 @@ class EncodedStream {
       this.gotOutput = true;
       this.pending = this.pending.length ? Buffer.concat([this.pending, d]) : d;
       this.buf.split(false);
+      if (this.spliceVideo()) return;
       if (this.vAll.length - this.vNext > MAX_QUEUED_SECONDS * this.fps) proc.stdout.pause();
       this.answer();
     });
     this.onExit(proc, (code, signal) => {
+      if (overlap && overlap === this.overlap) {
+        this.overlapFallback(this.exitReason(proc, code, signal));
+        return;
+      }
       if (proc !== this.proc) return;
       this.proc = null;
       if (code !== 0 || signal) {
@@ -458,12 +503,13 @@ class EncodedStream {
         return;
       }
       this.buf.split(true);
+      if (this.spliceVideo()) return;
+      // Keep the active encoder's tail if the probed duration outlasts its picture.
+      this.cancelOverlap();
       this.videoEnded = true;
       if (this.audioEnded) this.prepareLoop();
       this.answer();
     });
-    const cap = this.activeCapKbps();
-    this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${cap ? `, ${cap} kb/s cap` : ''})`);
   }
 
   onExit(proc, finish) {
@@ -492,13 +538,88 @@ class EncodedStream {
     this.restartVideo();
   }
 
+  nextVideoTime() {
+    return this.vAll[this.vNext]?.t ?? (this.vBase + this.frameIndex / this.fps);
+  }
+
+  transitionVideo(playing) {
+    this.cancelOverlap();
+    const spliceT = (Math.round(this.nextVideoTime() * this.fps) + Math.ceil(OVERLAP_LEAD_S * this.fps)) / this.fps;
+    if (!playing || !this.allowOverlap || this.hidden || this.disposed || this.startTimer
+      || !this.proc || this.proc.exitCode !== null || this.proc.signalCode || !(spliceT < this.pr.duration - 0.5)) {
+      this.restartVideo();
+      return;
+    }
+    this.takeStandby(NaN);
+    const activeMode = this.pipelineMode;
+    let proc;
+    try {
+      proc = this.launch(spliceT);
+    } catch (e) {
+      this.pipelineMode = activeMode;
+      this.overlapFallback(e.message);
+      return;
+    }
+    const buf = new SeekHistoryBuffer({ fps: this.fps, hasAudio: false });
+    buf.reset(spliceT);
+    this.overlap = { proc, spliceT, buf, mode: this.pipelineMode };
+    this.pipelineMode = activeMode;
+    this.spawns++;
+    this.lastSpawnAt = Date.now();
+    this.watchVideo(proc, this.overlap);
+  }
+
+  spliceVideo() {
+    const overlap = this.overlap;
+    if (!overlap || !overlap.buf.vAll.length) return false;
+    const { proc, spliceT, buf, mode } = overlap;
+    const boundary = spliceT - 0.5 / this.fps;
+    const producedUntil = this.vBase + this.frameIndex / this.fps;
+    if (producedUntil < boundary) return false;
+    if (proc.signalCode || (proc.exitCode !== null && proc.exitCode !== 0)) return false;
+    const cut = this.vAll.findIndex((p, i) => i >= this.vNext && p.t >= boundary);
+    if (cut !== -1) this.vAll.length = cut;
+    const old = this.proc;
+    this.overlap = null;
+    this.proc = proc;
+    this.stopProcess(old);
+    this.vBase = spliceT;
+    this.frameIndex = buf.frameIndex;
+    this.pending = buf.pending;
+    for (const packet of buf.vAll) this.vAll.push(packet);
+    buf.clear();
+    this.pipelineMode = mode;
+    this.gotOutput = true;
+    this.link.resetForRestart();
+    this.link.noteFirstOutput(Date.now());
+    this.log(`live transcode: video encoder switched at ${spliceT.toFixed(3)} s`);
+    this.post({ type: 'transcodeInfo', transcode: this.transcodeInfo() });
+    if (this.vAll.length - this.vNext <= MAX_QUEUED_SECONDS * this.fps) proc.stdout.resume();
+    this.answer();
+    return true;
+  }
+
+  cancelOverlap() {
+    const overlap = this.overlap;
+    this.overlap = null;
+    if (!overlap) return;
+    overlap.buf.clear();
+    this.stopProcess(overlap.proc);
+  }
+
+  overlapFallback(why) {
+    this.log(`live transcode: video overlap failed (${why}); restarting video`);
+    this.restartVideo();
+  }
+
   /** Restart at the first unsent frame. The in-band IDR changes size without disturbing audio. */
   restartVideo() {
+    this.cancelOverlap();
     this.takeStandby(NaN);
     const proc = this.proc;
     this.proc = null;
-    if (proc) { proc.stdout.destroy(); proc.kill('SIGKILL'); }
-    const next = this.vNext < this.vAll.length ? this.vAll[this.vNext].t : this.vBase + this.frameIndex / this.fps;
+    this.stopProcess(proc);
+    const next = this.nextVideoTime();
     this.vBase = Math.round(next * this.fps) / this.fps;
     this.vAll.length = this.vNext;
     this.frameIndex = 0;
@@ -529,7 +650,7 @@ class EncodedStream {
     if (down && this.tier === last && LINK_TIERS[last].kbps + pcm > m.kbps) this.slowLink(detail);
     else if (down) this.notice('quality', `Slow connection: live transcode lowered the picture to ${this.h}p to keep playing. It goes back up when the connection allows.`);
     this.post({ type: 'transcodeInfo', transcode: this.transcodeInfo({ adaptingDir: down ? 'down' : 'up' }) });
-    this.restartVideo();
+    this.transitionVideo(!down);
   }
 
   /** At the lowest tier the link still can't keep up: stay there (no fallback) and tell the user once. */
@@ -590,11 +711,18 @@ class EncodedStream {
     const gen = this.gen;
     const limit = Math.min(m.limit || 384 * 1024, this.tier ? 128 * 1024 : Infinity);
     const videoUntil = m.videoUntil ?? Infinity;
+    // Leave the boundary frame unsent until the replacement can supply it. If a read needs that frame
+    // before the replacement is ready, use the usual restart at the first unsent timestamp.
+    const boundary = this.overlap ? this.overlap.spliceT - 0.5 / this.fps : Infinity;
+    if (this.vAll[this.vNext]?.t >= boundary) {
+      this.overlapFallback('replacement missed the splice point');
+      return;
+    }
     // Even at the top tier, picture must not outrun the half second of Opus we can send per reply.
     const frameLimit = this.pr.audio && (this.tier || this.audioEncoder) ? Math.max(1, Math.floor(this.fps / 2)) : Infinity;
     let end = this.vNext;
     let bytes = 0;
-    while (end < this.vAll.length && end - this.vNext < frameLimit
+    while (end < this.vAll.length && this.vAll[end].t < boundary && end - this.vNext < frameLimit
       && (end === this.vNext || (this.vAll[end].t <= videoUntil && bytes + this.vAll[end].data.length <= limit))) bytes += this.vAll[end++].data.length;
     const vT = end > 0 ? this.vAll[end - 1].t + 1 / this.fps : this.base;
     const tail = this.videoEnded && this.vNext === this.vAll.length;
@@ -637,6 +765,9 @@ class EncodedStream {
 
   seek(m) {
     if (this.disposed) return;
+    const interruptedOverlap = !!this.overlap;
+    this.cancelOverlap();
+    if (m.playing !== undefined) this.playing = !!m.playing;
     this.gen = m.gen;
     this.link.resetForSeek(Date.now()); // the buffer refills after any seek, from memory or not
     const idx = Math.max(0, Math.floor(m.t * this.fps + 1e-6));
@@ -648,7 +779,7 @@ class EncodedStream {
     // The page re-seeks when shown. An encoder just started at that frame can satisfy it.
     const startingHere = this.proc && this.proc.exitCode === null && !this.proc.signalCode
       && !this.gotOutput && this.aNext === 0 && t === this.base && t === this.vBase;
-    if (!this.resizePending && (startingHere || this.reuseHistory(t))) {
+    if (!interruptedOverlap && !this.resizePending && (startingHere || this.reuseHistory(t))) {
       this.waiting = null;
       this.post({ type: 'seeked', gen: m.gen, t });
       return;
@@ -681,15 +812,19 @@ class EncodedStream {
   }
 
   kill() {
+    this.cancelOverlap();
     const video = this.proc;
     const audio = this.audioProc;
     this.proc = null;
     this.audioProc = null;
-    for (const proc of [video, audio]) {
-      if (!proc) continue;
-      proc.stdout.destroy();
-      if (proc.exitCode === null && !proc.signalCode) proc.kill('SIGKILL');
-    }
+    this.stopProcess(video);
+    this.stopProcess(audio);
+  }
+
+  stopProcess(proc) {
+    if (!proc) return;
+    proc.stdout.destroy();
+    if (proc.exitCode === null && !proc.signalCode) proc.kill('SIGKILL');
   }
 
   dispose() {

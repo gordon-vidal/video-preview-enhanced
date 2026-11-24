@@ -316,6 +316,7 @@ function createEngine(env) {
         this.meta.label = `${s.sourceCodec} ${s.sourcePixFmt} ${s.sourceWidth}×${s.sourceHeight} · streamed from the remote host as H.264, decoded by WebCodecs`;
         this.nativeLossy = true;
         this.remoteStream = true;
+        if (this.playing) this.worker.postMessage({ type: 'playback', playing: true });
       }
       log(`streams: ${JSON.stringify({ v: v && { c: v.codec, w: v.width, h: v.height, fmt: v.format }, a: a && { c: a.codec, sr: a.sampleRate, ch: a.channels }, dur: info.duration })} -> video ${video}, audio ${audio}`);
       if (!this.disposed) this.worker.postMessage({ type: 'config', video, audio, deep: !!this.gl.norm16 });
@@ -1725,6 +1726,7 @@ function createEngine(env) {
         this.acUnlocked = true;
       }
       this.playing = true;
+      if (this.remoteStream) this.worker.postMessage({ type: 'playback', playing: true });
       this.endSteps();
       // At the end (loop off): play starts over.
       if (this.eof && !this.queue.length && this.seekTarget === null && this.pauseT >= this.endT() - 1e-6) { this.seekAbs(this.startT || 0, true); return; }
@@ -1736,6 +1738,7 @@ function createEngine(env) {
       if (!this.playing) return;
       this.pauseT = this.now();
       this.playing = false;
+      if (this.remoteStream) this.worker.postMessage({ type: 'playback', playing: false });
       this.stopAudio();
       if (this.ac) this.restAudioLater(this.hidden ? 0 : AC_REST_MS);
       if (this.nonRef || this.fastUsed) {
@@ -1804,7 +1807,8 @@ function createEngine(env) {
       this.playing = wasPlaying;
       this.anchor(t);
       log(`seek to ${this.rel(t).toFixed(3)} s (gen ${this.gen})`);
-      this.worker.postMessage({ type: 'seek', gen: this.gen, t, ...(recoverTransport ? { recoverTransport: true } : {}) });
+      this.worker.postMessage({ type: 'seek', gen: this.gen, t,
+        ...(this.remoteStream ? { playing: this.playing } : {}), ...(recoverTransport ? { recoverTransport: true } : {}) });
     }
 
     /** Real-time catch-up: continue from the first keyframe at or after t, clock untouched. */

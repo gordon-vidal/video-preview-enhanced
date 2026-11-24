@@ -437,6 +437,7 @@ class CompareSession {
     const stream = new EncodedStream({
       ...d.stream, tools: d.tools, file: this.files[i], probed: d.probed,
       hidden: this.panel.visible === false,
+      allowOverlap: false,
       maxHeight: output.height, maxKbps: output.kbps, fitView: false, allowLinkAdapt: d.stream.remote,
       post: (m) => { if (current()) this.post({ type: 'nd', key, m }); },
       log: (msg) => this.log(`tile ${key}: ${msg}`),

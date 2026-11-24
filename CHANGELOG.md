@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Live transcode pre-starts a replacement encoder for quality upgrades, bitrate cap changes and larger picture sizes during single-player playback.
+
 - Seek-bar drags show a keyframe preview and hold the main picture until an exact seek on release. Compare previews its clock tile.
 
 ## 0.10.1 (2026-11-24)

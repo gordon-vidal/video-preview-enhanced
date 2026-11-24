@@ -1,16 +1,18 @@
 'use strict';
 // node test/host/stream_transition_test.js: Live transcode size transitions (src/stream.js reSize / seek) without
-// ffmpeg: a larger picture while playing restarts in-band (no page seek, so no sound or clock break), repeated
+// ffmpeg: a larger picture while playing switches in-band, repeated
 // view messages ask the page for one seek only, and a pending shrink never forces ffmpeg to restart a step back.
 const assert = require('assert');
+const { EventEmitter } = require('events');
+const { PassThrough } = require('stream');
 const { EncodedStream } = require('../../src/stream');
 const { AUDIO_RATE } = require('../../src/stream-buffer');
 
-function make({ audio = false } = {}) {
+function make({ audio = false, allowOverlap = false } = {}) {
   const posted = [];
   const s = new EncodedStream({
     tools: {}, file: 'x.mkv', post: (m) => posted.push(m), log: () => {}, remote: false, maxHeight: 2160,
-    encoder: 'libx264', cpuEncoder: 'libx264',
+    encoder: 'libx264', cpuEncoder: 'libx264', allowOverlap,
     probed: { duration: 60, video: { index: 0, codec: 'hevc', width: 3840, height: 2160, fps: 30 }, audio: audio ? { index: 1 } : null },
   });
   s.fps = 30;
@@ -22,6 +24,155 @@ function make({ audio = false } = {}) {
 }
 const refreshes = (posted) => posted.filter((m) => m.type === 'refresh').length;
 const fakeProc = () => ({ exitCode: null, signalCode: null, stdout: { isPaused: () => false, destroy() {} }, kill() {} });
+
+const idr = Buffer.from([0, 0, 1, 9, 0xf0, 0, 0, 1, 0x67, 0x11, 0, 0, 1, 0x68, 0x11, 0, 0, 1, 0x65, 0x11]);
+const inter = Buffer.from([0, 0, 1, 9, 0xf0, 0, 0, 1, 0x41, 0x22]);
+
+function overlapStream() {
+  const { s, posted } = make({ audio: true, allowOverlap: true });
+  delete s.restartVideo;
+  s.setView({ w: 960, h: 540 });
+  s.sizeVideo();
+  const children = [];
+  const logs = [];
+  s.log = (log) => logs.push(log);
+  s.launch = (t) => {
+    const proc = new EventEmitter();
+    Object.assign(proc, { t, h: s.h, cap: s.activeCapKbps(), stdout: new PassThrough(), exitCode: null,
+      signalCode: null, err: { text: '' }, kills: [] });
+    proc.kill = (signal) => { proc.kills.push(signal); proc.signalCode = signal; };
+    children.push(proc);
+    return proc;
+  };
+  s.base = s.vBase = 2;
+  s.aNext = 24000;
+  s.spawnVideo();
+  const old = s.proc;
+  old.stdout.write(Buffer.concat([idr, ...Array(30).fill(inter)]));
+  s.more({ gen: 0, videoUntil: 2.47 });
+  assert.strictEqual(s.vNext, 15);
+  return { s, posted, children, old, logs };
+}
+
+for (const change of ['grow', 'upgrade', 'cap']) {
+  const { s, old, posted, children } = overlapStream();
+  if (change === 'grow') s.setView({ w: 1920, h: 1080 }, true);
+  if (change === 'upgrade') {
+    s.tier = 1;
+    s.link.onSample = () => {
+      s.tier = 0;
+      return { change: 'tier', down: false, detail: 'good link' };
+    };
+    s.adapt({ gen: 0 });
+  }
+  if (change === 'cap') {
+    s.handle({ type: 'playback', playing: true });
+    s.setMaxBitrateMbps(5);
+  }
+  const replacement = children[1];
+  assert.strictEqual(replacement.t, 3.5);
+  if (change === 'grow') assert.strictEqual(replacement.h, 1080);
+  if (change === 'cap') assert.strictEqual(replacement.cap, 5000);
+  assert.strictEqual(s.proc, old);
+  assert.deepStrictEqual(old.kills, []);
+  if (change === 'upgrade') old.stdout.write(Buffer.concat(Array(20).fill(inter)));
+  replacement.stdout.write(idr);
+  assert.strictEqual(s.proc, old, 'a partial access unit cannot trigger the handoff');
+  replacement.stdout.write(inter);
+  if (change !== 'upgrade') {
+    assert.strictEqual(s.proc, old, 'ready replacement waits until old video reaches the boundary');
+    s.more({ gen: 0 });
+    assert.strictEqual(s.vNext, 30, 'old encoder continues to supply video');
+    old.stdout.write(Buffer.concat(Array(20).fill(inter)));
+  }
+  assert.strictEqual(s.proc, replacement);
+  assert.strictEqual(s.overlap, null);
+  assert.deepStrictEqual(old.kills, ['SIGKILL']);
+  old.emit('close', null, 'SIGKILL');
+  assert.strictEqual(s.proc, replacement, 'retired encoder close cannot affect the replacement');
+  replacement.stdout.write(inter);
+  s.more({ gen: 0 });
+  const packets = posted.filter((m) => m.type === 'batch').flatMap((m) => m.video);
+  assert.strictEqual(packets.length, 47);
+  packets.forEach((p, i) => assert.ok(Math.abs(p.t - (2 + i / 30)) < 1e-9, `frame ${i} is continuous`));
+  assert.deepStrictEqual(Buffer.from(packets[45].data), idr);
+  assert.strictEqual(s.aNext, 24000);
+  assert.strictEqual(refreshes(posted), 0);
+  s.dispose();
+  assert.deepStrictEqual(replacement.kills, ['SIGKILL']);
+}
+
+for (const failure of ['exit', 'throw', 'late', 'missing headers']) {
+  const { s, children, old, logs } = overlapStream();
+  if (failure === 'throw') {
+    const launch = s.launch;
+    s.launch = (t) => { if (t === 3.5) throw new Error('spawn failed'); return launch(t); };
+  }
+  s.setView({ w: 1920, h: 1080 }, true);
+  const replacement = children[1];
+  if (failure === 'exit') {
+    replacement.err.text = 'NVENC out of sessions';
+    replacement.exitCode = 1;
+    replacement.emit('close', 1, null);
+    assert.ok(logs.some((log) => log.includes('NVENC out of sessions')));
+  }
+  if (failure === 'late') {
+    old.stdout.write(Buffer.concat(Array(20).fill(inter)));
+    s.more({ gen: 0 });
+    s.more({ gen: 0 });
+  }
+  if (failure === 'missing headers') replacement.stdout.write(Buffer.concat([idr.subarray(0, 5), idr.subarray(-5), inter]));
+  assert.deepStrictEqual(old.kills, ['SIGKILL']);
+  assert.strictEqual(s.overlap, null);
+  assert.strictEqual(s.proc.t, failure === 'late' ? 3.5 : 2.5);
+  assert.strictEqual(s.proc.h, 1080);
+  assert.strictEqual(s.aNext, 24000);
+  assert.ok(logs.some((log) => log.includes('video overlap failed')));
+  s.dispose();
+}
+
+{ // The audio track can outlast the video and make the reported duration too generous.
+  const { s, old, children } = overlapStream();
+  s.setView({ w: 1920, h: 1080 }, true);
+  old.exitCode = 0;
+  old.emit('close', 0, null);
+  assert.strictEqual(s.videoEnded, true);
+  assert.strictEqual(s.vAll.length, 31, 'all old pictures remain available at EOF');
+  assert.deepStrictEqual(children[1].kills, ['SIGKILL']);
+  assert.strictEqual(s.overlap, null);
+  s.dispose();
+}
+
+const cancelBy = {
+  seek(s) { s.seek({ gen: 1, t: 2.4 }); },
+  hide(s) { s.setHidden(true); },
+  dispose(s) { s.dispose(); },
+  kill(s) { s.kill(); },
+  supersede(s) { s.setView({ w: 3840, h: 2160 }, true); },
+  panic(s) {
+    s.link.onSample = () => ({ change: 'tier', down: true, detail: 'slow link' });
+    s.adapt({ gen: 0 });
+  },
+};
+for (const [action, cancel] of Object.entries(cancelBy)) {
+  const { s, children, old } = overlapStream();
+  s.setView({ w: 1920, h: 1080 }, true);
+  const replacement = children[1];
+  replacement.stdout.write(Buffer.concat([idr, inter]));
+  cancel(s);
+  assert.deepStrictEqual(replacement.kills, ['SIGKILL'], action);
+  replacement.emit('close', null, 'SIGKILL');
+  assert.strictEqual(children.length, ['supersede', 'panic'].includes(action) ? 3 : 2, action);
+  if (action === 'supersede') {
+    assert.strictEqual(s.proc, old);
+    assert.strictEqual(s.overlap.proc, children[2]);
+  } else {
+    assert.deepStrictEqual(old.kills, ['SIGKILL'], action);
+    assert.strictEqual(s.overlap, null);
+  }
+  s.dispose();
+  assert.ok(children.every((proc) => proc.kills.length === 1), action);
+}
 
 { // Paused: one 'refresh' per growth, however many view messages follow for the same size.
   const { s, posted } = make();
