@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Live transcode: keep Opus sound in step with the picture when the connection can carry the full-quality stream.
+
 - **Exact backward frame stepping on variable-frame-rate (VFR) videos:** stepping backward one or more frames in dense or sparse VFR footage (e.g. OBS/phone recordings) now indexes decoded pictures directly instead of using nominal `1/fps` intervals, eliminating 1-frame skips and paused tick overshoots.
 - **Faster first native open of a session:** the one-time ffmpeg check now starts its three tool runs together, and the GPU lookup starts beside it instead of after it (only when no stored result is under 30 days old). Nothing decodes earlier.
 - Maintainer tooling: capture Dark, Light and High Contrast screenshot packs with `tools/theme-screenshots.js`.
