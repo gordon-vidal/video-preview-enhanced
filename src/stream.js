@@ -102,6 +102,7 @@ class EncodedStream {
     cpuEncoder: cpu, decodeMethod = 'none', onEncoderFail, audioEncoder = null,
     fitView = true, maxKbps = 0, maxBitrateMbps = 0, allowLinkAdapt = true, remote = true,
     allowSoftwareFallback = true, hidden = false, allowOverlap = true, rotation = 0, resolution = 0,
+    initialLink = undefined, onLinkUpdate = undefined,
   }) {
     // Packets and sound read, and the history for seeks back (src/stream-buffer.js). The fields it owns are
     // reachable as this.vAll, this.aNext ... (accessors below the class).
@@ -137,7 +138,8 @@ class EncodedStream {
     this.allowOverlap = allowOverlap;
     this.playing = false;
     this.overlap = null;
-    this.link = new LinkAdaptController(); // the quality ladder's state (src/stream-adapt.js)
+    this.onLinkUpdate = this.remote && this.allowLinkAdapt ? onLinkUpdate : undefined;
+    this.link = new LinkAdaptController(this.remote && this.allowLinkAdapt && !this.lockHeight ? initialLink : undefined);
     if (this.pr && this.pr.video) this.sizeVideo();
     this.pipelineMode = this.defaultPipelineMode();
     this.waitingSince = 0;
@@ -385,7 +387,10 @@ class EncodedStream {
       type: 'streams',
       info: {
         duration: this.pr.duration,
-        remoteStream: { fps: this.fps, sourceCodec: v.codec, sourcePixFmt: v.pixFmt, sourceWidth: v.width, sourceHeight: v.height },
+        remoteStream: {
+          fps: this.fps, sourceCodec: v.codec, sourcePixFmt: v.pixFmt, sourceWidth: v.width, sourceHeight: v.height,
+          linkAdaptive: this.remote && this.allowLinkAdapt,
+        },
         transcode: this.transcodeInfo(),
         // H.264 High, Annex B (no description: SPS/PPS come in-band before every IDR), SDR BT.709.
         video: { codec: 'h264', width: this.w, height: this.h, profile: 100, level, colorSpace: 1, colorTrc: 0 },
@@ -774,8 +779,13 @@ class EncodedStream {
     if (!this.allowLinkAdapt || this.lockHeight) return; // a resolution fixed by the user stays
     if (m.gen !== this.gen || (!this.proc && this.vNext === this.vAll.length)) return;
     const pcm = this.pr.audio ? (this.audioEncoder ? OPUS_KBPS : PCM_KBPS) : 0;
-    const d = this.link.onSample(m, Date.now(), pcm);
+    const timestamp = Date.now();
+    const samples = this.link.bwSamples;
+    const d = this.link.onSample(m, timestamp, pcm);
     if (!d) return;
+    if (this.onLinkUpdate && !m.debugRate && (samples !== this.link.bwSamples || d.change === 'tier')) {
+      this.onLinkUpdate({ fastKbps: d.fastKbps, slowKbps: d.slowKbps, tier: this.tier, upAfter: this.link.upAfter, timestamp });
+    }
     const { down, detail } = d;
     if (this.stats && (this.tier || m.starved)) this.log(`live transcode link: ${detail}, video ${m.mediaRate.toFixed(2)}x, starved=${m.starved}, behind=${m.behind}, link-limited=${d.linkLimited}, next profile ${Math.round(d.nextCap + pcm)} kb/s`);
     if (d.change === 'none') return;

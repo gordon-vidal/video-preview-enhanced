@@ -6,10 +6,11 @@
 const assert = require('assert');
 const { RemoteStream, LINK_TIERS, PCM_KBPS } = require('../../src/remotestream');
 
-function stream({ audio = true, audioEncoder = null, encoder, decodeMethod, tools = {} } = {}) {
+function stream({ audio = true, audioEncoder = null, encoder, decodeMethod, tools = {}, ...options } = {}) {
   const posts = [];
   const fails = [];
   const rs = new RemoteStream({
+    ...options,
     tools, audioEncoder, encoder, decodeMethod, file: 'x.mkv', post: (m) => posts.push(m), log: () => {}, onFail: (e) => fails.push(e),
     probed: { duration: 100, video: { index: 0, codec: 'hevc', pixFmt: 'yuv420p', width: 3840, height: 2160, fps: 30 }, audio: audio ? { index: 1, codec: 'aac' } : null },
   });
@@ -29,6 +30,31 @@ const notices = (posts) => posts.filter((m) => m.type === 'remoteNotice');
 
 const last = LINK_TIERS.length - 1;
 assert.ok(PCM_KBPS === 1536, `PCM ${PCM_KBPS}`);
+
+{ // The next Auto stream sizes its first output using the previous stream's measured link and tier.
+  const updates = [];
+  const { rs } = stream({ audio: false, onLinkUpdate: (link) => updates.push(link) });
+  rs.adapt(bad(4000));
+  rs.adapt(bad(4000));
+  assert.deepStrictEqual(updates.map((link) => link.tier), [0, 2]);
+  const initialLink = updates.at(-1);
+  assert.ok(initialLink.timestamp > 0);
+  const { rs: next } = stream({ audio: false, initialLink, onLinkUpdate: (link) => updates.push(link) });
+  assert.strictEqual(next.tier, 2);
+  assert.strictEqual(next.h, 720);
+  assert.strictEqual(next.link.fastKbps, 4000);
+  assert.strictEqual(next.link.slowKbps, 4000);
+  next.adapt(good(8000));
+  assert.strictEqual(next.link.fastKbps, 6000, 'the first accepted sample blends with the seed');
+  next.adapt(good(9000, { debugRate: true }));
+  assert.strictEqual(updates.length, 3, 'a per-tab test throttle does not update shared memory');
+  const { rs: fixed } = stream({ resolution: 1080, initialLink, onLinkUpdate: assert.fail });
+  fixed.adapt(bad(1000));
+  assert.strictEqual(fixed.tier, 0);
+  assert.strictEqual(fixed.h, 1080);
+  assert.strictEqual(stream({ remote: false, initialLink }).rs.tier, 0);
+  assert.strictEqual(stream({ allowLinkAdapt: false, initialLink }).rs.tier, 0);
+}
 
 { // #1: with s16 sound on a 1.5 Mb/s link no tier fits: go straight to the lowest, say so once, never fail.
   const { rs, posts, fails } = stream();

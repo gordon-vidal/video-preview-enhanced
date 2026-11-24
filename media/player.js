@@ -339,6 +339,8 @@
   function disposePlayer() {
     seekDragger.stop();
     hideTip(true);
+    seekPendingSince = null;
+    seekRow.classList.remove('seeking');
     const previous = player;
     player = null;
     previous?.dispose();

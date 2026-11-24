@@ -3,7 +3,7 @@
 // window after a (re)start or seek, two bad windows to step down (skipping tiers the link cannot carry), four
 // good ones to step up, and the resets, without ffmpeg or the webview.
 const assert = require('assert');
-const { LinkAdaptController, LINK_TIERS, LINK_SETTLE_MS } = require('../../src/stream-adapt');
+const { LinkAdaptController, LinkSessionMemory, LINK_TIERS, LINK_SETTLE_MS } = require('../../src/stream-adapt');
 
 const last = LINK_TIERS.length - 1;
 const bad = (kbps, more = {}) => ({ kbps, videoKbps: 8000, mediaRate: 0.6, buffer: 0.05, starved: true, behind: false, readMs: 1500, hostWaitMs: 0, ...more });
@@ -118,7 +118,7 @@ const make = () => {
   assert.strictEqual(enc.c.tier, 0);
 }
 
-{ // Step up at linkRun <= -4: four good windows with 30% headroom over the next tier and >= 0.8 s buffer.
+{ // Step up at linkRun <= -4: four good windows with 30% headroom and at least 0.35 s buffered.
   const { c, feed } = make();
   c.tier = 3; // 480p -> next is 720p (3000 kb/s, needs > 3900)
   for (let i = 0; i < 3; i++) assert.strictEqual(feed(good(5000)).change, 'none');
@@ -158,17 +158,19 @@ const make = () => {
   assert.strictEqual(c.tier, 2);
 }
 
-{ // Exponential oscillation backoff: dropping within 10 s of an upgrade doubles upRun (4 -> 8 -> 16, capped at 16).
+{ // Exponential oscillation backoff includes drops late in the 45 s window.
   const { c, feed } = make();
   c.tier = 3;
   for (let i = 0; i < 4; i++) feed(good(6000));
   assert.strictEqual(c.tier, 2, 'first upgrade uses UP_RUN=4');
   assert.strictEqual(c.state().upRun, 4);
-  // Re-starves within 10 s (panic 1-window drop at +2 s): upRun doubles to 8.
+  for (let i = 0; i < 20; i++) feed(good(6000));
   feed(bad(2000, { buffer: 0.05, mediaRate: 0.3 }));
   assert.strictEqual(c.tier, 3);
   assert.strictEqual(c.state().upRun, 8, 'oscillation doubles upRun to 8');
-  // Needs 8 qualifying good windows now (fast=4000, slow=5200 -> already above 3900).
+  for (let i = 0; i < 13; i++) assert.strictEqual(feed(good(8000)).change, 'none');
+  assert.strictEqual(c.state().linkRun, 0, 'good windows during the cooldown do not count');
+  // Needs 8 qualifying good windows after the cooldown.
   for (let i = 0; i < 7; i++) {
     assert.strictEqual(feed(good(8000)).change, 'none', `stays at tier 3 before 8 good windows (step ${i + 1})`);
   }
@@ -176,21 +178,56 @@ const make = () => {
   assert.strictEqual(c.tier, 3);
   assert.strictEqual(feed(good(8000)).change, 'tier', '8th qualifying window upgrades');
   assert.strictEqual(c.tier, 2, '8th qualifying window upgrades');
-  // Drops again within 10 s: upRun doubles to 16 (MAX_UP_RUN).
+  // Drops again: upRun doubles to 16 (MAX_UP_RUN).
   feed(bad(2000, { buffer: 0.05, mediaRate: 0.3 }));
   assert.strictEqual(c.tier, 3);
   assert.strictEqual(c.state().upRun, 16, 'second oscillation doubles upRun to 16');
-  // Staying stable past 10 s after an upgrade resets upRun back to 4.
+  // Staying stable past 45 s after an upgrade resets upRun back to 4.
   const s = make();
   s.c.tier = 3;
   for (let i = 0; i < 4; i++) s.feed(good(6000));
   s.feed(bad(2000, { buffer: 0.05, mediaRate: 0.3 }));
   assert.strictEqual(s.c.state().upRun, 8);
-  while (s.c.tier === 3) s.feed(good(8000));
+  for (let i = 0; i < 21; i++) s.feed(good(6000));
   assert.strictEqual(s.c.tier, 2);
-  // 6 stable samples = 12 s > 10 s oscillation window -> upRun resets to 4.
-  for (let i = 0; i < 6; i++) s.feed(good(6000));
-  assert.strictEqual(s.c.state().upRun, 4, 'stable playback past 10 s resets upRun to 4');
+  for (let i = 0; i < 23; i++) s.feed(good(6000));
+  assert.strictEqual(s.c.state().upRun, 4, 'stable playback past 45 s resets upRun to 4');
+}
+
+{ // Session estimates expire even if another video opens just before expiry.
+  const memory = new LinkSessionMemory();
+  const timestamp = 1000;
+  const snapshot = { fastKbps: 4000, slowKbps: 4200, tier: 2, timestamp };
+  memory.update(snapshot);
+  assert.strictEqual(new LinkSessionMemory().read(timestamp), undefined, 'another window starts fresh');
+  assert.strictEqual(memory.read(timestamp + 599999), snapshot);
+  assert.strictEqual(memory.read(timestamp + 600000), undefined);
+  assert.strictEqual(new LinkAdaptController(memory.read(timestamp + 600001)).tier, 0);
+}
+
+{ // Flaky SSH: a 1.5 s blackout every 8 s drains a deep buffer without starving playback.
+  const { c, feed } = make();
+  feed(bad(4000, { mediaRate: 0.3 }));
+  assert.strictEqual(c.tier, 2);
+  // Healthy bursts can look fast enough to upgrade. A buffered blackout window
+  // with no completed reads carries no new throughput information.
+  for (let seconds = 2; seconds <= 40; seconds += 2) {
+    const sample = seconds % 8
+      ? good(9000, { buffer: 3.25 })
+      : good(0, { readMs: 0, mediaRate: 0, buffer: 1.75 });
+    assert.strictEqual(feed(sample).change, 'none', `720p holds at +${seconds} s`);
+  }
+  assert.strictEqual(c.tier, 2);
+  for (let i = 0; i < 3; i++) assert.strictEqual(feed(good(9000, { buffer: 3.25 })).change, 'none');
+  assert.strictEqual(feed(good(9000, { buffer: 3.25 })).change, 'tier', 'sustained headroom can still upgrade');
+}
+
+{ // A filled buffer can leave a window without completed reads. It is not a zero-bandwidth estimate.
+  const { feed } = make();
+  feed(good(4000));
+  const d = feed(good(0, { readMs: 0, mediaRate: 0, buffer: 3 }));
+  assert.strictEqual(d.fastKbps, 4000);
+  assert.strictEqual(d.slowKbps, 4000);
 }
 
 { // A slow encoder (the host waited for ffmpeg most of the read) is not a slow link.

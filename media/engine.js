@@ -50,6 +50,7 @@ function createEngine(env) {
   const GPU_FRAMES = 6;
   /** Paused read-ahead (s) for decoders much faster than real time (native ffmpeg, WebCodecs); the built-in decoder fills its budget. */
   const PAUSED_AHEAD_S = 1.0;
+  const REMOTE_AHEAD_S = 3.25;
   /**
    * Paused steps that need a seek while the previous step's seek is still decoding start at most this often (ms):
    * a quick turn of the wheel was one seek per notch (each a new ffmpeg process with native decoding).
@@ -947,7 +948,7 @@ function createEngine(env) {
         // Holding VideoFrames can use up the decoder's surfaces before it reaches EOF.
         else if (!this.noSpill && !fr.spilling) this.toMemory(fr);
       }
-      if (!this.playing) this.spill();
+      if (!this.playing || this.remoteReadAhead()) this.spill();
     }
 
     /**
@@ -963,7 +964,7 @@ function createEngine(env) {
     }
 
     /**
-     * Paused, decoding ahead: a hardware decoder has a few output surfaces and stops
+     * When decoding ahead: a hardware decoder has a few output surfaces and stops
      * when they are all held (Edge after ~13 frames). Keep the next GPU_FRAMES frames as
      * they are and copy later ones to memory, which returns their surfaces.
      */
@@ -1076,11 +1077,10 @@ function createEngine(env) {
       // (And the frames kept for steps back.)
       const bytes = Math.max(this.queue.reduce((n, f) => n + f.bytes, 0), this.loopCache ? this.loopCache.bytes : 0) + (this.backBytes || 0);
       const aEnd = this.audio.length ? this.audio[this.audio.length - 1].t + this.audio[this.audio.length - 1].dur : 0;
-      // Playing: ~1 s ahead. Paused: the built-in (WebAssembly) decoder keeps decoding ahead up to the
-      // memory budget, so steps and play are served from memory. Native ffmpeg and WebCodecs decode far
-      // faster than real time: ~1 s is enough, and the rest (frames through the host and the network
-      // service; WebCodecs copies to memory, spill()) would be work and memory the user never sees.
-      const ahead = this.playing ? 1.0 : this.fastDecoder() ? PAUSED_AHEAD_S : 3600;
+      // A remote link needs enough headroom for short interruptions. Both GPU frames and copies
+      // count against the existing budget. Paused decoding still leaves room for step history.
+      const playingAhead = this.remoteReadAhead() ? REMOTE_AHEAD_S : 1;
+      const ahead = this.playing ? playingAhead : this.fastDecoder() ? PAUSED_AHEAD_S : 3600;
       // Frames that can't be copied to memory hold the decoder's surfaces: paused, read ahead no further.
       const gpuFull = this.vmode === 'webcodecs' && !this.playing && this.noSpill && this.gpuFrames() + pending >= GPU_FRAMES;
       // (Only decoded frames count: a hardware decoder can hold the packets it was given until it gets more,
@@ -1110,6 +1110,9 @@ function createEngine(env) {
 
     /** Native ffmpeg (also the remote stream) or WebCodecs: decoding much faster than real time (pump's paused read-ahead). */
     fastDecoder() { return !!this.cfg.native || this.vmode === 'webcodecs'; }
+
+    /** Live transcode over a remote link can buffer more once frames can be copied off decoder surfaces. */
+    remoteReadAhead() { return this.remoteStream && this.info?.remoteStream?.linkAdaptive && !this.noSpill; }
 
     // checkJs: start
     /** Override the decoded-frame budget for this tile. @param {number} budget */
@@ -1278,6 +1281,8 @@ function createEngine(env) {
       const decodeFps = this.decodeRate;
       this.worker.postMessage({
         type: 'remoteLink', gen: this.gen,
+        // The per-tab test throttle does not measure the window's shared link.
+        debugRate: this.debugRemoteRate !== undefined,
         // Link speed: the read time without the time the host waited for its ffmpeg.
         kbps: w.readMs - w.hostWaitMs > 0 ? w.bytes * 8 / (w.readMs - w.hostWaitMs) : 0,
         readMs: w.readMs, hostWaitMs: w.hostWaitMs,
@@ -1655,12 +1660,16 @@ function createEngine(env) {
         }
         this.noteShown(show);
         if (!this.firstShown && this.cfg.native) mark('nativeDraw');
-        if (show.vf) {
-          if (this.remoteStream && (this.meta.width !== show.vf.displayWidth || this.meta.height !== show.vf.displayHeight)) {
-            this.meta.width = show.vf.displayWidth;
-            this.meta.height = show.vf.displayHeight;
+        if (this.remoteStream) {
+          const width = show.vf ? show.vf.displayWidth : show.yuv.width;
+          const height = show.vf ? show.vf.displayHeight : show.yuv.height;
+          if (this.meta.width !== width || this.meta.height !== height) {
+            this.meta.width = width;
+            this.meta.height = height;
             env.onMeta(this);
           }
+        }
+        if (show.vf) {
           this.gl.drawFrame(show.vf);
           show.vf.close();
         } else this.gl.drawYuv(show.yuv);

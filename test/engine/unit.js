@@ -1266,6 +1266,25 @@ function gpuFrame(t, copies, closed) {
 const settle = () => new Promise((r) => setImmediate(r));
 async function finishCopies(copies) { while (copies.length) { copies.shift()(); await settle(); } }
 
+test('remote Live transcode reads further ahead within the existing frame budget', () => {
+  const p = player({
+    remoteStream: true, info: { remoteStream: { linkAdaptive: true } },
+    vmode: 'webcodecs', amode: 'none', playing: true, now: () => 0,
+    queue: Array.from({ length: 60 }, (_, i) => ({ t: (i + 1) / 30, bytes: 1000 })),
+    frameBudget: 62000, backBytes: 2000,
+  });
+  p.pump();
+  assert.strictEqual(p.worker.msgs.length, 0, 'frames kept for stepping count against the budget');
+  p.backBytes = 0;
+  p.pump();
+  assert.strictEqual(p.worker.msgs.at(-1).type, 'more', 'keeps reading at two seconds buffered');
+  p.frameBudget = 120000;
+  p.requesting = false;
+  p.queue.at(-1).t = 3.25;
+  p.pump();
+  assert.strictEqual(p.worker.msgs.length, 1, 'stops at the remote playback target');
+});
+
 test('remote Live transcode: a whole GOP decoded faster than it copies is kept for steps back, no frame leaks', async () => {
   const copies = [];
   const closed = [];

@@ -55,6 +55,7 @@ const { createAssociations } = require('./associations'); // default viewer for 
 const { createFrameLink, sameFile, hlsPlanText } = require('./framelink'); // frame links, native frame sizes, log texts
 const { createDebugCommands } = require('./debug-cmd'); // the VPE_LOG test hook (<log>.cmd)
 const { linkSimulatorFromEnv, effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VPE_SIMULATE_REMOTE
+const { LinkSessionMemory } = require('./stream-adapt');
 
 const HIDE_SLOW_PLAYBACK_NOTICE = 'videoPreviewEnhanced.hideSlowPlaybackNotice';
 const HIDE_REDUCED_RES_NOTICE = 'videoPreviewEnhanced.hideReducedResNotice';
@@ -91,6 +92,7 @@ const debugPool = (() => { try { return logFile && process.env.VPE_POOL ? JSON.p
 const remoteName = () => effectiveRemoteName(vscode);
 /** VPE_SIMULATE_LINK: one slow / flaky link shared by every player and Compare panel (null when unset, the normal case). */
 let linkSim = null;
+const sessionLink = new LinkSessionMemory();
 const sessions = new Set();
 const compareSessions = new Set(); // open compare panels (src/compare.js)
 const clipExports = new WeakSet();
@@ -2060,6 +2062,8 @@ class Session {
       ...stream, tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), probed: pr,
       stats: !!logFile, maxBitrateMbps: c.transcodeMaxBitrate, allowLinkAdapt: isRemoteLink,
       resolution: this.transcodeHeight,
+      initialLink: isRemoteLink ? sessionLink.read() : undefined,
+      onLinkUpdate: (snapshot) => { if (!signal.aborted) sessionLink.update(snapshot); },
       rotation: rotationOf(this.file),
       post: (msg) => {
         if (!signal.aborted) this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg });
