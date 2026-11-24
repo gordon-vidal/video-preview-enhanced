@@ -143,6 +143,27 @@ for (const failure of ['exit', 'throw', 'late', 'missing headers']) {
   s.dispose();
 }
 
+{ // Astra review: if the old encoder reaches EOF with frames queued past spliceT before the replacement is ready, keep overlap pending and splice when it arrives.
+  const { s, children, old } = overlapStream();
+  s.setView({ w: 1920, h: 1080 }, true);
+  const replacement = children[1];
+  const spliceT = s.overlap.spliceT;
+  // Old encoder produces frames past spliceT and exits cleanly before replacement outputs anything.
+  const chunks = [];
+  for (let i = 0; i < 40; i++) chunks.push(i === 0 ? idr : inter);
+  old.stdout.write(Buffer.concat(chunks));
+  old.emit('close', 0, null);
+  assert.ok(s.overlap && s.overlap.proc === replacement, 'overlap stays pending when old encoder hit EOF past spliceT');
+  assert.strictEqual(s.videoEnded, false, 'video is not marked ended while replacement is pending');
+  assert.deepStrictEqual(replacement.kills, [], 'replacement was not cancelled');
+  // Replacement now delivers its SPS/PPS + IDR access unit and splices cleanly at spliceT.
+  replacement.stdout.write(Buffer.concat([idr, inter]));
+  assert.strictEqual(s.overlap, null, 'overlap spliced cleanly once ready');
+  assert.strictEqual(s.proc, replacement, 'replacement promoted to active proc');
+  assert.ok(Math.abs(s.vBase - spliceT) < 1e-6, 'spliced at spliceT');
+  s.dispose();
+}
+
 const cancelBy = {
   seek(s) { s.seek({ gen: 1, t: 2.4 }); },
   hide(s) { s.setHidden(true); },

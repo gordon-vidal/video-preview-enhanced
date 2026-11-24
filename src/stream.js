@@ -523,6 +523,11 @@ class EncodedStream {
       }
       this.buf.split(true);
       if (this.spliceVideo()) return;
+      // If the active encoder finished with frames already queued past spliceT, keep the overlap pending until ready.
+      if (this.overlap && this.vAll.some((p, i) => i >= this.vNext && p.t >= this.overlap.spliceT - 0.5 / this.fps)) {
+        this.answer();
+        return;
+      }
       // Keep the active encoder's tail if the probed duration outlasts its picture.
       this.cancelOverlap();
       this.videoEnded = true;
