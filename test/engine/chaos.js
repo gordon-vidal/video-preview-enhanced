@@ -70,12 +70,7 @@ async function fuzz(file, vfr) {
         for (let i = 0; i < steps; i++) {
           const previous = P.player.shownT;
           P.step(direction);
-          // The VFR regression below separately reproduces a known skipped adjacent picture.
-          if (vfr) {
-            assert.ok(await P.until(() => P.player.seekTarget === null && direction * (P.player.shownT - previous) > 0,
-              'VFR step moves', 4000), 'VFR step did not move');
-            index = refs.findIndex((r) => Math.abs(r.t - P.player.shownT) < 0.00025);
-          } else index += direction;
+          index += direction;
           await expectPicture(P, refs, index, `burst ${burst} step ${direction} #${i}`);
           assert.ok(direction * (P.player.shownT - previous) > 0, 'step went in the wrong direction');
         }
@@ -152,8 +147,7 @@ async function largeSeek() {
   const { vfr, longGop } = makeStepping();
   await c.run('VFR stepping, seeks, speed and A-B loop', () => fuzz(vfr, true));
   await c.run('exact forward step in dense VFR', () => exactVfrSteps(vfr, 1));
-  await c.run('exact backward step in dense VFR', () => exactVfrSteps(vfr, -1),
-    'nominal rate can skip a picture during the 60 fps cadence');
+  await c.run('exact backward step in dense VFR', () => exactVfrSteps(vfr, -1));
   await c.run('10-second GOP stepping, seeks, speed and A-B loop', () => fuzz(longGop, false));
   if (process.env.VPE_HEAVY_MEDIA === '1') await c.run('multi-GiB random access', largeSeek);
   await c.done();

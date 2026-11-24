@@ -87,6 +87,7 @@ function createEngine(env) {
       this.pauseT = 0; // absolute media time while paused
       this.shownT = null;
       this.seekTarget = null;
+      this.seekBefore = null;
       this.seekGoalFrame = null;
       this.hold = null; // last frame before a seek target
       this.back = []; // decoded frames just before the shown one, paused (keepBack): steps back are served from them
@@ -733,8 +734,9 @@ function createEngine(env) {
           if (!this.fps && this.tsSeen.length >= 3 && this.tsSeen.length < 24) this.measureRate();
           // A seek past the last frame (End): show the last one.
           if (this.seekTarget !== null) {
-            if (this.hold) { this.insert(this.hold); this.hold = null; }
+            this.insertHold();
             this.seekTarget = null;
+            this.seekBefore = null;
             if (this.playing) { this.stopAudio(); this.anchor(this.pauseT); }
           }
           this.pump();
@@ -890,16 +892,34 @@ function createEngine(env) {
       this.lastT = fr.t;
       // Accurate seek: keep only the last frame before the target until we reach it.
       if (this.seekTarget !== null) {
-        // Seek targets sit mid-frame; anything starting 3/4 of a frame earlier is a previous frame.
-        const f = 1 / (this.fps || 30);
-        if (fr.t < this.seekTarget - 0.75 * f) {
-          if (this.hold) this.keepBack(this.hold);
-          this.hold = fr;
-          return;
+        if (typeof this.seekBefore === 'number') {
+          // Step back by k pictures: keep every picture strictly before the frame stepped from, newest k held,
+          // then land on the k-th last (k = 1 for a single step; dense VFR spacing differs from 1 / fps).
+          if (fr.t < this.seekBefore - 1e-4) {
+            const run = this.holdRun || (this.holdRun = []);
+            run.push(fr);
+            if (run.length > (this.seekBackCount || 1)) this.keepBack(run.shift());
+            this.hold = run[0];
+            return;
+          }
+          const run = this.holdRun;
+          this.pauseT = run && run.length ? run[0].t : fr.t;
+          this.insertHold();
+          if (this.stepTo && this.stepTo.gen === this.gen && !this.stepTo.timer) this.stepTo.t = this.pauseT;
+          this.seekTarget = null;
+          this.seekBefore = null;
+        } else {
+          // Seek targets sit mid-frame; anything starting 3/4 of a frame earlier is a previous frame.
+          const f = 1 / (this.fps || 30);
+          if (fr.t < this.seekTarget - 0.75 * f) {
+            if (this.hold) this.keepBack(this.hold);
+            this.hold = fr;
+            return;
+          }
+          if (this.hold && fr.t > this.seekTarget + 0.25 * f) this.insert(this.hold); else if (this.hold) this.keepBack(this.hold);
+          this.hold = null;
+          this.seekTarget = null;
         }
-        if (this.hold && fr.t > this.seekTarget + 0.25 * f) this.insert(this.hold); else if (this.hold) this.keepBack(this.hold);
-        this.hold = null;
-        this.seekTarget = null;
         if (this.seekStartMs !== undefined) {
           this.lastSeekMs = performance.now() - this.seekStartMs; // seek to its frame decoded
           log(`seek landed in ${Math.round(this.lastSeekMs)} ms (gen ${this.gen})`);
@@ -924,6 +944,7 @@ function createEngine(env) {
     gpuFrames() {
       let n = this.queue.reduce((k, f) => k + (f.vf ? 1 : 0), 0);
       if (this.hold && this.hold.vf) n++;
+      if (this.holdRun) for (const x of this.holdRun) if (x !== this.hold && x.vf) n++;
       if (this.lastShown && this.lastShown.vf) n++;
       return n;
     }
@@ -1516,14 +1537,19 @@ function createEngine(env) {
       // Show the newest frame that is due; drop older ones.
       let show = null;
       // Frames are due a quarter frame early at most, so a mid-frame target shows exactly that frame.
-      const early = 0.25 / (this.fps || 30);
+      let early = 0.25 / (this.fps || 30);
+      // A paused step shows exactly its picture: a quarter frame of nominal lead would also take the next one when
+      // the stream is denser than its nominal rate (120 fps inside 24 fps). Only rounded-ms timestamps get slack.
+      const st = this.stepTo;
+      if (!this.playing && st && st.gen === this.gen && !st.timer && this.seekTarget === null
+        && Math.abs(st.t - this.pauseT) < 1e-4) early = Math.min(early, 1e-3);
       // Showing every frame while decoding is behind: never drop, take the oldest due one.
       const everyFrame = this.playing && (this.whenSlow === 'every' || this.autoEvery) && this.behindUntil && performance.now() < this.behindUntil;
       // ...unless frames are decoded past the clock: then the display, not decoding, is slow (120 fps on 60 Hz), so drop to the newest due one.
       const decodedAhead = this.queue.length && this.queue[this.queue.length - 1].t > now + early;
       // A frame being copied waits for the shader to display it with the chosen matrix.
       while (this.queue.length && this.queue[0].t <= Math.min(now + early, limit) && !this.queue[0].spilling) {
-        if (show) { this.release(show); this.dropped = (this.dropped || 0) + 1; }
+        if (show) { if (this.playing) this.release(show); else this.keepBack(show); this.dropped = (this.dropped || 0) + 1; }
         show = this.queue.shift();
         if (everyFrame && !decodedAhead) break;
       }
@@ -1735,7 +1761,7 @@ function createEngine(env) {
       this.catchUp = false;
       for (const f of this.queue) this.release(f);
       this.queue = [];
-      if (this.hold) { this.release(this.hold); this.hold = null; }
+      this.releaseHold();
       this.dropBack(); // the frames decoded up to the new target are kept instead
       this.stopAudio();
       this.audio = [];
@@ -1743,6 +1769,7 @@ function createEngine(env) {
       this.eof = false;
       this.requesting = true;
       this.seekTarget = this.vmode === 'none' ? null : t; // no picture: nothing would clear it
+      this.seekBefore = null;
       this.seekStartMs = performance.now();
       this.pauseT = t;
       this.outCount = 0;
@@ -1766,10 +1793,11 @@ function createEngine(env) {
       this.readVT = undefined;
       for (const f of this.queue) this.release(f);
       this.queue = [];
-      if (this.hold) { this.release(this.hold); this.hold = null; }
+      this.releaseHold();
       this.eof = false;
       this.requesting = true;
       this.seekTarget = null;
+      this.seekBefore = null;
       if (this.vdec) { try { this.vdec.close(); } catch { /* closed */ } this.makeVideoDecoder(); }
       if (this.adec) { try { this.adec.close(); } catch { /* closed */ } this.makeAudioDecoder(); }
       this.stopAudio();
@@ -1791,6 +1819,7 @@ function createEngine(env) {
       // Forward within what is already decoded: no seek needed.
       if (this.queue.length && t >= this.queue[0].t - 1e-3 && t <= this.queue[this.queue.length - 1].t && (this.shownT === null || t >= this.shownT)) {
         while (this.queue.length > 1 && this.queue[1].t <= t + 1e-3) this.release(this.queue.shift());
+        this.dropBack();
         this.pauseT = t;
         this.stopAudio();
         this.anchor(t);
@@ -1832,29 +1861,42 @@ function createEngine(env) {
       const last = this.meta.duration ? start + this.meta.duration - f : Infinity;
       let to;
       let seek;
+      let origin; // a cache-missing step back: the picture stepped from and the pictures to go back from it
+      let count;
       if (d > 0) {
         const next = waiting ? null : this.queue.filter((x) => x.t > base + 1e-4)[d - 1];
         if (next) { to = next.t; this.keepPassed(to); this.showQueued(to); } // decoded already: at once
         else if (!this.eof || this.queue.length) { to = Math.min(last, base + d * f); seek = this.rel(base) + d * f; }
         else return;
       } else {
-        to = Math.max(start, base + d * f);
-        // A seek target half a frame before the frame stepped from lands on the previous frame, whatever its spacing.
-        if (waiting || !this.stepBack(to, base, f)) seek = this.rel(base) + (d + 0.5) * f;
+        const hit = waiting ? null : this.stepBack(-d, base);
+        if (hit !== null) {
+          to = hit;
+        } else {
+          to = Math.max(start, base + d * f);
+          // Notches that come while the seek is still on its way count from the first one's picture: the decoder
+          // lands on that many pictures before it, whatever the spacing (VFR), not on nominal 1 / fps intervals.
+          const more = pending && (st.timer || this.seekTarget !== null) && st.origin !== undefined;
+          origin = more ? st.origin : base;
+          count = (more ? st.count : 0) - d;
+          // A seek target half a frame before the picture lands before it; the decoder picks the exact one.
+          seek = this.rel(origin) - (count - 0.5) * f;
+        }
       }
       const now = performance.now();
       if (seek === undefined) { this.stepTo = { t: to, gen: this.gen, shown: this.shownCount || 0, at: pending ? st.at : 0 }; return; }
       if (this.meta.live) return; // a step outside the retained frames would require a seek
-      if (waiting) { st.t = to; st.seek = seek; return; } // the waiting seek takes the new target
+      if (waiting) { st.t = to; st.seek = seek; st.origin = origin; st.count = count; return; } // the waiting seek takes the new target
       const wait = pending && this.seekTarget !== null ? STEP_SEEK_MS - (now - st.at) : 0;
       if (wait > 0) {
-        const s = { t: to, gen: this.gen, shown: this.shownCount || 0, at: st.at, seek };
+        const s = { t: to, gen: this.gen, shown: this.shownCount || 0, at: st.at, seek, origin, count };
         s.timer = setTimeout(() => this.flushStep(s), wait);
         this.stepTo = s;
         return;
       }
       this.seekTime(seek, true);
-      this.stepTo = { t: to, gen: this.gen, shown: this.shownCount || 0, at: now };
+      if (origin !== undefined && this.seekTarget !== null) { this.seekBefore = origin; this.seekBackCount = count; }
+      this.stepTo = { t: to, gen: this.gen, shown: this.shownCount || 0, at: now, origin, count };
     }
 
     /** Paused: shows the queued frame at time t (frames before it leave the queue). */
@@ -1870,7 +1912,8 @@ function createEngine(env) {
       s.timer = null;
       if (this.stepTo !== s || s.gen !== this.gen || this.playing) return;
       this.seekTime(s.seek, true);
-      this.stepTo = { t: s.t, gen: this.gen, shown: this.shownCount || 0, at: performance.now() };
+      if (s.origin !== undefined && this.seekTarget !== null) { this.seekBefore = s.origin; this.seekBackCount = s.count; }
+      this.stepTo = { t: s.t, gen: this.gen, shown: this.shownCount || 0, at: performance.now(), origin: s.origin, count: s.count };
     }
 
     clearStepGoal() {
@@ -1889,19 +1932,14 @@ function createEngine(env) {
     backBudget() { return this.remoteStream ? Math.round(this.budget() * 0.65) : this.budget() / 2; }
 
     /** Puts a decoded frame in this.back in time order; the oldest go when it is over backBudget(). */
-    insertBack(fr, f) {
+    insertBack(fr) {
       if (!this.back) this.dropBack();
       const back = this.back;
       let i = back.length;
       while (i > 0 && back[i - 1].t > fr.t) i--;
       if (i > 0 && Math.abs(back[i - 1].t - fr.t) <= 1e-4) { this.release(fr); return; } // already kept
-      if (i === back.length) {
-        const prev = back[back.length - 1];
-        if (prev && fr.t - prev.t > 1.5 * f) this.dropBack(); // a gap: start a new run
-        this.back.push(fr);
-      } else {
-        back.splice(i, 0, fr);
-      }
+      if (i === back.length) back.push(fr);
+      else back.splice(i, 0, fr);
       this.backBytes += fr.bytes;
       const cap = this.backBudget();
       while (this.back.length && this.backBytes > cap) this.backBytes -= this.back.shift().bytes;
@@ -1909,29 +1947,49 @@ function createEngine(env) {
 
     /** Keeps a decoded frame (paused, in memory, consecutive with the kept ones) for steps back; else lets it go. */
     keepBack(fr) {
-      const f = 1 / (this.fps || 30);
       // (Compare steps its tiles by seeking them: no frames kept there.)
-      if (this.playing || this.hidden || this.cfg.noStepBack || fr.spilling) { this.release(fr); return; }
+      if (this.playing || this.hidden || this.cfg.noStepBack) { this.release(fr); return; }
+      if (fr.spilling) { this.dropBack(); this.release(fr); return; }
       if (fr.vf) {
         // Remote Live transcode decodes to WebCodecs frames, which hold the decoder's surfaces: the frames just
         // before a paused seek target are copied to memory (a few at a time) so that consecutive steps back are
         // served from here, not from another seek and decode of the GOP over the link.
         const near = this.remoteStream && !this.noSpill && this.seekTarget !== null
           && this.seekTarget - fr.t <= 3 && (this.backSpilling || 0) < 4;
-        if (!near) { this.release(fr); return; }
+        if (!near) { this.dropBack(); this.release(fr); return; }
         const gen = this.gen;
         const run = this.backGen || 0;
-        this.backSpilling = (this.backSpilling || 0) + 1;
+        this.backSpilling = (this.backSpilling || 0) + 1; // stepBack() waits for the copies: they set adjacency
         this.toMemory(fr).then(() => {
-          if (gen === this.gen && run === (this.backGen || 0) && !this.playing && !this.hidden && fr.yuv && !fr.vf) this.insertBack(fr, f);
-          else this.release(fr);
-        }, () => { this.release(fr); }).finally(() => {
+          if (gen === this.gen && run === (this.backGen || 0) && !this.playing && !this.hidden) {
+            if (fr.yuv && !fr.vf) this.insertBack(fr);
+            else { this.dropBack(); this.release(fr); }
+          } else this.release(fr);
+        }, () => {
+          if (gen === this.gen && run === (this.backGen || 0)) this.dropBack();
+          this.release(fr);
+        }).finally(() => {
           this.backSpilling = Math.max(0, (this.backSpilling || 1) - 1);
         });
         return;
       }
-      if (!fr.yuv) { this.release(fr); return; }
-      this.insertBack(fr, f);
+      if (!fr.yuv) { this.dropBack(); this.release(fr); return; }
+      this.insertBack(fr);
+    }
+
+    /** The pictures held for a step back (this.hold is the oldest, landing one): into the queue. */
+    insertHold() {
+      const run = this.holdRun && this.holdRun.length ? this.holdRun : this.hold ? [this.hold] : [];
+      for (const x of run) this.insert(x);
+      this.hold = null;
+      this.holdRun = null;
+    }
+
+    releaseHold() {
+      const run = this.holdRun && this.holdRun.length ? this.holdRun : this.hold ? [this.hold] : [];
+      for (const x of run) this.release(x);
+      this.hold = null;
+      this.holdRun = null;
     }
 
     dropBack() { this.back = []; this.backBytes = 0; this.backGen = (this.backGen || 0) + 1; }
@@ -1939,23 +1997,38 @@ function createEngine(env) {
     /** Before a paused step forward to frame time t: the shown frame and the decoded ones passed are kept for steps back. */
     keepPassed(t) {
       const sf = this.shownFrame;
-      const passed = this.queue.filter((x) => x.t < t - 1e-4 && x.yuv && !x.vf); // (WebCodecs frames still on the GPU stay)
-      if (sf && sf.yuv && !sf.vf && sf.t === this.shownT && sf.t < t - 1e-4 && !this.queue.includes(sf)) {
-        this.keptBufs.add(sf.yuv.data.buffer); // shown: else its buffer goes back to the decoder after the next upload
-        passed.push(sf);
+      const before = this.queue.filter((x) => x.t < t - 1e-4);
+      const passed = before.filter((x) => x.yuv && !x.vf); // (WebCodecs frames still on the GPU stay)
+      const haveShown = this.shownT !== null && this.shownT < t - 1e-4
+        && !this.queue.some((x) => Math.abs(x.t - this.shownT) < 1e-4);
+      if (haveShown) {
+        if (sf && sf.yuv && !sf.vf && sf.t === this.shownT) {
+          this.keptBufs.add(sf.yuv.data.buffer); // shown: else its buffer goes back to the decoder after the next upload
+          passed.push(sf);
+        } else {
+          // Shown picture is not in CPU memory: keeping older frames would leave a gap.
+          this.dropBack();
+          return;
+        }
+      }
+      if (passed.length < before.length + (haveShown ? 1 : 0)) {
+        // A passed frame in the queue is still on the GPU: keeping earlier frames would leave a gap.
+        this.dropBack();
+        return;
       }
       passed.sort((a, b) => a.t - b.t);
       for (const x of passed) if (!this.back.length || x.t > this.back[this.back.length - 1].t + 1e-4) this.keepBack(x);
     }
 
-    /** A paused step back to frame time `to` from the frame at `base`, from the kept frames: true when it was there. */
-    stepBack(to, base, f) {
+    /** A paused step back by `steps` pictures from the frame at `base`, from the kept frames: target time or null. */
+    stepBack(steps, base) {
       const back = this.back;
-      if (!back || !back.length || this.seekTarget !== null) return false;
-      const gap = base - back[back.length - 1].t;
-      if (!(gap > 0 && gap < 1.5 * f)) return false; // they don't end just before the frame stepped from
-      const i = back.findIndex((x) => Math.abs(x.t - to) < 0.5 * f);
-      if (i < 0) return false;
+      if (!back || !back.length || this.seekTarget !== null || !(steps >= 1)) return null;
+      // A copy still running may belong between the kept pictures and `base`: finished ones prove no adjacency.
+      if ((this.backSpilling || 0) > 0) return null;
+      if (!(base - back[back.length - 1].t > 1e-4)) return null;
+      const i = back.length - steps;
+      if (i < 0) return null;
       // Preserve the currently shown frame in the forward queue so a following step forward returns to N instead of
       // skipping to N+1. If N was displayed from a GPU VideoFrame (shownFrame is null), clone it from lastShown; if
       // N cannot be restored at all, fall back to a seek rather than consuming the backward cache.
@@ -1966,8 +2039,8 @@ function createEngine(env) {
         const sf = this.shownFrame;
         if (sf && sf.t === this.shownT) restore = sf;
         else if (this.lastShown && this.lastShown.vf) {
-          try { restore = { t: this.shownT, vf: this.lastShown.vf.clone() }; } catch { return false; }
-        } else return false;
+          try { restore = { t: this.shownT, vf: this.lastShown.vf.clone() }; } catch { return null; }
+        } else return null;
       }
       const moved = back.splice(i);
       for (const x of moved) this.backBytes -= x.bytes;
@@ -1980,7 +2053,7 @@ function createEngine(env) {
       this.pauseT = moved[0].t;
       this.stopAudio();
       this.anchor(this.pauseT);
-      return true;
+      return moved[0].t;
     }
     deferSeek(t) { if (this.startT === null) this.pendingSeek = t; else this.seekTime(t); }
     setRate(r) {
@@ -2349,7 +2422,7 @@ function createEngine(env) {
       if (this.lastShown && this.lastShown.vf) this.lastShown.vf.close();
       this.lastShown = null;
       this.queue = [];
-      if (this.hold) { this.release(this.hold); this.hold = null; }
+      this.releaseHold();
       for (const d of [this.vdec, this.adec]) if (d && d.state !== 'closed') { try { d.close(); } catch { /* closed */ } }
       this.gl?.dispose?.();
       this.revokeBlobs();
