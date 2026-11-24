@@ -3,7 +3,7 @@
 ## Unreleased
 
 - **Remote-SSH: the ffmpeg download now matches the host's NVIDIA driver.** The one-click download on a Linux remote used to take the newest build whatever the GPU, so an older driver (below 610) could not use NVENC and ffmpeg had to be set up again. It now detects the host's GPU and driver first and picks the compatible release line, as the local setup does; the offer text describes Live transcode.
-- Live transcode: making the picture larger while playing (window resize, zoom) now restarts the encoder in place instead of seeking the page, so sound and clock continue; repeated size messages ask for one refresh only, and a pending smaller size no longer forces ffmpeg to restart a step back that memory can serve.
+- Live transcode: making the picture larger while playing (window resize, zoom) now restarts the encoder in place instead of seeking the page, so sound and clock continue; repeated size messages ask for one refresh only.
 
 ## 0.10.0 (2026-11-24)
 

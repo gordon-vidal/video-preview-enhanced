@@ -313,8 +313,6 @@ class EncodedStream {
       return;
     }
     this.resizePending = changed;
-    // A smaller picture waits for a seek that needs ffmpeg anyway: a step back from memory need not restart it.
-    this.pendingShrink = changed && !grow;
     this.w = w;
     this.h = h;
     // One page seek per growth: more view messages for the same size (zoom, resize jitter) add none.
@@ -331,7 +329,6 @@ class EncodedStream {
     const w = Math.round((v.width * this.h) / v.height);
     this.w = w - (w % 2);
     this.resizePending = false;
-    this.pendingShrink = false;
     this.growQueued = false;
   }
 
@@ -650,7 +647,7 @@ class EncodedStream {
     // The page re-seeks when shown. An encoder just started at that frame can satisfy it.
     const startingHere = this.proc && this.proc.exitCode === null && !this.proc.signalCode
       && !this.gotOutput && this.aNext === 0 && t === this.base && t === this.vBase;
-    if ((!this.resizePending || this.pendingShrink) && (startingHere || this.reuseHistory(t))) {
+    if (!this.resizePending && (startingHere || this.reuseHistory(t))) {
       this.waiting = null;
       this.post({ type: 'seeked', gen: m.gen, t });
       return;

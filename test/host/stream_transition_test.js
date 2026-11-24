@@ -125,7 +125,7 @@ const fakeProc = () => ({ exitCode: null, signalCode: null, stdout: { isPaused: 
   assert.strictEqual(s.aNext, 24000, 'audio cursor preserved across in-band video restart');
 }
 
-{ // A pending shrink does not stop a step back being served from memory (no ffmpeg restart, no picture gap).
+{ // A pending shrink applies at the next seek (matching docs/PRODUCT.md "shrinking waits for the next seek").
   const { s, posted } = make();
   s.setView({ w: 1920, h: 1080 });
   s.sizeVideo();
@@ -137,15 +137,11 @@ const fakeProc = () => ({ exitCode: null, signalCode: null, stdout: { isPaused: 
   s.gotOutput = true;
   s.setView({ w: 960, h: 540 });
   assert.strictEqual(s.resizePending, true);
+  assert.strictEqual(s.h, 1080, 'shrinking holds current size until the next seek');
   s.seek({ gen: 1, t: 10.5 });
   const seeked = posted.filter((m) => m.type === 'seeked');
   assert.strictEqual(seeked.length, 1);
-  assert.strictEqual(s.vNext, 0, 'served from the packets held: cursor at the keyframe');
-  assert.ok(s.proc, 'ffmpeg was not restarted');
-  assert.strictEqual(s.resizePending, true, 'the smaller size still applies at the next real restart');
-  // A seek outside memory restarts and applies the size.
-  s.seek({ gen: 2, t: 50 });
-  assert.strictEqual(s.h, 540);
+  assert.strictEqual(s.h, 540, 'the next seek applies the smaller size');
   assert.strictEqual(s.resizePending, false);
   clearTimeout(s.startTimer);
   s.kill();
