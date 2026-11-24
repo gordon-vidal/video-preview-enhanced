@@ -47,7 +47,7 @@ function sanitizePlaybackPrefs(raw, base = DEFAULT_PLAYBACK_PREFS) {
  * @param {any} deps.vscode            workspace.getConfiguration, ConfigurationTarget
  * @param {() => Memento | undefined} deps.getState  globalState (set when the extension activates)
  * @param {(msg: string) => void} deps.log
- * @param {{ resolveSetting(o: any): any }} deps.transcodePolicy
+ * @param {{ resolveSetting(o: any): any, resolutionOf(v: any): number }} deps.transcodePolicy
  * @param {Iterable<PageTarget>} deps.sessions         open players
  * @param {Iterable<PageTarget>} deps.compareSessions  open compare panels
  */
@@ -89,6 +89,7 @@ function createSettings({ vscode, getState, log, transcodePolicy, sessions, comp
       transcode: c.transcode,
       transcodeMaxBitrate: c.transcodeMaxBitrate,
       transcodeSplitBitrate: c.transcodeSplitBitrate,
+      transcodeResolution: c.transcodeResolution || 0,
       ...storedPlaybackPrefs(),
     };
   }
@@ -140,6 +141,7 @@ function createSettings({ vscode, getState, log, transcodePolicy, sessions, comp
       })(),
       transcodeMaxBitrate: Math.max(0, Number(settingOr(c, 'transcodeMaxBitrate', 0)) || 0),
       transcodeSplitBitrate: settingOr(c, 'transcodeSplitBitrate', true),
+      transcodeResolution: transcodePolicy.resolutionOf(settingOr(c, 'transcodeResolution', 0)),
       hdrOutput: c.get('hdrOutput', 'auto') === 'off' ? 'off' : 'auto',
       pictureSize: ['fit', 'fill', 'stretch', 'actual'].includes(c.get('pictureSize')) ? c.get('pictureSize') : 'fit',
     };

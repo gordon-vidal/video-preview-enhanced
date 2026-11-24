@@ -47,7 +47,11 @@
       : VpeControls.STEP_SIZES.includes(initPrefs.stepSize) ? initPrefs.stepSize : null,
     transcode: (cfg.prefs && cfg.prefs.transcode) || 'auto',
     transcodeMaxBitrate: Number(cfg.prefs && cfg.prefs.transcodeMaxBitrate) || 0,
+    // The default Live transcode resolution for new tabs (0 = Auto); this tab's own is tabResolution().
+    transcodeResolution: Number(cfg.prefs && cfg.prefs.transcodeResolution) || 0,
   };
+  /** @type {number | undefined} the resolution picked in this tab (⚙ › Live transcode), until the host confirms it */
+  let pickedResolution;
   // Picture size for this tab (Fit, Fill, Stretch, 100 %): starts as the setting videoPreviewEnhanced.pictureSize; the button and Z change this tab only.
   const startPicture = VpePicture.parse(cfg.prefs && cfg.prefs.pictureSize);
   // The bar's time: 0 m:ss.mmm, 1 SMPTE timecode, 2 frame number (a click on it cycles).
@@ -498,6 +502,22 @@
     prefs.transcodeMaxBitrate = Number(mbps) || 0;
     vscode.postMessage({ type: 'transcodePref', maxBitrateMbps: prefs.transcodeMaxBitrate });
     toast(prefs.transcodeMaxBitrate > 0 ? `Max bitrate: ${prefs.transcodeMaxBitrate} Mb/s` : 'Max bitrate: Auto');
+  }
+  /** This tab's Live transcode resolution (0 = Auto): as picked, else as the host's stream reports it, else the default. */
+  function tabResolution() {
+    if (pickedResolution !== undefined) return pickedResolution;
+    const tc = player && player.info && player.info.transcode;
+    return tc && tc.locked !== undefined ? Number(tc.locked) || 0 : prefs.transcodeResolution;
+  }
+  function setTranscodeResolution(h) {
+    pickedResolution = Number(h) || 0;
+    vscode.postMessage({ type: 'transcodeResolution', height: pickedResolution });
+    toast(`Resolution: ${pickedResolution ? `${pickedResolution}p` : 'Auto'} for this video`);
+  }
+  function saveTranscodeResolution(h) {
+    prefs.transcodeResolution = Number(h) || 0;
+    vscode.postMessage({ type: 'transcodePref', resolution: prefs.transcodeResolution });
+    toast(`Default resolution: ${prefs.transcodeResolution ? `${prefs.transcodeResolution}p` : 'Auto'}`);
   }
   const setLoop = (l) => { loop = l; if (player && player.setLoop) player.setLoop(l); if (controls) controls.refresh(); };
   const hasAudio = () => !player || (player instanceof FramePlayer ? !!player.audio : !player.info || !!player.info.audio);
@@ -1136,7 +1156,11 @@
         hasSound: !!(player && ((player.info && player.info.audio) || player.audio)),
         tracks: d, facts: infoFacts(), canExternal: !!cfg.canOpenExternal,
         canUseOriginal: !!(player && player.remoteStream),
-        transcode: !cfg.url && !(player instanceof FramePlayer) ? { mode: prefs.transcode, maxBitrateMbps: prefs.transcodeMaxBitrate, active: !!(player && player.remoteStream) } : null,
+        transcode: !cfg.url && !(player instanceof FramePlayer) ? {
+          mode: prefs.transcode, maxBitrateMbps: prefs.transcodeMaxBitrate, active: !!(player && player.remoteStream),
+          resolution: tabResolution(), defaultResolution: prefs.transcodeResolution,
+          sourceHeight: (player && player.info && player.info.remoteStream && player.info.remoteStream.sourceHeight) || 0,
+        } : null,
         quality: streamQ,
       };
     },
@@ -1149,6 +1173,8 @@
       stepRate: (d) => bumpRate(d),
       setTranscode: (m) => setTranscode(m),
       setTranscodeMaxBitrate: (r) => setTranscodeMaxBitrate(r),
+      setTranscodeResolution: (h) => setTranscodeResolution(h),
+      saveTranscodeResolution: (h) => saveTranscodeResolution(h),
       useOriginal: () => vscode.postMessage({ type: 'action', id: 'fullRes' }),
       setPicture: (m) => insp.setMode(m),
       zoomPicture: (d) => insp.zoomStep(d),
@@ -1376,7 +1402,7 @@
       case 'focusMode': document.body.classList.toggle('maxi', !!m.active); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
       case 'pauseForTest': if (player && player.isPlaying()) { player.pause(); toast('Paused while ffmpeg is tested', 3000); } break;
-      case 'prefs': if (m.prefs && m.prefs.jump) { Object.assign(prefs.jump, m.prefs.jump); if (m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons === 'jump' ? 'jump' : 'frame'; if (m.prefs.transcode) prefs.transcode = m.prefs.transcode; if (m.prefs.transcodeMaxBitrate !== undefined) prefs.transcodeMaxBitrate = Number(m.prefs.transcodeMaxBitrate) || 0; stepTips(); controls.refresh(); } break;
+      case 'prefs': if (m.prefs && m.prefs.jump) { Object.assign(prefs.jump, m.prefs.jump); if (m.prefs.stepButtons) prefs.stepButtons = m.prefs.stepButtons === 'jump' ? 'jump' : 'frame'; if (m.prefs.transcode) prefs.transcode = m.prefs.transcode; if (m.prefs.transcodeMaxBitrate !== undefined) prefs.transcodeMaxBitrate = Number(m.prefs.transcodeMaxBitrate) || 0; if (m.prefs.transcodeResolution !== undefined) prefs.transcodeResolution = Number(m.prefs.transcodeResolution) || 0; stepTips(); controls.refresh(); } break;
       case 'ffmpegState': ffmpegState = { installed: !!m.installed, offer: !!m.offer, mb: Number(m.mb) || 0 }; if (player) player.ffmpeg = ffmpegState; break;
       case 'goto': insp.goToLink(m); break;
       case 'abQuery':

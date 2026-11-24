@@ -13,6 +13,14 @@ const STALL_SETTLE_MS = 1500;
 const REMOTE_H264_AUTO_BPS = 12e6; // 12 Mb/s: transcode high-bitrate H.264 over remote links
 const REMOTE_H264_DOWNSCALE_BPS = 6e6; // 6 Mb/s when downscaling > 1.3x over remote links
 const ZOOM_UPGRADE_THRESHOLD = 1.5; // Compare tiles upgrade toward the source's size when zoomed in this far
+/** Live transcode resolutions a video tab can be fixed at (⚙ › Live transcode, transcodeResolution); 0 = Auto. */
+const RESOLUTIONS = [2160, 1440, 1080, 720, 480, 360];
+
+/** A stored or requested resolution: one of RESOLUTIONS, else 0 (Auto). @param {any} v @returns {number} */
+function resolutionOf(v) {
+  const n = Number(v);
+  return RESOLUTIONS.includes(n) ? n : 0;
+}
 
 /**
  * Resolves the effective Live transcode mode (`auto | always | off`),
@@ -254,6 +262,8 @@ function driverNoticeText(notice) {
 module.exports = {
   MODES,
   BITRATE_PRESETS,
+  RESOLUTIONS,
+  resolutionOf,
   MIN_BITRATE_KBPS,
   STALL_FPS_RATIO,
   STALL_WINDOWS,
