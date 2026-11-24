@@ -2,8 +2,8 @@
 
 ## Unreleased
 
+- **Exact backward frame stepping on variable-frame-rate (VFR) videos:** stepping backward one or more frames in dense or sparse VFR footage (e.g. OBS/phone recordings) now indexes decoded pictures directly instead of using nominal `1/fps` intervals, eliminating 1-frame skips and paused tick overshoots.
 - Maintainer tooling: capture Dark, Light and High Contrast screenshot packs with `tools/theme-screenshots.js`.
-
 - **Remote-SSH: the ffmpeg download now matches the host's NVIDIA driver.** The one-click download on a Linux remote used to take the newest build whatever the GPU, so an older driver (below 610) could not use NVENC and ffmpeg had to be set up again. It now detects the host's GPU and driver first and picks the compatible release line, as the local setup does; the offer text describes Live transcode.
 - Live transcode: making the picture larger while playing (window resize, zoom) now restarts the encoder in place instead of seeking the page, so sound and clock continue; repeated size messages ask for one refresh only.
 
