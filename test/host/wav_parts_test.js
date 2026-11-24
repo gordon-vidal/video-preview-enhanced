@@ -21,11 +21,13 @@ const { load } = require('./mock_vscode');
     const h = load();
     const s = h.open(f);
     await s.send({ type: 'ready' });
-    const types = s.posted.map((m) => m.type);
+    // Ignore unrelated async state messages (e.g. ffmpegState) that can race with WAV I/O.
+    const media = s.posted.filter((m) => m.type === 'wavPart' || m.type === 'frames');
+    const types = media.map((m) => m.type);
     const fr = types.indexOf('frames');
-    assert.ok(fr > 0 && types.slice(0, fr).every((t) => t === 'wavPart'), 'wavPart messages, then frames');
-    assert.strictEqual(s.posted[fr].wav, null);
-    const sent = Buffer.concat(s.posted.slice(0, fr).map((m) => Buffer.from(m.data)));
+    assert.ok(fr > 0 && fr === types.length - 1 && types.slice(0, fr).every((t) => t === 'wavPart'), 'wavPart messages, then frames');
+    assert.strictEqual(media[fr].wav, null);
+    const sent = Buffer.concat(media.slice(0, fr).map((m) => Buffer.from(m.data)));
     assert.ok(sent.equals(whole), 'host sends the whole WAV');
     s.panel.dispose();
     console.log(`${path.basename(f)}: ${(whole.length / 1e6).toFixed(1)} MB WAV in ${fr} part(s): ok`);
