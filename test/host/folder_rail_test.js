@@ -282,6 +282,30 @@ function rail(fsys, o = {}) {
     assert.ok(!ctl.stats().suspended);
   }
 
+  // ---- resume called BEFORE the cancelled readdir finishes still re-lists ----
+  {
+    const f = fakeFs(TREE);
+    const realReaddir = f.readdir;
+    let calls = 0;
+    let firstRelease;
+    f.readdir = (d, o) => {
+      calls++;
+      if (calls === 1) return new Promise((resolve) => { firstRelease = () => resolve(realReaddir(d, o)); });
+      return realReaddir(d, o);
+    };
+    const { ctl, lists } = rail(f);
+    const pending = ctl.browse('/v');
+    await tick();
+    ctl.cancel();
+    assert.ok(ctl.stats().relist, 'interrupted listing recorded at cancel time');
+    const resumed = ctl.resume();
+    firstRelease();
+    assert.strictEqual(await pending, null, 'stale first read dropped');
+    await resumed;
+    assert.strictEqual(calls, 2, 'resume started a fresh listing');
+    assert.strictEqual(lists().length, 1, 'fresh listing posted');
+  }
+
   // ---- a pending metadata patch at a close or hide is not lost: resume posts what is known ----
   {
     const f = fakeFs(TREE);
@@ -540,11 +564,19 @@ function rail(fsys, o = {}) {
       await adopter.send({ type: 'railAdopted', id: ho.id, ok: false });
       await first;
       assert.strictEqual(b2Closed, false, 'a failed adoption keeps the source');
+      // Timed-out adoption: posts railHandoffCancel to the target so it never applies the expired handoff later.
+      const prevAdoptMs = process.env.VPE_ADOPT_MS;
+      process.env.VPE_ADOPT_MS = '30';
+      const timed = B2.send({ type: 'neighbour', d: 1, auto: true, rail: { open: false, onEnd: 'next' } });
+      await timed;
+      if (prevAdoptMs === undefined) delete process.env.VPE_ADOPT_MS; else process.env.VPE_ADOPT_MS = prevAdoptMs;
+      assert.strictEqual(b2Closed, false, 'timed-out adoption keeps source open');
+      assert.ok(adopter.posted.some((m) => m.type === 'railHandoffCancel'), 'target told to cancel expired handoff');
       // Again with Autoplay's next and a closed rail with its width and filter: all of it reaches the open tab.
       const second = B2.send({ type: 'neighbour', d: 1, auto: true, rail: { open: false, width: 300, filter: 'a 1', onEnd: 'next' } });
-      await C.until(() => handoffs().length === 2, 2000);
-      const ho2 = handoffs()[1].m;
-      assert.strictEqual(handoffs()[1].x, adopter);
+      await C.until(() => handoffs().length === 3, 2000);
+      const ho2 = handoffs()[2].m;
+      assert.strictEqual(handoffs()[2].x, adopter);
       assert.deepStrictEqual([ho2.rail, ho2.onEnd, ho2.fromAutoNext], [{ open: false, width: 300, filter: 'a 1', onEnd: 'next' }, 'next', true], 'the full carry');
       await settle(20);
       assert.strictEqual(b2Closed, false);

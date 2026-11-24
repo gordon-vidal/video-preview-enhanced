@@ -315,6 +315,7 @@ function createFolderRail(deps) {
   // Closed or hidden: nothing is queued or posted until resume(). relist: a listing was still being read then.
   let suspended = false;
   let relist = false;
+  let listing = false;
   /** Metadata of files the session already knows (the playing file): never probed. path -> meta */
   /** @type {Map<string, Meta>} */ const seeded = new Map();
   const stats = { stat: 0, probe: 0, flushes: 0 };
@@ -335,6 +336,7 @@ function createFolderRail(deps) {
     stopWork();
     suspended = false;
     relist = false;
+    listing = true;
     const w = work;
     const g = ++gen;
     const prev = dir;
@@ -349,6 +351,7 @@ function createFolderRail(deps) {
       ents = await fs.readdir(d, { withFileTypes: true });
     } catch (e) {
       if (stale(w)) return null;
+      listing = false;
       log(`folder rail: cannot read ${d}: ${e && /** @type {any} */ (e).code || e}`);
       const msg = { type: 'rail', op: 'list', gen: g, crumb: crumbOf(d), entries: [], error: 'This folder cannot be read' };
       post(msg);
@@ -362,6 +365,7 @@ function createFolderRail(deps) {
     const shown = ents.filter((e) => !e.name.startsWith('.'));
     const types = await Promise.all(shown.map((e) => entryType(fs, e, P.join(d, e.name))));
     if (stale(w)) return null;
+    listing = false;
     shown.forEach((e, k) => { if (types[k] === 'dir') dirs.push(e.name); else if (types[k] === 'file') files.push(e.name); });
     dirs.sort(naturalCompare);
     files.sort(naturalCompare);
@@ -539,7 +543,7 @@ function createFolderRail(deps) {
      * Rail closed or tab hidden: queued and running work stops and nothing is posted (a listing still being read is
      * dropped); the listing and what is known of it stay.
      */
-    cancel() { if (disposed) return; suspended = true; stopWork(); },
+    cancel() { if (disposed) return; if (listing) { listing = false; relist = true; } suspended = true; stopWork(); },
     /**
      * The rail is shown again: a listing that was dropped while being read is read again; else what is known is
      * posted again (patches dropped by the stop included) and what is still unknown is fetched (visible rows first).

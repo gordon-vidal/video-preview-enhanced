@@ -433,6 +433,15 @@
         case 'PageDown': moveCursor(10); break;
         case 'PageUp': moveCursor(-10); break;
         case 'Enter': if (cur) activate(cur); break;
+        case 'd': case 'D': {
+          const r = cur ? rows.get(cur) : null;
+          if (!e.ctrlKey && !e.metaKey && !e.altKey && r) {
+            if (r.e.kind === 'dir') send({ op: 'compareFolder', gen: snap.gen, id: r.e.id });
+            else if (r.e.kind === 'video' && r.e.id !== snap.current) compareRow(r.e.id);
+            else handled = false;
+          } else handled = false;
+          break;
+        }
         case 'Backspace': { const up = snap.entries.find((x) => x.kind === 'up'); if (up) send({ op: 'browse', gen: snap.gen, id: up.id }); break; }
         case 'Escape': setOpen(false, { refocus: true }); break;
         default: handled = false;

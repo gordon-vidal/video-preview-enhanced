@@ -1464,6 +1464,7 @@
       // A folder navigation landed on this already open tab (src/extension.js adoptHandoff): take over its state.
       // Applied once the player began (applyHandoff); a newer one replaces one still waiting.
       case 'railHandoff': pendingHandoff = m; applyHandoff(); break;
+      case 'railHandoffCancel': if (pendingHandoff && pendingHandoff.id === m.id) pendingHandoff = null; break;
       case 'playbackPrefs': applyPlaybackPrefs(m.prefs); break;
       case 'focusMode': document.body.classList.toggle('maxi', !!m.active); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.

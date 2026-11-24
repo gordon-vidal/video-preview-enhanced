@@ -1396,7 +1396,7 @@ class Session {
     if (this.adoptWait) this.adoptWait.done(false);
     this.adoptRail(intent);
     return new Promise((resolve) => {
-      const timer = setTimeout(() => done(false), ADOPT_MS);
+      const timer = setTimeout(() => { this.post({ type: 'railHandoffCancel', id }); done(false); }, ADOPT_MS);
       const done = (/** @type {boolean} */ ok) => {
         clearTimeout(timer);
         if (this.adoptWait && this.adoptWait.id === id) this.adoptWait = null;
