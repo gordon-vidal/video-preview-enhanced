@@ -1302,7 +1302,9 @@ function createEngine(env) {
       if (this.eof && !(this.vdec && this.vdec.decodeQueueSize) && this.seekTarget === null) {
         return { text: 'Fully decoded', level: 'ok', title: 'The rest of the video is decoded and in memory: playback and stepping are instant.' };
       }
-      if (behind) {
+      // Live transcode adapts through ABR (shown in the Live chip) and never frame-skips, so local-decoder
+      // slow-playback notices ("Skip frames (all videos)") do not apply to it.
+      if (behind && !this.remoteStream) {
         const r = ratio !== null ? speedText(ratio) : 'slow';
         const mediaRatio = this.nonRef ? this.mediaRate : ratio;
         const offerSetup = !this.cfg.native && this.ffmpeg?.offer;
@@ -1538,12 +1540,16 @@ function createEngine(env) {
         // Past the end with nothing left to show (also when a skip overshot the last keyframe).
         if (this.loop && this.loopAgain()) this.seekAbs(this.startT || 0, true); else this.pause();
       }
-      // Every frame, no sound driving the clock, nothing decoded to show: the clock waits at the next
-      // frame's time instead of running on past the frozen picture (and snapping back when it comes).
-      if (!this.followerClock && this.playing && this.vmode !== 'none' && !this.audioMaster()
-        && (this.whenSlow === 'every' || this.autoEvery) && !this.queue.length && !this.eof
-        && this.seekTarget === null && this.shownT !== null && !this.hidden && now > this.shownT + (this.waitPic ? 1 / (this.fps || 30) : 0.25)) {
-        if (!this.waitPic) { this.waitPic = true; if (!this.slowWarned) log(`waiting for the picture at ${this.rel(this.shownT).toFixed(2)} s (no sound drives the clock)`); }
+      // Every frame (no sound driving the clock) or a starved remote Live transcode stream (network blackout):
+      // hold the clock at the next frame's time instead of running on past the frozen picture and snapping back.
+      const remoteStarved = this.remoteStream && !this.queue.length && !this.eof
+        && now > this.shownT + 1 / (this.fps || 30);
+      const localStarved = !this.remoteStream && !this.audioMaster() && (this.whenSlow === 'every' || this.autoEvery)
+        && !this.queue.length && !this.eof && now > this.shownT + (this.waitPic ? 1 / (this.fps || 30) : 0.25);
+      if (!this.followerClock && this.playing && this.vmode !== 'none'
+        && this.seekTarget === null && this.shownT !== null && !this.hidden && (remoteStarved || localStarved)) {
+        if (!this.waitPic) { this.waitPic = true; if (!this.slowWarned) log(`waiting for the picture at ${this.rel(this.shownT).toFixed(2)} s (${remoteStarved ? 'remote stream buffering' : 'no sound drives the clock'})`); }
+        if (remoteStarved) this.stopAudio();
         this.behindUntil = performance.now() + 3000;
         this.reanchorCount = (this.reanchorCount || 0) + 1;
         this.anchor(this.shownT + 1 / (this.fps || 30));
