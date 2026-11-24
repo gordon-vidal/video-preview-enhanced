@@ -22,7 +22,7 @@ const LINK_SETTLE_MS = 2500;
 const ENCODER_WAIT_SHARE = 0.5;
 // Dual EWMA smoothing factors (fast tracks drops quickly; slow resists brief SSH throughput bursts).
 const EWMA_FAST_ALPHA = 0.5;
-const EWMA_SLOW_ALPHA = 0.2;
+const EWMA_SLOW_ALPHA = 0.35;
 // Windows in a row: this many bad ones step down (1 on panic starvation), this many good ones step up.
 const DOWN_RUN = 2;
 const UP_RUN = 4;
@@ -131,7 +131,9 @@ class LinkAdaptController {
     }
     const readMs = m.readMs ?? 0;
     const linkLimited = !(readMs > 0) || (m.hostWaitMs || 0) < ENCODER_WAIT_SHARE * readMs;
-    if (linkLimited) {
+    // Update bandwidth estimators on link-limited windows and healthy (non-starved) windows;
+    // ignore only starved encoder-limited stalls so a slow CPU doesn't pollute link estimates.
+    if (linkLimited || (!m.starved && !m.behind)) {
       if (this.bwSamples === 0) {
         this.fastKbps = m.kbps;
         this.slowKbps = m.kbps;
@@ -145,7 +147,7 @@ class LinkAdaptController {
     const down = linkLimited && m.starved && (m.mediaRate < 0.95 || m.behind);
     const panic = down && m.buffer < PANIC_BUFFER_S && m.mediaRate < PANIC_MEDIA_RATE;
     const upKbps = Math.min(this.fastKbps, this.slowKbps);
-    const up = this.tier > 0 && linkLimited && m.buffer >= UP_BUFFER_S && !m.starved && !m.behind
+    const up = this.tier > 0 && m.buffer >= UP_BUFFER_S && !m.starved && !m.behind
       && upKbps > 1.3 * (nextCap + pcm);
     if (!down && this.lastUpgradeAt !== -Infinity && now - this.lastUpgradeAt > OSCILLATION_WINDOW_MS) {
       this.upRun = UP_RUN;
