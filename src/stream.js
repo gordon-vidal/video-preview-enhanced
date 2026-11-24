@@ -16,12 +16,13 @@ const { lowerPriority, run } = require('./ffmpeg');
 const {
   CPU_ENCODERS,
   buildVideoPipeline,
+  buildDirectStreamArgs,
   defaultCodecLevel,
   pipelineLabel,
   toneMapSupport,
 } = require('./transcode_args');
 const { encoderCacheKey } = require('./transcode_probe');
-const { effectiveMaxKbps, isHdr } = require('./transcode_policy');
+const { effectiveMaxKbps, isHdr, canDirectStreamVideo } = require('./transcode_policy');
 const { LinkAdaptController, LINK_TIERS, LINK_SETTLE_MS } = require('./stream-adapt');
 const { SeekHistoryBuffer, AUDIO_RATE, MAX_QUEUED_AUDIO } = require('./stream-buffer');
 
@@ -98,7 +99,7 @@ class EncodedStream {
     tools, file, post, log, maxHeight, probed, onFail, stats, encoder, device,
     cpuEncoder: cpu, decodeMethod = 'none', onEncoderFail, audioEncoder = null,
     fitView = true, maxKbps = 0, maxBitrateMbps = 0, allowLinkAdapt = true, remote = true,
-    allowSoftwareFallback = true, hidden = false, allowOverlap = true,
+    allowSoftwareFallback = true, hidden = false, allowOverlap = true, rotation = 0,
   }) {
     // Packets and sound read, and the history for seeks back (src/stream-buffer.js). The fields it owns are
     // reachable as this.vAll, this.aNext ... (accessors below the class).
@@ -126,11 +127,15 @@ class EncodedStream {
     this.hdr = isHdr(probed && probed.video); // PQ/HLG/Dolby Vision 8.x: tone-mapped to SDR BT.709 (transcode_args.js)
     this.tonemapKind = null; // the tone-mapping path in use ('qsv', 'vaapi', 'libplacebo', 'opencl', 'cpu')
     this.badTonemap = new Set(); // paths that failed on this host: the next start picks the next best
+    this.rotation = Number(rotation) || 0;
+    this.directStreamFailed = false;
     this.hidden = hidden;
     this.allowOverlap = allowOverlap;
     this.playing = false;
     this.overlap = null;
     this.link = new LinkAdaptController(); // the quality ladder's state (src/stream-adapt.js)
+    if (this.pr && this.pr.video) this.sizeVideo();
+    this.pipelineMode = this.useDirectStream() ? 'direct-stream' : (CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode');
     this.waitingSince = 0;
     this.gen = 0;
     this.proc = null;
@@ -150,11 +155,23 @@ class EncodedStream {
   get settleAt() { return this.link.settleAt; }
   set settleAt(v) { this.link.settleAt = v; }
 
-  /** Always: re-encoded, scaled, 8-bit. */
-  lossy() { return true; }
+  /** Whether the current video output can copy the H.264 bitstream untouched instead of re-encoding. */
+  useDirectStream() {
+    if (this.directStreamFailed) return false;
+    return canDirectStreamVideo(this.pr && this.pr.video, {
+      tier: this.tier,
+      w: this.w,
+      h: this.h,
+      maxKbps: this.activeCapKbps(),
+      rotation: this.rotation,
+    });
+  }
+
+  /** False when Direct Stream copies the original H.264 bitstream untouched; true when re-encoding. */
+  lossy() { return this.pipelineMode !== 'direct-stream'; }
 
   // Keep a working hardware encoder across capped quality tiers (encoderArgs applies VBV maxrate/bufsize).
-  get videoEncoder() { return this.encoder; }
+  get videoEncoder() { return this.pipelineMode === 'direct-stream' ? 'copy' : this.encoder; }
 
   /** Effective bitrate ceiling in kb/s for the current tier, output size, and user cap. */
   activeCapKbps() {
@@ -225,6 +242,7 @@ class EncodedStream {
     return {
       encoder: this.videoEncoder,
       mode: this.pipelineMode,
+      lossy: this.lossy(),
       remote: this.remote,
       maxKbps: cap,
       hdrTonemap: this.hdr,
@@ -300,7 +318,11 @@ class EncodedStream {
     }
     this.sizeVideo();
     this.fps = v.fps || 30;
-    if (!this.hidden) this.startAt(0);
+    if (this.hidden) {
+      this.pipelineMode = this.useDirectStream() ? 'direct-stream' : (CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode');
+    } else {
+      this.startAt(0);
+    }
     const level = defaultCodecLevel(this.w, this.h, this.fps);
     this.post({
       type: 'streams',
@@ -368,9 +390,13 @@ class EncodedStream {
 
   args(t, audio) {
     const v = this.pr.video;
+    if (!audio && this.useDirectStream()) {
+      this.pipelineMode = 'direct-stream';
+      return buildDirectStreamArgs({ file: this.file, streamIndex: v.index, startTime: t });
+    }
     const cap = this.activeCapKbps();
     const pipe = audio ? { pre: [], vf: '', encArgs: [], mode: 'cpu' } : buildVideoPipeline({
-      encoder: this.videoEncoder,
+      encoder: this.encoder,
       device: this.device,
       decodeMethod: this.decodeMethod,
       gpuFilters: this.tools && this.tools.gpuFilters ? this.tools.gpuFilters : null,
@@ -488,7 +514,8 @@ class EncodedStream {
       }
       this.gotOutput = true;
       this.pending = this.pending.length ? Buffer.concat([this.pending, d]) : d;
-      this.buf.split(false);
+      if (proc.directStream) this.buf.splitMpegTs(false);
+      else this.buf.split(false);
       if (this.spliceVideo()) return;
       if (this.vAll.length - this.vNext > MAX_QUEUED_SECONDS * this.fps) proc.stdout.pause();
       this.answer();
@@ -502,11 +529,23 @@ class EncodedStream {
       this.proc = null;
       if (code !== 0 || signal) {
         const why = this.exitReason(proc, code, signal);
-        // Step 0: a failed hardware tone-mapper (QSV, VA-API, libplacebo, OpenCL) drops to the next best path.
+        // Step 0a: a failed hardware tone-mapper (QSV, VA-API, libplacebo, OpenCL) drops to the next best path.
         if (this.hdr && this.tonemapKind && this.tonemapKind !== 'cpu' && !this.badTonemap.has(this.tonemapKind)) {
           this.log(`live transcode: ${this.tonemapKind} HDR tone-mapping failed (${why}); trying the next tone-mapping path`);
           this.badTonemap.add(this.tonemapKind);
           this.restartVideo();
+          return;
+        }
+        // Step 0b: if Direct Stream (video copy) exited with an error, fall back seamlessly to re-encoding.
+        // External signals (e.g. SIGKILL) report failure instead of silently respawning.
+        if (proc.directStream) {
+          if (!this.directStreamFailed && !signal) {
+            this.log(`live transcode: direct stream failed (${why}); falling back to re-encoding (${this.encoder})`);
+            this.directStreamFailed = true;
+            this.restartVideo();
+            return;
+          }
+          this.fail(why);
           return;
         }
         // Step 1: if full GPU decode->scale->encode failed, drop GPU decode and retry CPU decode -> GPU encode.
@@ -521,7 +560,8 @@ class EncodedStream {
         else this.fail(why);
         return;
       }
-      this.buf.split(true);
+      if (proc.directStream) this.buf.splitMpegTs(true);
+      else this.buf.split(true);
       if (this.spliceVideo()) return;
       // If the active encoder finished with frames already queued past spliceT, keep the overlap pending until ready.
       if (this.overlap && this.vAll.some((p, i) => i >= this.vNext && p.t >= this.overlap.spliceT - 0.5 / this.fps)) {
@@ -648,6 +688,7 @@ class EncodedStream {
     this.vAll.length = this.vNext;
     this.frameIndex = 0;
     this.pending = Buffer.alloc(0);
+    this.buf.resetTs();
     this.gotOutput = false;
     this.link.resetForRestart();
     this.videoEnded = false;
@@ -690,8 +731,10 @@ class EncodedStream {
   }
 
   launch(t, audio = false) {
-    const proc = lowerPriority(spawn(this.tools.ffmpeg, this.args(t, audio), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+    const argv = this.args(t, audio);
+    const proc = lowerPriority(spawn(this.tools.ffmpeg, argv, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
     proc.t = t;
+    proc.directStream = !audio && this.pipelineMode === 'direct-stream';
     proc.err = { text: '' };
     proc.stderr.on('data', (d) => { proc.err.text = (proc.err.text + d).slice(-2000); });
     proc.on('error', (e) => { proc.err.text += String(e); });

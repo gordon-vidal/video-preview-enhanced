@@ -3,7 +3,8 @@
 // Keeps the existing RemoteStream exports intact for tests and remote-specific callers.
 
 const { EncodedStream, LINK_TIERS, PCM_KBPS, OPUS_KBPS, LINK_SETTLE_MS, audioEncoderFor, opusArgs } = require('./stream');
-const { encoderArgs, encoderFrame, GPU_ENCODERS, CPU_ENCODERS } = require('./transcode_args');
+const { encoderArgs, encoderFrame, buildDirectStreamArgs, GPU_ENCODERS, CPU_ENCODERS } = require('./transcode_args');
+const { canDirectStreamVideo } = require('./transcode_policy');
 const { probeEncoder, encoderFor, encoderFailed, cpuEncoder, ENCODER_KEY, renderNodes } = require('./transcode_probe');
 
 /** Formats worth streaming: everything the webview can't already decode on the GPU (8-bit 4:2:0 H.264, VP8). */
@@ -29,6 +30,8 @@ module.exports = {
   enabled,
   encoderArgs,
   encoderFrame,
+  buildDirectStreamArgs,
+  canDirectStreamVideo,
   renderNodes,
   probeEncoder,
   encoderFor,

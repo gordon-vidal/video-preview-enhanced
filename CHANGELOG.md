@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Live transcode pre-starts a replacement encoder for quality upgrades, bitrate cap changes and larger picture sizes during single-player playback.
-
+- Live transcode: host-side Direct Stream copies WebCodecs-compatible 8-bit SDR H.264 video without re-encoding (lossless video copy + Opus audio) when it fits the view and bitrate cap, falling back to re-encoding on ABR step-down or downscale.
 - Seek-bar drags show a keyframe preview and hold the main picture until an exact seek on release. Compare previews its clock tile.
 - Live transcode (remote): smarter adaptive bitrate (dual-EWMA bandwidth smoothing, 1-window panic step-down, 0.8 s upgrade guard with oscillation backoff, intermediate 1080p @ 5.5 Mb/s tier) and keep hardware GPU decoding active on stepped-down tiers.
 - **Remote HDR plays smoothly:** HDR clips (HDR10/PQ, HLG, Dolby Vision 8.x) in a Remote-SSH or container window now go through Live transcode and are tone-mapped to SDR BT.709 on the remote machine (hardware tone-mapping when the host has it, otherwise zscale + tonemap), labelled "HDR → SDR tone-mapped" in ⓘ; local HDR keeps the exact path unless Live transcode is Always.

@@ -2025,6 +2025,7 @@ class Session {
     this.native = new remotestream.EncodedStream({
       ...stream, tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), probed: pr,
       stats: !!logFile, maxBitrateMbps: c.transcodeMaxBitrate, allowLinkAdapt: isRemoteLink,
+      rotation: rotationOf(this.file),
       post: (msg) => {
         if (!signal.aborted) this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg });
       },
@@ -2039,8 +2040,8 @@ class Session {
       },
     });
     this.post({ type: 'libav', meta: { size: stat.size, duration: 0, label: '', native: true } });
-    // The one-time notice, unless the user chose Always themselves; never blocks playback.
-    if (c.transcode !== 'always') offers.maybeInformTranscode(this).catch((e) => log(`live transcode notice failed: ${e && e.message || e}`));
+    // The one-time lossy notice, unless the user chose Always themselves or video is Direct Stream (lossless copy).
+    if (c.transcode !== 'always' && this.native.lossy()) offers.maybeInformTranscode(this).catch((e) => log(`live transcode notice failed: ${e && e.message || e}`));
     return true;
   }
 

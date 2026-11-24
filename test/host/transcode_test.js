@@ -744,5 +744,115 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     }
   }
 
+  // ---- Direct Stream (Rank #4): eligibility, args, EncodedStream wiring, ABR fallback, real ffmpeg smoke ----
+  {
+    const baseH264 = { index: 0, codec: 'h264', pixFmt: 'yuv420p', depth: 8, width: 1920, height: 1080, fps: 30, bitRate: 5e6, rotation: 0 };
+    assert.strictEqual(policy.canDirectStreamVideo(baseH264, { tier: 0, h: 1080, maxKbps: 0 }), true, '8-bit 4:2:0 SDR H.264 fits uncapped');
+    assert.strictEqual(policy.canDirectStreamVideo({ ...baseH264, pixFmt: 'yuvj420p' }, { tier: 0, h: 1080, maxKbps: 8000 }), true, 'yuvj420p within cap');
+    assert.strictEqual(policy.canDirectStreamVideo(baseH264, { tier: 0, h: 1080, maxKbps: 4000 }), false, 'source bitrate exceeds cap');
+    assert.strictEqual(policy.canDirectStreamVideo(baseH264, { tier: 1, h: 1080, maxKbps: 0 }), false, 'ABR stepped-down tier');
+    assert.strictEqual(policy.canDirectStreamVideo(baseH264, { tier: 0, h: 720, maxKbps: 0 }), false, 'downscale needed');
+    assert.strictEqual(policy.canDirectStreamVideo({ ...baseH264, depth: 10 }, { tier: 0, h: 1080 }), false, '10-bit depth');
+    assert.strictEqual(policy.canDirectStreamVideo({ ...baseH264, pixFmt: 'yuv420p10le' }, { tier: 0, h: 1080 }), false, '10-bit pixFmt');
+    assert.strictEqual(policy.canDirectStreamVideo({ ...baseH264, pixFmt: 'yuv422p' }, { tier: 0, h: 1080 }), false, '4:2:2 chroma');
+    assert.strictEqual(policy.canDirectStreamVideo({ ...baseH264, colorTrc: 16 }, { tier: 0, h: 1080 }), false, 'HDR PQ');
+    assert.strictEqual(policy.canDirectStreamVideo({ ...baseH264, colorTransfer: 'arib-std-b67' }, { tier: 0, h: 1080 }), false, 'HDR HLG');
+    assert.strictEqual(policy.canDirectStreamVideo({ ...baseH264, dv: { profile: 8 } }, { tier: 0, h: 1080 }), false, 'Dolby Vision');
+    assert.strictEqual(policy.canDirectStreamVideo({ ...baseH264, codec: 'hevc' }, { tier: 0, h: 1080 }), false, 'HEVC');
+    assert.strictEqual(policy.canDirectStreamVideo({ ...baseH264, rotation: 90 }, { tier: 0, h: 1080 }), false, 'rotated video');
+    assert.strictEqual(policy.canDirectStreamVideo(baseH264, { tier: 0, h: 1080, rotation: 180 }), false, 'rotated opts');
+    assert.strictEqual(policy.canDirectStreamVideo(null, {}), false, 'null video');
+
+    // buildDirectStreamArgs & pipelineLabel
+    const dsArgs0 = args.buildDirectStreamArgs({ file: 'clip.mp4', streamIndex: 0, startTime: 0 });
+    assert.ok(dsArgs0.includes('-c:v') && dsArgs0[dsArgs0.indexOf('-c:v') + 1] === 'copy');
+    assert.ok(dsArgs0.includes('-bsf:v') && dsArgs0[dsArgs0.indexOf('-bsf:v') + 1] === 'h264_mp4toannexb');
+    assert.ok(dsArgs0.includes('-f') && dsArgs0[dsArgs0.indexOf('-f') + 1] === 'mpegts');
+    assert.ok(dsArgs0.includes('-copyts') && dsArgs0.includes('-start_at_zero'));
+    assert.ok(!dsArgs0.includes('-ss'), 'no -ss at startTime 0');
+    const dsArgsSeek = args.buildDirectStreamArgs({ file: 'clip.mkv', streamIndex: 2, startTime: 5.5 });
+    assert.ok(dsArgsSeek.includes('-ss'));
+    assert.strictEqual(dsArgsSeek[dsArgsSeek.indexOf('-map') + 1], '0:2');
+    const dsLabel = args.pipelineLabel({ encoder: 'copy', mode: 'direct-stream', remote: true, w: 1920, h: 1080, fps: 30 });
+    assert.match(dsLabel, /Direct stream \(video copy\).*1920×1080 30 fps.*lossless/);
+    assert.ok(!/lossy/i.test(dsLabel), 'Direct Stream label is not lossy');
+
+    // EncodedStream wiring: Direct Stream at tier 0 -> re-encode on ABR step-down or tight cap -> runtime fallback
+    const ds = new EncodedStream({
+      tools: {}, file: 'clip.mp4', post: () => {}, log: () => {}, remote: true, maxHeight: 1080,
+      encoder: 'h264_nvenc', cpuEncoder: 'libx264',
+      probed: { duration: 10, video: baseH264, audio: { index: 1, codec: 'aac' } },
+    });
+    assert.strictEqual(ds.pipelineMode, 'direct-stream');
+    assert.strictEqual(ds.videoEncoder, 'copy');
+    assert.strictEqual(ds.lossy(), false, 'Direct Stream is lossless (suppresses lossy notice)');
+    const info0 = ds.transcodeInfo();
+    assert.strictEqual(info0.mode, 'direct-stream');
+    assert.strictEqual(info0.encoder, 'copy');
+    assert.strictEqual(info0.lossy, false);
+    assert.match(info0.label, /Direct stream \(video copy\)/);
+    const a0 = ds.args(0, false);
+    assert.strictEqual(a0[a0.indexOf('-c:v') + 1], 'copy');
+    // ABR step-down switches seamlessly to re-encoding.
+    ds.tier = 1;
+    ds.sizeVideo();
+    const a1 = ds.args(0, false);
+    assert.strictEqual(a1[a1.indexOf('-c:v') + 1], 'h264_nvenc');
+    assert.strictEqual(ds.videoEncoder, 'h264_nvenc');
+    assert.strictEqual(ds.lossy(), true);
+    // Returning to tier 0 restores Direct Stream; tightening bitrate cap below source switches back to re-encoding.
+    ds.tier = 0;
+    ds.sizeVideo();
+    assert.strictEqual(ds.args(0, false)[ds.args(0, false).indexOf('-c:v') + 1], 'copy');
+    assert.strictEqual(ds.lossy(), false);
+    ds.setMaxBitrateMbps(2);
+    assert.strictEqual(ds.args(0, false)[ds.args(0, false).indexOf('-c:v') + 1], 'h264_nvenc');
+    assert.strictEqual(ds.lossy(), true);
+    ds.dispose();
+
+    // Real-ffmpeg smoke test on test/media/h264_8_1080p.mp4 and test/media/containers/h264_aac.mkv (both have B-frames).
+    const tools = await ff.locateTools(process.env.VPE_FFMPEG || '', '');
+    if (tools) {
+      const clips = [
+        path.join(__dirname, '..', 'media', 'h264_8_1080p.mp4'),
+        path.join(__dirname, '..', 'media', 'containers', 'h264_aac.mkv'),
+      ];
+      for (const clip of clips) {
+        const pr = await ff.probe(tools, clip);
+        const packets = [];
+        const fails = [];
+        let done;
+        const ended = new Promise((r) => { done = r; });
+        const st = new EncodedStream({
+          tools, file: clip, probed: pr, remote: true, maxHeight: 1080,
+          encoder: 'libx264', cpuEncoder: 'libx264',
+          log: () => {}, onFail: (e) => { fails.push(e); done(); },
+          post: (m) => {
+            if (m.type === 'batch') {
+              packets.push(...m.video);
+              if (m.eof) done();
+              else setImmediate(() => st.handle({ type: 'more', gen: 0, limit: 1 << 20 }));
+            }
+          },
+        });
+        assert.strictEqual(st.pipelineMode, 'direct-stream', `${path.basename(clip)} uses direct-stream`);
+        assert.strictEqual(st.videoEncoder, 'copy');
+        assert.strictEqual(st.lossy(), false);
+        st.open();
+        st.handle({ type: 'more', gen: 0, limit: 1 << 20 });
+        await ended;
+        st.dispose();
+        assert.deepStrictEqual(fails, [], `${path.basename(clip)} no failures`);
+        assert.ok(packets.length >= 24, `${path.basename(clip)} delivered ${packets.length} packets`);
+        assert.strictEqual(packets[0].key, true, `${path.basename(clip)} starts on IDR keyframe`);
+        assert.ok(Math.abs(packets[0].t) < 0.01, `${path.basename(clip)} first packet PTS near 0 (got ${packets[0].t})`);
+        assert.ok(args.parseSpsProfileLevel(packets[0].data), `${path.basename(clip)} keyframe carries in-band SPS`);
+        // Verify B-frame PTS are preserved (non-monotonic decode order, distinct timestamps).
+        const hasReorder = packets.some((p, i) => i > 0 && p.t < packets[i - 1].t);
+        assert.strictEqual(hasReorder, true, `${path.basename(clip)} preserves real B-frame PTS order`);
+      }
+    }
+  }
+
   console.log('transcode_test: ok');
 })().catch((e) => { console.error(e); process.exit(1); });
