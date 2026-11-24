@@ -4,6 +4,7 @@
 
 - Seek-bar drags show a keyframe preview and hold the main picture until an exact seek on release. Compare previews its clock tile.
 - Live transcode (remote): smarter adaptive bitrate (dual-EWMA bandwidth smoothing, 1-window panic step-down, 0.8 s upgrade guard with oscillation backoff, intermediate 1080p @ 5.5 Mb/s tier) and keep hardware GPU decoding active on stepped-down tiers.
+- **Remote HDR plays smoothly:** HDR clips (HDR10/PQ, HLG, Dolby Vision 8.x) in a Remote-SSH or container window now go through Live transcode and are tone-mapped to SDR BT.709 on the remote machine (hardware tone-mapping when the host has it, otherwise zscale + tonemap), labelled "HDR → SDR tone-mapped" in ⓘ; local HDR keeps the exact path unless Live transcode is Always.
 
 ## 0.10.1 (2026-11-24)
 
