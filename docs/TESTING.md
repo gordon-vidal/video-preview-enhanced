@@ -69,8 +69,9 @@ was waited for.
   (3.5 x for native, remote, URL, HDR and many-video scenarios; min 90 s). Past it the scenario ends and reports
   `TIMEOUT after N s in <scenario>/<case>; waiting for <thing>`. Waits: a hook answer 10 s, the extension
   activating 45 s, the first frame of an ordinary clip 15 s (4K, native, remote, URL and HDR keep their longer
-  waits), other waits as the case sets them. A page error still ends a wait at once; an instance without WebGL2 is
-  retried, not failed. `VPE_BUDGET_SCALE=2` doubles every budget on a slow machine.
+  waits; the repeated-open `playback/resume/position` correctness case allows 30 s after an
+  intermittent 15 s open timeout), other waits as the case sets them. A page error still ends a wait at once;
+  an instance without WebGL2 is retried, not failed. `VPE_BUDGET_SCALE=2` doubles every budget on a slow machine.
 - The limits are measured on the maintainer's desktop. On CI (`CI` set) every timeout, stall limit and budget is
   multiplied by 3: GitHub's Windows runners take 2-3x as long per file (4 files at once). `VPE_TIME_SCALE=<n>`
   sets the factor anywhere.

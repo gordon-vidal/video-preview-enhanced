@@ -104,4 +104,11 @@ those by hand in a visible window (Dark Modern, sidebar narrowed, under 1280 px 
 about 5 MB). Footage must be openly licensed; add the credit to the page (the current shots use
 *Big Buck Bunny* and *Tears of Steel*, CC BY 3.0).
 
+For a matching Dark Modern, Light Modern and High Contrast pack, run
+`node tools/theme-screenshots.js <out-dir> [video-file]` (default: the generated
+`test/media/cases/long_20s.mp4` fixture). It captures `dark.png`, `light.png` and
+`high-contrast.png` sequentially on the hidden desktop through the same screenshot runner
+and queue. Existing files with these names are replaced. Use `--plan` to print the paths
+and themes without starting VS Code or creating files.
+
 See [screenshot notes](notes/screenshots.md) for the footage and the remaining manual captures.

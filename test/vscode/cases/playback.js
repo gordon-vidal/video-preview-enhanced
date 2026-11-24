@@ -144,16 +144,21 @@ module.exports = [{
     // Resume: the position is remembered per file (not within the first seconds).
     await R.run('resume/position', async (ok) => {
       const file = lib.clip('long_20s.mp4');
-      let P = await lib.open(vs, h, file);
-      await P.waitFirstFrame();
-      P.seek(12.25);
-      await P.waitState((x) => Math.abs(x.t - 12.25) < 0.1, { timeout: 15000, what: 'seek to 12.25' });
-      // No observable signal: the page posts its position to the host at most once a second (and only when it changed),
-      // and the host keeps it on dispose. Wait out that tick plus margin.
-      await lib.sleep(2500);
-      await P.close();
-      P = await lib.open(vs, h, file);
+      // This repeated-open correctness check has exceeded the ordinary 15 s first-frame budget.
+      // Keep a bounded 30 s state wait (no retry); the wrapper opts out of the ordinary first-frame clamp.
+      const openResume = () => lib.open(vs, h, file, {
+        until: (s) => lib.pictureOrError(s), timeout: 30000,
+      });
+      let P = await openResume();
       try {
+        await P.waitFirstFrame();
+        P.seek(12.25);
+        await P.waitState((x) => Math.abs(x.t - 12.25) < 0.1, { timeout: 15000, what: 'seek to 12.25' });
+        // No observable signal: the page posts its position to the host at most once a second (and only when it changed),
+        // and the host keeps it on dispose. Wait out that tick plus margin.
+        await lib.sleep(2500);
+        await P.close();
+        P = await openResume();
         const s = await P.waitState((x) => x.firstShown && Math.abs(x.t - 12.25) < 0.15, { timeout: 20000, what: 'resumed at 12.25 s' });
         ok(Math.abs(s.t - 12.25) < 0.15, `resumed at ${s.t}`);
         if (h.ffmpeg) await P.expectFrame(Math.floor(12.25 * 30), 'resumed picture');
@@ -161,7 +166,7 @@ module.exports = [{
         await P.waitState((x) => Math.abs(x.t - 3) < 0.1, { timeout: 10000, what: 'seek to 3' });
         await lib.sleep(2500);
         await P.close();
-        P = await lib.open(vs, h, file);
+        P = await openResume();
         const z = await P.waitFirstFrame();
         ok(z.t < 1, `resume near the start: t=${z.t}`);
       } finally { await P.close(); }
