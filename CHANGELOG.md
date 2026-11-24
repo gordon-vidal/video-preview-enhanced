@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Live transcode stepping back over slow links:** after a pause, stepping back through a GOP is served from memory for the whole GOP (it kept only the last few pictures), a step back waits briefly for those pictures instead of sending the same GOP again, and quick wheel notches during a remote seek send one seek once the wheel rests instead of one every 80 ms.
+- **Opening a video:** the time no longer counts up while the first picture loads and then jumps back to 0.
 - **Seek-bar previews during Live transcode:** hovering or dragging the seek bar now shows keyframe previews while Live transcode is active (local and Remote-SSH files), decoded by a separate short ffmpeg on the host and cached per keyframe range; URL tabs still have none.
 - **Live transcode seeks:** Jump back to recently played regions using cached picture and sound, with no ffmpeg restart on a cache hit.
 - **Compare deep links & AI agent guide:** `vscode://gordon-vidal.video-preview-enhanced/compare?frame=N&mode=split&file=...&file=...` opens two or more videos in a synchronized Compare view at the requested frame/timestamp and layout (`grid`, `spotlight`, or `split`), or reveals and seeks an already-open Compare panel for those files. Added `docs/agents.md` with a copy-paste prompt for `AGENTS.md` / `CLAUDE.md`.
