@@ -32,12 +32,17 @@ function resolveSetting(o = {}) {
   return MODES.includes(o.transcode) ? /** @type {any} */ (o.transcode) : 'auto';
 }
 
-/** Whether a probed video stream is HDR (PQ/HDR10, HLG, or Dolby Vision side data). Phase 1 keeps HDR on the exact/raw path. */
+/** Whether a probed video stream is HDR (PQ/HDR10, HLG, or Dolby Vision side data). */
 function isHdr(v) {
   if (!v) return false;
   if (v.dv) return true;
   if (v.colorTrc === 16 || v.colorTrc === 18) return true;
   return /^(smpte2084|arib-std-b67)$/i.test(String(v.colorTransfer || ''));
+}
+
+/** Dolby Vision profile 5 (IPTPQc2, no HDR10/HLG base layer): ordinary tone-mapping would turn it purple/green. */
+function isDvProfile5(v) {
+  return !!(v && v.dv && v.dv.profile === 5) || /^ipt/i.test(String((v && v.colorSpace) || ''));
 }
 
 /**
@@ -136,17 +141,27 @@ function compareTileSize(video, maxHeight, { w, h, cols, rows, factor, zoom, act
  *   viewHeight?: number,
  *   forced?: boolean,
  *   compare?: boolean,
+ *   toneMap?: { cpu: boolean, any: boolean },
  * }} o
- * @returns {{ action: 'stream'|'skip', reason: string }}
+ * `toneMap` is the host's tone-mapping support (src/transcode_args.js toneMapSupport). HDR (PQ, HLG, Dolby Vision 8.x)
+ * streams only when it is available: over a remote link in auto/always (the remote window cannot show HDR anyway) and
+ * in `always` elsewhere; a local or WSL window in auto keeps HDR on the exact native/WebGPU path.
+ * @returns {{ action: 'stream'|'skip', reason: string, hdrTonemap?: boolean }}
  */
 function shouldTranscodeOnOpen(o) {
   const { mode, remote, video, maxBitrateMbps = 0, viewHeight = 0, forced = false, compare = false } = o;
   if (!video) return { action: 'skip', reason: 'no video stream' };
-  if (isHdr(video)) return { action: 'skip', reason: 'HDR stays on exact/raw path in v1' };
+  const isRemoteLink = !!remote && remote !== 'wsl';
+  if (isHdr(video)) {
+    if (mode === 'off' && !forced) return { action: 'skip', reason: 'transcode off' };
+    if (!(isRemoteLink || mode === 'always' || forced)) return { action: 'skip', reason: 'local HDR stays on the exact native path' };
+    if (isDvProfile5(video)) return { action: 'skip', reason: 'Dolby Vision profile 5 cannot be tone-mapped faithfully' };
+    if (!(o.toneMap && o.toneMap.any)) return { action: 'skip', reason: 'no HDR tone-mapping filter in this ffmpeg' };
+    return { action: 'stream', hdrTonemap: true, reason: `HDR tone-mapped to SDR (${isRemoteLink ? `remote window (${remote})` : 'forced'}, transcode ${mode})` };
+  }
   if (forced) return { action: 'stream', reason: 'enabled for this session' };
   if (mode === 'off') return { action: 'skip', reason: 'transcode off' };
 
-  const isRemoteLink = !!remote && remote !== 'wsl';
   if (isRemoteLink) {
     if (!remoteQualifies(video, { maxBitrateMbps, viewHeight })) {
       return { action: 'skip', reason: '8-bit H.264/VP8 within link budget plays directly on WebCodecs' };
@@ -218,6 +233,7 @@ module.exports = {
   ZOOM_UPGRADE_THRESHOLD,
   resolveSetting,
   isHdr,
+  isDvProfile5,
   exceedsRawTransfer,
   remoteQualifies,
   autoMaxKbps,

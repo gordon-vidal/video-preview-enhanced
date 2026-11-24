@@ -138,8 +138,35 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
   assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'off', remote: 'ssh-remote', video: h264High }).action, 'skip');
   // Locally, 8-bit H.264 always stays direct on WebCodecs.
   assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'always', remote: undefined, video: h264High }).action, 'skip');
-  // HDR stays on exact/raw path in v1.
-  assert.strictEqual(policy.shouldTranscodeOnOpen({ mode: 'always', remote: 'ssh-remote', video: { codec: 'hevc', pixFmt: 'yuv420p10le', width: 3840, height: 2160, colorTrc: 16 } }).action, 'skip');
+  // HDR -> SDR tone-mapping (research note Rank 2): remote links and `always` stream it when ffmpeg can tone-map;
+  // a local or WSL window in auto keeps HDR on the exact native/WebGPU path.
+  {
+    const pq = { codec: 'hevc', pixFmt: 'yuv420p10le', width: 3840, height: 2160, fps: 30, colorTransfer: 'smpte2084' };
+    const hlg = { ...pq, colorTransfer: 'arib-std-b67' };
+    const dv81 = { ...pq, colorTransfer: '', dv: { profile: 8, compat: 1 } };
+    const dv84 = { ...pq, colorTransfer: '', dv: { profile: 8, compat: 4 } };
+    const dv5 = { ...pq, colorTransfer: '', colorSpace: 'ipt-c2', dv: { profile: 5, compat: 0 } };
+    const cpu = { cpu: true, any: true };
+    const act = (o) => policy.shouldTranscodeOnOpen({ mode: 'auto', toneMap: cpu, ...o });
+    for (const v of [pq, hlg, dv81, dv84]) {
+      const d = act({ remote: 'ssh-remote', video: v });
+      assert.strictEqual(d.action, 'stream', `remote ${JSON.stringify(v)}`);
+      assert.strictEqual(d.hdrTonemap, true);
+      assert.strictEqual(act({ remote: 'ssh-remote', mode: 'always', video: v }).action, 'stream');
+      assert.strictEqual(act({ remote: undefined, mode: 'always', video: v }).action, 'stream', 'always tone-maps locally too');
+      assert.strictEqual(act({ remote: undefined, video: v }).action, 'skip', 'local auto keeps exact HDR');
+      assert.strictEqual(act({ remote: 'wsl', video: v }).action, 'skip', 'WSL window counts as local');
+      assert.strictEqual(act({ remote: 'ssh-remote', mode: 'off', video: v }).action, 'skip', 'off never streams');
+      assert.strictEqual(act({ remote: 'ssh-remote', toneMap: { cpu: false, any: false }, video: v }).action, 'skip', 'no filter: no stream');
+      assert.strictEqual(act({ remote: 'ssh-remote', toneMap: undefined, video: v }).action, 'skip');
+      assert.strictEqual(act({ remote: 'ssh-remote', compare: true, video: v }).action, 'stream', 'Compare tone-maps remote HDR too');
+    }
+    assert.strictEqual(act({ remote: 'ssh-remote', mode: 'always', video: dv5 }).action, 'skip', 'Dolby Vision profile 5 stays skipped');
+    assert.strictEqual(policy.isDvProfile5(dv5), true);
+    assert.strictEqual(policy.isDvProfile5(dv81), false);
+    // Local HDR is never moved to Live transcode by the stall detector.
+    assert.strictEqual(policy.evaluateLocalStall({ mode: 'auto', slowWindows: 3, hostKeepsUp: true, playing: true, rate: 1, hidden: false, sinceEventMs: 2000, video: pq, alreadyTranscoding: false }), 'none');
+  }
 
   // Local stall detector separates transfer bottleneck (hostKeepsUp=true) from decode bottleneck (hostKeepsUp=false).
   const baseStall = {
@@ -509,6 +536,212 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     const tieredChip = controls.remoteChipState({ remote: true, active: true, transcode: { h: 720, maxKbps: 3000, tier: 1 } });
     assert.strictEqual(tieredChip.text, 'Live · 720p ↓ · 3 Mb/s');
     assert.strictEqual(tieredChip.adapting, true);
+  }
+
+  // ---- HDR -> SDR tone-mapping: filter inventory, pipeline choice, label, info ----
+  {
+    const sample = [
+      'Filters:',
+      ' ... libplacebo        N->V       Apply various GPU filters from libplacebo',
+      ' .S. tonemap           V->V       Conversion to/from different dynamic ranges.',
+      ' ... tonemap_opencl    V->V       Perform HDR to SDR conversion with tonemapping.',
+      ' ... tonemap_vaapi     V->V       VAAPI VPP for tone-mapping',
+      ' .S. zscale            V->V       Apply resizing, colorspace and bit depth conversion.',
+      ' ... hwupload          V->V       Upload a normal frame to a hardware frame',
+      ' ... tonemap_cuda_x    V->V       not a known filter',
+    ].join('\n');
+    assert.deepStrictEqual([...ff.parseGpuFilters(sample)].sort(),
+      ['hwupload', 'libplacebo', 'tonemap', 'tonemap_opencl', 'tonemap_vaapi', 'zscale']);
+    assert.ok(ff.TOOLS_CACHE_VER >= 3, 'tools cache version bumped so old inventories re-probe for tone-mapping filters');
+    assert.deepStrictEqual(args.toneMapSupport(new Set(['zscale', 'tonemap'])), { cpu: true, any: true });
+    assert.deepStrictEqual(args.toneMapSupport(new Set(['zscale'])), { cpu: false, any: false }, 'zscale alone cannot tone-map');
+    assert.deepStrictEqual(args.toneMapSupport(new Set(['tonemap_opencl'])), { cpu: false, any: false }, 'OpenCL needs hwupload and hwdownload');
+    assert.strictEqual(args.toneMapSupport(new Set(['vpp_qsv'])).any, true);
+    assert.strictEqual(args.toneMapSupport(new Set(['tonemap_vaapi'])).any, true);
+    assert.strictEqual(args.toneMapSupport(new Set(['libplacebo'])).any, true);
+    assert.strictEqual(args.toneMapSupport(null).any, false);
+
+    const pq = { codec: 'hevc', pixFmt: 'yuv420p10le', colorTransfer: 'smpte2084', colorSpace: 'bt2020nc', width: 3840, height: 2160 };
+    const hlg = { ...pq, colorTransfer: 'arib-std-b67' };
+    const dv84 = { ...pq, colorTransfer: '', dv: { profile: 8, compat: 4 } };
+    const sdr = { codec: 'hevc', pixFmt: 'yuv420p10le', colorTransfer: 'bt709', width: 3840, height: 2160 };
+    const mk = (video, o) => args.buildVideoPipeline({ video, w: 1920, h: 1080, fps: 30, maxKbps: 8000, decodeMethod: 'none', ...o });
+    const cpuSet = new Set(['zscale', 'tonemap', 'scale_cuda']);
+
+    // CPU path: scale first, explicit BT.2020 input tags, hable, BT.709 limited out, pixel format for the encoder.
+    const cpu = mk(pq, { encoder: 'libx264', gpuFilters: cpuSet });
+    assert.strictEqual(cpu.tonemap, 'cpu');
+    assert.strictEqual(cpu.mode, 'cpu');
+    assert.ok(cpu.vf.startsWith('scale=1920:1080:flags=bilinear,zscale=tin=smpte2084:min=bt2020nc:pin=bt2020:rin=tv:t=linear:npl=100,format=gbrpf32le,'));
+    assert.ok(cpu.vf.endsWith('zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p'), cpu.vf);
+    assert.ok(mk(hlg, { encoder: 'libx264', gpuFilters: cpuSet }).vf.includes('zscale=tin=arib-std-b67:'), 'HLG input transfer');
+    assert.ok(mk(dv84, { encoder: 'libx264', gpuFilters: cpuSet }).vf.includes('zscale=tin=arib-std-b67:'), 'DV 8.4 has an HLG base');
+    // NVENC without tonemap_cuda (stock LGPL builds): CPU tone-map, never scale_cuda on HDR.
+    const nv = mk(pq, { encoder: 'h264_nvenc', decodeMethod: 'cuda', gpuFilters: cpuSet });
+    assert.strictEqual(nv.tonemap, 'cpu');
+    assert.strictEqual(nv.mode, 'gpu-encode');
+    assert.deepStrictEqual(nv.pre, []);
+    assert.ok(!/scale_cuda/.test(nv.vf));
+    assert.ok(mk(pq, { encoder: 'h264_amf', gpuFilters: cpuSet }).vf.endsWith(',format=nv12'), 'GPU encoders that want nv12');
+    const vaCpu = mk(pq, { encoder: 'h264_vaapi', device: '/dev/dri/renderD129', gpuFilters: cpuSet });
+    assert.deepStrictEqual(vaCpu.pre, ['-vaapi_device', '/dev/dri/renderD129']);
+    assert.ok(vaCpu.vf.endsWith(',format=nv12,hwupload'), vaCpu.vf);
+    // Hardware first, matched to the device.
+    const qsvSet = new Set(['vpp_qsv', 'zscale', 'tonemap']);
+    const qsv = mk(pq, { encoder: 'h264_qsv', decodeMethod: 'qsv', gpuFilters: qsvSet });
+    assert.strictEqual(qsv.mode, 'gpu-full');
+    assert.strictEqual(qsv.tonemap, 'qsv');
+    assert.strictEqual(qsv.vf, 'vpp_qsv=w=1920:h=1080:format=nv12:tonemap=1');
+    assert.strictEqual(mk(pq, { encoder: 'h264_qsv', decodeMethod: 'qsv', gpuFilters: qsvSet, badTonemap: new Set(['qsv']) }).tonemap, 'cpu', 'a failed path is skipped');
+    const va = mk(pq, { encoder: 'h264_vaapi', decodeMethod: 'vaapi', gpuFilters: new Set(['scale_vaapi', 'tonemap_vaapi']) });
+    assert.strictEqual(va.mode, 'gpu-full');
+    assert.strictEqual(va.tonemap, 'vaapi');
+    assert.strictEqual(va.vf, 'scale_vaapi=w=1920:h=1080,tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709');
+    assert.strictEqual(mk(pq, { encoder: 'h264_vaapi', decodeMethod: 'vaapi', gpuFilters: new Set(['scale_vaapi', 'zscale', 'tonemap']) }).tonemap, 'cpu',
+      'scale_vaapi without tonemap_vaapi must not ship un-mapped HDR');
+    const lpSet = new Set(['libplacebo', 'zscale', 'tonemap']);
+    const lp = mk(pq, { encoder: 'h264_nvenc', gpuFilters: lpSet });
+    assert.strictEqual(lp.tonemap, 'libplacebo');
+    assert.match(lp.vf, /^libplacebo=w=1920:h=1080:tonemapping=bt\.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p$/);
+    assert.strictEqual(mk(pq, { encoder: 'libx264', gpuFilters: lpSet }).tonemap, 'cpu', 'software encode stays on the CPU path');
+    const oclSet = new Set(['tonemap_opencl', 'hwupload', 'hwdownload', 'zscale', 'tonemap']);
+    const ocl = mk(pq, { encoder: 'h264_nvenc', gpuFilters: oclSet });
+    assert.strictEqual(ocl.tonemap, 'opencl');
+    assert.deepStrictEqual(ocl.pre, ['-init_hw_device', 'opencl=ocl', '-filter_hw_device', 'ocl']);
+    assert.match(ocl.vf, /hwupload,tonemap_opencl=tonemap=hable.*hwdownload,format=nv12,format=yuv420p$/);
+    assert.strictEqual(mk(pq, { encoder: 'h264_nvenc', gpuFilters: new Set([...lpSet, ...oclSet]), badTonemap: new Set(['libplacebo']) }).tonemap, 'opencl');
+    // Nothing available: refuse instead of shipping HDR code values as SDR.
+    assert.throws(() => mk(pq, { encoder: 'libx264', gpuFilters: new Set(['scale_cuda']) }), /tone-mapping/);
+    // SDR is unchanged.
+    const plain = mk(sdr, { encoder: 'libx264', gpuFilters: cpuSet });
+    assert.strictEqual(plain.tonemap, null);
+    assert.strictEqual(plain.vf, 'scale=1920:1080:flags=bilinear,format=yuv420p');
+
+    // Label and ⓘ info.
+    assert.match(args.pipelineLabel({ encoder: 'libx264', mode: 'cpu', remote: true, w: 1920, h: 1080, fps: 30, hdrTonemap: true }), /8-bit, HDR → SDR tone-mapped, lossy/);
+    assert.doesNotMatch(args.pipelineLabel({ encoder: 'libx264', mode: 'cpu', remote: true }), /tone-mapped/);
+    const mkProc = () => {
+      const p = new EventEmitter();
+      p.stdout = new EventEmitter();
+      p.stdout.pause = () => {};
+      p.stdout.isPaused = () => false;
+      p.stdout.destroy = () => {};
+      p.stderr = new EventEmitter();
+      p.err = { text: 'Error: tonemap failed' };
+      p.kill = () => {};
+      return p;
+    };
+    const posts = [];
+    const hs = new EncodedStream({
+      tools: { gpuFilters: new Set(['zscale', 'tonemap']) }, file: 'x.mp4', post: (m) => posts.push(m), log: () => {}, remote: true,
+      encoder: 'libx264', cpuEncoder: 'libx264', probed: { duration: 5, video: { index: 0, ...pq, fps: 30 }, audio: null },
+    });
+    hs.launch = mkProc;
+    hs.open();
+    const info = posts.find((m) => m.type === 'streams').info.transcode;
+    assert.strictEqual(info.hdrTonemap, true);
+    assert.match(info.label, /HDR → SDR tone-mapped/);
+    const full = hs.args(0, false);
+    assert.strictEqual(full[full.indexOf('-color_trc') + 1], 'bt709');
+    assert.strictEqual(full[full.indexOf('-color_primaries') + 1], 'bt709');
+    assert.strictEqual(full[full.indexOf('-colorspace') + 1], 'bt709');
+    assert.strictEqual(hs.transcodeInfo().tonemap, 'cpu');
+    hs.dispose();
+    // SDR streams carry no tone-map label.
+    const sdrStream = new EncodedStream({
+      tools: {}, file: 'x.mp4', post: () => {}, log: () => {}, remote: true, encoder: 'libx264', cpuEncoder: 'libx264',
+      probed: { duration: 5, video: { index: 0, ...sdr, fps: 30 }, audio: null },
+    });
+    assert.strictEqual(sdrStream.transcodeInfo().hdrTonemap, false);
+    assert.doesNotMatch(sdrStream.transcodeInfo().label, /tone-mapped/);
+    sdrStream.dispose();
+    // No tone-mapping filter at all: fails cleanly before any ffmpeg starts.
+    let failed = null;
+    let spawned = 0;
+    const noTm = new EncodedStream({
+      tools: { gpuFilters: new Set(['scale_cuda']) }, file: 'x.mp4', post: () => {}, log: () => {}, remote: true, encoder: 'libx264',
+      cpuEncoder: 'libx264', onFail: (w) => { failed = w; }, probed: { duration: 5, video: { index: 0, ...pq, fps: 30 }, audio: null },
+    });
+    noTm.launch = () => { spawned++; return mkProc(); };
+    noTm.open();
+    assert.match(failed || '', /zscale and tonemap/);
+    assert.strictEqual(spawned, 0);
+    noTm.dispose();
+    // A failing hardware tone-mapper drops to the next path (here QSV -> CPU) on the restart.
+    const procs = [];
+    const fb = new EncodedStream({
+      tools: { gpuFilters: qsvSet }, file: 'x.mp4', post: () => {}, log: () => {}, remote: true, encoder: 'h264_qsv', cpuEncoder: 'libx264',
+      decodeMethod: 'qsv', probed: { duration: 5, video: { index: 0, ...pq, fps: 30 }, audio: null },
+    });
+    fb.launch = (t, audio) => {
+      const p = mkProc();
+      procs.push(p);
+      if (!audio) fb.args(t, false); // the real launch builds the arguments, which pick the path
+      return p;
+    };
+    fb.open();
+    assert.strictEqual(fb.tonemapKind, 'qsv');
+    procs[0].emit('close', 1, null);
+    assert.ok(fb.badTonemap.has('qsv'), 'the failed QSV tone-mapper is not tried again');
+    assert.strictEqual(procs.length, 2, 'restarted once');
+    assert.strictEqual(fb.tonemapKind, 'cpu');
+    fb.dispose();
+  }
+
+  // ---- Real ffmpeg: the tone-map filtergraphs are accepted and give valid SDR H.264 (skipped without ffmpeg / LFS clips) ----
+  {
+    const { spawnSync } = require('child_process');
+    const fs = require('fs');
+    const os = require('os');
+    const tools = await ff.locateTools(process.env.VPE_FFMPEG || '', '');
+    const encs = tools ? spawnSync(tools.ffmpeg, ['-hide_banner', '-encoders'], { encoding: 'utf8' }).stdout || '' : '';
+    const enc = /\blibx264\b/.test(encs) ? 'libx264' : /\blibopenh264\b/.test(encs) ? 'libopenh264' : null;
+    const hasCpuTm = !!tools && tools.gpuFilters.has('zscale') && tools.gpuFilters.has('tonemap');
+    if (!hasCpuTm || !enc) console.log('transcode_test: tone-map ffmpeg smoke skipped (needs ffmpeg with zscale, tonemap and an H.264 encoder)');
+    else {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-tm-'));
+      try {
+        for (const [name, trc] of [['hevc_10_pq_2160p.mp4', 'smpte2084'], ['hevc_10_hlg_2160p.mp4', 'arib-std-b67']]) {
+          const clip = path.join(__dirname, '..', 'media', name);
+          if (!fs.existsSync(clip) || fs.statSync(clip).size < 4096) { console.log(`transcode_test: ${name} not available (Git LFS), smoke skipped`); continue; }
+          const pr = await ff.probe(tools, clip);
+          assert.strictEqual(pr.video.colorTransfer, trc);
+          assert.strictEqual(policy.isHdr(pr.video), true);
+          const s = new EncodedStream({
+            tools: { ffmpeg: tools.ffmpeg, gpuFilters: new Set(['zscale', 'tonemap']), legacy: tools.legacy }, file: clip, post: () => {}, log: () => {},
+            remote: true, maxHeight: 540, encoder: enc, cpuEncoder: enc, probed: pr,
+          });
+          s.fps = pr.video.fps || 30;
+          s.sizeVideo();
+          // The real arguments, with the pipe replaced by a file and a few frames (the SDR tags are part of them).
+          const a = s.args(0, false);
+          assert.strictEqual(s.tonemapKind, 'cpu');
+          const out = path.join(dir, `${name}.h264`);
+          const r = spawnSync(tools.ffmpeg, [...a.slice(0, a.indexOf('pipe:1')), '-frames:v', '6', '-y', out], { encoding: 'utf8', timeout: 120000 });
+          assert.strictEqual(r.status, 0, `${name}: ${r.stderr}`);
+          const p = spawnSync(tools.ffprobe, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
+            '-show_entries', 'stream=codec_name,pix_fmt,height,nb_read_frames', '-of', 'json', out], { encoding: 'utf8' });
+          const st = JSON.parse(p.stdout).streams[0];
+          assert.strictEqual(st.codec_name, 'h264', name);
+          assert.strictEqual(st.pix_fmt, 'yuv420p');
+          assert.strictEqual(st.height, 540);
+          assert.strictEqual(Number(st.nb_read_frames), 6);
+          s.dispose();
+          // Hardware-matched paths (libplacebo, OpenCL) only where this host's ffmpeg has the filter and a device: a
+          // host without the device must not fail the suite (the stream falls back at run time), so only report.
+          const hwSet = [['libplacebo', ['libplacebo']], ['opencl', ['tonemap_opencl', 'hwupload', 'hwdownload']]];
+          for (const [kind, need] of hwSet) {
+            if (!need.every((f) => tools.gpuFilters.has(f))) continue;
+            const pipe = args.buildVideoPipeline({ video: pr.video, encoder: 'h264_nvenc', decodeMethod: 'none', w: 960, h: 540, fps: 30, maxKbps: 4000,
+              gpuFilters: new Set(need), badTonemap: new Set(kind === 'opencl' ? ['libplacebo'] : []) });
+            assert.strictEqual(pipe.tonemap, kind);
+            const hr = spawnSync(tools.ffmpeg, ['-hide_banner', '-v', 'error', ...pipe.pre, '-i', clip, '-frames:v', '3', '-vf', pipe.vf, '-c:v', enc, '-f', 'null', '-'],
+              { encoding: 'utf8', timeout: 120000 });
+            console.log(`transcode_test: ${kind} tone-map ${name}: ${hr.status === 0 ? 'accepted by this ffmpeg' : `not usable on this host (${(hr.stderr || '').trim().split('\n').pop()})`}`);
+          }
+        }
+      } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    }
   }
 
   console.log('transcode_test: ok');

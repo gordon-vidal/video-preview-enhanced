@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Remote HDR plays smoothly:** HDR clips (HDR10/PQ, HLG, Dolby Vision 8.x) in a Remote-SSH or container window now go through Live transcode and are tone-mapped to SDR BT.709 on the remote machine (hardware tone-mapping when the host has it, otherwise zscale + tonemap), labelled "HDR → SDR tone-mapped" in ⓘ; local HDR keeps the exact path unless Live transcode is Always.
+
 ## 0.10.1 (2026-11-24)
 
 Over 1.3 s faster cold native opens on Windows (registry GPU detection + parallel tool checks), fixed cumulative Opus audio drift during long Live transcode playback, exact backward frame stepping on variable-frame-rate (VFR) videos, seamless in-band Live transcode growth while playing, NVIDIA-driver-matched Remote-SSH ffmpeg downloads, and compact Compare sync pill fixes.

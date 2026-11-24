@@ -18,9 +18,10 @@ const {
   buildVideoPipeline,
   defaultCodecLevel,
   pipelineLabel,
+  toneMapSupport,
 } = require('./transcode_args');
 const { encoderCacheKey } = require('./transcode_probe');
-const { effectiveMaxKbps } = require('./transcode_policy');
+const { effectiveMaxKbps, isHdr } = require('./transcode_policy');
 const { LinkAdaptController, LINK_TIERS, LINK_SETTLE_MS } = require('./stream-adapt');
 const { SeekHistoryBuffer, AUDIO_RATE, MAX_QUEUED_AUDIO } = require('./stream-buffer');
 
@@ -106,6 +107,9 @@ class EncodedStream {
     this.remote = !!remote;
     this.allowSoftwareFallback = allowSoftwareFallback !== false;
     this.pipelineMode = CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode';
+    this.hdr = isHdr(probed && probed.video); // PQ/HLG/Dolby Vision 8.x: tone-mapped to SDR BT.709 (transcode_args.js)
+    this.tonemapKind = null; // the tone-mapping path in use ('qsv', 'vaapi', 'libplacebo', 'opencl', 'cpu')
+    this.badTonemap = new Set(); // paths that failed on this host: the next start picks the next best
     this.hidden = hidden;
     this.link = new LinkAdaptController(); // the quality ladder's state (src/stream-adapt.js)
     this.waitingSince = 0;
@@ -201,6 +205,8 @@ class EncodedStream {
       mode: this.pipelineMode,
       remote: this.remote,
       maxKbps: cap,
+      hdrTonemap: this.hdr,
+      tonemap: this.hdr ? this.tonemapKind : null,
       w: this.w,
       h: this.h,
       tier: this.tier,
@@ -214,6 +220,7 @@ class EncodedStream {
         h: this.h,
         fps: this.fps,
         maxKbps: cap,
+        hdrTonemap: this.hdr,
       }),
     };
   }
@@ -264,6 +271,10 @@ class EncodedStream {
 
   open() {
     const v = this.pr.video;
+    if (this.hdr && !toneMapSupport(this.tools && this.tools.gpuFilters).any) {
+      this.onFail('HDR needs ffmpeg with zscale and tonemap (or a GPU tone-mapper)');
+      return undefined;
+    }
     this.sizeVideo();
     this.fps = v.fps || 30;
     if (!this.hidden) this.startAt(0);
@@ -345,8 +356,9 @@ class EncodedStream {
       h: this.h,
       fps: this.fps,
       maxKbps: cap,
+      badTonemap: this.badTonemap,
     });
-    if (!audio) this.pipelineMode = pipe.mode;
+    if (!audio) { this.pipelineMode = pipe.mode; this.tonemapKind = pipe.tonemap; }
     const args = ['-hide_banner', '-nostdin', '-v', 'error', ...pipe.pre];
     if (t > 0) args.push('-ss', Math.max(0, t - 0.0005).toFixed(4));
     args.push('-noautorotate', '-protocol_whitelist', 'file', '-i', this.file);
@@ -445,6 +457,13 @@ class EncodedStream {
       this.proc = null;
       if (code !== 0 || signal) {
         const why = this.exitReason(proc, code, signal);
+        // Step 0: a failed hardware tone-mapper (QSV, VA-API, libplacebo, OpenCL) drops to the next best path.
+        if (this.hdr && this.tonemapKind && this.tonemapKind !== 'cpu' && !this.badTonemap.has(this.tonemapKind)) {
+          this.log(`live transcode: ${this.tonemapKind} HDR tone-mapping failed (${why}); trying the next tone-mapping path`);
+          this.badTonemap.add(this.tonemapKind);
+          this.restartVideo();
+          return;
+        }
         // Step 1: if full GPU decode->scale->encode failed, drop GPU decode and retry CPU decode -> GPU encode.
         if (this.pipelineMode === 'gpu-full' && this.decodeMethod !== 'none') {
           this.log(`live transcode: GPU decode pipeline failed (${why}); retrying with CPU decode -> ${this.videoEncoder}`);

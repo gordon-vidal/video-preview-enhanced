@@ -2,6 +2,8 @@
 // Pure ffmpeg argument builders and H.264 SPS helpers for Live transcode (ADR 0002).
 // Zero I/O, zero VS Code dependencies — fully testable in Node.
 
+const { isHdr } = require('./transcode_policy');
+
 const CPU_ENCODERS = ['libx264', 'libopenh264'];
 const GPU_ENCODERS = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'h264_mf', 'h264_videotoolbox', 'h264_vaapi'];
 
@@ -83,9 +85,89 @@ function canVaapiFullGpu(v, gpuFilters) {
 }
 
 /**
+ * Which HDR -> SDR tone-mapping paths the cached `ffmpeg -filters` inventory (tools.gpuFilters) offers.
+ * `cpu`: zscale + tonemap (software, always works with a CPU encoder too); `any`: cpu or some hardware filter.
+ * Stock BtbN LGPL builds have no tonemap_cuda, so NVENC uses the cpu path (or libplacebo when present).
+ * @param {Set<string>|null|undefined} f
+ * @returns {{ cpu: boolean, any: boolean }}
+ */
+function toneMapSupport(f) {
+  const has = (n) => !!f && f.has(n);
+  const cpu = has('zscale') && has('tonemap');
+  const hw = has('vpp_qsv') || has('tonemap_vaapi') || has('libplacebo')
+    || (has('tonemap_opencl') && has('hwupload') && has('hwdownload'));
+  return { cpu, any: cpu || hw };
+}
+
+/** The transfer function the HDR source really carries (PQ, or HLG for HLG and Dolby Vision 8.4). */
+function hdrTransfer(v) {
+  const t = String((v && v.colorTransfer) || '');
+  if (/^arib-std-b67$/i.test(t) || (v && v.colorTrc === 18)) return 'arib-std-b67';
+  if (!t && v && v.dv && v.dv.compat === 4) return 'arib-std-b67';
+  return 'smpte2084';
+}
+
+/** CPU tone-map chain: explicit BT.2020 input tags (untagged files still convert), hable, BT.709 limited range out. */
+function cpuToneMap(v, fmt) {
+  return `zscale=tin=${hdrTransfer(v)}:min=bt2020nc:pin=bt2020:rin=tv:t=linear:npl=100,format=gbrpf32le,`
+    + `zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=${fmt}`;
+}
+
+/**
+ * Builds the HDR -> SDR video pipeline: hardware tone-mapping matched to the active decode/encode device first
+ * (QSV, VA-API zero-copy; libplacebo or OpenCL beside a GPU encoder), else scale first (a 4K -> 1080p cut saves 4x of the
+ * pixel work) and zscale + tonemap on the CPU. `bad` holds the kinds that already failed on this host.
+ * Returns null when no usable path exists (the policy does not start such a stream).
+ */
+function buildHdrPipeline(o, encArgs, isCpu, wantGpuDec) {
+  const { encoder, device, decodeMethod, gpuFilters, video, w, h } = o;
+  const bad = o.badTonemap || new Set();
+  const sup = toneMapSupport(gpuFilters);
+  const gf = gpuFilters || new Set();
+  if (!isCpu && wantGpuDec) {
+    if (encoder === 'h264_qsv' && (decodeMethod === 'qsv' || decodeMethod === 'auto') && canQsvFullGpu(video, gpuFilters) && !bad.has('qsv')) {
+      return { pre: ['-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv'], vf: `vpp_qsv=w=${w}:h=${h}:format=nv12:tonemap=1`, encArgs, mode: 'gpu-full', tonemap: 'qsv' };
+    }
+    if (encoder === 'h264_vaapi' && (decodeMethod === 'vaapi' || decodeMethod === 'auto') && canVaapiFullGpu(video, gpuFilters)
+      && gf.has('tonemap_vaapi') && !bad.has('vaapi')) {
+      return {
+        pre: ['-hwaccel', 'vaapi', '-hwaccel_device', device || '/dev/dri/renderD128', '-hwaccel_output_format', 'vaapi'],
+        vf: `scale_vaapi=w=${w}:h=${h},tonemap_vaapi=format=nv12:p=bt709:t=bt709:m=bt709`,
+        encArgs, mode: 'gpu-full', tonemap: 'vaapi',
+      };
+    }
+  }
+  // CPU (or auto-downloaded) decode. A GPU encoder gets nv12 frames, a CPU encoder yuv420p.
+  const fr = encoderFrame(encoder, device);
+  const fmt = fr.vf.startsWith('format=nv12') ? 'nv12' : 'yuv420p';
+  const mode = isCpu ? 'cpu' : 'gpu-encode';
+  const tail = fr.vf.includes('hwupload') ? ',hwupload' : '';
+  if (!isCpu && gf.has('libplacebo') && !bad.has('libplacebo')) {
+    return {
+      pre: fr.pre, mode, tonemap: 'libplacebo', encArgs,
+      vf: `libplacebo=w=${w}:h=${h}:tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=${fmt}${tail}`,
+    };
+  }
+  // -vaapi_device already is the filter device, so OpenCL (needs its own) only runs beside the other encoders.
+  if (!isCpu && encoder !== 'h264_vaapi' && gf.has('tonemap_opencl') && gf.has('hwupload') && gf.has('hwdownload') && !bad.has('opencl')) {
+    return {
+      pre: [...fr.pre, '-init_hw_device', 'opencl=ocl', '-filter_hw_device', 'ocl'], mode, tonemap: 'opencl', encArgs,
+      vf: `scale=${w}:${h}:flags=bilinear,format=p010le,hwupload,tonemap_opencl=tonemap=hable:desat=0:t=bt709:m=bt709:p=bt709:format=nv12,`
+        + `hwdownload,format=nv12${fmt === 'nv12' ? '' : ',format=yuv420p'}`,
+    };
+  }
+  if (sup.cpu && !bad.has('cpu')) {
+    return { pre: fr.pre, vf: `scale=${w}:${h}:flags=bilinear,${cpuToneMap(video, fmt)}${tail}`, encArgs, mode, tonemap: 'cpu' };
+  }
+  return null;
+}
+
+/**
  * Builds the video decode + scale + encode pipeline for ffmpeg.
  * Prefers full GPU decode -> GPU scale -> GPU encode when hardware-compatible,
  * then CPU decode -> GPU encode, then CPU decode -> software encode.
+ * HDR sources (PQ, HLG, Dolby Vision 8.x) are tone-mapped to SDR BT.709 on the way: the result's `tonemap` names
+ * the path (`qsv`, `vaapi`, `libplacebo`, `opencl`, `cpu`), null for SDR; `badTonemap` skips paths that failed.
  *
  * @param {{
  *   encoder: string,
@@ -97,14 +179,22 @@ function canVaapiFullGpu(v, gpuFilters) {
  *   h: number,
  *   fps: number,
  *   maxKbps?: number,
+ *   badTonemap?: Set<string>,
  * }} o
- * @returns {{ pre: string[], vf: string, encArgs: string[], mode: 'gpu-full'|'gpu-encode'|'cpu' }}
+ * @returns {{ pre: string[], vf: string, encArgs: string[], mode: 'gpu-full'|'gpu-encode'|'cpu', tonemap: string|null }}
  */
 function buildVideoPipeline(o) {
   const { encoder, device, decodeMethod, gpuFilters, video, w, h, fps, maxKbps } = o;
   const encArgs = encoderArgs(encoder, fps, maxKbps);
   const isCpu = CPU_ENCODERS.includes(encoder);
   const wantGpuDec = decodeMethod && decodeMethod !== 'none';
+
+  if (isHdr(video)) {
+    const hdr = buildHdrPipeline(o, encArgs, isCpu, wantGpuDec);
+    if (hdr) return hdr;
+    // No tone-mapping path (policy does not start these): never ship HDR code values as if they were SDR.
+    throw new Error('no HDR tone-mapping filter available (needs zscale and tonemap, or a GPU tone-mapper)');
+  }
 
   // Full GPU path: keep frames on GPU from decode through scale to H.264 encode.
   if (!isCpu && wantGpuDec) {
@@ -114,6 +204,7 @@ function buildVideoPipeline(o) {
         vf: `scale_cuda=w=${w}:h=${h}:format=nv12:interp_algo=bilinear`,
         encArgs,
         mode: 'gpu-full',
+        tonemap: null,
       };
     }
     if (encoder === 'h264_qsv' && (decodeMethod === 'qsv' || decodeMethod === 'auto') && canQsvFullGpu(video, gpuFilters)) {
@@ -122,6 +213,7 @@ function buildVideoPipeline(o) {
         vf: `vpp_qsv=w=${w}:h=${h}:format=nv12`,
         encArgs,
         mode: 'gpu-full',
+        tonemap: null,
       };
     }
     if (encoder === 'h264_vaapi' && (decodeMethod === 'vaapi' || decodeMethod === 'auto') && canVaapiFullGpu(video, gpuFilters)) {
@@ -131,6 +223,7 @@ function buildVideoPipeline(o) {
         vf: `scale_vaapi=w=${w}:h=${h}:format=nv12`,
         encArgs,
         mode: 'gpu-full',
+        tonemap: null,
       };
     }
     if (encoder === 'h264_videotoolbox' && (decodeMethod === 'videotoolbox' || decodeMethod === 'auto')) {
@@ -139,6 +232,7 @@ function buildVideoPipeline(o) {
         vf: `scale=${w}:${h}:flags=bilinear,format=nv12`,
         encArgs,
         mode: 'gpu-full',
+        tonemap: null,
       };
     }
   }
@@ -150,6 +244,7 @@ function buildVideoPipeline(o) {
     vf: `scale=${w}:${h}:flags=bilinear,${fr.vf}`,
     encArgs,
     mode: isCpu ? 'cpu' : 'gpu-encode',
+    tonemap: null,
   };
 }
 
@@ -209,7 +304,7 @@ const ENCODER_NAMES = {
 
 /**
  * Human-readable pipeline description for ⓘ (About this video) and stats.
- * @param {{ encoder: string, mode?: string, remote?: boolean, w?: number, h?: number, fps?: number, maxKbps?: number }} o
+ * @param {{ encoder: string, mode?: string, remote?: boolean, w?: number, h?: number, fps?: number, maxKbps?: number, hdrTonemap?: boolean }} o
  * @returns {string}
  */
 function pipelineLabel(o) {
@@ -218,7 +313,8 @@ function pipelineLabel(o) {
   const stage = o.mode === 'gpu-full' ? `GPU decode → ${enc}` : o.mode === 'gpu-encode' ? `CPU decode → ${enc}` : enc;
   const dims = o.w && o.h ? `, ${o.w}×${o.h}${o.fps ? ` ${+Number(o.fps).toFixed(Math.abs(o.fps - Math.round(o.fps)) < 0.01 ? 0 : 2)} fps` : ''}` : '';
   const cap = o.maxKbps > 0 ? `, max ${o.maxKbps >= 1000 ? `${+(o.maxKbps / 1000).toFixed(1)} Mb/s` : `${o.maxKbps} kb/s`}` : '';
-  return `Live transcode ${where}: ${stage} → WebCodecs${dims}, 8-bit, lossy${cap}`;
+  const sdr = o.hdrTonemap ? ', HDR → SDR tone-mapped' : '';
+  return `Live transcode ${where}: ${stage} → WebCodecs${dims}, 8-bit${sdr}, lossy${cap}`;
 }
 
 module.exports = {
@@ -230,6 +326,7 @@ module.exports = {
   canCudaFullGpu,
   canQsvFullGpu,
   canVaapiFullGpu,
+  toneMapSupport,
   buildVideoPipeline,
   defaultCodecLevel,
   parseSpsProfileLevel,

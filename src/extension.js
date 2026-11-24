@@ -30,6 +30,7 @@ const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (l
 const remotestream = lazy(() => require('./remotestream')); // unified Live transcode stream engine (ADR 0002)
 const transcodePolicy = lazy(() => require('./transcode_policy'));
 const transcodeProbe = lazy(() => require('./transcode_probe'));
+const transcodeArgs = lazy(() => require('./transcode_args'));
 const probe = lazy(() => require('./probe')); // ffmpeg's GPU decoding tested on this machine
 const decide = require('./decide'); // native ffmpeg or built-in, per file
 const localff = lazy(() => require('./localff')); // "Use an ffmpeg I already have…"
@@ -1001,7 +1002,7 @@ function activate(context) {
         const remoteLink = !!remote && remote !== 'wsl';
         const decision = transcodePolicy.shouldTranscodeOnOpen({
           mode: c.transcode, remote, video: pr.video, compare: true,
-          maxBitrateMbps: c.transcodeMaxBitrate, viewHeight: tile && tile.h,
+          maxBitrateMbps: c.transcodeMaxBitrate, viewHeight: tile && tile.h, toneMap: transcodeArgs.toneMapSupport(t.gpuFilters),
         });
         if (decision.action === 'stream') {
           const stream = await transcodeOptions(t, pr, c, remoteLink, false);
@@ -2007,6 +2008,7 @@ class Session {
       maxBitrateMbps: c.transcodeMaxBitrate,
       viewHeight: lastView && lastView.h > 0 ? lastView.h : 0,
       forced: !!opts.forced,
+      toneMap: transcodeArgs.toneMapSupport(t.gpuFilters),
     });
     if (decision.action !== 'stream') return false;
     const isRemoteLink = (!!remote && remote !== 'wsl') || c.remoteStream === 'on';

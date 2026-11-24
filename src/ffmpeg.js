@@ -121,11 +121,17 @@ async function toolsKey(ffmpeg, ffprobe) {
  * (path, size or time) checks again. Only working tools are cached.
  */
 // Bump when the set of discovered GPU filters changes so stale cached inventories re-probe.
-const TOOLS_CACHE_VER = 2;
+const TOOLS_CACHE_VER = 3;
 
-/** Parses GPU scale/VPP filter names from `ffmpeg -filters` stdout. */
+// GPU scale/VPP filters (full-GPU Live transcode) plus the HDR -> SDR tone-mapping filters and helpers that
+// src/transcode_args.js chooses among. libplacebo lists as `N->V` (dynamic inputs), the others as `V->V`.
+const KNOWN_FILTERS = ['scale_cuda', 'vpp_qsv', 'scale_vaapi', 'tonemap_vaapi', 'tonemap_opencl', 'libplacebo', 'zscale',
+  'tonemap', 'hwupload', 'hwdownload'];
+const KNOWN_FILTER_RE = new RegExp(`^\\s*[.A-Z]+\\s+(${KNOWN_FILTERS.join('|')})\\s+[VN]->V\\b`, 'gm');
+
+/** Parses the known GPU and tone-mapping filter names from `ffmpeg -filters` stdout. */
 function parseGpuFilters(stdout) {
-  return new Set(Array.from(String(stdout || '').matchAll(/^\s*[.A-Z]+\s+(scale_cuda|vpp_qsv|scale_vaapi)\s+V->V\b/gm), (m) => m[1]));
+  return new Set(Array.from(String(stdout || '').matchAll(KNOWN_FILTER_RE), (m) => m[1]));
 }
 
 /**
