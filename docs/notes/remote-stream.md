@@ -42,8 +42,9 @@ Finished (2026-11-19, second pass; see "Finishing" below). Setting `videoPreview
   playback, the stream uses interleaved signed 16-bit PCM at 48 kHz (1.536 Mb/s). Conversion
   to float happens in the page, so the link really carries half the former PCM bytes.
 - **Opus sync.** The Ogg header supplies encoder delay; the last granule removes final padding.
-  The host sends half-second batches with 80 ms of preroll. Each batch decodes independently,
-  then trims to its explicit sample range. Seeks from memory, restarts, pauses and loops keep
+  The host sends half-second batches with 80 ms of preroll. The picture batch is capped at
+  the same duration at every quality tier. The player decodes each sound batch independently
+  and trims it to its explicit sample range. Seeks from memory, restarts, pauses and loops keep
   the same sample clock as PCM. The ladder allows 128 kb/s including repeated preroll. With
   450 kb/s picture at 360p, its payload budget is 578 kb/s (previously 3522 kb/s with f32 PCM;
   s16 fallback: 1986 kb/s), before VS Code message and network overhead.

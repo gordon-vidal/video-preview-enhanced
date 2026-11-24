@@ -590,7 +590,8 @@ class EncodedStream {
     const gen = this.gen;
     const limit = Math.min(m.limit || 384 * 1024, this.tier ? 128 * 1024 : Infinity);
     const videoUntil = m.videoUntil ?? Infinity;
-    const frameLimit = this.tier && this.pr.audio ? Math.max(1, Math.floor(this.fps / 2)) : Infinity;
+    // Even at the top tier, picture must not outrun the half second of Opus we can send per reply.
+    const frameLimit = this.pr.audio && (this.tier || this.audioEncoder) ? Math.max(1, Math.floor(this.fps / 2)) : Infinity;
     let end = this.vNext;
     let bytes = 0;
     while (end < this.vAll.length && end - this.vNext < frameLimit

@@ -4,6 +4,7 @@
 // view messages ask the page for one seek only, and a pending shrink never forces ffmpeg to restart a step back.
 const assert = require('assert');
 const { EncodedStream } = require('../../src/stream');
+const { AUDIO_RATE } = require('../../src/stream-buffer');
 
 function make({ audio = false } = {}) {
   const posted = [];
@@ -162,6 +163,61 @@ const fakeProc = () => ({ exitCode: null, signalCode: null, stdout: { isPaused: 
   assert.strictEqual(s.h, 1080, 'the seek applied the larger size and restarted');
   clearTimeout(s.startTimer);
   s.kill();
+}
+
+{ // An uncapped remote link can fit much more than half a second of picture in the byte limit.
+  const fps = 25;
+  const logs = [];
+  let videoEnd = 0;
+  let audioEnd = 0;
+  const s = new EncodedStream({
+    tools: {}, file: 'x.mkv', log: (m) => logs.push(m), stats: true, encoder: 'libx264',
+    audioEncoder: 'libopus',
+    probed: { duration: 200, video: { index: 0, width: 640, height: 360, fps }, audio: { index: 1 } },
+    post(batch) {
+      if (batch.video.length) videoEnd = batch.video.at(-1).t + 1 / fps;
+      for (const a of batch.audio) {
+        assert.ok(Math.abs(a.t - audioEnd) < 1e-9, 'Opus is continuous');
+        audioEnd = a.t + a.samples / a.sampleRate;
+      }
+    },
+  });
+  s.fps = fps;
+  s.sizeVideo();
+  s.audioProc = { stdout: { pause() {}, resume() {} } };
+  const picture = new Uint8Array(8 * 1024);
+  const opus = Buffer.from([0xf8]); // one 20 ms packet, payload unused by the host
+  let frames = 0;
+  let audioSample = 0;
+  const realNow = Date.now;
+  try {
+    for (let i = 0; i < 150 * fps && videoEnd < 150; i++) {
+      Date.now = () => Math.round(videoEnd * 1000);
+      // Refill the video and audio pipes while the host has room for more data.
+      while (frames < (videoEnd + 2) * fps) {
+        const key = frames % (2 * fps) === 0;
+        s.vAll.push({ kind: 'packet', t: frames++ / fps, key, idr: key, data: picture });
+      }
+      while (!s.audioPaused) {
+        // Feed the parser's output directly so the test needs neither Ogg framing nor ffmpeg.
+        s.ogg.onPacket({ s: audioSample, n: 960, b: opus });
+        audioSample += 960;
+        s.audioPaused = (s.aEnd - s.aNext) >= 4 * AUDIO_RATE;
+      }
+      s.more({ gen: 0, limit: 384 * 1024 });
+      const lead = audioEnd - videoEnd;
+      assert.ok(lead >= -0.5 - 1e-9 && lead <= 2 + 1e-9, `sound lead ${lead} s at ${videoEnd} s`);
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  assert.ok(videoEnd >= 150 && audioEnd >= 149.5, 'sent picture and sound through the soak');
+  assert.ok(logs.length >= 50, 'sampled the host stats throughout playback');
+  for (const log of logs) {
+    const [, video, audio] = /sent to ([\d.]+) s video \/ ([\d.]+) s sound/.exec(log);
+    const lead = Number(audio) - Number(video);
+    assert.ok(lead >= -0.5 - 1e-9 && lead <= 2 + 1e-9, log);
+  }
 }
 
 console.log('stream transition tests passed');
