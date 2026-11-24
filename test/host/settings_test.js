@@ -101,6 +101,12 @@ const PB = 'videoPreviewEnhanced.playbackPrefs';
   assert.strictEqual(c.nativeMaxHeight, 720); assert.strictEqual(c.nativeMaxAuto, false);
   assert.strictEqual(c.pictureSize, 'fit'); assert.strictEqual(c.hdrOutput, 'off'); assert.strictEqual(c.transcodeMaxBitrate, 0);
   assert.strictEqual(c.jumps['jump.ctrl'], 30);
+  // The default Live transcode resolution: an offered height, else Auto (0); the pages get it with their prefs.
+  assert.strictEqual(c.transcodeResolution, 0);
+  t = make({ values: { transcodeResolution: 720 } });
+  assert.strictEqual(t.s.config().transcodeResolution, 720);
+  assert.strictEqual(t.s.prefsOf(t.s.config()).transcodeResolution, 720);
+  assert.strictEqual(make({ values: { transcodeResolution: 999 } }).s.config().transcodeResolution, 0);
 
   // config().transcode precedence: explicit transcode > explicit remoteStream > default 'auto'.
   t = make({ values: { remoteStream: 'on' } });

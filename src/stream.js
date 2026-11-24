@@ -22,7 +22,7 @@ const {
   toneMapSupport,
 } = require('./transcode_args');
 const { encoderCacheKey } = require('./transcode_probe');
-const { effectiveMaxKbps, isHdr, canDirectStreamVideo } = require('./transcode_policy');
+const { effectiveMaxKbps, isHdr, canDirectStreamVideo, resolutionOf } = require('./transcode_policy');
 const { LinkAdaptController, LINK_TIERS, LINK_SETTLE_MS } = require('./stream-adapt');
 const { SeekHistoryBuffer, AUDIO_RATE, MAX_QUEUED_AUDIO } = require('./stream-buffer');
 
@@ -99,7 +99,7 @@ class EncodedStream {
     tools, file, post, log, maxHeight, probed, onFail, stats, encoder, device,
     cpuEncoder: cpu, decodeMethod = 'none', onEncoderFail, audioEncoder = null,
     fitView = true, maxKbps = 0, maxBitrateMbps = 0, allowLinkAdapt = true, remote = true,
-    allowSoftwareFallback = true, hidden = false, allowOverlap = true, rotation = 0,
+    allowSoftwareFallback = true, hidden = false, allowOverlap = true, rotation = 0, resolution = 0,
   }) {
     // Packets and sound read, and the history for seeks back (src/stream-buffer.js). The fields it owns are
     // reachable as this.vAll, this.aNext ... (accessors below the class).
@@ -109,6 +109,8 @@ class EncodedStream {
     this.post = post;
     this.log = log;
     this.maxHeight = maxHeight || 1080;
+    // A resolution fixed for this tab (⚙ › Live transcode): that height whatever the view or the link; 0 = Auto.
+    this.lockHeight = resolutionOf(resolution);
     this.fitView = fitView;
     this.audioEncoder = audioEncoder;
     this.pr = probed;
@@ -204,6 +206,39 @@ class EncodedStream {
     }
   }
 
+  /**
+   * This tab's resolution from the ⚙ panel: a height (the quality ladder stays off and the view size does not
+   * matter), or 0 for Auto (view-fitted, the ladder adapts to the link again). Applies at once: playing, through
+   * the in-band restart a quality step uses; paused, with a page seek to the same picture.
+   */
+  setResolution(height) {
+    const next = resolutionOf(height);
+    if (next === this.lockHeight) return;
+    this.lockHeight = next;
+    const tier = this.tier;
+    if (next) this.tier = 0; // the ladder's step down no longer applies
+    this.log(`live transcode: resolution ${next ? `${next}p (fixed)` : 'auto'}`);
+    if (this.disposed || !this.pr || !this.pr.video) return;
+    this.buf.invalidateRegions();
+    this.takeStandby(NaN);
+    const { w, h } = this;
+    this.sizeVideo();
+    const changed = this.w !== w || this.h !== h || this.tier !== tier;
+    if (!this.fps) {
+      this.pipelineMode = this.defaultPipelineMode();
+    } else if (changed && !this.hidden && !this.startTimer && this.playing && this.proc) {
+      this.transitionVideo(true);
+      if ((this.pipelineMode === 'direct-stream') !== this.useDirectStream()) this.pipelineMode = this.defaultPipelineMode();
+    } else if (changed) {
+      // Paused (or not running): the next seek starts ffmpeg at the new size; the page makes it now when shown.
+      this.w = w;
+      this.h = h;
+      this.resizePending = true;
+      if (!this.hidden) this.post({ type: 'refresh' });
+    }
+    this.post({ type: 'transcodeInfo', transcode: this.transcodeInfo() });
+  }
+
   /** Live-update the max bitrate cap in kb/s (0 = Auto). */
   setMaxKbps(kbps) {
     const n = Number(kbps) > 0 ? Number(kbps) / 1000 : 0;
@@ -269,6 +304,7 @@ class EncodedStream {
       h: this.h,
       tier: this.tier,
       adapting: this.tier > 0,
+      locked: this.lockHeight, // this tab's fixed resolution (0: Auto)
       adaptingDir: extra && extra.adaptingDir ? extra.adaptingDir : null,
       label: pipelineLabel({
         encoder: this.videoEncoder,
@@ -398,7 +434,8 @@ class EncodedStream {
 
   sizeVideo() {
     const v = this.pr.video;
-    const h = Math.min(v.height, this.maxHeight, this.viewCap(), LINK_TIERS[this.tier]?.height ?? Infinity);
+    const h = this.lockHeight ? Math.min(v.height, this.lockHeight)
+      : Math.min(v.height, this.maxHeight, this.viewCap(), LINK_TIERS[this.tier]?.height ?? Infinity);
     const height = h - (h % 2);
     if (height !== this.h && this.standby) this.takeStandby(NaN);
     this.h = height;
@@ -449,6 +486,7 @@ class EncodedStream {
     this.kill();
     this.buf.reset(t);
     this.restored = false;
+    this.mixedHistoryFrom = null;
     this.videoEnded = false;
     this.audioEnded = !this.pr.audio;
     this.audioPaused = false;
@@ -681,6 +719,7 @@ class EncodedStream {
     buf.clear();
     this.pipelineMode = mode;
     this.buf.setConfiguration(''); // This active buffer now contains two video configurations.
+    this.mixedHistoryFrom = spliceT;
     this.gotOutput = true;
     this.link.resetForRestart();
     this.link.noteFirstOutput(Date.now());
@@ -721,6 +760,7 @@ class EncodedStream {
     this.link.resetForRestart();
     this.videoEnded = false;
     this.buf.setConfiguration('');
+    this.mixedHistoryFrom = this.vBase;
     this.spawnVideo();
   }
 
@@ -729,7 +769,7 @@ class EncodedStream {
    * Only active when allowLinkAdapt is true (remote links).
    */
   adapt(m) {
-    if (!this.allowLinkAdapt) return;
+    if (!this.allowLinkAdapt || this.lockHeight) return; // a resolution fixed by the user stays
     if (m.gen !== this.gen || (!this.proc && this.vNext === this.vAll.length)) return;
     const pcm = this.pr.audio ? (this.audioEncoder ? OPUS_KBPS : PCM_KBPS) : 0;
     const d = this.link.onSample(m, Date.now(), pcm);
@@ -911,6 +951,7 @@ class EncodedStream {
   /** A seek served from the packets held: no ffmpeg restart. */
   reuseHistory(t) {
     if (this.buf.configuration && this.buf.configuration !== this.cacheConfiguration()) return false;
+    if (this.mixedHistoryFrom !== null && this.mixedHistoryFrom !== undefined && t < this.mixedHistoryFrom - 0.25 / this.fps) return false;
     const proc = this.proc;
     const running = !!proc && proc.exitCode === null && !proc.signalCode;
     let at = this.buf.reuse(t, { hasProc: !!proc, running, videoEnded: this.videoEnded,

@@ -273,7 +273,10 @@ const VpeControls = (() => {
     const ns = (tr.sub || 0) + (o.subFiles || 0);
     rows.push(['Tracks', `${na === 0 ? 'no sound' : na === 1 ? '1 audio' : `${na} audio`} · ${ns === 0 ? 'no subtitles' : ns === 1 ? '1 subtitle' : `${ns} subtitles`}`]);
     let by;
-    if (info.transcode && info.transcode.label) by = info.transcode.label;
+    if (info.transcode && info.transcode.label) {
+      by = info.transcode.label;
+      if (Number(info.transcode.locked) > 0) by += `, resolution fixed at ${Number(info.transcode.locked)}p for this video`;
+    }
     else if (o.remoteStream) by = 'ffmpeg on the remote machine, sent as H.264 to your GPU';
     else if (o.native) by = info.method && info.method !== 'none' ? `your GPU (${info.method}), through ffmpeg` : 'ffmpeg, on the processor';
     else if (o.frames) by = 'the built-in image decoder';
@@ -327,18 +330,35 @@ const VpeControls = (() => {
     const res = h > 0 ? `${h}p` : '';
     const kbps = Number(tc.maxKbps) || 0;
     const rate = kbps >= 1000 ? `${+(kbps / 1000).toFixed(1)} Mb/s` : kbps > 0 ? `${Math.round(kbps)} kb/s` : '';
-    const lowered = tc.tier > 0;
+    // A resolution fixed for this video (⚙ › Live transcode › Resolution): the ladder does not move it.
+    const locked = Number(tc.locked) > 0;
+    const lowered = !locked && tc.tier > 0;
     let text;
     let ariaLabel;
-    if (dir) {
+    if (dir && !locked) {
       text = `Live · Adapting ${dir === 'down' ? '↓' : '↑'}`;
       ariaLabel = `Live transcode adapting quality ${dir}. Open Live transcode settings`;
     } else {
       text = ['Live', res ? (lowered ? `${res} ↓` : res) : '', rate].filter(Boolean).join(' · ');
-      ariaLabel = `Live transcode active${res ? `, ${res}` : ''}${lowered ? ' (adapted down)' : ''}${rate ? `, max ${rate}` : ''}. Open Live transcode settings`;
+      ariaLabel = `Live transcode active${res ? `, ${res}` : ''}${lowered ? ' (adapted down)' : ''}${locked ? ' (fixed resolution)' : ''}${rate ? `, max ${rate}` : ''}. Open Live transcode settings`;
     }
-    const title = `${tc.label || 'Live transcode active'}. Click to adjust mode or max bitrate`;
-    return { visible: true, text, title, ariaLabel, adapting: !!(dir || lowered) };
+    const fixed = locked ? `. Resolution fixed at ${Number(tc.locked)}p for this video` : '';
+    const title = `${tc.label || 'Live transcode active'}${fixed}. Click to adjust resolution, mode or max bitrate`;
+    return { visible: true, text, title, ariaLabel, adapting: !!((dir && !locked) || lowered) };
+  }
+
+  /** Live transcode heights a video can be fixed at (src/transcode_policy.js RESOLUTIONS). */
+  const TRANSCODE_HEIGHTS = [2160, 1440, 1080, 720, 480, 360];
+  /**
+   * The Resolution chips of ⚙ › Live transcode: Auto, then the heights up to the source's (up to 1080p when it is not
+   * known), and the current one even when it is above the source (a saved default), so the checked chip is shown.
+   * @param {number} source the source video's height (0: unknown) @param {number} current 0 = Auto
+   * @returns {{ h: number, label: string }[]}
+   */
+  function resolutionChoices(source, current) {
+    const top = source > 0 ? source : 1080;
+    const hs = TRANSCODE_HEIGHTS.filter((h) => h <= top || h === current);
+    return [{ h: 0, label: 'Auto' }, ...hs.map((h) => ({ h, label: `${h}p` }))];
   }
 
   /**
@@ -405,9 +425,10 @@ const VpeControls = (() => {
       if (s.picture) f.appendChild(btn('row', 'Picture size', () => show('picture'), { icon: ICON.picture, value: `${PIC.name(s.picture.mode)}${s.picture.pct !== null ? ` · ${s.picture.pct}%` : ''}`, chev: true, aria: { 'aria-label': `Picture size, ${PIC.name(s.picture.mode)}` } }));
       if (s.transcode) {
         const tm = s.transcode.mode || 'auto';
+        const res = s.transcode.active && s.transcode.resolution > 0 ? ` · ${s.transcode.resolution}p` : '';
         const mbps = s.transcode.maxBitrateMbps > 0 ? ` · ${s.transcode.maxBitrateMbps} Mb/s` : '';
         const modeName = tm === 'auto' ? 'Auto' : tm === 'always' ? 'Always' : 'Off';
-        f.appendChild(btn('row', 'Live transcode', () => show('transcode'), { icon: ICON.quality, value: `${modeName}${mbps}`, chev: true, aria: { 'aria-label': `Live transcode, ${modeName}${mbps}` } }));
+        f.appendChild(btn('row', 'Live transcode', () => show('transcode'), { icon: ICON.quality, value: `${modeName}${res}${mbps}`, chev: true, aria: { 'aria-label': `Live transcode, ${modeName}${res}${mbps}` } }));
       }
       // Tools that are neither inspection nor A–B (Compare): a row of their own.
       for (const t of (s.tools || []).filter((x) => !x.group)) {
@@ -623,6 +644,35 @@ const VpeControls = (() => {
         { label: 'Off', sub: 'Never transcode', checked: tc.mode === 'off', pick: () => env.act.setTranscode('off') },
       ]));
       f.appendChild(el('div', 'sep'));
+      // This video's resolution, while it plays through Live transcode (Compare sizes its tiles itself: no act).
+      if (tc.active && env.act.setTranscodeResolution) {
+        const cur = Number(tc.resolution) || 0;
+        const rbox = el('div', 'jbox');
+        const rtitle = el('div', 'jtitle', 'Resolution (this video)');
+        rtitle.setAttribute('aria-hidden', 'true');
+        const rg = el('div', 'jopts');
+        rg.setAttribute('role', 'radiogroup');
+        rg.setAttribute('aria-label', 'Resolution for this video');
+        for (const o of resolutionChoices(Number(tc.sourceHeight) || 0, cur)) {
+          rg.appendChild(btn('chip', o.label, () => { env.act.setTranscodeResolution(o.h); render(); }, {
+            aria: { role: 'radio', 'aria-checked': String(cur === o.h) },
+          }));
+        }
+        rbox.append(rtitle, rg);
+        f.appendChild(rbox);
+        const saved = Number(tc.defaultResolution) || 0;
+        if (cur !== saved && env.act.saveTranscodeResolution) {
+          const name = cur ? `${cur}p` : 'Auto';
+          const row = el('div', 'ibtns');
+          row.appendChild(btn('secondary', `Save ${name} as default`, () => { env.act.saveTranscodeResolution(cur); render(); }, {
+            aria: { 'aria-label': `Save ${name} as the default Live transcode resolution for new videos` },
+          }));
+          const pad = el('div', 'jbox'); // (the panel's side padding)
+          pad.appendChild(row);
+          f.appendChild(pad);
+        }
+        f.appendChild(el('div', 'sep'));
+      }
       const box = el('div', 'jbox');
       const title = el('div', 'jtitle', 'Max bitrate (best quality up to cap)');
       title.setAttribute('aria-hidden', 'true');
@@ -865,7 +915,7 @@ const VpeControls = (() => {
   return {
     create, createToast, createPlayFlash, drawRangeMarks, drawRangeButtons, facts, keyGroups, qualityRows, qualityLabel,
     clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
-    STEP_SIZES, stepName, stepBadge, stepSizeOf, stepAmount, drawStepBadges, holdVolumeOpen, remoteChipState,
+    STEP_SIZES, stepName, stepBadge, stepSizeOf, stepAmount, drawStepBadges, holdVolumeOpen, remoteChipState, resolutionChoices,
   };
 })();
 

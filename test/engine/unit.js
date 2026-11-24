@@ -110,7 +110,7 @@ test('#6 the clock waits for an accurate seek and starts at its target', () => {
 
 test('#6 every-frame mode keeps up when frames are decoded past the clock', () => {
   ctx.perfNow = 0;
-  const p = player({ playing: true, fps: 120, amode: 'none', eof: true });
+  const p = player({ playing: true, fps: 120, amode: 'none', eof: true, shownT: 0 });
   P.anchor.call(p, 0);
   for (let i = 0; i <= 240; i++) p.queue.push(frame(i / 120));
   p.behindUntil = 1e9;
@@ -130,8 +130,8 @@ test('#6 every-frame mode keeps up when frames are decoded past the clock', () =
   assert.strictEqual(P.now.call(q), 0);
 });
 
-/** Playing at media time t on the timer clock. */
-function playingAt(p, t) { ctx.perfNow = 0; p.playing = true; P.anchor.call(p, t); }
+/** Playing at media time t on the timer clock (a picture already shown: before the first one the clock holds). */
+function playingAt(p, t) { ctx.perfNow = 0; p.playing = true; if (p.shownT === null) p.shownT = t; P.anchor.call(p, t); }
 const audioItem = (t, dur) => ({ t, dur, buf: null, src: null });
 
 test('#8a sound that outlasts the picture is not cut', () => {
@@ -1183,6 +1183,9 @@ test('Astra review: an in-flight remote copy forces a back-cache miss; rapid VFR
   });
   P.stepFrame.call(p, -1);
   assert.strictEqual(p.queue.length, 0, 'no stale N-2 shown while N-1 is copying');
+  assert.strictEqual(seeksOf(p).length, 0, 'the step waits for the copy');
+  P.runBackRetry.call(p, p.backRetry); // BACK_WAIT_MS passed, the copy still busy
+  assert.strictEqual(p.queue.length, 0, 'no stale N-2 shown');
   assert.strictEqual(seeksOf(p).length, 1, 'treated as a cache miss: seeks instead');
   p.backSpilling = 0;
   const q = player({
@@ -1215,6 +1218,134 @@ test('Astra review: an in-flight remote copy forces a back-cache miss; rapid VFR
   t.pauseT = ms(101);
   P.tick.call(t);
   assert.strictEqual(t.shownT, ms(101), `shown ${t.shownT}, expected ${ms(101)}`);
+});
+
+test('opening: the clock holds until the first picture, then runs from there (no count-up and snap back)', () => {
+  ctx.perfNow = 0;
+  const p = player({ playing: true, amode: 'none' });
+  P.anchor.call(p, 0);
+  ctx.perfNow = 3000; // the first frame takes 3 s over a slow link
+  assert.strictEqual(P.now.call(p), 0, 'the timer ran before a picture was shown');
+  assert.strictEqual(P.currentTime.call(p), 0);
+  P.tick.call(p); // nothing decoded yet
+  assert.strictEqual(P.now.call(p), 0);
+  p.queue.push(frame(0), frame(1 / 30));
+  P.tick.call(p);
+  assert.strictEqual(p.shownT, 0, 'the first frame shows at once');
+  assert.ok(!p.behindUntil, 'the wait for the first picture counted as decoding behind');
+  assert.strictEqual(P.now.call(p), 0, 'the clock starts at the first picture');
+  ctx.perfNow = 3500;
+  assert.ok(Math.abs(P.now.call(p) - 0.5) < 1e-9, `then runs normally (${P.now.call(p)})`);
+  // A file that starts later (TS at 1.4 s): the clock holds at the start time once it is known.
+  ctx.perfNow = 0;
+  const ts = player({ playing: true, amode: 'none', startT: null });
+  P.anchor.call(ts, 0);
+  P.addFrame.call(ts, frame(1.4));
+  ctx.perfNow = 2000;
+  assert.strictEqual(P.now.call(ts), 1.4);
+  P.tick.call(ts);
+  assert.strictEqual(ts.shownT, 1.4);
+  // Sound only: no picture to wait for, the clock runs.
+  ctx.perfNow = 0;
+  const a = player({ playing: true, vmode: 'none' });
+  P.anchor.call(a, 0);
+  ctx.perfNow = 1000;
+  assert.ok(Math.abs(P.now.call(a) - 1) < 1e-9, 'a sound-only file waited for a picture');
+});
+
+/** A WebCodecs frame stub whose copyTo() finishes when the test says so (copies.shift()()). */
+function gpuFrame(t, copies, closed) {
+  const vf = {
+    format: 'I420', codedWidth: 4, codedHeight: 4, displayWidth: 4, displayHeight: 4, visibleRect: { width: 4, height: 4 },
+    colorSpace: {}, allocationSize: () => 24,
+    copyTo: () => new Promise((res) => copies.push(() => res([{ offset: 0, stride: 4 }, { offset: 16, stride: 2 }, { offset: 20, stride: 2 }]))),
+    close() { if (this.format !== null) closed.push(t); this.format = null; },
+  };
+  return { t, vf, bytes: 0 };
+}
+const settle = () => new Promise((r) => setImmediate(r));
+async function finishCopies(copies) { while (copies.length) { copies.shift()(); await settle(); } }
+
+test('remote Live transcode: a whole GOP decoded faster than it copies is kept for steps back, no frame leaks', async () => {
+  const copies = [];
+  const closed = [];
+  const p = player({ remoteStream: true, vmode: 'webcodecs', seekTarget: 3, pump: noop, keptBufs: new WeakSet() });
+  const gop = Array.from({ length: 60 }, (_, i) => gpuFrame(1 + i / 30, copies, closed));
+  for (const fr of gop) P.keepBack.call(p, fr);
+  assert.ok(copies.length <= 3, `${copies.length} copies at once`);
+  assert.strictEqual(p.backSpilling, 60, 'every frame is waiting or copying: none dropped');
+  await finishCopies(copies);
+  assert.strictEqual(p.back.length, 60, `kept ${p.back.length} of 60 (the 5th frame used to drop the run)`);
+  assert.strictEqual(p.backSpilling, 0);
+  assert.strictEqual(closed.length, 60, 'each GPU frame closed once copied');
+  for (let i = 1; i < 60; i++) assert.ok(p.back[i].t > p.back[i - 1].t, 'in time order');
+
+  // Another seek (or play, hide, dispose) while frames wait or copy: all of them are closed, none kept.
+  const closed2 = [];
+  const q = player({ remoteStream: true, vmode: 'webcodecs', seekTarget: 3, pump: noop });
+  for (let i = 0; i < 20; i++) P.keepBack.call(q, gpuFrame(1 + i / 30, copies, closed2));
+  P.endSteps.call(q);
+  assert.strictEqual(closed2.length, 17, 'waiting frames closed at once');
+  await finishCopies(copies);
+  assert.strictEqual(closed2.length, 20, 'frames that were copying closed when done');
+  assert.strictEqual(q.back.length, 0, 'nothing of the old run kept');
+  assert.strictEqual(q.backSpilling, 0);
+
+  // Over the budget: the oldest go, so what stays is contiguous up to the newest.
+  const closed3 = [];
+  const b = player({ remoteStream: true, vmode: 'webcodecs', seekTarget: 3, pump: noop, frameBudget: 24 * 10 / 0.65 });
+  for (let i = 0; i < 30; i++) P.keepBack.call(b, gpuFrame(1 + i / 30, copies, closed3));
+  await finishCopies(copies);
+  assert.ok(b.back.length >= 8 && b.back.length <= 10, `kept ${b.back.length}`);
+  assert.strictEqual(b.back[b.back.length - 1].t, 1 + 29 / 30, 'the newest kept');
+  for (let i = 1; i < b.back.length; i++) assert.ok(Math.abs(b.back[i].t - b.back[i - 1].t - 1 / 30) < 1e-6, 'no gap');
+  assert.strictEqual(closed3.length, 30, 'frames over the budget closed too');
+});
+
+test('remote Live transcode: a step back while the GOP is still copying waits for it instead of seeking', async () => {
+  const copies = [];
+  const closed = [];
+  const p = player({ remoteStream: true, vmode: 'webcodecs', seekTarget: 2, pump: noop, keptBufs: new WeakSet(),
+    firstShown: true, shownCount: 1 });
+  for (let i = 0; i < 30; i++) P.keepBack.call(p, gpuFrame(1 + i / 30, copies, closed));
+  // The seek landed on 2 s while the copies run on.
+  p.seekTarget = null;
+  p.shownT = p.pauseT = 2;
+  p.shownFrame = yuvFrame(2);
+  copies.shift()(); await settle(); // one copy done: this.back is not empty, the rest still busy
+  P.stepFrame.call(p, -1);
+  P.stepFrame.call(p, -1);
+  assert.strictEqual(seeksOf(p).length, 0, 'no seek while the copies run');
+  assert.ok(p.backRetry && p.backRetry.d === -2, 'the notches wait together');
+  await finishCopies(copies);
+  assert.strictEqual(p.backRetry, null);
+  assert.strictEqual(seeksOf(p).length, 0, 'served from memory');
+  assert.ok(Math.abs(p.pauseT - (1 + 28 / 30)) < 1e-6, `two pictures back: ${p.pauseT}`);
+});
+
+test('remote Live transcode: quick step notches during a seek coalesce into one seek once they rest', () => {
+  const notches = (extra) => {
+    ctx.perfNow = 10000;
+    const p = player({ firstShown: true, shownT: 4, shownCount: 1, pauseT: 4, keptBufs: new WeakSet(), ...extra });
+    P.stepFrame.call(p, -1);
+    for (let i = 0; i < 9; i++) { ctx.perfNow += 90; P.stepFrame.call(p, -1); } // notches 90 ms apart (> STEP_SEEK_MS)
+    return p;
+  };
+  const local = notches({});
+  assert.ok(seeksOf(local).length >= 9, `local stepping stays snappy (${seeksOf(local).length} seeks)`);
+  clearTimeout(local.stepTo && local.stepTo.timer);
+  const remote = notches({ remoteStream: true, vmode: 'webcodecs' });
+  assert.strictEqual(seeksOf(remote).length, 1, `remote: ${seeksOf(remote).length} seeks for 10 notches over 810 ms`);
+  const st = remote.stepTo;
+  assert.ok(st.timer, 'the next seek waits for the notches to rest');
+  assert.ok(Math.abs(st.t - (4 - 10 / 30)) < 1e-6, `the readout follows every notch (${st.t * 30})`);
+  assert.strictEqual(P.quietWait.call(remote, st, ctx.perfNow), 200, 'each notch restarts the quiet wait');
+  assert.strictEqual(P.quietWait.call(remote, st, st.quietFrom + 900), 100, 'capped at 1 s after the first waiting notch');
+  clearTimeout(st.timer);
+  P.flushStep.call(remote, st);
+  assert.strictEqual(seeksOf(remote).length, 2);
+  assert.ok(Math.abs(seeksOf(remote).pop().t - (4 - 9.5 / 30)) < 1e-6, 'one seek to the final target');
+  assert.strictEqual(remote.seekBackCount, 10);
 });
 
 (async () => {

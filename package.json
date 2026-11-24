@@ -581,6 +581,30 @@
           "scope": "machine",
           "markdownDescription": "Maximum bitrate in Mb/s for Live transcode (`0` = Auto; non-zero values are clamped to at least `0.25` Mb/s / 250 kb/s). Uses best quality capped strictly at this ceiling (capped VBR) so the stream never exceeds your link budget while staying compact on easy or low-fps scenes. Also set in ⚙ › Live transcode."
         },
+        "videoPreviewEnhanced.transcodeResolution": {
+          "type": "number",
+          "enum": [
+            0,
+            2160,
+            1440,
+            1080,
+            720,
+            480,
+            360
+          ],
+          "enumItemLabels": [
+            "Auto",
+            "2160p",
+            "1440p",
+            "1080p",
+            "720p",
+            "480p",
+            "360p"
+          ],
+          "default": 0,
+          "scope": "machine",
+          "markdownDescription": "Resolution for Live transcode in new video tabs (`0` = Auto: sized to the picture on screen, and over a remote link lowered and raised again with the connection). A height fixes the picture at that height (never above the video's own) and keeps it there whatever the connection does. Pick it for one video in ⚙ › Live transcode › Resolution, where **Save as default** sets this. Compare sizes its tiles itself."
+        },
         "videoPreviewEnhanced.transcodeSplitBitrate": {
           "type": "boolean",
           "default": true,

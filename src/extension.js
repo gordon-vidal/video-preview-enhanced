@@ -924,6 +924,7 @@ function activate(context) {
         || e.affectsConfiguration('videoPreviewEnhanced.transcode')
         || e.affectsConfiguration('videoPreviewEnhanced.transcodeMaxBitrate')
         || e.affectsConfiguration('videoPreviewEnhanced.transcodeSplitBitrate')
+        || e.affectsConfiguration('videoPreviewEnhanced.transcodeResolution')
         || e.affectsConfiguration('videoPreviewEnhanced.remoteStream')) {
         const c = config();
         if (e.affectsConfiguration('videoPreviewEnhanced.transcodeMaxBitrate')) {
@@ -1529,8 +1530,17 @@ class Session {
             this.native.setMaxBitrateMbps(mbps);
           }
         }
+        // Save as default: new tabs start at it; open tabs keep their own resolution.
+        if (m.resolution !== undefined) {
+          await setSetting('transcodeResolution', transcodePolicy.resolutionOf(m.resolution), vscode.ConfigurationTarget.Global);
+        }
         return undefined;
       }
+      // This tab's Live transcode resolution (⚙ › Live transcode › Resolution): kept across its reloads.
+      case 'transcodeResolution':
+        this.transcodeHeight = transcodePolicy.resolutionOf(m.height);
+        if (this.native instanceof remotestream.EncodedStream) this.native.setResolution(this.transcodeHeight);
+        return undefined;
       case 'compareWith':
         if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
         // Compare takes this tab's place and starts where the player is (src/compare.js).
@@ -2045,9 +2055,11 @@ class Session {
       return false;
     }
     log(`[${this.name}] decoder: remote stream / live transcode (${stream.encoder}, decode=${stream.decodeMethod}, ${remote || 'local'} window): ${pr.video.codec} ${pr.video.pixFmt} ${pr.video.width}x${pr.video.height}`);
+    if (this.transcodeHeight === undefined) this.transcodeHeight = c.transcodeResolution;
     this.native = new remotestream.EncodedStream({
       ...stream, tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), probed: pr,
       stats: !!logFile, maxBitrateMbps: c.transcodeMaxBitrate, allowLinkAdapt: isRemoteLink,
+      resolution: this.transcodeHeight,
       rotation: rotationOf(this.file),
       post: (msg) => {
         if (!signal.aborted) this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg });
