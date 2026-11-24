@@ -70,6 +70,16 @@ class SeekHistoryBuffer {
     this.aRest = Buffer.alloc(0); // bytes of a partial sample
     this.aNext = 0; // next sample to send
     this.pending = Buffer.alloc(0); // video bytes not yet cut into packets
+    this.resetTs();
+  }
+
+  /** Resets MPEG-TS demux state (used for Direct Stream `-c:v copy` PTS-preserving framing). */
+  resetTs() {
+    this.tsVideoPid = -1;
+    this.tsPts = NaN;
+    this.tsInUnit = false;
+    /** @type {Buffer[]} */
+    this.tsChunks = [];
   }
 
   /** Cuts complete access units (AUD to AUD) off the pending bytes; at the end, the rest too. */
@@ -91,13 +101,75 @@ class SeekHistoryBuffer {
     }
   }
 
-  /** @param {Buffer} data one access unit */
-  pushPacket(data) {
+  /**
+   * Demuxes single-video-stream MPEG-TS packets from ffmpeg Direct Stream (`-c:v copy -f mpegts`),
+   * extracting each PES access unit's Annex B bytes and real 90 kHz PTS (preserving B-frame order,
+   * VFR timestamps, and keyframe-aligned seek positions).
+   * @param {boolean} final
+   */
+  splitMpegTs(final) {
+    const buf = this.pending;
+    let off = 0;
+    while (off + 188 <= buf.length) {
+      if (buf[off] !== 0x47) { off++; continue; }
+      const pusi = (buf[off + 1] & 0x40) !== 0;
+      const pid = ((buf[off + 1] & 0x1f) << 8) | buf[off + 2];
+      const afc = (buf[off + 3] >> 4) & 3;
+      if ((afc & 1) !== 0) {
+        let p = off + 4;
+        if ((afc & 2) !== 0) p += 1 + buf[p];
+        if (p < off + 188) {
+          if (pusi && p + 9 <= off + 188 && buf[p] === 0 && buf[p + 1] === 0 && buf[p + 2] === 1 && (buf[p + 3] & 0xf0) === 0xe0) {
+            if (this.tsVideoPid < 0) this.tsVideoPid = pid;
+            if (pid === this.tsVideoPid) {
+              this.flushTsUnit();
+              const flags = (buf[p + 7] >> 6) & 3;
+              const hlen = buf[p + 8];
+              let pts = NaN;
+              if (flags >= 2 && p + 14 <= off + 188) {
+                const hi = (buf[p + 9] >> 1) & 7;
+                const lo = ((buf[p + 10] << 22) | ((buf[p + 11] >> 1) << 15) | (buf[p + 12] << 7) | (buf[p + 13] >> 1)) >>> 0;
+                pts = (hi * 4294967296 + lo) / 90000;
+              }
+              this.tsPts = pts;
+              this.tsInUnit = true;
+              p += 9 + hlen;
+              if (p < off + 188) this.tsChunks.push(Buffer.from(buf.subarray(p, off + 188)));
+            }
+          } else if (pid === this.tsVideoPid && this.tsInUnit) {
+            this.tsChunks.push(Buffer.from(buf.subarray(p, off + 188)));
+          }
+        }
+      }
+      off += 188;
+    }
+    this.pending = final ? Buffer.alloc(0) : Buffer.from(buf.subarray(off));
+    if (final) this.flushTsUnit();
+  }
+
+  /** Flushes the buffered MPEG-TS video access unit into vAll with its parsed PTS. */
+  flushTsUnit() {
+    if (!this.tsInUnit) return;
+    this.tsInUnit = false;
+    const chunks = this.tsChunks;
+    const pts = this.tsPts;
+    this.tsChunks = [];
+    this.tsPts = NaN;
+    if (!chunks.length) return;
+    const data = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks);
+    this.pushPacket(data, pts);
+  }
+
+  /**
+   * @param {Buffer} data one access unit
+   * @param {number} [pts] real presentation time in seconds when available (Direct Stream)
+   */
+  pushPacket(data, pts) {
     let key = false;
     for (let i = data.indexOf(AUD_PREFIX); i >= 0 && i + 3 < data.length; i = data.indexOf(AUD_PREFIX, i + 3)) {
       if ((data[i + 3] & 0x1f) === 5) { key = true; break; }
     }
-    const t = this.vBase + this.frameIndex / this.fps;
+    const t = pts !== undefined && Number.isFinite(pts) ? pts : this.vBase + this.frameIndex / this.fps;
     this.frameIndex++;
     this.vAll.push({ kind: 'packet', t, key, idr: key, data: new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.length)) });
   }
@@ -190,6 +262,7 @@ class SeekHistoryBuffer {
     this.pending = Buffer.alloc(0);
     this.aRest = Buffer.alloc(0);
     this.ogg = null;
+    this.resetTs();
   }
 }
 // checkJs: end

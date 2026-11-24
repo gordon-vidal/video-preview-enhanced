@@ -51,6 +51,34 @@ function exceedsRawTransfer(v) {
 }
 
 /**
+ * Whether a video stream can be direct-streamed (lossless H.264 bitstream copy via `-c:v copy`
+ * without video re-encoding) into WebCodecs at the current output size, tier, and bitrate cap.
+ *
+ * @param {any} video Probed video stream metadata.
+ * @param {{ tier?: number, h?: number, height?: number, w?: number, width?: number, maxKbps?: number, rotation?: number }} [opts]
+ * @returns {boolean}
+ */
+function canDirectStreamVideo(video, opts = {}) {
+  if (!video) return false;
+  if (video.codec !== 'h264') return false;
+  if ((Number(video.depth) || 8) > 8) return false;
+  if (!/^(yuv420p|yuvj420p)$/.test(video.pixFmt || '')) return false;
+  if (isHdr(video)) return false;
+  if (Number(video.rotation) || Number(opts.rotation)) return false;
+  if (Number(opts.tier) > 0) return false;
+  const outH = opts.h !== undefined ? opts.h : opts.height;
+  if (outH !== undefined && outH > 0 && outH !== video.height) return false;
+  const outW = opts.w !== undefined ? opts.w : opts.width;
+  if (outW !== undefined && outW > 0 && outW !== video.width) return false;
+  const maxKbps = Number(opts.maxKbps) || 0;
+  if (maxKbps > 0) {
+    const srcKbps = (Number(video.bitRate) || 0) / 1000;
+    if (srcKbps > maxKbps) return false;
+  }
+  return true;
+}
+
+/**
  * Whether a video stream qualifies for Live transcode on a remote link (SSH/container/tunnel).
  * Always includes codecs WebCodecs can't play directly; also includes high-bitrate 8-bit H.264
  * when the source bitrate exceeds the configured cap or is high relative to the displayed size.
@@ -218,6 +246,7 @@ module.exports = {
   ZOOM_UPGRADE_THRESHOLD,
   resolveSetting,
   isHdr,
+  canDirectStreamVideo,
   exceedsRawTransfer,
   remoteQualifies,
   autoMaxKbps,

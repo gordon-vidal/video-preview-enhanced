@@ -206,6 +206,7 @@ function createEngine(env) {
         case 'transcodeInfo':
           if (this.info && m.transcode) {
             this.info.transcode = m.transcode;
+            if (m.transcode.lossy !== undefined) this.nativeLossy = !!m.transcode.lossy;
             env.onMeta(this);
           }
           break;
@@ -314,7 +315,7 @@ function createEngine(env) {
       if (info.remoteStream) {
         const s = info.remoteStream;
         this.meta.label = `${s.sourceCodec} ${s.sourcePixFmt} ${s.sourceWidth}×${s.sourceHeight} · streamed from the remote host as H.264, decoded by WebCodecs`;
-        this.nativeLossy = true;
+        this.nativeLossy = !(info.transcode && info.transcode.lossy === false);
         this.remoteStream = true;
       }
       log(`streams: ${JSON.stringify({ v: v && { c: v.codec, w: v.width, h: v.height, fmt: v.format }, a: a && { c: a.codec, sr: a.sampleRate, ch: a.channels }, dur: info.duration })} -> video ${video}, audio ${audio}`);

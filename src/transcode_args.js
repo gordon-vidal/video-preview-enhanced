@@ -154,6 +154,30 @@ function buildVideoPipeline(o) {
 }
 
 /**
+ * Builds ffmpeg arguments for host-side Direct Stream (lossless H.264 bitstream copy without
+ * video re-encoding). Uses `-c:v copy -bsf:v h264_mp4toannexb` inside a zero-delay MPEG-TS pipe
+ * (`-f mpegts`) with `-copyts -start_at_zero -avoid_negative_ts disabled` so real source PTS
+ * survive B-frame reordering, VFR timing, and keyframe-aligned seeks.
+ *
+ * @param {{ file: string, streamIndex?: number, startTime?: number }} o
+ * @returns {string[]}
+ */
+function buildDirectStreamArgs({ file, streamIndex = 0, startTime = 0 }) {
+  const args = ['-hide_banner', '-nostdin', '-v', 'error'];
+  if (startTime > 0) args.push('-ss', Math.max(0, startTime - 0.0005).toFixed(4));
+  args.push(
+    '-copyts', '-start_at_zero', '-noautorotate', '-protocol_whitelist', 'file', '-i', file,
+    '-map', `0:${streamIndex}`,
+    '-c:v', 'copy',
+    '-bsf:v', 'h264_mp4toannexb',
+    '-avoid_negative_ts', 'disabled',
+    '-muxdelay', '0', '-muxpreload', '0',
+    '-f', 'mpegts', 'pipe:1',
+  );
+  return args;
+}
+
+/**
  * H.264 level_idc for a given output size and fps (ITU-T H.264 Table A-1).
  * 4K60 needs level 5.2 (52); 4K30 fits 5.1 (51); 1080p60 fits 4.2 (42); 1080p30 fits 4.0 (40).
  */
@@ -197,6 +221,7 @@ function parseSpsProfileLevel(data) {
 }
 
 const ENCODER_NAMES = {
+  copy: 'Direct stream (video copy)',
   h264_nvenc: 'NVIDIA NVENC',
   h264_qsv: 'Intel Quick Sync',
   h264_amf: 'AMD AMF',
@@ -213,10 +238,13 @@ const ENCODER_NAMES = {
  * @returns {string}
  */
 function pipelineLabel(o) {
-  const enc = ENCODER_NAMES[o.encoder] || o.encoder || 'H.264';
   const where = o.remote ? 'on the remote machine' : 'locally';
-  const stage = o.mode === 'gpu-full' ? `GPU decode → ${enc}` : o.mode === 'gpu-encode' ? `CPU decode → ${enc}` : enc;
   const dims = o.w && o.h ? `, ${o.w}×${o.h}${o.fps ? ` ${+Number(o.fps).toFixed(Math.abs(o.fps - Math.round(o.fps)) < 0.01 ? 0 : 2)} fps` : ''}` : '';
+  if (o.mode === 'direct-stream' || o.encoder === 'copy') {
+    return `Direct stream (video copy) ${where} → WebCodecs${dims}, lossless`;
+  }
+  const enc = ENCODER_NAMES[o.encoder] || o.encoder || 'H.264';
+  const stage = o.mode === 'gpu-full' ? `GPU decode → ${enc}` : o.mode === 'gpu-encode' ? `CPU decode → ${enc}` : enc;
   const cap = o.maxKbps > 0 ? `, max ${o.maxKbps >= 1000 ? `${+(o.maxKbps / 1000).toFixed(1)} Mb/s` : `${o.maxKbps} kb/s`}` : '';
   return `Live transcode ${where}: ${stage} → WebCodecs${dims}, 8-bit, lossy${cap}`;
 }
@@ -231,6 +259,7 @@ module.exports = {
   canQsvFullGpu,
   canVaapiFullGpu,
   buildVideoPipeline,
+  buildDirectStreamArgs,
   defaultCodecLevel,
   parseSpsProfileLevel,
   pipelineLabel,

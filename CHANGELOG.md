@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Live transcode: host-side Direct Stream copies WebCodecs-compatible 8-bit SDR H.264 video without re-encoding (lossless video copy + Opus audio) when it fits the view and bitrate cap, falling back to re-encoding on ABR step-down or downscale.
 - Seek-bar drags show a keyframe preview and hold the main picture until an exact seek on release. Compare previews its clock tile.
 
 ## 0.10.1 (2026-11-24)

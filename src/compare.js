@@ -436,7 +436,7 @@ class CompareSession {
     const current = () => !this.disposed && epoch === this.epoch && this.natives[i] === stream;
     const stream = new EncodedStream({
       ...d.stream, tools: d.tools, file: this.files[i], probed: d.probed,
-      hidden: this.panel.visible === false,
+      hidden: this.panel.visible === false, rotation: this.rotation[i] || 0,
       maxHeight: output.height, maxKbps: output.kbps, fitView: false, allowLinkAdapt: d.stream.remote,
       post: (m) => { if (current()) this.post({ type: 'nd', key, m }); },
       log: (msg) => this.log(`tile ${key}: ${msg}`),
@@ -448,8 +448,8 @@ class CompareSession {
     });
     this.natives[i] = stream;
     // The one-time "Live transcode is on" notice (once ever, see offers.maybeInformTranscode); never blocks the tile.
-    // Not when the user chose Always themselves.
-    if (this.informTranscode && d.informTranscode) this.informTranscode(this).catch((e) => this.log(`live transcode notice failed: ${e.message}`));
+    // Not when the user chose Always themselves or when Direct Stream copies video losslessly.
+    if (this.informTranscode && d.informTranscode && stream.lossy()) this.informTranscode(this).catch((e) => this.log(`live transcode notice failed: ${e.message}`));
     return 'transcode';
   }
 

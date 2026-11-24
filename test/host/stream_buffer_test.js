@@ -161,7 +161,46 @@ function testResetAndClear() {
   assert.equal(b.pending.length + b.aRest.length, 0);
 }
 
-for (const t of [testSplitAcrossChunks, testPacketTimes, testTrim, testTrimSound, testAddAudio, testReuse, testResetAndClear]) {
+function testSplitMpegTs() {
+  // Build minimal 188-byte TS packets carrying two H.264 PES units with B-frame PTS (0.12 s then 0.04 s).
+  const tsPkt = (pid, pusi, payload) => {
+    const p = Buffer.alloc(188, 0xff);
+    p[0] = 0x47;
+    p[1] = (pusi ? 0x40 : 0) | ((pid >> 8) & 0x1f);
+    p[2] = pid & 0xff;
+    p[3] = 0x10; // payload only
+    payload.copy(p, 4);
+    return p;
+  };
+  const encodePts = (sec) => {
+    const v = Math.round(sec * 90000);
+    return Buffer.from([
+      0x21 | (((v / 4294967296) & 7) << 1),
+      (v >>> 22) & 0xff,
+      (((v >>> 15) & 0x7f) << 1) | 1,
+      (v >>> 7) & 0xff,
+      ((v & 0x7f) << 1) | 1,
+    ]);
+  };
+  const pes = (ptsSec, data) => Buffer.concat([Buffer.from([0, 0, 1, 0xe0, 0, 0, 0x80, 0x80, 5]), encodePts(ptsSec), data]);
+  const idr = Buffer.from([0, 0, 0, 1, 0x65, 0x88, 0x99]);
+  const bframe = Buffer.from([0, 0, 0, 1, 0x41, 0xaa, 0xbb]);
+  const stream = Buffer.concat([tsPkt(0x100, true, pes(0.12, idr)), tsPkt(0x100, true, pes(0.04, bframe))]);
+  const b = fresh();
+  // Feed in odd-sized chunks to test TS framing across chunk boundaries.
+  for (let i = 0; i < stream.length; i += 73) {
+    b.pending = b.pending.length ? Buffer.concat([b.pending, stream.subarray(i, i + 73)]) : stream.subarray(i, i + 73);
+    b.splitMpegTs(false);
+  }
+  b.splitMpegTs(true);
+  assert.equal(b.vAll.length, 2);
+  assert.equal(b.vAll[0].key, true);
+  assert.ok(Math.abs(b.vAll[0].t - 0.12) < 1e-4);
+  assert.equal(b.vAll[1].key, false);
+  assert.ok(Math.abs(b.vAll[1].t - 0.04) < 1e-4);
+}
+
+for (const t of [testSplitAcrossChunks, testPacketTimes, testSplitMpegTs, testTrim, testTrimSound, testAddAudio, testReuse, testResetAndClear]) {
   t();
   console.log(`ok  ${t.name}`);
 }
