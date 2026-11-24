@@ -23,22 +23,80 @@ function nvidiaFromWindowsVersion(v) {
   return `${Number(last5.slice(0, 3))}.${last5.slice(3)}`;
 }
 
+// PCI vendor ids (from the registry's MatchingDeviceId) for when the provider / name text names no vendor.
+const PCI_VENDORS = { '10de': 'nvidia', '8086': 'intel', '1002': 'amd', '1022': 'amd', '5143': 'qualcomm' };
+const REG_CLASS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}';
+const REG_VALUES = ['DriverDesc', 'DriverVersion', 'ProviderName', 'MatchingDeviceId'];
+
+/** Shapes one adapter the same way for the registry and the PowerShell path (null = not a real GPU). */
+function makeGpu(name, vendorText, driverVersion, pciVendor) {
+  if (!name || /basic display|remote display|virtual/i.test(name)) return null;
+  let vendor = vendorOf(`${vendorText} ${name}`);
+  if (vendor === 'other' && pciVendor && PCI_VENDORS[pciVendor]) vendor = PCI_VENDORS[pciVendor];
+  const gpu = { vendor, name, driver: driverVersion || '' };
+  if (vendor === 'nvidia') gpu.driver = nvidiaFromWindowsVersion(driverVersion) || gpu.driver;
+  return gpu;
+}
+
+/**
+ * Parses `reg query <display class key> /s /v <Value>` output, one text per value in `outputs`
+ * ({ DriverDesc, DriverVersion, ProviderName, MatchingDeviceId }). Adapters are the numbered subkeys
+ * (0000, 0001 ...); Configuration\... and other subkeys carry none of these values and are ignored.
+ */
+function parseRegistryGpus(outputs) {
+  const byKey = new Map();
+  for (const value of REG_VALUES) {
+    let key = null;
+    for (const line of String(outputs[value] || '').split(/\r?\n/)) {
+      const k = /^HKEY_LOCAL_MACHINE\\.*\\(\d{4})\s*$/i.exec(line);
+      if (k) { key = k[1]; continue; }
+      const m = /^\s+(\w+)\s+REG_(?:EXPAND_)?SZ\s+(.*?)\s*$/.exec(line);
+      if (key && m && m[1].toLowerCase() === value.toLowerCase()) {
+        if (!byKey.has(key)) byKey.set(key, {});
+        byKey.get(key)[value] = m[2];
+      }
+    }
+  }
+  const gpus = [];
+  for (const key of [...byKey.keys()].sort()) {
+    const e = byKey.get(key);
+    const pci = /ven_([0-9a-f]{4})/i.exec(e.MatchingDeviceId || '');
+    const gpu = makeGpu(e.DriverDesc, e.ProviderName, e.DriverVersion, pci && pci[1].toLowerCase());
+    if (gpu) gpus.push(gpu);
+  }
+  return gpus;
+}
+
+/** Windows GPUs from the registry: four ~15 ms reg.exe queries in parallel (PowerShell + CIM costs ~1.1 s cold). */
+async function windowsGpusFromRegistry() {
+  const rs = await Promise.all(REG_VALUES.map((v) => run('reg.exe', ['query', REG_CLASS_KEY, '/s', '/v', v], 5000)));
+  const outputs = {};
+  REG_VALUES.forEach((v, i) => { outputs[v] = rs[i] && rs[i].code === 0 ? rs[i].stdout : ''; });
+  return parseRegistryGpus(outputs);
+}
+
+async function windowsGpusFromPowerShell() {
+  const r = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterCompatibility,DriverVersion | ConvertTo-Json -Compress'], 15000);
+  let list = [];
+  try { list = JSON.parse(r.stdout || '[]'); } catch { list = []; }
+  if (!Array.isArray(list)) list = [list];
+  const gpus = [];
+  for (const g of list) {
+    const gpu = g && makeGpu(g.Name, g.AdapterCompatibility, g.DriverVersion);
+    if (gpu) gpus.push(gpu);
+  }
+  return gpus;
+}
+
 async function detect() {
   const hw = { os: process.platform, arch: process.arch, gpus: [], nvidiaDriver: null, vaapi: false };
   try {
     if (process.platform === 'win32') {
-      const r = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-        'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterCompatibility,DriverVersion | ConvertTo-Json -Compress'], 15000);
-      let list = [];
-      try { list = JSON.parse(r.stdout || '[]'); } catch { list = []; }
-      if (!Array.isArray(list)) list = [list];
-      for (const g of list) {
-        if (!g || !g.Name || /basic display|remote display|virtual/i.test(g.Name)) continue;
-        const vendor = vendorOf(`${g.AdapterCompatibility} ${g.Name}`);
-        const gpu = { vendor, name: g.Name, driver: g.DriverVersion || '' };
-        if (vendor === 'nvidia') gpu.driver = nvidiaFromWindowsVersion(g.DriverVersion) || gpu.driver;
-        hw.gpus.push(gpu);
-      }
+      let gpus = [];
+      try { gpus = await windowsGpusFromRegistry(); } catch { gpus = []; }
+      if (!gpus.length) gpus = await windowsGpusFromPowerShell(); // reg.exe failed or listed no real adapter
+      hw.gpus.push(...gpus);
     } else if (process.platform === 'linux') {
       const r = await run('lspci', ['-mm'], 5000);
       for (const line of r.stdout.split('\n')) {
@@ -100,4 +158,4 @@ async function testEncoders(ffmpeg, encoders) {
   return results;
 }
 
-module.exports = { detect, candidateEncoders, testEncoders, nvidiaFromWindowsVersion };
+module.exports = { detect, candidateEncoders, testEncoders, nvidiaFromWindowsVersion, parseRegistryGpus };

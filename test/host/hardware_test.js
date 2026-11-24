@@ -75,6 +75,81 @@ const realPlatform = process.platform;
       assert.strictEqual(info.vaapi, false);
     }
 
+    // ---- Windows registry (reg.exe, tried before PowerShell) ---------------------------
+    const CLASS = 'HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}';
+    // adapters: { '0000': { DriverDesc, DriverVersion, ProviderName, MatchingDeviceId } }; fakes `reg query ... /s /v <Value>`.
+    const regOut = (adapters, value) => {
+      const keys = Object.keys(adapters).filter((k) => adapters[k][value] !== undefined);
+      if (!keys.length) return 'End of search: 0 match(es) found.\r\n';
+      return `\r\n${keys.map((k) => `${CLASS}\\${k}\r\n    ${value}    REG_SZ    ${adapters[k][value]}\r\n`).join('\r\n')}\r\n` +
+        `End of search: ${keys.length} match(es) found.\r\n`;
+    };
+    const regRunner = (adapters) => async (cmd, args) => {
+      if (cmd === 'reg.exe') return { code: 0, stdout: regOut(adapters, args[args.length - 1]), stderr: '' };
+      throw new Error('PowerShell must not run when the registry has the GPUs');
+    };
+    const NV = { DriverDesc: 'NVIDIA GeForce RTX 4070', DriverVersion: '32.0.15.7242', ProviderName: 'NVIDIA', MatchingDeviceId: 'pci\\ven_10de&dev_2786' };
+    const INTEL = { DriverDesc: 'Intel(R) UHD Graphics 770', DriverVersion: '31.0.101.4502', ProviderName: 'Intel Corporation', MatchingDeviceId: 'pci\\ven_8086&dev_4688' };
+    const AMD = { DriverDesc: 'AMD Radeon RX 7900 XT', DriverVersion: '31.0.21001.1', ProviderName: 'Advanced Micro Devices, Inc.', MatchingDeviceId: 'pci\\ven_1002&dev_744c' };
+
+    calls.length = 0;
+    answer = regRunner({ '0001': NV });
+    info = await hw.detect();
+    assert.deepStrictEqual(info.gpus, [{ vendor: 'nvidia', name: 'NVIDIA GeForce RTX 4070', driver: '572.42' }]);
+    assert.strictEqual(info.nvidiaDriver, '572.42', 'Windows 32.0.15.7242 -> 572.42, as the PowerShell path');
+    assert.deepStrictEqual(calls.map((c) => c.cmd), ['reg.exe', 'reg.exe', 'reg.exe', 'reg.exe'], 'registry only, no PowerShell');
+    assert.deepStrictEqual(calls[0].args.slice(0, 3), ['query', CLASS.replace('HKEY_LOCAL_MACHINE', 'HKLM'), '/s']);
+
+    answer = regRunner({ '0000': INTEL });
+    assert.deepStrictEqual((await hw.detect()).gpus, [{ vendor: 'intel', name: 'Intel(R) UHD Graphics 770', driver: '31.0.101.4502' }]);
+    answer = regRunner({ '0000': AMD });
+    info = await hw.detect();
+    assert.deepStrictEqual(info.gpus.map((x) => x.vendor), ['amd']);
+    assert.strictEqual(info.nvidiaDriver, null);
+
+    // iGPU + dGPU, numbered subkeys in order whatever the order of the output; Basic Display / virtual adapters dropped.
+    answer = regRunner({
+      '0002': { DriverDesc: 'Microsoft Basic Display Adapter', DriverVersion: '10.0.19041.1', ProviderName: 'Microsoft', MatchingDeviceId: 'root\\basicdisplay' },
+      '0001': NV,
+      '0000': INTEL,
+      '0003': { DriverDesc: 'Parsec Virtual Display Adapter', DriverVersion: '1.0', ProviderName: 'Parsec' },
+    });
+    info = await hw.detect();
+    assert.deepStrictEqual(info.gpus.map((x) => x.vendor), ['intel', 'nvidia']);
+    assert.strictEqual(info.nvidiaDriver, '572.42');
+    assert.strictEqual(info.gpus[1].driver, '572.42');
+    assert.strictEqual(info.gpus[0].driver, '31.0.101.4502', 'non-NVIDIA drivers stay as Windows prints them');
+
+    // The vendor falls back to the PCI id when provider and name say nothing; subkeys that are not adapters are ignored.
+    answer = regRunner({ '0000': { DriverDesc: 'GeForce Thing', DriverVersion: '31.0.15.3623', ProviderName: 'Contoso', MatchingDeviceId: 'PCI\\VEN_10DE&DEV_1' } });
+    info = await hw.detect();
+    assert.deepStrictEqual(info.gpus.map((x) => [x.vendor, x.driver]), [['nvidia', '536.23']]);
+    assert.deepStrictEqual(hw.parseRegistryGpus({
+      DriverDesc: `${CLASS}\\Configuration\\Control\\Video\r\n    DriverDesc    REG_SZ    Bogus\r\n${CLASS}\\0000\r\n    DriverDesc    REG_SZ    Matrox G200\r\n`,
+    }), [{ vendor: 'other', name: 'Matrox G200', driver: '' }]);
+    assert.deepStrictEqual(hw.parseRegistryGpus({}), []);
+    assert.deepStrictEqual(hw.parseRegistryGpus({ DriverDesc: 'ERROR: The system was unable to find the specified registry key or value.' }), []);
+
+    // reg.exe failing, throwing or listing only virtual adapters falls back to PowerShell (same result shape).
+    const ps = { Name: 'NVIDIA GeForce RTX 4070', AdapterCompatibility: 'NVIDIA', DriverVersion: '32.0.15.7242' };
+    const psAfter = (regAnswer) => async (cmd, args) => (cmd === 'reg.exe' ? regAnswer(cmd, args)
+      : { code: 0, stdout: JSON.stringify(ps), stderr: '' });
+    const onlyBasic = regRunner({ '0000': { DriverDesc: 'Microsoft Basic Display Adapter', ProviderName: 'Microsoft' } });
+    for (const regAnswer of [
+      async () => ({ code: 1, stdout: '', stderr: 'ERROR: Access is denied.' }),
+      async () => ({ code: -1, stdout: '', stderr: 'ENOENT' }),
+      async () => { throw new Error('spawn failed'); },
+      async () => ({ code: 0, stdout: 'End of search: 0 match(es) found.', stderr: '' }),
+      (cmd, args) => onlyBasic(cmd, args),
+    ]) {
+      calls.length = 0;
+      answer = psAfter(regAnswer);
+      info = await hw.detect();
+      assert.deepStrictEqual(info.gpus, [{ vendor: 'nvidia', name: 'NVIDIA GeForce RTX 4070', driver: '572.42' }]);
+      assert.strictEqual(info.nvidiaDriver, '572.42');
+      assert.strictEqual(calls[calls.length - 1].cmd, 'powershell.exe');
+    }
+
     // ---- Linux ----------------------------------------------------------------------
     setPlatform('linux');
     answer = async () => ({
