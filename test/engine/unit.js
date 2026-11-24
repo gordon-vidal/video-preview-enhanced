@@ -1175,6 +1175,48 @@ test('VFR backward stepping lands on the exact adjacent picture in dense and spa
   assert.strictEqual(jump.back.length, 0, 'in-queue jump drops stale back cache');
 });
 
+test('Astra review: an in-flight remote copy forces a back-cache miss; rapid VFR notches count pictures; paused tick takes only its step', () => {
+  // 1. N-2 copied, N-1 still copying: the finished copy alone cannot prove adjacency.
+  const p = player({
+    firstShown: true, fps: 30, startT: 0, shownT: 3.0, pauseT: 3.0, shownCount: 1, keptBufs: new WeakSet(), amode: 'none',
+    shownFrame: yuvFrame(3.0), back: [yuvFrame(2 + 53 / 60)], backBytes: 8, backSpilling: 1,
+  });
+  P.stepFrame.call(p, -1);
+  assert.strictEqual(p.queue.length, 0, 'no stale N-2 shown while N-1 is copying');
+  assert.strictEqual(seeksOf(p).length, 1, 'treated as a cache miss: seeks instead');
+  p.backSpilling = 0;
+  const q = player({
+    firstShown: true, fps: 30, startT: 0, shownT: 3.0, pauseT: 3.0, shownCount: 1, keptBufs: new WeakSet(), amode: 'none',
+    shownFrame: yuvFrame(3.0), back: [yuvFrame(2 + 58 / 60)], backBytes: 8,
+  });
+  assert.notStrictEqual(P.stepBack.call(q, 1, 3.0), null, 'with no copy pending the cache hits');
+
+  // 2. Two rapid notches before the first decode lands: N-2 in a 60 fps section of a 30 fps-nominal stream.
+  const m = player({ firstShown: true, fps: 30, startT: 0, meta: { duration: 10 }, shownT: 3.0, pauseT: 3.0, shownCount: 1,
+    keptBufs: new WeakSet(), amode: 'none' });
+  P.stepFrame.call(m, -1);
+  ctx.perfNow += 1; // inside STEP_SEEK_MS: the second notch waits and takes the target over
+  P.stepFrame.call(m, -1);
+  clearTimeout(m.stepTo.timer);
+  P.flushStep.call(m, m.stepTo);
+  assert.strictEqual(m.seekBefore, 3.0, 'counts from the picture stepped from');
+  assert.strictEqual(m.seekBackCount, 2);
+  for (let i = 52; i <= 60; i++) P.addFrame.call(m, yuvFrame(2 + i / 60));
+  assert.strictEqual(m.seekTarget, null, 'seek landed');
+  assert.ok(Math.abs(m.pauseT - (2 + 58 / 60)) < 1e-6, `landed on ${m.pauseT}, expected N-2 ${2 + 58 / 60}`);
+  assert.ok(Math.abs(m.queue[0].t - (2 + 58 / 60)) < 1e-6 && Math.abs(m.queue[1].t - (2 + 59 / 60)) < 1e-6, 'N-1 stays queued');
+  assert.strictEqual(m.hold, null);
+
+  // 3. Paused at N-1 in 120 fps VFR (nominal 24 fps, rounded-ms stamps): tick() does not move on to N.
+  const ms = (i) => Math.round(i * 1000 / 120) / 1000;
+  const t = player({ firstShown: true, fps: 24, startT: 0, shownT: ms(100), pauseT: ms(100), shownCount: 1, amode: 'none',
+    queue: [yuvFrame(ms(101)), yuvFrame(ms(102))] });
+  t.stepTo = { t: ms(101), gen: t.gen, shown: 1, at: 0 };
+  t.pauseT = ms(101);
+  P.tick.call(t);
+  assert.strictEqual(t.shownT, ms(101), `shown ${t.shownT}, expected ${ms(101)}`);
+});
+
 (async () => {
   // A pending promise alone doesn't keep Node alive. Require the suite to finish.
   process.exitCode = 1;
