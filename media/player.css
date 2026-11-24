@@ -508,7 +508,11 @@ body.idle { cursor: none; }
 #cog.open svg { transform: rotate(45deg); }
 #seek, #volume, #speedSlider { touch-action: none; }
 /* Narrow panes shed the bar's secondary buttons in this order; each stays reachable another way (docs/notes/ui-simple.md,
-   "Narrow bar"). Play, the step buttons, the time, Settings and Fullscreen stay longest. */
+   "Narrow bar"). Play, the step buttons, the time, Settings and Fullscreen stay longest. The folder capsule
+   (media/folder-rail.css) goes first: Shift+N / Shift+P and a right-click on the step buttons still change the video. */
+@media (max-width: 720px) {
+  #row #folderCap { display: none; }
+}
 @media (max-width: 640px) {
   #row button.rng, #row #infoBtn, #row #time #dur { display: none; }
   #row #remoteLiveBtn { display: none; }

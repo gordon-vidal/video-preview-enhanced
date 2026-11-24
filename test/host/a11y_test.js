@@ -75,12 +75,14 @@ assert.match(playerStyles, /\.vol-wrap:not\(\.no-audio\):hover \.vol-slide/, 'no
 assert.match(playerStyles, /\.vol-wrap\.no-audio #mute \{ opacity: 0\.4;/, 'no-audio dims the disabled mute button');
 // Narrow panes shed bar buttons in steps (docs/notes/ui-simple.md, "Narrow bar"); the step buttons go only at the last one.
 const ladder = [...playerStyles.matchAll(/@media \(max-width: (\d+)px\) \{([\s\S]*?)\n\}/g)].map((m) => [Number(m[1]), m[2]]);
-assert.deepStrictEqual(ladder.map((m) => m[0]), [640, 500, 400, 320, 250], 'narrow bar steps');
+assert.deepStrictEqual(ladder.map((m) => m[0]), [720, 640, 500, 400, 320, 250], 'narrow bar steps');
+// The folder capsule goes first (Shift+N / Shift+P and a right-click on the step buttons remain).
+assert.match(ladder[0][1], /^\s*#row #folderCap \{ display: none; \}\s*$/, 'below 720 px only the folder capsule goes');
 for (const [w, css] of ladder) {
   if (w > 250) assert.doesNotMatch(css, /#prev|#next|\.stepw|#play|#cog|#full|#now/, `${w} px keeps Play, the step buttons, the time, Settings, Fullscreen`);
 }
-assert.match(ladder[4][1], /\.stepw \{ display: none; \}/, 'below 250 px the step buttons go');
-assert.match(ladder[3][1], /\.vol-wrap \{ display: none; \}/, 'below 320 px Mute and volume go (M and the arrow keys remain)');
+assert.match(ladder[5][1], /\.stepw \{ display: none; \}/, 'below 250 px the step buttons go');
+assert.match(ladder[4][1], /\.vol-wrap \{ display: none; \}/, 'below 320 px Mute and volume go (M and the arrow keys remain)');
 assert.match(playerStyles, /#notice \{[^}]*background: var\(--vpe-surface-float\)/);
 
 const cmp = compareHtml({ uri: (...p) => `https://webview/${p.join('/')}`, cspSource: 'vscode-resource:', nonce: 'n', cfg: {}, frameSource: '' });

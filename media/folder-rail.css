@@ -1,0 +1,204 @@
+/* The folder rail (media/folder-rail.js, src/folder-rail-html.js) and the bar's folder capsule (src/bar.js).
+   docs/notes/folder-rail.md has the design; the tokens (--vpe-*) are media/player.css's. Monochrome: no accent colour. */
+
+/* #stage and the rail share #main; the rail docked takes real width beside the picture, overlaid it floats. */
+#main { position: relative; flex: 1; min-height: 0; display: flex; }
+#main > #stage { min-width: 0; }
+
+/* ---- The bar's capsule: ‹ 2/5 › right before Compare (single player, folders of 2+ videos) ---- */
+#row .folder-cap {
+  display: inline-flex; align-items: center; flex: none; height: 26px; padding: 0 2px; margin-right: 4px; gap: 0;
+  border-radius: 6px; background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle); box-sizing: border-box;
+}
+#row .folder-cap[hidden] { display: none; }
+#row .folder-cap button.cap-btn { height: 22px; min-width: 22px; padding: 0 4px; border-radius: 4px; font-size: 11px; }
+#row .folder-cap button.cap-count {
+  font-family: var(--vpe-mono); font-variant-numeric: tabular-nums; padding: 0 5px; min-width: 30px;
+}
+#row .folder-cap button.cap-count.open { background: var(--vpe-hover); }
+
+/* ---- Fold-out tab at the picture's right edge: revealed near the edge, opened by a click only ---- */
+.edge-zone {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 48px; z-index: 4;
+  display: flex; align-items: center; justify-content: flex-end; pointer-events: none;
+}
+.edge-zone[hidden] { display: none; }
+.edge-shelf, .rail-collapse-tab {
+  appearance: none; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
+  height: 28px; width: 16px; padding: 0; border-radius: 6px 0 0 6px;
+  background: var(--vpe-surface-float);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--vpe-panel-border); border-right: none;
+  color: var(--vscode-foreground);
+  box-shadow: -2px 2px 10px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  cursor: pointer;
+}
+.edge-shelf {
+  opacity: 0; transform: translateX(6px); pointer-events: none;
+  transition: opacity 150ms ease, transform 150ms ease, border-color 120ms;
+}
+.edge-zone.near .edge-shelf, .edge-shelf:focus-visible { opacity: 1; transform: translateX(0); pointer-events: auto; }
+.edge-shelf:hover, .rail-collapse-tab:hover { border-color: var(--vpe-bd-active); }
+.rail-collapse-tab {
+  position: absolute; left: -16px; top: 50%; transform: translateY(-50%);
+  z-index: 8; opacity: 0.72; transition: opacity 120ms ease, border-color 120ms;
+}
+.rail-collapse-tab:hover, .rail-collapse-tab:focus-visible { opacity: 1; }
+
+/* ---- The rail: one DOM, docked (default) or overlaid (setting folderRail.layout) ---- */
+.rail {
+  --rail-w: 218px;
+  width: var(--rail-w); min-width: 176px; max-width: 360px; box-sizing: border-box;
+  display: flex; flex-direction: column; min-height: 0;
+  color: var(--vpe-panel-fg); font-size: 12px;
+  border-left: 1px solid var(--vpe-panel-border);
+  z-index: 5; user-select: none;
+}
+.rail[hidden] { display: none; }
+.rail.dock { position: relative; flex: none; background: var(--vscode-editorWidget-background); }
+.rail.overlay {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  background: var(--vpe-surface-float);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  box-shadow: -8px 0 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+}
+/* The resize grip on the left edge; the fold tab sits outside it (left of the rail) and above it. */
+.resizer { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 6; touch-action: none; }
+.rail.resizing, .rail.resizing * { cursor: ew-resize; }
+
+/* Zone 1: header (hairline 1 below it) */
+.r-head { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--vpe-sep); }
+.r-crumb { flex: 1; min-width: 0; font-size: 11.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-btn {
+  appearance: none; border: 1px solid transparent; background: transparent;
+  color: var(--vscode-foreground); border-radius: 4px; height: 22px; min-width: 22px;
+  padding: 0 5px; font: inherit; font-size: 11px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+}
+.r-btn:hover { background: var(--vpe-hover); }
+.r-close { opacity: 0.55; }
+.r-close:hover, .r-close:focus-visible { opacity: 1; }
+
+/* Zone 2: filter and the Playable formats check, then the column header (no hairline between them) */
+.r-sub { display: flex; flex-direction: column; gap: 5px; padding: 6px 8px 4px; }
+.r-search {
+  width: 100%; height: 24px; padding: 0 7px; box-sizing: border-box;
+  background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle);
+  border-radius: 4px; color: var(--vscode-foreground); font: inherit; font-size: 11px; outline: none;
+}
+.r-search:focus { border-color: var(--vpe-bd-active); }
+.r-search::placeholder { color: var(--vpe-dim); }
+.r-playable {
+  align-self: flex-start; appearance: none; border: none; background: transparent; padding: 1px 0;
+  color: var(--vpe-dim); font: inherit; font-size: 11px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.r-playable:hover, .r-playable.on { color: var(--vscode-foreground); }
+.r-chk-box {
+  width: 13px; height: 13px; border-radius: 3px; box-sizing: border-box;
+  border: 1px solid var(--vpe-bd-subtle); background: var(--vpe-fill-subtle);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.r-chk-box svg { opacity: 0; }
+.r-playable.on .r-chk-box { border-color: var(--vpe-bd-active); }
+.r-playable.on .r-chk-box svg { opacity: 1; }
+.col-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 8px 4px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--vpe-dim); cursor: context-menu;
+}
+.col-pick {
+  appearance: none; border: none; background: transparent; color: inherit;
+  font: inherit; text-transform: inherit; letter-spacing: inherit;
+  padding: 1px 4px; border-radius: 3px; cursor: pointer;
+}
+.col-pick:hover, .col-pick[aria-expanded="true"] { background: var(--vpe-hover); color: var(--vscode-foreground); }
+
+/* The list: 24 px rows (Details) */
+.r-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 4px 4px; display: flex; flex-direction: column; gap: 1px; outline: none; }
+.r-list:focus-visible { outline: none; } /* keyboard focus shows on the cursor row instead (below) */
+.r-empty { padding: 8px 6px; font-size: 11px; color: var(--vpe-dim); }
+.r-row {
+  position: relative; flex: none;
+  display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px;
+  border-radius: 4px; cursor: pointer; font-size: 11.5px;
+}
+.r-row:hover, .r-row.cur { background: var(--vpe-row-hover); }
+/* The playing video: soft fill and a 2 px bar on the left, no outline box. */
+.r-row.active { background: var(--vpe-row-hover); font-weight: 500; }
+.r-row.active::before {
+  content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px;
+  border-radius: 1px; background: var(--vpe-bd-active);
+}
+.r-list:focus-visible .r-row.cur { box-shadow: inset 0 0 0 1px var(--vscode-focusBorder); }
+.r-row.dim { opacity: 0.45; cursor: default; }
+.r-ico { width: 14px; display: inline-flex; align-items: center; justify-content: center; flex: none; opacity: 0.8; }
+.r-row.active .r-ico { opacity: 1; }
+.r-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-col { font-family: var(--vpe-mono); font-size: 10.5px; color: var(--vpe-dim); font-variant-numeric: tabular-nums; flex: none; }
+.r-cmp {
+  display: none; appearance: none; border: 1px solid var(--vpe-bd-subtle); background: transparent;
+  color: var(--vscode-foreground); border-radius: 4px; height: 18px; width: 18px; padding: 0;
+  align-items: center; justify-content: center; cursor: pointer; flex: none;
+}
+.r-row:hover .r-cmp, .r-row.cur .r-cmp { display: inline-flex; }
+.r-row:hover .r-col.cmp-able, .r-row.cur .r-col.cmp-able { display: none; }
+.r-cmp:hover { background: var(--vpe-hover); border-color: var(--vpe-bd-active); }
+
+/* Zone 3: footer (hairline 2 above it) */
+.r-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 4px 6px; border-top: 1px solid var(--vpe-sep); font-size: 11px; color: var(--vpe-dim);
+}
+.end-btn {
+  appearance: none; border: none; background: transparent; color: var(--vscode-foreground);
+  border-radius: 4px; height: 22px; padding: 0 6px; font: inherit; font-size: 11px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0; white-space: nowrap; overflow: hidden;
+}
+.end-btn:hover, .end-btn[aria-expanded="true"] { background: var(--vpe-hover); }
+.end-btn .lbl { color: var(--vpe-dim); }
+.r-pos { font-family: var(--vpe-mono); font-size: 10.5px; font-variant-numeric: tabular-nums; padding-right: 2px; flex: none; }
+
+/* The column and Autoplay menus: the same 86% frosted float as #ctxmenu and the ⚙ panel */
+.vpe-pop {
+  position: fixed; z-index: 14; min-width: 138px; padding: 4px; box-sizing: border-box;
+  border-radius: 8px; background: var(--vpe-surface-float);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--vpe-panel-border);
+  box-shadow: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
+  color: var(--vpe-panel-fg);
+}
+.vpe-pop[hidden] { display: none; }
+.vpe-pop button {
+  width: 100%; appearance: none; border: none; background: transparent;
+  color: var(--vscode-foreground); text-align: left; padding: 5px 8px;
+  border-radius: 4px; font: inherit; font-size: 11px; cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.vpe-pop button:hover, .vpe-pop button:focus-visible { background: var(--vpe-row-hover); outline: none; }
+
+/* The hover card, left of the rail (outside the picture's hit-testing: it never takes the pointer) */
+.hover-pop {
+  position: absolute; z-index: 12; width: 184px; box-sizing: border-box;
+  border-radius: 6px; overflow: hidden;
+  background: var(--vpe-surface-float); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--vpe-panel-border); box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  pointer-events: none; color: var(--vpe-panel-fg);
+}
+.hover-pop[hidden] { display: none; }
+.hover-body { padding: 5px 7px; font-size: 10.5px; display: flex; flex-direction: column; gap: 2px; }
+.hover-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-foreground); }
+.hover-meta { font-family: var(--vpe-mono); font-size: 10px; color: var(--vpe-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hover-meta:empty { display: none; }
+
+/* Fullscreen with the bar hidden: so is the fold-out tab. */
+body.idle .edge-zone { display: none; }
+
+body.vscode-high-contrast .r-row:hover, body.vscode-high-contrast .r-row.active { outline: 1px dashed var(--vscode-contrastActiveBorder, transparent); outline-offset: -1px; }
+@media (prefers-reduced-motion: reduce) { .edge-shelf, .rail-collapse-tab { transition: none; } }
+
+/* Narrow panes (the capsule's own step is in media/player.css's narrow-bar ladder): a docked rail would leave
+   little picture, so it overlays instead. */
+@media (max-width: 560px) {
+  .rail.dock { position: absolute; top: 0; right: 0; bottom: 0; background: var(--vpe-surface-float); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+}

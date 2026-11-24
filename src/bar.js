@@ -77,8 +77,20 @@ const playerCompareButton = (visible, open) => {
 `;
 };
 
-/** The bar's markup; `compare`: the compare page's variant. */
-function barHtml({ compare = false, canCompare = true, compareOpen = false } = {}) {
+// The folder capsule (single player of a file only): previous / next video of the playing file's folder around its
+// place in it ("2/5"), which also opens and closes the folder rail. Hidden until the page knows the folder has more
+// than one video (media/folder-rail.js); never for URLs, image sequences or Compare.
+const chevron = (d) => '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + STROKE +
+  '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d + '"/></svg>';
+const folderCapsule = `    <div id="folderCap" class="folder-cap" role="group" aria-label="Folder" hidden>
+      <button id="capPrev" class="cap-btn" title="Previous video in folder  Shift+P" aria-label="Previous video in folder" aria-keyshortcuts="Shift+P">${chevron('M15 18l-6-6 6-6')}</button>
+      <button id="capCount" class="cap-btn cap-count" title="Folder rail" aria-label="Folder rail" aria-expanded="false" aria-controls="rail"></button>
+      <button id="capNext" class="cap-btn" title="Next video in folder  Shift+N" aria-label="Next video in folder" aria-keyshortcuts="Shift+N">${chevron('M9 18l6-6-6-6')}</button>
+    </div>
+`;
+
+/** The bar's markup; `compare`: the compare page's variant; `folder`: the player of a file (adds the folder capsule). */
+function barHtml({ compare = false, canCompare = true, compareOpen = false, folder = false } = {}) {
   return `<div id="bar">
   <div id="seekRow">
     <input id="seek" type="range" min="0" max="0" value="0" step="1" aria-label="Position">
@@ -100,7 +112,7 @@ function barHtml({ compare = false, canCompare = true, compareOpen = false } = {
     <button id="remoteLiveBtn" class="ib live-chip mono" title="Live transcode settings" aria-label="Live transcode settings" aria-expanded="false" aria-controls="panel" hidden></button>
 ${compare ? '' : `    <button id="tracks" class="ib" title="Subtitles  C" aria-label="Subtitles" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="C" hidden><span class="ccline">${icons.cc}</span></button>
 `}
-${compare ? compareCapsule : playerCompareButton(canCompare, compareOpen)}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I">${icons.about}</button>
+${compare ? compareCapsule : (folder ? folderCapsule : '') + playerCompareButton(canCompare, compareOpen)}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I">${icons.about}</button>
     <button id="rate" class="ib speed mono" title="Speed: click, or scroll to change" aria-label="Speed 1×" aria-expanded="false" aria-controls="panel">1×</button>
     <button id="cog" class="ib" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="panel">${icons.settings}</button>
     <button id="picBtn" class="ib" data-mode="fit" title="Picture size: Fit. Click for Fill  Z" aria-label="Picture size: Fit. Next: Fill" aria-keyshortcuts="Z">${pictures}</button>

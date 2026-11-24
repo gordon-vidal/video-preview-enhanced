@@ -7,7 +7,8 @@
 //
 // Step: { case, only?, skip?, settings?, env?, ffmpeg?, keepState?, timeout? }
 
-const PLAYER = ['media/player.js', 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/frame-player.js', 'media/player.css', 'src/bar.js'];
+const PLAYER = ['media/player.js', 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/autoplay.js', 'media/frame-player.js', 'media/player.css', 'src/bar.js'];
+const RAIL = ['media/folder-rail.js', 'media/folder-rail.css', 'src/folder-rail.js', 'src/folder-rail-html.js', 'src/player-html.js'];
 const ENGINE_CORE = [
   'media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/gl-renderer.js',
 ];
@@ -75,6 +76,12 @@ module.exports = [
     journey: 'The bar and panels: accessibility, keys, panels, speed, time formats, jump sizes (panel and settings), About this video, the context menu',
     sources: [...PLAYER, 'media/ctxmenu.js', 'src/extension.js', 'media/scopes.js', 'media/inspect.js', 'package.json'],
     steps: [{ case: 'ui' }, { case: 'ui_jumps' }, { case: 'ui_jumps_settings' }, { case: 'ui_info' }, { case: 'ctxmenu' }],
+  },
+  {
+    name: 'folder-rail',
+    journey: 'The folder rail and the bar capsule: open docked, resize, browse up and back, the column menu, the edge tab, a right-click on |▶ swaps the tab with the rail state, Autoplay plays the next video once',
+    sources: [...PLAYER, ...RAIL, 'src/extension.js', 'src/settings.js'],
+    steps: [{ case: 'folder-rail' }],
   },
   {
     name: 'picture-size',

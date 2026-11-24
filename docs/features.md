@@ -5,7 +5,7 @@
 - **Opens by double-click.** AVI, MKV, MOV, WMV, FLV, MPEG and the other formats below open in this player. MP4 and WebM open here too: on first start the extension sets itself as their default, unless you already chose another editor ([details and undo](commands-and-settings.md#making-it-the-default-for-mp4-and-webm)).
 - **Frame by frame.** `,` and `.` step one frame, and the mouse wheel steps while paused. Stepping backward is exact too: the player seeks to the keyframe before and decodes forward.
 - **Speed from 0.25× to 4×** in steps of 0.05, with the sound at its normal pitch. The speed button on the bar opens a slider with presets; scrolling over it, or `Shift+<` / `Shift+>`, changes the speed by 0.05.
-- **Loops.** Loop is on by default. `A` and `B` set an A-B loop over any section.
+- **Autoplay.** What happens at the end: **Off** (default: stop on the last frame), **Play next in folder** (the next video of the folder plays in the same tab from the start; it stops at the last one) or **Loop**. In ⚙ › Autoplay and the folder rail's footer; `R` turns Loop on and off. `A` and `B` set an A-B loop over any section, which always repeats.
 - **Picks up where you left off.** Reopening a video resumes at the last position.
 - **Subtitles.** SRT, WebVTT and ASS/SSA files.
   - Files next to the video load by themselves: `video.srt`, `video.en.srt`, `video.eng.forced.srt`, and `Subs/` folders.
@@ -19,7 +19,8 @@
 - **Fullscreen** (`F`) uses the full editor width in VS Code Zen Mode when the webview cannot enter fullscreen. Press `F` again to restore the workbench layout.
 - **Phone videos play upright.** Rotation metadata in MP4/MOV is applied.
 - **HDR10 and HLG in HDR on HDR displays.** When Windows reports an HDR display ("Use HDR" on) and VS Code's WebGPU can draw an extended-range canvas, HDR10 (PQ), HLG, HDR10+ and Dolby Vision profile 8 are shown as HDR: 203 nits is SDR white and brighter highlights go above it, up to what the display can show (`videoPreviewEnhanced.hdrOutput`). On SDR displays they are tone-mapped to SDR in the shader (BT.2390, 203 nits as SDR white), so they don't look flat and grey. The info and stats overlays (`I`, `Shift+I`) say which: "HDR output" or "HDR tone-mapped to SDR".
-- **Next and previous file.** `Shift+N` and `Shift+P` open the next or previous video in the same folder, in the same tab.
+- **Next and previous file.** `Shift+N` and `Shift+P`, the `‹` / `›` of the `2/5` capsule on the bar, or a right-click on ◀| / |▶ show the previous or next video in the same folder (natural order: `clip 2` before `clip 10`), in the same tab.
+- **Folder rail.** Click the `2/5` capsule, or the small tab that appears at the picture's right edge, for a list of the folder beside the picture: `..` goes up, folders list in place, a filter, **Playable formats** (videos only), and a column for Duration, Size or Modified (click `DURATION ▾` or right-click the header). Hover a file for its length, size, date, resolution and codec; the button on a video's row compares it with the playing one (or adds both to an open Compare). Drag its left edge to resize it (176–360 px). Browsing doesn't change what plays, or what `Shift+N` and Autoplay take next, until you pick a video. The setting `folderRail.layout` floats it over the picture instead (`overlay`). It keeps its state when you move to another video.
 - **Image sequences.** Run **Video Preview: Play Image Sequence** from the Command Palette and pick a folder of numbered PNG, JPG, WebP, BMP, GIF or AVIF frames.
 - **Live reload.** When a render or a capture rewrites the file, the player reloads it and keeps your position.
 - **Background tabs pause,** and the screen doesn't go to sleep while a video plays.
@@ -135,7 +136,7 @@ One layout (the old simple / advanced switch is gone). The bar, left to right:
 previous frame, play / pause, next frame (a small badge that appears when you point at them picks how far they jump:
 1 frame, 5 frames, 1 s, 5 s or 10 s), mute (new tabs start muted by default; dimmed and disabled when the video has no
 audio track), volume (opens when you point at mute), the time (click it: time → SMPTE timecode → frame
-number; the same detail while playing and paused), then CC (only when the video has subtitles), **Compare** (video
+number; the same detail while playing and paused), then CC (only when the video has subtitles), the folder capsule `‹ 2/5 ›` (a folder with more than one video), **Compare** (video
 files), ⓘ (about this video), the speed (click: speed panel; scroll: ±0.05), ⚙ (settings), the **picture size**
 button and fullscreen. Volume, playback speed, the time display format and the step size carry over across open tabs
 and sessions.
@@ -143,7 +144,7 @@ and sessions.
 - A click on the picture plays or pauses; with a panel open it closes the panel.
 - ⚙, ⓘ and the speed open their panel and close it when clicked again. CC turns subtitles on and off. `Esc` closes
   any panel or the Compare confirmation.
-- **⚙ Settings**, in groups. **Playback:** Repeat video (switch), Speed ›, Subtitles ›, Audio track ›, Picture size ›, Live transcode ›, Compare, Copy frame.
+- **⚙ Settings**, in groups. **Playback:** Autoplay › (Off, Play next in folder, Loop), Speed ›, Subtitles ›, Audio track ›, Picture size ›, Live transcode ›, Compare, Copy frame.
   **Tools:** **A–B Range ›** (set A / B / clear, Export frames A–B…, Export A–B Clip…, Copy ffmpeg command for A–B) and **Inspection ›**
   (Pixel inspector `X`, Scopes `W`, Stats `Shift+I`, Codec X-ray `Shift+X`). Then **Open video URL…** ([network URLs](urls.md)), **Open in system player**
   (local files), **Keyboard shortcuts** (also opens with `?`) and last **Extension settings** (VS Code's Settings, filtered to this extension).

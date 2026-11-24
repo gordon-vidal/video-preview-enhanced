@@ -158,7 +158,7 @@ module.exports = [{
       await settle(300);
       s = await P.state();
       const labels = s.panel.rows.map((r) => r.label);
-      for (const want of ['Repeat video', 'Speed', 'Subtitles', 'Audio track', 'Picture size', 'Copy frame', 'Compare', 'A–B Range', 'Inspection', 'Keyboard shortcuts', 'Open video URL…', 'Extension settings']) ok(labels.some((l) => l.includes(want)), `main page has no ${want}: ${JSON.stringify(labels)}`);
+      for (const want of ['Autoplay', 'Speed', 'Subtitles', 'Audio track', 'Picture size', 'Copy frame', 'Compare', 'A–B Range', 'Inspection', 'Keyboard shortcuts', 'Open video URL…', 'Extension settings']) ok(labels.some((l) => l.includes(want)), `main page has no ${want}: ${JSON.stringify(labels)}`);
       // Grouped: the exports and the four inspection tools sit on sub-pages; the jump sizes are VS Code settings only.
       for (const gone of ['Jump sizes', 'Scopes', 'Inspector', 'Stats', 'Codec X-ray', 'Export']) ok(!labels.some((l) => l.includes(gone)), `main page still has ${gone}: ${JSON.stringify(labels)}`);
       // A–B Range page: the range and every export together.
@@ -196,7 +196,8 @@ module.exports = [{
       await settle(300);
       s = await a11y();
       ok(s.active !== first, `ArrowDown: focus ${first} -> ${s.active}`);
-      ok(s.panel.radios.some((x) => x.role === 'switch'), `loop is a switch: ${JSON.stringify(s.panel.radios)}`);
+      // The player's Playback group starts with Autoplay › (Off / Play next in folder / Loop), not a Repeat switch.
+      ok(s.panel.items.some((x) => /^Autoplay, /.test(x.label || '')), `Autoplay row: ${JSON.stringify(s.panel.items.slice(0, 3))}`);
       P.key('Escape', { target: ':focus' });
       await settle(300);
       s = await a11y();

@@ -35,6 +35,7 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 | URLs (`src/urlsource.js`) | `url`, `url-native` |
 | The bar, panels, keys (`media/controls.js`, `src/bar.js`) | `ui` |
 | Subtitles, tracks | `subtitles` |
+| Folder rail, the bar's capsule, Autoplay, folder navigation (`src/folder-rail.js`, `media/folder-rail.js`, `media/autoplay.js`) | `folder-rail`, `ui` |
 - **GitHub Actions:** layers 1-2 on every push and pull request. Layer 3 stays local for now (needs a GPU).
 
 ## Rules

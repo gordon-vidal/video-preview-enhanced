@@ -3,6 +3,8 @@
 // playback-pref sanitising and the broadcast to open pages. Everything VS Code-shaped is injected, so a Node
 // test can drive it (test/host/settings_test.js); src/extension.js wires the real objects.
 
+const { resolveOnEnd, LAYOUTS } = require('./folder-rail');
+
 /** The jump sizes the page shows and changes: only the values package.json declares. */
 const JUMPS = ['frame', 1, 5, 10, 30];
 const PREFS = {
@@ -108,7 +110,9 @@ function createSettings({ vscode, getState, log, transcodePolicy, sessions, comp
     const c = vscode.workspace.getConfiguration('videoPreviewEnhanced');
     return {
       autoplay: c.get('autoplay', true),
-      loop: c.get('loop', true),
+      // Autoplay: onEnd where set, else the deprecated loop where set, else off (src/folder-rail.js resolveOnEnd).
+      onEnd: resolveOnEnd(c.inspect ? c.inspect('onEnd') : undefined, c.inspect ? c.inspect('loop') : undefined),
+      railLayout: LAYOUTS.includes(c.get('folderRail.layout')) ? c.get('folderRail.layout') : 'dock',
       jumps: Object.fromEntries(Object.entries(PREFS).map(([k, p]) => [k, settingOr(c, k, p.dflt)])),
       sequenceFps: c.get('sequenceFps', 30),
       decoder: c.get('decoder', 'auto'),

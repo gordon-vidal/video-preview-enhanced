@@ -19,12 +19,12 @@ them all, with the jump sizes you chose. In the player and Compare, you can also
 | Home / End | First / last frame |
 | ↑ / ↓ | Volume ±5 % |
 | M | Mute. Playback starts muted until you click, because VS Code blocks autoplay with sound |
-| R | Loop on or off |
+| R | Loop on or off (Autoplay: Loop ↔ Off; from Play next in folder: Loop) |
 | A / B | Set the start / end of the A–B range for looping and export (press again to clear) |
 | Backspace | Clear the A–B range |
 | T | Copy the current timestamp |
 | F | Fill the editor and switch to zen mode |
-| Shift+N / Shift+P | Next / previous video in the folder |
+| Shift+N / Shift+P | Next / previous video in the folder (also the bar's `‹ 2/5 ›` capsule, or a right-click on ◀\| / \|▶) |
 | D | Compare with another video: a quick pick of the videos in this folder, then the workspace (**Browse…** opens the file dialog) |
 | Shift+D | Wait for the next video you open from the Explorer. It opens Compare in the player's tab with Add Mode on if there is room. Esc cancels the wait. ⚙ › Tools › Compare does the same |
 | S / Ctrl+C | Save the frame as PNG / copy it |
@@ -81,6 +81,18 @@ leaves them alone (`docs/notes/ui-simple.md`).
 ## Right-click menu
 
 Right-clicking the player opens the player's own menu (themed like the ⚙ panel, shortcuts right-aligned, ✓ on Loop; it also works in fullscreen; arrow keys, Enter and Escape work in it) with quick actions on this moment, like a browser's or YouTube's. Each entry shows its key: **Play** / **Pause** (Space), **Loop** (R, ✓ when on), then **Set Range Start (A)**, **Set Range End (B)** and **Clear A–B Range** (Backspace, while a range is set), then **Copy Frame** (Ctrl+C), **Save Frame as PNG…** (S), **Copy Timestamp** (T), then **Start Compare** (or **Add to Compare** while a Compare is open; video files only), then **Keyboard Shortcuts** (?) and **Settings…** (opens the ⚙ panel). The frame link is `Shift+C`. How it plays (speed, sound, subtitles, tools) is in the ⚙ panel. It is part of the page, so it needs no VS Code menu support and no commands; details in `docs/notes/context-menu.md`.
+
+## Folder rail
+
+| Key or mouse | Action |
+|---|---|
+| Click `2/5` on the bar, or the tab at the picture's right edge | Show / hide the folder rail |
+| ↑ / ↓, Home / End, PageUp / PageDown | Move in the list |
+| Enter / click | Play the video (in this tab) or list the folder |
+| Backspace | Up one folder |
+| Esc | Clear the filter, then close the rail |
+| Right-click the column header, or click `DURATION ▾` | Pick the column: Duration, Size, Modified, None |
+| Right-click ◀\| / \|▶ | Previous / next video in the folder |
 
 Frame numbers are the ones the player shows: `#1` is the first frame.
 While stepping or using the seek bar, the bar shows the requested frame until the decoder catches up.

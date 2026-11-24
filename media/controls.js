@@ -350,7 +350,7 @@ const VpeControls = (() => {
    */
   function create(env) {
     const { panel, sheet, bar, buttons, onShow } = env;
-    /** @type {null|'main'|'speed'|'ab'|'inspect'|'picture'|'transcode'|'subs'|'audio'|'quality'|'info'|'step'} */
+    /** @type {null|'main'|'autoplay'|'speed'|'ab'|'inspect'|'picture'|'transcode'|'subs'|'audio'|'quality'|'info'|'step'} */
     let view = null;
     /** @type {HTMLElement|null} */
     let opener = null;
@@ -389,9 +389,14 @@ const VpeControls = (() => {
     function renderMain(s) {
       const f = document.createDocumentFragment();
       f.appendChild(heading('Playback'));
-      const loop = btn('row', 'Repeat video', () => { env.act.loop(); render(); }, { icon: ICON.loop, aria: { role: 'switch', 'aria-checked': String(!!s.loop) } });
-      loop.appendChild(sw(!!s.loop));
-      f.appendChild(loop);
+      if (s.autoplay) {
+        // The player: Off / Play next in folder / Loop (setting onEnd; media/autoplay.js), the rail footer's choice too.
+        f.appendChild(btn('row', 'Autoplay', () => show('autoplay'), { icon: ICON.loop, value: s.autoplay.label, chev: true, aria: { 'aria-label': `Autoplay, ${s.autoplay.label}` } }));
+      } else {
+        const loop = btn('row', 'Repeat video', () => { env.act.loop(); render(); }, { icon: ICON.loop, aria: { role: 'switch', 'aria-checked': String(!!s.loop) } });
+        loop.appendChild(sw(!!s.loop));
+        f.appendChild(loop);
+      }
       f.appendChild(btn('row', 'Speed', () => show('speed'), { icon: ICON.speed, value: speedText(s.rate), chev: true }));
       if (s.compare) {
         // Compare (media/compare.js): the sound comes from one video, chosen in the Compare panel.
@@ -540,6 +545,19 @@ const VpeControls = (() => {
       return f;
     }
 
+    /** Autoplay: what happens at the end of the video. "Play next in folder" only for a file in a folder. */
+    function renderAutoplay(s) {
+      const f = document.createDocumentFragment();
+      f.appendChild(head('Autoplay'));
+      const a = s.autoplay || { mode: 'off', next: false };
+      const modes = [['off', 'Off', 'Stop on the last frame'], ...(a.next ? [['next', 'Play next in folder', 'Then stop at the last video']] : []), ['loop', 'Loop', 'Start over']];
+      f.appendChild(radios('Autoplay', modes.map(([m, label, sub]) => ({ label, sub, checked: a.mode === m, pick: () => env.act.setAutoplay(m) }))));
+      const note = el('div', 'pnote');
+      note.append(kbd('R'), ' turns Loop on and off. An A–B range always repeats.');
+      f.appendChild(note);
+      return f;
+    }
+
     /** The step size popover (badge on ◀| / |▶): the sizes; a pick applies to both buttons and closes it. */
     function renderStep(s) {
       const f = document.createDocumentFragment();
@@ -678,7 +696,7 @@ const VpeControls = (() => {
       return f;
     }
 
-    const LABEL = { main: 'Player settings', speed: 'Speed', ab: 'A–B Range', inspect: 'Inspection', picture: 'Picture size', transcode: 'Live transcode', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video', step: 'Step size' };
+    const LABEL = { main: 'Player settings', autoplay: 'Autoplay', speed: 'Speed', ab: 'A–B Range', inspect: 'Inspection', picture: 'Picture size', transcode: 'Live transcode', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video', step: 'Step size' };
     /**
      * Pages a page adds (compare's panel and its per-video page): { label, render(s, kit), parent?, button? }.
      * `button`: the bar button (env.buttons key) that shows it open; `parent`: where Esc goes.
@@ -697,7 +715,7 @@ const VpeControls = (() => {
       panel.className = `panel ${view}`;
       const custom = VIEWS[view];
       panel.setAttribute('aria-label', custom ? (typeof custom.label === 'function' ? custom.label(s) : custom.label) : view === 'info' && s.infoTabs ? 'About these videos' : LABEL[view]);
-      const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'speed' ? renderSpeed(s) : view === 'ab' ? renderAB(s) : view === 'inspect' ? renderInspect(s) : view === 'picture' ? renderPicture(s) : view === 'transcode' ? renderTranscode(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : view === 'step' ? renderStep(s) : renderInfo(s);
+      const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'autoplay' ? renderAutoplay(s) : view === 'speed' ? renderSpeed(s) : view === 'ab' ? renderAB(s) : view === 'inspect' ? renderInspect(s) : view === 'picture' ? renderPicture(s) : view === 'transcode' ? renderTranscode(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : view === 'step' ? renderStep(s) : renderInfo(s);
       panel.appendChild(body);
       const after = /** @type {HTMLElement[]} */ ([...panel.querySelectorAll('[data-nav]')]);
       if (fi >= 0 && after.length) after[Math.min(fi, after.length - 1)].focus();
@@ -720,7 +738,7 @@ const VpeControls = (() => {
     function sync() {
       const set = (b, on) => { if (b) { b.setAttribute('aria-expanded', String(on)); b.classList.toggle('open', on); } };
       const own = view && VIEWS[view] ? VIEWS[view].button : null;
-      set(buttons.cog, view === 'main' || view === 'audio' || view === 'quality' || view === 'ab' || view === 'inspect' || view === 'picture' || (view === 'transcode' && opener !== buttons.remoteLive) || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
+      set(buttons.cog, view === 'main' || view === 'autoplay' || view === 'audio' || view === 'quality' || view === 'ab' || view === 'inspect' || view === 'picture' || (view === 'transcode' && opener !== buttons.remoteLive) || (view === 'subs' && opener !== buttons.tracks) || (view === 'speed' && opener !== buttons.rate));
       for (const [k, b] of Object.entries(buttons)) if (!['cog', 'info', 'rate', 'tracks', 'stepPrev', 'stepNext', 'remoteLive'].includes(k)) set(b, !!own && own === k);
       set(buttons.remoteLive, view === 'transcode' && opener === buttons.remoteLive);
       set(buttons.stepPrev, view === 'step' && opener === buttons.stepPrev);
@@ -737,7 +755,7 @@ const VpeControls = (() => {
       view = v;
       panel.hidden = false;
       render();
-      const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' || v === 'step' ? panel.querySelector('[aria-checked="true"]') : null) || panel.querySelector('[data-nav]'));
+      const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' || v === 'step' || v === 'autoplay' ? panel.querySelector('[aria-checked="true"]') : null) || panel.querySelector('[data-nav]'));
       if (first) first.focus();
     }
     /** A bar button: opens its page, or closes it when it is the page shown. */

@@ -95,9 +95,10 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
 
 - **One player, no modes.** The separate advanced layout is dropped; `advancedMode` is deprecated and ignored.
 - **Bar:** previous frame, play/pause, next frame, mute (new tabs start muted; dimmed and disabled when the video has no audio track), volume (folded behind mute until hovered), time (click: time / timecode / frame number),
-  then CC (only when the video has a subtitle track, 2026-11-22), **Compare** (video files), ⓘ (about this video),
+  then CC (only when the video has a subtitle track, 2026-11-22), the folder capsule `‹ 2/5 ›` (a file in a folder of 2+
+  videos; it also shows the folder rail, docs/notes/folder-rail.md), **Compare** (video files), ⓘ (about this video),
   speed, ⚙, picture size, fullscreen. No status pill: only real problems show (a notice, once).
-- **⚙ panel** (2026-11-22), in groups: **Playback** (repeat video, speed, subtitles (always there, also to load a file), audio
+- **⚙ panel** (2026-11-22), in groups: **Playback** (Autoplay: Off / Play next in folder / Loop, speed, subtitles (always there, also to load a file), audio
   track, picture size, live transcode, compare, copy frame), **Tools** (two sub-pages: **A–B Range**, with the range and
   its exports, and **Inspection**: pixel inspector, scopes, stats, codec X-ray) and the links (open video URL, open in
   system player, keyboard shortcuts, extension settings). No jump sizes there: they are VS Code settings.

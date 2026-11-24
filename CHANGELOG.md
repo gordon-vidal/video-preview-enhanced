@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Folder rail:** a `‹ 2/5 ›` capsule on the bar (previous / next video; the count shows the rail) and a tab at the picture's right edge bring up a compact list of the folder beside the picture (or over it: setting `folderRail.layout`). Natural order, `..` to go up, a filter, **Playable formats**, a Duration / Size / Modified column, a hover card, and a 1-click **Compare** on any other video. Browsing never changes what plays until you pick a video. Works locally, in WSL and over Remote-SSH ([details](docs/notes/folder-rail.md)).
+- **Autoplay:** Off / Play next in folder / Loop, in ⚙ › Autoplay and the rail's footer (setting `onEnd`, replacing `loop`). **Play next in folder** shows the folder's next video in the same tab from 0:00 when one plays to its end, and stops at the last one. An A–B range still repeats. **New tabs no longer loop by default**; a `loop` you set yourself still applies until you choose Autoplay.
+- **Right-click ◀| / |▶** goes to the previous / next video of the folder (a left click still steps one frame).
+- `Shift+N` / `Shift+P` read the folder without blocking the extension host.
+
 - **Seek-bar previews during Live transcode:** hovering or dragging the seek bar now shows keyframe previews while Live transcode is active (local and Remote-SSH files), decoded by a separate short ffmpeg on the host and cached per keyframe range; URL tabs still have none.
 - **Live transcode seeks:** Jump back to recently played regions using cached picture and sound, with no ffmpeg restart on a cache hit.
 - **Compare deep links & AI agent guide:** `vscode://gordon-vidal.video-preview-enhanced/compare?frame=N&mode=split&file=...&file=...` opens two or more videos in a synchronized Compare view at the requested frame/timestamp and layout (`grid`, `spotlight`, or `split`), or reveals and seeks an already-open Compare panel for those files. Added `docs/agents.md` with a copy-paste prompt for `AGENTS.md` / `CLAUDE.md`.
