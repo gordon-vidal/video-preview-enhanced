@@ -37,6 +37,14 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 | Subtitles, tracks | `subtitles` |
 - **GitHub Actions:** layers 1-2 on every push and pull request. Layer 3 stays local for now (needs a GPU).
 
+## Slow-link & remote UX invariants
+
+When changing clocks, stepping, caching or streaming, verify the affected behavior under simulated
+`slow-ssh` and `flaky-ssh` in Layer 1 or 2 with a virtual clock. A zero-latency local SSD run cannot
+exercise RTT, bandwidth contention or blackouts. The Layer 1
+[slow-link UX tests](../test/host/slow_link_ux_test.js) model first-frame delivery, the cost of redundant
+seek traffic on the FIFO pipe and cancellation when a tab closes.
+
 ## Rules
 
 - The player lifecycle suite exercises webview-only reloads by booting two documents from the same HTML. It uses controlled promises for outstanding reads and early probes.
