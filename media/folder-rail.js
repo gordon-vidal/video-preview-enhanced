@@ -251,11 +251,12 @@
     resizer.addEventListener('lostpointercapture', endDrag);
 
     // ---- filter, Playable formats ----
-    filter.addEventListener('input', () => render());
+    const syncFilter = () => { if (compare) send({ op: 'filter', filter: filter.value }); };
+    filter.addEventListener('input', () => { render(); syncFilter(); });
     filter.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
       if (e.key === 'Escape') {
         e.preventDefault(); e.stopPropagation();
-        if (filter.value) { filter.value = ''; render(); } else setOpen(false, { refocus: true });
+        if (filter.value) { filter.value = ''; render(); syncFilter(); } else setOpen(false, { refocus: true });
       } else if (e.key === 'ArrowDown' || e.key === 'Enter') {
         e.preventDefault(); e.stopPropagation();
         list.focus();

@@ -202,8 +202,8 @@
 .hover-meta { font-family: var(--vpe-mono); font-size: 10px; color: var(--vpe-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hover-meta:empty { display: none; }
 
-/* Fullscreen with the bar hidden: so is the fold-out tab. */
-body.idle .edge-zone { display: none; }
+/* Fullscreen with the bar hidden: so are both edge tabs. */
+body.idle .edge-zone, body.idle .rail-collapse-tab { display: none; }
 
 body.vscode-high-contrast .r-row:hover, body.vscode-high-contrast .r-row.active { outline: 1px dashed var(--vscode-contrastActiveBorder, transparent); outline-offset: -1px; }
 /* Reduced motion: no glide, the tabs simply appear (and nothing is kept on a compositor layer for it). */

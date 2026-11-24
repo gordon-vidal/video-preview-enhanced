@@ -642,11 +642,15 @@ function rail(fsys, o = {}) {
       assert.deepStrictEqual(list.members.sort(), [id('a 1.mp4'), id('a 2.mkv')].sort(), 'both compared videos are marked');
       assert.strictEqual(list.count, 2);
       assert.ok(!('current' in list), 'no single playing row in Compare');
-      // A video row: added (the page reloads, so the next page says it and keeps the rail as it was).
-      await rail({ op: 'activate', gen: list.gen, id: id('a 10.mov'), rail: { open: true, width: 250, filter: '' } });
+      // A video row: added (the page reloads, so the next page says it and keeps the rail open and live filter/width).
+      await rail({ op: 'prefs', width: 250 });
+      await rail({ op: 'filter', filter: 'a ' });
+      await rail({ op: 'activate', gen: list.gen, id: id('a 10.mov'), rail: { open: true, width: 250, filter: 'a ' } });
       assert.deepStrictEqual(names(), ['a 1.mp4', 'a 2.mkv', 'a 10.mov']);
       assert.strictEqual(cfg().toast, 'Added to Compare');
-      assert.deepStrictEqual(cfg().railCarry, { open: true, width: 250, filter: '' }, 'the rail comes back open on the new page');
+      assert.strictEqual(cfg().rail.width, 250, 'the resized width is preserved on the new page');
+      assert.deepStrictEqual(cfg().railCarry, { open: true, filter: 'a ' }, 'the rail comes back open with its live filter');
+      await rail({ op: 'filter', filter: '' });
       // The same video again: no duplicate.
       await rail({ op: 'activate', gen: list.gen, id: id('a 1.mp4'), rail: { open: true } });
       assert.strictEqual(cmp.files.length, 3);

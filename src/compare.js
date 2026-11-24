@@ -244,10 +244,13 @@ class CompareSession {
     const ctl = this.railCtl();
     if (!ctl) return undefined;
     const d = /** @type {any} */ (this.railDeps);
-    const keep = (msg) => { if (msg && msg.rail) this.railCarry = folderRail.sanitizeRailCarry(msg.rail); };
+    if (m && m.op === 'filter') { this.railFilter = typeof m.filter === 'string' ? m.filter.slice(0, 200) : ''; return undefined; }
+    const keep = (msg) => {
+      if (msg && msg.rail && typeof msg.rail.filter === 'string') this.railFilter = msg.rail.filter.slice(0, 200);
+    };
     return folderRail.routeRailMessage({
       ctl, prefs: d.prefs,
-      startDir: () => this.railBrowse || /** @type {string} */ (this.railDir()),
+      startDir: () => { if (!this.railBrowse) this.railBrowse = this.railDir(); return /** @type {string} */ (this.railBrowse); },
       setOpen: (open) => { this.railOpen = open; },
       setBrowse: (dir) => { this.railBrowse = dir; },
       onVideo: (e, msg) => { keep(msg); return this.railAdd(e.path); },
@@ -316,7 +319,7 @@ class CompareSession {
       maxVideos: maxVideos(),
       // The folder rail: its remembered look and layout, and its state on the page before (an add or remove reloads it).
       rail: this.railDir() ? { ...folderRail.sanitizeRailPrefs(/** @type {any} */ (this.railDeps).prefs.get()), layout: /** @type {any} */ (this.railDeps).layout() } : null,
-      railCarry: this.railDir() && (this.railCarry || this.railOpen) ? { ...(this.railCarry || { filter: '' }), open: this.railOpen } : null,
+      railCarry: this.railDir() && (this.railFilter || this.railOpen) ? { filter: this.railFilter || '', open: this.railOpen } : null,
       toast: this.nextToast,
     };
     this.nextToast = null;
