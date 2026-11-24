@@ -5,6 +5,8 @@
 //   neighbours, newest position wins; leaving stops decoding and the service closes after the idle time;
 //   no neighbours while playback is busy or for remote files;
 // - the native request path (o.request) works without the libav.js worker;
+// - Live transcode (EncodedStream) answers seek-bar thumbnails through the same host path with the real source
+//   keyframe time, cancels on abort, and a page for a URL never asks (engine.js net);
 // - thumbhost decodes one keyframe to RGBA of the asked box (real ffmpeg, when on PATH).
 const assert = require('assert');
 const fs = require('fs');
@@ -183,6 +185,59 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
     assert.strictEqual(await th.decodeThumb({ ffmpeg: 'ffmpeg' }, path.join(root, 'missing.mp4'), { w: 1920, h: 1080 }, 0, 160, 120), null, 'missing file: null');
     console.log(`native thumbnails (long_20s.mp4): ${ms.join(', ')} ms`);
   } else console.log('skip: ffmpeg or test/media/cases/long_20s.mp4 missing (native thumbnail decode)');
+
+  // Live transcode: the page asks the host like native ffmpeg (no remoteStream exclusion), URLs stay out.
+  const engineSrc = fs.readFileSync(path.join(root, 'media', 'engine.js'), 'utf8');
+  assert.ok(!engineSrc.includes('cfg.native ? this.remoteStream'), 'engine: Live transcode is not excluded from thumbnails');
+  assert.ok(engineSrc.includes('if (this.cfg.net) return null;'), 'engine: URL tabs have no thumbnails');
+  const extSrc = fs.readFileSync(path.join(root, 'src', 'extension.js'), 'utf8');
+  const sendThumbSrc = extSrc.slice(extSrc.indexOf('  sendThumb(m) {'), extSrc.indexOf('  async sendExactFrame'));
+  assert.ok(sendThumbSrc.includes('nd instanceof remotestream.EncodedStream'), 'host: EncodedStream gets thumbnails');
+  assert.ok(sendThumbSrc.includes('!this.url'), 'host: URL tabs excluded');
+  {
+    const { EncodedStream } = require('../../src/remotestream.js');
+    const probed = { duration: 20, video: { index: 0, codec: 'hevc', width: 1920, height: 1080, fps: 30, startTime: 0 }, audio: null };
+    const mkStream = (file, tools) => new EncodedStream({ tools, file, post: () => {}, log: () => {}, remote: false, encoder: 'h264_nvenc', cpuEncoder: null, probed });
+    const bad = mkStream('x.mkv', {});
+    assert.strictEqual(th.nativeThumb(bad, { t: 1, w: 200, h: 90 }, () => {}), null, 'box over 160: refused');
+    assert.strictEqual(th.nativeThumb(mkStream('', {}), { t: 1, w: 160, h: 90 }, () => {}), null, 'no file: refused');
+    bad.dispose();
+    // Cancellation: the child is killed and the answer is null, as for native ffmpeg.
+    if (ff.status === 0 && fs.existsSync(clip)) {
+      const lt = mkStream(clip, { ffmpeg: 'ffmpeg' });
+      const ac = new AbortController();
+      const pending = th.nativeThumb(lt, { t: 5, w: 160, h: 90 }, () => {}, ac.signal);
+      ac.abort(); // release, hide, reload or dispose while ffmpeg is still starting
+      assert.strictEqual(await pending, null, 'abort ends the thumbnail with null');
+      assert.strictEqual(await th.nativeThumb(lt, { t: 5, w: 160, h: 90 }, () => {}, ac.signal), null, 'already aborted: no spawn');
+      lt.dispose();
+    }
+    // Real decode: the answer carries the decoded source keyframe time, so the page's cache dedupes the range.
+    if (ff.status === 0 && fs.existsSync(clip)) {
+      const lt = mkStream(clip, { ffmpeg: 'ffmpeg' });
+      const r = await th.nativeThumb(lt, { t: 7.5, w: 160, h: 90 }, () => {});
+      assert.ok(r, 'Live transcode thumbnail');
+      assert.ok(Number.isFinite(r.kt) && r.kt <= 7.5, `real keyframe time ${r.kt}`);
+      assert.strictEqual(r.rel, r.kt - 0, 'rel = kt - source start');
+      assert.strictEqual(r.data.length, r.w * r.h * 4);
+      lt.dispose();
+      // The page-side cache then answers the whole visited range without another host request.
+      let asks = 0;
+      const svc = new ThumbService({
+        duration: 20, startT: 0, size: 1e6, fps: 30, cap: 30e6, log: () => {}, busy: () => false, idleMs: 50,
+        request: async (t, w, h) => { asks++; return { ...r, kt: r.kt, covered: true, w, h, data: new Uint8Array(w * h * 4) }; },
+      });
+      svc.hover(7.5, () => {}, true);
+      await tick(30);
+      svc.leave(true);
+      const n = asks;
+      const again = [];
+      svc.hover(7.5, (pic) => again.push(pic), true);
+      assert.strictEqual(again.length, 1, 'revisited place paints from the cache');
+      assert.strictEqual(asks, n, 'no second host request for a visited keyframe range');
+      svc.dispose();
+    }
+  }
 
   console.log('seek_preview_test: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

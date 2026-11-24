@@ -2279,15 +2279,15 @@ function createEngine(env) {
     // thumbnail with a short keyframe-only ffmpeg (src/thumbhost.js). Nothing is
     // decoded, and no worker or ffmpeg started, until the pointer is on the seek
     // bar (hover or drag), and decoding stops when it leaves (docs/notes/seek-preview.md).
-    // Not for the remote stream (ffmpeg on the remote host per thumbnail: gap) or
-    // audio-only files; MJPEG/image sequences use FramePlayer and have no thumbnails.
+    // The Live transcode stream asks the host too (one keyframe-only ffmpeg per thumbnail, never the running
+    // stream); not for URLs or audio-only files; MJPEG/image sequences use FramePlayer and have no thumbnails.
 
     /** The thumbnail service, made on first use; null when this file has none. */
     thumbService() {
       if (this.thumbs) return this.thumbs;
       const v = this.info && this.info.video;
       if (typeof ThumbService !== 'function' || !v || this.vmode === undefined || this.vmode === 'none' || this.startT === null || !(this.meta.duration > 0)) return null;
-      if (this.cfg.native ? this.remoteStream : !this.libavBlobs) return null;
+      if (!this.cfg.native && !this.libavBlobs) return null; // Live transcode (remoteStream) asks the host like native ffmpeg
       if (this.cfg.net) return null; // a URL: every thumbnail would be more HTTP range requests
       const startT = this.startT;
       this.thumbs = new ThumbService({

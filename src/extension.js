@@ -1401,7 +1401,7 @@ class Session {
     });
   }
 
-  /** Native ffmpeg seek-bar thumbnail (src/thumbhost.js); one at a time, answered with {type: 'thumb', id, ...}.
+  /** Native ffmpeg / Live transcode seek-bar thumbnail (src/thumbhost.js); one at a time, answered with {type: 'thumb', id, ...}.
    * @param {ThumbRequest} m
    */
   sendThumb(m) {
@@ -1415,7 +1415,10 @@ class Session {
     this.thumbJob?.controller.abort();
     const job = { id: m.id, controller: new AbortController() };
     this.thumbJob = job;
-    const work = nd instanceof NativeDecoder && this.panel.visible
+    // Native ffmpeg and Live transcode (EncodedStream) both decode keyframes of the source file on this host;
+    // a URL tab has no local file for ffmpeg to seek in, so it gets none.
+    const eligible = nd instanceof NativeDecoder || nd instanceof remotestream.EncodedStream;
+    const work = eligible && !this.url && !this.sequence && this.panel.visible
       ? nativeThumb(nd, m, (x) => log(`[${this.name}] ${x}`), job.controller.signal) : null;
     return Promise.resolve(work).catch(() => null).then((r) => {
       if (this.thumbJob !== job) return;

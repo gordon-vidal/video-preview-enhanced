@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Seek-bar previews during Live transcode:** hovering or dragging the seek bar now shows keyframe previews while Live transcode is active (local and Remote-SSH files), decoded by a separate short ffmpeg on the host and cached per keyframe range; URL tabs still have none.
 - **Compare deep links & AI agent guide:** `vscode://gordon-vidal.video-preview-enhanced/compare?frame=N&mode=split&file=...&file=...` opens two or more videos in a synchronized Compare view at the requested frame/timestamp and layout (`grid`, `spotlight`, or `split`), or reveals and seeks an already-open Compare panel for those files. Added `docs/agents.md` with a copy-paste prompt for `AGENTS.md` / `CLAUDE.md`.
 
 ## 0.11.0 (2026-11-24)

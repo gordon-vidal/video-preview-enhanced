@@ -20,7 +20,7 @@ busy, and stopped the worker a minute after the last hover.
 | WebAssembly (HEVC, VP9, AV1, MPEG-2, ...) | worked, slow first picture | one keyframe decode in WASM per place: 4K HEVC keyframes take hundreds of ms; the first hover also pays the worker start (fetch + WASM instantiate) |
 | Long-GOP 4K | worked, but only keyframe granularity | thumbnails are keyframes (worker seeks to the keyframe at or before t); a 10 s GOP gives the same picture across 10 s |
 | Native ffmpeg | **none** | `thumbnail()` returned false for `cfg.native`: that path never loads libav.js (`libavBlobs` is null) |
-| Remote stream (SSH, ffmpeg on the remote host) | **none** | runs as `cfg.native` too |
+| Live transcode / remote stream (ffmpeg on this or the remote host) | **host keyframe previews** | the same `sendThumb` path as native ffmpeg: a separate keyframe-only ffmpeg on the source file, never the running stream |
 | Remote file read over SSH (no stream) | hover only, no prefetch | every thumbnail costs at least one 4 MB block over the link |
 | MJPEG AVI / image sequences (FramePlayer) | none | no libav; every frame is already a picture, but no thumbnail path was written |
 | While dragging | **no thumbnail** | the tip followed `mousemove` only; during a drag the slider owns the pointer and the tip was not updated from `input`. The main picture already followed the drag (player.js frameLoop applies the newest `pendingSeekFrame` once the previous seek landed: exact seeks, newest wins) |
@@ -73,9 +73,9 @@ All logic in media/thumbs.js and the engine's thumbnail section; player.js only 
   and answers with the RGBA. `-noaccurate_seek` and passthrough timing are required: with only
   keyframes decoded, the keyframe before T is otherwise dropped as "before the cut" and nothing comes out
   (found by test). Legacy ffmpeg (no `-fps_mode`) gets `-vsync 0`. ffmpeg only decodes (docs/PRODUCT.md).
-- **Remote stream:** no thumbnails (gap). Cheapest option later: the same `sendThumb` handler running the
-  remote ffmpeg (RemoteStream already spawns it there) per thumbnail; each costs a process start on the
-  remote host plus ~20-60 KB over the link. Remote files without the stream: hover works, no strip.
+- **Live transcode (local or remote host):** `sendThumb` also accepts the `EncodedStream`; each thumbnail is one
+  keyframe-only ffmpeg on the host (~20-60 KB over the link) with the same single-flight, abort and `kt` reply as
+  native ffmpeg. URL tabs stay without. Remote files without the stream: hover works, no strip.
 
 ## Numbers
 
@@ -133,7 +133,7 @@ is the expensive case (one 4K keyframe decode per place, ~0.3-1 s of one core ea
 
 ## Left to do
 
-- Remote SSH stream: no thumbnails (see Design). Remote files read over SSH: hover only, no strip.
+- Remote files read over SSH: hover only, no strip.
 - MJPEG AVI / image sequences (FramePlayer): no thumbnails (could draw the decoded JPEG frames directly).
 - Live main picture while dragging is the existing exact-seek loop (newest wins after the previous seek
   lands). On long-GOP 4K in WebAssembly each exact seek can take seconds, so the picture lags; a
