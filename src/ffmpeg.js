@@ -132,7 +132,8 @@ function parseGpuFilters(stdout) {
  * Checks that ffmpeg and ffprobe run, and learns the version and GPU filters.
  * ...
  */
-async function locateTools(ffmpegSetting, ffprobeSetting, cache) {
+async function locateTools(ffmpegSetting, ffprobeSetting, cache, deps = {}) {
+  const exec = deps.run || run;
   // Spawn the real binary, not a Chocolatey / Scoop launcher (it drops pipe:3 / pipe:4).
   // A command name or path stays as it is unless it really is a shim.
   const unwrapped = async (cmd) => {
@@ -159,13 +160,14 @@ async function locateTools(ffmpegSetting, ffprobeSetting, cache) {
       return { ffmpeg, ffprobe, version: c.version, legacy: !!c.legacy, gpuFilters: new Set(c.gpuFilters || []), stamp, cached: true };
     }
   }
-  const v = await run(ffmpeg, ['-hide_banner', '-version'], 10000);
-  if (v.code !== 0) return null;
-  const [p, filters] = await Promise.all([
-    run(ffprobe, ['-hide_banner', '-version'], 10000),
-    run(ffmpeg, ['-hide_banner', '-filters'], 10000),
+  // The three checks are independent: started together (on a cold disk each start costs 100-400 ms; the first
+  // open of a session used to wait for them one after the other).
+  const [v, p, filters] = await Promise.all([
+    exec(ffmpeg, ['-hide_banner', '-version'], 10000),
+    exec(ffprobe, ['-hide_banner', '-version'], 10000),
+    exec(ffmpeg, ['-hide_banner', '-filters'], 10000),
   ]);
-  if (p.code !== 0) return null;
+  if (v.code !== 0 || p.code !== 0) return null;
   const version = v.stdout.split(/\r?\n/)[0];
   // -fps_mode arrived in ffmpeg 5.1; older builds use -vsync. Git builds (N-...) are new.
   const m = /version n?(\d+)\.(\d+)/.exec(version);

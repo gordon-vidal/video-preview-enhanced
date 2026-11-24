@@ -22,6 +22,7 @@ const EARLY_NATIVE_MS = 15000;
  *   scanAvi: (signal: AbortSignal) => Promise<any>,
  *   tools: () => Promise<any>,
  *   gpus: (t: any) => Promise<any>,
+ *   prefetchGpus?: () => void,
  *   failedBefore: (stat: any) => boolean,
  *   eligible: () => boolean,
  *   sniff: (file: string, stat: any, signal: AbortSignal) => Promise<any>,
@@ -66,6 +67,9 @@ class EarlyProbeController {
     const ctl = this.ctl = new AbortController();
     const { signal } = ctl;
     this.state = 'probing';
+    // The GPU lookup (a PowerShell start on Windows, ~1 s cold) needs no ffmpeg: start it beside the tools lookup
+    // instead of after it. It queries hardware only; nothing decodes.
+    if (d.prefetchGpus) { try { d.prefetchGpus(); } catch (e) { d.log(`[${d.name}] gpu prefetch: ${e && e.message || e}`); } }
     const stat = this.stat = d.stat(file).catch(() => null);
     // The page reuses this scan, unless the file changed. Only probe AVI after ruling out the frame player.
     const scan = this.avi = d.isAvi(file) ? stat.then((st) => st && !signal.aborted ? d.scanAvi(signal) : null) : null;

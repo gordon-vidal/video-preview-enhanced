@@ -131,7 +131,27 @@ async function testReleaseAndPageClose() {
   assert.ok(r2.made[0].disposed, 'open() ended without claiming it');
 }
 
+// The GPU lookup starts with the tools lookup (not after it) and a throwing prefetch breaks nothing.
+async function testGpuPrefetchBeforeTools() {
+  const order = [];
+  const tools = deferred();
+  const r = rig({
+    prefetchGpus: () => order.push('prefetch'),
+    tools: () => { order.push('tools'); return tools.promise; },
+  });
+  r.c.start('/a.mp4');
+  assert.deepEqual(order, ['prefetch', 'tools'], 'prefetch must not wait for the tools');
+  tools.resolve(T);
+  r.c.abort('done');
+  const bad = rig({ prefetchGpus: () => { throw new Error('boom'); } });
+  bad.c.start('/a.mp4');
+  assert.equal(bad.c.state, 'probing');
+  assert.ok(bad.logs.some((m) => /gpu prefetch: boom/.test(m)));
+  bad.c.abort('done');
+}
+
 (async () => {
+  await testGpuPrefetchBeforeTools();
   await testGuessMatchesProbe();
   await testGuessContradicted();
   await testAbortBeforeReady();

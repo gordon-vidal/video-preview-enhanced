@@ -184,6 +184,16 @@ function gpusForMethod(t, c = config()) {
 }
 
 /**
+ * Starts the GPU detection early (beside the ffmpeg lookup) when gpusForMethod would have to wait for it: GPU
+ * decoding on and no fresh stored result. A GPU test record needs the tools, so it is not known here; it only
+ * exists after a user-run test, which also stores the GPUs, so this costs nothing then. Nothing decodes.
+ */
+function prefetchGpus(c = config()) {
+  if (!c.gpuDecoding || (hwKnown && !hwStale && Date.now() - (hwKnown.at || 0) < HW_MAX_AGE_MS)) return;
+  machine();
+}
+
+/**
  * Stored probe results that fit this ffmpeg (same build and path, same GPU switch).
  * The GPU test runs only on request ("Video Preview: Re-test ffmpeg").
  */
@@ -1150,6 +1160,7 @@ class Session {
       scanAvi: (signal) => this.scanAvi(signal),
       tools,
       gpus: (t) => gpusForMethod(t, config()),
+      prefetchGpus: () => prefetchGpus(config()),
       failedBefore: (st) => decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, st),
       // Settings can change while it runs: asked again before each step.
       eligible: () => { const c = config(); return this.nativePossible(c) && c.transcode !== 'always' && !this.forceTranscode; },

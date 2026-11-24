@@ -46,6 +46,44 @@ async function fakeBinaries() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// A cold check starts ffmpeg -version, ffprobe -version and ffmpeg -filters together (not one after the other).
+async function coldChecksRunTogether() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-tools-'));
+  const ffmpeg = path.join(dir, `ffmpeg${exe}`);
+  const ffprobe = path.join(dir, `ffprobe${exe}`);
+  fs.writeFileSync(ffmpeg, 'x');
+  fs.writeFileSync(ffprobe, 'y');
+  const store = { rec: undefined };
+  const cache = { get: () => store.rec, set: (r) => { store.rec = r; } };
+  let live = 0;
+  let peak = 0;
+  const calls = [];
+  const fake = (code = 0) => async (cmd, args) => {
+    calls.push([path.basename(cmd), args.join(' ')]);
+    live++;
+    peak = Math.max(peak, live);
+    await new Promise((r) => setTimeout(r, 30));
+    live--;
+    const out = args.includes('-filters') ? ' ..V scale_cuda V->V x' + String.fromCharCode(10) : 'ffmpeg version 6.1 Copyright';
+    return { code: cmd === ffprobe ? code : 0, stdout: out, stderr: '' };
+  };
+  const t = await ff.locateTools(ffmpeg, ffprobe, cache, { run: fake() });
+  assert.ok(t && t.version.startsWith('ffmpeg version 6.1') && t.gpuFilters.has('scale_cuda'), JSON.stringify(t));
+  assert.strictEqual(calls.length, 3, JSON.stringify(calls));
+  assert.strictEqual(peak, 3, `the three checks overlapped ${peak}-fold`);
+  assert.ok(store.rec && store.rec.version === t.version, 'a working check is stored');
+  // A broken ffprobe still gives null and stores nothing.
+  store.rec = undefined;
+  assert.strictEqual(await ff.locateTools(ffmpeg, ffprobe, cache, { run: fake(1) }), null);
+  assert.strictEqual(store.rec, undefined, 'a failed check was stored');
+  // Cache hit: no process at all.
+  store.rec = { key: await ff.toolsKey(ffmpeg, ffprobe), v: ff.TOOLS_CACHE_VER, version: 'ffmpeg version 6.1', legacy: false, gpuFilters: [] };
+  calls.length = 0;
+  assert.ok((await ff.locateTools(ffmpeg, ffprobe, cache, { run: fake() })).cached);
+  assert.strictEqual(calls.length, 0, 'a cached check started processes');
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 async function real() {
   if (!(await ff.whichFile('ffmpeg')) || !(await ff.whichFile('ffprobe'))) { console.log('tools cache: real ffmpeg part skipped (none on PATH)'); return null; }
   const store = { rec: undefined };
@@ -86,6 +124,7 @@ async function real() {
 
 (async () => {
   await fakeBinaries();
+  await coldChecksRunTogether();
   const r = await real();
   console.log(`tools cache: ok${r ? ` (tool check ${r.coldMs.toFixed(0)} ms -> ${r.warmMs.toFixed(1)} ms cached; ffprobe ${r.probeMs.toFixed(0)} ms -> ${r.hitMs.toFixed(1)} ms cached)` : ''}`);
 })().catch((e) => { console.error(e); process.exit(1); });
