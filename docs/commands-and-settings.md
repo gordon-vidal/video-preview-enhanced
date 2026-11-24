@@ -49,7 +49,9 @@ natural name order. Existing keybindings for `videoPreviewEnhanced.addToCompare`
 | `videoPreviewEnhanced.compare.maxVideos` | `8` | How many videos one compare takes, 2 to 16. From 5 on they sit in a static grid (3×2, 3×3, 4×3, 4×4) and share the memory and transfer of 4 videos, so each picture gets fewer pixels. Applies to the next compare or the next video you add. |
 | `videoPreviewEnhanced.advancedMode` | `false` | No longer used (deprecated): the player has one layout and its tools are always in the ⚙ panel ([details](features.md#the-player)). |
 | `videoPreviewEnhanced.autoplay` | `true` | Start playing when a video opens. |
-| `videoPreviewEnhanced.loop` | `true` | Loop playback. |
+| `videoPreviewEnhanced.onEnd` | `off` | **Autoplay**: at the end of a video, `off` stops on the last frame, `next` plays the next video of its folder in the same tab from the start (stopping at the last one), `loop` starts over. An A–B range always repeats. ⚙ › Autoplay, the folder rail and `R` change the current tab; this is the default for new tabs. |
+| `videoPreviewEnhanced.loop` | `true` | Deprecated: use `onEnd`. While `onEnd` is not set, a value you set here still applies (`true`: Loop, `false`: Off); the default alone no longer loops. |
+| `videoPreviewEnhanced.folderRail.layout` | `dock` | Where the folder rail sits: `dock` beside the picture (the video and the scopes stay uncovered), `overlay` floating over its right edge. |
 | `videoPreviewEnhanced.sequenceFps` | `30` | Frame rate for image sequences (1 to 240). |
 | `videoPreviewEnhanced.ffmpegPath` | empty | Your own ffmpeg. Empty: the one setup downloaded, then PATH. A machine setting; a workspace can't set it. |
 | `videoPreviewEnhanced.gpuDecoding` | `true` | Let native ffmpeg decode on the GPU, with the method the test found best here. `false`: CPU only. |

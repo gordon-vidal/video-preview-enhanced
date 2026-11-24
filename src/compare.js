@@ -32,6 +32,9 @@ const { createAddMode, startsInAddMode, addToCompareOrigin } = require('./addmod
 const { createCompareMenu } = require('./comparemenu');
 const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('./burst');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
+const folderRail = require('./folder-rail');
+const { planCompareRow, planFolderCompare } = folderRail;
+const { folderRailHtml } = require('./folder-rail-html');
 
 const MAX_BLOCK = 8 * 1024 * 1024;
 /** Videos in one panel at most (the setting compare.maxVideos picks 2-16; 8 by default). */
@@ -67,9 +70,12 @@ function compareScripts(large) {
     'timestretch.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js', 'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js',
     'engine.js', 'picture.js', 'modes.js', 'range-drag.js', 'controls.js', 'abloop.js', 'comparerange.js', 'stepgoal.js',
     'timefmt.js', ...(large ? ['membudget.js'] : []),
-    'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js', 'compare-debug.js', 'compare-sync.js', 'compare.js',
+    'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js', 'compare-debug.js', 'compare-sync.js', 'folder-rail.js', 'compare.js',
   ];
 }
+
+/** The compare page's stylesheets: the player's, Compare's own, and the folder rail's (src/folder-rail-html.js). */
+const COMPARE_CSS = ['player.css', 'compare.css', 'folder-rail.css'];
 
 /**
  * The compare page. Pure, so tests can render it without VS Code:
@@ -87,7 +93,7 @@ function compareHtml({ uri, cspSource, nonce, cfg, frameSource, inlineCss, inlin
     ['connect-src', cspSource, 'blob:', frameSource].filter(Boolean).join(' '),
   ].join('; ');
   const { styles, scripts } = assetTags({
-    uri, nonce, cssFiles: ['player.css', 'compare.css'], scriptFiles: compareScripts(large), inlineCss, inlineScripts,
+    uri, nonce, cssFiles: COMPARE_CSS, scriptFiles: compareScripts(large), inlineCss, inlineScripts,
   });
   const json = JSON.stringify(cfg).replace(/</g, '\\u003c');
   return `<!DOCTYPE html>
@@ -97,6 +103,7 @@ function compareHtml({ uri, cspSource, nonce, cfg, frameSource, inlineCss, inlin
 ${styles}
 </head><body class="compare">
 <script type="application/json" id="cfg">${json}</script>
+<div id="main">
 <div id="stage">
   <canvas id="canvas" hidden role="img" aria-label="Videos compared"></canvas>
   <div id="cells"${large ? ' class="dense"' : ''}></div>
@@ -110,6 +117,8 @@ ${styles}
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div></div>
   ${playFlashHtml}
   <div id="toast" hidden aria-hidden="true"></div>
+</div>
+${cfg.rail ? folderRailHtml() : ''}
 </div>
 <div id="addPop" class="add-pop" role="menu" aria-label="Add video" hidden>
   <button id="addPickBtn" type="button" role="menuitem"><span>Pick / Browse video…</span></button>
@@ -133,6 +142,7 @@ class CompareSession {
   constructor(context, uris, {
     log, engineCfg, nativeFor, nativeQueue, transport = 'message', frameSource, vscode: api, pick, viewColumn,
     start, goto, mode, openPlayer, setPref, setPlaybackPrefs, prefs, copyText, addMode, setTranscodePref, informTranscode, menu, exportClips, linkSim,
+    rail, railFolder,
   }) {
     if (api) vscode = api;
     this.logRaw = log;
@@ -152,6 +162,14 @@ class CompareSession {
     this.addMode = addMode || null;
     this.menu = menu;
     this.copyText = copyText || ((t) => vscode.env.clipboard.writeText(t));
+    // The folder rail (src/folder-rail.js): the player's controller, cache and look; rows add to this Compare.
+    this.railDeps = rail || null; // { cache, probe, prefs, layout(), caseless }
+    this.railFolder = railFolder || null; // (session, folderUri): "Compare all videos in folder" into this Compare
+    this.rail = null;
+    this.railOpen = false;
+    this.railBrowse = null;
+    this.railCarry = null; // the page's rail state, kept across this page's reloads (a video added or removed)
+    this.nextToast = null; // said by the next page (an add reloads this one)
     this.start = start > 0 ? start : 0; // the player's position when it turned into compare (first page only)
     this.goto = goto || null; // link seek target ({ frame?, t? }, first page only)
     this.mode = mode || null; // link layout mode ('grid' | 'spotlight' | 'split', first page only)
@@ -185,6 +203,7 @@ class CompareSession {
     panel.onDidDispose(() => this.dispose());
     panel.onDidChangeViewState(() => {
       if (!panel.visible) this.thumbJob?.controller.abort();
+      if (this.rail) { if (!panel.visible) this.rail.cancel(); else if (this.railOpen) this.rail.resume(); }
       this.post({ type: 'visible', visible: panel.visible, active: panel.active });
       if (panel.active) this.menu?.activated(this);
     });
@@ -198,6 +217,70 @@ class CompareSession {
     this.order = Grid.tileOrder(uris.length, this.order);
     this.fhs = this.files.map(() => null);
     this.log = (m) => this.logRaw(`[compare ${this.names.join(' ↔ ')}] ${m}`);
+  }
+
+  /** The folder the rail shows first: the first video's (every Compare video is a file on disk). null: no rail. */
+  railDir() {
+    return this.railDeps && this.files.length ? path.dirname(this.files[0]) : null;
+  }
+
+  /** A path of the videos' file system as a uri with their scheme and authority (remote windows too). */
+  uriOf(p) {
+    return this.uris[0].with({ path: vscode.Uri.file(p).path, fragment: '', query: '' });
+  }
+
+  railCtl() {
+    if (this.rail || this.disposed || !this.railDir()) return this.rail;
+    const d = /** @type {any} */ (this.railDeps);
+    this.rail = folderRail.createFolderRail({
+      fs: fs.promises, post: (m) => this.post(m), cache: d.cache, probe: d.probe, authority: this.uris[0].authority || '',
+      caseless: !!d.caseless, members: () => this.files, log: (m) => this.log(m),
+    });
+    return this.rail;
+  }
+
+  /** A message of the page's rail: the same routing as the player's; a video row adds to this Compare. */
+  onRail(m) {
+    const ctl = this.railCtl();
+    if (!ctl) return undefined;
+    const d = /** @type {any} */ (this.railDeps);
+    if (m && m.op === 'filter') { this.railFilter = typeof m.filter === 'string' ? m.filter.slice(0, 200) : ''; return undefined; }
+    const keep = (msg) => {
+      if (msg && msg.rail && typeof msg.rail.filter === 'string') this.railFilter = msg.rail.filter.slice(0, 200);
+    };
+    return folderRail.routeRailMessage({
+      ctl, prefs: d.prefs,
+      startDir: () => { if (!this.railBrowse) this.railBrowse = this.railDir(); return /** @type {string} */ (this.railBrowse); },
+      setOpen: (open) => { this.railOpen = open; },
+      setBrowse: (dir) => { this.railBrowse = dir; },
+      onVideo: (e, msg) => { keep(msg); return this.railAdd(e.path); },
+      onCompareVideo: (e, msg) => { keep(msg); return this.railAdd(e.path); },
+      onCompareFolder: (e, msg) => { keep(msg); return this.railFolder ? this.railFolder(this, this.uriOf(e.path)) : undefined; },
+    }, m);
+  }
+
+  /** A rail video row: toggles membership in this Compare (adds up to compare.maxVideos, or removes down to 2). */
+  railAdd(file) {
+    const uri = this.uriOf(file);
+    const key = fileKey(uri);
+    const idx = this.uris.findIndex((u) => fileKey(u) === key);
+    if (idx >= 0) {
+      if (this.uris.length <= 2) {
+        this.post({ type: 'toast', text: 'Compare needs at least 2 videos', ms: 2500 });
+        return false;
+      }
+      this.log(`remove ${this.names[idx]}`);
+      this.originalTiles.splice(idx, 1);
+      this.order = Grid.orderAfterRemoval(this.order, idx);
+      this.nextToast = 'Removed from Compare';
+      this.reload(this.uris.filter((_, j) => j !== idx));
+      return true;
+    }
+    const max = maxVideos();
+    const plan = planFolderCompare({ videoKeys: [key], compareKeys: this.uris.map(fileKey), max });
+    if (plan.action === 'add') { this.addUris([uri], 'Added to Compare'); return true; }
+    this.post({ type: 'toast', text: `Compare is full (${max} videos)`, ms: 2500 });
+    return false;
   }
 
   title() {
@@ -248,13 +331,18 @@ class CompareSession {
       mode: this.mode,
       replaced: this.replaced,
       maxVideos: maxVideos(),
+      // The folder rail: its remembered look and layout, and its state on the page before (an add or remove reloads it).
+      rail: this.railDir() ? { ...folderRail.sanitizeRailPrefs(/** @type {any} */ (this.railDeps).prefs.get()), layout: /** @type {any} */ (this.railDeps).layout() } : null,
+      railCarry: this.railDir() && (this.railFilter || this.railOpen) ? { filter: this.railFilter || '', open: this.railOpen } : null,
+      toast: this.nextToast,
     };
+    this.nextToast = null;
     this.start = 0;
     this.goto = null;
     this.mode = null;
     this.replaced = undefined;
     const { inlineCss, inlineScripts } = inlineAssetsFor(this.media.fsPath, {
-      cssFiles: ['player.css', 'compare.css'],
+      cssFiles: COMPARE_CSS,
       scriptFiles: compareScripts(Grid.isLarge(this.names.length)),
       inlineScripts: !!vscode.env.remoteName,
     });
@@ -325,7 +413,9 @@ class CompareSession {
       case 'tileOrder':
         this.order = Grid.tileOrder(this.names.length, m.order);
         this.panel.title = this.title();
+        if (this.rail) this.rail.refreshMembers();
         return undefined;
+      case 'rail': return this.onRail(m);
       case 'readBlock': return this.readBlock(m.key, m.pos, m.len);
       case 'thumb': return this.sendThumb(m);
       case 'nd': {
@@ -578,8 +668,8 @@ class CompareSession {
     this.addUris(picked);
   }
 
-  /** Adds files after the ones shown (up to the setting's count); also the test hook's `compareAdd`. */
-  addUris(picked) {
+  /** Adds files after the ones shown (up to the setting's count); also the test hook's `compareAdd`. `said`: the next page's toast. */
+  addUris(picked, said) {
     if (this.disposed) return;
     // The room is taken now, not before the dialog: the view can change while it is open.
     const max = maxVideos();
@@ -589,6 +679,7 @@ class CompareSession {
     if (files.length > room) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; added ${add.length}.`);
     if (!add.length) return;
     this.log(`add ${add.map((u) => path.basename(u.fsPath)).join(', ')}`);
+    if (said) this.nextToast = said;
     this.reload([...this.uris, ...add]);
   }
 
@@ -656,6 +747,7 @@ class CompareSession {
     if (this.disposed) return;
     this.disposed = true;
     this.menu?.closed(this);
+    if (this.rail) { this.rail.dispose(); this.rail = null; }
     this.closeFiles();
     if (this.link) { this.link.dispose(); this.link = null; }
     this.log('closed');
@@ -703,6 +795,7 @@ function registerCompare(context, deps) {
     const viewColumn = from && from.panel ? from.panel.viewColumn : col;
     const session = new CompareSession(context, list, {
       ...deps, transport, frameSource, pick: pickMany, viewColumn, start: t, goto, mode, addMode: addModeApi, menu,
+      railFolder: (sess, folderUri) => compareFolderRow(sess, folderUri, sess),
     });
     if (startsInAddMode({ origin, count: list.length })) armAddMode(session);
     session.panel.onDidDispose(() => deps.compareOpenChanged?.());
@@ -1116,8 +1209,71 @@ function registerCompare(context, deps) {
     }
     return open(shown, { goto, mode, origin: 'link' });
   };
+  /**
+   * The folder rail's 1-click Compare on a row: no Compare open, a 2-video Compare of the playing video and that one
+   * takes the player's tab at its moment `t`; a Compare open, the missing ones join it (no duplicates, up to
+   * compare.maxVideos). Queued behind other Add to Compare actions, like them.
+   */
+  const compareRow = (player, targetUri, t) => {
+    const action = selected.then(async () => {
+      if (promotion?.done) await promotion.done.catch(() => {});
+      if (!player || player.disposed || !targetUri || !FS_SCHEMES.has(targetUri.scheme) || !VIDEO_EXT.test(targetUri.path)) return undefined;
+      const compare = menu.latest();
+      const max = maxVideos();
+      const plan = planCompareRow({ compareKeys: compare ? compare.uris.map(fileKey) : null, playerKey: fileKey(player.uri), targetKey: fileKey(targetUri), max });
+      deps.log(`compare: from the folder rail: ${path.basename(targetUri.fsPath)} -> ${plan.action}`);
+      if (plan.action === 'open') return open([player.uri, targetUri], { from: player, t: Number.isFinite(t) ? t : 0, origin: 'rail' });
+      const say = (text) => player.post({ type: 'toast', text, ms: 2500 });
+      if (plan.action === 'add') {
+        compare.addUris([player.uri, targetUri].filter((u, i, all) => plan.keys.includes(fileKey(u)) && all.findIndex((x) => fileKey(x) === fileKey(u)) === i));
+        say(`Added to Compare (${compare.uris.length} videos)${plan.skipped ? `; Compare is full (${max} videos)` : ''}`);
+        return compare;
+      }
+      say(plan.action === 'full' ? `Compare is full (${max} videos)` : 'Already in Compare');
+      return compare;
+    });
+    selected = action.catch(() => {});
+    return action;
+  };
+  /**
+   * The folder rail's "Compare all videos in folder" on a folder row: the folder's videos (the same walk as Start
+   * Compare on a folder in the Explorer: natural order, subfolders too) start a Compare in the player's tab, or join
+   * the open Compare (no duplicates, up to compare.maxVideos). A toast says when there is nothing to do.
+   */
+  const compareFolderRow = (player, folderUri, into = null) => {
+    // `player`: the tab whose rail asked (a player Session, or a CompareSession whose own rail asked: then `into` is it).
+    const action = selected.then(async () => {
+      if (promotion?.done) await promotion.done.catch(() => {});
+      if (!player || player.disposed || !folderUri || !FS_SCHEMES.has(folderUri.scheme)) return undefined;
+      const videos = await selectionVideos(folderUri);
+      if (player.disposed) return undefined;
+      const compare = into || menu.latest();
+      const max = maxVideos();
+      const byKey = new Map(videos.map((u) => [fileKey(u), u]));
+      const plan = planFolderCompare({ videoKeys: videos.map(fileKey), compareKeys: compare ? compare.uris.map(fileKey) : null, max });
+      const name = path.basename(folderUri.fsPath);
+      deps.log(`compare: folder rail: ${name} (${videos.length} videos) -> ${plan.action}`);
+      const say = (text) => player.post({ type: 'toast', text, ms: 3000 });
+      const uris = plan.keys.map((k) => byKey.get(k));
+      if (plan.action === 'open') {
+        if (plan.skipped) say(`Compare shows up to ${max} videos: the first ${max} of ${name}`);
+        return open(uris, { from: player, t: 0, origin: 'selection' });
+      }
+      if (plan.action === 'add') {
+        const text = `Added ${uris.length} from ${name} to Compare${plan.skipped ? `; Compare is full (${max} videos)` : ''}`;
+        // Adding reloads the Compare page: its own rail hears it from the next page.
+        if (compare === player) compare.addUris(uris, text); else { compare.addUris(uris); say(text); }
+        return compare;
+      }
+      say(plan.action === 'few' ? (compare ? `No videos in ${name}` : `${name} has fewer than 2 videos to compare`)
+        : plan.action === 'full' ? `Compare is full (${max} videos)` : `The videos of ${name} are in Compare already`);
+      return compare || undefined;
+    });
+    selected = action.catch(() => {});
+    return action;
+  };
   return {
-    claimOpen, noteOpen, holdOpen, toggleAddMode, stopAddMode, openCompareLink,
+    claimOpen, noteOpen, holdOpen, toggleAddMode, stopAddMode, openCompareLink, compareRow, compareFolderRow,
     addFromPlayer: (player, t, confirmStart) => addToCompare(player.uri, undefined, { from: player, t, confirmStart }),
   };
 }

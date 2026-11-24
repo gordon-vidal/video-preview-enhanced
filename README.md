@@ -8,7 +8,7 @@
 - **Compare up to 16 videos, frame‑accurately:** synced playback and frame steps, zoom and pan together, per-video offsets.
 - **Seek‑bar previews:** hover or drag the seek bar and see the picture at that moment.
 - **Pro tools:** scopes, pixel inspector, Codec X‑ray (I / P / B frames and bitrate).
-- **Everyday comforts:** subtitles, audio tracks, 0.25× to 4× speed, A–B loops.
+- **Everyday comforts:** subtitles, audio tracks, 0.25× to 4× speed, A–B loops, a folder rail with Autoplay of the next video.
 - **Free, MIT licensed, no telemetry.**
 
 ## Remote video streaming

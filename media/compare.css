@@ -368,3 +368,9 @@ body.vscode-high-contrast-light #cells.dense :is(.pill, .sync-pill) {
 @media (prefers-reduced-motion: reduce) {
   .ov, .addcell, .skeleton, .skeleton-sub { transition: none; }
 }
+
+/* ---- The folder rail in Compare (media/folder-rail.css has the rail; docs/notes/folder-rail.md): beside or over the
+   tiles like in the player, but no Autoplay picker in its footer (it shows how many videos Compare holds) ---- */
+body.compare #main > #stage { min-width: 0; }
+body.compare .rail .end-btn { display: none; }
+body.compare .rail .r-foot { justify-content: flex-end; }

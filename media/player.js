@@ -33,7 +33,13 @@
   /** @type {any} */
   let player = null;
   let pageClosed = false;
-  let loop = saved.loop !== undefined ? saved.loop : !!cfg.loop;
+  // Autoplay (setting onEnd; media/autoplay.js): 'off' | 'next' | 'loop'. The setting is the default for new tabs; the ⚙
+  // panel, the rail's footer, R and the right-click menu change this tab (and a folder navigation carries it on).
+  // A tab restored from before Autoplay saved a Loop switch (saved.loop): on stays Loop, off is Off (or the setting's
+  // Play next in folder).
+  let onEnd = VpeAutoplay.MODES.includes(saved.onEnd) ? saved.onEnd
+    : saved.loop === true ? 'loop'
+      : saved.loop === false && VpeAutoplay.parse(cfg.onEnd) === 'loop' ? 'off' : VpeAutoplay.parse(cfg.onEnd);
   let muted = saved.muted !== undefined ? !!saved.muted : true;
   const rawVol = saved.volume !== undefined ? Number(saved.volume) : initPrefs.volume !== undefined ? Number(initPrefs.volume) : 1;
   let volume = Number.isFinite(rawVol) && rawVol >= 0 && rawVol <= 1 ? Math.round(rawVol * 100) / 100 : 1;
@@ -144,6 +150,9 @@
   });
   /** @type {any} */
   let controls = null;
+  /** The folder rail and the bar's capsule (media/folder-rail.js); null for URLs and image sequences. */
+  /** @type {any} */
+  let rail = null;
   /** The CC button is present only when there is a track to toggle. */
   function updateCc() {
     const d = subs.panelData();
@@ -161,7 +170,8 @@
   // The frame player (MJPEG AVI, image sequences): media/frame-player.js.
   const FramePlayer = VpeFramePlayer.createFramePlayer({
     canvas, vscode, log, showMessage, setMute,
-    getRate: () => rate, getLoop: () => loop, getMuted: () => muted, getVolume: () => volume,
+    getRate: () => rate, getLoop: () => engineLoops(), getMuted: () => muted, getVolume: () => volume,
+    onEnded: (p, info) => handleEnded(p, info),
   });
 
   // ---- Controls -----------------------------------------------------------
@@ -180,11 +190,11 @@
     const step = scrubbing ? null : player.pendingStep?.();
     if (player.seekTarget == null) player.seekGoalFrame = null;
     // A seek that has not landed after SEEK_PENDING_MS (a slow remote link) shows on the bar at once (CSS .seeking).
-    if (player.seekTarget == null) { seekPendingSince = null; seekRow.classList.remove('seeking'); }
+    if (player.seekTarget == null) { seekPendingSince = null; seekRow?.classList.remove('seeking'); }
     else {
       const t0 = performance.now();
       seekPendingSince ??= t0;
-      if (t0 - seekPendingSince > SEEK_PENDING_MS) seekRow.classList.add('seeking');
+      if (t0 - seekPendingSince > SEEK_PENDING_MS) seekRow?.classList.add('seeking');
     }
     const dragFrame = scrubbing ? Number(ui.seek.value) : player.seekGoalFrame ?? null;
     const f = dragFrame ?? (step ? player.frameAt(step.t) : player.currentFrame());
@@ -318,7 +328,7 @@
       if (now - lastSave > 1000) {
         lastSave = now;
         // Only when something changed: a paused page wrote the same state and position every second.
-        const state = { t: player.currentTime(), rate, volume, muted, loop, subs: subs.state(), timeMode,
+        const state = { t: player.currentTime(), rate, volume, muted, onEnd, subs: subs.state(), timeMode,
           reducedResDismissed, slowNoticeDismissed, stepSize: prefs.stepSize, ...(switchPlay !== null ? { play: switchPlay } : {}) };
         const json = JSON.stringify([state, player.meta.duration || 0]);
         if (json !== lastSaved) {
@@ -340,7 +350,7 @@
     seekDragger.stop();
     hideTip(true);
     seekPendingSince = null;
-    seekRow.classList.remove('seeking');
+    seekRow?.classList.remove('seeking');
     const previous = player;
     player = null;
     previous?.dispose();
@@ -359,7 +369,12 @@
     p.setRate(rate);
     updateMuteUi();
     p.setVolume(volume, muted);
-    if (p.setLoop) p.setLoop(loop);
+    syncEngineLoop();
+    // The folder rail shows this file's duration and picture size without probing it again (src/folder-rail.js seed).
+    if (rail && meta) {
+      const v = p.info && p.info.video;
+      vscode.postMessage({ type: 'rail', op: 'self', duration: meta.duration || 0, width: meta.width || (v && v.width) || 0, height: meta.height || (v && v.height) || 0, codec: (v && v.codec) || '' });
+    }
     const resume = saved.t > 0 ? saved.t : (cfg.resume || 0);
     // A frame link (vscode:// URI or #t= / #frame= fragment) wins over the resume position.
     const linked = !!cfg.goto && !saved.t;
@@ -374,13 +389,49 @@
     // A quality switch (HLS) reloads the page: it plays on when it was playing.
     const playOn = !!saved.play;
     saved.play = false;
-    if ((cfg.autoplay || playOn) && !linked) p.play(); // a frame link opens paused on that frame
+    // Autoplay's "Play next in folder" opened this tab: it plays from the start whatever the autoplay setting says.
+    const autoNext = !!cfg.autoNext && !saved.t;
+    if ((cfg.autoplay || playOn || autoNext) && !linked) p.play(); // a frame link opens paused on that frame
+    begun = p;
+    applyHandoff();
+  }
+
+  /** The player that began (first picture on the way, resume applied); a handoff waits for it. */
+  /** @type {any} */
+  let begun = null;
+  /** A folder navigation that landed on this open tab (src/extension.js adoptHandoff), kept until the player began. */
+  /** @type {any} */
+  let pendingHandoff = null;
+  /**
+   * Applies a waiting handoff: Autoplay, the rail state (media/folder-rail.js adopt, the same as a new tab's), and for
+   * Autoplay's next video a play from 0:00. Only then the host is told (railAdopted, ok) and closes the source tab.
+   */
+  function applyHandoff() {
+    const m = pendingHandoff;
+    if (!m || !player || begun !== player) return;
+    pendingHandoff = null;
+    if (m.onEnd) setOnEnd(m.onEnd, false);
+    if (rail) rail.adopt(m.rail);
+    if (m.fromAutoNext) { player.seekTime(0); player.play(); }
+    vscode.postMessage({ type: 'railAdopted', id: m.id, ok: true });
+  }
+
+  /**
+   * The engine or frame player paused at the end of the file (loop off for the decoder). An A–B range wins, else
+   * Autoplay's "Play next in folder" opens the next video once (only when playback ran into the end); else it stays.
+   */
+  function handleEnded(p, info) {
+    if (p !== player || pageClosed) return;
+    const act = VpeAutoplay.atEnd({ mode: onEnd, a: ab.a, b: ab.b, natural: !!(info && info.natural), hidden: !pageVisible, rate, file: !!rail });
+    log(`end of file: ${act.action} (autoplay ${onEnd}${info && info.natural ? '' : ', not played into'})`); // test hook (layer 3)
+    if (act.action === 'ab') { p.seekTime(act.to); p.play(); } else if (act.action === 'next' && rail) rail.go(1, true);
   }
 
   // A-B loop: A sets the start, B the end; pressing the same key again clears it (media/abloop.js).
   const ab = /** @type {any} */ (self).VpeAbLoop.create();
   function abChanged() {
     toast(ab.toast(fmtTime));
+    syncEngineLoop(); // a range wraps by itself: the decoder must not start over at the end meanwhile
     drawAB();
     if (controls) controls.refresh();
   }
@@ -532,7 +583,20 @@
     vscode.postMessage({ type: 'transcodePref', resolution: prefs.transcodeResolution });
     toast(`Default resolution: ${prefs.transcodeResolution ? `${prefs.transcodeResolution}p` : 'Auto'}`);
   }
-  const setLoop = (l) => { loop = l; if (player && player.setLoop) player.setLoop(l); if (controls) controls.refresh(); };
+  /** Whether the decoder itself starts over at the end: Loop without an A–B range. */
+  function engineLoops() { return VpeAutoplay.engineLoops(onEnd, ab.isSet()); }
+  function syncEngineLoop() { if (player && player.setLoop) player.setLoop(engineLoops()); }
+  /** Autoplay for this tab (the ⚙ panel, the rail's footer); `say`: a toast names it. */
+  function setOnEnd(m, say = true) {
+    onEnd = VpeAutoplay.parse(m);
+    syncEngineLoop();
+    vscode.setState({ ...(vscode.getState() || {}), onEnd });
+    if (controls) controls.refresh();
+    if (rail) rail.refreshOnEnd();
+    if (say) toast(`Autoplay: ${VpeAutoplay.label(onEnd)}`);
+  }
+  /** R and the right-click menu's Loop: Loop and Off swap; Play next in folder becomes Loop. */
+  const toggleLoop = () => { setOnEnd(VpeAutoplay.toggleLoop(onEnd), false); toast(onEnd === 'loop' ? 'Loop on' : 'Loop off'); };
   const hasAudio = () => !player || (player instanceof FramePlayer ? !!player.audio : !player.info || !!player.info.audio);
   function updateMuteUi() {
     const noAudio = !hasAudio();
@@ -782,6 +846,18 @@
   }
   ui.prev.onclick = () => stepButton(-1);
   ui.next.onclick = () => stepButton(1);
+  /** Shift+N / Shift+P, the bar's capsule and a right-click on ◀| / |▶: the folder's next / previous video in this tab. */
+  function neighbour(d) { if (rail) rail.go(d); else vscode.postMessage({ type: 'neighbour', d }); }
+  // A right-click on a step button changes the video (a left click still steps frames). It comes before the page's
+  // own menu (media/ctxmenu.js listens on the document). URLs and image sequences have no folder: the menu opens.
+  for (const [b, d] of [[ui.prev, -1], [ui.next, 1]]) {
+    b.addEventListener('contextmenu', (e) => {
+      if (!rail) return;
+      e.preventDefault();
+      e.stopPropagation();
+      neighbour(d);
+    });
+  }
   // The badge on a step button opens the size popover above it; the click never reaches the step button or the bar.
   for (const b of [ui.prevSize, ui.nextSize]) b.addEventListener('click', (e) => { e.stopPropagation(); if (controls) controls.toggle('step', b); });
   stepTips();
@@ -922,7 +998,9 @@
 
   // Background tabs keep their webview alive; don't let them play on unseen.
   let resumeOnShow = false;
+  let pageVisible = true;
   function setVisible(visible) {
+    pageVisible = visible;
     if (!player) return;
     if (!visible) { seekDragger.stop(); hideTip(true); }
     if (player.setHidden) player.setHidden(!visible);
@@ -986,10 +1064,10 @@
       case 'Home': player.seekFrame(0); break;
       case 'End': player.pause(); player.seekFrame(player.n - 1); break;
       case 'm': case 'M': setMute(!muted); break;
-      case 'r': case 'R': setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); break;
+      case 'r': case 'R': toggleLoop(); break;
       case 'f': case 'F': if (!e.repeat) toggleFullscreen(); break;
-      case 'N': if (e.shiftKey) vscode.postMessage({ type: 'neighbour', d: 1 }); else handled = false; break;
-      case 'P': if (e.shiftKey) vscode.postMessage({ type: 'neighbour', d: -1 }); else handled = false; break;
+      case 'N': if (e.shiftKey) neighbour(1); else handled = false; break;
+      case 'P': if (e.shiftKey) neighbour(-1); else handled = false; break;
       case 'a': case 'A': setAB('a'); break;
       case 'b': case 'B': setAB('b'); break;
       case 'Backspace': clearAB(); toast('A–B range cleared'); break;
@@ -1014,11 +1092,12 @@
   const engine = createEngine({
     vscode, canvas, log, showMessage, toast, page: cfg.page, debug: !!cfg.debug,
     wake: () => wakeLoop(),
-    getState: () => ({ rate, volume, muted, loop }),
+    getState: () => ({ rate, volume, muted, loop: onEnd === 'loop' }),
     setMuteUi: (m) => { if (m !== muted) setMute(m, false); },
     onReady: (p) => { begin(p, p.meta); },
     onMeta: (p) => { ui.seek.max = String(Math.max(0, p.n - 1)); updateMuteUi(); updateRemoteChip(); if (controls) controls.refresh(); },
     onTracks: (p) => subs.onTracks(p),
+    onEnded: (p, info) => handleEnded(p, info),
   });
 
   // ---- xray: Codec X-ray strip, chapters, keyframe steps (media/xray.js) ----
@@ -1131,7 +1210,7 @@
     if (!streamQ || pick === streamQ.pick) return;
     if (player) {
       switchPlay = player.isPlaying();
-      vscode.setState({ ...(vscode.getState() || {}), t: player.currentTime(), play: switchPlay, rate, volume, muted, loop, subs: subs.state(), timeMode });
+      vscode.setState({ ...(vscode.getState() || {}), t: player.currentTime(), play: switchPlay, rate, volume, muted, onEnd, subs: subs.state(), timeMode });
       player.pause();
     }
     streamQ = { ...streamQ, pick };
@@ -1163,7 +1242,7 @@
     get: () => {
       const d = subs.panelData();
       return {
-        rate, loop, jump: prefs.jump, stepButtons: prefs.stepButtons, stepSize: VpeControls.stepSizeOf(prefs), abLabel: abLabel(), picture: pictureState(), tools: TOOLS, ab: { items: AB_ITEMS },
+        rate, loop: onEnd === 'loop', autoplay: { mode: onEnd, label: VpeAutoplay.label(onEnd), next: !!rail }, jump: prefs.jump, stepButtons: prefs.stepButtons, stepSize: VpeControls.stepSizeOf(prefs), abLabel: abLabel(), picture: pictureState(), tools: TOOLS, ab: { items: AB_ITEMS },
         subsLabel: d.subs.length ? d.label : 'None in file',
         audioLabel: d.audio.length ? (d.audio.find((a) => a.checked) || d.audio[0]).main : (player && player.info && player.info.audio) || (player && player.audio) ? 'Only one' : 'None',
         hasSound: !!(player && ((player.info && player.info.audio) || player.audio)),
@@ -1179,7 +1258,8 @@
     },
     act: {
       stepSize: setStepSize,
-      loop: () => { setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); },
+      loop: () => toggleLoop(),
+      setAutoplay: (m) => setOnEnd(m),
       cycleAB: () => cycleAB(),
       copyFrame: () => copyFrame(),
       setRate, pickRate: changeRate,
@@ -1275,13 +1355,21 @@
     }
   });
   window.addEventListener('resize', () => { if (!compareBackdrop.hidden) placeCompareDialog(); });
-  setLoop(loop);
   updateCc();
+
+  // ---- Folder rail and the bar's capsule (media/folder-rail.js, docs/notes/folder-rail.md) ----
+  if ($('rail') && typeof VpeFolderRail !== 'undefined') {
+    rail = VpeFolderRail.create({
+      doc: document, post: (m) => vscode.postMessage(m), toast, cfg: cfg.rail || {},
+      getOnEnd: () => onEnd, setOnEnd: (m) => setOnEnd(m), label: VpeAutoplay.label,
+      time: () => (player ? player.currentTime() : 0),
+    });
+  }
 
   // ---- Right-click menu (media/ctxmenu.js, docs/notes/context-menu.md) ----
   // An HTML menu in the page: its items run through the same functions as the keys and buttons.
   const MENU_ACTIONS = {
-    playPause: () => togglePlay(), loop: () => { setLoop(!loop); toast(loop ? 'Loop on' : 'Loop off'); },
+    playPause: () => togglePlay(), loop: () => toggleLoop(),
     // From the menu "Set" always sets (at this moment); the A / B keys toggle.
     setA: () => resetAB('a'), setB: () => resetAB('b'), clearAB: () => clearAB(),
     copyFrame: () => copyFrame(), saveFrame: () => saveFrame(), copyTime: () => copyTimestamp(),
@@ -1291,7 +1379,7 @@
   const ctxMenu = VpeCtxMenu.create({
     menu: $('ctxmenu'),
     getState: () => ({
-      ready: !!player, playing: !!player && player.isPlaying(), loop, abSet: ab.isSet(),
+      ready: !!player, playing: !!player && player.isPlaying(), loop: onEnd === 'loop', abSet: ab.isSet(),
       file: !cfg.url && !(player instanceof FramePlayer), compareOpen,
     }),
     beforeOpen: () => controls.closeAll(false),
@@ -1411,6 +1499,11 @@
       case 'hideReducedResNotice': cfg.hideReducedResNotice = true; break;
       case 'addMode': showAddMode(m); break;
       case 'compareOpen': setCompareOpen(!!m.open); break;
+      case 'rail': if (rail) rail.onMessage(m); break;
+      // A folder navigation landed on this already open tab (src/extension.js adoptHandoff): take over its state.
+      // Applied once the player began (applyHandoff); a newer one replaces one still waiting.
+      case 'railHandoff': pendingHandoff = m; applyHandoff(); break;
+      case 'railHandoffCancel': if (pendingHandoff && pendingHandoff.id === m.id) pendingHandoff = null; break;
       case 'playbackPrefs': applyPlaybackPrefs(m.prefs); break;
       case 'focusMode': document.body.classList.toggle('maxi', !!m.active); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
@@ -1485,7 +1578,9 @@
         prefs,
         volume,
         muted,
-        loop,
+        loop: onEnd === 'loop',
+        onEnd,
+        rail: rail ? rail.snapshot() : null,
         streamQ,
         loopStats,
         loopBusy: loopBusy(),
@@ -1502,6 +1597,8 @@
   // The picture area in device pixels: the host's "Auto" quality for HLS picks a picture that covers it.
   const readyView = (() => { const r = stage.getBoundingClientRect(); const k = window.devicePixelRatio || 1; const w = Math.round(r.width * k), h = Math.round(r.height * k); return w >= 16 && h >= 16 ? { w, h } : null; })();
   vscode.postMessage({ type: 'ready', page: cfg.page, origin: window.location.origin, view: readyView });
+  // A folder navigation from a tab with the rail open: open here too (after 'ready', so the host takes the request).
+  if (rail && cfg.railCarry) rail.adopt(cfg.railCarry);
   // The WebAssembly decoder loads while the host decides how to play the file (ffprobe etc.):
   // the GPU (WebCodecs) and WebAssembly paths both need it; native ffmpeg drops it.
   if (cfg.engine && cfg.engine.preload !== false) engine.preload({ ...cfg.engine, debug: !!cfg.debug });

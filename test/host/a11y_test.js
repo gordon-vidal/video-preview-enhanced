@@ -75,12 +75,34 @@ assert.match(playerStyles, /\.vol-wrap:not\(\.no-audio\):hover \.vol-slide/, 'no
 assert.match(playerStyles, /\.vol-wrap\.no-audio #mute \{ opacity: 0\.4;/, 'no-audio dims the disabled mute button');
 // Narrow panes shed bar buttons in steps (docs/notes/ui-simple.md, "Narrow bar"); the step buttons go only at the last one.
 const ladder = [...playerStyles.matchAll(/@media \(max-width: (\d+)px\) \{([\s\S]*?)\n\}/g)].map((m) => [Number(m[1]), m[2]]);
-assert.deepStrictEqual(ladder.map((m) => m[0]), [640, 500, 400, 320, 250], 'narrow bar steps');
+assert.deepStrictEqual(ladder.map((m) => m[0]), [720, 640, 500, 400, 320, 250], 'narrow bar steps');
+// The folder capsule goes first (Shift+N / Shift+P and a right-click on the step buttons remain).
+assert.match(ladder[0][1], /^\s*#row #folderCap \{ display: none; \}\s*$/, 'below 720 px only the folder capsule goes');
 for (const [w, css] of ladder) {
   if (w > 250) assert.doesNotMatch(css, /#prev|#next|\.stepw|#play|#cog|#full|#now/, `${w} px keeps Play, the step buttons, the time, Settings, Fullscreen`);
 }
-assert.match(ladder[4][1], /\.stepw \{ display: none; \}/, 'below 250 px the step buttons go');
-assert.match(ladder[3][1], /\.vol-wrap \{ display: none; \}/, 'below 320 px Mute and volume go (M and the arrow keys remain)');
+assert.match(ladder[5][1], /\.stepw \{ display: none; \}/, 'below 250 px the step buttons go');
+assert.match(ladder[4][1], /\.vol-wrap \{ display: none; \}/, 'below 320 px Mute and volume go (M and the arrow keys remain)');
+// The folder rail and its openers: named, and the Autoplay menu's choices are radios (media/folder-rail.js keeps the
+// fold-out tab in the Tab order while the capsule is hidden, so the keyboard can still open the rail below 720 px).
+{
+  const { folderRailHtml } = require('../../src/folder-rail-html');
+  const { barHtml } = require('../../src/bar');
+  const rail = folderRailHtml();
+  assert.match(rail, /<button id="railOpenTab"[^>]*aria-label="Open folder rail"/);
+  assert.match(rail, /<aside id="rail"[^>]*aria-label="Folder"/);
+  assert.match(rail, /id="railList" class="r-list" role="listbox" aria-label="Files" tabindex="0"/);
+  assert.match(rail, /id="railEndMenu" class="vpe-pop" role="menu" aria-label="Autoplay"/);
+  const endItems = [...rail.matchAll(/<button type="button" role="(\w+)" aria-checked="false" data-end="(\w+)"/g)].map((m) => `${m[1]}:${m[2]}`);
+  assert.deepStrictEqual(endItems, ['menuitemradio:off', 'menuitemradio:next', 'menuitemradio:loop']);
+  assert.match(rail, /id="railEndBtn"[^>]*aria-haspopup="menu" aria-expanded="false" aria-controls="railEndMenu"/);
+  assert.match(rail, /id="railPlayable"[^>]*role="checkbox" aria-checked="true"/);
+  const cap = barHtml({ folder: true });
+  assert.match(cap, /id="folderCap" class="folder-cap" role="group" aria-label="Folder"/);
+  assert.match(cap, /id="capCount"[^>]*aria-label="Folder rail" aria-expanded="false" aria-controls="rail"/);
+  assert.match(cap, /id="capPrev"[^>]*aria-label="Previous video in folder" aria-keyshortcuts="Shift\+P"/);
+  assert.match(cap, /id="capNext"[^>]*aria-label="Next video in folder" aria-keyshortcuts="Shift\+N"/);
+}
 assert.match(playerStyles, /#notice \{[^}]*background: var\(--vpe-surface-float\)/);
 
 const cmp = compareHtml({ uri: (...p) => `https://webview/${p.join('/')}`, cspSource: 'vscode-resource:', nonce: 'n', cfg: {}, frameSource: '' });

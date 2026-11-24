@@ -38,6 +38,8 @@ function createEngine(env) {
   const FAST_CODECS = new Set(['hevc', 'h264']); // decoders that honour skip_loop_filter (fast preview)
   const SETUP_NOTICE_RATIO = 0.5; // below this decode speed (x real time), prioritize the ffmpeg setup notice
   const onTracks = env.onTracks || (() => {}); // (player) when the track list or a selection changes
+  // (player, {natural, ran}) once playback paused at the end of the file with loop off (media/autoplay.js decides what next).
+  const onEnded = env.onEnded || (() => {});
   // Something arrived or changed outside the page's input events (a worker or host message, a decoder
   // output, a seek from code): the page's frame loop runs again if it was resting (Player.settled).
   const wake = env.wake || (() => {});
@@ -1566,10 +1568,12 @@ function createEngine(env) {
       }
       const end = this.startT !== null && this.meta.duration ? this.startT + this.meta.duration : Infinity;
       if (this.playing && this.eof && !this.queue.length && now >= this.endT() && this.seekTarget === null) {
-        if (this.loop && this.loopAgain()) now = this.restartLoop(now, this.endT()); else this.pause();
+        if (this.loop && this.loopAgain()) now = this.restartLoop(now, this.endT()); else this.ended(this.endT());
       } else if (this.playing && now > end + 0.5 && !this.queue.length && (this.eof || now > end + 1.5)) {
         // Past the end with nothing left to show (also when a skip overshot the last keyframe).
-        if (this.loop && this.loopAgain()) this.seekAbs(this.startT || 0, true); else this.pause();
+        // Without the decoder's or transport's end of file (a stalled native or remote feed) it pauses all the same, but
+        // the report is not "played into the end": Autoplay must not move on to another file.
+        if (this.loop && this.loopAgain()) this.seekAbs(this.startT || 0, true); else this.ended(end, !!this.eof);
       }
       // Every frame (no sound driving the clock) or a starved remote Live transcode stream (network blackout):
       // hold the clock at the next frame's time instead of running on past the frozen picture and snapping back.
@@ -1712,6 +1716,19 @@ function createEngine(env) {
       this.shownFrame = show.yuv && !show.vf ? show : null; // stepFrame can hand it back to the queue or keepBack
     }
 
+    /**
+     * Playback reached the end with loop off: pause on the last frame and tell the page (Autoplay). `natural`: it ran
+     * into the end (visible, at least MIN_RUN since the last play or seek), not a seek or skip that landed there, and
+     * `terminal`: the end of file came from the decoder or transport, not from the clock passing the declared duration.
+     */
+    ended(at, terminal = true) {
+      const ran = Number.isFinite(this.runFromT) ? at - this.runFromT : Infinity;
+      const hidden = !!this.hidden;
+      this.pause();
+      const ranIn = typeof VpeAutoplay !== 'undefined' ? VpeAutoplay.natural({ playing: true, ran, hidden }) : !hidden && ran >= 0.25;
+      onEnded(this, { natural: ranIn && terminal, ran, terminal });
+    }
+
     /** End of what was decoded: the last frame's end or the end of the sound, whichever is later. */
     endT() {
       const a = this.audio[this.audio.length - 1];
@@ -1796,6 +1813,7 @@ function createEngine(env) {
       this.endSteps();
       // At the end (loop off): play starts over.
       if (this.eof && !this.queue.length && this.seekTarget === null && this.pauseT >= this.endT() - 1e-6) { this.seekAbs(this.startT || 0, true); return; }
+      this.runFromT = this.pauseT; // Autoplay: how far playback ran before reaching the end (ended)
       this.anchor(this.pauseT);
     }
 
@@ -1866,6 +1884,7 @@ function createEngine(env) {
       this.seekBefore = null;
       this.seekStartMs = performance.now();
       this.pauseT = t;
+      this.runFromT = t;
       this.outCount = 0;
       this.ptsBase = undefined;
       if (this.vdec) { try { this.vdec.close(); } catch { /* closed */ } this.makeVideoDecoder(); }

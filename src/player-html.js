@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { barHtml, playFlashHtml } = require('./bar');
+const { folderRailHtml } = require('./folder-rail-html');
 
 // checkJs: start
 /**
@@ -21,6 +22,7 @@ const { barHtml, playFlashHtml } = require('./bar');
  * @property {boolean} debug VPE_LOG set: tests may use either frame transport
  * @property {boolean} canCompare
  * @property {boolean} compareOpen
+ * @property {boolean} [folder] a file in a folder: the folder capsule and rail (not URLs or image sequences)
  * @property {string[]} [inlineCss] CSS text to inline in `<style nonce="...">` (no unstyled first paint)
  * @property {Record<string, string>} [inlineScripts] script file name -> source to inline (remote hosts)
  */
@@ -140,7 +142,7 @@ function playerHtml(p) {
   const early = p.sequence ? [] : [uri('decoder-worker.js'), `${base}/${p.loader}`, `${stem}.wasm.js`, `${stem}.wasm.wasm`];
   const earlyJs = early.length ? `<script nonce="${nonce}">{const controller=new AbortController(), responses={};self.vpeEarly={controller,responses};for(const u of ${JSON.stringify(early).replace(/</g, '\\u003c')})responses[u]=fetch(u,{signal:controller.signal}).catch(()=>null);}</script>\n` : '';
   const { styles, scripts } = assetTags({
-    uri, nonce, cssFiles: ['player.css'], scriptFiles: SCRIPTS, inlineCss: p.inlineCss, inlineScripts: p.inlineScripts,
+    uri, nonce, cssFiles: CSS, scriptFiles: SCRIPTS, inlineCss: p.inlineCss, inlineScripts: p.inlineScripts,
   });
   const cfg = JSON.stringify(p.cfg);
   return `<!DOCTYPE html>
@@ -150,6 +152,7 @@ function playerHtml(p) {
 ${earlyJs}${styles}
 </head><body>
 <script type="application/json" id="cfg">${cfg.replace(/</g, '\\u003c')}</script>
+<div id="main">
 <div id="stage" class="fit">
   <canvas id="canvas" hidden role="img" aria-label="Video"></canvas>
   <div id="subs" hidden></div>
@@ -164,7 +167,9 @@ ${earlyJs}${styles}
     <button id="noticeClose" title="Dismiss" aria-label="Dismiss">×</button>
   </div>
 </div>
-${barHtml({ canCompare: p.canCompare, compareOpen: p.compareOpen })}
+${p.folder ? folderRailHtml() : ''}
+</div>
+${barHtml({ canCompare: p.canCompare, compareOpen: p.compareOpen, folder: !!p.folder })}
 <div id="startCompareBackdrop" hidden>
   <div id="startCompareDialog" tabindex="-1" role="dialog" aria-modal="true" aria-label="Start comparison" aria-describedby="startCompareHint">
     <p id="startCompareHint">Start Compare with this video, then click videos in the Explorer to add them.</p>
@@ -187,11 +192,13 @@ const SCRIPTS = [
   'membudget.js', 'timestretch.js', 'pool.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js',
   'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js', 'engine.js', 'picture.js', 'inspect.js', 'scopes.js', 'exactframe.js', 'reduced-res-notice.js',
   'slow-notice.js', 'subtitles.js', 'tracks-menu.js', 'xray.js', 'modes.js', 'range-drag.js', 'controls.js',
-  'ctxmenu.js', 'timefmt.js', 'abloop.js', 'debug-probe.js', 'frame-player.js', 'player.js',
+  'ctxmenu.js', 'timefmt.js', 'abloop.js', 'autoplay.js', 'folder-rail.js', 'debug-probe.js', 'frame-player.js', 'player.js',
 ];
+/** The page's stylesheets, in order (inlined: src/extension.js inlineAssetsFor). */
+const CSS = ['player.css', 'folder-rail.css'];
 // checkJs: end
 
 module.exports = {
-  playerHtml, frameSourcesOf, SCRIPTS, assetTags,
+  playerHtml, frameSourcesOf, SCRIPTS, CSS, assetTags,
   INLINE_SCRIPT_MAX_BYTES, escapeStyle, escapeScript, readMediaAsset, inlineAssetsFor,
 };

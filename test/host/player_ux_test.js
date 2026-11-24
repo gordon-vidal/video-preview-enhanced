@@ -106,6 +106,7 @@ function element(parent) {
     scopes: { mode: () => scopesOpen, close() { scopesOpen = false; } },
     insp: { onKey(e) { if (e.key !== 'Escape' || !inspectorOpen) return false; inspectorOpen = false; return true; } },
     addHint: { hidden: true },
+    syncEngineLoop: noop,
   });
   vm.runInContext([
     script('  function showNotice(n)', '  /**\n   * Pixel tools'),
@@ -259,6 +260,25 @@ function element(parent) {
     full.show('main');
     assert.deepStrictEqual(labels(), ['Playback', 'Repeat video', 'Speed', 'Subtitles', 'Audio track', 'Picture size', 'Compare', 'Copy frame',
       'Tools', 'A–B Range', 'Inspection', 'Open video URL…', 'Open in system player', 'Keyboard shortcuts', 'Extension settings']);
+    // The player of a file: Autoplay (Off / Play next in folder / Loop) instead of the Repeat video switch.
+    const picked = [];
+    full.close?.(false);
+    const auto = Controls.create({
+      panel, sheet: element(), bar: element(), buttons: Object.fromEntries(['cog', 'info', 'rate', 'tracks'].map((k) => [k, element()])),
+      act: { loop: noop, setAutoplay: (m) => picked.push(m), cycleAB: noop, copyFrame: noop, openUrl: noop, extSettings: noop, copyInfo: noop, copyLink: noop },
+      get: () => ({ ...state, autoplay: { mode: 'next', label: 'Play next in folder', next: true } }),
+    });
+    auto.show('main');
+    assert.deepStrictEqual(labels().slice(0, 3), ['Playback', 'Autoplay', 'Speed']);
+    assert.ok(!labels().includes('Repeat video'));
+    auto.show('autoplay');
+    const flatten = (e) => [e, ...(e.children || []).flatMap(flatten)];
+    const radios = flatten(panel.children.at(-1)).filter((b) => b.attributes && b.attributes.role === 'radio');
+    assert.deepStrictEqual(radios.map(labelOf), ['Off', 'Play next in folder', 'Loop']);
+    assert.deepStrictEqual(radios.map((b) => b.attributes['aria-checked']), ['false', 'true', 'false']);
+    radios[2].dispatch('click');
+    assert.deepStrictEqual(picked, ['loop']);
+    auto.close(false);
     full.show('ab');
     assert.deepStrictEqual(labels().slice(0, 6), ['A–B Range', 'Set A / B / clear', 'Export frames A–B…', 'Export A–B Clip…', 'Copy ffmpeg command for A–B']);
     rows().find((b) => labelOf(b) === 'Export A–B Clip…').dispatch('click');

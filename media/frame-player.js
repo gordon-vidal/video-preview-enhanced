@@ -17,11 +17,13 @@
    * @property {() => boolean} getLoop
    * @property {() => boolean} getMuted
    * @property {() => number} getVolume
+   * @property {(player: any, info: { natural: boolean, ran: number }) => void} [onEnded] playback paused at the end (loop off)
    */
 
   /** @param {FramePlayerDeps} deps */
   function createFramePlayer(deps) {
     const { canvas, vscode, log, showMessage, setMute, getRate, getLoop, getMuted, getVolume } = deps;
+    const onEnded = deps.onEnded || (() => {});
 
     class FramePlayer {
       /**
@@ -34,6 +36,7 @@
         this.fps = meta.fps;
         this.duration = this.n / this.fps;
         this.t = 0;
+        this.runFrom = 0;
         this.gen = 0;
         this.playing = false;
         this.last = 0;
@@ -64,6 +67,7 @@
       play() {
         if (this.frameAt(this.t) >= this.n - 1) { this.gen++; this.t = 0; }
         this.playing = true;
+        this.runFrom = this.t; // Autoplay: how far playback ran before the end
         this.last = performance.now();
         this.syncAudio(true);
       }
@@ -84,6 +88,7 @@
         i = Math.max(0, Math.min(this.n - 1, i));
         this.gen++;
         this.t = (i + 0.5) / this.fps;
+        this.runFrom = this.t;
         this.syncAudio(true);
       }
       setRate() { this.syncAudio(true); }
@@ -118,7 +123,12 @@
           this.t += (Math.min(250, now - this.last) / 1000) * getRate();
           if (this.t >= this.duration) {
             if (getLoop()) { this.gen++; this.t %= this.duration; this.syncAudio(true); }
-            else { this.t = (this.n - 0.5) / this.fps; this.pause(); }
+            else {
+              const ran = this.duration - this.runFrom;
+              this.t = (this.n - 0.5) / this.fps;
+              this.pause();
+              onEnded(this, { natural: ran >= 0.25, ran });
+            }
           }
           this.syncAudio(false);
         }

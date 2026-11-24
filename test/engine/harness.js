@@ -55,6 +55,7 @@ globalThis.VpeBlockCache = require('../../media/block-cache');
 globalThis.VpeGlRenderer = require('../../media/gl-renderer');
 globalThis.VpeCodecUtils = require('../../media/codec-utils');
 globalThis.VpeDecoderBoot = require('../../media/decoder-boot');
+globalThis.VpeAutoplay = require('../../media/autoplay'); // the engine's end-of-file report (ended)
 const src = fs.readFileSync(path.join(MEDIA, 'engine.js'), 'utf8');
 vm.runInThisContext(`${src}\nglobalThis.createEngine = createEngine;`, { filename: path.join(MEDIA, 'engine.js') });
 
@@ -107,7 +108,8 @@ async function open(file, o = {}) {
   const engine = globalThis.createEngine({
     vscode: {
       postMessage: (m) => {
-        if (m.type !== 'readBlock' || !P.player) return;
+        // P.stallReads: reads go unanswered from then on (a stalled feed: no data and no end of file).
+        if (m.type !== 'readBlock' || !P.player || P.stallReads) return;
         setImmediate(() => {
           if (P.closed) return;
           const n = Math.max(0, Math.min(m.len, size - m.pos));
@@ -127,6 +129,8 @@ async function open(file, o = {}) {
     onReady: () => { ready = true; },
     onMeta: () => {},
     onTracks: () => {},
+    // Playback paused at the end with loop off (media/player.js handleEnded): P.onEnded(info), set by a test.
+    onEnded: (p, info) => { if (P.onEnded) P.onEnded(info); },
   });
   P.player = new engine.LibavPlayer({ size }, { workerUrl: 'decoder-worker.js', loader: 'libav.js', variant: 'vpe', whenSlow: 'every', mem: o.mem });
   P.player.setLoop && P.player.setLoop(!!o.loop);

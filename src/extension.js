@@ -40,7 +40,7 @@ const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
 const { EarlyProbeController } = require('./early-probe');
 const { registerCompare, setPickHook } = require('./compare'); // compare mode (src/compare.js)
-const { playerHtml, inlineAssetsFor, SCRIPTS: PLAYER_SCRIPTS } = require('./player-html'); // the player page's HTML, CSP and script order
+const { playerHtml, inlineAssetsFor, SCRIPTS: PLAYER_SCRIPTS, CSS: PLAYER_CSS } = require('./player-html'); // the player page's HTML, CSP and script order
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy(() => require('./rangecmd')); // A-B frame export and ffmpeg command
@@ -56,6 +56,7 @@ const { createFrameLink, sameFile, hlsPlanText } = require('./framelink'); // fr
 const { createDebugCommands } = require('./debug-cmd'); // the VPE_LOG test hook (<log>.cmd)
 const { linkSimulatorFromEnv, effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VPE_SIMULATE_REMOTE
 const { LinkSessionMemory } = require('./stream-adapt');
+const folderRail = require('./folder-rail'); // the folder rail, neighbours, Autoplay's next video, tab-swap handoff
 
 const HIDE_SLOW_PLAYBACK_NOTICE = 'videoPreviewEnhanced.hideSlowPlaybackNotice';
 const HIDE_REDUCED_RES_NOTICE = 'videoPreviewEnhanced.hideReducedResNotice';
@@ -100,6 +101,27 @@ const clipExports = new WeakSet();
 const wcFailed = new Set();
 // Frame links (vscode://<id>/open?…) waiting for their player: file URI string -> {t, frame}.
 const pendingGoto = new Map();
+// Folder navigation (src/folder-rail.js): the intent a new tab takes over (rail state, Autoplay), registered before
+// vscode.openWith, and the file metadata (ffprobe) the rails of every tab share.
+const railHandoffs = folderRail.createHandoffs();
+const railMeta = folderRail.createMetaCache();
+/** ffprobe (cached by size and date) for the rail's Duration column and hover card; none in Restricted Mode. */
+async function railProbe(file, signal) {
+  if (!vscode.workspace.isTrusted || config().decoder === 'builtin') return null;
+  const t = await tools();
+  if (!t || signal.aborted) return null;
+  const pr = await ff.probe(t, file, signal);
+  return { duration: pr.duration, width: pr.video && pr.video.width, height: pr.video && pr.video.height, codec: pr.video && pr.video.codec };
+}
+/** The rail's remembered look (width, column, Playable formats), shared by every player and Compare. */
+const railPrefs = {
+  get: () => globalState.get(folderRail.RAIL_PREFS_KEY),
+  set: (v) => globalState.update(folderRail.RAIL_PREFS_KEY, v),
+};
+let adoptSeq = 0;
+// How long an open target may take to apply a folder navigation (its player may still be opening). Without its
+// answer the source tab stays open: nothing is closed on a guess.
+const ADOPT_MS = Number(process.env.VPE_ADOPT_MS) > 0 && logFile ? Number(process.env.VPE_ADOPT_MS) : 20000;
 const PENDING_GOTO_MS = 30e3; // a link's player normally opens within a second
 let lastActive = null;
 /** Compare's add mode (src/compare.js registerCompare): claimOpen(uri) takes a video VS Code is opening. */
@@ -843,11 +865,14 @@ function activate(context) {
     openCustomDocument: (uri) => ({ uri, dispose() {} }),
     resolveCustomEditor: (doc, panel) => {
       if (logFile) log(`[${path.basename(doc.uri.path)}] player resolve started`);
+      // A folder navigation of the player (Shift+N, the rail, Autoplay) opens this tab in its place: it is a player,
+      // never taken by Compare's Add Mode or Open Together.
+      const handoff = railHandoffs.take(doc.uri.with({ fragment: '' }).toString(), panel.viewColumn);
       // Add mode (docs/notes/compare-ui.md): the video goes into compare, and this new tab closes unused.
-      if (compareApi && compareApi.claimOpen(doc.uri)) { setTimeout(() => panel.dispose(), 0); return undefined; }
+      if (!handoff && compareApi && compareApi.claimOpen(doc.uri)) { setTimeout(() => panel.dispose(), 0); return undefined; }
       // Several videos opened at once (an Explorer multi-selection) become one compare (src/burst.js).
-      const noted = !!compareApi && compareApi.noteOpen(doc.uri, { panel });
-      const session = new Session(context, { uri: doc.uri }, panel);
+      const noted = !handoff && !!compareApi && compareApi.noteOpen(doc.uri, { panel });
+      const session = new Session(context, { uri: doc.uri, handoff }, panel);
       // Opened with others within a moment: compare takes these videos, so the heavy start-up (page, decoder, ffprobe) waits
       // for its verdict and never happens for them. A video opened alone starts at once (one macrotask later).
       const hold = noted ? compareApi.holdOpen(doc.uri) : null;
@@ -922,6 +947,12 @@ function activate(context) {
       // Cheap to apply at once: larger frames with a seek to the same moment, smaller ones at the next seek.
       if (e.affectsConfiguration('videoPreviewEnhanced.sizeFramesToView')) for (const s of sessions) if (s.native && s.native.setFit) s.native.setFit(fitsView());
       if (e.affectsConfiguration('videoPreviewEnhanced.overrideFileIcons')) fileIcons({ force: true });
+      // Docked or overlaid: the same rail, another class; every open player follows at once.
+      if (e.affectsConfiguration('videoPreviewEnhanced.folderRail.layout')) {
+        const layout = config().railLayout;
+        for (const s of sessions) if (s.railAllowed()) s.post({ type: 'rail', op: 'layout', layout });
+        for (const c of compareSessions) if (c.railDir && c.railDir()) c.post({ type: 'rail', op: 'layout', layout });
+      }
       if (Object.keys(PREFS).some((k) => e.affectsConfiguration(`videoPreviewEnhanced.${k}`))
         || e.affectsConfiguration('videoPreviewEnhanced.transcode')
         || e.affectsConfiguration('videoPreviewEnhanced.transcodeMaxBitrate')
@@ -965,6 +996,11 @@ function activate(context) {
     lastActivePlayer: () => lastActive,
     // Videos compared lately (uri strings): the quick pick on key D lists them first.
     recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
+    // The folder rail in Compare: the same controller, metadata cache, probe and remembered look as the player's.
+    rail: {
+      cache: railMeta, probe: railProbe, prefs: railPrefs, layout: () => config().railLayout,
+      caseless: process.platform === 'win32' || process.platform === 'darwin',
+    },
     // Compare's bar and panels are the player's: the same jump sizes, written the same way.
     prefs: () => prefsOf(config()),
     setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
@@ -1090,7 +1126,7 @@ async function openLink(link) {
 }
 
 class Session {
-  constructor(context, { uri, sequence, url }, panel) {
+  constructor(context, { uri, sequence, url, handoff }, panel) {
     this.t = { load: T_LOAD, activate: T_ACTIVATE, activated: T_ACTIVATED, session: Date.now() }; // start-up timeline (logged for tests)
     this.context = context;
     // A URL the user entered (Open Video URL…): no file; file-only features are off or adapted.
@@ -1140,13 +1176,21 @@ class Session {
     panel.onDidChangeViewState(() => {
       if (this.disposed) return;
       if (panel.active) lastActive = this;
-      if (!panel.visible) { this.hiddenCount++; this.thumbJob?.controller.abort(); }
+      if (!panel.visible) { this.hiddenCount++; this.thumbJob?.controller.abort(); if (this.rail) this.rail.cancel(); }
+      else if (this.rail && this.railOpen) this.rail.resume();
       if (panel.visible && this.shown) this.startEarly();
       this.post({ type: 'visible', visible: panel.visible });
       if (panel.visible) this.sendCompareOpen();
       if (panel.visible && this.onShown) { const f = this.onShown; this.onShown = null; f(); }
     });
     this.extraSubs = []; // subtitle files the user loaded; sent again after a reload
+    // A folder navigation's hand-over (src/folder-rail.js createHandoffs): rail state, Autoplay, the browsed folder.
+    this.handoff = handoff || null;
+    this.railBrowse = null;
+    this.rail = null; // the folder rail controller, made on the first rail request (railCtl)
+    this.railOpen = false;
+    this.navChain = Promise.resolve();
+    if (handoff) this.adoptRail(handoff); // the same take-over as an open tab's (adoptHandoff)
     sessions.add(this);
     lastActive = this;
   }
@@ -1227,22 +1271,142 @@ class Session {
     }
   }
 
-  /** Opens the next (d = 1) or previous (d = -1) video in the same folder, in this tab's place. */
-  async openNeighbour(d) {
-    if (this.sequence || this.url) return;
-    const dir = path.dirname(this.file);
-    let names;
-    try { names = fs.readdirSync(dir); } catch { return; }
-    const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-    const vids = names.filter((n) => VIDEO_EXT.test(n)).sort(coll.compare);
-    const i = vids.indexOf(path.basename(this.file));
-    const target = vids[i + d];
-    if (!target) { this.post({ type: 'toast', text: d > 0 ? 'Last video in this folder' : 'First video in this folder' }); return; }
-    // Same scheme and authority as this file, so it also works in remote windows.
-    const uri = vscode.Uri.joinPath(this.uri, '..', target);
-    const viewType = /\.(mp4|webm)$/i.test(target) ? 'videoPreviewEnhanced.playerOptional' : 'videoPreviewEnhanced.player';
-    await vscode.commands.executeCommand('vscode.openWith', uri, viewType, { viewColumn: this.panel.viewColumn, preview: false });
-    this.panel.dispose();
+  // ---- the folder: next / previous video, the folder rail (src/folder-rail.js, docs/notes/folder-rail.md) ----
+
+  /** A file of a folder on disk (local, WSL, Remote-SSH): not a URL, an image sequence or a virtual file. */
+  railAllowed() {
+    return !this.sequence && !this.url && FS_SCHEMES.has(this.uri.scheme);
+  }
+
+  /** A path of this file's file system as a uri with this file's scheme and authority (remote windows too). */
+  uriOf(p) {
+    return this.uri.with({ path: vscode.Uri.file(p).path, fragment: '', query: '' });
+  }
+
+  /** The rail controller of this tab (made on first use). */
+  railCtl() {
+    if (this.rail || this.disposed || !this.railAllowed()) return this.rail;
+    this.rail = folderRail.createFolderRail({
+      fs: fs.promises, post: (m) => this.post(m), cache: railMeta, authority: this.uri.authority || '',
+      current: () => this.file, caseless: process.platform === 'win32' || process.platform === 'darwin',
+      log: (m) => log(`[${this.name}] ${m}`), probe: railProbe,
+    });
+    return this.rail;
+  }
+
+  /** The playing file's place in its folder, for the bar's capsule and the rail's footer. */
+  async sendRailPos() {
+    if (!this.railAllowed()) return;
+    const at = await folderRail.neighbourOf(fs.promises, this.file, 0);
+    this.post({ type: 'rail', op: 'pos', index: at.index, count: at.count });
+  }
+
+  /** A message of the page's rail (media/folder-rail.js). Ids are checked against the current listing. */
+  async onRail(m) {
+    const ctl = this.railCtl();
+    if (!ctl) return undefined;
+    return folderRail.routeRailMessage({
+      ctl, prefs: railPrefs,
+      startDir: () => this.railBrowse || ctl.dir() || path.dirname(this.file),
+      setOpen: (open) => { this.railOpen = open; },
+      setBrowse: (d) => { this.railBrowse = d; },
+      seed: (msg) => ctl.seed(this.file, msg),
+      // A video plays in this tab's place; its Compare button compares it with this one; a folder's, all of its videos.
+      onVideo: (e, msg) => this.navigate(e.path, { rail: msg.rail }),
+      onCompareVideo: (e, msg) => (compareApi ? compareApi.compareRow(this, this.uriOf(e.path), Number(msg.t) || 0) : undefined),
+      onCompareFolder: (e) => (compareApi ? compareApi.compareFolderRow(this, this.uriOf(e.path)) : undefined),
+    }, m);
+  }
+
+  /** Opens the next (d = 1) or previous (d = -1) video of the playing file's folder, in this tab's place. */
+  async openNeighbour(d, { auto = false, rail } = {}) {
+    if (!this.railAllowed() || (d !== 1 && d !== -1)) return undefined;
+    const at = await folderRail.neighbourOf(fs.promises, this.file, d);
+    if (this.disposed) return undefined;
+    if (!at.target) {
+      // Autoplay at the last video: it stays paused on the last frame (no wrap).
+      this.post({ type: 'toast', text: d > 0 ? 'Last video in this folder' : 'First video in this folder' });
+      return undefined;
+    }
+    return this.navigate(at.target, { rail, fromAutoNext: auto && d > 0 });
+  }
+
+  /**
+   * Shows the video at `target` (a path of this folder or one the rail browsed) in this tab's place: the tab-swap
+   * model (vscode.openWith, then this tab closes). The new tab takes a handoff intent registered first (rail state,
+   * Autoplay; `fromAutoNext`: start at 0:00 and play). One navigation at a time per tab: a second waits, and once this
+   * tab is gone it does nothing (Autoplay never advances twice).
+   */
+  navigate(target, o = {}) {
+    const run = () => this.swapTo(target, o);
+    this.navChain = this.navChain.then(run, run);
+    return this.navChain;
+  }
+
+  async swapTo(target, { rail, fromAutoNext = false } = {}) {
+    if (this.disposed) return;
+    const uri = this.uriOf(target);
+    const key = uri.toString();
+    const column = this.panel.viewColumn;
+    const carry = folderRail.sanitizeRailCarry(rail);
+    const intent = { rail: carry, fromAutoNext, browse: carry.open && this.rail ? this.rail.dir() : null };
+    if (logFile) log(`[${this.name}] folder: open ${path.basename(target)}${fromAutoNext ? ' (autoplay next)' : ''}`);
+    // Open already in this editor group: VS Code would only focus it. It is shown and takes the handoff; this tab
+    // closes only once that tab says it applied it (its player ready, Autoplay's play started).
+    const open = [...sessions].find((s) => s !== this && !s.disposed && s.uri.toString() === key && s.panel.viewColumn === column);
+    if (open) {
+      open.panel.reveal(column, false);
+      const ok = await open.adoptHandoff(intent);
+      if (!ok) { log(`[${this.name}] folder: ${path.basename(target)} did not take over; this tab stays`); return; }
+      if (!this.disposed) this.panel.dispose();
+      return;
+    }
+    const token = railHandoffs.register(key, column, intent);
+    try {
+      await vscode.commands.executeCommand('vscode.openWith', uri, playerViewType(uri), { viewColumn: column, preview: false });
+    } catch (e) {
+      railHandoffs.drop(token);
+      throw e;
+    }
+    if (!this.disposed) this.panel.dispose();
+  }
+
+  /**
+   * The host's part of taking over a folder navigation's rail state (a new tab and an open one alike): the folder the
+   * rail shows next is the one the source showed, else this file's own. The page's part is media/folder-rail.js adopt.
+   * @param {import('./folder-rail').HandoffIntent} intent
+   */
+  adoptRail(intent) {
+    if (!this.railAllowed()) return undefined;
+    this.railBrowse = intent.browse || path.dirname(this.file);
+    // Open here and staying open: show that folder now (a closed rail lists it when the page opens it).
+    if (this.rail && this.railOpen && intent.rail.open) return this.rail.browse(this.railBrowse);
+    return undefined;
+  }
+
+  /**
+   * A folder navigation landed on this open tab: the page applies the rail state and Autoplay once its player is
+   * ready and answers 'railAdopted'. Resolves true only on that answer; false when it does not come within ADOPT_MS,
+   * the tab closes, or a newer handoff replaces it.
+   * @param {import('./folder-rail').HandoffIntent} intent
+   * @returns {Promise<boolean>}
+   */
+  adoptHandoff(intent) {
+    const id = ++adoptSeq;
+    if (this.adoptWait) this.adoptWait.done(false);
+    this.adoptRail(intent);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { this.post({ type: 'railHandoffCancel', id }); done(false); }, ADOPT_MS);
+      const done = (/** @type {boolean} */ ok) => {
+        clearTimeout(timer);
+        if (this.adoptWait && this.adoptWait.id === id) this.adoptWait = null;
+        resolve(ok);
+      };
+      this.adoptWait = { id, done };
+      /** @type {import('./folder-rail').RailHandoffMessage} */
+      const msg = { type: 'railHandoff', id, rail: intent.rail, onEnd: intent.rail.onEnd, fromAutoNext: !!intent.fromAutoNext };
+      this.post(msg);
+    });
   }
 
   /** Where this file was left last time (same size and date), unless it was near the start or end. */
@@ -1368,9 +1532,19 @@ class Session {
     // A link's frame applies to the first page only: a reload (file changed on disk) resumes instead.
     const goto = this.goto || null;
     this.goto = null;
+    // A folder navigation's hand-over applies to the first page only, like a link's frame.
+    const handoff = this.handoff;
+    this.handoff = null;
+    const carry = handoff ? handoff.rail : null;
+    const autoNext = !!(handoff && handoff.fromAutoNext);
     const cfgObject = {
       page: ++this.page,
-      autoplay: c.autoplay, loop: c.loop, prefs: prefsOf(c), canOpenExternal: this.canOpenExternal(), name: this.name, debug: !!logFile, resume: this.resumeAt(), goto,
+      autoplay: c.autoplay, onEnd: (carry && carry.onEnd) || c.onEnd, autoNext, prefs: prefsOf(c), canOpenExternal: this.canOpenExternal(), name: this.name, debug: !!logFile,
+      // Autoplay's next video starts at 0:00, not where it was left last time.
+      resume: autoNext ? 0 : this.resumeAt(), goto,
+      rail: this.railAllowed() ? { ...folderRail.sanitizeRailPrefs(globalState.get(folderRail.RAIL_PREFS_KEY)), layout: c.railLayout } : null,
+      // The source tab's rail state: the page applies it with the same adopt() as an open tab's handoff.
+      railCarry: this.railAllowed() && carry ? carry : null,
       // A URL tab (Open Video URL…): file-only tools are off; the info panel names the host instead of a size.
       url: this.url ? { host: new URL(this.url).host } : null,
       sequence: !!this.sequence,
@@ -1394,12 +1568,12 @@ class Session {
     };
     // The page's CSS is inlined; on remote hosts (every webview resource is an SSH round trip) so are the small scripts.
     const { inlineCss, inlineScripts } = inlineAssetsFor(media.fsPath, {
-      cssFiles: ['player.css'], scriptFiles: PLAYER_SCRIPTS, inlineScripts: !!vscode.env.remoteName,
+      cssFiles: PLAYER_CSS, scriptFiles: PLAYER_SCRIPTS, inlineScripts: !!vscode.env.remoteName,
     });
     return playerHtml({
       cspSource: w.cspSource, uri, base, loader: this.build.loader, nonce, cfg: cfgObject, sequence: !!this.sequence,
       framePort: this.framePort, transport: nativeTransport(), debug: !!logFile,
-      canCompare: this.canCompare(), compareOpen: this.compareOpen(),
+      canCompare: this.canCompare(), compareOpen: this.compareOpen(), folder: this.railAllowed(),
       inlineCss, inlineScripts,
     });
   }
@@ -1480,6 +1654,7 @@ class Session {
         this.t.ready = this.t.ready || Date.now();
         this.sendSubtitles().catch((e) => log(`[${this.name}] subtitles: ${e && e.stack || e}`));
         this.sendFfmpegState();
+        this.sendRailPos().catch((e) => log(`[${this.name}] folder: ${e && e.code || e}`));
         if (globalState.get(HIDE_SLOW_PLAYBACK_NOTICE)) this.post({ type: 'hideSlowPlaybackNotice' });
         if (globalState.get(HIDE_REDUCED_RES_NOTICE)) this.post({ type: 'hideReducedResNotice' });
         // The bar was rendered with the Compare state. A Compare that opened or closed while the page loaded is sent
@@ -1612,7 +1787,12 @@ class Session {
         return undefined;
       case 'playing': return undefined;
       case 'pos': return this.rememberPos(m.t, m.d);
-      case 'neighbour': return this.openNeighbour(m.d);
+      case 'neighbour': return this.openNeighbour(m.d, { auto: m.auto === true, rail: m.rail });
+      case 'rail': return this.onRail(m);
+      case 'railAdopted': { // checkJs-typed in src/folder-rail.js (RailAdoptedMessage)
+        if (this.adoptWait && this.adoptWait.id === m.id) this.adoptWait.done(m.ok === true);
+        return undefined;
+      }
       case 'focusMode': return toggleFocusMode(vscode);
       case 'focusModeExited': noteFocusModeExited(); return undefined;
       case 'copyText': return vscode.env.clipboard.writeText(String(m.text || ''));
@@ -2608,6 +2788,8 @@ class Session {
     clearTimeout(this.watchTimer);
     this.watchTimer = null;
     if (this.watcher) { this.watcher.close(); this.watcher = null; }
+    if (this.rail) { this.rail.dispose(); this.rail = null; }
+    if (this.adoptWait) this.adoptWait.done(false);
     this.closePage('closed');
     if (this.link) { this.link.dispose(); this.link = null; }
     this.boots.clear();

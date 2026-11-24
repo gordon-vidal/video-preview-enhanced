@@ -2534,10 +2534,20 @@
     controls.refresh();
   }
 
+  // ---- The folder rail (media/folder-rail.js, the player's; docs/notes/folder-rail.md): opened from the edge tab, a
+  // video row adds that video to this Compare, a folder row's Compare adds that folder's. No bar capsule, no Autoplay.
+  const rail = cfg.rail && $('rail') && typeof VpeFolderRail !== 'undefined' ? VpeFolderRail.create({
+    doc: document, post: (m) => vscode.postMessage(m), toast, cfg: cfg.rail, compare: true,
+    getOnEnd: () => 'off', setOnEnd: () => {}, label: () => '',
+    // The edge tab stays away while a tile is dragged to a new place or the spotlight split is dragged.
+    busy: () => !!tileDrag || splitterEl.classList.contains('dragging'),
+  }) : null;
+
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (!m || m.page !== cfg.page) return;
     switch (m.type) {
+      case 'rail': if (rail) rail.onMessage(m); break;
       case 'abQuery': exportAB(); break;
       case 'goto':
         if (m.mode === 'spotlight' && N >= 2) setMode('spotlight');
@@ -2642,6 +2652,7 @@
     st, scanner, settled, computeMetrics, ssim, synced,
     step, seekClock, seekA: seekClock, play, pause, setMode, setDock, setHeroRatio, setSyncMode, setOffset, setClock, setSound, setSplit, swapSides, nudge, leave, removeTile,
     metrics: () => lastMetrics,
+    railState: () => (rail ? rail.snapshot() : null),
     measure: (opt) => pairMetrics(tiles[0], tiles[1], { ssim: true, rgb: true, ...opt }),
   };
 
@@ -2660,4 +2671,7 @@
   lastTileSize = JSON.stringify(tile);
   vscode.postMessage({ type: 'tileOrder', order: st.order });
   vscode.postMessage({ type: 'ready', tile, origin: window.location.origin });
+  // An add or remove reloads this page: the rail comes back as it was, and the add is said here.
+  if (rail && cfg.railCarry) rail.adopt(cfg.railCarry);
+  if (cfg.toast) toast(String(cfg.toast));
 })();

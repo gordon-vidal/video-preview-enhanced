@@ -496,10 +496,44 @@
           "maximum": 16,
           "markdownDescription": "How many videos one compare view takes (2–16). From 5 videos on they are shown in a static grid (3×2, 3×3, 4×3, 4×4) and share the memory and transfer budgets of 4, so each picture gets fewer pixels. Applies to the next compare you open or a video you add."
         },
+        "videoPreviewEnhanced.onEnd": {
+          "type": "string",
+          "enum": [
+            "off",
+            "next",
+            "loop"
+          ],
+          "enumItemLabels": [
+            "Off",
+            "Play next in folder",
+            "Loop"
+          ],
+          "enumDescriptions": [
+            "Stop on the last frame.",
+            "Open the next video of the same folder in the player's tab and play it from the start. Stops at the folder's last video.",
+            "Start the video over."
+          ],
+          "default": "off",
+          "markdownDescription": "**Autoplay**: what the player does when a video plays to its end. An A–B range always repeats instead. ⚙ › Autoplay, the folder rail and `R` (Loop on / off) change the open tab; this setting is the default for new tabs. Replaces `#videoPreviewEnhanced.loop#`, which still applies while this is not set."
+        },
         "videoPreviewEnhanced.loop": {
           "type": "boolean",
           "default": true,
-          "description": "Loop playback by default."
+          "description": "Loop playback by default.",
+          "markdownDeprecationMessage": "Use `#videoPreviewEnhanced.onEnd#` (Autoplay: Off, Play next in folder, Loop). While Autoplay is not set, a value set here still applies: `true` is Loop, `false` is Off."
+        },
+        "videoPreviewEnhanced.folderRail.layout": {
+          "type": "string",
+          "enum": [
+            "dock",
+            "overlay"
+          ],
+          "enumDescriptions": [
+            "The rail takes its width beside the picture: nothing of the video or the scopes is covered.",
+            "The rail floats over the right edge of the picture."
+          ],
+          "default": "dock",
+          "markdownDescription": "Where the folder rail (the list of the folder's files, opened from the `2/5` button on the bar or the tab at the picture's right edge) sits."
         },
         "videoPreviewEnhanced.sequenceFps": {
           "type": "number",

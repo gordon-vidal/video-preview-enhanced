@@ -158,7 +158,7 @@ module.exports = [{
       await settle(300);
       s = await P.state();
       const labels = s.panel.rows.map((r) => r.label);
-      for (const want of ['Repeat video', 'Speed', 'Subtitles', 'Audio track', 'Picture size', 'Copy frame', 'Compare', 'A–B Range', 'Inspection', 'Keyboard shortcuts', 'Open video URL…', 'Extension settings']) ok(labels.some((l) => l.includes(want)), `main page has no ${want}: ${JSON.stringify(labels)}`);
+      for (const want of ['Autoplay', 'Speed', 'Subtitles', 'Audio track', 'Picture size', 'Copy frame', 'Compare', 'A–B Range', 'Inspection', 'Keyboard shortcuts', 'Open video URL…', 'Extension settings']) ok(labels.some((l) => l.includes(want)), `main page has no ${want}: ${JSON.stringify(labels)}`);
       // Grouped: the exports and the four inspection tools sit on sub-pages; the jump sizes are VS Code settings only.
       for (const gone of ['Jump sizes', 'Scopes', 'Inspector', 'Stats', 'Codec X-ray', 'Export']) ok(!labels.some((l) => l.includes(gone)), `main page still has ${gone}: ${JSON.stringify(labels)}`);
       // A–B Range page: the range and every export together.
@@ -196,7 +196,26 @@ module.exports = [{
       await settle(300);
       s = await a11y();
       ok(s.active !== first, `ArrowDown: focus ${first} -> ${s.active}`);
-      ok(s.panel.radios.some((x) => x.role === 'switch'), `loop is a switch: ${JSON.stringify(s.panel.radios)}`);
+      // The player's Playback group starts with Autoplay › (Off / Play next in folder / Loop), not a Repeat switch.
+      ok(s.panel.items.some((x) => /^Autoplay, /.test(x.label || '')), `Autoplay row: ${JSON.stringify(s.panel.items.slice(0, 3))}`);
+      // From the keyboard: Home puts focus on Autoplay (the first row), activating it opens its page with focus on the
+      // checked choice; the choices are radios, one checked; Escape goes back with focus on the Autoplay row.
+      P.key('Home', { target: ':focus' });
+      await settle(200);
+      s = await a11y();
+      ok(/^Autoplay, /.test(s.active), `Home: focus on ${s.active}`);
+      await P.ask('click', { sel: ':focus' });
+      await settle(300);
+      s = await a11y();
+      const choices = s.panel.radios;
+      ok(s.panel.view === 'autoplay' && s.panel.label === 'Autoplay', `the Autoplay page: ${s.panel.view} ${s.panel.label}`);
+      ok(choices.length === 3 && choices.every((x) => x.role === 'radio') && choices.filter((x) => x.checked === 'true').length === 1,
+        `three radios, one checked: ${JSON.stringify(choices)}`);
+      ok(s.activeRole === 'radio' && /Off/.test(s.active), `focus on the checked choice: ${s.active} (${s.activeRole})`);
+      P.key('Escape', { target: ':focus' });
+      await settle(300);
+      s = await a11y();
+      ok(s.panel.view === 'main' && /^Autoplay, /.test(s.active), `Escape: back on ${s.panel.view}, focus on ${s.active}`);
       P.key('Escape', { target: ':focus' });
       await settle(300);
       s = await a11y();
