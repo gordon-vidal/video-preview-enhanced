@@ -339,6 +339,39 @@ async function withFfmpeg(tools) {
   }
   const file = clips.lateAudio;
   const pr = await ff.probe(tools, file);
+  {
+    const st = driver(tools, file, pr, { encoder: 'libx264' });
+    st.limit = 8 * 1024;
+    st.holdAt = 0.5;
+    try {
+      await st.rs.handle({ type: 'open' });
+      st.more();
+      await until(() => st.hold, 'picture sent before planned overlap');
+      const old = st.rs.proc;
+      const audio = st.rs.audioProc;
+      const aNext = st.rs.aNext;
+      await st.rs.handle({ type: 'playback', playing: true });
+      st.rs.setMaxBitrateMbps(1);
+      const { proc, spliceT } = st.rs.overlap;
+      assert.strictEqual(st.rs.proc, old);
+      await until(() => st.rs.proc === proc, 'replacement encoder promoted');
+      assert.strictEqual(st.rs.audioProc, audio);
+      assert.strictEqual(st.rs.aNext, aNext);
+      assert.strictEqual(st.rs.spawns, 2, 'no hard restart');
+      st.hold = false;
+      st.holdAt = spliceT + 0.5;
+      st.more();
+      await until(() => st.hold, 'picture sent across the overlap');
+      const splice = Math.round(spliceT * pr.video.fps);
+      st.video.forEach((p, i) => assert.ok(Math.abs(p.t - i / pr.video.fps) < 1e-9, `frame ${i} is continuous`));
+      assert.ok(st.video[splice].idr);
+      marks(st.video, []);
+      assert.deepStrictEqual(st.fails, []);
+      out.overlap = 'continuous decodable H.264 with the original PCM process';
+    } finally {
+      st.rs.dispose();
+    }
+  }
   // 2. A seek back inside the two GOPs kept is served from memory: no new ffmpeg, from the keyframe before it.
   {
     const st = driver(tools, file, pr);
