@@ -187,11 +187,12 @@ module.exports = [{
         await vs.waitLog(new RegExp(`compare .*\\] add ${lib.esc(extra.name)}`), { from, timeout: 15000, what: `${extra.name} added` });
         s = await until((x) => x.rail && x.rail.open && x.rail.rows.some((r) => r.name === extra.name && r.inCompare), 'the added clip marked after the reload', 20000);
         ok(s.rail.pos === '4 in Compare', `footer after the add: ${s.rail.pos}`);
-        // Clicking it again: already in Compare (a toast, no reload).
+        // Clicking it again: removed from Compare (the page reloads with the rail open and unmarked).
+        const rmFrom = vs.mark();
         act({ action: 'click', sel: `#railList .r-row.in-cmp[aria-selected="true"]` });
-        await h.sleep(600);
-        s = await ui();
-        ok(s.rail.pos === '4 in Compare', 'no duplicate');
+        await vs.waitLog(new RegExp(`compare .*\\] remove ${lib.esc(extra.name)}`), { from: rmFrom, timeout: 15000, what: `${extra.name} removed` });
+        s = await until((x) => x.rail && x.rail.open && x.rail.rows.some((r) => r.name === extra.name && !r.inCompare), 'the removed clip unmarked after the reload', 20000);
+        ok(s.rail.pos === '3 in Compare', `footer after the remove: ${s.rail.pos}`);
       });
     } finally { await h.closeClip(vs); }
     return R.out;
