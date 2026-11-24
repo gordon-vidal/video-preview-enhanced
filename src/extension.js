@@ -1024,7 +1024,7 @@ function activate(context) {
 
   // Test hook: with VPE_LOG set, JSON lines appended to <log>.cmd are sent to open players or run as commands.
   createDebugCommands({
-    vscode, fs, log, logFile, sessions, compareSessions, frameserver, remotestream, setPickHook, openUrl,
+    vscode, fs, log, logFile, sessions, compareSessions, frameserver, remotestream, setPickHook, openUrl, openLink,
     resetTools: () => { toolsPromise = null; }, // PATH may have gained or lost ffmpeg
     setCompareFiles: (files) => { testCompareFiles = files; },
   }).install(context);

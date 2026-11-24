@@ -15,7 +15,7 @@ const ENGINE = [...ENGINE_CORE, 'media/decoder-worker.js', 'media/pool.js', 'med
 const HOST = ['src/extension.js', 'src/early-probe.js', 'src/player-html.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/nativepts.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
 const COMPARE = [
-  'src/compare.js', 'src/comparemenu.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js',
+  'src/compare.js', 'src/comparemenu.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js', 'src/framelink.js',
   'media/compare.js', 'media/compare-compositor.js', 'media/compare-sync.js', 'media/compare-metrics.js',
   'media/compare-debug.js', 'media/timefmt.js', 'media/compare.css', 'media/compare-grid.js', 'media/range-drag.js',
 ];
@@ -92,7 +92,7 @@ module.exports = [
     name: 'compare',
     journey: 'Compare mode: entering and leaving, the bar, tiles, views, the Tools grid, PSNR / SSIM against ffmpeg',
     sources: [...COMPARE, ...PLAYER, 'media/scopes.js'],
-    steps: [{ case: 'modes' }, { case: 'compare_ui' }, { case: 'compare_addmode' }, { case: 'compare_burst' }, { case: 'compare_metrics' }],
+    steps: [{ case: 'modes' }, { case: 'compare_ui' }, { case: 'compare_link' }, { case: 'compare_addmode' }, { case: 'compare_burst' }, { case: 'compare_metrics' }],
   },
   {
     name: 'multiview',

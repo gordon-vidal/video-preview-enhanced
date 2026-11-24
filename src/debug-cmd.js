@@ -29,11 +29,12 @@ const DEBUG_COMMANDS = new Set([
  * @param {any} deps.remotestream  src/remotestream.js (may be a lazy proxy)
  * @param {(hook: ((items: any[]) => Promise<any>) | null) => void} deps.setPickHook  src/compare.js
  * @param {(context: any, url: string, where: string) => Promise<any>} deps.openUrl
+ * @param {(uri: any) => Promise<any>} deps.openLink
  * @param {() => void} deps.resetTools  forget the found ffmpeg (PATH may have changed)
  * @param {(files: any[] | undefined) => void} deps.setCompareFiles  the open dialog's result for the next Start Compare
  */
 function createDebugCommands(deps) {
-  const { vscode, fs, log, logFile, sessions, compareSessions, frameserver, remotestream, setPickHook, openUrl, resetTools, setCompareFiles } = deps;
+  const { vscode, fs, log, logFile, sessions, compareSessions, frameserver, remotestream, setPickHook, openUrl, openLink, resetTools, setCompareFiles } = deps;
 
   /**
    * Test hook: throughput of the localhost frame server (src/frameserver.js) into the webview.
@@ -92,6 +93,7 @@ function createDebugCommands(deps) {
                 continue;
               }
               if (c.openUrl) { openUrl(context, String(c.openUrl), c.where === 'side' || c.where === 'window' ? c.where : 'active').catch((e) => log(`debug openUrl: ${e && e.stack || e}`)); continue; } // tests: skips the input box
+              if (c.openLink) { openLink(vscode.Uri.parse(String(c.openLink))).catch((e) => log(`debug openLink: ${e && e.stack || e}`)); continue; } // tests: exercises the URI handler in real VS Code
               if (c.compareFiles) { // 2-4 files into compare: the command takes the selection form (uri, uris)
                 const list = c.compareFiles.map((f) => vscode.Uri.file(f));
                 vscode.commands.executeCommand('videoPreviewEnhanced.compare', list[0], list);
