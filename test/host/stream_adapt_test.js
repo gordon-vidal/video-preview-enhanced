@@ -148,9 +148,9 @@ const make = () => {
   const { c, feed } = make();
   c.tier = 3; // 480p -> next is 720p (needs > 3900)
   feed(good(2000)); // seed fast=2000, slow=2000
-  const burst = feed(good(10000)); // fast=6000, slow=3600 -> min(fast, slow) = 3600 <= 3900
-  assert.strictEqual(burst.fastKbps, 6000);
-  assert.strictEqual(burst.slowKbps, 3600);
+  const burst = feed(good(7000)); // fast=4500, slow=3750 -> min(fast, slow) = 3750 <= 3900
+  assert.strictEqual(burst.fastKbps, 4500);
+  assert.strictEqual(burst.slowKbps, 3750);
   assert.strictEqual(c.state().linkRun, 0, 'slow EWMA blocks single-window burst from starting upgrade run');
   // Sustained high throughput lifts slow EWMA above 3900 and upgrades after 4 qualifying windows.
   for (let i = 0; i < 3; i++) assert.strictEqual(feed(good(10000)).change, 'none');
