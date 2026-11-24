@@ -94,7 +94,9 @@ function element(parent) {
   let inspectorOpen = true;
   const document = element();
   const ctx = vm.createContext({
-    ui, player, document, performance, timeMode: 0, pendingSeekFrame: null, lastSeekAt: 0, wakeLoop: noop,
+    ui, player, document, performance, timeMode: 0, wakeLoop: noop,
+    VpeRangeDrag: { bindSeek: (_input, handlers) => { ctx.seekHandlers = handlers; } },
+    showTip: noop, hideTip: noop,
     fmtClock: String, fmtTime: String, toast: noop, announce: noop, drawAB: noop,
     vscode: { postMessage: (m) => posted.push(m.type), getState: () => ({}), setState: noop },
     $: (id) => (elements[id] ||= element(notice)), self: { VpeAbLoop: require('../../media/abloop') },
@@ -109,27 +111,25 @@ function element(parent) {
     script('  function showNotice(n)', '  /**\n   * Pixel tools'),
     script('  let scrubbing = false;', '  // Decoder status'),
     script('  // Decoder status', '  let wake ='),
-    script("  ui.seek.addEventListener('input'", '  // Hover tip:'),
+    script('  const seekDragger =', '  const volumeDragger ='),
     script('  const ab = ', '  function abLabel()'),
     script('  function sendRange(', '  /**\n   * Shows frame'),
     script("  document.addEventListener('keydown'", "    if (e.key === '?'") + '\n  });',
   ].join('\n'), ctx);
-  for (const sentDuringDrag of [false, true]) {
-    ui.seek.value = '20';
-    ui.seek.dispatch('input');
-    if (sentDuringDrag) vm.runInContext('player.seekFrame(pendingSeekFrame); pendingSeekFrame = null;', ctx);
-    ui.seek.dispatch('change');
-    vm.runInContext('updateUi()', ctx);
-    assert.strictEqual(ui.seek.value, '20');
-    assert.strictEqual(ui.now.textContent, '2');
-    player.seekTarget = null;
-    vm.runInContext('updateUi()', ctx);
-    assert.strictEqual(player.seekGoalFrame, null);
-    assert.strictEqual(ui.seek.value, '90', 'the readout returns to the decoded frame when the seek settles');
-  }
-  ui.seek.value = '10';
-  ui.seek.dispatch('input');
-  ui.seek.dispatch('change');
+  ui.seek.value = '20';
+  ctx.seekHandlers.preview(20);
+  assert.strictEqual(ui.seek.value, '20');
+  assert.strictEqual(ui.now.textContent, '2');
+  assert.strictEqual(player.seekTarget, undefined, 'the drag leaves the decoder alone');
+  ctx.seekHandlers.finish();
+  ctx.seekHandlers.commit(20);
+  assert.strictEqual(ui.seek.value, '20');
+  assert.strictEqual(ui.now.textContent, '2');
+  player.seekTarget = null;
+  vm.runInContext('updateUi()', ctx);
+  assert.strictEqual(player.seekGoalFrame, null);
+  assert.strictEqual(ui.seek.value, '90', 'the readout returns to the decoded frame when the seek settles');
+  ctx.seekHandlers.commit(10);
   vm.runInContext("setAB('a')", ctx);
   player.shownT = 11;
   vm.runInContext("setAB('b')", ctx);

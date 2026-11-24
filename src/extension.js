@@ -23,7 +23,7 @@ const ff = require('./ffmpeg');
 const setup = lazy(() => require('./setup'));
 const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
-const { decodeThumb } = require('./thumbhost');
+const { nativeThumb } = require('./thumbhost');
 const { ExactFrameGrabber } = require('./exact_frame');
 const { toggleFocusMode, noteFocusModeExited, resetFocusMode, setFocusModeListener } = require('./focus-mode');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
@@ -1116,7 +1116,7 @@ class Session {
     panel.onDidChangeViewState(() => {
       if (this.disposed) return;
       if (panel.active) lastActive = this;
-      if (!panel.visible) this.hiddenCount++;
+      if (!panel.visible) { this.hiddenCount++; this.thumbJob?.controller.abort(); }
       if (panel.visible && this.shown) this.startEarly();
       this.post({ type: 'visible', visible: panel.visible });
       if (panel.visible) this.sendCompareOpen();
@@ -1278,7 +1278,8 @@ class Session {
   closePage(why) {
     this.loadGen = (this.loadGen || 0) + 1;
     this.pageAbort.abort();
-    this.thumbChain = null;
+    this.thumbJob?.controller.abort();
+    this.thumbJob = null;
     this.exporting = null;
     this.onShown = null;
     if (this.exportWait) for (const finish of this.exportWait.values()) finish({ error: 'export cancelled' });
@@ -1386,24 +1387,26 @@ class Session {
     const { signal } = this.pageAbort;
     const boot = this.boot;
     const nd = this.native;
-    const reply = (r) => {
+    if (signal.aborted || m.cancel) {
+      if (this.thumbJob?.id === m.id) this.thumbJob.controller.abort();
+      return;
+    }
+    this.thumbJob?.controller.abort();
+    const job = { id: m.id, controller: new AbortController() };
+    this.thumbJob = job;
+    const work = nd instanceof NativeDecoder && this.panel.visible
+      ? nativeThumb(nd, m, (x) => log(`[${this.name}] ${x}`), job.controller.signal) : null;
+    return Promise.resolve(work).catch(() => null).then((r) => {
+      if (this.thumbJob !== job) return;
+      this.thumbJob = null;
+      if (signal.aborted || job.controller.signal.aborted) return;
       // checkJs: start
       const message = /** @satisfies {ThumbReply} */ ({
-        type: 'thumb', boot, page: m.page, id: m.id,
-        ...(r ? { w: r.w, h: r.h, data: new Uint8Array(r.data) } : {}),
+        type: 'thumb', boot, page: m.page, id: m.id, ...r,
       });
       // checkJs: end
-      if (!signal.aborted) this.post(message);
-    };
-    const v = nd && nd.pr && nd.pr.video;
-    // Only the local native decoder (not the remote stream) and sane requests.
-    if (!(nd instanceof NativeDecoder) || !v || !nd.file || !Number.isFinite(m.t) || !(m.w > 0 && m.w <= 640 && m.h > 0 && m.h <= 640)) { reply(null); return undefined; }
-    const src = { w: v.sourceWidth || v.width, h: v.sourceHeight || v.height };
-    this.thumbChain = (this.thumbChain || Promise.resolve()).then(() => {
-      if (!signal.aborted) return decodeThumb(nd.tools, nd.file, src, m.t, m.w, m.h,
-        (x) => log(`[${this.name}] ${x}`), signal);
-    }).then(reply, () => reply(null));
-    return undefined;
+      this.post(message);
+    });
   }
 
   /**

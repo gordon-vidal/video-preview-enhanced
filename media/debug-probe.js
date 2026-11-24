@@ -566,16 +566,16 @@
           target.dispatchEvent(new Ctor(m.ev, init));
           break;
         }
-        case 'scrub': { // the slider dragged to `frac` (what the browser does while the mouse is held): input; end: change + pointerup
+        case 'scrub': { // the slider dragged to `frac` (what the browser does while the mouse is held): input; end: pointerup
           const max = Number(ui.seek.max) || 0;
           ui.seek.value = String(Math.round(Math.max(0, Math.min(1, m.frac)) * max));
           ui.seek.dispatchEvent(new Event('input', { bubbles: true }));
+          const value = Number(ui.seek.value);
           if (m.end) {
-            ui.seek.dispatchEvent(new Event('change', { bubbles: true }));
             const r = ui.seek.getBoundingClientRect();
             doc.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: r.left + m.frac * r.width, clientY: m.off ? r.top - 100 : r.top + r.height / 2 }));
           }
-          log(`scrub ${JSON.stringify({ id: m.id, value: Number(ui.seek.value) })}`);
+          log(`scrub ${JSON.stringify({ id: m.id, value })}`);
           break;
         }
         case 'gotoText': { // Ctrl+G, type, Enter

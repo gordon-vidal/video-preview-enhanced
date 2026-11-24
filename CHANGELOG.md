@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Seek-bar drags show a keyframe preview and hold the main picture until an exact seek on release. Compare previews its clock tile.
+
 ## 0.10.1 (2026-11-24)
 
 Over 1.3 s faster cold native opens on Windows (registry GPU detection + parallel tool checks), fixed cumulative Opus audio drift during long Live transcode playback, exact backward frame stepping on variable-frame-rate (VFR) videos, seamless in-band Live transcode growth while playing, NVIDIA-driver-matched Remote-SSH ffmpeg downloads, and compact Compare sync pill fixes.

@@ -15,7 +15,7 @@ const { spawnSync } = require('child_process');
 const root = path.join(__dirname, '..', '..');
 const src = fs.readFileSync(path.join(root, 'media', 'thumbs.js'), 'utf8');
 const ctx = {
-  performance, setTimeout, clearTimeout, console, Uint8ClampedArray, Uint8Array, Map, Promise, Math,
+  performance, setTimeout, clearTimeout, console, Uint8ClampedArray, Uint8Array, Map, Promise, Math, AbortController,
   ImageData: class { constructor(d, w, h) { this.data = d; this.width = w; this.height = h; } },
   createImageBitmap: async (img) => ({ w: img.width, h: img.height, close() { this.closed = true; } }),
 };
@@ -120,6 +120,42 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
   assert.strictEqual(asked.length, 1, 'remote: no neighbour filling');
   remote.dispose();
 
+  // During a drag, retain the active decode and replace the pending target.
+  const requests = [];
+  const pictures = [];
+  const scrub = mk({
+    request: (t, w, h, signal) => new Promise((resolve) => {
+      requests.push({ t, signal, complete: (kt) => resolve({ kt, covered: true, w, h, data: new Uint8Array(w * h * 4) }) });
+    }),
+  });
+  const preview = (t) => scrub.hover(t, (p) => pictures.push(p), true);
+  preview(126);
+  preview(180);
+  preview(210);
+  assert.deepStrictEqual(requests.map((r) => r.t), [136], 'one active request during a sweep');
+  requests[0].complete(130);
+  await tick();
+  assert.deepStrictEqual(requests.map((r) => r.t), [136, 220], 'only the latest pending target dispatches');
+  requests[1].complete(190);
+  await tick();
+  assert.ok(pictures.length, 'latest picture publishes');
+  scrub.leave(true);
+  const revisited = [];
+  scrub.hover(192, (p) => revisited.push(p), true);
+  assert.strictEqual(revisited.length, 1, 'an unrequested slot in the observed range paints immediately');
+  assert.strictEqual(requests.length, 2, 'an anchor hit avoids a native start');
+
+  preview(300);
+  preview(390);
+  scrub.leave(true);
+  assert.ok(requests[2].signal.aborted, 'release cancels the active native job');
+  const beforeLateReply = pictures.length;
+  requests[2].complete(280);
+  await tick(70);
+  assert.strictEqual(pictures.length, beforeLateReply, 'a stale reply cannot publish');
+  assert.strictEqual(requests.length, 3, 'release drops the pending target');
+  scrub.dispose();
+
   // Native ffmpeg: one keyframe as RGBA of the box.
   const th = require('../../src/thumbhost.js');
   assert.deepStrictEqual(th.fitBox(3840, 2160, 160, 120), { w: 160, h: 90 });
@@ -136,6 +172,7 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
       const r = await th.decodeThumb({ ffmpeg: 'ffmpeg' }, clip, { w: 1920, h: 1080 }, t, 160, 120);
       ms.push(Date.now() - t0);
       assert.ok(r, `thumbnail at ${t} s`);
+      assert.ok(Number.isFinite(r.kt) && r.kt <= t, `source timestamp ${r.kt} at ${t}`);
       assert.strictEqual(r.w, 160);
       assert.strictEqual(r.h, 90);
       assert.strictEqual(r.data.length, 160 * 90 * 4);

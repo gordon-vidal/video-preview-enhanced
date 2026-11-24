@@ -377,13 +377,15 @@
   // ---- transport ---------------------------------------------------------------
 
   let scrubbing = false;
+  let seekDragger;
   const stepGoal = VpeStepGoal.create({
     now: () => performance.now(),
     schedule: (fn, ms) => setTimeout(fn, ms),
     cancel: (timer) => clearTimeout(timer),
-    dispatch({ frame, time }) {
+    dispatch({ frame, time, exact }) {
       sync.clearStep();
-      clock.seekFrame(frame);
+      if (exact) clock.commitScrubFrame(frame);
+      else clock.seekFrame(frame);
       if (clock.playing) sync.syncPlaying(true);
       else sync.seekFollowers(time);
       wakeLoop();
@@ -391,7 +393,7 @@
   });
 
   function clearStep() {
-    scrubbing = false;
+    seekDragger?.stop();
     stepGoal.clear();
     sync.clearStep();
   }
@@ -2125,31 +2127,65 @@
   updatePicBtn();
   ui.cmpBtn.onclick = () => controls.toggle('cmp', ui.cmpBtn);
   ui.full.onclick = toggleFullscreen;
-  ui.seek.addEventListener('input', () => {
-    if (!clock || clock.vmode === undefined || clock.meta.live) return;
-    if (!scrubbing) clearStep();
-    scrubbing = true;
-    stepGoal.set(Number(ui.seek.value), goalBounds());
-    updateUi();
-    wakeLoop();
+  const thumbBox = document.createElement('div');
+  const thumbCv = document.createElement('canvas');
+  thumbBox.id = 'thumb';
+  thumbBox.hidden = true;
+  thumbBox.appendChild(thumbCv);
+  ui.tip.parentElement.appendChild(thumbBox);
+  const canSeek = () => clock && clock.vmode !== undefined && !clock.meta.live;
+  seekDragger = VpeRangeDrag.bindSeek(ui.seek, {
+    preview(frame) {
+      if (!canSeek()) return;
+      if (!scrubbing) {
+        stepGoal.clear();
+        sync.clearStep();
+        scrubbing = true;
+        for (const p of tiles) p.beginScrub();
+      }
+      const source = clock;
+      const rect = ui.seek.getBoundingClientRect();
+      const px = rect.width * frame / (Number(ui.seek.max) || 1);
+      showSeekTip(frame, px, rect.width);
+      source.thumbnail(frame / source.frameNumberRate(), (picture) => {
+        if (!scrubbing || source !== clock) return;
+        ThumbService.draw(thumbCv, picture);
+        thumbBox.hidden = false;
+        const half = thumbBox.offsetWidth / 2 || 82;
+        thumbBox.style.left = `${Math.max(half, Math.min(rect.width - half, px))}px`;
+      }, true);
+      updateUi();
+      wakeLoop();
+    },
+    finish() {
+      if (!scrubbing) return;
+      scrubbing = false;
+      clock?.thumbnailLeave(true);
+      for (const p of tiles) p.endScrub();
+      ui.tip.hidden = true;
+      thumbBox.hidden = true;
+      wakeLoop();
+    },
+    commit(frame) {
+      if (!canSeek()) return;
+      stepGoal.clear();
+      stepGoal.set(frame, goalBounds(), true);
+      updateUi();
+      wakeLoop();
+    },
   });
-  ui.seek.addEventListener('change', () => {
-    if (!scrubbing) return;
-    scrubbing = false;
-    stepGoal.flush();
-    updateUi();
-    wakeLoop();
-  });
+  function showSeekTip(frame, px, width) {
+    ui.tip.textContent = `${tileLabel(st.clock)} ${fmtTime(frame / fpsOf(clock))} ? #${frame + 1}`;
+    ui.tip.style.left = `${Math.max(30, Math.min(width - 30, px))}px`;
+    ui.tip.hidden = false;
+  }
   ui.seek.addEventListener('mousemove', (e) => {
-    if (!clock || !clock.n) return;
+    if (scrubbing || !clock || !clock.n) return;
     const r = ui.seek.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    const f = Math.round(x * (clock.n - 1));
-    ui.tip.textContent = `${tileLabel(st.clock)} ${fmtTime(f / fpsOf(clock))} · #${f + 1}`;
-    ui.tip.style.left = `${Math.max(30, Math.min(r.width - 30, e.clientX - r.left))}px`;
-    ui.tip.hidden = false;
+    showSeekTip(Math.round(x * (clock.n - 1)), e.clientX - r.left, r.width);
   });
-  ui.seek.addEventListener('mouseleave', () => { ui.tip.hidden = true; });
+  ui.seek.addEventListener('mouseleave', () => { if (!scrubbing) ui.tip.hidden = true; });
   // A click on the bar's empty space closes the menu.
   ui.bar.addEventListener('click', () => closeMenu());
 
@@ -2420,13 +2456,13 @@
           if (time > 0) seekClock(time);
           if (playing) play();
         }
-        if (begun && visible) {
+        if (begun && visible && !scrubbing) {
           if (pendingStart && tiles.every((p) => p.startT !== null)) { seekClock(pendingStart); pendingStart = 0; }
           if (stepGoal.goal && sync.clockStepReady) stepGoal.settle();
           if (clock.playing) sync.syncPlaying();
         }
         for (const p of tiles) if (p !== clock) p.tick(now);
-        if (begun && visible && !stepGoal.goal) sync.syncPaused();
+        if (begun && visible && !scrubbing && !stepGoal.goal) sync.syncPaused();
         stepTileMotion(now);
         present(now);
         updateUi();
@@ -2455,6 +2491,7 @@
   document.addEventListener('visibilitychange', () => syncVisibility(document.hidden));
 
   function useOriginalTile(i, notice) {
+    seekDragger?.stop();
     const old = tiles[i];
     if (!old || nativeTiles[i] !== 'transcode') return;
     if (old === clock) {
@@ -2535,6 +2572,7 @@
         else p.onWorker(m.m);
         break;
       }
+      case 'thumb': engines[m.key]?.onHostThumb(m); break;
       case 'ndv': { const p = engines[m.key]; if (p) p.onNativeVideo(m); break; }
       case 'nda': { const p = engines[m.key]; if (p) p.onNativeAudio(m); break; }
       case 'originalTile': useOriginalTile(m.index, m.notice); break;

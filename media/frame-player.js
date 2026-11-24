@@ -71,6 +71,14 @@
         this.playing = false;
         if (this.audio) this.audio.pause();
       }
+      beginScrub() {
+        this.scrubbing = true;
+        this.audio?.pause();
+      }
+      endScrub() {
+        this.scrubbing = false;
+        this.last = performance.now();
+      }
       seekTime(t) { this.seekFrame(Math.floor(t * this.fps)); }
       seekFrame(i) {
         i = Math.max(0, Math.min(this.n - 1, i));
@@ -93,7 +101,7 @@
         a.playbackRate = getRate();
         a.muted = getMuted();
         a.volume = getVolume();
-        if (!this.playing || this.t >= a.duration) { if (!a.paused) a.pause(); return; }
+        if (this.scrubbing || !this.playing || this.t >= a.duration) { if (!a.paused) a.pause(); return; }
         if (force || Math.abs(a.currentTime - this.t) > 0.12) a.currentTime = this.t;
         if (a.paused && !this.audioPending) {
           this.audioPending = true;
@@ -105,6 +113,7 @@
       }
 
       tick(now) {
+        if (this.scrubbing) return;
         if (this.playing) {
           this.t += (Math.min(250, now - this.last) / 1000) * getRate();
           if (this.t >= this.duration) {

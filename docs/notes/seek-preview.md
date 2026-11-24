@@ -30,16 +30,17 @@ busy, and stopped the worker a minute after the last hover.
 
 - **No strip, no prefill.** Nothing is started after open: no thumbnail service, worker, request or ffmpeg process
   before the first hover (`engine.thumbStripSoon`, `strip()`, `cfg.thumbStrip*` and the pace/strip timers are gone).
-- **First hover or drag:** the picture under the pointer is decoded first; newest position wins (a running worker
-  request for another place is cancelled; a native ffmpeg one, at most a few hundred ms, finishes and its picture is
-  cached). While the pointer stays on the bar and the exact place is cached, the nearest missing places within 4 grid
-  places (grid = duration/200) each side are filled, nearest first, one at a time, not while playback is busy and never
-  for remote files. A hover where place and neighbours are cached starts no work and no worker.
-- **Leave / drag end:** `leave()` clears the wanted place, cancels the running worker request, and nothing more is
-  requested. The worker (WASM) is closed `idleMs` (20 s) after the last hover; the pictures stay cached (budget
-  `mem.thumbs`, LRU). The next hover restarts the worker.
-- **Native ffmpeg:** unchanged on the host (src/thumbhost.js: one at a time per player, below-normal priority,
-  `-threads 2`); it only ever runs for a request, and requests come only from hover/drag.
+- **Drag and release.** The slider and time display follow the pointer. The preview tooltip shows a nearby
+  keyframe while the main picture holds its last committed frame and audio scheduling pauses. Compare previews
+  the clock tile and holds all tile pictures. Release cancels preview work and commits the exact frame through
+  the usual seek and synchronization path. A cancelled drag returns to the committed position.
+- **Preview requests.** One decode can run at a time. Pointer movement replaces its pending target. Ordinary
+  hover can fill nearby missing slots when playback has room and the file is local. Active drags and remote
+  files skip this work. Live transcode, URL inputs and image sequences retain the committed picture while
+  dragging.
+- **Preview cache.** The tooltip stores scaled images under the tab's thumbnail byte budget. It reuses covered
+  time ranges from successful keyframe landings. Releasing a drag stops the preview worker or native ffmpeg
+  job and retains the cached pictures. Native ffmpeg reports the decoded keyframe timestamp with its pixels.
 - Tests: test/host/seek_preview_test.js, test/vscode/cases/seek_preview.js, inspect thumbs/seek-bar (asserting no
   service/log lines before the first hover, one picture after, no requests after leaving or after the drag ends).
 

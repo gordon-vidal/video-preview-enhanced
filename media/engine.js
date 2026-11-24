@@ -1051,7 +1051,7 @@ function createEngine(env) {
     // ---- flow control -----------------------------------------------------
 
     pump() {
-      if (this.requesting || this.eof || !this.worker || this.vmode === undefined) return;
+      if (this.scrubHeldT !== undefined || this.requesting || this.eof || !this.worker || this.vmode === undefined) return;
       const now = this.now();
       // A paused remote stream can fill its decode cache far past the shown frame and evict
       // that frame's seek history on the host. Leave room in the host's 20 s window for steps back.
@@ -1180,6 +1180,7 @@ function createEngine(env) {
       wake();
       if (h === !!this.hidden || this.vmode === undefined) return;
       this.hidden = h;
+      if (h) this.thumbnailLeave(true);
       if (h && this.ac && !this.playing) this.restAudioLater(0);
       // A live stream (Open Video URL…) can't seek back to where it was: its ffmpeg keeps running.
       const stopNative = this.cfg.native && !this.meta.live;
@@ -1408,6 +1409,7 @@ function createEngine(env) {
     // checkJs: end
 
     now() {
+      if (this.scrubHeldT !== undefined) return this.scrubHeldT;
       if (!this.playing) return this.pauseT;
       if (this.followerClock) return this.followerClock();
       if (this.acWaking) return this.pauseT;
@@ -1497,7 +1499,7 @@ function createEngine(env) {
     // ---- presentation ---------------------------------------------------------
 
     tick(_wallTime, loopRange) {
-      if (this.vmode === undefined) return;
+      if (this.scrubHeldT !== undefined || this.vmode === undefined) return;
       this.updateAudioLive(this.now());
       this.checkAudioLag();
       let now = this.now();
@@ -1663,6 +1665,7 @@ function createEngine(env) {
       const t = performance.now();
       if (on && this.nonRefOffAt && t - this.nonRefOffAt < 5000) this.nonRefHold = Math.min(60000, (this.nonRefHold || 5000) * 2);
       this.nonRef = on;
+      if (on) this.nonRefUsed = true;
       this.nonRefAt = t;
       if (!on) this.nonRefOffAt = t;
       log(on ? 'behind: not decoding non-reference frames' : 'caught up: decoding every frame again');
@@ -1745,12 +1748,34 @@ function createEngine(env) {
       this.spill();
     }
 
+    beginScrub() {
+      if (this.scrubHeldT !== undefined) return;
+      this.scrubHeldT = this.shownT ?? this.now();
+      this.stopAudio();
+    }
+
+    endScrub() {
+      if (this.scrubHeldT === undefined) return;
+      this.anchor(this.scrubHeldT);
+      this.scrubHeldT = undefined;
+      wake();
+    }
+
+    commitScrubFrame(frame) {
+      const force = this.nonRefUsed || this.fastUsed || this.skipping;
+      this.skipping = false;
+      this.setFast(false);
+      if (this.nonRef) this.setNonRef(false);
+      this.seekFrame(frame, force);
+    }
+
     seekAbs(t, keepPlaying, recoverTransport = false) {
       wake();
       const wasPlaying = keepPlaying !== undefined ? keepPlaying : this.playing;
       if (!wasPlaying && this.nonRef) this.setNonRef(false); // a paused seek or step shows every frame
       if (!wasPlaying) this.setFast(false); // ...decoded exactly
       if (!this.fast) this.fastUsed = false; // decoded from a keyframe again, exactly
+      this.nonRefUsed = !!this.nonRef;
       this.gen++;
       this.loopCache = null;
       this.remoteWindow = null;
@@ -1809,7 +1834,7 @@ function createEngine(env) {
       this.worker.postMessage({ type: 'seek', gen: this.gen, t, fast: true });
     }
 
-    seekTime(rel, stepping = false) {
+    seekTime(rel, stepping = false, force = false) {
       if (this.vmode === undefined) return; // keys before the decoder is ready
       if (this.meta.live) return; // a live stream plays from the live edge (Open Video URL…)
       if (!stepping) this.clearStepGoal();
@@ -1817,7 +1842,7 @@ function createEngine(env) {
       const r = Math.max(0, dur ? Math.min(rel, dur - 0.5 / (this.fps || 30)) : rel);
       const t = (this.startT || 0) + r;
       // Forward within what is already decoded: no seek needed.
-      if (this.queue.length && t >= this.queue[0].t - 1e-3 && t <= this.queue[this.queue.length - 1].t && (this.shownT === null || t >= this.shownT)) {
+      if (!force && this.queue.length && t >= this.queue[0].t - 1e-3 && t <= this.queue[this.queue.length - 1].t && (this.shownT === null || t >= this.shownT)) {
         while (this.queue.length > 1 && this.queue[1].t <= t + 1e-3) this.release(this.queue.shift());
         this.dropBack();
         this.pauseT = t;
@@ -1828,7 +1853,7 @@ function createEngine(env) {
       this.seekAbs(t);
     }
     frameSeekTime(i) { return (Math.max(0, i) + 0.5) / this.frameNumberRate(); }
-    seekFrame(i) { this.seekTime(this.frameSeekTime(i)); }
+    seekFrame(i, force = false) { this.seekTime(this.frameSeekTime(i), false, force); }
     /** The requested step stays active until its picture shows or something else moves the player. */
     pendingStep() {
       const st = this.stepTo;
@@ -2265,33 +2290,54 @@ function createEngine(env) {
         libav: this.libavBlobs, size: this.meta.size, duration: this.meta.duration, startT,
         fps: this.fps, rotation: this.cfg.rotation || 0, remote: !!this.cfg.remote, log, cap: this.mem.thumbs,
         onRead: (pos, len) => this.thumbRead(pos, len),
-        onIdle: () => this.blockCache?.forgetPosition('thumbs'),
+        onIdle: () => this.dropBlockReader('thumbs'),
         busy: () => this.thumbsBusy(),
-        request: this.cfg.native ? (t, w, h) => this.hostThumb(t - startT, w, h).then((r) => (r && r.data ? { ...r, kt: t } : null)) : undefined,
+        request: this.cfg.native ? async (t, w, h, signal) => {
+          const r = await this.hostThumb(t - startT, w, h, signal);
+          if (!r) return null;
+          const kt = Number.isFinite(r.rel) ? startT + r.rel : undefined;
+          return { ...r, kt, covered: kt !== undefined };
+        } : undefined,
       });
       return this.thumbs;
     }
 
     /** Hover at `rel` seconds: cb(picture) now or when decoded. False when there are no thumbnails. */
-    thumbnail(rel, cb) {
+    thumbnail(rel, cb, scrub = false) {
+      if (this.hidden || this.disposed) return false;
       const s = this.thumbService();
       if (!s) return false;
-      s.hover(rel, cb);
+      const gen = this.gen;
+      s.hover(rel, (picture) => {
+        if (!this.hidden && !this.disposed && this.gen === gen) cb(picture);
+      }, scrub);
       return true;
     }
 
     /** Native backend: one thumbnail from the extension host ({w, h, data} RGBA, or null). */
-    hostThumb(rel, w, h) {
+    hostThumb(rel, w, h, signal) {
       const id = (this.hostThumbId = (this.hostThumbId || 0) + 1);
       this.hostThumbWait = this.hostThumbWait || new Map();
       return new Promise((resolve) => {
-        const timer = setTimeout(() => { this.hostThumbWait.delete(id); resolve(null); }, 10e3);
-        this.hostThumbWait.set(id, (m) => { clearTimeout(timer); resolve(m); });
         // checkJs: start
-        vscode.postMessage(/** @satisfies {ThumbRequest} */ ({
+        const request = /** @satisfies {ThumbRequest} */ ({
           type: 'thumb', page: env.page, id, t: Math.max(0, rel), w, h,
-        }));
+        });
         // checkJs: end
+        const cancel = () => {
+          done(null);
+          vscode.postMessage({ ...request, cancel: true });
+        };
+        const done = (m) => {
+          clearTimeout(timer);
+          signal.removeEventListener('abort', cancel);
+          this.hostThumbWait.delete(id);
+          resolve(m);
+        };
+        const timer = setTimeout(cancel, 10e3);
+        this.hostThumbWait.set(id, done);
+        signal.addEventListener('abort', cancel, { once: true });
+        vscode.postMessage(request);
       });
     }
 
@@ -2300,14 +2346,13 @@ function createEngine(env) {
       if (m.page !== env.page) return;
       const done = this.hostThumbWait && this.hostThumbWait.get(m.id);
       if (!done) return;
-      this.hostThumbWait.delete(m.id);
-      done(m.data ? { w: m.w, h: m.h, data: new Uint8Array(m.data) } : null);
+      done(m.data ? { rel: m.rel, w: m.w, h: m.h, data: new Uint8Array(m.data) } : null);
     }
 
     /** Tests: thumbnail service counters, or null while no hover has made it. */
     thumbStrip() { return this.thumbs ? this.thumbs.stats0() : null; }
 
-    thumbnailLeave() { if (this.thumbs) this.thumbs.leave(); }
+    thumbnailLeave(immediate = false) { if (this.thumbs) this.thumbs.leave(immediate); }
 
     /** A thumbnail-worker read: like onWorkerRead, but only the block it needs (no read-ahead). */
     thumbRead(pos, len) {
