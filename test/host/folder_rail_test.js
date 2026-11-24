@@ -458,7 +458,7 @@ function rail(fsys, o = {}) {
   // ---- markup: no file names in the static HTML; the capsule only for a file of a folder ----
   {
     const html = folderRailHtml();
-    for (const id of ['rail', 'railEdge', 'railOpenTab', 'railFoldTab', 'railClose', 'railFilter', 'railPlayable', 'railColBtn', 'railList', 'railEndBtn', 'railPos', 'railColMenu', 'railEndMenu', 'railHover']) {
+    for (const id of ['rail', 'railEdge', 'railOpenTab', 'railClose', 'railFilter', 'railPlayable', 'railColBtn', 'railList', 'railEndBtn', 'railPos', 'railColMenu', 'railEndMenu', 'railHover']) {
       assert.match(html, new RegExp(`id="${id}"`), id);
     }
     assert.doesNotMatch(html, /<input[^>]*type="checkbox"/, 'no raw checkbox');

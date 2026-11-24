@@ -107,7 +107,7 @@
     const $ = (/** @type {string} */ id) => /** @type {any} */ (doc.getElementById(id));
     const rail = $('rail'), list = $('railList'), main = $('main'), stage = $('stage');
     const cap = $('folderCap'), capCount = $('capCount'), capPrev = $('capPrev'), capNext = $('capNext');
-    const edge = $('railEdge'), openTab = $('railOpenTab'), foldTab = $('railFoldTab'), closeBtn = $('railClose');
+    const edge = $('railEdge'), openTab = $('railOpenTab'), closeBtn = $('railClose');
     const filter = $('railFilter'), playableBtn = $('railPlayable'), colHead = $('railColHead'), colBtn = $('railColBtn');
     const colMenu = $('railColMenu'), endMenu = $('railEndMenu'), endBtn = $('railEndBtn'), endVal = $('railEndVal');
     const pos = $('railPos'), crumb = $('railCrumb'), resizer = $('railResizer');
@@ -168,7 +168,6 @@
     // Opened from the keyboard (a click with no pointer, detail 0): focus goes to the list; a mouse click leaves it.
     const byKey = (/** @type {any} */ e) => e.detail === 0;
     openTab.addEventListener('click', (/** @type {MouseEvent} */ e) => { e.stopPropagation(); setOpen(true, { focus: byKey(e) }); });
-    foldTab.addEventListener('click', (/** @type {Event} */ e) => { e.stopPropagation(); setOpen(false, { refocus: true }); });
     closeBtn.addEventListener('click', (/** @type {Event} */ e) => { e.stopPropagation(); setOpen(false, { refocus: true }); });
     capCount.addEventListener('click', (/** @type {MouseEvent} */ e) => { e.stopPropagation(); setOpen(!open, { focus: !open && byKey(e) }); });
     capPrev.addEventListener('click', (/** @type {Event} */ e) => { e.stopPropagation(); go(-1); });
