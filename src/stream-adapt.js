@@ -30,8 +30,9 @@ const MAX_UP_RUN = 16;
 // Severe starvation: step down after 1 window instead of waiting for DOWN_RUN.
 const PANIC_BUFFER_S = 0.1;
 const PANIC_MEDIA_RATE = 0.5;
-// Require enough buffer before stepping up so restart latency does not immediately rebuffer.
-const UP_BUFFER_S = 0.8;
+// Require enough buffer before stepping up so restart latency does not immediately rebuffer
+// (WebCodecs live playback buffers ~0.5 s ahead, so keep this safely below 0.5 s).
+const UP_BUFFER_S = 0.35;
 // A step-down within this window after a step-up doubles `upRun` (up to MAX_UP_RUN) to damp oscillation.
 const OSCILLATION_WINDOW_MS = 10000;
 // A gap longer than this between samples ends the run (the player was paused or hidden).

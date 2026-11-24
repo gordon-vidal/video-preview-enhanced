@@ -129,14 +129,14 @@ const make = () => {
   // Not enough headroom over 1080p's 5500 kb/s (1.3 x 5500 = 7150): stays.
   for (let i = 0; i < 6; i++) feed(good(7000));
   assert.strictEqual(c.tier, 2);
-  // Upgrade buffer guard raised to 0.8 s: 0.5 s (previously allowed at 0.25 s) breaks the run.
+  // Upgrade buffer guard (0.35 s, safely below WebCodecs' ~0.5 s live buffer): 0.3 s breaks the run.
   const r = make();
   r.c.tier = 3;
   for (let i = 0; i < 3; i++) r.feed(good(5000));
-  r.feed(good(5000, { buffer: 0.5 }));
-  assert.strictEqual(r.c.state().linkRun, 0, 'buffer < 0.8 s resets upgrade run');
-  r.feed(good(5000, { buffer: 0.8 }));
-  assert.strictEqual(r.c.state().linkRun, -1, 'buffer === 0.8 s counts toward upgrade');
+  r.feed(good(5000, { buffer: 0.3 }));
+  assert.strictEqual(r.c.state().linkRun, 0, 'buffer < 0.35 s resets upgrade run');
+  r.feed(good(5000, { buffer: 0.35 }));
+  assert.strictEqual(r.c.state().linkRun, -1, 'buffer === 0.35 s counts toward upgrade');
   assert.strictEqual(r.c.tier, 3);
   // Never above tier 0.
   const t0 = make();
