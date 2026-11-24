@@ -338,7 +338,7 @@ class EncodedStream {
     const pipe = audio ? { pre: [], vf: '', encArgs: [], mode: 'cpu' } : buildVideoPipeline({
       encoder: this.videoEncoder,
       device: this.device,
-      decodeMethod: this.tier ? 'none' : this.decodeMethod,
+      decodeMethod: this.decodeMethod,
       gpuFilters: this.tools && this.tools.gpuFilters ? this.tools.gpuFilters : null,
       video: v,
       w: this.w,
@@ -526,7 +526,7 @@ class EncodedStream {
     const last = LINK_TIERS.length - 1;
     this.sizeVideo();
     this.log(`remote stream: quality ${down ? 'down' : 'up'} to ${this.h}p (${detail})`);
-    if (down && this.tier === last && LINK_TIERS[last].kbps + pcm > m.kbps) this.slowLink(detail);
+    if (down && this.tier === last && LINK_TIERS[last].kbps + pcm > d.fastKbps) this.slowLink(detail);
     else if (down) this.notice('quality', `Slow connection: live transcode lowered the picture to ${this.h}p to keep playing. It goes back up when the connection allows.`);
     this.post({ type: 'transcodeInfo', transcode: this.transcodeInfo({ adaptingDir: down ? 'down' : 'up' }) });
     this.restartVideo();
