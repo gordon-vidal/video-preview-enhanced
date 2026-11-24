@@ -1110,7 +1110,7 @@ test('stepBack from a GPU VideoFrame preserves frame N so step-back then step-fo
   assert.strictEqual(p.lastShown.vf.id, 'N', 'displayed frame N, not N+1');
   assert.ok(closed >= 1, 'released VideoFrame clones are closed');
 
-  // When N cannot be restored (no shownFrame and no lastShown.vf), stepBack returns false so stepFrame seeks.
+  // When N cannot be restored (no shownFrame and no lastShown.vf), stepBack returns null so stepFrame seeks.
   const q = player({
     playing: false, fps: 30, startT: 0, meta: { duration: 10 },
     shownT: tCur, pauseT: tCur, seekTarget: null, shownFrame: null, lastShown: null,
@@ -1118,8 +1118,61 @@ test('stepBack from a GPU VideoFrame preserves frame N so step-back then step-fo
     backBytes: 16,
     queue: [{ t: tNext, vf: makeVf('N+1') }],
   });
-  assert.strictEqual(P.stepBack.call(q, tPrev, tCur, f), false, 'falls back to seek when N cannot be restored');
+  assert.strictEqual(P.stepBack.call(q, 1, tCur), null, 'falls back to seek when N cannot be restored');
   assert.strictEqual(q.back.length, 1, 'back cache untouched on fallback');
+});
+
+test('VFR backward stepping lands on the exact adjacent picture in dense and sparse cadences', () => {
+  // Dense 60 fps section inside a 30 fps-nominal VFR stream (cache hit).
+  const dense = player({
+    firstShown: true, fps: 30, startT: 0, meta: { duration: 10 },
+    shownT: 2 + 5 / 60, pauseT: 2 + 5 / 60, shownCount: 1, keptBufs: new WeakSet(), amode: 'none',
+  });
+  dense.shownFrame = yuvFrame(2 + 5 / 60);
+  for (let i = 0; i < 5; i++) P.keepBack.call(dense, yuvFrame(2 + i / 60));
+  const seeks0 = seeksOf(dense).length;
+  P.stepFrame.call(dense, -1);
+  assert.strictEqual(seeksOf(dense).length, seeks0, 'dense VFR step back uses cache');
+  assert.ok(Math.abs(dense.queue[0].t - (2 + 4 / 60)) < 1e-6, `landed on ${dense.queue[0].t}, expected ${2 + 4 / 60}`);
+  // Rapid second step back before tick() counts from the actual previous picture, not nominal 1/fps.
+  P.stepFrame.call(dense, -1);
+  assert.strictEqual(seeksOf(dense).length, seeks0, 'rapid dense VFR step back uses cache');
+  assert.ok(Math.abs(dense.queue[0].t - (2 + 3 / 60)) < 1e-6, `landed on ${dense.queue[0].t}, expected ${2 + 3 / 60}`);
+
+  // Sparse 15 fps section inside a 30 fps-nominal VFR stream (66.7 ms > 1.5/30): cache stays intact.
+  const sparse = player({
+    firstShown: true, fps: 30, startT: 0, meta: { duration: 10 },
+    shownT: 3 / 15, pauseT: 3 / 15, shownCount: 1, keptBufs: new WeakSet(), amode: 'none',
+  });
+  sparse.shownFrame = yuvFrame(3 / 15);
+  for (let i = 0; i < 3; i++) P.keepBack.call(sparse, yuvFrame(i / 15));
+  assert.strictEqual(sparse.back.length, 3, 'sparse VFR frames are not dropped from back cache');
+  P.stepFrame.call(sparse, -1);
+  assert.strictEqual(seeksOf(sparse).length, 0, 'sparse VFR step back uses cache');
+  assert.ok(Math.abs(sparse.queue[0].t - 2 / 15) < 1e-6, `landed on ${sparse.queue[0].t}, expected ${2 / 15}`);
+
+  // Cache-miss seek in dense 60 fps VFR (e.g. stepping back from a keyframe): lands on N-1, not N-2.
+  const miss = player({
+    firstShown: true, fps: 30, startT: 0, meta: { duration: 10 },
+    shownT: 3.0, pauseT: 3.0, shownCount: 1, keptBufs: new WeakSet(), amode: 'none',
+  });
+  P.stepFrame.call(miss, -1);
+  assert.strictEqual(seeksOf(miss).length, 1, 'cache miss triggers seek');
+  for (let i = 55; i <= 60; i++) P.addFrame.call(miss, yuvFrame(2 + i / 60));
+  assert.strictEqual(miss.seekTarget, null, 'seek landed');
+  assert.ok(Math.abs(miss.queue[0].t - (2 + 59 / 60)) < 1e-6, `landed on ${miss.queue[0].t}, expected ${2 + 59 / 60}`);
+  assert.ok(Math.abs(miss.pauseT - (2 + 59 / 60)) < 1e-6, 'pauseT matches exact previous picture');
+  assert.strictEqual(miss.back.length, 4, 'prior pictures kept in back cache');
+
+  // Forward in-queue seekTime drops stale back frames so a later step back does not jump to an old run.
+  const jump = player({
+    firstShown: true, fps: 30, startT: 0, meta: { duration: 10 },
+    shownT: 1 / 30, pauseT: 1 / 30, shownCount: 1, keptBufs: new WeakSet(), amode: 'none',
+    back: [yuvFrame(0)], backBytes: 8,
+    queue: [yuvFrame(2 / 30), yuvFrame(3 / 30), yuvFrame(4 / 30)],
+  });
+  P.seekTime.call(jump, 4 / 30);
+  assert.strictEqual(jump.back.length, 0, 'in-queue jump drops stale back cache');
 });
 
 (async () => {
