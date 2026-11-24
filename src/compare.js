@@ -32,7 +32,7 @@ const { createAddMode, startsInAddMode, addToCompareOrigin } = require('./addmod
 const { createCompareMenu } = require('./comparemenu');
 const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('./burst');
 const { FRAME_SERVER_BPS, TRANSPORT_BPS, FRAME_SERVER_HEIGHT } = require('./decide');
-const { planCompareRow } = require('./folder-rail');
+const { planCompareRow, planFolderCompare } = require('./folder-rail');
 
 const MAX_BLOCK = 8 * 1024 * 1024;
 /** Videos in one panel at most (the setting compare.maxVideos picks 2-16; 8 by default). */
@@ -1143,8 +1143,43 @@ function registerCompare(context, deps) {
     selected = action.catch(() => {});
     return action;
   };
+  /**
+   * The folder rail's "Compare all videos in folder" on a folder row: the folder's videos (the same walk as Start
+   * Compare on a folder in the Explorer: natural order, subfolders too) start a Compare in the player's tab, or join
+   * the open Compare (no duplicates, up to compare.maxVideos). A toast says when there is nothing to do.
+   */
+  const compareFolderRow = (player, folderUri) => {
+    const action = selected.then(async () => {
+      if (promotion?.done) await promotion.done.catch(() => {});
+      if (!player || player.disposed || !folderUri || !FS_SCHEMES.has(folderUri.scheme)) return undefined;
+      const videos = await selectionVideos(folderUri);
+      if (player.disposed) return undefined;
+      const compare = menu.latest();
+      const max = maxVideos();
+      const byKey = new Map(videos.map((u) => [fileKey(u), u]));
+      const plan = planFolderCompare({ videoKeys: videos.map(fileKey), compareKeys: compare ? compare.uris.map(fileKey) : null, max });
+      const name = path.basename(folderUri.fsPath);
+      deps.log(`compare: folder rail: ${name} (${videos.length} videos) -> ${plan.action}`);
+      const say = (text) => player.post({ type: 'toast', text, ms: 3000 });
+      const uris = plan.keys.map((k) => byKey.get(k));
+      if (plan.action === 'open') {
+        if (plan.skipped) say(`Compare shows up to ${max} videos: the first ${max} of ${name}`);
+        return open(uris, { from: player, t: 0, origin: 'selection' });
+      }
+      if (plan.action === 'add') {
+        compare.addUris(uris);
+        say(`Added ${uris.length} from ${name} to Compare${plan.skipped ? `; Compare is full (${max} videos)` : ''}`);
+        return compare;
+      }
+      say(plan.action === 'few' ? (compare ? `No videos in ${name}` : `${name} has fewer than 2 videos to compare`)
+        : plan.action === 'full' ? `Compare is full (${max} videos)` : `The videos of ${name} are in Compare already`);
+      return compare || undefined;
+    });
+    selected = action.catch(() => {});
+    return action;
+  };
   return {
-    claimOpen, noteOpen, holdOpen, toggleAddMode, stopAddMode, openCompareLink, compareRow,
+    claimOpen, noteOpen, holdOpen, toggleAddMode, stopAddMode, openCompareLink, compareRow, compareFolderRow,
     addFromPlayer: (player, t, confirmStart) => addToCompare(player.uri, undefined, { from: player, t, confirmStart }),
   };
 }

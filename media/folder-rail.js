@@ -7,6 +7,7 @@
 'use strict';
 
 (function (root) {
+  // checkJs: start
   const COLUMN_LABEL = { duration: 'Duration', size: 'Size', modified: 'Modified', none: 'None' };
   const WIDTH = { min: 176, max: 360, dflt: 218 };
   const EDGE_PX = 48; // how near the picture's right edge the fold-out tab shows
@@ -96,7 +97,7 @@
   /**
    * @param {{
    *   doc: Document, post: (m: any) => void, toast: (t: string, ms?: number) => void,
-   *   cfg: { layout?: string, width?: number, column?: string, playable?: boolean, open?: boolean, filter?: string },
+   *   cfg: { layout?: string, width?: number, column?: string, playable?: boolean },
    *   getOnEnd: () => string, setOnEnd: (mode: string) => void, label: (mode: string) => string,
    *   time?: () => number,
    * }} env
@@ -125,7 +126,6 @@
     /** @type {string|null} */ let cur = null; // keyboard cursor (row id)
     let place = { index: -1, count: 0 };
     let near = false;
-    if (filter) filter.value = typeof cfg.filter === 'string' ? cfg.filter : '';
 
     const send = (/** @type {any} */ m) => post({ type: 'rail', ...m });
     const prefs = () => post({ type: 'rail', op: 'prefs', width, column, playable });
@@ -154,9 +154,17 @@
         if (focus) list.focus();
       } else {
         send({ op: 'close' });
-        if (refocus && (rail.contains(doc.activeElement) || doc.activeElement === doc.body)) (cap.hidden ? $('play') : capCount).focus();
+        if (refocus && (rail.contains(doc.activeElement) || doc.activeElement === doc.body)) opener().focus();
       }
+      updateOpener();
     }
+    /** The capsule is shown (the narrow-bar ladder hides it below 720 px with CSS, not with `hidden`). */
+    const capVisible = () => !cap.hidden && cap.getClientRects().length > 0;
+    /** Where the keyboard opens the rail: the capsule's count, else the fold-out tab. */
+    const opener = () => (capVisible() ? capCount : openTab);
+    /** The fold-out tab joins the Tab order only while the capsule is not there to open the rail. */
+    function updateOpener() { openTab.tabIndex = !open && !capVisible() ? 0 : -1; }
+    window.addEventListener('resize', updateOpener, { passive: true });
     // Opened from the keyboard (a click with no pointer, detail 0): focus goes to the list; a mouse click leaves it.
     const byKey = (/** @type {any} */ e) => e.detail === 0;
     openTab.addEventListener('click', (/** @type {MouseEvent} */ e) => { e.stopPropagation(); setOpen(true, { focus: byKey(e) }); });
@@ -173,6 +181,18 @@
     /** What the next tab of a folder navigation takes over. */
     function carry() {
       return { open, width, filter: filter ? filter.value : '', onEnd: env.getOnEnd() };
+    }
+    /**
+     * Takes over a folder navigation's rail state (src/folder-rail.js RailCarry): the same for a new tab (its cfg)
+     * and an already open one (railHandoff). Open or closed, width and filter all follow the source tab.
+     * @param {{ open?: boolean, width?: number, filter?: string } | null | undefined} c
+     */
+    function adopt(c) {
+      if (!c) return;
+      if (c.width) { width = clampWidth(c.width); applyLayout(); }
+      const q = typeof c.filter === 'string' ? c.filter : '';
+      if (filter.value !== q) { filter.value = q; render(); }
+      setOpen(!!c.open);
     }
 
     // ---- the fold-out tab: revealed near the right edge of the picture, opened by a click only ----
@@ -258,7 +278,7 @@
       menu.style.left = `${Math.max(4, Math.min(x, vw - w - 4))}px`;
       menu.style.top = `${Math.max(4, Math.min(y, vh - h - 4))}px`;
       const first = menu.querySelector('[aria-checked="true"]') || menu.querySelector('button');
-      if (first) first.focus();
+      if (first) /** @type {HTMLElement} */ (first).focus();
     }
     colBtn.addEventListener('click', (/** @type {Event} */ e) => { e.stopPropagation(); showMenu(colMenu, colBtn, 'col', column, null); });
     colHead.addEventListener('contextmenu', (/** @type {MouseEvent} */ e) => {
@@ -333,7 +353,8 @@
         if (e.kind === 'up') row.title = 'Parent folder';
         else name.title = e.name;
         row.append(ic, name);
-        const canCompare = e.kind === 'video' && !active;
+        // A video: compare it with the playing one; a folder: compare all its videos.
+        const canCompare = (e.kind === 'video' && !active) || e.kind === 'dir';
         /** @type {HTMLElement|null} */
         let col = null;
         if (column !== 'none' && e.kind !== 'up') {
@@ -346,11 +367,15 @@
           const b = doc.createElement('button');
           b.type = 'button';
           b.className = 'r-cmp';
-          b.title = 'Compare with the playing video';
-          b.setAttribute('aria-label', `Compare with ${e.name}`);
+          const folder = e.kind === 'dir';
+          b.title = folder ? 'Compare all videos in folder' : 'Compare with the playing video';
+          b.setAttribute('aria-label', folder ? `Compare all videos in folder ${e.name}` : `Compare with ${e.name}`);
           b.tabIndex = -1;
           b.innerHTML = ICO.cmp;
-          b.addEventListener('click', (/** @type {Event} */ ev) => { ev.stopPropagation(); compareRow(e.id); });
+          b.addEventListener('click', (/** @type {Event} */ ev) => {
+            ev.stopPropagation();
+            if (folder) send({ op: 'compareFolder', gen: snap.gen, id: e.id }); else compareRow(e.id);
+          });
           row.appendChild(b);
         }
         row.addEventListener('click', () => { setCursor(e.id); activate(e.id); });
@@ -492,6 +517,7 @@
       place = { index: Number.isFinite(index) ? index : -1, count: Number.isFinite(count) ? count : 0 };
       const text = posText(place.index, place.count);
       cap.hidden = !capsuleShown(place.index, place.count);
+      updateOpener();
       capCount.textContent = text;
       capCount.setAttribute('aria-label', text ? `Folder rail, video ${place.index + 1} of ${place.count}` : 'Folder rail');
       pos.textContent = text;
@@ -500,9 +526,10 @@
     refreshOnEnd();
 
     edge.hidden = false;
+    updateOpener();
 
     return {
-      go, carry, onMessage, setPos, refreshOnEnd,
+      go, carry, adopt, onMessage, setPos, refreshOnEnd,
       isOpen: () => open,
       open: () => setOpen(true, { focus: true }),
       show: () => setOpen(true),
@@ -513,7 +540,12 @@
         open, layout, width, column, playable, filter: filter.value, crumb: snap.crumb, gen: snap.gen,
         railRect: open ? (() => { const r = rail.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })() : null,
         stageRect: (() => { const r = stage.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
-        rows: [...rows.values()].map((r) => ({ id: r.e.id, name: r.e.name, kind: r.e.kind, col: r.col ? r.col.textContent : '', active: r.e.id === snap.current })),
+        rows: [...rows.values()].map((r) => {
+          const b = /** @type {HTMLElement | null} */ (r.row.querySelector('.r-cmp'));
+          return { id: r.e.id, name: r.e.name, kind: r.e.kind, col: r.col ? r.col.textContent : '', active: r.e.id === snap.current, cmp: b ? b.title : '' };
+        }),
+        openTabIndex: openTab.tabIndex, capVisible: capVisible(),
+        openTabRect: (() => { const r = openTab.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
         cap: { hidden: cap.hidden, text: capCount.textContent }, pos: pos.textContent, edgeNear: near, edgeHidden: edge.hidden,
         autoplay: endVal.textContent, hover: hover.hidden ? null : { name: hoverName.textContent, l1: hoverL1.textContent, l2: hoverL2.textContent },
         menus: { column: !colMenu.hidden, autoplay: !endMenu.hidden },
@@ -521,6 +553,7 @@
     };
   }
 
+  // checkJs: end
   const api = { create, fmtDuration, fmtSize, fmtModified, colText, filterEntries, posText, capsuleShown, clampWidth, nearEdge, COLUMN_LABEL, WIDTH, EDGE_PX };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else /** @type {any} */ (root).VpeFolderRail = api;

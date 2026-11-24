@@ -49,7 +49,7 @@ function fakeFs(tree, { links = {} } = {}) {
         const target = links[p] || p;
         const n = at(target);
         if (n === undefined) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; }
-        return { size: typeof n === 'number' ? n : 0, mtimeMs: 1700000000000 + (typeof n === 'number' ? n : 0), isDirectory: () => typeof n === 'object' };
+        return { size: typeof n === 'number' ? n : 0, mtimeMs: 1700000000000 + (typeof n === 'number' ? n : 0), isDirectory: () => typeof n === 'object', isFile: () => typeof n === 'number' };
       } finally { st.inStat--; }
     },
   };
@@ -260,6 +260,66 @@ function rail(fsys, o = {}) {
     assert.strictEqual(await ctl.browse('/v'), null, 'a disposed rail lists nothing');
   }
 
+  // ---- closing or hiding the rail while the folder is read: nothing is posted or queued; resume reads it again ----
+  {
+    const f = fakeFs(TREE);
+    let readRelease;
+    const realReaddir = f.readdir;
+    f.readdir = (d, o) => new Promise((resolve) => { readRelease = () => resolve(realReaddir(d, o)); });
+    const { ctl, posted, lists } = rail(f);
+    const pending = ctl.browse('/v');
+    await tick();
+    ctl.cancel(); // the rail closes while readdir runs
+    readRelease();
+    assert.strictEqual(await pending, null, 'the listing read before the close is dropped');
+    await settle(20);
+    assert.strictEqual(posted.length, 0, 'nothing posted while closed');
+    assert.strictEqual(f.st.stat, 0, 'no stat work started while closed');
+    assert.ok(ctl.stats().suspended && ctl.stats().relist);
+    f.readdir = realReaddir;
+    await ctl.resume();
+    assert.strictEqual(lists().length, 1, 'resume reads the folder again');
+    assert.ok(!ctl.stats().suspended);
+  }
+
+  // ---- a pending metadata patch at a close or hide is not lost: resume posts what is known ----
+  {
+    const f = fakeFs(TREE);
+    const { ctl, metas, flush } = rail(f);
+    const a = await ctl.browse('/v/sub');
+    await settle(40); // the stats are done; their patch waits for the batch timer
+    ctl.cancel(); // closed before the timer fired: the timer is cleared
+    flush();
+    assert.strictEqual(metas().length, 0, 'no patch posted while closed');
+    await ctl.resume();
+    const m = metas();
+    assert.strictEqual(m.length, 1, 'resume republishes the known metadata');
+    assert.strictEqual(m[0].gen, a.gen);
+    assert.deepStrictEqual(m[0].patches.map((x) => x.size).sort((x, y) => x - y), [1, 2, 10], 'sizes recorded before the close');
+  }
+
+  // ---- symlinks in the playback folder: only links to regular files count as videos ----
+  {
+    const tree = { d: { 'a.mp4': 1, 'dirlink.mp4': 'link', 'broken.mp4': 'link', 'filelink.mkv': 'link', real: {} } };
+    const f = fakeFs(tree, { links: { '/d/dirlink.mp4': '/d/real', '/d/broken.mp4': '/d/gone', '/d/filelink.mkv': '/d/a.mp4' } });
+    const n = await R.neighbourOf(f, '/d/a.mp4', 1, P);
+    assert.deepStrictEqual(n, { index: 0, count: 2, target: '/d/filelink.mkv' }, 'a link to a folder or a broken link is not a video');
+    const { ctl } = rail(f);
+    const msg = await ctl.browse('/d');
+    assert.deepStrictEqual(msg.entries.map((e) => `${e.kind}:${e.name}`), ['up:..', 'dir:dirlink.mp4', 'dir:real', 'video:a.mp4', 'video:filelink.mkv']);
+  }
+
+  // ---- "Compare all videos in folder" preflight ----
+  {
+    assert.deepStrictEqual(R.planFolderCompare({ videoKeys: ['a', 'b', 'c'], compareKeys: null, max: 8 }), { action: 'open', keys: ['a', 'b', 'c'], skipped: 0 });
+    assert.deepStrictEqual(R.planFolderCompare({ videoKeys: ['a'], compareKeys: null, max: 8 }), { action: 'few', keys: [], skipped: 0 }, 'one video: no Compare');
+    assert.deepStrictEqual(R.planFolderCompare({ videoKeys: ['a', 'b', 'c'], compareKeys: null, max: 2 }), { action: 'open', keys: ['a', 'b'], skipped: 1 });
+    assert.deepStrictEqual(R.planFolderCompare({ videoKeys: ['a', 'b'], compareKeys: ['a', 'x'], max: 8 }), { action: 'add', keys: ['b'], skipped: 0 }, 'no duplicates');
+    assert.deepStrictEqual(R.planFolderCompare({ videoKeys: ['a', 'b'], compareKeys: ['x', 'y'], max: 2 }), { action: 'full', keys: [], skipped: 2 });
+    assert.deepStrictEqual(R.planFolderCompare({ videoKeys: ['a'], compareKeys: ['a'], max: 8 }), { action: 'none', keys: [], skipped: 0 });
+    assert.strictEqual(R.planFolderCompare({ videoKeys: [], compareKeys: ['a'], max: 8 }).action, 'few');
+  }
+
   // ---- handoff intents: one per target, the editor group must match, they expire ----
   {
     let now = 1000;
@@ -273,8 +333,16 @@ function rail(fsys, o = {}) {
     assert.strictEqual(h.take('file:///v/c.mp4', 1), null, 'expired');
     h.register('file:///v/d.mp4', undefined, { y: 1 });
     assert.deepStrictEqual(h.take('file:///v/d.mp4', 3), { y: 1 }, 'no group known: any');
-    h.register('file:///v/e.mp4', 1, {});
-    h.drop('file:///v/e.mp4');
+    // Two editor groups navigating to the same file keep their own intent; a drop removes only its registration.
+    const t1 = h.register('file:///v/e.mp4', 1, { g: 1 });
+    const t2 = h.register('file:///v/e.mp4', 2, { g: 2 });
+    assert.notStrictEqual(t1.id, t2.id);
+    h.drop(t1);
+    assert.deepStrictEqual(h.take('file:///v/e.mp4', 2), { g: 2 }, 'group 2 keeps its intent after group 1 dropped');
+    const t3 = h.register('file:///v/f.mp4', 1, { old: true });
+    h.register('file:///v/f.mp4', 1, { fresh: true }); // a newer navigation to the same slot
+    h.drop(t3);
+    assert.deepStrictEqual(h.take('file:///v/f.mp4', 1), { fresh: true }, 'an old token does not drop the newer intent');
     assert.strictEqual(h.size(), 0);
   }
 
@@ -426,7 +494,8 @@ function rail(fsys, o = {}) {
       await C.shown;
       const cfgC = webviewConfig(C.panel.webview);
       assert.strictEqual(cfgC.onEnd, 'next', 'Autoplay carried over');
-      assert.deepStrictEqual([cfgC.rail.open, cfgC.rail.width, cfgC.rail.filter], [true, 240, 'a'], 'rail state carried over');
+      assert.deepStrictEqual(cfgC.railCarry, { open: true, width: 240, filter: 'a', onEnd: 'next' }, 'rail state carried over (applied by the same adopt as an open tab)');
+      assert.strictEqual(cfgC.rail.width, 218, 'the remembered look stays apart from the carry');
       assert.strictEqual(cfgC.autoNext, false, 'a manual navigation keeps the resume position');
       // The rail in the new tab lists the folder that was browsed.
       await C.send({ type: 'rail', op: 'open' });
@@ -448,18 +517,59 @@ function rail(fsys, o = {}) {
       const cfgB2 = webviewConfig(B2.panel.webview);
       assert.strictEqual(cfgB2.autoNext, true, 'plays from the start');
       assert.strictEqual(cfgB2.resume, 0);
-      // An already open target in this editor group: it takes the handoff; no second tab; the source closes.
+      // An already open target in this editor group (its player still loading): it is revealed and takes the handoff;
+      // the source closes only after the target's matching, successful answer.
       const D = h.open(path.join(dir, 'a 10.mov'));
       await D.shown;
-      const sent = B2.send({ type: 'neighbour', d: 1, rail: { open: true, onEnd: 'loop' } });
-      await C.until((p) => p.some((m) => m.type === 'railHandoff'), 2000).catch(() => {});
-      const adopter = [C, D].find((x) => x.posted.some((m) => m.type === 'railHandoff'));
-      assert.ok(adopter, 'the open tab got the handoff');
-      const ho = adopter.posted.find((m) => m.type === 'railHandoff');
+      let b2Closed = false;
+      const b2Dispose = B2.panel.dispose;
+      B2.panel.dispose = () => { b2Closed = true; b2Dispose.call(B2.panel); };
+      const revealed = [];
+      for (const x of [C, D]) x.panel.reveal = () => revealed.push(x);
+      const handoffs = () => [C, D].flatMap((x) => x.posted.filter((m) => m.type === 'railHandoff').map((m) => ({ x, m })));
+      const first = B2.send({ type: 'neighbour', d: 1, rail: { open: true, onEnd: 'loop' } });
+      await C.until(() => handoffs().length === 1, 2000);
+      const { x: adopter, m: ho } = handoffs()[0];
+      assert.deepStrictEqual(revealed, [adopter], 'the open target is shown first');
       assert.strictEqual(ho.onEnd, 'loop');
-      await adopter.send({ type: 'railAdopted', id: ho.id });
-      await sent;
+      await settle(20);
+      assert.strictEqual(b2Closed, false, 'no answer yet (the target is still loading): the source stays');
+      await adopter.send({ type: 'railAdopted', id: ho.id + 1000, ok: true });
+      await settle(5);
+      assert.strictEqual(b2Closed, false, 'an answer to another handoff does not close it');
+      await adopter.send({ type: 'railAdopted', id: ho.id, ok: false });
+      await first;
+      assert.strictEqual(b2Closed, false, 'a failed adoption keeps the source');
+      // Again with Autoplay's next and a closed rail with its width and filter: all of it reaches the open tab.
+      const second = B2.send({ type: 'neighbour', d: 1, auto: true, rail: { open: false, width: 300, filter: 'a 1', onEnd: 'next' } });
+      await C.until(() => handoffs().length === 2, 2000);
+      const ho2 = handoffs()[1].m;
+      assert.strictEqual(handoffs()[1].x, adopter);
+      assert.deepStrictEqual([ho2.rail, ho2.onEnd, ho2.fromAutoNext], [{ open: false, width: 300, filter: 'a 1', onEnd: 'next' }, 'next', true], 'the full carry');
+      await settle(20);
+      assert.strictEqual(b2Closed, false);
+      await adopter.send({ type: 'railAdopted', id: ho2.id, ok: true });
+      await second;
+      assert.strictEqual(b2Closed, true, 'closed after the matching successful answer');
       assert.strictEqual(opens().length, 2, 'no openWith for an open target');
+      // The adopting tab dropped its old browsed folder (C had walked into "more"): its rail lists its own folder.
+      await adopter.send({ type: 'rail', op: 'close' });
+      await adopter.send({ type: 'rail', op: 'open' });
+      const relisted = adopter.posted.filter((m) => m.op === 'list').pop();
+      assert.ok(relisted.entries.some((e) => e.name === 'a 1.mp4'), `the playback folder, not a stale browse: ${relisted.entries.map((e) => e.name)}`);
+
+      // "Compare all videos in folder" on a folder row: routed to Compare's folder walk; one video is not enough.
+      const toUriPath = (u) => (process.platform === 'win32' ? u.path.replace(/^\//, '') : u.path);
+      h.vscode.FileType = { File: 1, Directory: 2, SymbolicLink: 64 };
+      h.vscode.workspace.fs.stat = async (u) => ({ type: fs.statSync(toUriPath(u)).isDirectory() ? 2 : 1 });
+      h.vscode.workspace.fs.readDirectory = async (u) => fs.readdirSync(toUriPath(u), { withFileTypes: true }).map((d) => [d.name, d.isDirectory() ? 2 : 1]);
+      const more = relisted.entries.find((e) => e.name === 'more');
+      await adopter.send({ type: 'rail', op: 'compareFolder', gen: relisted.gen, id: relisted.entries.find((e) => e.name === 'a 1.mp4').id });
+      await adopter.send({ type: 'rail', op: 'compareFolder', gen: relisted.gen - 1, id: more.id });
+      await settle(10);
+      assert.ok(!adopter.posted.some((m) => m.type === 'toast' && /fewer than 2|Compare/.test(m.text)), 'a video row or an old listing does nothing');
+      await adopter.send({ type: 'rail', op: 'compareFolder', gen: relisted.gen, id: more.id });
+      await adopter.until((ps) => ps.some((m) => m.type === 'toast' && /fewer than 2 videos/.test(m.text)), 3000);
       for (const x of [A, B, C, D, B2]) x.panel.dispose(); // file watchers would keep Node alive
       h.dispose();
     } finally {

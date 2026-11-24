@@ -6,6 +6,7 @@
 'use strict';
 
 (function (root) {
+  // checkJs: start
   const MODES = /** @type {const} */ (['off', 'next', 'loop']);
   const LABEL = { off: 'Off', next: 'Play next in folder', loop: 'Loop' };
   /** A run shorter than this (media seconds from the last play or seek) is a seek to the end, not playback reaching it. */
@@ -38,6 +39,7 @@
   /** Whether a pause at the end came from playback running into it: `ran` media seconds since the last play or seek. */
   const natural = (/** @type {{ playing: boolean, ran: number, hidden?: boolean }} */ s) => !!s.playing && !s.hidden && s.ran >= MIN_RUN;
 
+  // checkJs: end
   const api = { MODES, LABEL, MIN_RUN, parse, label, toggleLoop, engineLoops, atEnd, natural };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else /** @type {any} */ (root).VpeAutoplay = api;

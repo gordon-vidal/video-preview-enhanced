@@ -108,7 +108,8 @@ async function open(file, o = {}) {
   const engine = globalThis.createEngine({
     vscode: {
       postMessage: (m) => {
-        if (m.type !== 'readBlock' || !P.player) return;
+        // P.stallReads: reads go unanswered from then on (a stalled feed: no data and no end of file).
+        if (m.type !== 'readBlock' || !P.player || P.stallReads) return;
         setImmediate(() => {
           if (P.closed) return;
           const n = Math.max(0, Math.min(m.len, size - m.pos));

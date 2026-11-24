@@ -10,13 +10,13 @@ see a clip's length or size before opening it, no "play the next one" and no qui
 - **Bar capsule `‹ 2/5 ›`** (`#folderCap`, src/bar.js), right before Compare, single player of a file only. `‹` / `›`
   are the previous / next video; the count opens and closes the rail. Hidden for URLs, image sequences, Compare, a
   folder with one video, and below 720 px (the first step of the narrow-bar ladder in media/player.css).
-- **Fold-out tab** (`#railOpenTab`, 16×28 px, 10 px `‹`): appears when the pointer is within 48 px of the picture's
+- **Fold-out tab** (`#railOpenTab`, 20×84 px, 12 px `‹`): appears when the pointer is within 48 px of the picture's
   right edge; a click opens the rail, hovering never does. Not over the scopes, while panning a zoomed picture, during
   a drag or in fullscreen with the bar hidden. Zero layout footprint while the rail is closed.
 - **The rail** (`#rail`, 218 px, 176–360 px by dragging its left edge; remembered for new tabs). `"dock"` (default,
   setting `folderRail.layout`) gives it real width beside the picture, so neither the video nor the scopes are covered;
   `"overlay"` floats it over the picture (86% frosted, blur 12 px). Same DOM, one class. Below 560 px a docked rail
-  overlays. A 16×28 px `›` tab on its left edge (outside the resize grip) and a dim `×` close it; so does Esc.
+  overlays. A 20×84 px `›` tab on its left edge (outside the resize grip) and a dim `×` close it; so does Esc.
   - Header: the folder and its parent. Filter (`Filter…`, keys stay in the field) and **Playable formats** (a
     monochrome check button, on by default: videos and folders only).
   - Column header `NAME | DURATION ▾`: a click on `DURATION ▾` or a right-click on the header picks **Duration**,
@@ -27,6 +27,10 @@ see a clip's length or size before opening it, no "play the next one" and no qui
     takes the tab at the current moment; a Compare open, the missing ones join it (no duplicates, up to
     `compare.maxVideos`). Hovering a file shows a card left of the rail: name, `duration · size · modified`,
     resolution and codec (`—` when unknown).
+  - A folder row (not `..`) shows the same hover button, **Compare all videos in folder**: the folder's videos (the
+    Explorer's Start Compare walk: natural order, subfolders too) start a Compare in the player's tab, or join the open
+    Compare (no duplicates, up to `compare.maxVideos`). A toast says so when the folder has fewer than two videos, or
+    when Compare is full.
   - Footer: **Autoplay: Off ▾** (Off / Play next in folder / Loop) and the position `2/5`.
 - **Autoplay** (setting `onEnd`, replaces `loop`): ⚙ › Playback › **Autoplay ›**, the rail's footer, `R` (Loop ↔ Off;
   from Play next in folder it goes to Loop) and the right-click menu's Loop all change the open tab; the setting is the
@@ -46,12 +50,24 @@ see a clip's length or size before opening it, no "play the next one" and no qui
   page in batches tagged with the listing's generation. A folder change, closing the rail, hiding the tab or closing
   it cancels queued and running work; late answers are dropped.
 - The page never sends a path: rows have opaque ids valid for one listing (generation).
+- Closing the rail or hiding the tab suspends it: nothing is queued or posted, and a listing still being read is
+  dropped. Showing it again reads that folder again, or posts what is already known (a batch that was pending at the
+  close included) and fetches the rest.
+- Symbolic links count as what they point to: a link to a regular file can be a video, a link to a folder is a
+  folder, a broken link (or one to anything else) is left out, in the rail and in next / previous alike.
+- The end-of-duration watchdog (the clock passed the declared end with nothing left to show) still pauses, but its
+  report is not "played into the end" unless the decoder or transport gave the end of file, so a stalled native or
+  remote feed never makes Autoplay move on.
 - The **browse** folder (what the rail lists) is not the **playback** folder (the playing file's): next / previous,
   the capsule and Autoplay use the playback folder until a video is opened from the rail.
 - **Tab swap:** navigation keeps `vscode.openWith` + `dispose()`. A handoff intent (rail open / width / filter /
   browsed folder, Autoplay, "from Autoplay") is registered before `openWith` and taken by the new tab's
-  `resolveCustomEditor` ahead of Compare's Add Mode and Open Together. A target already open in the same editor
-  group takes the handoff (`railHandoff` → `railAdopted`, 1.5 s at most) and is revealed; then the source closes.
+  `resolveCustomEditor` ahead of Compare's Add Mode and Open Together. Intents are kept per uri *and* editor group;
+  each registration has a token, so a failed open drops only its own. A target already open in the same editor group
+  is revealed and takes the handoff (`railHandoff`); its page keeps it until its player has begun, applies it with
+  the same `adopt` as a new tab (open or closed, width, filter, browsed folder, Autoplay; Autoplay's next plays from
+  0:00) and answers `railAdopted`. Only that answer closes the source; without it (20 s, or the target closed) the
+  source stays.
   Navigation is serialized per tab, so Autoplay never advances twice. Uris keep the file's scheme and authority
   (local, WSL, Remote-SSH).
 
@@ -65,3 +81,11 @@ Home End PageUp PageDown move, Enter opens, Backspace goes up, Esc closes). The 
 ## Later (phase 2)
 
 Preview mode (32 px rows with thumbnails): not built yet, and no button for it in phase 1.
+
+## Future / follow-ups
+
+- **Recursive search in the rail's filter:** match names in subfolders too (bounded walk, cancellable like the
+  metadata work), with the folder shown on the matching rows.
+- **Rethink how Compare is entered** now that the rail exists: the split between the Compare view and the single
+  player (the Compare button's confirmation, Add Mode), seamless adding from the rail, drag and drop from the rail
+  onto the picture or a tile, and adding automatically from the rail while a Compare is open.

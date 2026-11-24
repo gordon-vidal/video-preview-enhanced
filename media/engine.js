@@ -1524,7 +1524,9 @@ function createEngine(env) {
         if (this.loop && this.loopAgain()) now = this.restartLoop(now, this.endT()); else this.ended(this.endT());
       } else if (this.playing && now > end + 0.5 && !this.queue.length && (this.eof || now > end + 1.5)) {
         // Past the end with nothing left to show (also when a skip overshot the last keyframe).
-        if (this.loop && this.loopAgain()) this.seekAbs(this.startT || 0, true); else this.ended(end);
+        // Without the decoder's or transport's end of file (a stalled native or remote feed) it pauses all the same, but
+        // the report is not "played into the end": Autoplay must not move on to another file.
+        if (this.loop && this.loopAgain()) this.seekAbs(this.startT || 0, true); else this.ended(end, !!this.eof);
       }
       // Every frame, no sound driving the clock, nothing decoded to show: the clock waits at the next
       // frame's time instead of running on past the frozen picture (and snapping back when it comes).
@@ -1651,14 +1653,15 @@ function createEngine(env) {
 
     /**
      * Playback reached the end with loop off: pause on the last frame and tell the page (Autoplay). `natural`: it ran
-     * into the end (visible, at least MIN_RUN since the last play or seek), not a seek or skip that landed there.
+     * into the end (visible, at least MIN_RUN since the last play or seek), not a seek or skip that landed there, and
+     * `terminal`: the end of file came from the decoder or transport, not from the clock passing the declared duration.
      */
-    ended(at) {
+    ended(at, terminal = true) {
       const ran = Number.isFinite(this.runFromT) ? at - this.runFromT : Infinity;
       const hidden = !!this.hidden;
       this.pause();
-      const natural = typeof VpeAutoplay !== 'undefined' ? VpeAutoplay.natural({ playing: true, ran, hidden }) : !hidden && ran >= 0.25;
-      onEnded(this, { natural, ran });
+      const ranIn = typeof VpeAutoplay !== 'undefined' ? VpeAutoplay.natural({ playing: true, ran, hidden }) : !hidden && ran >= 0.25;
+      onEnded(this, { natural: ranIn && terminal, ran, terminal });
     }
 
     /** End of what was decoded: the last frame's end or the end of the sound, whichever is later. */

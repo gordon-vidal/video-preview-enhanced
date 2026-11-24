@@ -19,7 +19,17 @@ const { VIDEO_EXT } = require('./open-video');
  * @typedef {{ id: string, name: string, kind: EntryKind, path: string }} Entry
  * @typedef {{ size?: number, mtime?: number, duration?: number, width?: number, height?: number, codec?: string, items?: number }} Meta
  * @typedef {{ name: string, isDirectory(): boolean, isFile(): boolean, isSymbolicLink(): boolean }} Dirent
- * @typedef {{ size: number, mtimeMs: number, isDirectory(): boolean, isFile?(): boolean }} Stat
+ * @typedef {{ size: number, mtimeMs: number, isDirectory(): boolean, isFile(): boolean }} Stat
+ * @typedef {{ readdir(dir: string, o: { withFileTypes: true }): Promise<Dirent[]>, stat(p: string): Promise<Stat> }} FsLike
+ * @typedef {{ open: boolean, width?: number, filter: string, onEnd?: 'off'|'next'|'loop' }} RailCarry
+ *   the rail state a folder navigation carries to the next tab (sanitizeRailCarry)
+ * @typedef {{ rail: RailCarry, fromAutoNext: boolean, browse: string | null }} HandoffIntent
+ *   what the next tab of a folder navigation takes over; browse: the folder the rail showed (null: the playback folder)
+ * @typedef {{ key: string, id: number }} HandoffToken  one registration of createHandoffs
+ * @typedef {{ type: 'railHandoff', id: number, rail: RailCarry, onEnd?: string, fromAutoNext: boolean }} RailHandoffMessage
+ *   host -> page: a navigation landed on this open tab
+ * @typedef {{ type: 'railAdopted', id: number, ok: boolean }} RailAdoptedMessage
+ *   page -> host: the handoff `id` is applied (ok: with its player ready, Autoplay's play started when asked)
  */
 
 /** Autoplay (setting videoPreviewEnhanced.onEnd): what happens when a video plays to its end. */
@@ -117,29 +127,70 @@ function planCompareRow({ compareKeys, playerKey, targetKey, max }) {
 /**
  * Short-lived intents for a folder navigation: registered before vscode.openWith, taken by the new tab's
  * resolveCustomEditor (ahead of Compare's Add Mode and Open Together), so that tab knows it continues this one
- * (rail state, Autoplay hand-over). One per target; it expires after `ttlMs`.
+ * (rail state, Autoplay hand-over). One per target uri *and* editor group (two groups navigating to the same file
+ * keep their own); each registration has a token, and only that registration is dropped with it. They expire after
+ * `ttlMs`.
  * @param {{ now?: () => number, ttlMs?: number }} [o]
  */
 function createHandoffs({ now = Date.now, ttlMs = 15000 } = {}) {
-  /** @type {Map<string, { column: number | undefined, intent: any, until: number }>} */
+  /** @type {Map<string, { token: number, intent: HandoffIntent, until: number }>} */
   const map = new Map();
+  let seq = 0;
+  const slot = (/** @type {string} */ key, /** @type {number|undefined} */ column) => `${typeof column === 'number' ? column : '*'}|${key}`;
   const sweep = () => { const t = now(); for (const [k, v] of map) if (v.until < t) map.delete(k); };
   return {
-    /** @param {string} key target uri (no fragment) @param {number|undefined} column @param {any} intent */
-    register(key, column, intent) { sweep(); map.set(key, { column, intent, until: now() + ttlMs }); },
-    /** The intent for a tab opening `key` in `column`, consumed; null when none (or another editor group). */
-    take(/** @type {string} */ key, /** @type {number|undefined} */ column) {
+    /**
+     * @param {string} key target uri (no fragment) @param {number|undefined} column @param {HandoffIntent} intent
+     * @returns {HandoffToken}
+     */
+    register(key, column, intent) {
       sweep();
-      const v = map.get(key);
-      if (!v) return null;
-      if (typeof v.column === 'number' && typeof column === 'number' && v.column !== column) return null;
-      map.delete(key);
+      const token = { key: slot(key, column), id: ++seq };
+      map.set(token.key, { token: token.id, intent, until: now() + ttlMs });
+      return token;
+    },
+    /**
+     * The intent for a tab opening `key` in `column`, consumed; null when none (or only for another editor group).
+     * @param {string} key @param {number|undefined} column
+     * @returns {HandoffIntent | null}
+     */
+    take(key, column) {
+      sweep();
+      const at = map.has(slot(key, column)) ? slot(key, column) : map.has(slot(key, undefined)) ? slot(key, undefined) : null;
+      if (!at) return null;
+      const v = /** @type {{ intent: HandoffIntent }} */ (map.get(at));
+      map.delete(at);
       return v.intent;
     },
-    /** Drops an intent that was not taken (the target was already open, or the open failed). */
-    drop(/** @type {string} */ key) { map.delete(key); },
+    /** Drops this registration if it was not taken (the open failed); a newer one for the same slot stays. */
+    drop(/** @type {HandoffToken} */ token) {
+      const v = map.get(token.key);
+      if (v && v.token === token.id) map.delete(token.key);
+    },
     size() { sweep(); return map.size; },
   };
+}
+
+/**
+ * "Compare all videos in folder" from a rail folder row: what to do with the folder's videos (keys, in order).
+ * No Compare open: a new Compare needs at least two; a Compare open: the ones it lacks, up to `max` in all.
+ * @param {{ videoKeys: string[], compareKeys: string[] | null, max: number }} o
+ * @returns {{ action: 'open' | 'add' | 'few' | 'full' | 'none', keys: string[], skipped: number }}
+ */
+function planFolderCompare({ videoKeys, compareKeys, max }) {
+  const unique = [...new Set(videoKeys)];
+  if (!compareKeys) {
+    if (unique.length < 2) return { action: 'few', keys: [], skipped: 0 };
+    return { action: 'open', keys: unique.slice(0, max), skipped: Math.max(0, unique.length - max) };
+  }
+  if (!unique.length) return { action: 'few', keys: [], skipped: 0 };
+  const have = new Set(compareKeys);
+  const missing = unique.filter((k) => !have.has(k));
+  const room = Math.max(0, max - compareKeys.length);
+  const keys = missing.slice(0, room);
+  const skipped = missing.length - keys.length;
+  if (keys.length) return { action: 'add', keys, skipped };
+  return { action: skipped ? 'full' : 'none', keys: [], skipped };
 }
 
 /**
@@ -167,26 +218,44 @@ function createMetaCache(max = 500) {
 }
 
 /**
- * The playable videos of `dir` in natural order (async readdir; names only, no stat).
- * @param {{ readdir(dir: string, o: { withFileTypes: true }): Promise<Dirent[]> }} fs
- * @param {string} dir
+ * What a directory entry is for the rail: 'dir', 'file' (a regular file) or null (leave it out). A symbolic link
+ * is what it points to (stat follows it); a link to something else, or a broken one, is left out.
+ * @param {FsLike} fs @param {Dirent} e @param {string} full
+ * @returns {Promise<'dir'|'file'|null>}
  */
-async function playableIn(fs, dir) {
+async function entryType(fs, e, full) {
+  if (e.isDirectory()) return 'dir';
+  if (e.isFile()) return 'file';
+  if (!e.isSymbolicLink()) return null;
+  try {
+    const st = await fs.stat(full);
+    if (st.isDirectory()) return 'dir';
+    return st.isFile() ? 'file' : null;
+  } catch { return null; }
+}
+
+/**
+ * The playable videos of `dir` in natural order: regular files (or links to one) with a video extension.
+ * Only links cost a stat; plain entries are judged by readdir's types.
+ * @param {FsLike} fs @param {string} dir @param {any} [pathMod]
+ */
+async function playableIn(fs, dir, pathMod = nodePath) {
   const ents = await fs.readdir(dir, { withFileTypes: true });
-  return ents.filter((e) => (e.isFile() || e.isSymbolicLink()) && isPlayable(e.name) && !e.name.startsWith('.'))
-    .map((e) => e.name).sort(naturalCompare);
+  const cands = ents.filter((e) => isPlayable(e.name) && !e.name.startsWith('.'));
+  const types = await Promise.all(cands.map((e) => entryType(fs, e, pathMod.join(dir, e.name))));
+  return cands.filter((_, i) => types[i] === 'file').map((e) => e.name).sort(naturalCompare);
 }
 
 /**
  * Where `file` is among the playable videos of its folder, and its neighbour `d` (1 next, -1 previous).
- * @param {{ readdir(dir: string, o: { withFileTypes: true }): Promise<Dirent[]> }} fs
+ * @param {FsLike} fs
  * @param {string} file @param {number} d @param {any} [pathMod]
  * @returns {Promise<{ index: number, count: number, target: string | null }>}  index is 0-based (-1: not listed)
  */
 async function neighbourOf(fs, file, d, pathMod = nodePath) {
   const dir = pathMod.dirname(file);
   const base = pathMod.basename(file);
-  const vids = await playableIn(fs, dir);
+  const vids = await playableIn(fs, dir, pathMod);
   let index = vids.indexOf(base);
   // A case-insensitive file system can report another case than the opened uri.
   if (index < 0) index = vids.findIndex((n) => n.toLowerCase() === base.toLowerCase());
@@ -241,11 +310,17 @@ function createFolderRail(deps) {
   let abort = new AbortController();
   /** @type {Map<string, Meta>} */ let patches = new Map();
   let flushTimer = null;
+  // Work token: bumped by every stop (folder change, close, hide), so an answer that arrives after it is dropped.
+  let work = 0;
+  // Closed or hidden: nothing is queued or posted until resume(). relist: a listing was still being read then.
+  let suspended = false;
+  let relist = false;
   /** Metadata of files the session already knows (the playing file): never probed. path -> meta */
   /** @type {Map<string, Meta>} */ const seeded = new Map();
   const stats = { stat: 0, probe: 0, flushes: 0 };
 
-  function cancelWork() {
+  function stopWork() {
+    work++;
     abort.abort();
     abort = new AbortController();
     statWant = new Set();
@@ -257,7 +332,10 @@ function createFolderRail(deps) {
   /** Lists `d` (the rail's folder). Names and kinds come at once; sizes, dates and durations follow (meta). */
   async function browse(/** @type {string} */ d) {
     if (disposed) return null;
-    cancelWork();
+    stopWork();
+    suspended = false;
+    relist = false;
+    const w = work;
     const g = ++gen;
     const prev = dir;
     dir = d;
@@ -270,29 +348,21 @@ function createFolderRail(deps) {
     try {
       ents = await fs.readdir(d, { withFileTypes: true });
     } catch (e) {
-      if (g !== gen || disposed) return null;
+      if (stale(w)) return null;
       log(`folder rail: cannot read ${d}: ${e && /** @type {any} */ (e).code || e}`);
       const msg = { type: 'rail', op: 'list', gen: g, crumb: crumbOf(d), entries: [], error: 'This folder cannot be read' };
       post(msg);
       return msg;
     }
-    if (g !== gen || disposed) return null;
+    if (stale(w)) return null;
     const dirs = [];
     const files = [];
-    for (const e of ents) {
-      if (e.name.startsWith('.')) continue; // hidden files and folders (.git, .DS_Store)
-      if (e.isDirectory()) dirs.push(e.name);
-      else if (e.isFile()) files.push(e.name);
-      else if (e.isSymbolicLink()) {
-        // A link: what it points to decides (a broken one is left out).
-        try {
-          const st = await fs.stat(P.join(d, e.name));
-          if (g !== gen || disposed) return null;
-          if (st.isDirectory()) dirs.push(e.name); else files.push(e.name);
-        } catch { /* broken link */ }
-      }
-    }
-    if (g !== gen || disposed) return null;
+    // Hidden files and folders (.git, .DS_Store) are left out; a link is what it points to (a regular file or a
+    // folder), anything else (a broken link, a device) is left out too.
+    const shown = ents.filter((e) => !e.name.startsWith('.'));
+    const types = await Promise.all(shown.map((e) => entryType(fs, e, P.join(d, e.name))));
+    if (stale(w)) return null;
+    shown.forEach((e, k) => { if (types[k] === 'dir') dirs.push(e.name); else if (types[k] === 'file') files.push(e.name); });
     dirs.sort(naturalCompare);
     files.sort(naturalCompare);
     /** @type {Entry[]} */
@@ -320,6 +390,16 @@ function createFolderRail(deps) {
     return msg;
   }
 
+  /**
+   * True when the work started under token w was stopped meanwhile. Stopped by a close or a hide (not by a newer
+   * listing): the listing is read again on resume.
+   */
+  function stale(/** @type {number} */ w) {
+    if (w === work && !disposed) return false;
+    if (suspended) relist = true;
+    return true;
+  }
+
   /** The folder's name and its parent's, for the header ("videos / codecs"). */
   function crumbOf(/** @type {string} */ d) {
     const base = P.basename(d) || d;
@@ -338,13 +418,13 @@ function createFolderRail(deps) {
   }
 
   function pump() {
-    if (disposed) return;
+    if (disposed || suspended) return;
     while (statBusy < STAT_POOL) {
       const id = next(statWant);
       if (!id) break;
       statWant.delete(id);
       statBusy++;
-      runStat(id, gen, abort.signal).finally(() => { statBusy--; pump(); });
+      runStat(id, work, abort.signal).finally(() => { statBusy--; pump(); });
     }
     if (!deps.probe) return;
     while (probeBusy < PROBE_POOL) {
@@ -354,16 +434,16 @@ function createFolderRail(deps) {
       if (!id) break;
       probeWant.delete(id);
       probeBusy++;
-      runProbe(id, gen, abort.signal).finally(() => { probeBusy--; pump(); });
+      runProbe(id, work, abort.signal).finally(() => { probeBusy--; pump(); });
     }
   }
 
-  async function runStat(/** @type {string} */ id, /** @type {number} */ g, /** @type {AbortSignal} */ signal) {
+  async function runStat(/** @type {string} */ id, /** @type {number} */ w, /** @type {AbortSignal} */ signal) {
     const e = entries.get(id);
     if (!e) return;
     let st;
     try { stats.stat++; st = await fs.stat(e.path); } catch { return; }
-    if (g !== gen || signal.aborted || disposed) return;
+    if (w !== work || signal.aborted || disposed) return;
     /** @type {Meta} */
     const m = { ...(metas.get(id) || {}), mtime: Math.round(st.mtimeMs) };
     if (e.kind !== 'dir') m.size = st.size;
@@ -376,14 +456,14 @@ function createFolderRail(deps) {
     probeWant.add(id);
   }
 
-  async function runProbe(/** @type {string} */ id, /** @type {number} */ g, /** @type {AbortSignal} */ signal) {
+  async function runProbe(/** @type {string} */ id, /** @type {number} */ w, /** @type {AbortSignal} */ signal) {
     const e = entries.get(id);
     const m = metas.get(id);
     if (!e || !m || !deps.probe) return;
     /** @type {Meta|null} */
     let r = null;
     try { stats.probe++; r = await deps.probe(e.path, signal); } catch { r = null; }
-    if (g !== gen || signal.aborted || disposed) return;
+    if (w !== work || signal.aborted || disposed) return;
     /** @type {Meta} */
     const got = r ? pick(r) : {};
     // A file that cannot be probed is remembered as unknown too, so it is not probed again on every hover.
@@ -402,7 +482,8 @@ function createFolderRail(deps) {
   };
 
   function patch(/** @type {string} */ id, /** @type {Meta} */ m) {
-    if (!Object.keys(m).length) return;
+    // Suspended: the value is in metas and goes out with resume()'s republish.
+    if (!Object.keys(m).length || suspended) return;
     patches.set(id, { ...(patches.get(id) || {}), ...m });
     if (flushTimer !== null) return;
     const g = gen;
@@ -452,13 +533,24 @@ function createFolderRail(deps) {
       const got = pick(m || {});
       if (!Object.keys(got).length) return;
       seeded.set(file, got);
-      for (const [id, e] of entries) if (e.path === file) { Object.assign(metas.get(id) || {}, got); patch(id, got); }
+      for (const [id, e] of entries) if (e.path === file) { metas.set(id, { ...(metas.get(id) || {}), ...got }); patch(id, got); }
     },
-    /** Rail closed, tab hidden or folder change: queued and running work stops; the listing stays. */
-    cancel: cancelWork,
-    /** The rail is shown again: what is still unknown is fetched again (visible rows first). */
+    /**
+     * Rail closed or tab hidden: queued and running work stops and nothing is posted (a listing still being read is
+     * dropped); the listing and what is known of it stay.
+     */
+    cancel() { if (disposed) return; suspended = true; stopWork(); },
+    /**
+     * The rail is shown again: a listing that was dropped while being read is read again; else what is known is
+     * posted again (patches dropped by the stop included) and what is still unknown is fetched (visible rows first).
+     */
     resume() {
-      if (disposed) return;
+      if (disposed) return null;
+      suspended = false;
+      if (relist && dir !== null) { relist = false; return browse(dir); }
+      if (!gen) return null;
+      const known = [...metas].filter(([id]) => entries.has(id)).map(([id, m]) => ({ id, ...m }));
+      if (known.length) post({ type: 'rail', op: 'meta', gen, patches: known });
       for (const [id, e] of entries) {
         const m = metas.get(id);
         if (e.kind === 'up') continue;
@@ -466,16 +558,17 @@ function createFolderRail(deps) {
         else if (e.kind === 'video' && m.duration === undefined && !cache.get(cache.key(authority, e.path, /** @type {number} */ (m.size), m.mtime))) probeWant.add(id);
       }
       pump();
+      return null;
     },
-    dispose() { disposed = true; cancelWork(); entries = new Map(); },
+    dispose() { disposed = true; stopWork(); entries = new Map(); },
     /** Test hook: work counters and queue sizes. */
-    stats: () => ({ ...stats, statWant: statWant.size, probeWant: probeWant.size, statBusy, probeBusy }),
+    stats: () => ({ ...stats, statWant: statWant.size, probeWant: probeWant.size, statBusy, probeBusy, suspended, relist }),
   };
 }
 // checkJs: end
 
 module.exports = {
   ON_END, COLUMNS, LAYOUTS, WIDTH, RAIL_PREFS_KEY,
-  naturalCompare, isPlayable, resolveOnEnd, sanitizeRailPrefs, sanitizeRailCarry, planCompareRow,
+  naturalCompare, isPlayable, resolveOnEnd, sanitizeRailPrefs, sanitizeRailCarry, planCompareRow, planFolderCompare,
   createHandoffs, createMetaCache, playableIn, neighbourOf, createFolderRail,
 };

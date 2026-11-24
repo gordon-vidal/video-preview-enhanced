@@ -17,7 +17,8 @@
 }
 #row .folder-cap button.cap-count.open { background: var(--vpe-hover); }
 
-/* ---- Fold-out tab at the picture's right edge: revealed near the edge, opened by a click only ---- */
+/* ---- Fold-out tab at the picture's right edge: revealed near the edge, opened by a click only. Both edge tabs are
+   20 x 84 px ribbons with a 12 px chevron (the keyboard reaches the fold-out one when the capsule is hidden). ---- */
 .edge-zone {
   position: absolute; top: 0; right: 0; bottom: 0; width: 48px; z-index: 4;
   display: flex; align-items: center; justify-content: flex-end; pointer-events: none;
@@ -25,7 +26,7 @@
 .edge-zone[hidden] { display: none; }
 .edge-shelf, .rail-collapse-tab {
   appearance: none; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
-  height: 28px; width: 16px; padding: 0; border-radius: 6px 0 0 6px;
+  height: 84px; width: 20px; padding: 0; border-radius: 7px 0 0 7px;
   background: var(--vpe-surface-float);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--vpe-panel-border); border-right: none;
@@ -40,7 +41,7 @@
 .edge-zone.near .edge-shelf, .edge-shelf:focus-visible { opacity: 1; transform: translateX(0); pointer-events: auto; }
 .edge-shelf:hover, .rail-collapse-tab:hover { border-color: var(--vpe-bd-active); }
 .rail-collapse-tab {
-  position: absolute; left: -16px; top: 50%; transform: translateY(-50%);
+  position: absolute; left: -20px; top: 50%; transform: translateY(-50%);
   z-index: 8; opacity: 0.72; transition: opacity 120ms ease, border-color 120ms;
 }
 .rail-collapse-tab:hover, .rail-collapse-tab:focus-visible { opacity: 1; }

@@ -35,7 +35,11 @@
   let pageClosed = false;
   // Autoplay (setting onEnd; media/autoplay.js): 'off' | 'next' | 'loop'. The setting is the default for new tabs; the ⚙
   // panel, the rail's footer, R and the right-click menu change this tab (and a folder navigation carries it on).
-  let onEnd = VpeAutoplay.MODES.includes(saved.onEnd) ? saved.onEnd : VpeAutoplay.parse(cfg.onEnd);
+  // A tab restored from before Autoplay saved a Loop switch (saved.loop): on stays Loop, off is Off (or the setting's
+  // Play next in folder).
+  let onEnd = VpeAutoplay.MODES.includes(saved.onEnd) ? saved.onEnd
+    : saved.loop === true ? 'loop'
+      : saved.loop === false && VpeAutoplay.parse(cfg.onEnd) === 'loop' ? 'off' : VpeAutoplay.parse(cfg.onEnd);
   let muted = saved.muted !== undefined ? !!saved.muted : true;
   const rawVol = saved.volume !== undefined ? Number(saved.volume) : initPrefs.volume !== undefined ? Number(initPrefs.volume) : 1;
   let volume = Number.isFinite(rawVol) && rawVol >= 0 && rawVol <= 1 ? Math.round(rawVol * 100) / 100 : 1;
@@ -371,6 +375,28 @@
     // Autoplay's "Play next in folder" opened this tab: it plays from the start whatever the autoplay setting says.
     const autoNext = !!cfg.autoNext && !saved.t;
     if ((cfg.autoplay || playOn || autoNext) && !linked) p.play(); // a frame link opens paused on that frame
+    begun = p;
+    applyHandoff();
+  }
+
+  /** The player that began (first picture on the way, resume applied); a handoff waits for it. */
+  /** @type {any} */
+  let begun = null;
+  /** A folder navigation that landed on this open tab (src/extension.js adoptHandoff), kept until the player began. */
+  /** @type {any} */
+  let pendingHandoff = null;
+  /**
+   * Applies a waiting handoff: Autoplay, the rail state (media/folder-rail.js adopt, the same as a new tab's), and for
+   * Autoplay's next video a play from 0:00. Only then the host is told (railAdopted, ok) and closes the source tab.
+   */
+  function applyHandoff() {
+    const m = pendingHandoff;
+    if (!m || !player || begun !== player) return;
+    pendingHandoff = null;
+    if (m.onEnd) setOnEnd(m.onEnd, false);
+    if (rail) rail.adopt(m.rail);
+    if (m.fromAutoNext) { player.seekTime(0); player.play(); }
+    vscode.postMessage({ type: 'railAdopted', id: m.id, ok: true });
   }
 
   /**
@@ -1436,12 +1462,8 @@
       case 'compareOpen': setCompareOpen(!!m.open); break;
       case 'rail': if (rail) rail.onMessage(m); break;
       // A folder navigation landed on this already open tab (src/extension.js adoptHandoff): take over its state.
-      case 'railHandoff':
-        if (m.onEnd) setOnEnd(m.onEnd, false);
-        if (rail && m.rail && m.rail.open && !rail.isOpen()) rail.show();
-        if (m.fromAutoNext && player) { player.seekTime(0); player.play(); }
-        vscode.postMessage({ type: 'railAdopted', id: m.id });
-        break;
+      // Applied once the player began (applyHandoff); a newer one replaces one still waiting.
+      case 'railHandoff': pendingHandoff = m; applyHandoff(); break;
       case 'playbackPrefs': applyPlaybackPrefs(m.prefs); break;
       case 'focusMode': document.body.classList.toggle('maxi', !!m.active); break;
       // The user started the GPU test from the slow-playback offer: it waits for native playback to stop.
@@ -1536,7 +1558,7 @@
   const readyView = (() => { const r = stage.getBoundingClientRect(); const k = window.devicePixelRatio || 1; const w = Math.round(r.width * k), h = Math.round(r.height * k); return w >= 16 && h >= 16 ? { w, h } : null; })();
   vscode.postMessage({ type: 'ready', page: cfg.page, origin: window.location.origin, view: readyView });
   // A folder navigation from a tab with the rail open: open here too (after 'ready', so the host takes the request).
-  if (rail && cfg.rail && cfg.rail.open) rail.show();
+  if (rail && cfg.railCarry) rail.adopt(cfg.railCarry);
   // The WebAssembly decoder loads while the host decides how to play the file (ffprobe etc.):
   // the GPU (WebCodecs) and WebAssembly paths both need it; native ffmpeg drops it.
   if (cfg.engine && cfg.engine.preload !== false) engine.preload({ ...cfg.engine, debug: !!cfg.debug });

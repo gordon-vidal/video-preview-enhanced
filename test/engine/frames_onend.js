@@ -62,6 +62,21 @@ runJobs('engine frames: Autoplay at the end of the file', [
     J.assert(acts.length === 0, `End / step: ${JSON.stringify(acts)}`);
     J.assert(!P.playing(), 'still paused');
   }],
+  ['onend/next-stalled-feed', CLIP, async (P) => {
+    // The feed stalls (no data, no end of file) and the clock runs past the declared end: the watchdog pauses, but
+    // the report is not "played into the end", so Play next in folder stays on this file.
+    const acts = page(P, 'next');
+    const p = P.player;
+    P.stallReads = true;
+    P.onTick = () => { for (const f of p.queue.splice(0)) p.release(f); p.eof = false; };
+    const end = (p.startT || 0) + P.duration;
+    p.play();
+    p.now = () => end + 2;
+    J.assert(await P.until(() => acts.length, 'the watchdog', 10000), 'the watchdog never paused');
+    J.assert(acts[0].action === 'stop' && !acts[0].natural, `stalled feed: ${JSON.stringify(acts)}`);
+    J.assert(!P.playing(), 'paused');
+    P.onTick = null;
+  }],
   ['onend/loop', CLIP, async (P) => {
     const acts = page(P, 'loop');
     P.setRate(RATE);

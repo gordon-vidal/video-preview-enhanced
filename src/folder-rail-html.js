@@ -4,11 +4,13 @@
 // folder name is in it: the list comes from the host as data (src/folder-rail.js) and media/folder-rail.js
 // builds the rows with textContent. The look is media/folder-rail.css; docs/notes/folder-rail.md has the design.
 
+// checkJs: start
 // Icons on the bar's 24-unit grid with the bar's 1.6 stroke (src/bar.js).
 const icon = (size, body, sw = '1.6') => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 const ICONS = {
-  open: icon(10, '<path d="M15 18l-6-6 6-6"/>', '2'),
-  fold: icon(10, '<path d="M9 18l6-6-6-6"/>', '2'),
+  // The edge tabs' chevrons: 12 px on 20 x 84 px tabs, large enough to grab on purpose.
+  open: icon(12, '<path d="M15 18l-6-6 6-6"/>', '2'),
+  fold: icon(12, '<path d="M9 18l6-6-6-6"/>', '2'),
   close: icon(12, '<path d="M18 6L6 18M6 6l12 12"/>'),
   check: icon(9, '<path d="M20 6L9 17l-5-5"/>', '2.6'),
 };
@@ -49,5 +51,7 @@ ${menu('railColMenu', 'Column', 'col', COLUMN_ITEMS)}
 ${menu('railEndMenu', 'Autoplay', 'end', ON_END_ITEMS)}
 <div id="railHover" class="hover-pop" hidden aria-hidden="true"><div class="hover-body"><div id="railHoverName" class="hover-title"></div><div id="railHoverLine1" class="hover-meta"></div><div id="railHoverLine2" class="hover-meta"></div></div></div>`;
 }
+
+// checkJs: end
 
 module.exports = { folderRailHtml, COLUMN_ITEMS, ON_END_ITEMS };

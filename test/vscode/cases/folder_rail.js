@@ -65,6 +65,9 @@ module.exports = [{
         let s = await P.waitState((v) => names(v).includes('neigh'), { what: 'the parent folder' });
         ok(/cases$/.test(railOf(s).crumb), `crumb ${railOf(s).crumb}`);
         ok(!railOf(s).rows.some((x) => x.active), 'no playing row in another folder');
+        const neigh = railOf(s).rows.find((x) => x.name === 'neigh');
+        ok(neigh.cmp === 'Compare all videos in folder', `folder row Compare: ${JSON.stringify(neigh.cmp)}`);
+        ok(!railOf(s).rows.find((x) => x.kind === 'up').cmp, 'no Compare on ..');
         ok(railOf(s).cap.text === '2/3', 'browsing leaves the capsule (playback folder) alone');
         await P.ask('click', { sel: '#railList .r-row', text: 'neigh' });
         s = await P.waitState((v) => names(v).join() === '..,n1.mp4,n2.mp4,n3.mp4', { what: 'back in the folder' });
@@ -102,6 +105,8 @@ module.exports = [{
         P.act({ action: 'dom', ev: 'pointermove', x: st[0] + st[2] - 10, y: st[1] + st[3] / 2 });
         s = await P.waitState((v) => railOf(v).edgeNear, { what: 'the fold-out tab near the edge', timeout: 5000 });
         ok(!railOf(s).open, 'hover alone never opens the rail');
+        ok(Math.round(railOf(s).openTabRect[2]) === 20 && Math.round(railOf(s).openTabRect[3]) === 84, `the tab is 20 x 84 px: ${railOf(s).openTabRect}`);
+        ok(railOf(s).capVisible && railOf(s).openTabIndex === -1, 'with the capsule shown, the tab is not a Tab stop');
         P.act({ action: 'dom', ev: 'pointermove', x: st[0] + st[2] / 2, y: st[1] + st[3] / 2 });
         s = await P.waitState((v) => !railOf(v).edgeNear, { what: 'the tab hides away from the edge', timeout: 5000 });
         await P.ask('click', { sel: '#railOpenTab' });
@@ -134,6 +139,18 @@ module.exports = [{
         ok(lib.lines(vs, /\[n2\.mp4\] webview: end of file: next/, from).length === 1, 'one end report');
         ok(lib.lines(vs, /folder: open n3\.mp4 \(autoplay next\)/, from).length === 1, 'advanced once');
         ok(!lib.lines(vs, /\[n3\.mp4\] webview: .*Resumed at/, from).length, 'no resume toast: starts at 0:00');
+      });
+
+      await R.run('rail/compare-folder', async (ok) => {
+        // The rail came along open; up one folder, then Compare all videos of "neigh" (three) from its row.
+        await P.waitState((v) => railOf(v).open && names(v).length >= 4, { what: 'the rail in n3' });
+        await P.ask('click', { sel: '#railList .r-row', text: '..' });
+        await P.waitState((v) => names(v).includes('neigh'), { what: 'the parent folder' });
+        const from = vs.mark();
+        await P.ask('click', { sel: '#railList button.r-cmp[aria-label="Compare all videos in folder neigh"]' });
+        const line = await vs.waitLog(/compare: folder rail: \S+ \(\d+ videos\) -> \w+/, { from, timeout: 15000, what: 'the folder compare' });
+        ok(/\(3 videos\) -> open/.test(line), `folder compare: ${line}`);
+        await vs.waitLog(/compare: .*n1\.mp4 <-> .*n2\.mp4 <-> .*n3\.mp4/, { from, timeout: 15000, what: 'a Compare of the three videos' });
       });
     } finally { await h.closeClip(vs); }
     return R.out;
