@@ -808,6 +808,42 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     ds.setMaxBitrateMbps(2);
     assert.strictEqual(ds.args(0, false)[ds.args(0, false).indexOf('-c:v') + 1], 'h264_nvenc');
     assert.strictEqual(ds.lossy(), true);
+    // Transitioning to or from Direct Stream while playing (allowOverlap: true) restarts cleanly without Annex-B overlap splice.
+    const mkFakeProc = () => {
+      const p = new EventEmitter();
+      p.stdout = new EventEmitter();
+      p.stdout.pause = () => {};
+      p.stdout.resume = () => {};
+      p.stdout.isPaused = () => false;
+      p.stdout.destroy = () => {};
+      p.stderr = new EventEmitter();
+      p.err = { text: '' };
+      p.kill = () => {};
+      p.exitCode = null;
+      p.signalCode = null;
+      return p;
+    };
+    const dsPlays = [];
+    ds.launch = (t, audio = false) => {
+      const argv = ds.args(t, audio);
+      const p = mkFakeProc();
+      p.directStream = !audio && ds.pipelineMode === 'direct-stream';
+      dsPlays.push({ mode: ds.pipelineMode, directStream: p.directStream, argv });
+      return p;
+    };
+    ds.fps = 30;
+    ds.playing = true;
+    ds.proc = mkFakeProc();
+    ds.setMaxBitrateMbps(10); // re-encode -> direct-stream while playing
+    assert.strictEqual(ds.overlap, null, 'transition into direct-stream does not use Annex-B overlap splice');
+    assert.strictEqual(ds.pipelineMode, 'direct-stream');
+    assert.strictEqual(ds.lossy(), false);
+    assert.strictEqual(dsPlays.at(-1).directStream, true);
+    ds.setMaxBitrateMbps(2); // direct-stream -> re-encode while playing
+    assert.strictEqual(ds.overlap, null, 'transition out of direct-stream does not use Annex-B overlap splice');
+    assert.strictEqual(ds.pipelineMode, 'gpu-encode');
+    assert.strictEqual(ds.lossy(), true);
+    assert.strictEqual(dsPlays.at(-1).directStream, false);
     ds.dispose();
 
     // Real-ffmpeg smoke test on test/media/h264_8_1080p.mp4 and test/media/containers/h264_aac.mkv (both have B-frames).

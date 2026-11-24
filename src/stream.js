@@ -135,7 +135,7 @@ class EncodedStream {
     this.overlap = null;
     this.link = new LinkAdaptController(); // the quality ladder's state (src/stream-adapt.js)
     if (this.pr && this.pr.video) this.sizeVideo();
-    this.pipelineMode = this.useDirectStream() ? 'direct-stream' : (CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode');
+    this.pipelineMode = this.defaultPipelineMode();
     this.waitingSince = 0;
     this.gen = 0;
     this.proc = null;
@@ -167,6 +167,11 @@ class EncodedStream {
     });
   }
 
+  /** Default pipeline mode before ffmpeg args choose a GPU decode/encode path. */
+  defaultPipelineMode() {
+    return this.useDirectStream() ? 'direct-stream' : (CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode');
+  }
+
   /** False when Direct Stream copies the original H.264 bitstream untouched; true when re-encoding. */
   lossy() { return this.pipelineMode !== 'direct-stream'; }
 
@@ -191,7 +196,9 @@ class EncodedStream {
     this.takeStandby(NaN);
     this.log(`live transcode: max bitrate ${next > 0 ? `${next} Mb/s` : 'auto'}`);
     // Only restart an actively running video pipeline; deferred seeks and hidden tabs pick up the new cap on spawn.
-    if (this.fps && !this.disposed && !this.hidden && !this.startTimer && this.proc) {
+    if (!this.fps && !this.disposed && this.pr && this.pr.video) {
+      this.pipelineMode = this.defaultPipelineMode();
+    } else if (this.fps && !this.disposed && !this.hidden && !this.startTimer && this.proc) {
       this.transitionVideo(this.playing);
     }
   }
@@ -210,14 +217,21 @@ class EncodedStream {
    * @returns {boolean} the output grew and the caller should refresh the tile
    */
   setCompareOutput(height, kbps, { deferGrow = false } = {}) {
-    const mbps = kbps / 1000;
+    const mbps = Number(kbps) > 0 ? Number(kbps) / 1000 : 0;
     if (this.maxHeight === height && this.maxBitrateMbps === mbps) return false;
     const { w, h } = this;
     this.maxHeight = height;
     this.maxBitrateMbps = mbps;
     this.takeStandby(NaN);
     this.cancelOverlap();
-    if (!this.fps || this.disposed) return false;
+    if (this.disposed) return false;
+    if (!this.fps) {
+      if (this.pr && this.pr.video) {
+        this.sizeVideo();
+        this.pipelineMode = this.defaultPipelineMode();
+      }
+      return false;
+    }
     if (deferGrow && !this.hidden) {
       this.sizeVideo();
       if (this.h > h) {
@@ -231,6 +245,8 @@ class EncodedStream {
       this.sizeVideo();
       this.restartVideo();
     } else {
+      this.w = w;
+      this.h = h;
       this.resizePending = true;
     }
     return false;
@@ -319,7 +335,7 @@ class EncodedStream {
     this.sizeVideo();
     this.fps = v.fps || 30;
     if (this.hidden) {
-      this.pipelineMode = this.useDirectStream() ? 'direct-stream' : (CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode');
+      this.pipelineMode = this.defaultPipelineMode();
     } else {
       this.startAt(0);
     }
@@ -610,7 +626,8 @@ class EncodedStream {
     this.cancelOverlap();
     const spliceT = (Math.round(this.nextVideoTime() * this.fps) + Math.ceil(OVERLAP_LEAD_S * this.fps)) / this.fps;
     if (!playing || !this.allowOverlap || this.hidden || this.disposed || this.startTimer
-      || !this.proc || this.proc.exitCode !== null || this.proc.signalCode || !(spliceT < this.pr.duration - 0.5)) {
+      || !this.proc || this.proc.exitCode !== null || this.proc.signalCode || !(spliceT < this.pr.duration - 0.5)
+      || this.pipelineMode === 'direct-stream' || this.useDirectStream()) {
       this.restartVideo();
       return;
     }
@@ -714,8 +731,9 @@ class EncodedStream {
     this.log(`remote stream: quality ${down ? 'down' : 'up'} to ${this.h}p (${detail})`);
     if (down && this.tier === last && LINK_TIERS[last].kbps + pcm > d.fastKbps) this.slowLink(detail);
     else if (down) this.notice('quality', `Slow connection: live transcode lowered the picture to ${this.h}p to keep playing. It goes back up when the connection allows.`);
-    this.post({ type: 'transcodeInfo', transcode: this.transcodeInfo({ adaptingDir: down ? 'down' : 'up' }) });
     this.transitionVideo(!down);
+    if ((this.pipelineMode === 'direct-stream') !== this.useDirectStream()) this.pipelineMode = this.defaultPipelineMode();
+    this.post({ type: 'transcodeInfo', transcode: this.transcodeInfo({ adaptingDir: down ? 'down' : 'up' }) });
   }
 
   /** At the lowest tier the link still can't keep up: stay there (no fallback) and tell the user once. */
