@@ -54,7 +54,8 @@ holds the boundary: `.dependency-cruiser.cjs` (`npm run verify:fast`) forbids `p
 | Part | What | Where | Speed |
 |---|---|---|---|
 | **1A** Pure state | Layout, capture, add / remove / enlarge / split (0–100 %) / sync / offsets, tabs | `test/host/player_state_test.js` | milliseconds |
-| **1B** UI controller | The shared helpers alone, then `create()` over the real widgets on a **strict** fake DOM of the real markup (`src/bar.js`, `src/folder-rail-html.js`; `test/host/fake-dom.js`: unknown ids are `null`, `closest()` and bubbling are real), FakeEngine + FakeHost | `test/host/player_ui_test.js` | about 2 s |
+| **1B** UI controller | The shared helpers alone, then `create()` over the real widgets on a **strict** fake DOM of the real markup (`src/bar.js`, `src/folder-rail-html.js`; `test/host/fake-dom.js`: unknown ids are `null`, `closest()` and bubbling are real), FakeEngine + FakeHost; the controller modules (`media/player-ui-tiles.js`, `-input.js`, `-tools.js`, `-lifecycle.js`) on the same fake DOM | `test/host/player_ui_test.js`, `player_ui_tiles_test.js`, `player_ui_input_test.js`, `player_ui_tools_test.js`, `player_ui_lifecycle_test.js` | seconds |
+| **1C** Adapter contracts | One EngineAdapter / HostAdapter contract suite run against the mockup fakes (`tools/mockup/fake-engine.js`, `fake-host.js`) and the production adapters (`media/player-engine-adapter.js`, `media/player-host-adapter.js`), plus production-only behaviour | `test/host/adapter_contract_test.js`, `test/host/production_adapters_test.js` | under a second |
 | **2** Engine contract | Decoders, seeking, clocks, the frame stream, without the UI | `test/engine/` | seconds |
 | **3a** Webview UI / gestures | Real Chromium DOM: layout, focus, pointer capture, letterboxed picture rects, event bubbling in the real page | `ui`, `compare`, `folder-rail` scenarios | about a minute each |
 | **3b** Real-clip integration | Frame accuracy, decoder clocks, Compare sync across real videos, the decoders, real host messages (files, folder listing, Remote-SSH) | `playback`, `seeking`, `multiview`, `remote-stream`, ... | minutes |
@@ -69,7 +70,7 @@ not load `player-state.js` yet. So a 1B test proves production behaviour only wh
 
 | Interaction | Production uses the shared code | `create()` (mockup) is |
 |---|---|---|
-| Key dispatch (`keyCommand`, `runKey`) | both pages, end to end; each page's handler set is pinned to `PAGE_KEY_ACTIONS` | the same dispatch over unified actions |
+| Key dispatch (`keyCommand`, `runKey`) | both pages, end to end; each page's `KEY_ACTIONS` handler names are pinned to the expected sets in `player_ui_test.js` (`EXPECTED_PLAYER_KEYS`, `EXPECTED_COMPARE_KEYS`) | the same dispatch over unified actions |
 | `D` | player: `pickVideoMessage('player')` → `comparePick` with the time; Compare: no plain-`D` key | **proposal**: `pickVideo` with `exclude`, in any N |
 | Bar buttons, step buttons and badges, A–B pins, time readout, Picture size, Copy details | both pages, end to end (`bindButtons`, `stepBy`, `bindStepBadges`, `bindAbPins`, `timeReadout`, `pictureButton`, `copyInfoText`) | the same helpers |
 | Split Wipe divider: drag over the displayed picture, pointer capture, keys, 0–100 % | Compare, end to end (`bindSplitDivider`) | the same binding (picture = split cell; no letterbox model) |
@@ -82,7 +83,7 @@ not load `player-state.js` yet. So a 1B test proves production behaviour only wh
 1. Put the state transition in `media/player-state.js` and test it in `player_state_test.js`.
 2. Put the wiring (key, button, menu item, gesture) in `media/player-ui.js` as a helper both pages call, or in
    `create()` for the unified page; add the key to `keyCommand`, a handler to each page's `KEY_ACTIONS` table and
-   the name to `PAGE_KEY_ACTIONS`.
+   the name to `EXPECTED_PLAYER_KEYS` / `EXPECTED_COMPARE_KEYS` in `test/host/player_ui_test.js`.
 3. Prove it in `test/host/player_ui_test.js`: the helper alone, then the gesture through `create()` over the
    real widgets (fire the click / key / pointer events on the fake DOM, assert the state and what FakeHost got).
    Keep production-parity assertions apart from unified-proposal ones. A control the fixture lacks is `null`: add

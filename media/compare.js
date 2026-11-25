@@ -2146,7 +2146,7 @@
     },
   });
   function showSeekTip(frame, px, width) {
-    ui.tip.textContent = `${tileLabel(st.clock)} ${fmtTime(frame / fpsOf(clock))} ? #${frame + 1}`;
+    ui.tip.textContent = `${tileLabel(st.clock)} ${fmtTime(frame / fpsOf(clock))} · #${frame + 1}`;
     ui.tip.style.left = `${Math.max(30, Math.min(width - 30, px))}px`;
     ui.tip.hidden = false;
   }

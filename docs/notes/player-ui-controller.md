@@ -1,10 +1,34 @@
 # Shared UI controller (`media/player-ui.js`)
 
-Status: the helpers are in production; `create()` is a proposal. `media/player.js` and `media/compare.js` call the
-shared helpers below for their UI wiring (per interaction: docs/TESTING.md, "What is shared with production"); the
-mockup harness (`tools/mockup/render.js`) mounts the same file through `create()`, which previews the unified
-1 → N page over `media/player-state.js`. No production page loads `player-state.js` yet. What is still
-page-specific is listed under "What stays in the pages".
+Status: the **single-lane unified viewer** is the signed-off design: one page, one tab that grows from one video
+to N (Compare), over one pure state, one UI controller and two adapters. Everything in "Architecture" is built and
+tested in Node; the production cutover (Phase 5, at the end) is not done yet:
+
+- `media/player.js` and `media/compare.js` call the shared helpers of `media/player-ui.js` for their UI wiring
+  (per interaction: docs/TESTING.md, "What is shared with production"). Production pages load `player-ui.js` only.
+- `VpePlayerUi.create()`, the controller modules, `media/player-state.js` and the production adapters run in the
+  mockup harness (`tools/mockup/render.js`) and the Node tests; no production page loads them yet.
+
+What is still page-specific is listed under "What stays in the pages".
+
+## Architecture
+
+| Layer | Module | Proved by |
+|---|---|---|
+| Pure state | `media/player-state.js`: unified tab / Compare state, no DOM, VS Code or decoder names | `test/host/player_state_test.js`, including seeded randomized action sequences that check every tab invariant after every step |
+| UI controller | `media/player-ui.js` (`VpePlayerUi.create()` plus the shared helpers), composed with the four modules below through `env.widgets` | `test/host/player_ui_test.js` |
+| | `media/player-ui-tiles.js`: Compare tile glide, drag / dock, tile menu, details card, ▲ / ▼, hover | `test/host/player_ui_tiles_test.js` |
+| | `media/player-ui-input.js`: seek tip and thumbnail, wheel step / zoom / pan, idle bar, Zen Esc Esc, auto-pause, live region, go-to box | `test/host/player_ui_input_test.js` |
+| | `media/player-ui-tools.js`: notice banner, inspection tools (scopes, inspector, stats, X-ray), subtitles, frame export | `test/host/player_ui_tools_test.js` |
+| | `media/player-ui-lifecycle.js`: prefs sync, frame links and resume, rail handoffs, centre overlay, ready / pagehide bridge | `test/host/player_ui_lifecycle_test.js` |
+| Engine and host | `media/player-engine-adapter.js` (`VpeEngineAdapter`, over the page's decoders and compositor), `media/player-host-adapter.js` (`VpeHostAdapter`, over `vscode.postMessage` with a per-surface name table) | `test/host/adapter_contract_test.js` (shared contract) and `test/host/production_adapters_test.js` |
+| Mockup fakes | `tools/mockup/fake-engine.js`, `tools/mockup/fake-host.js` | the same shared contract suite, so they are verified fakes |
+
+`test/host/adapter_contract_test.js` holds the EngineAdapter and HostAdapter contracts once
+(`runEngineAdapterContract`, `runHostAdapterContract`); run directly it checks the two fakes, and
+`production_adapters_test.js` runs the same functions against the production adapters plus what only they do
+(player metadata, sound routing over N players, the page / boot envelope, per-surface message names, webview state).
+So a UI test that passes over the fakes makes a claim the production adapters are held to as well.
 
 ## Problem
 
@@ -69,8 +93,11 @@ Keys a focused control owns (`VpeModes.ownsKey`: the rail filter, a list box) ar
 divider take Compare's keys (arrows, Shift / PageUp / PageDown, Home / End); the divider is Compare's own binding
 (`bindSplitDivider`, 0–100 %).
 
-**Production parity vs. proposal.** `PAGE_KEY_ACTIONS` lists the actions each shipped page handles; the test pins
-each page's `KEY_ACTIONS` to it. `pickVideoMessage(surface)` is the one mapping for `D`: the single player posts
+**Production parity vs. proposal.** Each shipped page keeps its own `KEY_ACTIONS` table of handlers.
+`test/host/player_ui_test.js` reads both tables from the page source and compares their handler names with expected
+sets the test keeps itself (`EXPECTED_PLAYER_KEYS`, `EXPECTED_COMPARE_KEYS`; deliberately not shipped in
+`player-ui.js`), checks a `PARITY` list of keys one page handles and the other does not, and checks that every
+handler name is an action `keyCommand` produces. `pickVideoMessage(surface)` is the one mapping for `D`: the single player posts
 `{ type: 'comparePick', t }`, production Compare has no plain-`D` key, and `create()` (proposal) posts
 `{ type: 'pickVideo', exclude }` in any N. The tests keep the two kinds of assertions apart.
 
@@ -93,7 +120,7 @@ their own copies. `create()` uses the same helpers, so the mockup runs the produ
 | `createFolderRail`, `goNeighbour` | the `#rail` guard and Shift+N / Shift+P fallback | yes | yes (rail) | yes |
 | `spotlightRatioAt`, `spotlightKeyRatio` | the Spotlight splitter math | | yes | yes |
 | `bindSplitDivider` (`splitRatioAt`, `splitKeyRatio`) | the whole Split Wipe divider: drag over the displayed (letterboxed) picture with pointer capture, keys, Home 0 % / End 100 %, no click through | | yes | yes |
-| `PAGE_KEY_ACTIONS`, `pickVideoMessage` | each page's key set; the `D` message per surface | yes | yes (no `D`) | yes (proposal) |
+| `pickVideoMessage` | the `D` message per surface | yes | (no `D` key) | yes (proposal) |
 
 The helpers take the widget modules as arguments (never a page global) and touch no decoder, so
 `test/host/player_ui_test.js` loads them in Node. `media/player-ui.js` stays in `tsconfig.check.json` and under the
@@ -117,7 +144,8 @@ nothing, `player-ui.js` imports no `src/`, Node built-in or decoder module.
 
 `test/host/player_ui_test.js` (layer 1B, about 2 s, no video decoded) checks:
 
-- production parity, apart from the proposal: each page's `KEY_ACTIONS` equals `PAGE_KEY_ACTIONS`, `D` posts
+- production parity, apart from the proposal: each page's `KEY_ACTIONS` handler names equal the test's
+  `EXPECTED_PLAYER_KEYS` / `EXPECTED_COMPARE_KEYS`, `D` posts
   `comparePick` with the time in the player and is not a Compare key; then, separately, `create()`'s `pickVideo`;
 - the key table, `runKey`, and the parity of the player's and Compare's `KEY_ACTIONS` tables (which page handles which
   key; every handler name is a `keyCommand` action; no second key switch left in either page);
@@ -137,19 +165,26 @@ nothing, `player-ui.js` imports no `src/`, Node built-in or decoder module.
 - the boundary contract: no DOM / VS Code / decoder names in `player-state.js`, no VS Code / decoder names in
   `player-ui.js`, and the dependency-cruiser rules are present.
 
+The controller modules and adapters have their own suites (see "Architecture"): `player_ui_tiles_test.js`,
+`player_ui_input_test.js`, `player_ui_tools_test.js`, `player_ui_lifecycle_test.js` on the same strict fake DOM,
+and `adapter_contract_test.js` / `production_adapters_test.js` for the adapters.
+
 `test/host/player_html_test.js` checks the script order of both pages. See docs/TESTING.md, "UI and gesture tests
 without video", for what stays in layer 3.
 
-## Next step: one unified page
+## Next step: one unified page (Phase 5 production cutover)
 
-1. **EngineAdapter over the decoders**: `draw` becomes "present this tile's frame" over `frame-player.js` /
-   `compare-compositor.js`; `tickMs: 0`, and the page calls `ui.dispatch('seek', f)` from the decoder clock
-   instead of the controller's timer. `facts(id)` maps to `VpeControls.facts(meta)`.
-2. **HostAdapter = `vscode.postMessage`** with a small translation table: `pickVideo` → `comparePick`,
-   `fullscreen` / `copyFrame` stay page-side (they need the canvas), the rest already match production names
-   (`rail`, `neighbour`, `copyText`, `saveFrame`, `external`, `openSettings`, `openUrl`).
+The adapters exist and pass the shared contract (`media/player-engine-adapter.js`, `media/player-host-adapter.js`;
+see "Architecture"). What is left is the cutover itself:
+
+1. **Drive the controller from the decoder clock**: `tickMs: 0`, and the page calls `ui.dispatch('seek', f)` from
+   the decoder clock instead of the controller's timer.
+2. **Host adapter surface**: start with the `player` / `compare` translation tables of `VpeHostAdapter` (for
+   example `pickVideo` → `comparePick`), then switch to `unified` once the host speaks the controller's protocol.
 3. **Host side**: `src/extension.js` answers `tiles` with `rail members` / `pos` (it already sends both) and
    sends `openVideo` where it now opens another webview for "add to Compare" (needs the single and Compare pages
    to share one webview; see `docs/notes/compare-ui.md` for the current Compare design).
-4. Mount `create()` in that page and delete the remaining page-side bar and stage wiring; run the layer-3
-   scenarios that cover the bar, the rail, Compare and the keys (pick them per AGENTS.md, Tests).
+4. **Switch the production webview** in `src/extension.js` to the unified shell: load `player-state.js`, the
+   `player-ui-*` modules and the adapters, mount `create()`, and retire the duplicated UI code in `media/player.js`
+   / `media/compare.js` (bar and stage wiring, their `KEY_ACTIONS` tables, the copies the modules replace). Run the
+   layer-3 scenarios that cover the bar, the rail, Compare and the keys (pick them per AGENTS.md, Tests).
