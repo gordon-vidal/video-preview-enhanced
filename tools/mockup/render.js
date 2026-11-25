@@ -64,6 +64,7 @@ function stageMarkupHtml() {
   <div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
   <div id="sheet" hidden></div>
   <div id="ctxmenu" class="ctxmenu" role="menu" aria-label="Player menu" tabindex="-1" hidden></div>
+  <div id="menu" role="menu" aria-label="Tile menu" hidden></div>
   <div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>`;
 }
 
@@ -94,6 +95,8 @@ function buildMockupHtml(opts = {}) {
     'media/controls.js',
     'media/ctxmenu.js',
     'media/folder-rail.js',
+    'media/player-ui-tiles.js',
+    'media/player-ui-input.js',
     'media/player-ui.js',
     'tools/mockup/fake-engine.js',
     'tools/mockup/fake-host.js',
@@ -217,7 +220,8 @@ html, body {
 /* Real #main (stage + real Folder Rail side-by-side) and #bar fill the rest of .wb */
 #main { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
 #stage { flex: 1; min-width: 0; min-height: 0; background: #000; position: relative; overflow: hidden; }
-.cell { cursor: pointer !important; transition: left 160ms cubic-bezier(0.2,0,0,1), top 160ms cubic-bezier(0.2,0,0,1), width 160ms cubic-bezier(0.2,0,0,1), height 160ms cubic-bezier(0.2,0,0,1); }
+/* No CSS transition on the cells: media/player-ui-tiles.js createGlide (FLIP) glides them, as in Compare. */
+.cell { cursor: pointer !important; }
 #stage.fit .cell canvas, #stage .cell canvas { width: 100%; height: 100%; max-width: none; max-height: none; display: block; }
 .cell-border { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
 .cell.add { cursor: pointer !important; }
@@ -252,7 +256,7 @@ html, body {
 /* Keep real popups (#panel, #sheet, #ctxmenu, rail menus) bounded cleanly inside the 728 px inline frame */
 .panel { max-height: ${wbHeight - 86}px !important; overflow-y: auto; z-index: 25; }
 #sheet { position: absolute !important; inset: 0; z-index: 30; }
-#ctxmenu { z-index: 32; }
+#ctxmenu, #menu { z-index: 32; }
 .rail { width: var(--rail-w, 200px); }
 
 .code-tab-view {
@@ -387,6 +391,9 @@ ${inlinedScripts}
       VpeTime: typeof VpeTime !== 'undefined' ? VpeTime : globalThis.VpeTime,
       VpePicture: globalThis.VpePicture,
       VpeModes: typeof VpeModes !== 'undefined' ? VpeModes : globalThis.VpeModes,
+      VpePlayerUiTiles: globalThis.VpePlayerUiTiles,
+      VpePlayerUiInput: globalThis.VpePlayerUiInput,
+      CompareGrid: globalThis.CompareGrid,
     },
     initial: SCENARIOS[INITIAL_KEY],
     container: $('wb'),

@@ -369,7 +369,19 @@ const hasHandler = (src, action) => new RegExp(`\\n    ${action}: `).test(keysOf
   assert.strictEqual(S.replaceVideo(multi, 'clip-2'), multi, 'multi-video tabs are left alone');
 
   const rows = PUI.compareRows(S, S.getTab(S.nudgeOffset(multi, 'clip-1', -3)), (id) => ({ id, name: id.toUpperCase() }));
-  assert.deepStrictEqual(rows.map((r) => [r.letter, r.name, r.offText]), [['A', 'CLIP-4', '+0 f'], ['B', 'CLIP-1', '-3 f']]);
+  assert.deepStrictEqual(rows.map((r) => [r.letter, r.name, r.offText, r.offLong]), [['A', 'CLIP-4', '0', 'In step'], ['B', 'CLIP-1', '−3 f', '−3 frames']],
+    'offsets are { unit, v } and read as Compare writes them (U+2212 minus)');
+  assert.deepStrictEqual(rows.map((r) => r.offset), [{ unit: 'frames', v: 0 }, { unit: 'frames', v: -3 }]);
+  assert.deepStrictEqual(rows.map((r) => [r.clock, r.sound]), [[true, true], [false, false]], 'A sets the clock and is heard by default');
+  const msRows = PUI.compareRows(S, S.getTab(S.nudgeOffset(S.setOffsetUnit(multi, 'clip-1', 'ms'), 'clip-1', 4)), (id) => ({ id, name: id }));
+  assert.deepStrictEqual([msRows[1].offset, msRows[1].offText], [{ unit: 'ms', v: 40 }, '+40 ms'], 'ms offsets step 10 ms');
+
+  // replaceTile: the host's answer to 'replaceVideo' keeps the slot (pure half).
+  const getClip = (id) => ({ id, name: `${id}.mp4` });
+  const rt = PUI.applyHostMessage(S, multi, { type: 'replaceTile', oldId: 'clip-1', newId: 'clip-3' }, getClip);
+  assert.deepStrictEqual([S.getTab(rt.state).tiles, rt.toast, rt.handled], [['clip-4', 'clip-3'], 'Replaced with clip-3.mp4', true]);
+  const rtBad = PUI.applyHostMessage(S, multi, { type: 'replaceTile', oldId: 'nope', newId: 'clip-3' }, getClip);
+  assert.deepStrictEqual([rtBad.state, rtBad.toast], [multi, ''], 'an unknown tile is left alone');
 }
 
 // ---- 5. FakeHost: the folder rail protocol of src/folder-rail.js, in Node ----
@@ -448,6 +460,9 @@ const realWidgets = () => ({
   VpeTime: require('../../media/timefmt'),
   VpePicture: require('../../media/picture'),
   VpeModes: require('../../media/modes'),
+  VpePlayerUiTiles: require('../../media/player-ui-tiles'),
+  VpePlayerUiInput: require('../../media/player-ui-input'),
+  CompareGrid: require('../../media/compare-grid'),
 });
 /** Run fn with the browser globals the widgets read directly (document, window, matchMedia, animation frames). */
 const withGlobals = (dom, fn) => {
@@ -698,10 +713,15 @@ const withGlobals = (dom, fn) => {
     assert.strictEqual(cellsEl.children.length, nCells, 'ticks do not rebuild the cells');
     assert.strictEqual(cellOf('clip-2'), cellA, 'the same node');
     assert.ok(drawn.length >= drawn0 + 10, 'each tick draws both tiles');
-    cellA.querySelector('.pill .nm').fire('click');
+    cellA.querySelector('canvas').fire('click');
     assert.strictEqual(tab().playing, true, 'a tile click waits out the double-click window');
     flushClick();
-    assert.strictEqual(tab().playing, false, 'a click on the tile picture (its name pill bubbles to the cell) pauses');
+    assert.strictEqual(tab().playing, false, 'a click on the tile picture (its canvas bubbles to the cell) pauses');
+    // The name pill is a button: it opens that video's Compare page and never plays / pauses.
+    cellA.querySelector('.pill .nm').fire('click');
+    assert.deepStrictEqual([ui.controls.view(), tab().playing], ['cmpVid', false], 'the name pill opens Compare › video');
+    assert.ok(!dom.timers.some((t) => t && t.ms === 250), 'no pending play / pause');
+    key('Escape');
     cellA.fire('click'); cellA.fire('click'); cellA.fire('dblclick');
     assert.ok(!dom.timers.some((t) => t && t.ms === 250), 'a double-click cancels the pending play / pause');
     assert.deepStrictEqual([tab().layout, tab().spotlightId, tab().playing], ['spotlight', 'clip-2', false], 'double-click only enlarges');
@@ -713,9 +733,9 @@ const withGlobals = (dom, fn) => {
     assert.ok(btnOf('clip-0', '[data-enlarge]') && btnOf('clip-0', '[data-rm]') && btnOf('clip-0', '.sync-pill [data-d="1"]'),
       'the tile overlay has real Enlarge / Remove / Sync buttons');
     btnOf('clip-0', '.sync-pill [data-d="1"]').fire('click');
-    assert.deepStrictEqual([tab().offsets['clip-0'], tab().playing], [1, false], 'Sync + nudges, no play');
+    assert.deepStrictEqual([tab().offsets['clip-0'], tab().playing], [{ unit: 'frames', v: 1 }, false], 'Sync + nudges, no play');
     btnOf('clip-0', '.sync-pill [data-d="-1"]').fire('click');
-    assert.deepStrictEqual([tab().offsets['clip-0'], tab().playing], [0, false], 'Sync − nudges, no play');
+    assert.deepStrictEqual([tab().offsets['clip-0'], tab().playing], [{ unit: 'frames', v: 0 }, false], 'Sync − nudges, no play');
     btnOf('clip-2', '[data-enlarge] svg').fire('click');
     assert.deepStrictEqual([tab().layout, tab().spotlightId, tab().playing], ['spotlight', 'clip-2', false],
       'Enlarge (a click on its icon) enlarges that tile and does not toggle play');
@@ -762,14 +782,40 @@ const withGlobals = (dom, fn) => {
     assert.ok(Math.abs(tab().heroRatio - Math.min(0.9, hr0 + 0.05)) < 1e-9, '↓ grows the main tile (dock top)');
     $('splitter').fire('keydown', { key: 'Home' });
     assert.ok(Math.abs(tab().heroRatio - 0.1) < 1e-9, 'Home: smallest');
-    $('splitter').fire('pointerdown', {});
-    dom.win.fire('pointermove', { clientX: 0, clientY: 111 });
-    dom.win.fire('pointerup', {});
-    assert.ok(Math.abs(tab().heroRatio - 0.3) < 1e-9, 'dragging the splitter');
-    assert.strictEqual(dom.win.listenerCount('pointermove'), 0, 'the splitter drag lets go of the window');
+    const spl = $('splitter');
+    assert.deepStrictEqual([spl.classList.contains('h'), spl.getAttribute('aria-orientation'), spl.getAttribute('aria-valuetext')],
+      [true, 'horizontal', 'Spotlight 10%'], 'dock top: a horizontal bar, its value spoken');
+    spl.fire('pointerdown', { button: 2, pointerId: 4, clientY: 200 });
+    spl.fire('pointermove', { pointerId: 4, clientY: 200 });
+    assert.ok(Math.abs(tab().heroRatio - 0.1) < 1e-9, 'a right-button press is not a drag');
+    spl.fire('pointerdown', { button: 0, pointerId: 4, clientX: 0, clientY: 37 });
+    assert.ok(spl.hasPointerCapture(4), 'the splitter captures the pointer');
+    spl.fire('pointermove', { pointerId: 9, clientX: 0, clientY: 300 });
+    assert.ok(Math.abs(tab().heroRatio - 0.1) < 1e-9, 'another pointer does not move it');
+    spl.fire('pointermove', { pointerId: 4, clientX: 0, clientY: 0.3 * (STAGE.height - S.GAP) });
+    spl.fire('pointerup', { pointerId: 4 });
+    const playingBefore = tab().playing;
+    spl.fire('click', { button: 0 });
+    assert.ok(Math.abs(tab().heroRatio - 0.3) < 1e-9, 'dragging the splitter (along the dock, over the stage less the gap)');
+    assert.strictEqual(tab().playing, playingBefore, 'the click that ends the drag does not play / pause');
+    assert.strictEqual(spl.getAttribute('aria-valuenow'), '30');
+    spl.fire('dblclick');
+    assert.ok(Math.abs(tab().heroRatio - S.HERO_DEFAULT) < 1e-9, 'double-click resets the Spotlight size to 72 %');
+    ui.setState(S.setDock(ui.getState(), 'left'));
+    assert.deepStrictEqual([spl.classList.contains('v'), spl.classList.contains('h'), spl.getAttribute('aria-orientation')],
+      [true, false, 'vertical'], 'dock left: a vertical bar');
+    spl.fire('keydown', { key: 'ArrowRight' });
+    assert.ok(Math.abs(tab().heroRatio - (S.HERO_DEFAULT + 0.05)) < 1e-9, '→ grows the main tile (dock left)');
+    ui.setState(S.setDock(ui.getState(), 'top'));
+    assert.strictEqual(tab().syncMode, true, 'Sync mode is still on');
+    ui.controls.show('cmp', $('startCompareBtn'));
     key('Escape');
+    assert.deepStrictEqual([ui.controls.anyOpen(), tab().syncMode], [false, true], 'Esc closes the panel first');
     key('Escape');
-    assert.strictEqual(tab().layout, 'grid', 'Esc collapses Spotlight once the panels are closed');
+    assert.deepStrictEqual([tab().syncMode, tab().layout], [false, 'spotlight'], 'then Esc leaves Sync mode');
+    assert.strictEqual($('toast').textContent, 'Sync offsets off', 'and says so');
+    key('Escape');
+    assert.strictEqual(tab().layout, 'grid', 'Esc collapses Spotlight once the panels and Sync are closed');
 
     // D in Compare: the unified proposal picks another video through the host (production Compare has no plain-D
     // key: section 1 checks that separately).
@@ -780,9 +826,17 @@ const withGlobals = (dom, fn) => {
     assert.deepStrictEqual(pick[pick.length - 1], PUI.pickVideoMessage('unified', { exclude: ['clip-2', 'clip-0'] }), 'it excludes the shown videos');
     assert.strictEqual(tab().tiles.length, 3, '+ Add video asks the host and joins its answer');
     ui.dispatch('nudge', 'clip-0', 2);
-    assert.strictEqual(tab().offsets['clip-0'], 2);
+    assert.deepStrictEqual(tab().offsets['clip-0'], { unit: 'frames', v: 2 });
+    // 2-click remove from 3 videos on: the first click asks "Remove?", the second removes.
     btnOf('clip-0', '[data-rm]').fire('click');
-    assert.strictEqual(tab().tiles.includes('clip-0'), false, 'Remove on the tile removes it');
+    assert.deepStrictEqual([tab().tiles.includes('clip-0'), tab().removeConfirmId], [true, 'clip-0'], 'the first click only asks');
+    assert.strictEqual(btnOf('clip-0', '[data-rm]').textContent, 'Remove?');
+    assert.ok(cellOf('clip-0').classList.contains('confirming'));
+    key('Escape');
+    assert.strictEqual(tab().removeConfirmId, null, 'Esc cancels the question');
+    btnOf('clip-0', '[data-rm]').fire('click');
+    btnOf('clip-0', '[data-rm]').fire('click');
+    assert.strictEqual(tab().tiles.includes('clip-0'), false, 'Remove on the tile removes it (second click)');
     assert.strictEqual(tab().playing, false, 'and does not toggle play');
     ui.dispatch('leaveCompare');
     assert.strictEqual(tab().tiles.length, 1, 'Leave compare keeps A');
@@ -793,13 +847,388 @@ const withGlobals = (dom, fn) => {
     assert.ok(host.log.some((m) => m.type === 'fullscreen'));
 
     ui.onHostMessage({ type: 'toast', text: 'hello' });
-    assert.strictEqual($('stage').listenerCount('contextmenu'), 1, 'the stage opens the real context menu');
+    assert.strictEqual($('stage').listenerCount('contextmenu'), 1, 'the stage has one right-click listener (the tile menu)');
 
     ui.dispose();
     assert.strictEqual(timers().length, 0, 'dispose stops the clock');
     assert.strictEqual($('play').listenerCount('click'), 0, 'dispose removes the bar listeners');
     assert.strictEqual($('divider').listenerCount('keydown'), 0, 'and the divider\'s');
   });
+}
+
+// ---- 7b. Phase 1 & 2A wired into create(): tiles (media/player-ui-tiles.js) and input (media/player-ui-input.js) ----
+// Each block mounts a fresh controller on the real markup over FakeEngine + FakeHost (clip-2 has no audio track).
+{
+  /** Mount create() on a fresh fixture; `fn` runs inside the browser globals the widgets read. */
+  const mount = (initial, fn, extra = {}) => {
+    const dom = fixtureDom();
+    return withGlobals(dom, () => {
+      const widgets = realWidgets();
+      let menuEnv = null;
+      let menuOpens = 0;
+      const realMenu = widgets.VpeCtxMenu;
+      widgets.VpeCtxMenu = {
+        ...realMenu,
+        create: (env) => {
+          const before = env.beforeOpen;
+          menuEnv = { ...env, beforeOpen: () => { menuOpens++; if (before) before(); } };
+          return realMenu.create(menuEnv);
+        },
+      };
+      // The fake DOM has no 2D context: drawing (and the thumbnail drawn into its canvas) is recorded, not painted.
+      const base = createFakeEngine();
+      const thumbs = [];
+      const engine = { ...base, draw() {}, thumbnail: (id, sec, _cv, scrub) => base.thumbnail(id, sec, (p) => thumbs.push(p), scrub) };
+      const host = createFakeHost({ clips: engine.clips });
+      const ui = PUI.create({ doc: dom.doc, win: dom.win, stateApi: S, engine, host, widgets, initial, tickMs: 42, ...extra });
+      host.connect(ui.onHostMessage);
+      ui.render();
+      const tab = () => S.getTab(ui.getState());
+      const cellOf = (id) => dom.$('cells').querySelector(`.cell[data-clip="${id}"]`);
+      const key = (k, mods = {}) => dom.doc.body.fire('keydown', { key: k, ...mods });
+      const t = { dom, ui, host, engine, tab, cellOf, key, $: dom.$, menuEnv: () => menuEnv, menuOpens: () => menuOpens };
+      try { return fn(t); } finally { ui.dispose(); }
+    });
+  };
+  const last = (log, type) => log.filter((m) => m.type === type).pop();
+
+  // Duplicate right-click fix: one video opens the player menu exactly once (ctxmenu.js's own listener).
+  mount({ tiles: ['clip-0'] }, ({ $, ui, menuOpens }) => {
+    $('cells').querySelector('canvas').fire('contextmenu', { clientX: 30, clientY: 30, button: 2 });
+    assert.strictEqual(ui.ctxMenu.isOpen(), true, 'right-click opens the player menu');
+    assert.strictEqual(menuOpens(), 1, 'it opens once, not twice');
+    assert.strictEqual(ui.tileMenu.isOpen(), false, 'one video: no tile menu');
+  });
+
+  // Add to Compare never switches a running capture off.
+  mount({ tiles: ['clip-0', 'clip-1'], capture: true }, ({ ui, tab, host, menuEnv }) => {
+    const picks = host.log.filter((m) => m.type === 'pickVideo').length;
+    menuEnv().run('addToCompare');
+    assert.strictEqual(tab().capture, true, 'capture stays on');
+    assert.strictEqual(host.log.filter((m) => m.type === 'pickVideo').length, picks + 1, 'it picks the next video instead');
+    assert.deepStrictEqual(tab().tiles, ['clip-0', 'clip-1', 'clip-2'], 'which joins the view');
+    ui.setState(S.toggleCapture(ui.getState()).state);
+    menuEnv().run('addToCompare');
+    assert.strictEqual(tab().capture, true, 'with capture off, Add to Compare turns it on');
+  });
+
+  // Clock and sound: tile buttons, the tile menu, the bar, the engine.
+  mount({ tiles: ['clip-0', 'clip-1', 'clip-2'] }, ({ $, ui, tab, cellOf, engine, dom, host, key }) => {
+    assert.strictEqual($('play').getAttribute('aria-label'), 'Play all', 'Compare plays all');
+    assert.match($('seek').getAttribute('aria-valuetext'), /^A 0:02\.00 of 0:10\.00, frame 49$/, 'the seek slider speaks the clock tile, letter first');
+    const snd = (id) => cellOf(id).querySelector('[data-act="sound"]');
+    assert.strictEqual(snd('clip-0').getAttribute('aria-pressed'), 'false', 'muted by default');
+    snd('clip-1').fire('click');
+    assert.deepStrictEqual([tab().soundId, ui.getPrefs().muted, engine.fake.soundSource], ['clip-1', false, 'clip-1'], 'the tile sound button picks the heard tile');
+    assert.strictEqual(snd('clip-1').getAttribute('aria-label'), 'Mute B');
+    snd('clip-1').fire('click');
+    assert.deepStrictEqual([tab().soundId, ui.getPrefs().muted, engine.fake.soundSource], ['clip-1', true, null], 'again: mute');
+    assert.strictEqual(snd('clip-2').getAttribute('aria-label'), 'No audio track in C', 'a clip without audio says so');
+    snd('clip-2').fire('click');
+    assert.strictEqual(tab().soundId, 'clip-1', 'and cannot be heard');
+    // The tile menu: right-click a tile (N >= 2), not the player menu.
+    cellOf('clip-1').querySelector('canvas').fire('contextmenu', { clientX: 40, clientY: 40, button: 2 });
+    assert.deepStrictEqual([ui.tileMenu.isOpen(), ui.ctxMenu.isOpen()], [true, false], 'right-click on a tile opens the tile menu only');
+    const items = [...$('menu').querySelectorAll('.mi')].map((b) => b.dataset.action);
+    assert.deepStrictEqual(items, ['playPause', 'setClock', 'setSound', 'offset', 'copyFrame', 'copyTime', 'replace', 'remove', 'add', 'leave', 'keys', 'settings']);
+    $('menu').querySelector('[data-action="setClock"]').fire('click');
+    assert.deepStrictEqual([tab().clockId, ui.tileMenu.isOpen()], ['clip-1', false], 'B sets the clock');
+    assert.match($('seek').getAttribute('aria-valuetext'), /^B /, 'the seek slider follows the clock tile');
+    assert.ok(cellOf('clip-1').querySelector('.pill').classList.contains('clock'), 'the clock tile is marked');
+    // Replace through the host keeps the slot.
+    cellOf('clip-0').querySelector('canvas').fire('contextmenu', { clientX: 40, clientY: 40, button: 2 });
+    $('menu').querySelector('[data-action="replace"]').fire('click');
+    assert.deepStrictEqual(last(host.log, 'replaceVideo').oldId, 'clip-0', 'Replace asks the host');
+    assert.deepStrictEqual(tab().tiles, ['clip-3', 'clip-1', 'clip-2'], 'and its answer takes the slot');
+    // Copy timestamp of a tile: its letter and its own time.
+    cellOf('clip-2').querySelector('canvas').fire('contextmenu', { clientX: 40, clientY: 40, button: 2 });
+    $('menu').querySelector('[data-action="copyTime"]').fire('click');
+    assert.strictEqual(last(host.log, 'copyText').text, 'C 0:02.00');
+    // Esc closes the tile menu.
+    cellOf('clip-2').querySelector('canvas').fire('contextmenu', { clientX: 40, clientY: 40, button: 2 });
+    $('menu').querySelector('.mi').fire('keydown', { key: 'Escape' });
+    assert.strictEqual(ui.tileMenu.isOpen(), false, 'Esc closes the tile menu');
+    // Leave compare keeps the clock tile.
+    ui.dispatch('leaveCompare');
+    assert.deepStrictEqual(tab().tiles, ['clip-1'], 'Leave compare keeps the clock tile (B)');
+    assert.deepStrictEqual(last(host.log, 'leaveCompare').keepId, 'clip-1');
+    assert.strictEqual($('play').getAttribute('aria-label'), 'Play', 'back to one video');
+    void dom; void key;
+  });
+
+  // The bar's mute speaks "No audio track" when the heard clip has none; M then only says so.
+  mount({ tiles: ['clip-2'] }, ({ $, ui, key }) => {
+    assert.deepStrictEqual([$('mute').getAttribute('aria-label'), $('mute').disabled], ['No audio track', true]);
+    const muted = ui.getPrefs().muted;
+    key('m');
+    assert.strictEqual(ui.getPrefs().muted, muted, 'M changes nothing without audio');
+    assert.strictEqual($('toast').textContent, 'No audio track');
+    assert.match($('rate').getAttribute('aria-label'), /^Speed /, 'the speed button names itself');
+    key('l');
+    assert.strictEqual($('toast').textContent, '+10 s', 'L says how far it skipped');
+    key('j');
+    assert.strictEqual($('toast').textContent, '-10 s');
+  });
+
+  // Swap (X, the bar button), layout buttons, dense grid.
+  mount({ tiles: ['clip-0', 'clip-1'] }, ({ $, ui, tab, host, key }) => {
+    assert.deepStrictEqual([$('swapBtn').hidden, $('spotlightBtn').hidden, $('gridBtn').hidden, $('splitBtn').hidden], [false, false, false, false]);
+    assert.deepStrictEqual([$('gridBtn').getAttribute('aria-pressed'), $('gridBtn').classList.contains('active')], ['true', true]);
+    key('x');
+    assert.deepStrictEqual(tab().tiles, ['clip-1', 'clip-0'], 'X swaps the sides');
+    assert.deepStrictEqual(last(host.log, 'tileOrder').order, ['clip-1', 'clip-0'], 'the host learns the new order');
+    $('swapBtn').fire('click');
+    assert.deepStrictEqual(tab().tiles, ['clip-0', 'clip-1'], 'the Swap button too');
+    $('spotlightBtn').fire('click');
+    assert.deepStrictEqual([tab().layout, $('spotlightBtn').getAttribute('aria-pressed'), $('gridBtn').getAttribute('aria-pressed')], ['spotlight', 'true', 'false']);
+    $('splitBtn').fire('click');
+    assert.strictEqual(tab().layout, 'split');
+    $('splitBtn').fire('click');
+    assert.strictEqual(tab().layout, 'grid', 'Split again goes back to the grid');
+    ui.setState(S.openVideo(S.toggleCapture(ui.getState()).state, 'clip-2').state);
+    assert.deepStrictEqual([$('swapBtn').hidden, $('splitBtn').hidden], [true, true], 'Swap and Split only at N = 2');
+    assert.strictEqual(key('x').defaultPrevented, false, 'X is not a key at N = 3');
+    assert.strictEqual($('cells').classList.contains('dense'), false);
+    for (const id of ['clip-3', 'clip-4']) ui.setState(S.openVideo(ui.getState(), id).state);
+    assert.strictEqual($('cells').classList.contains('dense'), true, '5 videos: the dense grid');
+  });
+
+  // Per-tile chrome: ⓘ card, offsets in frames / ms, ▲ / ▼, ended, letterbox insets.
+  mount({ tiles: ['clip-0', 'clip-1', 'clip-2'] }, ({ $, ui, tab, cellOf, dom, host }) => {
+    const c1 = cellOf('clip-1');
+    // Letterboxing: a 16:9 clip in a 340 x 185 cell has bars left and right (clip-0 is 3840 x 2160, 1.78 < 1.84).
+    const c0 = cellOf('clip-0');
+    assert.strictEqual(c0.style['--pic-t'], '0px');
+    assert.ok(parseInt(c0.style['--pic-l'], 10) > 0 && c0.style['--pic-l'] === c0.style['--pic-r'], 'the tile chrome hugs the picture');
+    // ⓘ details card with the values that differ from A marked.
+    c1.querySelector('.mute-mini[data-act="info"]').fire('click');
+    assert.ok(c1.classList.contains('show-stats'), 'ⓘ opens the details card');
+    const card = c1.querySelector('.tile-stats');
+    assert.strictEqual(card.querySelector('.iname').textContent, 'shot_01_raw.mov');
+    assert.ok([...card.querySelectorAll('dd.diff')].length >= 1, 'what differs from A is marked');
+    assert.strictEqual(c1.querySelector('.mute-mini[data-act="info"]').getAttribute('aria-pressed'), 'true');
+    card.querySelector('.tile-stats-close').fire('click');
+    assert.deepStrictEqual([c1.classList.contains('show-stats'), tab().statsOpen], [false, []], '× closes it');
+    assert.strictEqual(dom.doc.activeElement, c1.querySelector('.mute-mini[data-act="info"]'), 'focus goes back to ⓘ');
+    // Offset stepper: frames, the value opens Compare › video, its unit switch keeps the moment.
+    ui.dispatch('sync');
+    assert.ok($('stage').classList.contains('sync-mode'));
+    c1.querySelector('.sync-pill [data-d="1"]').fire('click');
+    c1.querySelector('.sync-pill [data-d="1"]').fire('click');
+    assert.strictEqual(c1.querySelector('.offv').textContent, '+2 f');
+    c1.querySelector('.offv').fire('click');
+    assert.strictEqual(ui.controls.view(), 'cmpVid', 'the offset value opens the video page');
+    const chip = (label) => [...$('panel').querySelectorAll('.chip')].find((b) => b.textContent === label);
+    assert.strictEqual(chip('Frames').getAttribute('aria-pressed'), 'true');
+    chip('Time ms').fire('click');
+    assert.deepStrictEqual(S.getOffset(tab(), 'clip-1'), { unit: 'ms', v: 83.333 }, '2 frames at 24 fps = 83.333 ms');
+    assert.strictEqual(c1.querySelector('.offv').textContent, '+83.3 ms');
+    c1.querySelector('.sync-pill [data-d="-1"]').fire('click');
+    assert.deepStrictEqual(S.getOffset(tab(), 'clip-1'), { unit: 'ms', v: 73.333 }, 'a ms nudge is 10 ms');
+    const reset = [...$('panel').querySelectorAll('button')].find((b) => b.textContent === 'Reset offset');
+    assert.ok(reset, 'Reset offset is offered');
+    reset.fire('click');
+    assert.deepStrictEqual(S.getOffset(tab(), 'clip-1'), { unit: 'ms', v: 0 }, 'Reset keeps the unit');
+    const sw = (label) => [...$('panel').querySelectorAll('[role="switch"]')].find((b) => b.textContent.startsWith(label));
+    sw('B sets the clock').fire('click');
+    assert.strictEqual(tab().clockId, 'clip-1', 'the page sets the clock');
+    sw('Sound from B').fire('click');
+    assert.strictEqual(tab().soundId, 'clip-1', 'and the sound');
+    ui.controls.closeAll(false);
+    // ▲ / ▼ move the tile one slot; a focused button keeps the focus on the moved tile.
+    const down = c1.querySelector('[data-act="move"][data-d="1"]');
+    down.focus();
+    down.fire('click');
+    assert.deepStrictEqual(tab().tiles, ['clip-0', 'clip-2', 'clip-1'], '▼ moves B one slot later');
+    assert.deepStrictEqual(last(host.log, 'tileOrder').order, ['clip-0', 'clip-2', 'clip-1']);
+    assert.strictEqual(cellOf('clip-1'), c1, 'the same cell (it glides, it is not rebuilt)');
+    const focused = dom.doc.activeElement;
+    assert.ok(focused && focused.dataset.act === 'move' && c1.contains(focused), 'focus stays on the moved tile');
+    assert.strictEqual(c1.querySelector('[data-act="move"][data-d="1"]').disabled, true, 'the last slot cannot move later');
+    // Out of range: an offset past the clip's end shows "ended" and no frame number.
+    ui.setState(S.setOffset(S.setOffsetUnit(ui.getState(), 'clip-2', 'frames'), 'clip-2', 300));
+    assert.ok(cellOf('clip-2').classList.contains('ended'), 'past its end the tile says so');
+    assert.strictEqual(cellOf('clip-2').querySelector('.fr').textContent, '—');
+  });
+
+  // 2-click remove: the pointer leaving the tile cancels the question; N = 2 removes at once (back to one video).
+  mount({ tiles: ['clip-0', 'clip-1', 'clip-2'] }, ({ ui, tab, cellOf, $ }) => {
+    cellOf('clip-1').querySelector('[data-rm]').fire('click');
+    assert.strictEqual(tab().removeConfirmId, 'clip-1');
+    cellOf('clip-1').querySelector('canvas').fire('pointermove', { clientX: 400, clientY: 50 });
+    $('cells').fire('pointerleave');
+    assert.strictEqual(tab().removeConfirmId, null, 'leaving the tile cancels "Remove?"');
+    cellOf('clip-1').querySelector('[data-rm]').fire('click');
+    cellOf('clip-1').querySelector('[data-rm]').fire('click');
+    assert.deepStrictEqual(tab().tiles, ['clip-0', 'clip-2']);
+    cellOf('clip-2').querySelector('[data-rm]').fire('click');
+    assert.deepStrictEqual(tab().tiles, ['clip-0'], 'with 2 videos one click goes back to the single player');
+    void ui;
+  });
+
+  // Tile drag: reorder in the grid, dock the Spotlight main tile, the click after a drop does not play.
+  mount({ tiles: ['clip-0', 'clip-1'] }, ({ $, tab, cellOf, host, dom }) => {
+    const stage = $('stage');
+    const a = cellOf('clip-0').querySelector('canvas');
+    a.fire('pointerdown', { button: 0, pointerId: 5, clientX: 100, clientY: 100 });
+    stage.fire('pointermove', { pointerId: 5, clientX: 300, clientY: 100 });
+    assert.ok(stage.classList.contains('tile-dragging'), 'past 6 px the tile lifts');
+    stage.fire('pointermove', { pointerId: 5, clientX: 500, clientY: 100 });
+    const sk = stage.querySelector('.skeleton');
+    assert.ok(sk && !sk.hidden && sk.textContent === 'Move here', 'the drop outline shows');
+    stage.fire('pointerup', { pointerId: 5, clientX: 500, clientY: 100 });
+    assert.deepStrictEqual(tab().tiles, ['clip-1', 'clip-0'], 'dropping on B moves A there');
+    assert.deepStrictEqual(last(host.log, 'tileOrder').order, ['clip-1', 'clip-0'], 'the host learns the order');
+    assert.strictEqual(sk.hidden, true);
+    const playing = tab().playing;
+    cellOf('clip-0').querySelector('canvas').fire('click');
+    assert.ok(!dom.timers.some((t) => t && t.ms === 250) && tab().playing === playing, 'the click of the drop does not play / pause');
+    // Spotlight: the main tile docks to the edge it is dropped near.
+    stage.fire('pointerup', { pointerId: 99 });
+  });
+  mount({ tiles: ['clip-0', 'clip-1', 'clip-2'], layout: 'spotlight', spotlightId: 'clip-0' }, ({ $, tab, cellOf, ui }) => {
+    const stage = $('stage');
+    cellOf('clip-0').querySelector('canvas').fire('pointerdown', { button: 0, pointerId: 6, clientX: 340, clientY: 100 });
+    stage.fire('pointermove', { pointerId: 6, clientX: 10, clientY: 185 });
+    assert.strictEqual(stage.querySelector('.skeleton').textContent, 'Dock Spotlight left');
+    stage.fire('pointerup', { pointerId: 6, clientX: 10, clientY: 185 });
+    assert.strictEqual(tab().dock, 'left', 'the main tile docks left');
+    assert.ok($('splitter').classList.contains('v'), 'the splitter turns vertical');
+    // A strip tile dropped on the main tile swaps into Spotlight.
+    cellOf('clip-2').querySelector('canvas').fire('pointerdown', { button: 0, pointerId: 7, clientX: 600, clientY: 300 });
+    stage.fire('pointermove', { pointerId: 7, clientX: 200, clientY: 180 });
+    stage.fire('pointerup', { pointerId: 7, clientX: 200, clientY: 180 });
+    assert.deepStrictEqual([tab().spotlightId, tab().tiles], ['clip-2', ['clip-2', 'clip-1', 'clip-0']],
+      'C swaps places with the main tile (as Compare: the main tile is A)');
+    // A cancelled lift changes nothing.
+    cellOf('clip-1').querySelector('canvas').fire('pointerdown', { button: 0, pointerId: 8, clientX: 600, clientY: 60 });
+    stage.fire('pointermove', { pointerId: 8, clientX: 200, clientY: 180 });
+    ui.parts.tileDrag.cancel();
+    assert.strictEqual(stage.classList.contains('tile-dragging'), false, 'a cancelled lift lets go');
+    assert.deepStrictEqual(tab().tiles, ['clip-2', 'clip-1', 'clip-0']);
+  });
+
+  // Seek bar hover: tip "time · #frame", the clock letter in Compare, the thumbnail through the engine.
+  mount({ tiles: ['clip-0'] }, ({ $, engine }) => {
+    const seek = $('seek');
+    seek.fire('pointermove', { clientX: 340 });
+    assert.strictEqual($('tip').textContent, '0:05.00 · #121', 'time · frame (middle dot, 1-based frame)');
+    assert.strictEqual($('tip').hidden, false);
+    assert.strictEqual(engine.fake.thumbnails, 1, 'the engine draws the thumbnail');
+    const thumb = $('bar').querySelector('canvas.seek-thumb');
+    assert.ok(thumb && !thumb.hidden, 'the thumbnail shows');
+    seek.fire('pointerleave');
+    assert.deepStrictEqual([$('tip').hidden, thumb.hidden, engine.fake.thumbHover], [true, true, false], 'leaving hides both');
+  });
+  mount({ tiles: ['clip-0', 'clip-1'] }, ({ $ }) => {
+    $('seek').fire('pointermove', { clientX: 0 });
+    assert.strictEqual($('tip').textContent, 'A 0:00.00 · #1', 'Compare: the clock tile\'s letter first');
+  });
+
+  // Wheel, zoom, pan, − / +, Ctrl keys, the go-to box.
+  mount({ tiles: ['clip-0'] }, ({ $, ui, tab, cellOf, key, host, dom }) => {
+    const stage = $('stage');
+    const f0 = tab().frame;
+    const w = stage.fire('wheel', { deltaY: 100 });
+    assert.deepStrictEqual([tab().frame, w.defaultPrevented], [f0 + 1, true], 'wheel steps one frame while paused');
+    stage.fire('wheel', { deltaY: -100 });
+    assert.strictEqual(tab().frame, f0);
+    stage.fire('wheel', { deltaY: 0, deltaX: 100, shiftKey: true });
+    assert.strictEqual(tab().frame, f0 + 24, 'Shift+wheel takes the 1 s jump (deltaX on Windows)');
+    ui.dispatch('playPause');
+    stage.fire('wheel', { deltaY: 100 });
+    assert.strictEqual(tab().frame, f0 + 24, 'no wheel step while playing');
+    ui.dispatch('playPause');
+    stage.fire('wheel', { deltaY: -100, ctrlKey: true, clientX: 340, clientY: 185 });
+    assert.ok(tab().zoom > 1.2 && tab().zoom < 1.3, 'Ctrl+wheel zooms (one notch ≈ ×1.22)');
+    assert.deepStrictEqual([tab().panX, tab().panY], [0, 0], 'about the pointer: the stage centre stays');
+    // Drag to pan the zoomed picture; the click that ends it is not play / pause.
+    const cv = cellOf('clip-0').querySelector('canvas');
+    cv.fire('pointerdown', { button: 0, pointerId: 2, clientX: 100, clientY: 100 });
+    stage.fire('pointermove', { pointerId: 2, clientX: 130, clientY: 90 });
+    stage.fire('pointermove', { pointerId: 2, clientX: 150, clientY: 80 });
+    stage.fire('pointerup', { pointerId: 2 });
+    assert.deepStrictEqual([tab().panX, tab().panY], [50, -20], 'drag pans by the pointer travel');
+    const playing = tab().playing;
+    cv.fire('click');
+    assert.strictEqual(tab().playing, playing, 'the click after a pan does not play / pause');
+    // − / + zoom in the single player; the bar's picture page follows.
+    const z = tab().zoom;
+    key('+');
+    assert.ok(Math.abs(tab().zoom - z * 1.25) < 1e-9, '+ zooms in');
+    key('-');
+    assert.ok(Math.abs(tab().zoom - z) < 1e-9, '− zooms out');
+    ui.dispatch('resetView');
+    assert.deepStrictEqual([tab().zoom, tab().panX], [1, 0]);
+    // Ctrl+← / → step a frame; Ctrl+C copies the frame; Ctrl+G opens the go-to box.
+    const f1 = tab().frame;
+    assert.strictEqual(key('ArrowRight', { ctrlKey: true }).defaultPrevented, true);
+    assert.strictEqual(tab().frame, f1 + 1, 'Ctrl+→ one frame');
+    key('ArrowLeft', { ctrlKey: true });
+    assert.strictEqual(tab().frame, f1);
+    const copies = host.log.filter((m) => m.type === 'copyFrame').length;
+    key('c', { ctrlKey: true });
+    assert.strictEqual(host.log.filter((m) => m.type === 'copyFrame').length, copies + 1, 'Ctrl+C copies the frame');
+    key('g', { ctrlKey: true });
+    const box = $('goto');
+    assert.strictEqual(box.hidden, false, 'Ctrl+G opens the go-to box');
+    const input = box.querySelector('input');
+    assert.strictEqual(dom.doc.activeElement, input);
+    input.value = '1:75';
+    const bad = input.fire('keydown', { key: 'Enter' });
+    assert.deepStrictEqual([input.getAttribute('aria-invalid'), box.hidden, bad.propagationStopped], ['true', false, true],
+      'a typo is marked and the box stays; keys typed here never reach the player');
+    input.value = '#10';
+    input.fire('keydown', { key: 'Enter' });
+    assert.deepStrictEqual([box.hidden, tab().frame], [true, 9], 'frame 10 (as the counter shows it) is index 9');
+    assert.strictEqual(key('Escape').defaultPrevented, false, 'nothing open: Esc goes on to VS Code');
+  });
+  // − / + in Compare nudge the hovered tile.
+  mount({ tiles: ['clip-0', 'clip-1'] }, ({ tab, cellOf, key }) => {
+    cellOf('clip-1').querySelector('canvas').fire('pointermove', { clientX: 500, clientY: 100 });
+    key('+');
+    key('+');
+    key('-');
+    assert.deepStrictEqual([S.getOffset(tab(), 'clip-1'), S.getOffset(tab(), 'clip-0')], [{ unit: 'frames', v: 1 }, { unit: 'frames', v: 0 }],
+      '− / + nudge the tile under the pointer');
+    assert.strictEqual(tab().zoom, 1, 'and do not zoom');
+  });
+
+  // Zen Mode Esc Esc, auto-pause of hidden tabs, the live region, the idle bar in fullscreen.
+  mount({ tiles: ['clip-0'] }, ({ $, ui, tab, host, key, dom }) => {
+    ui.onHostMessage({ type: 'focusMode', active: true });
+    key('Escape');
+    key('Escape');
+    assert.ok(host.log.some((m) => m.type === 'focusModeExited'), 'Esc Esc in Zen Mode tells the host');
+    ui.dispatch('playPause');
+    ui.onHostMessage({ type: 'setVisible', visible: false });
+    assert.strictEqual(tab().playing, false, 'a hidden tab pauses');
+    ui.onHostMessage({ type: 'setVisible', visible: true });
+    assert.strictEqual(tab().playing, true, 'and resumes what it paused');
+    ui.dispatch('playPause');
+    ui.onHostMessage({ type: 'setVisible', visible: false });
+    ui.onHostMessage({ type: 'setVisible', visible: true });
+    assert.strictEqual(tab().playing, false, 'a paused tab stays paused');
+    // The live region: emptied, then written 50 ms later (a repeated text is read again).
+    ui.dispatch('cycleTime');
+    const live = $('live');
+    assert.strictEqual(live.textContent, '', 'emptied first');
+    const t50 = dom.timers.filter(Boolean).find((t) => t.ms === 50);
+    assert.ok(t50, 'written 50 ms later');
+    t50.fn();
+    assert.strictEqual(live.textContent, 'Timecode');
+    assert.strictEqual(dom.doc.body.classList.contains('idle'), false, 'not fullscreen: the bar never hides');
+  });
+
+  // The rendered harness wires the same modules.
+  const html = buildMockupHtml({ scenario: 'grid-3' });
+  for (const src of ['media/compare-grid.js', 'media/player-ui-tiles.js', 'media/player-ui-input.js']) {
+    assert.ok(html.indexOf(`data-src="${src}"`) >= 0 && html.indexOf(`data-src="${src}"`) < html.indexOf('data-src="media/player-ui.js"'),
+      `the harness inlines ${src} before media/player-ui.js`);
+  }
+  const harness = html.slice(html.lastIndexOf('<script>'));
+  for (const w of ['VpePlayerUiTiles', 'VpePlayerUiInput', 'CompareGrid']) assert.ok(harness.includes(`${w}: globalThis.${w}`), `the harness passes ${w}`);
+  assert.ok(FIXTURE.includes('id="menu"'), 'the shared markup has the tile menu');
 }
 
 // ---- 8. The mockup harness mounts the shared controller instead of its own wiring ----
