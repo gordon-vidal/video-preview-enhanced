@@ -515,6 +515,12 @@ const withGlobals = (dom, fn) => {
     const $ = dom.$;
     const tab = () => S.getTab(ui.getState());
     const timers = () => dom.timers.filter(Boolean);
+    /** Run the pending single click of a tile (it waits out the double-click window). */
+    const flushClick = () => {
+      const i = dom.timers.findIndex((t) => t && t.ms === 250);
+      assert.ok(i >= 0, 'a tile click is pending');
+      const t = dom.timers[i]; dom.timers[i] = null; t.fn();
+    };
 
     // Every documented action is reachable by name.
     for (const a of ['playPause', 'prevFrame', 'nextFrame', 'mute', 'loop', 'setA', 'setB', 'clearAB', 'cyclePicture',
@@ -693,7 +699,14 @@ const withGlobals = (dom, fn) => {
     assert.strictEqual(cellOf('clip-2'), cellA, 'the same node');
     assert.ok(drawn.length >= drawn0 + 10, 'each tick draws both tiles');
     cellA.querySelector('.pill .nm').fire('click');
+    assert.strictEqual(tab().playing, true, 'a tile click waits out the double-click window');
+    flushClick();
     assert.strictEqual(tab().playing, false, 'a click on the tile picture (its name pill bubbles to the cell) pauses');
+    cellA.fire('click'); cellA.fire('click'); cellA.fire('dblclick');
+    assert.ok(!dom.timers.some((t) => t && t.ms === 250), 'a double-click cancels the pending play / pause');
+    assert.deepStrictEqual([tab().layout, tab().spotlightId, tab().playing], ['spotlight', 'clip-2', false], 'double-click only enlarges');
+    cellOf('clip-2').fire('dblclick');
+    assert.strictEqual(tab().layout, 'grid', 'double-click on the enlarged tile goes back to the grid');
 
     // Nested tile buttons: their clicks run their own action and never bubble up to play / pause the tile.
     const btnOf = (id, sel) => cellOf(id).querySelector(sel);

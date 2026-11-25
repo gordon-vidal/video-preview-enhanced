@@ -207,7 +207,9 @@
    */
   function openVideo(ws, clipId, opts = {}) {
     const label = opts.label || clipId;
-    const capTab = !opts.forceNewTab ? ws.tabs.find((t) => t.capture) : null;
+    const active = getTab(ws);
+    // Capture pauses automatically while another editor/tab is active: only an active capturing tab catches opens.
+    const capTab = !opts.forceNewTab && active.capture ? active : null;
     if (capTab) {
       if (capTab.tiles.includes(clipId)) {
         return {
@@ -238,7 +240,6 @@
       return { state: { ...ws, activeTabId: existingSingle.id }, action: 'switched', toast: '' };
     }
 
-    const active = getTab(ws);
     if (!opts.forceNewTab && active.tiles.length === 1) {
       const state = updateTab(ws, active.id, (t) => ({ ...t, tiles: [clipId], offsets: {} }));
       return { state, action: 'replaced', toast: '' };
@@ -312,6 +313,25 @@
       syncMode: nextTiles.length >= 2 ? t.syncMode : false,
     }));
     return { state, toast: nextTiles.length === 1 ? 'Back to single video' : '' };
+  }
+
+  /**
+   * Move a tile to another slot (drag onto another tile, or the ‹ / › move arrows). Offsets, the Spotlight tile and
+   * the Split sides follow the clip, not the slot, so only the order changes.
+   * @param {WorkspaceState} ws
+   * @param {number} from slot index
+   * @param {number} to slot index
+   * @param {number} [tabId]
+   * @returns {WorkspaceState}
+   */
+  function moveTile(ws, from, to, tabId) {
+    const target = getTab(ws, tabId);
+    const n = target.tiles.length;
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from >= n || to < 0 || to >= n || from === to) return ws;
+    const tiles = target.tiles.slice();
+    const [moved] = tiles.splice(from, 1);
+    tiles.splice(to, 0, moved);
+    return updateTab(ws, target.id, (t) => ({ ...t, tiles }));
   }
 
   /**
@@ -502,7 +522,7 @@
           x, y, w: Math.max(1, x2 - x), h: Math.max(1, y2 - y), role: 'grid',
         });
       });
-      if (n < tab.maxVideos && n < cols * rows) {
+      if (isMulti && n < tab.maxVideos && n < cols * rows) {
         const c = n % cols;
         const r = Math.floor(n / cols);
         const x = Math.round(c * cw);
@@ -514,11 +534,11 @@
     }
 
     const captureLabel = tab.capture
-      ? (isMulti ? 'Open new here' : 'Comparing…')
-      : (isMulti ? 'Paused' : 'Compare');
+      ? 'Adding videos'
+      : (isMulti ? 'Add videos' : 'Compare');
     const captureTitle = tab.capture
-      ? 'Open new videos in this compare view (click to pause)'
-      : (isMulti ? 'Capture paused — click to open new videos in this compare view' : 'Start Compare — open new videos here');
+      ? 'Open videos to add to comparison (click to stop)'
+      : (isMulti ? 'Click to add newly opened videos to this comparison' : 'Start Compare — open videos to add to comparison');
     const { cols, rows } = gridDimensions(n);
     const layoutLabel = !isMulti
       ? 'Full-width (1×1)'
@@ -558,6 +578,7 @@
     openVideo,
     replaceVideo,
     removeTile,
+    moveTile,
     toggleEnlarge,
     toggleSplit,
     nudgeOffset,

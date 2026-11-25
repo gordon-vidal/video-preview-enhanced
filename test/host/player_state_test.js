@@ -57,7 +57,7 @@ const { SCENARIOS, buildMockupHtml } = require('../../tools/mockup/render');
   assert.strictEqual(dup.action, 'duplicate');
   assert.strictEqual(S.getTab(dup.state).tiles.length, 2);
 
-  // 3rd video -> 2x2 grid with spare addSlot in quadrant 4, Split hides
+  // 3rd video -> 2x2 grid with compact addSlot in quadrant 4, Split hides
   ws = S.openVideo(ws, 'clip-2', { label: 'shot_02_denoise.mkv' }).state;
   ui = S.deriveUi(S.getTab(ws), { width: 800, height: 400 });
   assert.strictEqual(ui.showSplitBtn, false);
@@ -142,12 +142,30 @@ const { SCENARIOS, buildMockupHtml } = require('../../tools/mockup/render');
   assert.strictEqual(ws.tabs.length, 2);
   assert.deepStrictEqual(S.getTab(ws).tiles, ['clip-2']);
 
-  // Turning capture back on in tab 1 captures from tab 2 as well
+  // Capture pauses while another tab is active, and resumes when you switch back to tab 1
   ws = S.toggleCapture(ws, 1).state;
+  const whileAway = S.openVideo(ws, 'clip-3', { label: 'shot_03_grade_b.mp4' });
+  assert.strictEqual(whileAway.action, 'replaced', 'inactive capturing tab does not hijack opens from another editor');
+  assert.deepStrictEqual(S.getTab(whileAway.state, 1).tiles, ['clip-0', 'clip-1']);
+
+  ws = S.selectTab(whileAway.state, 1);
   const added = S.openVideo(ws, 'clip-3');
-  assert.strictEqual(added.action, 'added');
+  assert.strictEqual(added.action, 'added', 'capture resumes automatically when returning to tab 1');
   assert.strictEqual(added.state.activeTabId, 1);
   assert.deepStrictEqual(S.getTab(added.state, 1).tiles, ['clip-0', 'clip-1', 'clip-3']);
+}
+
+// ---- 6b. moveTile: order changes, offsets / Spotlight follow the clip; bad slots are a no-op ----
+{
+  let ws = S.createWorkspaceState({ tiles: ['clip-0', 'clip-1', 'clip-2'], layout: 'spotlight', spotlightId: 'clip-1' });
+  ws = S.nudgeOffset(ws, 'clip-2', 3);
+  const moved = S.moveTile(ws, 2, 0);
+  assert.deepStrictEqual(S.getTab(moved).tiles, ['clip-2', 'clip-0', 'clip-1']);
+  assert.strictEqual(S.getTab(moved).offsets['clip-2'], 3);
+  assert.strictEqual(S.getTab(moved).spotlightId, 'clip-1');
+  assert.strictEqual(S.moveTile(ws, 1, 1), ws);
+  assert.strictEqual(S.moveTile(ws, 0, 3), ws);
+  assert.strictEqual(S.moveTile(ws, -1, 0), ws);
 }
 
 // ---- 7. FakeEngine & Mockup Harness smoke tests (all scenarios) ----

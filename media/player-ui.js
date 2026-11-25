@@ -13,6 +13,7 @@
 //
 // Host -> page messages: { type: 'rail', op, ... }      the folder rail protocol (src/folder-rail.js)
 //                        { type: 'openVideo', clipId, label?, compare?, replace?, forceNewTab? }
+//                        { type: 'removeVideo', clipId }  a rail click on a video already in this Compare
 //                        { type: 'toast', text }
 // Page -> host messages: { type: 'rail' | 'neighbour', ... }  posted by VpeFolderRail itself
 //                        { type: 'tiles', tabId, tiles, current }  after any change of the active tab's videos
@@ -445,11 +446,16 @@
    * @returns {{ state: any, toast: string, handled: boolean }}
    */
   function applyHostMessage(S, ws, msg, getClip) {
+    // A rail click on a video that is already in this Compare takes it out again (src/compare.js railAdd).
+    if (msg && msg.type === 'removeVideo' && typeof msg.clipId === 'string') {
+      const r = S.removeTile(ws, msg.clipId);
+      return { state: r.state, toast: r.state === ws ? '' : (r.toast || 'Removed from Compare'), handled: true };
+    }
     if (!msg || msg.type !== 'openVideo' || typeof msg.clipId !== 'string') return { state: ws, toast: '', handled: false };
     const label = msg.label || (getClip(msg.clipId) || { name: msg.clipId }).name;
     if (msg.replace) {
       const tab = S.getTab(ws);
-      if (tab.tiles.length === 1) return { state: S.replaceVideo(ws, msg.clipId), toast: '', handled: true };
+      if (tab.tiles.length === 1 && !tab.capture) return { state: S.replaceVideo(ws, msg.clipId), toast: '', handled: true };
     }
     let state = ws;
     if (msg.compare && !S.getTab(state).capture) state = S.toggleCapture(state).state;
@@ -903,7 +909,7 @@
     if (capBanner) {
       const stopBtn = capBanner.querySelector('[data-act="pause"]') || $('capStopBtn');
       const pickBtn = capBanner.querySelector('[data-act="pick"]') || $('capPickBtn');
-      bindButtons([[stopBtn, act.capture, true], [pickBtn, act.pickVideo, true]], onClick);
+      bindButtons([[stopBtn, act.capture, true], [pickBtn, () => rail.open(), true]], onClick);
     }
     // Dragging an A–B pin moves that end to the nearest frame: the same helper as media/player.js and media/compare.js.
     if (W.VpeAbLoop.bindPin) {
@@ -971,6 +977,13 @@
     const cellNodes = new Map();
     /** @type {any} */
     let addSlotNode = null;
+    /** The pending single click of a tile (see DBLCLICK_MS). */
+    let clickTimer = 0;
+    const DBLCLICK_MS = 250;
+    cleanups.push(() => { if (clickTimer) win.clearTimeout(clickTimer); });
+    /** When the last tile drag ended: the click that follows a drag is not a play / pause. */
+    let dragEndedAt = -Infinity;
+    const consumeDragClick = () => Date.now() - dragEndedAt < 300;
 
     function renderCells(/** @type {any} */ t, /** @type {any} */ ui) {
       stageEl.classList.toggle('sync-mode', t.syncMode && ui.isMulti);
@@ -989,14 +1002,21 @@
           const cv = doc.createElement('canvas');
           cell.appendChild(cv);
           if (ui.isMulti && ui.effectiveLayout !== 'split') cell.appendChild(Object.assign(doc.createElement('div'), { className: 'cell-border' }));
+          // A tile's double-click enlarges it, so its single click waits out the double-click window: playback
+          // never stutters pause → play before the enlarge. One video (and Split) play at once, as media/player.js.
+          const enlargeable = ui.isMulti && ui.effectiveLayout !== 'split';
           cell.addEventListener('click', (/** @type {any} */ e) => {
             if (e.target && e.target.closest && e.target.closest('button')) return;
+            if (consumeDragClick()) return;
             if (controls.anyOpen() || ctxMenu.isOpen()) { controls.closeAll(false); ctxMenu.close(false); return; }
-            act.playPause();
+            if (!enlargeable) { act.playPause(); return; }
+            if (clickTimer) win.clearTimeout(clickTimer);
+            clickTimer = win.setTimeout(() => { clickTimer = 0; act.playPause(); }, DBLCLICK_MS);
           });
           cell.addEventListener('dblclick', (/** @type {any} */ e) => {
-            if (!ui.isMulti || ui.effectiveLayout === 'split' || (e.target && e.target.closest && e.target.closest('button'))) return;
-            act.enlarge(r.clipId);
+            if (e.target && e.target.closest && e.target.closest('button')) return;
+            if (clickTimer) { win.clearTimeout(clickTimer); clickTimer = 0; }
+            if (enlargeable) act.enlarge(r.clipId); else if (!ui.isMulti) act.fullscreen();
           });
           /** @type {any} */
           let frEl = null;
@@ -1028,8 +1048,14 @@
           const slot = doc.createElement('div');
           slot.className = 'cell add';
           slot.innerHTML = '<button type="button" class="addcell">+ Add video</button>';
+          // Clicking the empty space around the compact button still toggles play/pause like any tile.
+          slot.addEventListener('click', (/** @type {any} */ e) => {
+            if (e.target && e.target.closest && e.target.closest('button')) return;
+            if (controls.anyOpen() || ctxMenu.isOpen()) { controls.closeAll(false); ctxMenu.close(false); return; }
+            act.playPause();
+          });
           const b = slot.querySelector('button');
-          if (b) b.addEventListener('click', (e) => { e.stopPropagation(); act.pickVideo(); });
+          if (b) b.addEventListener('click', (e) => { e.stopPropagation(); rail.open(); });
           cellsEl.appendChild(slot);
           addSlotNode = slot;
         }

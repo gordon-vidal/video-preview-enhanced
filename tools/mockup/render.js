@@ -51,9 +51,8 @@ function stageMarkupHtml() {
       ${playFlashHtml}
       <div class="cap-banner" id="capBanner" hidden>
         <span class="cap-pulse"></span>
-        <span>Open new videos in this compare view</span>
-        <button id="capPickBtn" type="button">Pick…</button>
-        <button id="capStopBtn" type="button">Pause</button>
+        <span>Open videos to add to comparison</span>
+        <button id="capStopBtn" type="button">Stop</button>
       </div>
       <div class="splitter h" id="splitter" hidden><div class="splitter-bar"></div></div>
       <div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" hidden><div class="h">⇄</div></div>
@@ -221,7 +220,11 @@ html, body {
 .cell { cursor: pointer !important; transition: left 160ms cubic-bezier(0.2,0,0,1), top 160ms cubic-bezier(0.2,0,0,1), width 160ms cubic-bezier(0.2,0,0,1), height 160ms cubic-bezier(0.2,0,0,1); }
 #stage.fit .cell canvas, #stage .cell canvas { width: 100%; height: 100%; max-width: none; max-height: none; display: block; }
 .cell-border { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
-.cell.add .addcell { opacity: 0.45; border-style: dashed; }
+.cell.add { cursor: pointer !important; }
+.cell.add .addcell {
+  flex-direction: row; padding: 6px 12px; border-radius: 999px; font-size: 11.5px;
+  opacity: 0.65; border-style: dashed;
+}
 .cell.add:hover .addcell { opacity: 1; }
 
 .cap-banner {
@@ -252,6 +255,17 @@ html, body {
 #ctxmenu { z-index: 32; }
 .rail { width: var(--rail-w, 200px); }
 
+.code-tab-view {
+  position: absolute; inset: 0; z-index: 20;
+  background: var(--vscode-editor-background); color: var(--vscode-foreground);
+  padding: 20px 24px; font-family: var(--vpe-mono); font-size: 12px; line-height: 1.65;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.code-tab-banner {
+  padding: 8px 12px; border-radius: 6px; font-family: var(--vscode-font-family); font-size: 11.5px;
+  background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle); color: var(--vpe-dim);
+}
+.code-tab-banner strong { color: var(--vscode-foreground); }
 .harness-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
   padding: 8px 2px 2px; font-size: 11.5px; color: var(--muted-foreground, var(--vpe-dim));
@@ -276,6 +290,10 @@ html, body {
     <div id="expList" style="display:flex;gap:5px;align-items:center;"></div>
   </div>
   <div class="tabs" id="tabs"></div>
+  <div id="codeView" class="code-tab-view" hidden>
+    <div class="code-tab-banner"><strong>Other editor active (app.js):</strong> Compare capture is paused while you work here. Clicking a video in Explorer above opens it in its own tab; switch back to your Compare tab to resume capture.</div>
+    <pre style="margin:0;opacity:0.85;">// Simulated non-video editor tab\nexport function exportSequence(clips) {\n  return clips.filter(Boolean).map((c) => c.name);\n}</pre>
+  </div>
   ${stageMarkupHtml()}
 </div>
 
@@ -300,10 +318,13 @@ ${inlinedScripts}
   const INITIAL_KEY = ${JSON.stringify(scenarioKey)};
   const $ = (id) => document.getElementById(id);
   const expList = $('expList'), tabsEl = $('tabs'), statePills = $('statePills'), scenarioSel = $('scenarioSel');
+  const codeView = $('codeView');
+  let inOtherEditor = false;
   const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text) x.textContent = text; return x; };
 
   function chrome(ws, ui) {
     const tab = S.getTab(ws);
+    if (codeView) codeView.hidden = !inOtherEditor;
     expList.textContent = '';
     for (const c of engine.clips.slice(0, 5)) {
       const idx = tab.tiles.indexOf(c.id);
@@ -312,26 +333,43 @@ ${inlinedScripts}
       const dot = el('span', 'dot');
       dot.style.background = c.color;
       b.append(dot, el('span', '', c.name));
-      if (idx >= 0 && ui.isMulti) b.appendChild(el('span', 'tag', S.TILE_KEYS[idx]));
-      b.onclick = () => host.explorerOpen(c.id);
+      if (!inOtherEditor && idx >= 0 && ui.isMulti) b.appendChild(el('span', 'tag', S.TILE_KEYS[idx]));
+      b.onclick = () => {
+        if (inOtherEditor) {
+          inOtherEditor = false;
+          // Other editor active: capture is paused, so opening a video opens a new tab instead of hijacking Compare.
+          const res = S.openVideo(ui$.getState(), c.id, { forceNewTab: true, label: c.name });
+          ui$.setState(res.state);
+          return;
+        }
+        host.explorerOpen(c.id);
+      };
       expList.appendChild(b);
     }
     tabsEl.textContent = '';
     for (const t of ws.tabs) {
-      const div = el('div', 'tab' + (t.id === tab.id ? ' active' : ''));
-      if (t.capture) { const d = el('span', 'tab-cap-dot'); d.title = 'Open new videos here'; div.appendChild(d); }
+      const div = el('div', 'tab' + (!inOtherEditor && t.id === tab.id ? ' active' : ''));
+      if (t.capture) { const d = el('span', 'tab-cap-dot'); d.title = inOtherEditor ? 'Capture paused (other editor active)' : 'Open new videos here'; if (inOtherEditor) d.style.opacity = '0.35'; div.appendChild(d); }
       div.appendChild(el('span', '', t.tiles.length === 1 ? engine.getClip(t.tiles[0]).name : 'Compare (' + t.tiles.length + ')'));
       if (ws.tabs.length > 1) { const x = el('span', 'tab-x', '×'); x.dataset.close = String(t.id); div.appendChild(x); }
       div.onclick = (e) => {
+        inOtherEditor = false;
         const close = e.target && e.target.dataset && e.target.dataset.close;
         ui$.setState(close ? S.closeTab(ui$.getState(), t.id) : S.selectTab(ui$.getState(), t.id));
       };
       tabsEl.appendChild(div);
     }
+    // Simulated non-video editor tab so you can test capture pausing while in another editor.
+    const codeTab = el('div', 'tab' + (inOtherEditor ? ' active' : ''));
+    codeTab.appendChild(el('span', '', 'app.js'));
+    codeTab.title = 'Switch to a code editor tab (pauses Compare capture while active)';
+    codeTab.onclick = () => { inOtherEditor = true; chrome(ui$.getState(), S.deriveUi(S.getTab(ui$.getState()), { width: 680, height: 370 })); };
+    tabsEl.appendChild(codeTab);
+
     statePills.innerHTML =
       '<span class="harness-pill">Videos: <strong>' + ui.n + '</strong></span>' +
       '<span class="harness-pill">Layout: <strong>' + ui.layoutLabel + '</strong></span>' +
-      '<span class="harness-pill">Capture: <strong>' + (tab.capture ? 'ON' : 'OFF') + '</strong></span>';
+      '<span class="harness-pill">Capture: <strong>' + (tab.capture ? (inOtherEditor ? 'PAUSED (other tab)' : 'ON') : 'OFF') + '</strong></span>';
   }
 
   const ui$ = globalThis.VpePlayerUi.create({
