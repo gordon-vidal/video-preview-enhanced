@@ -74,36 +74,99 @@
   }
 
   /**
-   * The page's keyboard shortcuts (a subset of media/player.js / media/compare.js keydown, same keys) as data.
+   * The keyboard shortcuts of the single player (media/player.js), Compare (media/compare.js) and create(), as one
+   * table. Each page maps the action names it supports to its own functions (runKey); a name a page lacks, or a
+   * handler that returns false, is "not handled" and the key goes on to VS Code. Ctrl / Cmd / Alt keys are not player
+   * keys, except with AltGr (Ctrl+Alt on Windows), which types [ ] { } # on many layouts.
    * @param {{ key: string, shiftKey?: boolean, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean }} e
-   * @returns {string | null} an action name of `create()`'s dispatch table
+   * @param {{ altGr?: boolean }} [o]
+   * @returns {{ action: string, arg?: any } | null}
    */
-  function keyAction(e) {
-    if (e.ctrlKey || e.metaKey || e.altKey) return null;
+  function keyCommand(e, o = {}) {
+    if (e.metaKey || (!o.altGr && (e.ctrlKey || e.altKey))) return null;
+    const a = (/** @type {string} */ action, /** @type {any} */ arg) => (arg === undefined ? { action } : { action, arg });
+    const shift = !!e.shiftKey;
     switch (e.key) {
-      case ' ': case 'k': case 'K': return 'playPause';
-      case ',': return 'prevFrame';
-      case '.': return 'nextFrame';
-      case 'm': case 'M': return 'mute';
-      case 'r': case 'R': return 'loop';
-      case 'a': return 'setA';
-      case 'A': return e.shiftKey ? null : 'setA';
-      case 'b': case 'B': return 'setB';
-      case 'Backspace': return 'clearAB';
-      case 'z': case 'Z': return e.shiftKey ? null : 'cyclePicture';
-      case 'i': case 'I': return 'info';
-      case '?': return 'keys';
-      case 'Escape': return 'escape';
-      case 'D': return e.shiftKey ? 'capture' : null;
-      case 'N': return e.shiftKey ? 'nextVideo' : null;
-      case 'P': return e.shiftKey ? 'prevVideo' : null;
-      case 'f': case 'F': return 'fullscreen';
-      default: return null;
+      case ' ': case 'k': case 'K': return a('playPause');
+      case 'j': case 'J': return a('skip', -10);
+      case 'l': case 'L': return a('skip', 10);
+      case 'ArrowLeft': return a('jump', { dir: -1, shift });
+      case 'ArrowRight': return a('jump', { dir: 1, shift });
+      case ',': return a('prevFrame');
+      case '.': return a('nextFrame');
+      case '<': case '[': return a('rateStep', -1);
+      case '>': case ']': return a('rateStep', 1);
+      case 'ArrowUp': return a('volumeStep', 0.05);
+      case 'ArrowDown': return a('volumeStep', -0.05);
+      case 'Home': return a('home');
+      case 'End': return a('end');
+      case 'm': case 'M': return a('mute');
+      case 'r': case 'R': return a('loop');
+      case 'f': case 'F': return a('fullscreen');
+      case 'N': return shift ? a('nextVideo') : null;
+      case 'P': return shift ? a('prevVideo') : null;
+      case 'a': case 'A': return a('setA');
+      case 'b': case 'B': return a('setB');
+      case 'Backspace': return a('clearAB');
+      case 't': case 'T': return a('copyTime');
+      case 'z': case 'Z': return shift ? null : a('cyclePicture');
+      case '+': case '=': return a('plus');
+      case '-': case '_': return a('minus');
+      case 'i': case 'I': return a('info');
+      case 's': case 'S': return a('saveFrame');
+      case 'c': case 'C': return a('cc');
+      case 'w': case 'W': return a('scopes');
+      case 'x': case 'X': return a('swap');
+      case 'd': return a('pickVideo');
+      case 'D': return a(shift ? 'capture' : 'pickVideo');
+      case '?': return a('keys');
+      case 'Escape': return a('escape');
+      default: return /^[0-9]$/.test(e.key) ? a('seekTenth', Number(e.key)) : null;
     }
   }
 
   /**
-   * The bar's time readout: clock (m:ss.ss), SMPTE timecode, or frame number (click the time to cycle).
+   * The action name a key runs (keyCommand without its argument).
+   * @param {{ key: string, shiftKey?: boolean, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean }} e
+   * @returns {string | null}
+   */
+  function keyAction(e) {
+    const c = keyCommand(e);
+    return c ? c.action : null;
+  }
+
+  /**
+   * Run one keydown through keyCommand and a page's action table; a handler gets (arg, event).
+   * @param {any} e KeyboardEvent
+   * @param {Record<string, (arg: any, e: any) => any>} table
+   * @param {{ altGr?: boolean }} [o]
+   * @returns {boolean} whether the page used the key (the caller then calls preventDefault)
+   */
+  function runKey(e, table, o) {
+    const c = keyCommand(e, o);
+    if (!c || typeof table[c.action] !== 'function') return false;
+    return table[c.action](c.arg, e) !== false;
+  }
+
+  /** What a click on the bar's time shows next: clock, SMPTE timecode, frame number (the toast says which). */
+  const TIME_MODE_NAMES = /** @type {const} */ (['Time', 'Timecode', 'Frame number']);
+  const nextTimeMode = (/** @type {number} */ m) => ((Number(m) || 0) + 1) % 3;
+
+  /**
+   * The bar's time readout (#now, #dur) in the user's time format; the same in the player, Compare and the mockup.
+   * @param {{ f: number, t: number, dur: number, fps: number, nFrames: number, mode: number, live?: boolean,
+   *   fmtClock: (s: number) => string, fmtTimecode: (f: number, fps: number) => string }} o
+   * @returns {{ now: string, dur: string }}
+   */
+  function timeReadout(o) {
+    if (o.live) return { now: o.fmtClock(o.t), dur: '· LIVE' };
+    if (o.mode === 1 && o.fps) return { now: o.fmtTimecode(o.f, o.fps), dur: `/ ${o.fmtTimecode(o.nFrames, o.fps)}` };
+    if (o.mode === 2) return { now: `frame ${o.f + 1}`, dur: `/ ${o.nFrames || '?'}` };
+    return { now: o.fmtClock(o.t), dur: `/ ${o.fmtClock(o.dur)}` };
+  }
+
+  /**
+   * One time as text (A–B labels, Copy time): clock (m:ss.ss), SMPTE timecode, or frame number.
    * @param {number} frame
    * @param {number} fps
    * @param {number} mode 0 | 1 | 2
@@ -111,11 +174,192 @@
    */
   function formatTime(frame, fps, mode, fmtTimecode) {
     const r = fps || 24;
-    if (mode === 2) return `#${frame}`;
+    if (mode === 2) return `frame ${frame + 1}`;
     if (mode === 1 && fmtTimecode) return fmtTimecode(frame, r);
     const t = frame / r;
     const m = Math.floor(t / 60);
     return `${m}:${(t % 60).toFixed(2).padStart(5, '0')}`;
+  }
+
+  /**
+   * Wire bar buttons. Each entry is [element, run, stop]; `stop` keeps the click from reaching the stage or the bar
+   * (whose own click handlers play / pause or dismiss panels). The pages use the `onclick` property (a page can swap
+   * one handler later, and Node tests call onclick()); create() passes `on` so dispose() can remove its listeners.
+   * @param {[any, () => void, boolean?][]} entries
+   * @param {(el: any, fn: (e?: any) => void) => void} [on]
+   */
+  function bindButtons(entries, on) {
+    for (const [el, run, stop] of entries) {
+      if (!el) continue;
+      const fn = stop ? (/** @type {any} */ e) => { if (e && e.stopPropagation) e.stopPropagation(); run(); } : () => run();
+      if (on) on(el, fn); else el.onclick = fn;
+    }
+  }
+
+  /**
+   * The buttons beside Play: the size picked with their badge, else one frame or the Ctrl+arrow jump (setting
+   * stepButtons). Frames go to `step`, seconds to `skip`.
+   * @param {any} VpeControls media/controls.js
+   * @param {any} prefs { stepSize, stepButtons, jump }
+   * @param {number} dir -1 | 1
+   * @param {{ step: (frames: number) => void, skip: (seconds: number) => void }} go
+   */
+  function stepBy(VpeControls, prefs, dir, go) {
+    const a = VpeControls.stepAmount(VpeControls.stepSizeOf(prefs));
+    if (a.n) go.step(dir * a.n); else go.skip(dir * a.s);
+  }
+
+  /**
+   * The badge on a step button opens the size popover above it; the click never reaches the step button or the bar.
+   * @param {any[]} badges [#prevSize, #nextSize]
+   * @param {(badge: any) => void} open
+   * @param {(el: any, type: string, fn: (e: any) => void) => void} [listen]
+   */
+  function bindStepBadges(badges, open, listen) {
+    for (const b of badges) {
+      if (!b) continue;
+      const fn = (/** @type {any} */ e) => { e.stopPropagation(); open(b); };
+      if (listen) listen(b, 'click', fn); else b.addEventListener('click', fn);
+    }
+  }
+
+  /**
+   * Where an A–B pin sits on the seek bar for a snapped frame (percent of the bar).
+   * @param {{ f: number, t: number }} snap @param {number} n frames @param {number} dur seconds
+   */
+  const pinPercent = (snap, n, dur) => (n > 1 ? snap.f / (n - 1) * 100 : dur ? snap.t / dur * 100 : 0);
+
+  /**
+   * Dragging an A–B pin on the seek bar moves that end to the nearest frame; the playhead stays. The tip above the
+   * bar says which end and where. `src.commit` stores the end (each page's own A–B bookkeeping).
+   * @param {any} VpeAbLoop media/abloop.js
+   * @param {{ a: any, b: any, seek: any, tip?: any }} els
+   * @param {{ ready: () => boolean, n: () => number, fps: () => number, dur: () => number,
+   *   tipLabel: (snap: { f: number, t: number }) => string,
+   *   commit: (which: 'a' | 'b', snap: { f: number, t: number }) => void, end: () => void }} src
+   */
+  function bindAbPins(VpeAbLoop, els, src) {
+    for (const which of /** @type {('a' | 'b')[]} */ (['a', 'b'])) {
+      const pin = els[which];
+      if (!pin) continue;
+      VpeAbLoop.bindPin(pin, which, {
+        rect: () => els.seek.getBoundingClientRect(),
+        n: () => (src.ready() ? src.n() : 0),
+        fps: () => (src.ready() ? src.fps() : 0),
+        dur: () => (src.ready() ? src.dur() : 0),
+        move(/** @type {string} */ w, /** @type {{ f: number, t: number }} */ snap, /** @type {number} */ clientX) {
+          if (!src.ready()) return;
+          const n = src.n();
+          pin.style.left = `${pinPercent(snap, n, src.dur())}%`;
+          if (!els.tip) return;
+          const r = els.seek.getBoundingClientRect();
+          els.tip.textContent = `${w.toUpperCase()} ${src.tipLabel(snap)}${n ? ` · #${snap.f + 1}` : ''}`;
+          els.tip.style.left = `${Math.max(30, Math.min(r.width - 30, clientX - r.left))}px`;
+          els.tip.hidden = false;
+        },
+        commit(/** @type {'a' | 'b'} */ w, /** @type {{ f: number, t: number }} */ snap) {
+          if (src.ready()) src.commit(w, snap);
+        },
+        end: () => src.end(),
+      });
+    }
+  }
+
+  /**
+   * The Picture size button shows the current size and names the next one (VpePicture: media/picture.js).
+   * @param {any} btn #picBtn
+   * @param {any} VpePicture
+   * @param {string} mode
+   * @param {string} [scope] e.g. 'all videos' in Compare
+   */
+  function pictureButton(btn, VpePicture, mode, scope) {
+    if (!btn) return;
+    const nx = VpePicture.next(mode);
+    btn.dataset.mode = mode;
+    btn.title = `Picture size: ${VpePicture.name(mode)} (${VpePicture.WORDS[mode]})${scope ? `, ${scope}` : ''}. Click for ${VpePicture.name(nx)}  Z`;
+    btn.setAttribute('aria-label', `Picture size: ${VpePicture.name(mode)}. Next: ${VpePicture.name(nx)}`);
+  }
+
+  /** ⓘ › Copy details: the facts as plain lines. @param {{ title: string, sub: string, rows: string[][] }} d */
+  const copyInfoText = (d) => [d.title, d.sub, ...d.rows.map(([k, v]) => `${k}: ${v}`)].join('\n');
+
+  /**
+   * The right-click menu (media/ctxmenu.js): its items run through the page's own named actions.
+   * @param {any} VpeCtxMenu
+   * @param {{ menu: any, container?: any, getState: () => any, beforeOpen?: () => void, actions: Record<string, () => void> }} o
+   */
+  function createContextMenu(VpeCtxMenu, o) {
+    /** @type {any} */
+    const env = { menu: o.menu, getState: o.getState, beforeOpen: o.beforeOpen, run: (/** @type {string} */ a) => { if (o.actions[a]) o.actions[a](); } };
+    if (o.container) env.container = o.container;
+    return VpeCtxMenu.create(env);
+  }
+
+  /**
+   * The Folder Rail (media/folder-rail.js) when the page has its markup (#rail) and the script; else null (URLs,
+   * image sequences). Its own `rail` / `neighbour` messages go straight to `post`.
+   * @param {any} VpeFolderRail
+   * @param {any} doc
+   * @param {any} opts VpeFolderRail.create options (doc is filled in)
+   */
+  function createFolderRail(VpeFolderRail, doc, opts) {
+    if (!VpeFolderRail || !doc.getElementById('rail')) return null;
+    return VpeFolderRail.create({ doc, ...opts });
+  }
+
+  /**
+   * Shift+N / Shift+P and the folder capsule: the folder's next / previous video (through the rail when there is
+   * one, else straight to the host).
+   * @param {any} rail @param {(m: any) => void} post @param {number} d
+   */
+  function goNeighbour(rail, post, d) {
+    if (rail) rail.go(d); else post({ type: 'neighbour', d });
+  }
+
+  /**
+   * Spotlight splitter: the main tile's share for a pointer at (px, py) in a stage of w x h, by the dock edge.
+   * @param {string} dock 'top' | 'bottom' | 'left' | 'right'
+   * @param {number} px @param {number} py @param {number} w @param {number} h
+   */
+  function spotlightRatioAt(dock, px, py, w, h) {
+    if (dock === 'top') return py / h;
+    if (dock === 'bottom') return 1 - py / h;
+    if (dock === 'left') return px / w;
+    return 1 - px / w;
+  }
+
+  /**
+   * Spotlight splitter keys: arrows along the dock (Shift: 10 %), Home / End; null for any other key.
+   * @param {{ key: string, shiftKey?: boolean }} e @param {string} dock @param {number} ratio
+   * @param {number} min @param {number} max
+   * @returns {number | null}
+   */
+  function spotlightKeyRatio(e, dock, ratio, min, max) {
+    const delta = e.shiftKey ? 0.10 : 0.05;
+    const horiz = dock === 'top' || dock === 'bottom';
+    if (horiz && e.key === 'ArrowDown') return ratio + (dock === 'top' ? delta : -delta);
+    if (horiz && e.key === 'ArrowUp') return ratio + (dock === 'top' ? -delta : delta);
+    if (!horiz && e.key === 'ArrowRight') return ratio + (dock === 'left' ? delta : -delta);
+    if (!horiz && e.key === 'ArrowLeft') return ratio + (dock === 'left' ? -delta : delta);
+    if (e.key === 'Home') return min;
+    if (e.key === 'End') return max;
+    return null;
+  }
+
+  /**
+   * Split Wipe divider keys: arrows 1 % (Shift / PageUp / PageDown 10 %), Home / End; null for any other key.
+   * @param {{ key: string, shiftKey?: boolean }} e @param {number} split
+   * @returns {number | null}
+   */
+  function splitKeyRatio(e, split) {
+    const big = e.shiftKey || e.key === 'PageUp' || e.key === 'PageDown' ? 0.1 : 0.01;
+    switch (e.key) {
+      case 'ArrowLeft': case 'ArrowDown': case 'PageDown': return split - big;
+      case 'ArrowRight': case 'ArrowUp': case 'PageUp': return split + big;
+      case 'Home': return 0;
+      case 'End': return 1;
+      default: return null;
+    }
   }
 
   /** @param {any} stateApi @param {any} tab */
@@ -173,7 +417,7 @@
    *   stateApi: any,
    *   engine: EngineAdapter,
    *   host: HostAdapter,
-   *   widgets?: { VpeControls?: any, VpeFolderRail?: any, VpeCtxMenu?: any, VpeAbLoop?: any, VpeAutoplay?: any, VpeTime?: any },
+   *   widgets?: { VpeControls?: any, VpeFolderRail?: any, VpeCtxMenu?: any, VpeAbLoop?: any, VpeAutoplay?: any, VpeTime?: any, VpePicture?: any, VpeModes?: any },
    *   initial?: any,
    *   prefs?: Partial<Prefs>,
    *   railCfg?: { layout?: string, width?: number, column?: string, playable?: boolean },
@@ -194,7 +438,7 @@
 
     const doc = env.doc;
     const win = /** @type {any} */ (env.win || doc.defaultView || globalThis);
-    const W = /** @type {any} */ ({ ...{ VpeControls: win.VpeControls, VpeFolderRail: win.VpeFolderRail, VpeCtxMenu: win.VpeCtxMenu, VpeAbLoop: win.VpeAbLoop, VpeAutoplay: win.VpeAutoplay, VpeTime: win.VpeTime }, ...(env.widgets || {}) });
+    const W = /** @type {any} */ ({ ...{ VpeControls: win.VpeControls, VpeFolderRail: win.VpeFolderRail, VpeCtxMenu: win.VpeCtxMenu, VpeAbLoop: win.VpeAbLoop, VpeAutoplay: win.VpeAutoplay, VpeTime: win.VpeTime, VpePicture: win.VpePicture, VpeModes: win.VpeModes }, ...(env.widgets || {}) });
     for (const k of ['VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay']) {
       if (!W[k]) throw new Error(`player-ui: widget ${k} is missing`);
     }
@@ -205,7 +449,7 @@
     const stageEl = need('stage'), barEl = need('bar');
     const cellsEl = $('cells') || stageEl.appendChild(Object.assign(doc.createElement('div'), { id: 'cells' }));
     const capBanner = $('capBanner'), splitterEl = $('splitter'), dividerEl = $('divider');
-    const seekEl = need('seek'), nowEl = $('now'), durEl = $('dur'), timeEl = $('time');
+    const seekEl = need('seek'), nowEl = $('now'), durEl = $('dur'), timeEl = $('time'), tipEl = $('tip');
     const tracksBtn = $('tracks'), cmpBtn = need('startCompareBtn');
     const playBtn = need('play'), prevBtn = need('prev'), nextBtn = need('next');
     const prevSize = $('prevSize'), nextSize = $('nextSize');
@@ -248,6 +492,9 @@
     const tab = () => S.getTab(ws);
     const fps = () => tab().fps || 24;
     const fmt = (/** @type {number} */ f) => formatTime(f, fps(), prefs.timeMode, W.VpeTime ? W.VpeTime.fmtTimecode : null);
+    const clockText = (/** @type {number} */ sec) => formatTime(Math.round(sec * fps()), fps(), 0);
+    /** The arrow keys' jump sizes (settings videoPreviewEnhanced.jump.*): seconds, or 'frame'. */
+    const JUMP = { arrow: 5, shift: 1, ctrl: 'frame' };
     const clipName = (/** @type {string} */ id) => (engine.getClip(id) || { name: id }).name;
 
     /** One state transition: replace the state, say the toast, redraw. */
@@ -269,8 +516,7 @@
       if (controls) controls.refresh();
       toast(`Autoplay: ${W.VpeAutoplay.label(m)}`);
     };
-    const rail = W.VpeFolderRail.create({
-      doc,
+    const rail = createFolderRail(W.VpeFolderRail, doc, {
       toast,
       post: (/** @type {any} */ m) => postHost(m),
       cfg: env.railCfg || { layout: 'dock', width: 200, column: 'duration', playable: true },
@@ -279,6 +525,7 @@
       label: W.VpeAutoplay.label,
       time: () => tab().frame / fps(),
     });
+    if (!rail) throw new Error('player-ui: #rail is missing');
 
     // ---- the real VpeControls: every sub-page, plus the Compare pages over the unified state ----
     const abLabel = () => {
@@ -388,7 +635,7 @@
           rate: prefs.rate,
           loop: prefs.onEnd === 'loop',
           autoplay: { mode: prefs.onEnd, label: W.VpeAutoplay.label(prefs.onEnd), next: !isMulti },
-          jump: { arrow: 5, shift: 1, ctrl: 'frame' },
+          jump: JUMP,
           stepButtons: 'frame',
           stepSize: prefs.stepSize,
           abLabel: abLabel(),
@@ -454,7 +701,7 @@
         loadSubs: () => postHost({ type: 'loadSubs' }),
         subDelay: () => {},
         subSize: () => {},
-        copyInfo: (/** @type {any} */ d) => { postHost({ type: 'copyText', text: [d.title, d.sub, ...d.rows.map((/** @type {string[]} */ [a, b]) => `${a}: ${b}`)].join('\n') }); toast('Details copied'); },
+        copyInfo: (/** @type {any} */ d) => { postHost({ type: 'copyText', text: copyInfoText(d) }); toast('Details copied'); },
         copyLink: () => postHost({ type: 'copyLink' }),
         external: () => postHost({ type: 'external' }),
         extSettings: () => postHost({ type: 'openSettings' }),
@@ -463,7 +710,7 @@
     });
 
     // ---- the real right-click menu ----
-    ctxMenu = W.VpeCtxMenu.create({
+    ctxMenu = createContextMenu(W.VpeCtxMenu, {
       menu: need('ctxmenu'),
       container: env.container || doc.body,
       getState: () => {
@@ -471,16 +718,11 @@
         return { ready: true, playing: t.playing, loop: prefs.onEnd === 'loop', abSet: ab.isSet(), file: true, compareOpen: t.tiles.length >= 2 };
       },
       beforeOpen: () => controls.closeAll(false),
-      run: (/** @type {string} */ action) => {
-        /** @type {Record<string, () => void>} */
-        const MENU = {
-          playPause: act.playPause, loop: act.loop, setA: act.setA, setB: act.setB, clearAB: act.clearAB,
-          copyFrame: act.copyFrame, saveFrame: () => postHost({ type: 'saveFrame' }),
-          copyTime: () => { const text = fmt(tab().frame); postHost({ type: 'copyText', text }); toast(`Copied ${text}`); },
-          startCompare: act.capture, addToCompare: act.capture,
-          keys: () => controls.openSheet(cogBtn), cog: () => controls.show('main', cogBtn),
-        };
-        if (MENU[action]) MENU[action]();
+      actions: {
+        playPause: () => act.playPause(), loop: () => act.loop(), setA: () => act.setA(), setB: () => act.setB(),
+        clearAB: () => act.clearAB(), copyFrame: () => act.copyFrame(), saveFrame: () => act.saveFrame(),
+        copyTime: () => act.copyTime(), startCompare: () => act.capture(), addToCompare: () => act.capture(),
+        keys: () => controls.openSheet(cogBtn), cog: () => controls.show('main', cogBtn),
       },
     });
     listen(stageEl, 'contextmenu', (/** @type {MouseEvent} */ e) => { e.preventDefault(); ctxMenu.open(e.clientX, e.clientY); });
@@ -506,8 +748,20 @@
       controls.refresh();
       render();
     }
+    /** A jump of the arrow keys: seconds, or 'frame' (one frame, paused). */
+    const jumpBy = (/** @type {number | string} */ v, /** @type {number} */ dir) => (v === 'frame' ? commit(S.stepFrame(ws, dir)) : act.skip(dir * Number(v)));
     const act = {
       playPause: () => { ws = S.togglePlay(ws); flashPlay(tab().playing); render(); },
+      skip: (/** @type {number} */ sec) => commit(S.seekFrame(ws, tab().frame + Math.round(sec * fps()))),
+      jump: (/** @type {{ dir: number, shift?: boolean }} */ o) => jumpBy(o.shift ? JUMP.shift : JUMP.arrow, o.dir),
+      stepButton: (/** @type {number} */ dir) => stepBy(W.VpeControls, prefs, dir, { step: (n) => commit(S.stepFrame(ws, n)), skip: (sec) => act.skip(sec) }),
+      home: () => commit(S.seekFrame(ws, 0)),
+      end: () => { const t = tab(); commit(S.seekFrame(t.playing ? S.togglePlay(ws) : ws, t.maxFrame)); },
+      seekTenth: (/** @type {number} */ n) => commit(S.seekFrame(ws, (n / 10) * tab().maxFrame)),
+      rateStep: (/** @type {number} */ d) => { setRate(prefs.rate + d * W.VpeControls.SPEED_STEP); toast(W.VpeControls.speedText ? W.VpeControls.speedText(prefs.rate) : `${prefs.rate}×`); },
+      volumeStep: (/** @type {number} */ d) => { act.volume(prefs.volume + d); toast(`Volume ${Math.round(prefs.volume * 100)}%`); },
+      copyTime: () => { const text = fmt(tab().frame); postHost({ type: 'copyText', text }); toast(`Copied ${text}`); },
+      saveFrame: () => postHost({ type: 'saveFrame' }),
       prevFrame: () => commit(S.stepFrame(ws, -1)),
       nextFrame: () => commit(S.stepFrame(ws, 1)),
       seek: (/** @type {number} */ f) => commit(S.seekFrame(ws, f)),
@@ -517,7 +771,7 @@
       setA: () => markAB('a'),
       setB: () => markAB('b'),
       clearAB: () => { ab.clear(); controls.refresh(); render(); toast('A–B range cleared'); },
-      cycleTime: () => { prefs.timeMode = (prefs.timeMode + 1) % 3; render(); },
+      cycleTime: () => { prefs.timeMode = nextTimeMode(prefs.timeMode); render(); toast(TIME_MODE_NAMES[prefs.timeMode]); },
       cyclePicture: () => setPicture(PICTURE_MODES[(PICTURE_MODES.indexOf(/** @type {any} */ (prefs.picMode)) + 1) % PICTURE_MODES.length]),
       copyFrame: () => { postHost({ type: 'copyFrame' }); toast(tab().tiles.length > 1 ? 'View copied' : 'Frame copied'); },
       fullscreen: () => postHost({ type: 'fullscreen' }),
@@ -549,55 +803,48 @@
         commit(next, text);
       },
       pickVideo: () => postHost({ type: 'pickVideo', exclude: tab().tiles.slice() }),
-      nextVideo: () => rail.go(1),
-      prevVideo: () => rail.go(-1),
+      nextVideo: () => goNeighbour(rail, postHost, 1),
+      prevVideo: () => goNeighbour(rail, postHost, -1),
     };
     /** @type {Record<string, (...a: any[]) => any>} */
     const dispatchTable = act;
+    /** The shared key table (keyCommand) over this page's actions; a key's argument, if any, is the first one. */
+    /** @type {Record<string, (arg: any, e: any) => any>} */
+    const keyTable = {};
+    for (const [name, f] of Object.entries(act)) {
+      const fn = /** @type {(...a: any[]) => any} */ (f);
+      keyTable[name] = (/** @type {any} */ arg) => (arg === undefined ? fn() : fn(arg));
+    }
 
     // ---- the real #bar ----
-    const click = (/** @type {any} */ el, /** @type {() => void} */ fn) => {
-      if (el) listen(el, 'click', (/** @type {Event} */ e) => { e.stopPropagation(); fn(); });
-    };
-    click(cmpBtn, act.capture);
-    click(splitBtn, act.split);
-    click(syncBtn, act.sync);
-    click(playBtn, act.playPause);
-    click(prevBtn, act.prevFrame);
-    click(nextBtn, act.nextFrame);
-    click(prevSize, () => controls.toggle('step', prevSize));
-    click(nextSize, () => controls.toggle('step', nextSize));
-    click(muteBtn, act.mute);
-    click(timeEl, act.cycleTime);
-    click(setABtn, act.setA);
-    click(setBBtn, act.setB);
-    click(cogBtn, () => controls.toggle('main', cogBtn));
-    click(infoBtn, act.info);
-    click(rateBtn, () => controls.toggle('speed', rateBtn));
-    click(tracksBtn, () => controls.toggle('subs', tracksBtn));
-    click(picBtn, act.cyclePicture);
-    click(fullBtn, act.fullscreen);
+    const onClick = (/** @type {any} */ el, /** @type {(e?: any) => void} */ fn) => listen(el, 'click', fn);
+    bindButtons([
+      [cmpBtn, act.capture, true], [splitBtn, act.split, true], [syncBtn, act.sync, true],
+      [playBtn, act.playPause, true], [prevBtn, () => act.stepButton(-1), true], [nextBtn, () => act.stepButton(1), true],
+      [muteBtn, act.mute, true], [timeEl, act.cycleTime, true], [setABtn, act.setA, true], [setBBtn, act.setB, true],
+      [cogBtn, () => controls.toggle('main', cogBtn), true], [infoBtn, act.info, true],
+      [rateBtn, () => controls.toggle('speed', rateBtn), true], [tracksBtn, () => controls.toggle('subs', tracksBtn), true],
+      [picBtn, act.cyclePicture, true], [fullBtn, act.fullscreen, true],
+    ], onClick);
+    bindStepBadges([prevSize, nextSize], (b) => controls.toggle('step', b), (el, type, fn) => listen(el, type, fn));
     if (volEl) listen(volEl, 'input', () => act.volume(Number(volEl.value)));
     listen(seekEl, 'input', () => act.seek(Number(seekEl.value)));
     if (capBanner) {
       const stopBtn = capBanner.querySelector('[data-act="pause"]') || $('capStopBtn');
       const pickBtn = capBanner.querySelector('[data-act="pick"]') || $('capPickBtn');
-      click(stopBtn, act.capture);
-      click(pickBtn, act.pickVideo);
+      bindButtons([[stopBtn, act.capture, true], [pickBtn, act.pickVideo, true]], onClick);
     }
-    // Dragging an A–B pin moves that end to the nearest frame (media/player.js does the same over the decoder).
-    if (W.VpeAbLoop.bindPin && abA && abB) {
-      for (const [which, pin] of /** @type {[('a'|'b'), any][]} */ ([['a', abA], ['b', abB]])) {
-        W.VpeAbLoop.bindPin(pin, which, {
-          rect: () => seekEl.getBoundingClientRect(),
-          n: () => tab().maxFrame + 1,
-          fps,
-          dur: () => tab().maxFrame / fps(),
-          move: (/** @type {string} */ _w, /** @type {{ f: number }} */ snap) => { pin.style.left = `${tab().maxFrame ? snap.f / tab().maxFrame * 100 : 0}%`; },
-          commit: (/** @type {'a'|'b'} */ w, /** @type {{ f: number, t: number }} */ snap) => { ab.reset(w, snap.t, snap.f, snap.t, false); controls.refresh(); },
-          end: () => render(),
-        });
-      }
+    // Dragging an A–B pin moves that end to the nearest frame: the same helper as media/player.js and media/compare.js.
+    if (W.VpeAbLoop.bindPin) {
+      bindAbPins(W.VpeAbLoop, { a: abA, b: abB, seek: seekEl, tip: tipEl }, {
+        ready: () => true,
+        n: () => tab().maxFrame + 1,
+        fps,
+        dur: () => tab().maxFrame / fps(),
+        tipLabel: (snap) => clockText(snap.t),
+        commit: (w, snap) => { ab.reset(w, snap.t, snap.f, snap.t, false); controls.refresh(); },
+        end: () => { if (tipEl) tipEl.hidden = true; render(); },
+      });
     }
 
     // ---- Spotlight splitter and Split Wipe divider drags ----
@@ -613,18 +860,32 @@
         win.addEventListener('pointerup', up);
       });
     };
-    drag(splitterEl, (ev, rect) => commit(S.setHeroRatio(ws, (ev.clientY - rect.top) / rect.height)));
+    drag(splitterEl, (ev, rect) => commit(S.setHeroRatio(ws, spotlightRatioAt(tab().dock, ev.clientX - rect.left, ev.clientY - rect.top, rect.width, rect.height))));
     drag(dividerEl, (ev, rect) => commit(S.setSplitRatio(ws, (ev.clientX - rect.left) / rect.width)));
+    // The same keys as Compare's splitter and divider (media/compare.js): arrows, Shift for big steps, Home / End.
+    const keyDrag = (/** @type {any} */ el, /** @type {(e: KeyboardEvent) => void} */ fn) => { if (el) listen(el, 'keydown', fn); };
+    keyDrag(splitterEl, (e) => {
+      const next = spotlightKeyRatio(e, tab().dock, tab().heroRatio, 0.1, 0.9);
+      if (next === null) return;
+      e.preventDefault(); e.stopPropagation();
+      commit(S.setHeroRatio(ws, next));
+    });
+    keyDrag(dividerEl, (e) => {
+      const next = splitKeyRatio(e, tab().split);
+      if (next === null) return;
+      e.preventDefault(); e.stopPropagation();
+      commit(S.setSplitRatio(ws, next));
+    });
 
     // ---- keyboard shortcuts ----
     listen(env.keyTarget || doc, 'keydown', (/** @type {KeyboardEvent} */ e) => {
-      const t = /** @type {any} */ (e.target);
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      const a = keyAction(e);
-      if (!a || !dispatchTable[a]) return;
-      const handled = dispatchTable[a]();
-      if (a === 'escape' && handled === false) return;
-      e.preventDefault();
+      // Typing in a field (the rail filter), a list box, or Space / Enter on a focused button: not player keys.
+      if (W.VpeModes && W.VpeModes.ownsKey) { if (W.VpeModes.ownsKey(e)) return; } else {
+        const t = /** @type {any} */ (e.target);
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      }
+      const altGr = !!(e.getModifierState && e.getModifierState('AltGraph'));
+      if (runKey(e, keyTable, { altGr })) e.preventDefault();
     });
 
     // ---- the stage: one cell per tile, from deriveUi ----
@@ -721,7 +982,8 @@
     function drawBar() {
       const t = tab();
       if (rateBtn) rateBtn.textContent = W.VpeControls.speedText ? W.VpeControls.speedText(prefs.rate) : `${prefs.rate}×`;
-      if (picBtn) picBtn.dataset.mode = prefs.picMode;
+      if (picBtn && W.VpePicture) pictureButton(picBtn, W.VpePicture, prefs.picMode, t.tiles.length > 1 ? 'all videos' : '');
+      else if (picBtn) picBtn.dataset.mode = prefs.picMode;
       if (tracksBtn) tracksBtn.classList.toggle('on', prefs.subKey !== 'off');
       if (muteBtn) { muteBtn.classList.toggle('muted', prefs.muted); muteBtn.setAttribute('aria-pressed', String(prefs.muted)); }
       if (volEl) volEl.value = String(prefs.muted ? 0 : prefs.volume);
@@ -764,8 +1026,12 @@
 
       seekEl.max = String(t.maxFrame);
       seekEl.value = String(t.frame);
-      if (nowEl) nowEl.textContent = fmt(t.frame);
-      if (durEl) durEl.textContent = `/ ${fmt(t.maxFrame)}`;
+      const rd = timeReadout({
+        f: t.frame, t: t.frame / fps(), dur: t.maxFrame / fps(), fps: fps(), nFrames: t.maxFrame + 1, mode: prefs.timeMode,
+        fmtClock: clockText, fmtTimecode: W.VpeTime ? W.VpeTime.fmtTimecode : (/** @type {number} */ f) => String(f),
+      });
+      if (nowEl) nowEl.textContent = rd.now;
+      if (durEl) durEl.textContent = rd.dur;
       playBtn.classList.toggle('playing', t.playing);
       drawBar();
 
@@ -827,7 +1093,11 @@
     };
   }
 
-  const api = { HOST_COMMANDS, PICTURE_MODES, defaultPrefs, keyAction, formatTime, applyHostMessage, compareRows, create };
+  const api = {
+    HOST_COMMANDS, PICTURE_MODES, TIME_MODE_NAMES, defaultPrefs, keyCommand, keyAction, runKey, nextTimeMode, timeReadout,
+    formatTime, bindButtons, stepBy, bindStepBadges, pinPercent, bindAbPins, pictureButton, copyInfoText, createContextMenu,
+    createFolderRail, goNeighbour, spotlightRatioAt, spotlightKeyRatio, splitKeyRatio, applyHostMessage, compareRows, create,
+  };
   // checkJs: end
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

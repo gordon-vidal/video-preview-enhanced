@@ -34,9 +34,45 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 | Remote stream (`src/remotestream.js`) | `remote-stream` |
 | URLs (`src/urlsource.js`) | `url`, `url-native` |
 | The bar, panels, keys (`media/controls.js`, `src/bar.js`) | `ui` |
+| The shared UI seam (`media/player-ui.js`, `media/player-state.js`) | `ui`, `compare`, `folder-rail` |
 | Subtitles, tracks | `subtitles` |
 | Folder rail, the bar's capsule, Autoplay, folder navigation (`src/folder-rail.js`, `media/folder-rail.js`, `media/autoplay.js`) | `folder-rail`, `ui`, `compare` |
 - **GitHub Actions:** layers 1-2 on every push and pull request. Layer 3 stays local for now (needs a GPU).
+
+## UI and gesture tests without video
+
+The webview UI is split three ways (AGENTS.md, Rules): **pure state** (`media/player-state.js`), the **shared UI
+seam** (`media/player-ui.js`), and the **engine and host** behind adapters (production: the decoders and
+`vscode.postMessage`; tests and the mockup: `tools/mockup/fake-engine.js` and `tools/mockup/fake-host.js`).
+`media/player.js` and `media/compare.js` call the seam's helpers for their keys, bar buttons, step buttons and
+badges, A–B pins, time readout, Picture size button, Copy details, right-click menu, Folder Rail and the
+Compare splitter and divider. The mockup (`tools/mockup/render.js`) mounts the same file through
+`VpePlayerUi.create()`. So a UI or gesture path can be checked in Layer 1, in milliseconds, without decoding a
+frame:
+
+| What | Where it is proven | How long |
+|---|---|---|
+| Layout, capture, add / remove / enlarge / split / sync / offsets, tabs (pure transitions) | `test/host/player_state_test.js` | milliseconds |
+| The shared key table and the player's and Compare's key parity, bar buttons, step size, A–B pin drag, time formats, Picture size, context-menu actions, Folder Rail round trip through FakeHost, Spotlight splitter and Split Wipe divider (pointer and keys), cell DOM reuse during playback ticks, double-click enlarge | `test/host/player_ui_test.js` (the real widgets on a small fake DOM, FakeEngine + FakeHost; about 0.1 s) | milliseconds |
+| Script order of both pages (the seam loads before `player.js` / `compare.js`), CSP and nonces | `test/host/player_html_test.js`, `test/host/a11y_test.js` | milliseconds |
+| Page code slices (`playback_prefs_test.js`, `player_ux_test.js`, `ctxmenu_test.js`) | Node `vm` over the real `player.js` source with `VpePlayerUi` in the context | milliseconds |
+
+What stays in **Layer 3** (real VS Code on the hidden desktop): Chromium layout, focus and pointer capture,
+WebGL and WebCodecs, the decoders and their clocks (frame-exact stepping, A–B playback, Compare sync across real
+videos), fullscreen and Zen Mode, the real host messages over the webview boundary (file watching, the folder
+listing, Remote-SSH and remote streaming), and anything a screenshot must show. Layer 3 confirms that the wiring
+the Layer 1 tests prove also holds in a real webview; it does not need to repeat every key or gesture.
+
+**New UI features from now on:**
+
+1. Put the state transition in `media/player-state.js` and test it in `player_state_test.js`.
+2. Put the wiring (key, button, menu item, gesture) in `media/player-ui.js` as a helper both pages call, or in
+   `create()` for the unified page; add the key to `keyCommand` and a handler to each page's `KEY_ACTIONS` table.
+3. Prove it in `test/host/player_ui_test.js`: the helper alone, then the gesture through `create()` over the
+   real widgets (fire the click / key / pointer events on the fake DOM, assert the state and what FakeHost got).
+4. Look at it in the mockup (`node tools/mockup/render.js`, `.claude/skills/ui-mockup/SKILL.md`).
+5. Pick only the Layer 3 scenarios that cover the real-webview boundary of the change (usually `ui`, plus
+   `compare` or `folder-rail` when those change), not the whole layer.
 
 ## Slow-link & remote UX invariants
 

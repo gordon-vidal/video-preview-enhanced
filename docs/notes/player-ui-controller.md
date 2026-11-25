@@ -1,7 +1,8 @@
 # Shared UI controller (`media/player-ui.js`)
 
-Status: in use by the mockup harness (`tools/mockup/render.js`); production `media/player.js` and
-`media/compare.js` are **not** migrated yet (see "Production migration" below).
+Status: in production. `media/player.js` and `media/compare.js` call the shared helpers below for their UI wiring;
+the mockup harness (`tools/mockup/render.js`) mounts the same file through `create()`. What is still page-specific
+is listed under "What stays in the pages".
 
 ## Problem
 
@@ -59,21 +60,68 @@ per video in Compare. Context menu: the real `VpeCtxMenu` on the stage.
 Stage: cells from `deriveUi`, hover pills, enlarge/remove/offset buttons, double-click to enlarge, Spotlight
 splitter drag, Split Wipe divider drag, the `+ Add video` slot.
 
-Keys (`keyAction`): `Space`/`K`, `,` `.`, `M`, `R`, `A` `B` `Backspace`, `Z`, `I`, `?`, `Esc` (panels, then
-menu, then collapse Spotlight), `Shift+D` (capture), `Shift+N`/`Shift+P` (folder ‹ / ›), `F`. Keys typed into an
-input (the rail filter) are ignored.
+Keys (`keyCommand`, the same table the pages use): `Space`/`K`, `J`/`L`, arrows (with Shift), `,` `.`, `[` `]`
+`<` `>`, `↑` `↓`, `Home`/`End`, `0`-`9`, `M`, `R`, `A` `B` `Backspace`, `T`, `S`, `Z`, `I`, `?`, `Esc` (panels,
+then menu, then collapse Spotlight), `D` (pick), `Shift+D` (capture), `Shift+N`/`Shift+P` (folder ‹ / ›), `F`.
+Keys a focused control owns (`VpeModes.ownsKey`: the rail filter, a list box) are ignored. The splitter and the
+divider take Compare's keys (arrows, Shift / PageUp / PageDown, Home / End).
+
+## The shared helpers (production and mockup)
+
+Both production pages load `player-state.js` and `player-ui.js` right before their own script
+(`src/player-html.js` `SCRIPTS`, `src/compare.js` `compareScripts`) and call these helpers instead of keeping
+their own copies. `create()` uses the same helpers, so the mockup runs the production wiring:
+
+| Helper | What it replaces | `player.js` | `compare.js` | `create()` |
+|---|---|---|---|---|
+| `keyCommand(e, { altGr })`, `runKey(e, KEY_ACTIONS)` | the two `switch (e.key)` blocks; each page keeps a `KEY_ACTIONS` table of its own handlers | yes | yes | yes |
+| `bindButtons([[el, run, stop]], on?)` | the bar's `onclick =` lines (stop flag per button, as before) | yes | yes | yes (`on` = listener) |
+| `stepBy`, `bindStepBadges` | the step buttons' size logic and the badge popover click | yes | yes | yes |
+| `bindAbPins`, `pinPercent` | the A–B pin drag (pin position, tip text and placement) | yes | yes | yes |
+| `timeReadout`, `nextTimeMode`, `TIME_MODE_NAMES` | the time / timecode / frame readout and its click cycle | yes | yes | yes |
+| `pictureButton` | the Picture size button's mode, title and label | yes | yes (`all videos`) | yes |
+| `copyInfoText` | ⓘ › Copy details | yes | yes | yes |
+| `createContextMenu` | the `VpeCtxMenu.create` + action lookup | yes | (Compare has its own tile menu) | yes |
+| `createFolderRail`, `goNeighbour` | the `#rail` guard and Shift+N / Shift+P fallback | yes | yes (rail) | yes |
+| `spotlightRatioAt`, `spotlightKeyRatio`, `splitKeyRatio` | the Spotlight splitter and Split Wipe divider math | | yes | yes |
+
+The helpers take the widget modules as arguments (never a page global) and touch no decoder, so
+`test/host/player_ui_test.js` loads them in Node. `media/player-ui.js` stays in `tsconfig.check.json` and under the
+webview boundary rules of `.dependency-cruiser.cjs`.
+
+## What stays in the pages, and why
+
+- **Decoder lifetimes and clocks**: `player.js` drives one `engine.js` player; `compare.js` drives N players, the
+  compositor (`compare-compositor.js`), offsets and sync. What a key or button *does* (seek, step, rate, volume)
+  is the page's handler; only the dispatch is shared.
+- **Compare's stage**: tiles drawn by the compositor in one canvas, tile drag-to-reorder, the tile menu, sync
+  mode, add mode. `create()` has its own simple stage over `deriveUi` cells for the mockup; moving Compare onto it
+  needs the EngineAdapter below.
+- **Page-only features**: scopes, the pixel inspector, subtitles, X-ray, exports, remote streaming, the Start
+  Compare dialog, the notice banner, Zen Mode's Esc Esc.
+- **Separate webviews**: single and Compare are still two pages with their own host messages, so `create()` (one
+  unified state for both) is not mounted in production yet.
 
 ## Tests
 
-`test/host/player_ui_test.js` (layer 1, ~0.2 s) checks the pure helpers, the FakeHost protocol, and runs
-`create()` with the real widgets on a small permissive fake DOM: bar clicks, keys, the rail round trip through
-the host, Compare N = 1 → 2 → 3 → 1, Split/Spotlight, panels, `dispose()`. It also asserts the harness script
-mounts `VpePlayerUi.create(` and contains none of the old wiring.
+`test/host/player_ui_test.js` (layer 1, about 0.1 s, no video decoded) checks:
 
-## Production migration (next step, not done here)
+- the key table, `runKey`, and the parity of the player's and Compare's `KEY_ACTIONS` tables (which page handles which
+  key; every handler name is a `keyCommand` action; no second key switch left in either page);
+- the pure helpers (time readout, Picture size, Copy details, step size, pin position and tip, splitter and
+  divider math by dock and key, `bindButtons` stop policy, context-menu and rail creation) and that both pages
+  call them instead of local copies;
+- the FakeHost protocol;
+- `create()` over the real widgets on a small fake DOM: bar clicks, every key including AltGr and Ctrl rules, the
+  real `abloop.js` pin drag, context-menu items, the rail round trip, Compare N = 1 → 2 → 3 → 1, cell DOM reuse
+  across playback ticks, click to pause and double-click to enlarge mid-playback, Split Wipe divider and
+  Spotlight splitter by keys and drag, panels, `dispose()`;
+- that the harness mounts `VpePlayerUi.create(` and carries none of the old wiring.
 
-Kept out of this change on purpose: `player.js` and `compare.js` carry decoder lifetimes, remote streaming and
-layer-3 coverage, and the two pages still differ (separate webviews for single and Compare). The seam is ready:
+`test/host/player_html_test.js` checks the script order of both pages. See docs/TESTING.md, "UI and gesture tests
+without video", for what stays in layer 3.
+
+## Next step: one unified page
 
 1. **EngineAdapter over the decoders**: `draw` becomes "present this tile's frame" over `frame-player.js` /
    `compare-compositor.js`; `tickMs: 0`, and the page calls `ui.dispatch('seek', f)` from the decoder clock
@@ -84,5 +132,5 @@ layer-3 coverage, and the two pages still differ (separate webviews for single a
 3. **Host side**: `src/extension.js` answers `tiles` with `rail members` / `pos` (it already sends both) and
    sends `openVideo` where it now opens another webview for "add to Compare" (needs the single and Compare pages
    to share one webview; see `docs/notes/compare-ui.md` for the current Compare design).
-4. Move `player.js`'s keydown and bar `onclick` blocks onto `ui.dispatch`, then delete them; run the layer-3
+4. Mount `create()` in that page and delete the remaining page-side bar and stage wiring; run the layer-3
    scenarios that cover the bar, the rail, Compare and the keys (pick them per AGENTS.md, Tests).

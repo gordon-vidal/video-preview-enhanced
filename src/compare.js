@@ -71,7 +71,9 @@ function compareScripts(large) {
     'timestretch.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js', 'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js',
     'engine.js', 'picture.js', 'modes.js', 'range-drag.js', 'controls.js', 'abloop.js', 'comparerange.js', 'stepgoal.js',
     'timefmt.js', ...(large ? ['membudget.js'] : []),
-    'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js', 'compare-debug.js', 'compare-sync.js', 'folder-rail.js', 'compare.js',
+    'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js', 'compare-debug.js', 'compare-sync.js', 'folder-rail.js',
+    // The shared UI seam (docs/notes/player-ui-controller.md): pure state, then the UI helpers compare.js calls.
+    'player-state.js', 'player-ui.js', 'compare.js',
   ];
 }
 

@@ -192,7 +192,9 @@ const SCRIPTS = [
   'membudget.js', 'timestretch.js', 'pool.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js',
   'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js', 'engine.js', 'picture.js', 'inspect.js', 'scopes.js', 'exactframe.js', 'reduced-res-notice.js',
   'slow-notice.js', 'subtitles.js', 'tracks-menu.js', 'xray.js', 'modes.js', 'range-drag.js', 'controls.js',
-  'ctxmenu.js', 'timefmt.js', 'abloop.js', 'autoplay.js', 'folder-rail.js', 'debug-probe.js', 'frame-player.js', 'player.js',
+  'ctxmenu.js', 'timefmt.js', 'abloop.js', 'autoplay.js', 'folder-rail.js', 'debug-probe.js', 'frame-player.js',
+  // The shared UI seam (docs/notes/player-ui-controller.md): pure state, then the UI helpers player.js calls.
+  'player-state.js', 'player-ui.js', 'player.js',
 ];
 /** The page's stylesheets, in order (inlined: src/extension.js inlineAssetsFor). */
 const CSS = ['player.css', 'folder-rail.css'];

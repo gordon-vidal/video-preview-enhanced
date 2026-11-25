@@ -81,12 +81,18 @@ for (let bits = 0; bits < 32; bits++) {
 }
 
 // every item runs a page action, and the key it shows is a key the page handles
-const MENU_ACTIONS = page.slice(page.indexOf('const MENU_ACTIONS = {'), page.indexOf('const ctxMenu = VpeCtxMenu.create'));
+const MENU_ACTIONS = page.slice(page.indexOf('const MENU_ACTIONS = {'), page.indexOf('const ctxMenu = VpePlayerUi.createContextMenu(VpeCtxMenu'));
 const every = [READY, { ...READY, playing: true, loop: true, abSet: true }, { ...READY, compareOpen: true }]
   .flatMap((s) => Menu.items(s)).filter((i) => !('sep' in i));
 for (const i of every) assert(new RegExp(`\\b${i.action}:`).test(MENU_ACTIONS), `the page handles ${i.action}`);
-const keyCase = { play: "case ' '", loop: "case 'r'", setA: "case 'a'", setB: "case 'b'", clearAB: "case 'Backspace'", saveFrame: "case 's'", copyTime: "case 't'" };
-for (const [id, c] of Object.entries(keyCase)) assert(every.some((i) => i.id === id) && page.includes(c), `${id}: its key is handled by the page (${c})`);
+// The keys go through the shared table (media/player-ui.js keyCommand) into the page's own KEY_ACTIONS handlers.
+const PUI = require('../../media/player-ui');
+const KEY_ACTIONS = page.slice(page.indexOf('const KEY_ACTIONS = {'), page.indexOf('};', page.indexOf('const KEY_ACTIONS = {')));
+const keyOf = { play: ' ', loop: 'r', setA: 'a', setB: 'b', clearAB: 'Backspace', saveFrame: 's', copyTime: 't' };
+for (const [id, key] of Object.entries(keyOf)) {
+  const cmd = PUI.keyCommand({ key });
+  assert(every.some((i) => i.id === id) && cmd && new RegExp(`\\b${cmd.action}:`).test(KEY_ACTIONS), `${id}: its key is handled by the page (${JSON.stringify(key)})`);
+}
 assert(page.includes("e.key === '?'") && page.includes("e.key === 'c' || e.key === 'C'") && page.includes("label: 'Compare', key: 'Shift+D'"), 'Ctrl+C, ? and Shift+D exist');
 
 // the native menu is gone: no webview/context entries, no ctx commands, no data-vscode-context

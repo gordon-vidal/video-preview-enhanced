@@ -1,17 +1,35 @@
 'use strict';
-// Millisecond tests for the shared webview UI controller (media/player-ui.js): its pure helpers, the FakeHost
-// protocol (tools/mockup/fake-host.js), and create() end to end over the REAL widgets (controls.js, folder-rail.js,
-// ctxmenu.js, abloop.js, autoplay.js) on a tiny permissive fake DOM. The fake DOM does not lay out or parse HTML:
-// it only lets the real code run so the adapter contracts (what the page posts, how it answers the host, which
-// bar controls follow the state) are checked without a browser or VS Code.
+// Millisecond tests for the shared webview UI seam (media/player-ui.js): the helpers media/player.js and
+// media/compare.js call in production (keys, bar buttons, step buttons, A–B pins, time readout, Picture size,
+// context menu, Folder Rail, Spotlight splitter / Split Wipe divider), the FakeHost protocol
+// (tools/mockup/fake-host.js), and create() end to end over the REAL widgets (controls.js, folder-rail.js,
+// ctxmenu.js, abloop.js, autoplay.js, picture.js, modes.js) on a tiny permissive fake DOM. Nothing decodes video:
+// the fake DOM does not lay out or parse HTML, it only lets the real code run so the gesture paths and the adapter
+// contracts (what the page posts, how it answers the host, which bar controls follow the state) are checked
+// without a browser or VS Code. docs/TESTING.md "UI and gesture tests without video" explains the split.
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const S = require('../../media/player-state');
 const PUI = require('../../media/player-ui');
 const { createFakeEngine } = require('../../tools/mockup/fake-engine');
 const { createFakeHost } = require('../../tools/mockup/fake-host');
 const { buildMockupHtml, SCENARIOS } = require('../../tools/mockup/render');
 
-// ---- 1. keyAction: the same keys as media/player.js / media/compare.js ----
+const T0 = Date.now();
+const ROOT = path.join(__dirname, '..', '..');
+const playerSrc = fs.readFileSync(path.join(ROOT, 'media', 'player.js'), 'utf8');
+const compareSrc = fs.readFileSync(path.join(ROOT, 'media', 'compare.js'), 'utf8');
+// The page scripts must still parse: the source checks below read them as text, so a clash with a page's own
+// names (Compare already had a `KEYS` of tile letters) would otherwise only show in a real webview.
+for (const [name, src] of [['player.js', playerSrc], ['compare.js', compareSrc]]) {
+  assert.doesNotThrow(() => new (require('vm').Script)(src, { filename: name }), `${name} parses`);
+}
+/** A page's key handler table (`const KEY_ACTIONS = { ... };`) as source text. */
+const keysOf = (src) => { const i = src.indexOf('const KEY_ACTIONS = {'); assert.ok(i > 0, 'the page has a KEY_ACTIONS table'); return src.slice(i, src.indexOf('\n  };', i)); };
+const hasHandler = (src, action) => new RegExp(`\\n    ${action}: `).test(keysOf(src));
+
+// ---- 1. keyCommand: one key table for the player, Compare and create() ----
 {
   const k = (key, mods = {}) => PUI.keyAction({ key, ...mods });
   assert.strictEqual(k(' '), 'playPause');
@@ -21,7 +39,7 @@ const { buildMockupHtml, SCENARIOS } = require('../../tools/mockup/render');
   assert.strictEqual(k('m'), 'mute');
   assert.strictEqual(k('R'), 'loop');
   assert.strictEqual(k('a'), 'setA');
-  assert.strictEqual(k('A', { shiftKey: true }), null, 'Shift+A is the audio track key, not A–B');
+  assert.strictEqual(k('A', { shiftKey: true }), 'setA', 'Shift+A: Compare sets A; the player\'s subtitle keys take it first');
   assert.strictEqual(k('b'), 'setB');
   assert.strictEqual(k('Z'), 'cyclePicture');
   assert.strictEqual(k('Z', { shiftKey: true }), null);
@@ -29,18 +47,216 @@ const { buildMockupHtml, SCENARIOS } = require('../../tools/mockup/render');
   assert.strictEqual(k('?'), 'keys');
   assert.strictEqual(k('Escape'), 'escape');
   assert.strictEqual(k('D', { shiftKey: true }), 'capture');
+  assert.strictEqual(k('D'), 'pickVideo', 'D without Shift (Caps Lock) picks, as d does');
   assert.strictEqual(k('N', { shiftKey: true }), 'nextVideo');
+  assert.strictEqual(k('N'), null);
   assert.strictEqual(k('P', { shiftKey: true }), 'prevVideo');
   assert.strictEqual(k(',', { ctrlKey: true }), null, 'modified keys are left to VS Code');
   assert.strictEqual(k('q'), null);
+  assert.deepStrictEqual(PUI.keyCommand({ key: 'ArrowLeft', shiftKey: true }), { action: 'jump', arg: { dir: -1, shift: true } });
+  assert.deepStrictEqual(PUI.keyCommand({ key: 'j' }), { action: 'skip', arg: -10 });
+  assert.deepStrictEqual(PUI.keyCommand({ key: ']' }), { action: 'rateStep', arg: 1 });
+  assert.deepStrictEqual(PUI.keyCommand({ key: 'ArrowDown' }), { action: 'volumeStep', arg: -0.05 });
+  assert.deepStrictEqual(PUI.keyCommand({ key: '7' }), { action: 'seekTenth', arg: 7 });
+  assert.strictEqual(PUI.keyCommand({ key: '[', ctrlKey: true, altKey: true }), null, 'Ctrl+Alt+[ is not a player key');
+  assert.deepStrictEqual(PUI.keyCommand({ key: '[', ctrlKey: true, altKey: true }, { altGr: true }), { action: 'rateStep', arg: -1 }, 'AltGr types [');
+  assert.strictEqual(PUI.keyCommand({ key: 'k', metaKey: true }, { altGr: true }), null, 'Cmd is never a player key');
+
+  // runKey: a missing handler or one that returns false leaves the key; anything else uses it.
+  const calls = [];
+  const table = { playPause: () => calls.push('pp'), seekTenth: (n) => (n === 0 ? false : calls.push(n)), fullscreen: (_a, e) => calls.push(e.repeat) };
+  assert.strictEqual(PUI.runKey({ key: ' ' }, table), true);
+  assert.strictEqual(PUI.runKey({ key: '0' }, table), false, 'a handler returning false is not handled');
+  assert.strictEqual(PUI.runKey({ key: '5' }, table), true);
+  assert.strictEqual(PUI.runKey({ key: 'f', repeat: true }, table), true, 'the event reaches the handler');
+  assert.strictEqual(PUI.runKey({ key: 'm' }, table), false, 'no handler: not handled');
+  assert.deepStrictEqual(calls, ['pp', 5, true]);
+
+  // The production pages run the same table: what each page handles (and deliberately does not).
+  const PARITY = [
+    // [key, mods, player handles, Compare handles]
+    [' ', {}, true, true], ['j', {}, true, true], ['ArrowRight', {}, true, true], [',', {}, true, true],
+    ['[', {}, true, true], ['ArrowUp', {}, true, true], ['Home', {}, true, true], ['End', {}, true, true],
+    ['m', {}, true, true], ['r', {}, true, true], ['f', {}, true, true], ['a', {}, true, true], ['b', {}, true, true],
+    ['z', {}, true, true], ['i', {}, true, true], ['+', {}, true, true], ['-', {}, true, true],
+    ['N', { shiftKey: true }, true, false], ['Backspace', {}, true, false], ['t', {}, true, false],
+    ['s', {}, true, false], ['c', {}, true, false], ['w', {}, true, false], ['d', {}, true, false],
+    ['D', { shiftKey: true }, true, true], ['5', {}, true, false], ['x', {}, false, true], ['Escape', {}, false, true],
+  ];
+  for (const [key, mods, inPlayer, inCompare] of PARITY) {
+    const c = PUI.keyCommand({ key, ...mods });
+    assert.ok(c, `${key} is a key`);
+    assert.strictEqual(hasHandler(playerSrc, c.action), inPlayer, `player ${key} -> ${c.action}`);
+    assert.strictEqual(hasHandler(compareSrc, c.action), inCompare, `Compare ${key} -> ${c.action}`);
+  }
+  for (const src of [playerSrc, compareSrc]) {
+    assert.ok(src.includes('VpePlayerUi.runKey(e, KEY_ACTIONS, { altGr })'), 'the page dispatches its keys through the shared table');
+    assert.ok(!/switch \(e\.key\) \{\s*case ' ': case 'k'/.test(src), 'no second copy of the key switch');
+    // Every handler name a page defines is one keyCommand produces (a typo would silently never run).
+    const known = new Set(['playPause', 'skip', 'jump', 'prevFrame', 'nextFrame', 'rateStep', 'volumeStep', 'home', 'end',
+      'mute', 'loop', 'fullscreen', 'nextVideo', 'prevVideo', 'setA', 'setB', 'clearAB', 'copyTime', 'cyclePicture', 'plus',
+      'minus', 'info', 'saveFrame', 'cc', 'scopes', 'swap', 'pickVideo', 'capture', 'keys', 'escape', 'seekTenth']);
+    for (const [, name] of keysOf(src).matchAll(/\n {4}(\w+): /g)) assert.ok(known.has(name), `KEY_ACTIONS.${name} is a keyCommand action`);
+  }
 }
 
-// ---- 2. formatTime: clock, timecode, frame number ----
+// ---- 2. Time readout, time formats, picture button, copy details ----
 {
   assert.strictEqual(PUI.formatTime(48, 24, 0), '0:02.00');
-  assert.strictEqual(PUI.formatTime(48, 24, 2), '#48');
+  assert.strictEqual(PUI.formatTime(48, 24, 2), 'frame 49', 'frame numbers count from 1, as on the bar');
   assert.strictEqual(PUI.formatTime(48, 24, 1, (f, r) => `tc${f}@${r}`), 'tc48@24');
   assert.strictEqual(PUI.formatTime(1500, 24, 0), '1:02.50');
+  const base = { f: 48, t: 2, dur: 10, fps: 24, nFrames: 240, fmtClock: (s) => `c${s}`, fmtTimecode: (f, r) => `tc${f}@${r}` };
+  assert.deepStrictEqual(PUI.timeReadout({ ...base, mode: 0 }), { now: 'c2', dur: '/ c10' });
+  assert.deepStrictEqual(PUI.timeReadout({ ...base, mode: 1 }), { now: 'tc48@24', dur: '/ tc240@24' });
+  assert.deepStrictEqual(PUI.timeReadout({ ...base, mode: 1, fps: 0 }), { now: 'c2', dur: '/ c10' }, 'no timecode without a frame rate');
+  assert.deepStrictEqual(PUI.timeReadout({ ...base, mode: 2 }), { now: 'frame 49', dur: '/ 240' });
+  assert.deepStrictEqual(PUI.timeReadout({ ...base, mode: 2, nFrames: 0 }), { now: 'frame 49', dur: '/ ?' });
+  assert.deepStrictEqual(PUI.timeReadout({ ...base, mode: 1, live: true }), { now: 'c2', dur: '· LIVE' }, 'a live stream has no end');
+  assert.deepStrictEqual([0, 1, 2].map(PUI.nextTimeMode), [1, 2, 0]);
+  assert.deepStrictEqual(PUI.TIME_MODE_NAMES, ['Time', 'Timecode', 'Frame number']);
+  for (const src of [playerSrc, compareSrc]) {
+    assert.ok(src.includes('VpePlayerUi.timeReadout({'), 'the page draws the time through the shared readout');
+    assert.ok(src.includes('VpePlayerUi.TIME_MODE_NAMES['), 'the time click toasts the shared names');
+  }
+
+  const VpePicture = require('../../media/picture');
+  const btn = { dataset: {}, title: '', attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
+  PUI.pictureButton(btn, VpePicture, 'fit');
+  assert.strictEqual(btn.dataset.mode, 'fit');
+  assert.match(btn.title, /^Picture size: Fit \([^)]+\)\. Click for Fill {2}Z$/);
+  assert.strictEqual(btn.attrs['aria-label'], 'Picture size: Fit. Next: Fill');
+  PUI.pictureButton(btn, VpePicture, 'actual', 'all videos');
+  assert.match(btn.title, /^Picture size: 100% \([^)]+\), all videos\. Click for Fit {2}Z$/, 'Compare names its scope');
+  assert.doesNotThrow(() => PUI.pictureButton(null, VpePicture, 'fit'));
+
+  assert.strictEqual(PUI.copyInfoText({ title: 'a.mp4', sub: 'H.264', rows: [['Size', '1920×1080'], ['FPS', '24']] }), 'a.mp4\nH.264\nSize: 1920×1080\nFPS: 24');
+}
+
+// ---- 2b. Bar buttons, step buttons, A–B pins, menu, rail, Compare gestures: the shared helpers ----
+{
+  // bindButtons: the onclick property (production) or a listener (create), with the stop flag per entry.
+  const mk = () => ({ onclick: null, on: [] });
+  const play = mk(), cog = mk();
+  const ran = [];
+  PUI.bindButtons([[play, () => ran.push('play')], [cog, () => ran.push('cog'), true], [null, () => ran.push('none')]]);
+  let stopped = 0;
+  play.onclick({ stopPropagation: () => stopped++ });
+  cog.onclick({ stopPropagation: () => stopped++ });
+  cog.onclick();
+  assert.deepStrictEqual(ran, ['play', 'cog', 'cog']);
+  assert.strictEqual(stopped, 1, 'only entries with stop keep the click from the stage');
+  const added = [];
+  PUI.bindButtons([[play, () => ran.push('x'), true]], (el, fn) => added.push([el, fn]));
+  assert.strictEqual(added.length, 1);
+  assert.strictEqual(added[0][0], play);
+
+  // stepBy: the badge's size, else one frame / the Ctrl+arrow jump (setting stepButtons).
+  const VpeControls = require('../../media/controls');
+  const moves = [];
+  const go = { step: (n) => moves.push(['f', n]), skip: (s) => moves.push(['s', s]) };
+  PUI.stepBy(VpeControls, { stepSize: null, stepButtons: 'frame', jump: { ctrl: 10 } }, 1, go);
+  PUI.stepBy(VpeControls, { stepSize: 'frames5', stepButtons: 'frame', jump: { ctrl: 10 } }, -1, go);
+  PUI.stepBy(VpeControls, { stepSize: 5, stepButtons: 'frame', jump: { ctrl: 10 } }, 1, go);
+  PUI.stepBy(VpeControls, { stepSize: null, stepButtons: 'jump', jump: { ctrl: 10 } }, -1, go);
+  assert.deepStrictEqual(moves, [['f', 1], ['f', -5], ['s', 5], ['s', -10]]);
+  for (const src of [playerSrc, compareSrc]) assert.ok(src.includes('VpePlayerUi.stepBy(VpeControls, prefs,'), 'the page steps through stepBy');
+
+  // bindStepBadges: the badge opens the size popover and never reaches the step button.
+  const badge = { l: {}, addEventListener(t, fn) { this.l[t] = fn; } };
+  const opened = [];
+  PUI.bindStepBadges([badge, null], (b) => opened.push(b));
+  let badgeStopped = false;
+  badge.l.click({ stopPropagation: () => { badgeStopped = true; } });
+  assert.deepStrictEqual([opened[0] === badge, badgeStopped], [true, true]);
+
+  // bindAbPins over a fake VpeAbLoop: the pin follows the snapped frame, the tip says where, commit only when ready.
+  const bound = {};
+  const fakeAb = { bindPin: (pin, which, cfg) => { bound[which] = { pin, cfg }; } };
+  const pinA = { style: {} }, pinB = { style: {} };
+  const tip = { style: {}, hidden: true, textContent: '' };
+  const seek = { getBoundingClientRect: () => ({ left: 100, width: 400 }) };
+  let ready = false;
+  const commits = [];
+  PUI.bindAbPins(fakeAb, { a: pinA, b: pinB, seek, tip }, {
+    ready: () => ready, n: () => 101, fps: () => 25, dur: () => 4, tipLabel: (s) => `t${s.t}`,
+    commit: (w, s) => commits.push([w, s.f]), end: () => commits.push('end'),
+  });
+  assert.deepStrictEqual(Object.keys(bound), ['a', 'b']);
+  assert.strictEqual(bound.a.cfg.n(), 0, 'no video yet: no frames');
+  bound.a.cfg.move('a', { f: 50, t: 2 }, 300);
+  assert.strictEqual(pinA.style.left, undefined, 'no move before the video is ready');
+  bound.a.cfg.commit('a', { f: 50, t: 2 });
+  assert.deepStrictEqual(commits, []);
+  ready = true;
+  bound.b.cfg.move('b', { f: 50, t: 2 }, 300);
+  assert.strictEqual(pinB.style.left, '50%');
+  assert.deepStrictEqual([tip.textContent, tip.style.left, tip.hidden], ['B t2 · #51', '200px', false]);
+  bound.b.cfg.move('b', { f: 0, t: 0 }, 0);
+  assert.strictEqual(tip.style.left, '30px', 'the tip stays on the bar');
+  bound.b.cfg.commit('b', { f: 50, t: 2 });
+  bound.b.cfg.end();
+  assert.deepStrictEqual(commits, [['b', 50], 'end']);
+  assert.strictEqual(PUI.pinPercent({ f: 0, t: 1 }, 1, 4), 25, 'one frame: by time');
+  assert.strictEqual(PUI.pinPercent({ f: 0, t: 1 }, 0, 0), 0);
+
+  // createContextMenu: menu items run the page's named actions; unknown items do nothing.
+  let menuEnv = null;
+  const fakeMenu = { create: (env) => { menuEnv = env; return { env }; } };
+  const hits = [];
+  PUI.createContextMenu(fakeMenu, { menu: 'm', getState: () => ({}), actions: { copyTime: () => hits.push('t') } });
+  menuEnv.run('copyTime');
+  menuEnv.run('nope');
+  assert.deepStrictEqual(hits, ['t']);
+  assert.ok(!('container' in menuEnv), 'no container unless the page gives one (ctxmenu.js defaults to body)');
+
+  // createFolderRail: null without #rail or the script (URLs, image sequences), else the real rail's options.
+  let railOpts = null;
+  const fakeRail = { create: (o) => { railOpts = o; return { go: (d) => hits.push(`go${d}`) }; } };
+  const docWith = (has) => ({ getElementById: (id) => (has && id === 'rail' ? {} : null) });
+  assert.strictEqual(PUI.createFolderRail(fakeRail, docWith(false), {}), null);
+  assert.strictEqual(PUI.createFolderRail(null, docWith(true), {}), null);
+  const doc = docWith(true);
+  const rail = PUI.createFolderRail(fakeRail, doc, { compare: true });
+  assert.deepStrictEqual([railOpts.doc, railOpts.compare], [doc, true]);
+  const posted = [];
+  PUI.goNeighbour(rail, (m) => posted.push(m), 1);
+  PUI.goNeighbour(null, (m) => posted.push(m), -1);
+  assert.deepStrictEqual([hits.pop(), posted], ['go1', [{ type: 'neighbour', d: -1 }]], 'the rail when there is one, else the host');
+
+  // Spotlight splitter and Split Wipe divider: pointer and keys, by dock.
+  assert.strictEqual(PUI.spotlightRatioAt('top', 0, 100, 400, 400), 0.25);
+  assert.strictEqual(PUI.spotlightRatioAt('bottom', 0, 100, 400, 400), 0.75);
+  assert.strictEqual(PUI.spotlightRatioAt('left', 300, 0, 400, 400), 0.75);
+  assert.strictEqual(PUI.spotlightRatioAt('right', 300, 0, 400, 400), 0.25);
+  const kr = (key, dock, shiftKey = false) => PUI.spotlightKeyRatio({ key, shiftKey }, dock, 0.5, 0.1, 0.9);
+  assert.ok(Math.abs(kr('ArrowDown', 'top') - 0.55) < 1e-9);
+  assert.ok(Math.abs(kr('ArrowDown', 'bottom') - 0.45) < 1e-9);
+  assert.ok(Math.abs(kr('ArrowUp', 'top', true) - 0.4) < 1e-9, 'Shift: 10 %');
+  assert.ok(Math.abs(kr('ArrowRight', 'left') - 0.55) < 1e-9);
+  assert.ok(Math.abs(kr('ArrowLeft', 'right') - 0.55) < 1e-9);
+  assert.strictEqual(kr('ArrowLeft', 'top'), null, 'across the dock: not a splitter key');
+  assert.deepStrictEqual([kr('Home', 'top'), kr('End', 'left'), kr('x', 'top')], [0.1, 0.9, null]);
+  const sk = (key, shiftKey = false) => PUI.splitKeyRatio({ key, shiftKey }, 0.5);
+  assert.ok(Math.abs(sk('ArrowRight') - 0.51) < 1e-9);
+  assert.ok(Math.abs(sk('ArrowDown') - 0.49) < 1e-9);
+  assert.ok(Math.abs(sk('ArrowLeft', true) - 0.4) < 1e-9);
+  assert.ok(Math.abs(sk('PageUp') - 0.6) < 1e-9);
+  assert.deepStrictEqual([sk('Home'), sk('End'), sk('Enter')], [0, 1, null]);
+
+  // The production pages call these helpers rather than carrying their own copies.
+  const uses = {
+    player: [playerSrc, ['bindButtons([', 'bindStepBadges(', 'bindAbPins(self.VpeAbLoop', 'pictureButton(ui.picBtn',
+      'copyInfoText(d)', 'createContextMenu(VpeCtxMenu', 'createFolderRail(', 'goNeighbour(rail']],
+    compare: [compareSrc, ['bindButtons([', 'bindStepBadges(', 'bindAbPins(self.VpeAbLoop', 'pictureButton(ui.picBtn',
+      'copyInfoText(d)', 'createFolderRail(', 'spotlightRatioAt(st.dock', 'spotlightKeyRatio(e, st.dock', 'splitKeyRatio(e, st.split']],
+  };
+  for (const [name, [src, calls]] of Object.entries(uses)) {
+    for (const c of calls) assert.ok(src.includes(`VpePlayerUi.${c}`), `${name}: calls VpePlayerUi.${c}`);
+    for (const old of ['self.VpeAbLoop.bindPin(', 'VpeCtxMenu.create(', 'VpeFolderRail.create(', 'ui.play.onclick =', 'ui.picBtn.onclick =']) {
+      assert.ok(!src.includes(old), `${name}: no local copy of ${old}`);
+    }
+  }
 }
 
 // ---- 3. applyHostMessage: the pure half of host -> page ----
@@ -232,7 +448,13 @@ const fakeDom = () => {
       VpeAbLoop: require('../../media/abloop'),
       VpeAutoplay: require('../../media/autoplay'),
       VpeTime: require('../../media/timefmt'),
+      VpePicture: require('../../media/picture'),
+      VpeModes: require('../../media/modes'),
     };
+    // Capture the env the controller hands the real ctxmenu.js, to run its items as a click on them would.
+    let menuEnv = null;
+    const realMenu = widgets.VpeCtxMenu;
+    widgets.VpeCtxMenu = { ...realMenu, create: (env) => { menuEnv = env; return realMenu.create(env); } };
     const engine = createFakeEngine();
     const drawn = [];
     const spyEngine = { ...engine, draw: (cv, id, frame, opts) => drawn.push({ id, frame, split: opts && opts.splitClipRatio }) };
@@ -282,6 +504,13 @@ const fakeDom = () => {
     assert.strictEqual($('now').textContent, widgets.VpeTime.fmtTimecode(120, 24));
     $('picBtn').fire('click');
     assert.strictEqual(ui.getPrefs().picMode, 'fill', 'Picture size cycles');
+    assert.strictEqual($('picBtn').dataset.mode, 'fill', 'the button follows (shared pictureButton)');
+    assert.match($('picBtn').title, /^Picture size: Fill .*Click for Stretch {2}Z$/);
+    $('time').fire('click');
+    assert.deepStrictEqual([$('now').textContent, $('dur').textContent], ['frame 121', '/ 241'], 'frame numbers, as in the player');
+    $('time').fire('click');
+    assert.strictEqual(ui.getPrefs().timeMode, 0, 'back to the clock');
+    assert.strictEqual($('now').textContent, '0:05.00');
 
     // Keyboard shortcuts.
     const key = (k, mods = {}) => dom.doc.fire('keydown', { key: k, target: dom.doc.body, ...mods });
@@ -301,7 +530,70 @@ const fakeDom = () => {
     assert.strictEqual(ui.ab.isSet(), false, 'Backspace clears A–B');
     key('r');
     assert.strictEqual(ui.getPrefs().onEnd, 'loop', 'R loops');
-    const typed = dom.doc.fire('keydown', { key: ',', target: { tagName: 'INPUT' } });
+
+    // The rest of the shared key table (media/player-ui.js keyCommand), as media/player.js runs it.
+    key('Home');
+    assert.strictEqual(tab().frame, 0, 'Home');
+    key('End');
+    assert.strictEqual(tab().frame, tab().maxFrame, 'End');
+    key('5');
+    assert.strictEqual(tab().frame, 120, '5 jumps to 50 %');
+    key('Home');
+    key('l');
+    assert.strictEqual(tab().frame, 240, 'L skips 10 s');
+    key('j');
+    assert.strictEqual(tab().frame, 0, 'J skips back 10 s');
+    key('ArrowRight');
+    assert.strictEqual(tab().frame, 120, '→ jumps 5 s');
+    key('ArrowLeft', { shiftKey: true });
+    assert.strictEqual(tab().frame, 96, 'Shift+← jumps 1 s');
+    const rate0 = ui.getPrefs().rate;
+    key(']');
+    assert.ok(ui.getPrefs().rate > rate0, '] speeds up');
+    key('[');
+    assert.strictEqual(ui.getPrefs().rate, rate0, '[ slows down');
+    const altGr = dom.doc.fire('keydown', { key: ']', ctrlKey: true, altKey: true, target: dom.doc.body, getModifierState: (m) => m === 'AltGraph' });
+    assert.strictEqual(altGr.defaultPrevented, true, 'AltGr+] (typed ]) is a player key');
+    key('[');
+    const ctrlKey = dom.doc.fire('keydown', { key: ',', ctrlKey: true, target: dom.doc.body });
+    assert.strictEqual(ctrlKey.defaultPrevented, undefined, 'Ctrl+, goes to VS Code');
+    const vol0 = ui.getPrefs().volume;
+    key('ArrowDown');
+    assert.ok(Math.abs(ui.getPrefs().volume - (vol0 - 0.05)) < 1e-9, '↓ lowers the volume');
+    key('ArrowUp');
+    const copies = host.log.filter((m) => m.type === 'copyText').length;
+    key('t');
+    assert.strictEqual(host.log.filter((m) => m.type === 'copyText').length, copies + 1, 'T copies the time');
+    key('s');
+    assert.ok(host.log.some((m) => m.type === 'saveFrame'), 'S asks the host to save the frame');
+    const unknown = dom.doc.fire('keydown', { key: 'q', target: dom.doc.body });
+    assert.strictEqual(unknown.defaultPrevented, undefined, 'unknown keys are left alone');
+
+    // A–B pins: the real abloop.js drag over the shared bindAbPins (the same path as both pages).
+    $('abA').fire('pointerdown', { clientX: 340, pointerId: 1, button: 0 });
+    assert.strictEqual($('abA').style.left, '50%', 'the pin follows the pointer to the nearest frame');
+    assert.match($('tip').textContent, /^A 0:05\.00 · #121$/, 'the tip names the end, the time and the frame');
+    $('abA').fire('pointerup', { clientX: 340, pointerId: 1 });
+    assert.strictEqual(ui.ab.a, 5, 'dropping the pin sets A at that frame');
+    assert.strictEqual($('tip').hidden, true, 'the tip goes away');
+    key('Backspace');
+
+    // Right-click menu items run the same actions as the keys (the env ctxmenu.js gets).
+    assert.deepStrictEqual([menuEnv.getState().ready, menuEnv.getState().compareOpen], [true, false]);
+    menuEnv.run('setA');
+    assert.ok(ui.ab.isSet(), 'menu: Set Range Start');
+    menuEnv.run('clearAB');
+    assert.strictEqual(ui.ab.isSet(), false, 'menu: Clear A–B Range');
+    menuEnv.run('copyTime');
+    assert.strictEqual(host.log.filter((m) => m.type === 'copyText').length, copies + 2, 'menu: Copy Timestamp');
+    menuEnv.run('cog');
+    assert.strictEqual(ui.controls.view(), 'main', 'menu: Settings… opens ⚙');
+    key('Escape');
+    $('stage').fire('contextmenu', { clientX: 20, clientY: 20 });
+    assert.strictEqual(ui.ctxMenu.isOpen(), true, 'a right-click on the stage opens the menu');
+    key('Escape');
+    assert.strictEqual(ui.ctxMenu.isOpen(), false, 'Esc closes it');
+    const typed = dom.doc.fire('keydown', { key: ',', target: { nodeType: 1, tagName: 'INPUT', type: 'text' } });
     assert.strictEqual(typed.defaultPrevented, undefined, 'keys typed into the rail filter are left alone');
     key('?');
     assert.strictEqual(ui.controls.sheetOpen(), true, '? opens the shortcuts sheet');
@@ -337,11 +629,42 @@ const fakeDom = () => {
     assert.strictEqual($('folderCap').hidden, true, 'the folder capsule hides in Compare');
     const tilesMsg = host.log.filter((m) => m.type === 'tiles').pop();
     assert.deepStrictEqual(tilesMsg.tiles, ['clip-2', 'clip-0']);
+    assert.strictEqual(menuEnv.getState().compareOpen, true, 'the menu offers Add to Compare now');
+
+    // Cell DOM reuse: playback ticks redraw the same .cell nodes, so a click or double-click mid-playback lands.
+    const cellsEl = $('cells');
+    const nCells = cellsEl.children.length;
+    const cellOf = (id) => cellsEl.children.slice(-tab().tiles.length).find((c) => c.dataset.clip === id);
+    const cellA = cellOf('clip-2');
+    assert.ok(cellA && cellOf('clip-0'), 'one cell per tile');
+    $('play').fire('click');
+    const drawn0 = drawn.length;
+    for (let i = 0; i < 5; i++) dom.timers.filter(Boolean)[0].fn();
+    assert.strictEqual(cellsEl.children.length, nCells, 'ticks do not rebuild the cells');
+    assert.strictEqual(cellOf('clip-2'), cellA, 'the same node');
+    assert.ok(drawn.length >= drawn0 + 10, 'each tick draws both tiles');
+    cellA.fire('click', {});
+    assert.strictEqual(tab().playing, false, 'a click on a tile mid-playback pauses');
+    cellA.fire('dblclick', {});
+    assert.deepStrictEqual([tab().layout, tab().spotlightId], ['spotlight', 'clip-2'], 'double-click enlarges that tile');
+    key('Escape');
+    assert.strictEqual(tab().layout, 'grid', 'Esc collapses Spotlight');
 
     $('splitBtn').fire('click');
     assert.strictEqual(tab().layout, 'split', 'Split Wipe');
     assert.strictEqual($('divider').hidden, false, 'the divider shows');
     assert.ok(drawn.some((d) => d.split === tab().split), 'tile B is drawn clipped at the divider');
+    // The divider: Compare's keys (shared splitKeyRatio) and a drag.
+    const sp0 = tab().split;
+    $('divider').fire('keydown', { key: 'ArrowRight' });
+    assert.ok(Math.abs(tab().split - (sp0 + 0.01)) < 1e-9, '→ moves the divider 1 %');
+    $('divider').fire('keydown', { key: 'End' });
+    assert.strictEqual(tab().split, 0.95, 'End: as far as player-state allows');
+    $('divider').fire('pointerdown', {});
+    dom.win.fire('pointermove', { clientX: 170, clientY: 10 });
+    dom.win.fire('pointerup', {});
+    assert.strictEqual(tab().split, 0.25, 'dragging the divider');
+    assert.strictEqual(dom.win.listenerCount('pointermove'), 0, 'the drag lets go of the window');
     $('syncBtn').fire('click');
     assert.strictEqual(tab().syncMode, true);
 
@@ -350,11 +673,22 @@ const fakeDom = () => {
     ui.dispatch('layout', 'spotlight');
     assert.strictEqual(tab().layout, 'spotlight');
     assert.strictEqual($('splitter').hidden, false, 'the Spotlight splitter shows');
+    // The splitter: Compare's keys (shared spotlightKeyRatio) and a drag along the dock (shared spotlightRatioAt).
+    const hr0 = tab().heroRatio;
+    $('splitter').fire('keydown', { key: 'ArrowDown' });
+    assert.ok(Math.abs(tab().heroRatio - Math.min(0.9, hr0 + 0.05)) < 1e-9, '↓ grows the main tile (dock top)');
+    $('splitter').fire('keydown', { key: 'Home' });
+    assert.ok(Math.abs(tab().heroRatio - 0.1) < 1e-9, 'Home: smallest');
+    $('splitter').fire('pointerdown', {});
+    dom.win.fire('pointermove', { clientX: 0, clientY: 111 });
+    dom.win.fire('pointerup', {});
+    assert.ok(Math.abs(tab().heroRatio - 0.3) < 1e-9, 'dragging the splitter');
     key('Escape');
     key('Escape');
     assert.strictEqual(tab().layout, 'grid', 'Esc collapses Spotlight once the panels are closed');
 
-    ui.dispatch('pickVideo');
+    key('d');
+    assert.ok(host.log.some((m) => m.type === 'pickVideo'), 'D asks the host for another video');
     assert.strictEqual(tab().tiles.length, 3, '+ Add video asks the host and joins its answer');
     ui.dispatch('nudge', 'clip-0', 2);
     assert.strictEqual(tab().offsets['clip-0'], 2);
@@ -394,4 +728,6 @@ for (const key of Object.keys(SCENARIOS)) {
   }
 }
 
-console.log('player_ui_test: ok');
+const ms = Date.now() - T0;
+assert.ok(ms < 5000, `the UI seam is checked in milliseconds, not by playing video (${ms} ms)`);
+console.log(`player_ui_test: ok (${ms} ms, no video decoded)`);
