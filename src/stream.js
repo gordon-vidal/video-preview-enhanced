@@ -857,7 +857,7 @@ class EncodedStream {
   /** At the lowest tier the link still can't keep up: stay there (no fallback) and tell the user once. */
   slowLink(detail) {
     this.log(`remote stream: the link can't carry the lowest quality${this.pr.audio ? ' with its sound' : ''} (${detail}); staying at ${this.h}p`);
-    this.notice('slow', `The connection is too slow for this video${this.pr.audio ? ` with its sound (${this.audioEncoder ? 'Opus, about 0.13' : 'uncompressed, about 1.5'} Mb/s)` : ''}, even at ${this.h}p: playback may stutter.`);
+    this.notice('slow', `The connection is too slow for this video${this.pr.audio ? ' with its sound' : ''}, even at ${this.h}p. Playback may pause to load.`);
   }
 
   /** A notice in the webview, once per stream and kind. */

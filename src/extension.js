@@ -461,12 +461,13 @@ function maybeShowDriverNotice(t, notice, nvidiaDriver) {
   const key = `${t.ffmpeg}|${t.version || ''}|${nvidiaDriver || ''}`;
   const seen = globalState.get(DRIVER_NOTICE_KEY) || {};
   if (seen[key]) return;
+  if (offers && offers.popupPending()) return;
   seen[key] = Date.now();
   globalState.update(DRIVER_NOTICE_KEY, seen).then(undefined, () => {});
   const text = transcodePolicy.driverNoticeText(notice);
-  log(`[live transcode] ${text}`);
-  vscode.window.showInformationMessage(text, 'Set Up Optional ffmpeg').then((ans) => {
-    if (ans === 'Set Up Optional ffmpeg') setupFfmpeg();
+  log(`[live transcode] ${text}${notice.requiredApi && notice.foundApi ? ` (NVENC API ${notice.requiredApi} vs ${notice.foundApi})` : ''}`);
+  vscode.window.showInformationMessage(text, 'Got it', 'Set up ffmpeg').then((ans) => {
+    if (ans === 'Set up ffmpeg') setupFfmpeg();
   }, () => {});
 }
 
@@ -855,6 +856,7 @@ function activate(context) {
       }
     },
     downloadRemoteFfmpeg,
+    openSettings: (id) => vscode.commands.executeCommand('workbench.action.openSettings', id),
     hostPlatform, hostArch, hostname: () => os.hostname(), sessions,
   });
   // A method guessed from the stored GPUs produced no picture: maybe another GPU or driver now; detect again.
@@ -2531,7 +2533,7 @@ class Session {
       const n = this.native;
       const fullResolution = 'Switch to Full Resolution (This Tab)';
       const ok = await vscode.window.showWarningMessage(
-        `Native ffmpeg decodes this video at ${n.w}×${n.h} (${n.deep ? 10 : 8}-bit) for smooth playback. Exported PNGs will use this playback picture.`,
+        `This video plays at ${n.w}×${n.h} (${n.deep ? 10 : 8}-bit) for smooth playback. Exported PNGs will use this reduced picture.`,
         { modal: true }, fullResolution, 'Export Anyway');
       if (signal.aborted) return;
       if (ok === fullResolution) {

@@ -147,9 +147,9 @@ function listAll(dir) {
 
     // The offer says what Live transcode does and that the build is matched to the host.
     const text = rf.offerText({ codec: 'hevc', host: 'box', mb: 135 });
-    assert.match(text, /^HEVC plays in the built-in decoder in this window/);
-    assert.match(text, /Live transcode decodes it there .*GPU.* streams a lighter H\.264 version/);
-    assert.match(text, /LGPL build matched to box's GPU driver/);
+    assert.match(text, /^HEVC plays slowly in this remote window/);
+    assert.match(text, /With ffmpeg on box, Live transcode plays it smoothly/);
+    assert.match(text, /Download portable ffmpeg \(~135 MB, no admin\) into the extension's folder on box\?/);
     assert.ok(!/remote stream/i.test(text), 'no pre-Live-transcode wording');
     assert.match(rf.offerText({ host: 'box', mb: 135 }), /^This video plays/);
 
@@ -226,7 +226,7 @@ function listAll(dir) {
     await x.soft();
     await x.s.until(() => x.h.context.globalState.get(managed), 10000);
     assert.strictEqual(x.offers.length, 1, 'asked once');
-    assert.match(x.offers[0].text, /HEVC plays in the built-in decoder.*Live transcode.*Download ffmpeg \(~135 MB, LGPL build matched to .*, no admin\)/);
+    assert.match(x.offers[0].text, /HEVC plays slowly in this remote window.*Live transcode.*Download portable ffmpeg \(~135 MB, no admin\)/);
     assert.deepStrictEqual(x.offers[0].items, [rf.OFFER_DOWNLOAD, rf.OFFER_LATER, rf.OFFER_NEVER]);
     const rec = x.h.context.globalState.get(managed);
     assert.ok(rec.ffmpeg.startsWith(storage2) && /linuxarm64/.test(rec.ffmpeg), rec.ffmpeg);
