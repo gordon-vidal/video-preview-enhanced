@@ -94,8 +94,10 @@
 
   /**
    * A follower already decoding for this step gets to show its picture before a correction.
-   * @param {{gen: number, seekTarget: number | null, pauseT: number, shownT: number | null,
-   *   eof: boolean} & ({nextQueuedT: number | null} | {queue: {t: number}[]})} tile
+   * A picture shown before the tile's last seek or jump (current false) does not continue into its queue: it is
+   * never kept, whatever its time.
+   * @param {{gen: number, seekTarget: number | null, pauseT: number, shownT: number | null, eof: boolean,
+   *   current?: boolean} & ({nextQueuedT: number | null} | {queue: {t: number}[]})} tile
    * @param {number} target @param {number} early @param {number} [stepGen]
    */
   function followerSeekAction(tile, target, early, stepGen) {
@@ -103,7 +105,8 @@
     const shownFits = tile.shownT !== null && tile.shownT <= target + early + 1e-6;
     if (tile.gen === stepGen && (tile.seekTarget !== null
       || (next !== null ? next <= tile.pauseT + early : shownFits && !tile.eof))) return 'wait';
-    if (tile.seekTarget === null && shownFits && (next !== null ? next > target + early : tile.eof)) return 'keep';
+    if (tile.seekTarget === null && shownFits && tile.current !== false
+      && (next !== null ? next > target + early : tile.eof)) return 'keep';
     return 'seek';
   }
   // checkJs: end

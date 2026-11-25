@@ -168,6 +168,22 @@
     return `<button class="${cls}" data-act="remove" data-i="${i}" aria-label="${label}" title="${confirming ? 'Click again to remove' : 'Remove from Compare'}">${confirming ? 'Remove?' : icon}</button>`;
   }
 
+  /**
+   * The ⓘ details card's top-right close button. It reuses the pill's 'info' action, so closing toggles the same
+   * per-tile state (statsIds) and the ⓘ button's aria-pressed follows on the next render.
+   */
+  function statsCloseHtml(i, letter, icon) {
+    const label = `Close details for ${letter}`;
+    return `<button class="tile-stats-close" type="button" data-act="info" data-i="${i}" aria-label="${label}" title="Close details">${icon}</button>`;
+  }
+
+  /** Toggle a tile's details card; returns whether it is now open. */
+  function toggleStats(ids, i) {
+    if (ids.has(i)) { ids.delete(i); return false; }
+    ids.add(i);
+    return true;
+  }
+
   /** cubic-bezier(0.2, 0, 0, 1) (the tiles' glide) at progress p of 0-1: x solved by bisection, then y. */
   function easeStandard(p) {
     if (!(p > 0)) return 0;
@@ -378,7 +394,8 @@
     clampMax, clampHeroRatio, clampDock, detectEdgeDock, spotlightLayout, tileStatsRows,
     isLarge, gridFor, gridCellCount,
     tileOrder, moveTile, orderAfterRemoval, tileMemory, texturePixels, capSize, nativeCredits, nativeQueuePerTile,
-    compareVisibility, reorderSession, canRemoveTile, removeButtonHtml, easeStandard, createGlide,
+    compareVisibility, reorderSession, canRemoveTile, removeButtonHtml, statsCloseHtml, toggleStats, easeStandard,
+    createGlide,
   };
   const commonJs = /** @type {{ exports?: typeof api } | undefined} */ (
     // @ts-ignore The webview has no CommonJS globals.

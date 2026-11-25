@@ -33,9 +33,10 @@ function setup() {
   const b = tile('B', 20);
   const offsets = [0, 0];
   const tiles = [a, b];
-  const sync = new CompareSyncController({ tiles: () => tiles, offset: (i) => offsets[i], sound: () => 1 });
+  const clockMs = { now: 0 };
+  const sync = new CompareSyncController({ tiles: () => tiles, offset: (i) => offsets[i], sound: () => 1, now: () => clockMs.now });
   sync.setClock(0, true);
-  return { a, b, sync, offsets };
+  return { a, b, sync, offsets, clockMs };
 }
 
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`);
@@ -118,4 +119,69 @@ const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9,
   assert.equal(a.loop, true);
 }
 
-console.log('compare sync: VFR, lag hold, range bounds, FPS discovery, clock switching');
+{
+  // A follower whose next picture is not due yet (seek landing, VFR gap) does not hold the clock: holding would freeze
+  // its time before that picture for good.
+  const { a, b, sync } = setup();
+  a.play();
+  sync.syncPlaying(); // B seeks with the clock
+  a.holds.length = 0;
+  Object.assign(a.state, { shownT: 15, seekTarget: null });
+  Object.assign(b.state, { shownT: 20.3, seekTarget: null, nextQueuedT: 25 + 1 / 30 });
+  sync.syncPlaying();
+  assert.equal(sync.waiting, false, 'the next picture comes with the clock, not by holding it');
+  assert.deepEqual(a.holds, []);
+  b.state.nextQueuedT = 25; // due: it catches up on its next tick, the clock waits for that
+  sync.syncPlaying();
+  assert.equal(sync.waiting, true);
+  assert.deepEqual(a.holds, [15]);
+}
+
+{
+  // A follower that never delivers (a remote seek or stream that stalls) holds the group for STALL_MS at most.
+  const { a, b, sync, clockMs } = setup();
+  a.play();
+  sync.syncPlaying();
+  Object.assign(a.state, { shownT: 15 });
+  b.state.seekTarget = 25;
+  sync.syncPlaying();
+  assert.equal(sync.waiting, true);
+  clockMs.now = 2900;
+  sync.syncPlaying();
+  assert.equal(sync.waiting, true, 'a slow seek still holds');
+  clockMs.now = 3100;
+  sync.syncPlaying();
+  assert.equal(sync.waiting, false, 'no progress for 3 s: the others play on');
+  Object.assign(b.state, { seekTarget: null, shownT: 20.5, shownCount: 2, nextQueuedT: 20.6 });
+  sync.syncPlaying();
+  assert.equal(sync.waiting, true, 'progress: it holds the group again while it catches up');
+  clockMs.now = 3200;
+  Object.assign(b.state, { shownT: 25, nextQueuedT: 25.1 });
+  sync.syncPlaying();
+  assert.equal(sync.waiting, false);
+}
+
+{
+  // The clock's picture is about to jump (seek within its decoded frames): no hold at the old picture.
+  const { a, b, sync } = setup();
+  a.play();
+  sync.syncPlaying();
+  a.holds.length = 0;
+  Object.assign(a.state, { shownT: 11, current: false });
+  b.state.seekTarget = 21;
+  sync.syncPlaying();
+  assert.deepEqual(a.holds, []);
+  a.state.current = true;
+  sync.syncPlaying();
+  assert.deepEqual(a.holds, [11]);
+}
+
+{
+  // Paused: a follower whose picture predates its last seek is sought, not kept, even when the time would fit.
+  const { b, sync } = setup();
+  Object.assign(b.state, { shownT: 21, pauseT: 25, nextQueuedT: 25 + 1 / 30, current: false });
+  sync.seekFollowers(4);
+  near(b.seeks[0], 4 + 0.25 / 30);
+}
+
+console.log('compare sync: VFR, lag hold, range bounds, FPS discovery, clock switching, stall and stale pictures');
