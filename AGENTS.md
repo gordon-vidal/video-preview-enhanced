@@ -26,13 +26,13 @@ build dependencies, no build step. Works locally, in WSL and over Remote-SSH.
 | Path | What |
 |---|---|
 | `src/` | Extension host (Node, CommonJS): activation, custom editor, ffmpeg setup, remote streaming, settings |
-| `media/` | Webview player (browser scripts, workers): `player.js`, `engine.js`, `compare.js`, scopes, thumbs; `media/libav-vpe/` is the prebuilt WebAssembly decoder (do not hand-edit) |
+| `media/` | Webview player (browser scripts, workers): `player.js`, `player-state.js` (pure unified player/compare state), `engine.js`, `compare.js`, scopes, thumbs; `media/libav-vpe/` is the prebuilt WebAssembly decoder (do not hand-edit) |
 | `test/host/`, `test/engine/` | Layers 1-2: Node tests. `node test/run.js unit engine` runs them |
 | `test/vscode/` | Layers 3-4: real VS Code on a hidden desktop (Windows). `cases/` are the scenarios |
 | `test/subtitles`, `test/timestretch`, `test/inspect` | More Node unit tests that CI runs |
 | `test/media/` | Test clips (Git LFS) and generators; licences in `test/media/LICENSES.md` |
 | `docs/` | User docs, `PRODUCT.md` (product truth), `TESTING.md` (test truth), `RELEASING.md`, `REVIEW.md`, `adr/` (signed-off decisions), `notes/` (design notes) |
-| `tools/`, `review.cmd`, `review.sh` | Maintainer helpers (`review.cmd` / `review.sh` = visible review profile; humans only) |
+| `tools/`, `review.cmd`, `review.sh` | Maintainer helpers (`tools/mockup/` = reusable interactive UI mockup harness using real CSS/bar/state; `review.cmd` / `review.sh` = visible review profile; humans only) |
 | `build/libav/` | Scripts that rebuild the WebAssembly decoder (Linux/WSL only; rarely needed) |
 | `.private-context/` | Git-ignored maintainer notes, local only (see below) |
 
@@ -91,9 +91,7 @@ before releases or in performance work.
   `CHANGELOG.md`. README claims and numbers must match a measured run.
 - `docs/PRODUCT.md` is the product source of truth. A change that contradicts it needs the
   maintainer's decision first.
-- **UI changes**: do not restyle or rearrange the player on your own. Describe the change in a design
-  note in `docs/notes/` (problem, mock-up or screenshot via the hidden-desktop `test/vscode/screenshot.js`,
-  keys and a11y names) and open it as a PR for review, or ask first.
+- **UI changes & testable 3-way separation**: keep **UI shell** (`src/bar.js`, `media/player.css`, `media/compare.css`), **pure state** (`media/player-state.js`, zero DOM/VS Code/decoder — verified in milliseconds in Node via `test/host/player_state_test.js`), and **decoder/host engine** cleanly separated. Do not restyle or rearrange the player on your own. Whenever you do UI/UX work, **always contribute to the reusable mockup harness (`tools/mockup/render.js`)** (which inlines the real CSS, bar markup, and `player-state.js` over `tools/mockup/fake-engine.js`) rather than hand-crafting throwaway HTML, and follow `.claude/skills/ui-mockup/SKILL.md`. Describe the change in a design note in `docs/notes/` (problem, mock-up or screenshot via `tools/mockup/` or the hidden-desktop `test/vscode/screenshot.js`, keys and a11y names) and open it as a PR for review, or ask first.
 - Code: `'use strict'`, 2 spaces, LF, about 120 columns; comments say why. No new runtime
   dependencies. Put logic in small modules a Node test can load without VS Code or a browser.
 - Test media must be openly licensed (no NC/ND) and credited in `test/media/LICENSES.md`;
@@ -131,5 +129,5 @@ chat shared outside this machine. If it is absent, work from the public docs onl
 
 Project skills live in `.claude/skills/<name>/SKILL.md` (auto-discovered by Claude Code; other
 agents should read the relevant `SKILL.md` directly before running tests, debugging decode issues,
-adding a format, releasing, updating docs, or writing user-facing notices): `run-tests`,
-`reproduce-decode-bug`, `add-format`, `release-checklist`, `update-docs`, `ui-notices`.
+adding a format, releasing, updating docs, writing user-facing notices, or building UI mockups): `run-tests`,
+`reproduce-decode-bug`, `add-format`, `release-checklist`, `update-docs`, `ui-notices`, `ui-mockup`.
