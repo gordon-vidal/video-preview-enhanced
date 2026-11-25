@@ -155,10 +155,16 @@ const { SCENARIOS, buildMockupHtml } = require('../../tools/mockup/render');
     assert.ok(html.includes('<!DOCTYPE html>'), `${key}: valid HTML doctype`);
     assert.ok(html.includes('VpePlayerState'), `${key}: inlines real media/player-state.js`);
     assert.ok(html.includes('CompareGrid'), `${key}: inlines real media/compare-grid.js`);
+    assert.ok(html.includes('VpeControls'), `${key}: inlines real media/controls.js`);
+    assert.ok(html.includes('VpeFolderRail'), `${key}: inlines real media/folder-rail.js`);
+    assert.ok(html.includes('VpeCtxMenu'), `${key}: inlines real media/ctxmenu.js`);
+    assert.ok(html.includes('id="rail"'), `${key}: includes real Folder Rail markup`);
+    assert.ok(html.includes('id="panel"'), `${key}: includes real Controls panel markup`);
+    assert.ok(html.includes('id="ctxmenu"'), `${key}: includes real Context Menu markup`);
     assert.ok(html.includes('#bar'), `${key}: inlines real player.css + bar.js`);
     assert.ok(html.includes('#cells'), `${key}: inlines real compare.css`);
     assert.ok(html.includes('id="startCompareBtn"'), `${key}: uses real src/bar.js Compare button`);
-    const markupOnly = html.slice(0, html.indexOf('<script>'));
+    const markupOnly = html.slice(0, html.indexOf('<script'));
     assert.ok(!markupOnly.includes('undefined'), `${key}: no stray undefined in generated markup`);
     assert.ok(!/\b\d+(?:\.\d+)?vh\b/i.test(markupOnly), `${key}: no vh units (safe for inline html_render)`);
   }
