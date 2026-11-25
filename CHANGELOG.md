@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed frozen playback after some H.264 seeks and incorrect timing in long recordings. Exact-frame tools respond sooner on long videos, ffmpeg tests work with Live transcode tabs open, and deleted folders, failed reads, and unexpected playback errors are handled more gracefully.
+
 - The extension package no longer includes local Git hook scripts (`.githooks/`) from the build machine.
 
 - **Folder rail:** a `‹ 2/5 ›` capsule on the bar (previous / next video; the count shows the rail) and a tab at the picture's right edge bring up a compact list of the folder beside the picture (or over it: setting `folderRail.layout`). Natural order, `..` to go up, a filter, **Playable formats**, a Duration / Size / Modified column, a hover card, a 1-click **Compare** on any other video and **Compare all videos in folder** on a folder. The rail works in Compare too: the tab at the right edge shows it, the clips in Compare are marked, and a click on a video (or a folder's Compare) adds or removes it. Browsing never changes what plays until you pick a video. Works locally, in WSL and over Remote-SSH ([details](docs/notes/folder-rail.md)).

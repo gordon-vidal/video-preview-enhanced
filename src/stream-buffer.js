@@ -202,7 +202,7 @@ class SeekHistoryBuffer {
               if (flags >= 2 && p + 14 <= off + 188) {
                 const hi = (buf[p + 9] >> 1) & 7;
                 const lo = ((buf[p + 10] << 22) | ((buf[p + 11] >> 1) << 15) | (buf[p + 12] << 7) | (buf[p + 13] >> 1)) >>> 0;
-                pts = (hi * 4294967296 + lo) / 90000;
+                pts = (hi * 2 ** 30 + lo) / 90000;
               }
               this.tsPts = pts;
               this.tsInUnit = true;

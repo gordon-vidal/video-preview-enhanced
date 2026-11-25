@@ -6,7 +6,7 @@
 // clipboard and "save" need), so local, WSL and Remote-SSH behave alike: the extension host runs ffmpeg next to
 // the file and only the PNG crosses the link.
 //
-//   ffmpeg -ss T-W -noautorotate -i FILE -map 0:v:0 -frames:v 1 -vf select,reverse,[transpose],scale=in_color_matrix=M -f image2pipe -c:v png -
+//   ffmpeg -ss T-W -t W+0.5 -noautorotate -i FILE -map 0:v:0 -frames:v 1 -vf select,reverse,[transpose],scale=in_color_matrix=M -f image2pipe -c:v png -
 //
 // Input-side -ss seeks a little before T and the filter keeps the last frame at or before T: the source frame the
 // player shows (also in a VFR hold, where an accurate seek to T alone would give the next frame). Rotation is applied like the page does (the stream is -noautorotate, the page turns it).
@@ -64,10 +64,12 @@ function exactFrameArgs(file, t, o = {}) {
   const index = Number.isInteger(video.index) ? video.index : (Number.isInteger(o.index) ? o.index : 0);
   const time = Math.max(0, Number(t) || 0) + 0.0005; // rounding of the page's time must not skip the frame
   const ss = Math.max(0, time - (o.window || 0.1));
+  // Leave room for reordered frames while bounding the input consumed before reverse emits.
+  const inputDuration = (time - ss + 0.5).toFixed(4);
   const vf = [`select=lte(t\\,${(time - ss).toFixed(4)})`, 'reverse', ...rotationFilters(o.rotation || 0),
     `scale=in_color_matrix=${matrixFor(video)}:flags=accurate_rnd+full_chroma_int`, 'format=rgb24'];
   return ['-hide_banner', '-loglevel', 'error', '-nostdin', '-noautorotate', '-protocol_whitelist', 'file',
-    ...(ss > 0 ? ['-ss', ss.toFixed(4)] : []), '-i', file, '-map', `0:${index}`, '-an', '-sn', '-dn',
+    ...(ss > 0 ? ['-ss', ss.toFixed(4)] : []), '-t', inputDuration, '-i', file, '-map', `0:${index}`, '-an', '-sn', '-dn',
     '-frames:v', '1', '-vf', vf.join(','), '-f', 'image2pipe', '-c:v', 'png', '-compression_level', '1', '-'];
 }
 

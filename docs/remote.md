@@ -13,7 +13,7 @@ The current desktop run also showed 30 fps for the 4K HEVC 10-bit fixture with `
 
 During single-player Live transcode playback, quality upgrades, bitrate cap changes and larger picture sizes can switch to a pre-started encoder while the audio continues. If the replacement cannot start or misses the switch point, the video encoder restarts at the next frame. Quality drops on a slow link restart immediately.
 
-Live transcode keeps recently played regions in host memory. Jumping back to a cached region can reuse its picture and sound without starting ffmpeg. Playback resumes transcoding as it runs past the cached data.
+Live transcode keeps recently played regions in host memory. Jumping back to a cached region can reuse its picture and sound without starting ffmpeg. Playback resumes transcoding as it runs past the cached data. If a Direct Stream seek lands where the video decoder cannot start, Live transcode re-encodes the picture so playback can resume.
 
 In Auto resolution, a new single-video tab can start at the quality recently used on the same remote connection. That memory expires after ten minutes and clears when the extension host restarts. Remote playback buffers further ahead when memory allows and waits for sustained recovery before raising quality after a drop.
 

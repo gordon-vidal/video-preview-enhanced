@@ -831,6 +831,13 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
       dsPlays.push({ mode: ds.pipelineMode, directStream: p.directStream, argv });
       return p;
     };
+    assert.strictEqual(ds.busy(), false, 'an unopened stream does not delay the ffmpeg test');
+    ds.audioProc = mkFakeProc();
+    ds.account(0, 0);
+    assert.strictEqual(ds.busy(), true, 'recent audio batches count as active transcoding');
+    ds.sentAt = Date.now() - 5000;
+    assert.strictEqual(ds.busy(), false, 'a buffered, stalled stream does not delay the ffmpeg test');
+    ds.audioProc = null;
     ds.fps = 30;
     ds.playing = true;
     ds.proc = mkFakeProc();
@@ -849,6 +856,47 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     // Real-ffmpeg smoke test on test/media/h264_8_1080p.mp4 and test/media/containers/h264_aac.mkv (both have B-frames).
     const tools = await ff.locateTools(process.env.VPE_FFMPEG || '', '');
     if (tools) {
+      const fs = require('node:fs');
+      const os = require('node:os');
+      const { spawnSync } = require('node:child_process');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-open-gop-'));
+      try {
+        const file = path.join(dir, 'open-gop.mp4');
+        const made = spawnSync(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30',
+          '-t', '7', '-c:v', 'libx264', '-threads', '1', '-x264-params', 'open-gop=1:keyint=90:scenecut=0', file],
+        { encoding: 'utf8', timeout: 20000 });
+        assert.strictEqual(made.status, 0, made.error?.message || made.stderr);
+        const pr = await ff.probe(tools, file);
+        let st;
+        try {
+          const first = await new Promise((resolve, reject) => {
+            st = new EncodedStream({
+              tools, file, probed: pr, remote: true, maxHeight: 1080,
+              encoder: 'libx264', cpuEncoder: 'libx264', log: () => {},
+              onFail: (message) => reject(new Error(message)),
+              post: (m) => {
+                if (m.type !== 'batch') return;
+                if (m.video.length) resolve(m.video[0]);
+                else if (m.eof) reject(new Error('stream ended without a picture'));
+                else setImmediate(() => st.more({ gen: 0 }));
+              },
+            });
+            assert.strictEqual(st.pipelineMode, 'direct-stream');
+            st.fps = pr.video.fps;
+            st.sizeVideo();
+            st.startAt(3.5);
+            st.more({ gen: 0 });
+          });
+          assert.notStrictEqual(st.pipelineMode, 'direct-stream', 'open-GOP restart falls back before shipping packets');
+          assert.ok(first.key && args.parseSpsProfileLevel(first.data), 'replacement starts with a decodable picture');
+          assert.strictEqual(first.t, 3.5, 'fallback preserves the seek target');
+        } finally {
+          st?.dispose();
+        }
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+
       const clips = [
         path.join(__dirname, '..', 'media', 'h264_8_1080p.mp4'),
         path.join(__dirname, '..', 'media', 'containers', 'h264_aac.mkv'),

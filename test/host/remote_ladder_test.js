@@ -139,10 +139,12 @@ assert.ok(PCM_KBPS === 1536, `PCM ${PCM_KBPS}`);
   rs.settleAt = Date.now() + 60000;
   for (let i = 0; i < 6; i++) rs.adapt(bad(500));
   assert.strictEqual(rs.tier, 0);
-  // After a step, restartVideo() clears settleAt until ffmpeg's first output (checked in the source).
+  rs.proc = null;
+  rs.spawnVideo = () => {};
+  delete rs.restartVideo;
+  rs.restartVideo();
+  assert.strictEqual(rs.settleAt, Infinity, 'a restart ignores link samples until first output');
   const src = require('fs').readFileSync(require.resolve('../../src/stream'), 'utf8');
-  const restart = src.slice(src.indexOf('  restartVideo() {'), src.indexOf('  restartVideo() {') + 1200);
-  assert.match(restart, /this\.link\.resetForRestart\(\)/);
   assert.match(src, /this\.link\.resetForSeek\(Date\.now\(\)\); \/\/ the buffer refills after any seek/);
 }
 

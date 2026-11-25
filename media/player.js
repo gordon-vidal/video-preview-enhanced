@@ -310,8 +310,23 @@
       && !scrubbing && !seekDragger.dragging() && !volumeDragger.dragging()
       && insp.idle() && !scopes.mode() && !(xray && xray.isShown()) && !exactNeeded();
   }
+  let lastFrameError = -Infinity;
   function frameLoop(now) {
     if (pageClosed) return;
+    try {
+      frameTick(now);
+    } catch (e) {
+      quietSince = null;
+      if (now - lastFrameError >= 1000) {
+        lastFrameError = now;
+        log('player frame:', e instanceof Error ? e.stack || e.message : e);
+      }
+    } finally {
+      if (loopOn && !pageClosed) requestAnimationFrame(frameLoop);
+    }
+  }
+
+  function frameTick(now) {
     loopStats.frames++;
     let changed = false;
     if (player) {
@@ -341,7 +356,6 @@
     if (changed || !restful()) quietSince = null;
     else if (quietSince === null) quietSince = now;
     else if (now - quietSince > REST_AFTER_MS) { loopOn = false; loopStats.rests++; if (debugProbe) debugProbe.wake(); return; }
-    requestAnimationFrame(frameLoop);
     if (debugProbe) debugProbe.wake();
   }
   requestAnimationFrame(frameLoop);

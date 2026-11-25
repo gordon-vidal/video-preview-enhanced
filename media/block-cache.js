@@ -31,11 +31,12 @@
     const readers = new Map(/** @type {[ReaderId, number][]} */ ([]));
     let bytes = 0;
     let disposed = false;
+    let retryAfter = 0;
     /** @type {number | null} */
     let timer = null;
 
     function requestBlock(/** @type {number} */ pos, retry = false) {
-      if (pos >= size || blocks.has(pos) || inflight.has(pos)) return;
+      if (pos >= size || blocks.has(pos) || inflight.has(pos) || clock.now() < retryAfter) return;
       inflight.set(pos, { at: clock.now(), retry });
       request({ type: 'readBlock', page, pos, len: blockSize });
     }
@@ -57,7 +58,9 @@
     }
 
     function armTimer() {
-      if (waiting.size && timer === null) timer = clock.set(retryReads, 5000);
+      if (!waiting.size || timer !== null) return;
+      const cooldown = retryAfter - clock.now();
+      timer = clock.set(retryReads, cooldown > 0 ? cooldown : 5000);
     }
 
     function retryReads() {
@@ -108,6 +111,9 @@
       if (disposed) return;
       inflight.delete(pos);
       if (error || !data?.byteLength) {
+        // A decoder can ask again immediately after the empty reply. Hold that read
+        // for the retry timer so a persistent disk error cannot spin the host.
+        retryAfter = clock.now() + 1000;
         log(`block ${pos}: ${error || 'no data'}`);
         failBlock(pos);
         return;

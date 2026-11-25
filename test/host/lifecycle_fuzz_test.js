@@ -129,12 +129,25 @@ async function runSuiteA(rng, tmpDir) {
   }
 
   try {
-    const first = h.open(file);
-    const firstSession = host.lastActivePlayer();
+    const watch = fs.watch;
+    let first;
+    let firstSession;
+    let emitFirstWatchEvent;
+    try {
+      fs.watch = (dir, onEvent) => {
+        emitFirstWatchEvent = onEvent;
+        return watch(dir, onEvent);
+      };
+      first = h.open(file);
+      firstSession = host.lastActivePlayer();
+      await first.shown;
+    } finally {
+      fs.watch = watch;
+    }
     const second = h.open(file);
     const session = host.lastActivePlayer();
-    await Promise.all([first.shown, second.shown]);
-    firstSession.watcher.emit('change', 'change', path.basename(file));
+    await second.shown;
+    emitFirstWatchEvent('change', path.basename(file));
     assert.ok(firstSession.watchTimer);
     first.panel.dispose();
     assert.strictEqual(firstSession.watchTimer, null);

@@ -566,6 +566,18 @@ class EncodedStream {
 
   watchVideo(proc, overlap = null) {
     const t0 = Date.now();
+    const first = this.vAll.length;
+    let checkedStart = false;
+    const checkDirectStart = () => {
+      if (checkedStart || !this.vAll[first]) return true;
+      checkedStart = true;
+      if (spliceKeyframe(this.vAll[first])) return true;
+      // An open-GOP recovery point cannot start the webview decoder. Keep the original seek target.
+      this.log('live transcode: direct stream did not start with SPS/PPS and IDR; falling back to re-encoding');
+      this.directStreamFailed = true;
+      this.restartVideo(this.vBase);
+      return false;
+    };
     proc.stdout.on('data', (d) => {
       if (overlap && overlap === this.overlap) {
         const { buf } = overlap;
@@ -586,8 +598,10 @@ class EncodedStream {
       }
       this.gotOutput = true;
       this.pending = this.pending.length ? Buffer.concat([this.pending, d]) : d;
-      if (proc.directStream) this.buf.splitMpegTs(false);
-      else this.buf.split(false);
+      if (proc.directStream) {
+        this.buf.splitMpegTs(false);
+        if (!checkDirectStart()) return;
+      } else this.buf.split(false);
       if (this.spliceVideo()) return;
       if (this.vAll.length - this.vNext > MAX_QUEUED_SECONDS * this.fps) proc.stdout.pause();
       this.answer();
@@ -632,8 +646,10 @@ class EncodedStream {
         else this.fail(why);
         return;
       }
-      if (proc.directStream) this.buf.splitMpegTs(true);
-      else this.buf.split(true);
+      if (proc.directStream) {
+        this.buf.splitMpegTs(true);
+        if (!checkDirectStart()) return;
+      } else this.buf.split(true);
       if (this.spliceVideo()) return;
       // If the active encoder finished with frames already queued past spliceT, keep the overlap pending until ready.
       if (this.overlap && this.vAll.some((p, i) => i >= this.vNext && p.t >= this.overlap.spliceT - 0.5 / this.fps)) {
@@ -752,13 +768,12 @@ class EncodedStream {
   }
 
   /** Restart at the first unsent frame. The in-band IDR changes size without disturbing audio. */
-  restartVideo() {
+  restartVideo(next = this.nextVideoTime()) {
     this.cancelOverlap();
     this.takeStandby(NaN);
     const proc = this.proc;
     this.proc = null;
     this.stopProcess(proc);
-    const next = this.nextVideoTime();
     this.videoFragment = null;
     this.vBase = Math.round(next * this.fps) / this.fps;
     this.vAll.length = this.vNext;
@@ -930,9 +945,16 @@ class EncodedStream {
       videoEnd: this.videoEnded && this.vNext === this.vAll.length, hostWaitMs: Date.now() - this.waitingSince });
   }
 
+  /** Whether ffmpeg is actively supplying playback data or starting a run. */
+  busy() {
+    return !!(this.proc || this.audioProc)
+      && Date.now() - Math.max(this.sentAt || 0, (this.lastSpawnAt || 0) + 3000) < 1500;
+  }
+
   account(n, bytes) {
+    this.sentAt = Date.now();
     if (!this.stats) return;
-    const now = Date.now();
+    const now = this.sentAt;
     const st = this.st || (this.st = { t0: now, n: 0, bytes: 0 });
     st.n += n;
     st.bytes += bytes;

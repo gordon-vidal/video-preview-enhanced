@@ -281,7 +281,7 @@ function testSplitMpegTs() {
   const encodePts = (sec) => {
     const v = Math.round(sec * 90000);
     return Buffer.from([
-      0x21 | (((v / 4294967296) & 7) << 1),
+      0x21 | (((v / 2 ** 30) & 7) << 1),
       (v >>> 22) & 0xff,
       (((v >>> 15) & 0x7f) << 1) | 1,
       (v >>> 7) & 0xff,
@@ -291,7 +291,8 @@ function testSplitMpegTs() {
   const pes = (ptsSec, data) => Buffer.concat([Buffer.from([0, 0, 1, 0xe0, 0, 0, 0x80, 0x80, 5]), encodePts(ptsSec), data]);
   const idr = Buffer.from([0, 0, 0, 1, 0x65, 0x88, 0x99]);
   const bframe = Buffer.from([0, 0, 0, 1, 0x41, 0xaa, 0xbb]);
-  const stream = Buffer.concat([tsPkt(0x100, true, pes(0.12, idr)), tsPkt(0x100, true, pes(0.04, bframe))]);
+  const stream = Buffer.concat([tsPkt(0x100, true, pes(0.12, idr)), tsPkt(0x100, true, pes(0.04, bframe)),
+    tsPkt(0x100, true, pes(12000.25, idr))]);
   const b = fresh();
   // Feed in odd-sized chunks to test TS framing across chunk boundaries.
   for (let i = 0; i < stream.length; i += 73) {
@@ -299,7 +300,8 @@ function testSplitMpegTs() {
     b.splitMpegTs(false);
   }
   b.splitMpegTs(true);
-  assert.equal(b.vAll.length, 2);
+  assert.equal(b.vAll.length, 3);
+  assert.equal(b.vAll[2].t, 12000.25);
   assert.equal(b.vAll[0].key, true);
   assert.ok(Math.abs(b.vAll[0].t - 0.12) < 1e-4);
   assert.equal(b.vAll[1].key, false);

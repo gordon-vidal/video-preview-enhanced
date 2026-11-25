@@ -56,6 +56,7 @@ const { createFrameLink, sameFile, hlsPlanText } = require('./framelink'); // fr
 const { createDebugCommands } = require('./debug-cmd'); // the VPE_LOG test hook (<log>.cmd)
 const { linkSimulatorFromEnv, effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VPE_SIMULATE_REMOTE
 const { LinkSessionMemory } = require('./stream-adapt');
+const { watchFile } = require('./file-watch');
 const folderRail = require('./folder-rail'); // the folder rail, neighbours, Autoplay's next video, tab-swap handoff
 
 const HIDE_SLOW_PLAYBACK_NOTICE = 'videoPreviewEnhanced.hideSlowPlaybackNotice';
@@ -1250,10 +1251,10 @@ class Session {
   watch() {
     if (this.sequence || !FS_SCHEMES.has(this.uri.scheme)) return;
     let lastStamp = 0;
+    const onError = (e) => log(`[${this.name}] cannot watch for changes: ${e.message}`);
     try {
-      this.watcher = fs.watch(path.dirname(this.file), (_ev, name) => {
+      this.watcher = watchFile(this.file, () => {
         if (this.disposed) return;
-        if (name && name.toLowerCase() !== path.basename(this.file).toLowerCase()) return;
         clearTimeout(this.watchTimer);
         this.watchTimer = setTimeout(() => {
           this.watchTimer = null;
@@ -1264,10 +1265,10 @@ class Session {
             else this.dropEarly('file changed'); // the page's open() probes the new file
           });
         }, 800);
-      });
+      }, onError);
       fs.stat(this.file, (err, st) => { if (!err) lastStamp = st.mtimeMs; });
     } catch (e) {
-      log(`[${this.name}] cannot watch for changes: ${e.message}`);
+      onError(e);
     }
   }
 

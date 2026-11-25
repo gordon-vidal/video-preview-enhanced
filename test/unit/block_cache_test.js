@@ -100,6 +100,13 @@ for (const budget of [MiB, 4 * MiB]) {
   assert.equal(requests.length, 0);
   for (const error of ['invalid range', 'EIO']) {
     cache.read(6, 10, 'thumbs');
+    if (error === 'EIO') {
+      advance(999);
+      assert.equal(requests.length, 1, 'no host retry during cooldown');
+      assert.equal(replies.length, 2, 'leave the decoder waiting');
+      advance(1);
+      assert.equal(requests.length, 2, 'retry after cooldown');
+    }
     cache.receive(0, new Uint8Array(0), error);
     assert.equal(replies.at(-1).pos, 6);
     assert.equal(replies.at(-1).data.length, 0);
@@ -119,6 +126,17 @@ for (const budget of [MiB, 4 * MiB]) {
   advance(60000);
   assert.equal(requests.length, before);
   assert.equal(replies.length, 4);
+}
+
+{
+  const { cache, requests, replies, advance } = setup();
+  cache.read(0, 1, 'thumbs');
+  cache.receive(0, null, 'EIO');
+  cache.read(0, 1, 'thumbs');
+  advance(1000);
+  cache.receive(0, Uint8Array.of(7));
+  assert.equal(requests.length, 2);
+  assert.deepEqual([...replies.at(-1).data], [7]);
 }
 
 console.log('block cache checks passed');

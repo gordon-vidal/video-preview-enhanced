@@ -30,14 +30,16 @@ const opts = (over = {}) => ({ tools: { ffmpeg: 'ffmpeg' }, file: 'clip.mp4', t:
 
 function args() {
   const a = exactFrameArgs('a b.mp4', 12.3456, { video: { index: 2, height: 1080, colorSpace: 'bt709' }, rotation: 0 });
-  assert.deepEqual(a.slice(a.indexOf('-ss'), a.indexOf('-ss') + 4), ['-ss', '12.2461', '-i', 'a b.mp4'], 'seek 0.1 s + 0.5 ms before, file as one argument');
+  assert.deepEqual(a.slice(a.indexOf('-ss'), a.indexOf('-ss') + 6), ['-ss', '12.2461', '-t', '0.6000', '-i', 'a b.mp4'],
+    'bound the input after the seek so reverse does not read through EOF');
   assert.ok(a[a.indexOf('-vf') + 1].startsWith('select=lte(t\\,0.1000),reverse,'), 'the last frame at or before t');
   assert.deepEqual(windows({ fps: 50 }).map((w) => +w.toFixed(2)), [0.05, 2, 30]);
   assert.ok(a.includes('-noautorotate') && a.includes('0:2') && a.includes('png'), 'noautorotate, the video stream, PNG');
   assert.equal(a[a.length - 1], '-', 'PNG on stdout');
   assert.ok(a[a.indexOf('-vf') + 1].includes('in_color_matrix=bt709') && a[a.indexOf('-vf') + 1].endsWith('format=rgb24'));
   assert.ok(!exactFrameArgs('f.mp4', 0).includes('-ss'), 't = 0: no seek');
-  assert.ok(exactFrameArgs('f.mp4', 0).includes('-vf'));
+  const start = exactFrameArgs('f.mp4', 0);
+  assert.deepEqual(start.slice(start.indexOf('-i') - 2, start.indexOf('-i')), ['-t', '0.5005']);
   assert.deepEqual(rotationFilters(90), ['transpose=1']);
   assert.deepEqual(rotationFilters(180), ['hflip', 'vflip']);
   assert.deepEqual(rotationFilters(270), ['transpose=2']);
