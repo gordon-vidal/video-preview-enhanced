@@ -46,6 +46,9 @@ const { make } = require('../media/make_cases_media');
     assert.deepStrictEqual(compare.natives.map((n) => n.maxQueued), [queue, queue]);
 
     fs.copyFileSync(rotated, rewritten);
+    // s_h264.mp4 and rotated.mp4 have identical byte sizes; ensure a distinct mtime on coarse-clock filesystems.
+    const nextMtime = new Date(Date.now() + 2000);
+    fs.utimesSync(rewritten, nextMtime, nextMtime);
     await compare.reload();
     const rotation = await rotationOf(rotated);
     assert.ok(rotation > 0, 'rotated fixture');

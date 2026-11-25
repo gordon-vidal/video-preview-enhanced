@@ -75,7 +75,7 @@ async function rotationOf(file) {
   try {
     const stat = await fs.promises.stat(file);
     if (!stat.isFile()) return 0;
-    const stamp = `${stat.mtimeMs}:${stat.size}`;
+    const stamp = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
     const cached = rotationCache.get(file);
     if (cached?.stamp === stamp) return await cached.result;
     const result = readRotation(file, stat.size);
