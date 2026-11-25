@@ -28,8 +28,10 @@
       draw(canvas, clipId, frame, opts = {}) {
         const clip = byId.get(clipId) || clips[0];
         const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-        const w = Math.max(1, Math.round((canvas.clientWidth || 320) * dpr));
-        const h = Math.max(1, Math.round((canvas.clientHeight || 180) * dpr));
+        const cssW = Number(opts.width) > 0 ? Number(opts.width) : (canvas.clientWidth || 320);
+        const cssH = Number(opts.height) > 0 ? Number(opts.height) : (canvas.clientHeight || 180);
+        const w = Math.max(1, Math.round(cssW * dpr));
+        const h = Math.max(1, Math.round(cssH * dpr));
         if (canvas.width !== w || canvas.height !== h) {
           canvas.width = w;
           canvas.height = h;

@@ -35,7 +35,7 @@
    * @typedef {object} EngineAdapter
    * @property {ClipMeta[]} clips
    * @property {(id: string) => ClipMeta} getClip
-   * @property {(canvas: HTMLCanvasElement, clipId: string, frame: number, opts?: { splitClipRatio?: number | null }) => void} draw
+   * @property {(canvas: HTMLCanvasElement, clipId: string, frame: number, opts?: { width?: number, height?: number, splitClipRatio?: number | null }) => void} draw
    * @property {(clipId: string) => { title: string, sub: string, rows: string[][] }} [facts]
    */
   /**
@@ -628,57 +628,92 @@
     });
 
     // ---- the stage: one cell per tile, from deriveUi ----
+    // Reuse .cell DOM nodes across frame/seek/resize ticks so pointerdown -> pointerup clicks and dblclicks
+    // never drop mid-playback when the 42 ms play timer advances frames.
+    let lastCellsKey = '';
+    /** @type {Map<string, { cell: any, cv: any, frEl: any, offEl: any }>} */
+    const cellNodes = new Map();
+    /** @type {any} */
+    let addSlotNode = null;
+
     function renderCells(/** @type {any} */ t, /** @type {any} */ ui) {
       stageEl.classList.toggle('sync-mode', t.syncMode && ui.isMulti);
-      cellsEl.textContent = '';
-      for (const r of ui.cells) {
-        const cell = doc.createElement('div');
-        cell.className = `cell${r.role.startsWith('split') ? ' split' : ''}`;
-        cell.dataset.clip = r.clipId;
-        cell.dataset.role = r.role;
-        Object.assign(cell.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
-        if (r.role === 'split-b') cell.style.background = 'transparent';
-        const cv = doc.createElement('canvas');
-        cell.appendChild(cv);
-        if (ui.isMulti && ui.effectiveLayout !== 'split') cell.appendChild(Object.assign(doc.createElement('div'), { className: 'cell-border' }));
-        cell.addEventListener('click', (e) => {
-          if (/** @type {any} */ (e.target).closest('button')) return;
-          if (controls.anyOpen() || ctxMenu.isOpen()) { controls.closeAll(false); ctxMenu.close(false); return; }
-          act.playPause();
-        });
-        cell.addEventListener('dblclick', (e) => {
-          if (!ui.isMulti || ui.effectiveLayout === 'split' || /** @type {any} */ (e.target).closest('button')) return;
-          act.enlarge(r.clipId);
-        });
-        if (ui.isMulti) {
-          const ov = doc.createElement('div');
-          ov.className = 'ov';
-          const isHero = r.role === 'hero';
-          const off = t.offsets[r.clipId] || 0;
-          ov.innerHTML =
-            `<div class="${r.role === 'split-b' ? 'pill right' : 'pill'}"><span class="ltr">${r.letter}</span><span class="nm">${esc(clipName(r.clipId))}</span><span class="fr">#${t.frame + off}</span></div>`
-            + (ui.effectiveLayout !== 'split'
-              ? `<div class="tile-top-acts"><button type="button" class="tbtn" data-enlarge title="${isHero ? 'Back to grid' : 'Enlarge tile'}" aria-label="${isHero ? 'Back to grid' : 'Enlarge tile'} ${r.letter}">${isHero ? ICONS.collapse : ICONS.expand}</button>`
-                + `<button type="button" class="tbtn rm" data-rm title="Remove from compare" aria-label="Remove ${r.letter} from compare">${ICONS.close}</button></div>`
-              : '')
-            + `<div class="sync-pill"><button type="button" data-d="-1" aria-label="${r.letter} earlier">−</button><span>${off >= 0 ? '+' : ''}${off}f</span><button type="button" data-d="1" aria-label="${r.letter} later">+</button></div>`;
-          const on = (/** @type {string} */ sel, /** @type {(b: any) => void} */ fn) => ov.querySelectorAll(sel).forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); fn(b); }));
-          on('[data-enlarge]', () => act.enlarge(r.clipId));
-          on('[data-rm]', () => act.removeTile(r.clipId));
-          on('[data-d]', (b) => act.nudge(r.clipId, Number(b.dataset.d)));
-          cell.appendChild(ov);
+      const key = `${ui.isMulti ? 1 : 0}|${ui.effectiveLayout}|${ui.addSlot ? 1 : 0}|${ui.cells.map((/** @type {any} */ r) => `${r.clipId}:${r.role}:${r.letter}`).join(',')}`;
+      if (key !== lastCellsKey) {
+        lastCellsKey = key;
+        cellNodes.clear();
+        addSlotNode = null;
+        cellsEl.textContent = '';
+        for (const r of ui.cells) {
+          const cell = doc.createElement('div');
+          cell.className = `cell${r.role.startsWith('split') ? ' split' : ''}`;
+          cell.dataset.clip = r.clipId;
+          cell.dataset.role = r.role;
+          if (r.role === 'split-b') cell.style.background = 'transparent';
+          const cv = doc.createElement('canvas');
+          cell.appendChild(cv);
+          if (ui.isMulti && ui.effectiveLayout !== 'split') cell.appendChild(Object.assign(doc.createElement('div'), { className: 'cell-border' }));
+          cell.addEventListener('click', (/** @type {any} */ e) => {
+            if (e.target && e.target.closest && e.target.closest('button')) return;
+            if (controls.anyOpen() || ctxMenu.isOpen()) { controls.closeAll(false); ctxMenu.close(false); return; }
+            act.playPause();
+          });
+          cell.addEventListener('dblclick', (/** @type {any} */ e) => {
+            if (!ui.isMulti || ui.effectiveLayout === 'split' || (e.target && e.target.closest && e.target.closest('button'))) return;
+            act.enlarge(r.clipId);
+          });
+          /** @type {any} */
+          let frEl = null;
+          /** @type {any} */
+          let offEl = null;
+          if (ui.isMulti) {
+            const ov = doc.createElement('div');
+            ov.className = 'ov';
+            const isHero = r.role === 'hero';
+            ov.innerHTML =
+              `<div class="${r.role === 'split-b' ? 'pill right' : 'pill'}"><span class="ltr">${r.letter}</span><span class="nm">${esc(clipName(r.clipId))}</span><span class="fr"></span></div>`
+              + (ui.effectiveLayout !== 'split'
+                ? `<div class="tile-top-acts"><button type="button" class="tbtn" data-enlarge title="${isHero ? 'Back to grid' : 'Enlarge tile'}" aria-label="${isHero ? 'Back to grid' : 'Enlarge tile'} ${r.letter}">${isHero ? ICONS.collapse : ICONS.expand}</button>`
+                  + `<button type="button" class="tbtn rm" data-rm title="Remove from compare" aria-label="Remove ${r.letter} from compare">${ICONS.close}</button></div>`
+                : '')
+              + `<div class="sync-pill"><button type="button" data-d="-1" aria-label="${r.letter} earlier">−</button><span class="offv"></span><button type="button" data-d="1" aria-label="${r.letter} later">+</button></div>`;
+            const on = (/** @type {string} */ sel, /** @type {(b: any) => void} */ fn) => ov.querySelectorAll(sel).forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); fn(b); }));
+            on('[data-enlarge]', () => act.enlarge(r.clipId));
+            on('[data-rm]', () => act.removeTile(r.clipId));
+            on('[data-d]', (b) => act.nudge(r.clipId, Number(b.dataset.d)));
+            frEl = ov.querySelector('.fr');
+            offEl = ov.querySelector('.offv');
+            cell.appendChild(ov);
+          }
+          cellsEl.appendChild(cell);
+          cellNodes.set(r.clipId, { cell, cv, frEl, offEl });
         }
-        cellsEl.appendChild(cell);
-        engine.draw(cv, r.clipId, t.frame + (t.offsets[r.clipId] || 0), { splitClipRatio: r.role === 'split-b' ? t.split : null });
+        if (ui.addSlot) {
+          const slot = doc.createElement('div');
+          slot.className = 'cell add';
+          slot.innerHTML = '<button type="button" class="addcell">+ Add video</button>';
+          const b = slot.querySelector('button');
+          if (b) b.addEventListener('click', (e) => { e.stopPropagation(); act.pickVideo(); });
+          cellsEl.appendChild(slot);
+          addSlotNode = slot;
+        }
       }
-      if (ui.addSlot) {
-        const slot = doc.createElement('div');
-        slot.className = 'cell add';
-        Object.assign(slot.style, { left: `${ui.addSlot.x}px`, top: `${ui.addSlot.y}px`, width: `${ui.addSlot.w}px`, height: `${ui.addSlot.h}px` });
-        slot.innerHTML = '<button type="button" class="addcell">+ Add video</button>';
-        const b = slot.querySelector('button');
-        if (b) b.addEventListener('click', (e) => { e.stopPropagation(); act.pickVideo(); });
-        cellsEl.appendChild(slot);
+
+      for (const r of ui.cells) {
+        const entry = cellNodes.get(r.clipId);
+        if (!entry) continue;
+        Object.assign(entry.cell.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+        const off = t.offsets[r.clipId] || 0;
+        if (entry.frEl) entry.frEl.textContent = `#${t.frame + off}`;
+        if (entry.offEl) entry.offEl.textContent = `${off >= 0 ? '+' : ''}${off}f`;
+        engine.draw(entry.cv, r.clipId, t.frame + off, {
+          width: r.w,
+          height: r.h,
+          splitClipRatio: r.role === 'split-b' ? t.split : null,
+        });
+      }
+      if (ui.addSlot && addSlotNode) {
+        Object.assign(addSlotNode.style, { left: `${ui.addSlot.x}px`, top: `${ui.addSlot.y}px`, width: `${ui.addSlot.w}px`, height: `${ui.addSlot.h}px` });
       }
     }
 

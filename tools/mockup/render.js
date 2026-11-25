@@ -191,7 +191,7 @@ html, body {
 #main { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
 #stage { flex: 1; min-width: 0; min-height: 0; background: #000; position: relative; overflow: hidden; }
 .cell { cursor: pointer !important; transition: left 160ms cubic-bezier(0.2,0,0,1), top 160ms cubic-bezier(0.2,0,0,1), width 160ms cubic-bezier(0.2,0,0,1), height 160ms cubic-bezier(0.2,0,0,1); }
-.cell canvas { width: 100%; height: 100%; display: block; }
+#stage.fit .cell canvas, #stage .cell canvas { width: 100%; height: 100%; max-width: none; max-height: none; display: block; }
 .cell-border { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
 .cell.add .addcell { opacity: 0.45; border-style: dashed; }
 .cell.add:hover .addcell { opacity: 1; }
