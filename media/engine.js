@@ -100,6 +100,8 @@ function createEngine(env) {
       this.playing = false;
       this.pauseT = 0; // absolute media time while paused
       this.shownT = null;
+      // The shown picture predates the queue (a seek or jump since): frames between them were never shown.
+      this.shownStale = false;
       this.seekTarget = null;
       this.seekBefore = null;
       this.seekGoalFrame = null;
@@ -1206,6 +1208,8 @@ function createEngine(env) {
       const ready = seekTarget === null && shownT !== null && startT !== null;
       return Object.freeze({
         startT, shownT, pauseT, seekTarget, nextQueuedT, eof, gen, fps, shownCount: this.shownCount || 0,
+        // Whether the shown picture continues into the queue: false from a seek or jump until its first picture shows.
+        current: shownT !== null && (!this.shownStale || this.vmode === 'none'),
         firstFrameReady: ready && shownT === startT && due < startT + 0.75 / fps,
         settled: ready && shownT <= due + 1e-6 && (nextQueuedT === null ? eof : nextQueuedT > due),
       });
@@ -1247,6 +1251,7 @@ function createEngine(env) {
       }
       // A new generation: compare's followers resync on it (review 2026-11-19-4 #1). The worker is idle at EOF.
       this.gen++;
+      this.shownStale = true;
       this.queue = cache.video.slice();
       this.stopAudio();
       for (const a of cache.audio) a.src = null;
@@ -1751,6 +1756,7 @@ function createEngine(env) {
           show.vf.close();
         } else this.gl.drawYuv(show.yuv);
         this.shownT = show.t;
+        this.shownStale = false;
         this.shownCount = (this.shownCount || 0) + 1;
         // The clock held for this first picture (now()): it runs from here, not from when playback was asked for.
         if (firstPending) { this.stopAudio(); this.anchor(now); }
@@ -1955,6 +1961,7 @@ function createEngine(env) {
       this.eof = false;
       this.requesting = true;
       this.seekTarget = this.vmode === 'none' ? null : t; // no picture: nothing would clear it
+      this.shownStale = true;
       this.seekBefore = null;
       this.seekStartMs = performance.now();
       this.pauseT = t;
@@ -1986,6 +1993,7 @@ function createEngine(env) {
       this.requesting = true;
       this.seekTarget = null;
       this.seekBefore = null;
+      this.shownStale = true;
       if (this.vdec) { try { this.vdec.close(); } catch { /* closed */ } this.makeVideoDecoder(); }
       if (this.adec) { try { this.adec.close(); } catch { /* closed */ } this.makeAudioDecoder(); }
       this.stopAudio();
@@ -2008,6 +2016,7 @@ function createEngine(env) {
       if (!force && this.queue.length && t >= this.queue[0].t - 1e-3 && t <= this.queue[this.queue.length - 1].t && (this.shownT === null || t >= this.shownT)) {
         while (this.queue.length > 1 && this.queue[1].t <= t + 1e-3) this.release(this.queue.shift());
         this.dropBack();
+        this.shownStale = true; // the frames skipped over were never shown
         this.pauseT = t;
         this.stopAudio();
         this.anchor(t);

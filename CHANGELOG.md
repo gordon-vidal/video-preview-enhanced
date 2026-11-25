@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Compare playback and stepping:** seeking forward while playing no longer freezes every video when one of them lands on a picture just after the others (it could wait forever, most often over Remote-SSH); a video that stalls holds the others for 3 s at most; and stepping back after such a seek no longer leaves a video on its old picture.
+
 ## 0.12.0 (2026-11-25)
 
 Compact Folder Rail in both single-video and Compare views, new Autoplay modes (Off / Play next in folder / Loop), Compare deep links (`vscode://.../compare`), per-video Live transcode resolution picker, seek-bar keyframe previews and cached seeks during Live transcode, major slow-SSH responsiveness upgrades (128 KB bounded pipe, ~3 KB JPEG host thumbnails, session link memory, deeper remote buffer, GOP step-back caching), plus recovery fixes for damaged H.264 streams, open-GOP Direct Stream seeks, long-recording timestamps, exact-frame timeouts, and Windows folder-watch cleanup.
