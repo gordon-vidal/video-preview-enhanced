@@ -9,6 +9,8 @@ const suite = () => require('../suite');
 
 module.exports = [{
   name: 'open-formats',
+  // Short clips (1-2 s) must keep playing for the fps windows: Autoplay no longer loops by default.
+  settings: { 'videoPreviewEnhanced.onEnd': 'loop' },
   async run(vs, h) {
     const { CLIPS, wcprobe, playClip } = suite();
     const out = [];
@@ -29,6 +31,8 @@ module.exports = [{
 }, {
   name: 'open-native',
   ffmpeg: true,
+  // Short clips (1-2 s) must keep playing for the fps windows: Autoplay no longer loops by default.
+  settings: { 'videoPreviewEnhanced.onEnd': 'loop' },
   async run(vs, h) {
     const { NATIVE_CLIPS, playClip } = suite();
     const out = [];

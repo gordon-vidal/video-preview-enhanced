@@ -36,10 +36,12 @@ async function playNative(vs, h, file, seconds) {
   };
 }
 
+const LOOP = { 'videoPreviewEnhanced.onEnd': 'loop' };
 const functional = [
   {
     name: 'native-transfer',
     ffmpeg: true,
+    settings: LOOP, // the 2 s clip keeps playing (Autoplay no longer loops by default)
     async run(vs, h) {
       const r = await playNative(vs, h, 'hevc_10_2160p.mp4', h.seconds);
       const p = [...r.problems];
@@ -59,6 +61,7 @@ const functional = [
     // same moment, src/native.js setView); shrinking back waits for the next seek. Playback goes on.
     name: 'native-transfer-resize',
     ffmpeg: true,
+    settings: LOOP, // the 2 s clip keeps playing (Autoplay no longer loops by default)
     async run(vs, h) {
       const file = 'hevc_10_2160p.mp4';
       const tag = `[${file}]`;
@@ -107,6 +110,7 @@ const functional = [
   {
     name: 'native-transfer-fallback',
     ffmpeg: true,
+    settings: LOOP, // the 2 s clip keeps playing (Autoplay no longer loops by default)
     env: { VPE_NATIVE_TRANSPORT: 'fail' },
     async run(vs, h) {
       const r = await playNative(vs, h, 'hevc_10_2160p.mp4', h.seconds);

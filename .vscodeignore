@@ -8,6 +8,8 @@ out/**
 docs/**
 node_modules/**
 .vscode/**
+.githooks/**
+.husky/**
 .github/**
 .claude/**
 .private-context/**

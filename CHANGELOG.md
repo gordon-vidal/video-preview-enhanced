@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The extension package no longer includes local Git hook scripts (`.githooks/`) from the build machine.
+
 - **Folder rail:** a `‹ 2/5 ›` capsule on the bar (previous / next video; the count shows the rail) and a tab at the picture's right edge bring up a compact list of the folder beside the picture (or over it: setting `folderRail.layout`). Natural order, `..` to go up, a filter, **Playable formats**, a Duration / Size / Modified column, a hover card, a 1-click **Compare** on any other video and **Compare all videos in folder** on a folder. The rail works in Compare too: the tab at the right edge shows it, the clips in Compare are marked, and a click on a video (or a folder's Compare) adds or removes it. Browsing never changes what plays until you pick a video. Works locally, in WSL and over Remote-SSH ([details](docs/notes/folder-rail.md)).
 - **Autoplay:** Off / Play next in folder / Loop, in ⚙ › Autoplay and the rail's footer (setting `onEnd`, replacing `loop`). **Play next in folder** shows the folder's next video in the same tab from 0:00 when one plays to its end, and stops at the last one. An A–B range still repeats. **New tabs no longer loop by default**; a `loop` you set yourself still applies until you choose Autoplay.
 - **Right-click ◀| / |▶** goes to the previous / next video of the folder (a left click still steps one frame).
