@@ -172,6 +172,16 @@
         "category": "Video Preview"
       },
       {
+        "command": "videoPreviewEnhanced.openSetupGuide",
+        "title": "Open Setup Guide",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.copyAgentSnippet",
+        "title": "Copy AI Agent Deep-Link Instructions",
+        "category": "Video Preview"
+      },
+      {
         "command": "videoPreviewEnhanced.startCompare",
         "title": "Video Preview Enhanced: Start Compare"
       },
@@ -686,7 +696,70 @@
           "description": "What to do when a video decodes slower than real time. The slow-playback notice can switch it for you."
         }
       }
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "videoPreviewEnhanced.setup",
+        "title": "Set up Video Preview Enhanced",
+        "description": "Play any video smoothly in VS Code — locally, over Remote-SSH, or with AI coding agents.",
+        "steps": [
+          {
+            "id": "ready",
+            "title": "Ready to play (no setup required)",
+            "description": "Video Preview Enhanced is already set as your default viewer for MP4, MKV, MOV, WebM, AVI, and 15+ other formats. Just click any video in the Explorer to play it.\n[Open a Video…](command:videoPreviewEnhanced.openVideoFile)\nPrefer VS Code's built-in preview for MP4/WebM? [Restore default](command:videoPreviewEnhanced.undoDefault).",
+            "media": {
+              "markdown": "media/walkthrough/ready.md"
+            },
+            "completionEvents": [
+              "onCommand:videoPreviewEnhanced.openVideoFile",
+              "onView:videoPreviewEnhanced.player"
+            ]
+          },
+          {
+            "id": "ffmpeg",
+            "title": "Smooth 4K, HDR, HEVC, AV1 & ProRes (optional)",
+            "description": "Common videos (H.264 and VP8) already play on your graphics card with nothing installed. For heavy 4K or HDR formats, one click downloads portable ffmpeg (~80 MB, no admin rights) or links one you already have.\n[Set up ffmpeg](command:videoPreviewEnhanced.setupFfmpeg)\nAlready have ffmpeg and playback feels slow? [Test GPU speed](command:videoPreviewEnhanced.retestFfmpeg).",
+            "when": "!remoteName || remoteName == 'wsl'",
+            "media": {
+              "markdown": "media/walkthrough/ffmpeg.md"
+            },
+            "completionEvents": [
+              "onCommand:videoPreviewEnhanced.setupFfmpeg"
+            ]
+          },
+          {
+            "id": "remote",
+            "title": "Remote servers (Remote-SSH, WSL & containers)",
+            "description": "Over Remote-SSH or containers, Live transcode is on automatically (Auto) so videos stream smoothly and adapt to your connection speed. Set up ffmpeg on the remote machine to enable it.\n[Set up ffmpeg on this machine](command:videoPreviewEnhanced.setupFfmpeg)\nYou can adjust mode, max bitrate, or resolution anytime in [Live transcode settings](command:workbench.action.openSettings?%22%40id%3AvideoPreviewEnhanced.transcode%22).",
+            "media": {
+              "markdown": "media/walkthrough/remote.md"
+            },
+            "completionEvents": [
+              "onCommand:videoPreviewEnhanced.setupFfmpeg"
+            ]
+          },
+          {
+            "id": "agents",
+            "title": "Clickable video links for AI coding agents (optional)",
+            "description": "Using Claude Code, Codex, Cursor, or Copilot? Teach your agent to output clickable links that jump straight to a specific frame or open a synchronized side-by-side comparison.\n[Copy AI Agent Instructions](command:videoPreviewEnhanced.copyAgentSnippet)",
+            "media": {
+              "markdown": "media/walkthrough/agents.md"
+            },
+            "completionEvents": [
+              "onCommand:videoPreviewEnhanced.copyAgentSnippet"
+            ]
+          },
+          {
+            "id": "later",
+            "title": "How to change anything later",
+            "description": "Click ⚙ on any video's player bar for per-video controls and inspection tools, search Video Preview Enhanced in Settings for defaults, or run **Video Preview: Open Setup Guide** from the Command Palette anytime.\n[Open Extension Settings](command:workbench.action.openSettings?%22%40ext%3Agordon-vidal.video-preview-enhanced%22)",
+            "media": {
+              "markdown": "media/walkthrough/later.md"
+            }
+          }
+        ]
+      }
+    ]
   },
   "galleryBanner": {
     "color": "#161B22",

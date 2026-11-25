@@ -35,6 +35,7 @@ const probe = lazy(() => require('./probe')); // ffmpeg's GPU decoding tested on
 const decide = require('./decide'); // native ffmpeg or built-in, per file
 const localff = lazy(() => require('./localff')); // "Use an ffmpeg I already have…"
 const remoteff = lazy(() => require('./remoteff')); // ffmpeg downloaded on the remote host, for the remote stream
+const walkthrough = lazy(() => require('./walkthrough')); // Setup Guide walkthrough + AI agent snippet
 const proxy = lazy(() => require('./proxy'));
 const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
@@ -517,6 +518,9 @@ async function confirmDownload(build) {
 
 /** Setup for the optional native decoder: a build matched to this machine, or the user's own. */
 async function setupFfmpeg() {
+  if (vscode.env.remoteName && vscode.env.remoteName !== 'wsl' && remoteff.supported(hostPlatform(), hostArch())) {
+    return downloadRemoteFfmpeg();
+  }
   const state = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Video Preview: checking this computer…' }, async () => {
     hwPromise = null;
     const info = await machine();
@@ -932,6 +936,11 @@ function activate(context) {
     vscode.commands.registerCommand('videoPreviewEnhanced.retestFfmpeg', () => retestFfmpeg()),
     vscode.commands.registerCommand('videoPreviewEnhanced.makeDefault', () => makeDefault(true)),
     vscode.commands.registerCommand('videoPreviewEnhanced.undoDefault', () => undoDefault()),
+    vscode.commands.registerCommand('videoPreviewEnhanced.openSetupGuide', () => vscode.commands.executeCommand('workbench.action.openWalkthrough', `${EXT_ID}#${walkthrough.WALKTHROUGH_ID}`, false)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.copyAgentSnippet', async () => {
+      await vscode.env.clipboard.writeText(walkthrough.AGENT_SNIPPET);
+      vscode.window.showInformationMessage('AI agent video-link instructions copied. Paste them into AGENTS.md, CLAUDE.md, or .cursorrules.');
+    }),
     vscode.commands.registerCommand('videoPreviewEnhanced.loadSubtitles', () => {
       const s = [...sessions].find((x) => x.panel.active) || (lastActive && !lastActive.disposed ? lastActive : null);
       if (s) return s.loadSubtitles();
