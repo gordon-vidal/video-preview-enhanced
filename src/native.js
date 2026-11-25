@@ -440,8 +440,11 @@ class NativeDecoder {
       if (completed || proc !== this.proc) return;
       completed = true;
       const failed = !!error || code !== 0 || !!signal;
-      const exit = error ? error.message : signal || `exit ${code}`;
-      const why = error ? exit : err.text.trim().split(/\r?\n/).slice(-2).join(' | ');
+      const exit = error ? ff.redactErrorUrls(error.message) : signal || `exit ${code}`;
+      // A clipped first line may start halfway through a URL, so it cannot be safely redacted.
+      const firstCompleteLine = err.clipped ? err.text.indexOf('\n') + 1 : 0;
+      const diagnostic = err.clipped && !firstCompleteLine ? '' : err.text.slice(firstCompleteLine);
+      const why = error ? exit : ff.redactErrorUrls(diagnostic).trim().split(/\r?\n/).slice(-2).join(' | ');
       if (error) this.log(`native ffmpeg spawn failed: ${why}`);
       else if (failed) this.log(`native ffmpeg exited ${signal || code}: ${why}`);
       if (failed && !this.gotOutput && proc.stamped && STAMP_FAILURE.test(err.text)) {
@@ -538,8 +541,13 @@ class NativeDecoder {
     proc.w = this.w;
     proc.h = this.h;
     proc.startedAt = Date.now();
-    proc.err = { text: '' };
-    proc.stderr.on('data', (d) => { proc.err.text = (proc.err.text + d).slice(-2000); });
+    proc.err = { text: '', clipped: false };
+    proc.stderr.on('data', (d) => {
+      const text = proc.err.text + d;
+      const start = Math.max(0, text.length - 2000);
+      if (start) proc.err.clipped = text[start - 1] !== '\n';
+      proc.err.text = text.slice(start);
+    });
     return proc;
   }
 

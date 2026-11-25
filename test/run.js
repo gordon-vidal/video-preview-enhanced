@@ -112,13 +112,19 @@ function killChild(child) {
 }
 for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143]]) process.on(sig, () => { for (const c of running) killChild(c); process.exit(code); });
 
+const isolatedTempTests = new Set(['compare', 'exact_frame', 'nativepts', 'review'].map((n) => `test/host/${n}_test.js`));
+
 /** Runs one test file in its own process (a Windows job object kills its children with it). */
 function runFile(entry) {
   return new Promise((resolve) => {
     const t0 = Date.now();
     const args = [path.join(ROOT, entry.file), ...(entry.args || []).map((a) => (/^test\//.test(a) ? path.join(ROOT, a) : a))];
     const cmd = hasPython() ? ['python', '-I', path.join(__dirname, 'lib', 'windows_job.py'), process.execPath, ...args] : [process.execPath, ...args];
-    const child = spawn(cmd[0], cmd.slice(1), { cwd: ROOT, windowsHide: true, detached: process.platform !== 'win32', env: { ...process.env, VPE_TEST_PARALLEL: '1' } });
+    const env = { ...process.env, VPE_TEST_PARALLEL: '1' };
+    // The runner owns the parent directory so cleanup still runs after a hard timeout.
+    const tempDir = isolatedTempTests.has(entry.file) ? fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-host-')) : null;
+    if (tempDir) Object.assign(env, { TMPDIR: tempDir, TMP: tempDir, TEMP: tempDir });
+    const child = spawn(cmd[0], cmd.slice(1), { cwd: ROOT, windowsHide: true, detached: process.platform !== 'win32', env });
     running.add(child);
     let out = '';
     let lastAt = Date.now();
@@ -139,7 +145,11 @@ function runFile(entry) {
     const done = (code, why) => {
       clearTimeout(timer);
       clearInterval(watch);
-      running.delete(child);
+      if (!running.delete(child)) return;
+      if (tempDir) {
+        try { fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+        catch (e) { code = 1; out += `\nTemporary directory cleanup failed: ${e.message}\n`; }
+      }
       const ms = Date.now() - t0;
       const skipped = !kind && code === 0 && /^SKIP(PED)?\b/m.test(out) && !/^(ok|PASS)\b/m.test(out) ? (/^SKIP(?:PED)?:?\s*(.*)$/m.exec(out) || [])[1] : null;
       gapMs = Math.max(gapMs, Date.now() - lastAt);

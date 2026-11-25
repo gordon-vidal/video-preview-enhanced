@@ -478,12 +478,14 @@ function rail(fsys, o = {}) {
 
   // ---- src/extension.js: folder navigation by tab swap with a handoff intent ----
   {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe_rail_'));
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe_rail_'));
+    const dir = fs.mkdirSync(path.join(temp, 'media'), { recursive: true });
     for (const n of ['a 1.mp4', 'a 2.mkv', 'a 10.mov', 'readme.txt']) fs.writeFileSync(path.join(dir, n), Buffer.alloc(64));
     fs.mkdirSync(path.join(dir, 'more'));
     fs.writeFileSync(path.join(dir, 'more', 'deep.mp4'), Buffer.alloc(64));
     try {
-      const h = load();
+      // The extension reads the debug timeout when the module loads.
+      const h = load({ env: { VPE_LOG: path.join(temp, 'rail.log'), VPE_ADOPT_MS: '150' } });
       const opens = () => (h.vscode.executed || []).filter((x) => x[0] === 'vscode.openWith');
       const B = h.open(path.join(dir, 'a 2.mkv'));
       await B.shown;
@@ -565,11 +567,8 @@ function rail(fsys, o = {}) {
       await first;
       assert.strictEqual(b2Closed, false, 'a failed adoption keeps the source');
       // Timed-out adoption: posts railHandoffCancel to the target so it never applies the expired handoff later.
-      const prevAdoptMs = process.env.VPE_ADOPT_MS;
-      process.env.VPE_ADOPT_MS = '30';
       const timed = B2.send({ type: 'neighbour', d: 1, auto: true, rail: { open: false, onEnd: 'next' } });
       await timed;
-      if (prevAdoptMs === undefined) delete process.env.VPE_ADOPT_MS; else process.env.VPE_ADOPT_MS = prevAdoptMs;
       assert.strictEqual(b2Closed, false, 'timed-out adoption keeps source open');
       assert.ok(adopter.posted.some((m) => m.type === 'railHandoffCancel'), 'target told to cancel expired handoff');
       // Again with Autoplay's next and a closed rail with its width and filter: all of it reaches the open tab.
@@ -605,7 +604,7 @@ function rail(fsys, o = {}) {
       for (const x of [A, B, C, D, B2]) x.panel.dispose(); // file watchers would keep Node alive
       h.dispose();
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(temp, { recursive: true, force: true });
     }
   }
 

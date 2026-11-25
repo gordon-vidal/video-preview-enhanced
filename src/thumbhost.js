@@ -27,7 +27,7 @@ function thumbArgs(file, t, w, h, legacy, stream = 'v:0', format = 'rgba') {
   // -threads 2 (decoder and filters): one keyframe needs no more, and ffmpeg's default (~40 threads on 8 cores)
   // next to playback made the desktop stutter (2026-11-20).
   return ['-hide_banner', '-loglevel', 'info', '-nostats', '-copyts', '-nostdin', '-noautorotate', '-skip_frame', 'nokey', '-noaccurate_seek',
-    '-threads', '2', '-ss', Math.max(0, t).toFixed(3), '-i', file, '-filter_threads', '1', '-map', `0:${stream}`, '-an', '-sn', '-dn',
+    '-threads', '2', '-ss', Math.max(0, t).toFixed(3), '-protocol_whitelist', 'file', '-i', file, '-filter_threads', '1', '-map', `0:${stream}`, '-an', '-sn', '-dn',
     ...(legacy ? ['-vsync', '0'] : ['-fps_mode', 'passthrough']), '-frames:v', '1',
     '-vf', `scale=${w}:${h}:flags=bilinear,showinfo`,
     ...(format === 'jpeg' ? ['-pix_fmt', 'yuvj420p', '-c:v', 'mjpeg', '-q:v', '6', '-f', 'image2pipe']

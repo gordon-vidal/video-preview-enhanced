@@ -14,13 +14,14 @@ const { make } = require('../media/make_cases_media');
   const rotated = make('rotated.mp4');
   const upright = make('s_h264.mp4');
   assert.ok(rotated && upright, 'ffmpeg test clips');
-  const rewritten = path.join(path.dirname(rotated), `vpe_compare_${process.pid}.mp4`);
   const { totalmem, freemem } = os;
   const h = load({ settings: {
     'videoPreviewEnhanced.decoder': 'ffmpeg',
     'videoPreviewEnhanced.compare.maxVideos': 4,
   } });
   let compare;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-compare-'));
+  const rewritten = path.join(dir, 'rewritten.mp4');
   try {
     fs.copyFileSync(upright, rewritten);
     os.totalmem = () => 8 * GB;
@@ -315,6 +316,6 @@ const { make } = require('../media/make_cases_media');
     h.dispose();
     os.totalmem = totalmem;
     os.freemem = freemem;
-    fs.rmSync(rewritten, { force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 })().then(() => console.log('compare: ok'), (e) => { console.error(e); process.exitCode = 1; });

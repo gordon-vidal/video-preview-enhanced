@@ -55,9 +55,10 @@ assert(!/ssh link|transcode\s+:/.test(out) && envs(out).length === 0, 'no link o
 assert(!/transcode/.test(c.find((x) => /settings\.json/.test(x))), 'no transcode seeded');
 
 // a .vsix path is used as is: no worktree, no build.
-const vsix = path.join(os.tmpdir(), 'vpe-review-test.vsix');
-fs.writeFileSync(vsix, 'not a real package');
+const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-review-fixture-'));
+const vsix = path.join(fixtureDir, 'test.vsix');
 try {
+  fs.writeFileSync(vsix, 'not a real package');
   for (const flags of [[], ['-DryRun']]) { // PowerShell spelling too
     const r = node(...(flags.length ? flags : ['--dry-run']), vsix);
     assert.strictEqual(r.status, 0, r.stdout + r.stderr);
@@ -70,7 +71,7 @@ try {
   const bad = node('--dry-run', '--dev', vsix);
   assert.notStrictEqual(bad.status, 0);
   assert(/needs source code/.test(bad.stdout + bad.stderr), '--dev with a vsix is refused');
-} finally { fs.rmSync(vsix, { force: true }); }
+} finally { fs.rmSync(fixtureDir, { recursive: true, force: true }); }
 
 // --dev / -Dev: no package, no install
 for (const flag of ['--dev', '-Dev']) {
@@ -262,7 +263,8 @@ function zip(name, content, deflate) {
   end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(body.length, 16);
   return Buffer.concat([body, dir, end]);
 }
-const pkgFile = path.join(os.tmpdir(), `vpe-review-test-${process.pid}.vsix`);
+const pkgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-review-package-'));
+const pkgFile = path.join(pkgDir, 'test.vsix');
 try {
   for (const deflate of [false, true]) {
     fs.writeFileSync(pkgFile, zip('extension/package.json', '{"version":"1.2.3"}', deflate));
@@ -272,7 +274,7 @@ try {
   }
   fs.writeFileSync(pkgFile, zip('other.txt', 'x', false));
   assert.throws(() => review.readVsixVersion(pkgFile));
-} finally { fs.rmSync(pkgFile, { force: true }); }
+} finally { fs.rmSync(pkgDir, { recursive: true, force: true }); }
 
 // ---- the old PowerShell entry point still works (Windows) ----
 if (process.platform === 'win32') {

@@ -51,6 +51,16 @@ const FILTERS = (names) => ` T.. split              V->N       Split\n${names.ma
   script = () => ({ stdout: 'out', stderr: 'err', code: 3 });
   r = await ff.run('x', ['a']);
   assert.deepStrictEqual(r, { code: 3, stdout: 'out', stderr: 'err' });
+  const signed = `HTTPS://viewer:p'ass@${'example.test'}:8443/clip.mp4?token=secret&expires=123#fragment`;
+  const other = 'http://example.test/other.mp4?signature=private';
+  const diagnostic = `Could not open '${signed}' or "${other}": 403 Forbidden`;
+  const redacted = `Could not open 'HTTPS://example.test:8443/clip.mp4' or "http://example.test/other.mp4": 403 Forbidden`;
+  script = () => ({ stderr: diagnostic, code: 1 });
+  assert.strictEqual((await ff.run('x', [])).stderr, redacted);
+  for (const key of ['throws', 'error']) {
+    script = () => ({ [key]: diagnostic });
+    assert.strictEqual((await ff.run('x', [])).stderr, `Error: ${redacted}`);
+  }
   script = () => ({ hang: true });
   const t0 = Date.now();
   r = await ff.run('x', [], 100);

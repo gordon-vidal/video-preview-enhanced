@@ -19,6 +19,16 @@ function lowerPriority(proc) {
   return proc;
 }
 
+/** Removes URL user info and signed query strings from subprocess diagnostics. */
+function redactErrorUrls(text) {
+  return text.replace(/\b([a-z][a-z\d+.-]*:\/\/)([^\s"<>]+)/gi, (_url, scheme, rest) => {
+    // A single quote can appear inside a URL as well as around it in an error message.
+    const quote = rest.endsWith("'") ? "'" : '';
+    const address = quote ? rest.slice(0, -1) : rest;
+    return scheme + address.replace(/^[^/?#]*@/, '').split(/[?#]/, 1)[0] + quote;
+  });
+}
+
 function run(cmd, args, timeoutMs = 30000, signal) {
   return new Promise((resolve) => {
     let stdout = '';
@@ -27,14 +37,14 @@ function run(cmd, args, timeoutMs = 30000, signal) {
     try {
       p = spawn(cmd, args, { windowsHide: true, signal });
     } catch (e) {
-      resolve({ code: -1, stdout, stderr: String(e) });
+      resolve({ code: -1, stdout, stderr: redactErrorUrls(String(e)) });
       return;
     }
     const timer = setTimeout(() => p.kill(), timeoutMs);
     p.stdout.on('data', (d) => (stdout += d));
     p.stderr.on('data', (d) => (stderr += d));
-    p.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, stdout, stderr: String(e) }); });
-    p.on('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
+    p.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, stdout, stderr: redactErrorUrls(String(e)) }); });
+    p.on('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr: redactErrorUrls(stderr) }); });
   });
 }
 
@@ -362,4 +372,4 @@ async function probeRun(tools, input, signal) {
   };
 }
 
-module.exports = { run, lowerPriority, locateTools, parseGpuFilters, TOOLS_CACHE_VER, probe, whichFile, unwrapShim, resolveTool, toolsKey, probeCache, looksLikePlaylist, isPlaylistFile, inputArgs, isUrlInput, URL_PROTOCOLS };
+module.exports = { run, redactErrorUrls, lowerPriority, locateTools, parseGpuFilters, TOOLS_CACHE_VER, probe, whichFile, unwrapShim, resolveTool, toolsKey, probeCache, looksLikePlaylist, isPlaylistFile, inputArgs, isUrlInput, URL_PROTOCOLS };

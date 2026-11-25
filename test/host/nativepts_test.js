@@ -264,7 +264,8 @@ function filterRefused() {
   const { EventEmitter } = require('events');
   const launched = [];
   const failures = [];
-  const nd = new NativeDecoder({ probed: PROBED, method: 'd3d11va', log() {}, post() {}, postRaw() {}, onFail: (e) => failures.push(e) });
+  const logs = [];
+  const nd = new NativeDecoder({ probed: PROBED, method: 'd3d11va', log: (e) => logs.push(e), post() {}, postRaw() {}, onFail: (e) => failures.push(e) });
   nd.tools = { ffmpeg: 'fake' };
   nd.w = 2; nd.h = 2; nd.fps = 25;
   nd.launch = (t) => {
@@ -288,6 +289,13 @@ function filterRefused() {
   launched[1].err.text = 'Device creation failed';
   launched[1].emit('close', 1);
   assert.strictEqual(nd.method, 'none', 'software next');
+  launched[2].err.clipped = true;
+  const password = 'test-password';
+  launched[2].err.text = `truncated-secret\nError opening https://viewer:${password}@example.test/clip.mp4?token=secret`;
+  launched[2].emit('close', 1);
+  assert.deepStrictEqual(failures, ['Error opening https://example.test/clip.mp4']);
+  assert.ok(logs.includes('native ffmpeg exited 1: Error opening https://example.test/clip.mp4'));
+  assert.doesNotMatch(logs.join('\n'), /secret|viewer/);
   nd.dispose();
 }
 

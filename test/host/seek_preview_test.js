@@ -163,6 +163,8 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
   assert.deepStrictEqual(th.fitBox(3840, 2160, 160, 120), { w: 160, h: 90 });
   assert.deepStrictEqual(th.fitBox(1080, 1920, 120, 160), { w: 90, h: 160 });
   const args = th.thumbArgs('a.mp4', 12.3456, 160, 90);
+  const input = args.indexOf('-i');
+  assert.deepStrictEqual(args.slice(input - 2, input + 2), ['-protocol_whitelist', 'file', '-i', 'a.mp4']);
   assert.ok(args.indexOf('-skip_frame') < args.indexOf('-i') && args.includes('nokey'), 'keyframes only, before the input');
   assert.ok(args.indexOf('-ss') < args.indexOf('-i'), 'input-side seek');
   const ff = spawnSync('ffmpeg', ['-version'], { windowsHide: true });
