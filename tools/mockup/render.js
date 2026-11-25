@@ -362,8 +362,16 @@ ${inlinedScripts}
     time: () => S.getTab(ws).frame / (S.getTab(ws).fps || 24),
     post: (m) => {
       if (!m) return;
-      if (m.type === 'folderRail') {
-        if (m.op === 'open' && m.id) {
+      if (m.type === 'neighbour') {
+        const tab = S.getTab(ws);
+        const idx = engine.clips.findIndex((c) => c.id === tab.tiles[0]);
+        const next = engine.clips[(idx + (m.d || 1) + engine.clips.length) % engine.clips.length];
+        ws = S.openVideo(ws, next.id, { label: next.name }).state;
+        render();
+        return;
+      }
+      if (m.type === 'rail') {
+        if (m.op === 'activate' && m.id) {
           const c = engine.getClip(m.id);
           const res = S.openVideo(ws, c.id, { label: c.name });
           ws = res.state;
@@ -377,21 +385,20 @@ ${inlinedScripts}
           ws = res.state;
           if (res.toast) toast(res.toast);
           render();
-        } else if (m.op === 'step') {
-          const tab = S.getTab(ws);
-          const idx = engine.clips.findIndex((c) => c.id === tab.tiles[0]);
-          const next = engine.clips[(idx + m.dir + engine.clips.length) % engine.clips.length];
-          ws = S.openVideo(ws, next.id, { label: next.name }).state;
-          render();
-        } else if (m.op === 'list') {
+        } else if (m.op === 'open') {
+          lastRailKey = '';
           pushRailList();
         }
       }
     },
   });
 
+  let lastRailKey = '';
   function pushRailList() {
     const tab = S.getTab(ws);
+    const key = tab.tiles.join(',');
+    if (key === lastRailKey) return;
+    lastRailKey = key;
     rail.onMessage({
       op: 'list',
       gen: ++railGen,
@@ -443,7 +450,7 @@ ${inlinedScripts}
       const tab = S.getTab(ws);
       const isMulti = tab.tiles.length >= 2;
       return {
-        compare: isMulti,
+        compare: null,
         rate,
         loop: onEnd === 'loop',
         autoplay: { mode: onEnd, label: VpeAutoplay.label(onEnd), next: !isMulti },
@@ -780,6 +787,23 @@ ${inlinedScripts}
     ws = S.seekFrame(ws, (tab.frame + 1) % (tab.maxFrame + 1));
     render();
   }, 42);
+
+  window.addEventListener('keydown', (e) => {
+    const tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key === ' ') { e.preventDefault(); playBtn.click(); }
+    else if (e.key === ',') { e.preventDefault(); prevBtn.click(); }
+    else if (e.key === '.') { e.preventDefault(); nextBtn.click(); }
+    else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); muteBtn.click(); }
+    else if (e.key === 'r' || e.key === 'R') { e.preventDefault(); onEnd = onEnd === 'loop' ? 'off' : 'loop'; rail.refreshOnEnd(); controls.refresh(); toast(onEnd === 'loop' ? 'Loop on' : 'Loop off'); }
+    else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); markAB('a'); }
+    else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); markAB('b'); }
+    else if (e.key === 'z' || e.key === 'Z') { e.preventDefault(); picBtn.click(); }
+    else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); controls.toggle('info', infoBtn); }
+    else if (e.key === '?') { e.preventDefault(); controls.openSheet(cogBtn); }
+    else if (e.key === 'D' && e.shiftKey) { e.preventDefault(); cmpBtn.click(); }
+    else if (e.key === 'Escape') { controls.closeAll(false); ctxMenu.close(false); }
+  });
 
   if (typeof ResizeObserver !== 'undefined') {
     new ResizeObserver(() => render()).observe(stageEl);
