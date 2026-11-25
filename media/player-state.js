@@ -259,6 +259,21 @@
   }
 
   /**
+   * Replace the video of a single-video tab in place (folder ‹ / › and the rail's click in a single view).
+   * Unlike `openVideo` it never joins a capturing tab: the user navigated *this* tab, not "open another".
+   * Multi-video tabs are left unchanged (navigation there is the host's call).
+   * @param {WorkspaceState} ws
+   * @param {string} clipId
+   * @param {number} [tabId]
+   * @returns {WorkspaceState}
+   */
+  function replaceVideo(ws, clipId, tabId) {
+    const target = getTab(ws, tabId);
+    if (target.tiles.length !== 1 || target.tiles[0] === clipId) return ws;
+    return updateTab(ws, target.id, (t) => ({ ...t, tiles: [clipId], offsets: {}, frame: 0, playing: false }));
+  }
+
+  /**
    * Remove a tile from a tab. Dropping to 1 video seamlessly restores single-player state.
    * @param {WorkspaceState} ws
    * @param {string} clipId
@@ -541,6 +556,7 @@
     getTab,
     toggleCapture,
     openVideo,
+    replaceVideo,
     removeTile,
     toggleEnlarge,
     toggleSplit,

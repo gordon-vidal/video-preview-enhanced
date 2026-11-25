@@ -1,8 +1,9 @@
 'use strict';
 // Reusable interactive UI mockup harness: inlines the REAL player.css, compare.css, folder-rail.css,
-// src/bar.js, src/folder-rail-html.js, media/compare-grid.js, media/player-state.js, media/picture.js,
-// media/abloop.js, media/autoplay.js, media/timefmt.js, media/controls.js, media/ctxmenu.js, and
-// media/folder-rail.js over FakeEngine (tools/mockup/fake-engine.js).
+// src/bar.js, src/folder-rail-html.js and the real page scripts (player-state.js, controls.js, ctxmenu.js,
+// folder-rail.js, ...), then mounts the shared UI controller media/player-ui.js over FakeEngine
+// (tools/mockup/fake-engine.js) and FakeHost (tools/mockup/fake-host.js). The harness itself only draws the
+// simulated VS Code chrome around the player (Explorer strip, tabs, scenario picker); it has no player wiring.
 // Zero build step; output renders cleanly inside T3 Code's 728 px inline html_render frame.
 const fs = require('fs');
 const path = require('path');
@@ -63,7 +64,9 @@ function buildMockupHtml(opts = {}) {
     'media/controls.js',
     'media/ctxmenu.js',
     'media/folder-rail.js',
+    'media/player-ui.js',
     'tools/mockup/fake-engine.js',
+    'tools/mockup/fake-host.js',
   ];
   const inlinedScripts = scriptFiles
     .map((rel) => `<script data-src="${rel}">\n${escapeScript(readRepoFile(rel))}\n</script>`)
@@ -279,512 +282,72 @@ html, body {
 
 ${inlinedScripts}
 <script>
+// Harness chrome only (simulated Explorer, tab strip, scenario picker, state pills). Everything inside the
+// player is the real shared controller, media/player-ui.js, over FakeEngine + FakeHost.
 (() => {
   const S = globalThis.VpePlayerState;
   const engine = globalThis.VpeFakeEngine.createFakeEngine();
+  const host = globalThis.VpeFakeHost.createFakeHost({ clips: engine.clips });
   const SCENARIOS = ${JSON.stringify(SCENARIOS)};
   const INITIAL_KEY = ${JSON.stringify(scenarioKey)};
-
   const $ = (id) => document.getElementById(id);
-  const stageEl = $('stage'), cellsEl = $('cells'), expList = $('expList');
-  const tabsEl = $('tabs'), capBanner = $('capBanner'), splitterEl = $('splitter'), dividerEl = $('divider');
-  const statePills = $('statePills'), scenarioSel = $('scenarioSel');
-  const seekEl = $('seek'), nowEl = $('now'), durEl = $('dur'), barEl = $('bar');
-  const tracksBtn = $('tracks'), cmpBtn = $('startCompareBtn');
-  const playBtn = $('play'), prevBtn = $('prev'), nextBtn = $('next');
-  const prevSize = $('prevSize'), nextSize = $('nextSize');
-  const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate');
-  const cogBtn = $('cog'), infoBtn = $('infoBtn'), picBtn = $('picBtn'), fullBtn = $('full');
-  const setABtn = $('setABtn'), setBBtn = $('setBBtn'), abMarks = $('abMarks'), abA = $('abA'), abB = $('abB');
+  const expList = $('expList'), tabsEl = $('tabs'), statePills = $('statePills'), scenarioSel = $('scenarioSel');
+  const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text) x.textContent = text; return x; };
 
-  // Inject unified Split (N===2) and Sync (N>=2) controls beside Compare inside the real #bar.
-  const splitBtn = document.createElement('button');
-  splitBtn.id = 'mockSplitBtn'; splitBtn.className = 'ib'; splitBtn.hidden = true;
-  splitBtn.title = 'Split Wipe (2 videos)';
-  splitBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="1.6"/><path d="M12 3v18"/></svg>';
-  const syncBtn = document.createElement('button');
-  syncBtn.id = 'mockSyncBtn'; syncBtn.className = 'ib'; syncBtn.hidden = true;
-  syncBtn.title = 'Sync frame offsets';
-  syncBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="11.5" height="4.2" rx="1.1"/><rect x="8.5" y="13.8" width="11.5" height="4.2" rx="1.1"/><path d="M12 3.5v17" stroke-dasharray="1.8 2.2"/></svg>';
-  cmpBtn.parentNode.insertBefore(splitBtn, cmpBtn);
-  cmpBtn.parentNode.insertBefore(syncBtn, cmpBtn);
-
-  const expandSvg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>';
-  const collapseSvg = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7"/></svg>';
-  const closeSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
-
-  const announce = (t) => { const l = $('live'); if (l) l.textContent = t; };
-  const toast = VpeControls.createToast($('toast'), announce);
-  const flashPlay = VpeControls.createPlayFlash($('playFlash'), stageEl);
-
-  // Additional interactive player prefs driven by the real VpeControls & VpeFolderRail widgets.
-  let ws = S.createWorkspaceState(SCENARIOS[INITIAL_KEY]);
-  let onEnd = 'off';
-  let rate = 1;
-  let muted = true;
-  let volume = 0.85;
-  let stepSize = 'frame';
-  let picMode = 'fit';
-  let picZoom = 1;
-  let subKey = 'en';
-  let audioId = 'a0';
-  let transcodeMode = 'auto';
-  let transcodeMaxBitrate = 0;
-  let transcodeRes = 0;
-  let timeMode = 0;
-  const ab = VpeAbLoop.create();
-
-  const fmtTime = (f, fps) => {
-    const t = f / (fps || 24);
-    if (timeMode === 2) return '#' + f;
-    if (timeMode === 1 && globalThis.VpeTime) return VpeTime.fmtTimecode(t, fps || 24);
-    const m = Math.floor(t / 60);
-    return m + ':' + (t % 60).toFixed(2).padStart(5, '0');
-  };
-
-  // ---- Real VpeFolderRail (sidebar) ----
-  const railEntries = engine.clips.map((c, idx) => ({
-    id: c.id,
-    name: c.name,
-    kind: 'video',
-    duration: 10 + idx * 14,
-    size: (18 + idx * 27) * 1024 * 1024,
-    mtime: Date.now() - idx * 3600 * 1000 * 5,
-  }));
-  let railGen = 1;
-  const rail = VpeFolderRail.create({
-    doc: document,
-    toast,
-    cfg: { layout: 'dock', width: 200, column: 'duration', playable: true },
-    getOnEnd: () => onEnd,
-    setOnEnd: (m) => { onEnd = m; rail.refreshOnEnd(); controls.refresh(); toast('Autoplay: ' + VpeAutoplay.label(m)); },
-    label: VpeAutoplay.label,
-    time: () => S.getTab(ws).frame / (S.getTab(ws).fps || 24),
-    post: (m) => {
-      if (!m) return;
-      if (m.type === 'folderRail') {
-        if (m.op === 'open' && m.id) {
-          const c = engine.getClip(m.id);
-          const res = S.openVideo(ws, c.id, { label: c.name });
-          ws = res.state;
-          if (res.toast) toast(res.toast);
-          render();
-        } else if (m.op === 'compare' && m.id) {
-          const tab = S.getTab(ws);
-          if (!tab.capture) ws = S.toggleCapture(ws).state;
-          const c = engine.getClip(m.id);
-          const res = S.openVideo(ws, c.id, { label: c.name });
-          ws = res.state;
-          if (res.toast) toast(res.toast);
-          render();
-        } else if (m.op === 'step') {
-          const tab = S.getTab(ws);
-          const idx = engine.clips.findIndex((c) => c.id === tab.tiles[0]);
-          const next = engine.clips[(idx + m.dir + engine.clips.length) % engine.clips.length];
-          ws = S.openVideo(ws, next.id, { label: next.name }).state;
-          render();
-        } else if (m.op === 'list') {
-          pushRailList();
-        }
-      }
-    },
-  });
-
-  function pushRailList() {
+  function chrome(ws, ui) {
     const tab = S.getTab(ws);
-    rail.onMessage({
-      op: 'list',
-      gen: ++railGen,
-      crumb: 'clips / dailies_v4',
-      entries: railEntries,
-      current: tab.tiles[0],
-      members: tab.tiles,
-      count: tab.tiles.length,
-    });
-    const idx = engine.clips.findIndex((c) => c.id === tab.tiles[0]);
-    rail.setPos(idx, engine.clips.length);
-    for (const e of railEntries) {
-      rail.onMessage({ op: 'meta', gen: railGen, id: e.id, duration: e.duration, size: e.size, mtime: e.mtime });
-    }
-  }
-
-  // ---- Real VpeControls (⚙ Settings, ⓘ Info, Speed, Subtitles, Picture, Step badges, ? Sheet) ----
-  const abLabel = () => {
-    if (ab.a === null && ab.b === null) return 'Off';
-    const tab = S.getTab(ws);
-    const a = ab.a !== null ? fmtTime(Math.round(ab.a * tab.fps), tab.fps) : '—';
-    const b = ab.b !== null ? fmtTime(Math.round(ab.b * tab.fps), tab.fps) : '—';
-    return a + ' → ' + b;
-  };
-  const infoFacts = () => {
-    const tab = S.getTab(ws);
-    const clip = engine.getClip(tab.tiles[0]);
-    return {
-      title: clip.name,
-      sub: clip.codec + ' · 3840×2160 · ' + (clip.fps || 24) + ' fps',
-      rows: [
-        ['Video', clip.codec + ', 3840×2160, ' + (clip.fps || 24) + ' fps'],
-        ['Audio', 'AAC stereo, 48 kHz'],
-        ['Duration', '0:10.00 (' + tab.maxFrame + ' frames)'],
-        ['Decoder', 'Mock FakeEngine (2D canvas)'],
-        ['View', tab.tiles.length > 1 ? 'Compare (' + tab.tiles.length + ' videos)' : 'Single video'],
-      ],
-    };
-  };
-
-  let ctxMenu = null;
-  const controls = VpeControls.create({
-    panel: $('panel'),
-    sheet: $('sheet'),
-    bar: barEl,
-    onShow: () => { if (ctxMenu) ctxMenu.close(false); },
-    buttons: { cog: cogBtn, info: infoBtn, rate: rateBtn, tracks: tracksBtn, stepPrev: prevSize, stepNext: nextSize },
-    get: () => {
-      const tab = S.getTab(ws);
-      const isMulti = tab.tiles.length >= 2;
-      return {
-        compare: isMulti,
-        rate,
-        loop: onEnd === 'loop',
-        autoplay: { mode: onEnd, label: VpeAutoplay.label(onEnd), next: !isMulti },
-        jump: { arrow: 5, shift: 1, ctrl: 'frame' },
-        stepButtons: 'frame',
-        stepSize,
-        abLabel: abLabel(),
-        picture: { mode: picMode, pct: Math.round(picZoom * 100), zoomed: picZoom !== 1 },
-        tools: [
-          { id: 'compare', label: tab.capture ? 'Pause Compare capture' : 'Start Compare', key: 'Shift+D', on: tab.capture, run: () => cmpBtn.click() },
-          { id: 'rail', label: rail.isOpen() ? 'Close Folder Rail' : 'Open Folder Rail', on: rail.isOpen(), run: () => { rail.toggle(); render(); } },
-        ],
-        ab: {
-          items: [
-            { label: 'Set Range Start (A)', key: 'A', run: () => markAB('a') },
-            { label: 'Set Range End (B)', key: 'B', run: () => markAB('b') },
-            { label: 'Clear A–B Range', key: 'Backspace', run: () => { ab.clear(); controls.refresh(); render(); toast('A–B range cleared'); } },
-          ],
-        },
-        subsLabel: subKey === 'off' ? 'Off' : 'English (SRT)',
-        audioLabel: audioId === 'a0' ? 'English (AAC 2.0)' : 'Director Commentary',
-        hasSound: true,
-        tracks: {
-          on: subKey !== 'off',
-          label: subKey === 'off' ? 'Off' : 'English (SRT)',
-          subs: [
-            { key: 'off', main: 'Off', checked: subKey === 'off' },
-            { key: 'en', main: 'English (SRT)', sub: 'Sidecar', checked: subKey === 'en' },
-          ],
-          audio: [
-            { id: 'a0', main: 'English (AAC 2.0)', checked: audioId === 'a0' },
-            { id: 'a1', main: 'Director Commentary', checked: audioId === 'a1' },
-          ],
-          delay: 0,
-          size: 100,
-        },
-        facts: infoFacts(),
-        canExternal: false,
-        canUseOriginal: false,
-        transcode: {
-          mode: transcodeMode,
-          maxBitrateMbps: transcodeMaxBitrate,
-          active: false,
-          resolution: transcodeRes,
-          defaultResolution: 0,
-          sourceHeight: 2160,
-        },
-      };
-    },
-    act: {
-      stepSize: (v) => { stepSize = v; VpeControls.drawStepBadges([prevSize, nextSize], v); controls.refresh(); toast('Step: ' + VpeControls.stepName(v)); },
-      loop: () => { onEnd = onEnd === 'loop' ? 'off' : 'loop'; rail.refreshOnEnd(); controls.refresh(); toast(onEnd === 'loop' ? 'Loop on' : 'Loop off'); },
-      setAutoplay: (m) => { onEnd = m; rail.refreshOnEnd(); controls.refresh(); toast('Autoplay: ' + VpeAutoplay.label(m)); },
-      cycleAB: () => markAB(),
-      copyFrame: () => toast('Frame copied (mock)'),
-      setRate: (r) => { rate = VpeControls.clampRate(r); rateBtn.textContent = rate + '×'; controls.refresh(); },
-      pickRate: (r) => { rate = VpeControls.clampRate(r); rateBtn.textContent = rate + '×'; controls.refresh(); },
-      stepRate: (d) => { rate = VpeControls.clampRate(rate + d * 0.05); rateBtn.textContent = rate + '×'; controls.refresh(); },
-      setTranscode: (m) => { transcodeMode = m; controls.refresh(); toast('Live transcode: ' + m); },
-      setTranscodeMaxBitrate: (r) => { transcodeMaxBitrate = r; controls.refresh(); },
-      setTranscodeResolution: (h) => { transcodeRes = h; controls.refresh(); },
-      saveTranscodeResolution: (h) => { transcodeRes = h; controls.refresh(); toast('Saved default resolution'); },
-      setPicture: (m) => { picMode = m; picBtn.dataset.mode = m; controls.refresh(); toast('Picture: ' + m); },
-      zoomPicture: (d) => { picZoom = Math.max(0.5, Math.min(4, +(picZoom + d * 0.25).toFixed(2))); controls.refresh(); },
-      resetPicture: () => { picZoom = 1; picMode = 'fit'; picBtn.dataset.mode = 'fit'; controls.refresh(); },
-      selectSub: (k) => { subKey = k; tracksBtn.classList.toggle('on', k !== 'off'); controls.refresh(); toast(k === 'off' ? 'Subtitles off' : 'Subtitles: English'); },
-      selectAudio: (id) => { audioId = id; controls.refresh(); toast('Audio track switched'); },
-      loadSubs: () => toast('Load subtitles… (mock)'),
-      subDelay: () => {},
-      subSize: () => {},
-      copyInfo: () => toast('Details copied'),
-      copyLink: () => toast('Frame link copied'),
-      external: () => toast('Open in system player (mock)'),
-      extSettings: () => toast('Open VS Code Settings (mock)'),
-      openUrl: () => toast('Open Video URL… (mock)'),
-    },
-  });
-
-  // ---- Real VpeCtxMenu (right-click menu) ----
-  const MENU_ACTIONS = {
-    playPause: () => { ws = S.togglePlay(ws); flashPlay(S.getTab(ws).playing); render(); },
-    loop: () => { onEnd = onEnd === 'loop' ? 'off' : 'loop'; rail.refreshOnEnd(); controls.refresh(); toast(onEnd === 'loop' ? 'Loop on' : 'Loop off'); },
-    setA: () => markAB('a'),
-    setB: () => markAB('b'),
-    clearAB: () => { ab.clear(); controls.refresh(); render(); toast('A–B range cleared'); },
-    copyFrame: () => toast('Frame copied (mock)'),
-    saveFrame: () => toast('Save frame as PNG… (mock)'),
-    copyTime: () => { const t = S.getTab(ws); toast('Copied ' + fmtTime(t.frame, t.fps)); },
-    startCompare: () => cmpBtn.click(),
-    addToCompare: () => cmpBtn.click(),
-    keys: () => controls.openSheet(cogBtn),
-    cog: () => controls.show('main', cogBtn),
-  };
-  ctxMenu = VpeCtxMenu.create({
-    menu: $('ctxmenu'),
-    container: $('wb'),
-    getState: () => {
-      const tab = S.getTab(ws);
-      return { ready: true, playing: tab.playing, loop: onEnd === 'loop', abSet: ab.isSet(), file: true, compareOpen: tab.tiles.length >= 2 };
-    },
-    beforeOpen: () => controls.closeAll(false),
-    run: (action) => { if (MENU_ACTIONS[action]) MENU_ACTIONS[action](); },
-  });
-  stageEl.addEventListener('contextmenu', (e) => { e.preventDefault(); ctxMenu.open(e.clientX, e.clientY); });
-
-  function markAB(which) {
-    const tab = S.getTab(ws);
-    const t = tab.frame / (tab.fps || 24);
-    if (which) ab.set(which, t, tab.frame, t, false);
-    else ab.cycle(t, tab.frame, t, false);
-    toast(ab.toast((sec) => fmtTime(Math.round(sec * (tab.fps || 24)), tab.fps)));
-    controls.refresh();
-    render();
-  }
-
-  function render() {
-    const tab = S.getTab(ws);
-    const W = stageEl.clientWidth || 680;
-    const H = stageEl.clientHeight || 370;
-    const ui = S.deriveUi(tab, { width: W, height: H });
-
-    // Top compact Explorer clip strip
-    expList.innerHTML = '';
-    engine.clips.slice(0, 5).forEach((c) => {
+    expList.textContent = '';
+    for (const c of engine.clips.slice(0, 5)) {
       const idx = tab.tiles.indexOf(c.id);
-      const b = document.createElement('button');
+      const b = el('button', 'exp-chip');
       b.type = 'button';
-      b.className = 'exp-chip';
-      b.innerHTML = '<span class="dot" style="background:' + c.color + '"></span>' +
-        '<span>' + c.name + '</span>' +
-        (idx >= 0 && ui.isMulti ? '<span class="tag">' + S.TILE_KEYS[idx] + '</span>' : '');
-      b.onclick = () => {
-        const res = S.openVideo(ws, c.id, { label: c.name });
-        ws = res.state;
-        if (res.toast) toast(res.toast);
-        render();
-      };
+      const dot = el('span', 'dot');
+      dot.style.background = c.color;
+      b.append(dot, el('span', '', c.name));
+      if (idx >= 0 && ui.isMulti) b.appendChild(el('span', 'tag', S.TILE_KEYS[idx]));
+      b.onclick = () => host.explorerOpen(c.id);
       expList.appendChild(b);
-    });
-
-    // Tabs
-    tabsEl.innerHTML = '';
-    ws.tabs.forEach((t) => {
-      const el = document.createElement('div');
-      el.className = 'tab' + (t.id === tab.id ? ' active' : '');
-      const title = t.tiles.length === 1 ? engine.getClip(t.tiles[0]).name : 'Compare (' + t.tiles.length + ')';
-      el.innerHTML = (t.capture ? '<span class="tab-cap-dot" title="Open new videos here"></span>' : '') +
-        '<span>' + title + '</span>' +
-        (ws.tabs.length > 1 ? '<span class="tab-x" data-close="' + t.id + '">×</span>' : '');
-      el.onclick = (e) => {
-        if (e.target.dataset && e.target.dataset.close) ws = S.closeTab(ws, t.id);
-        else ws = S.selectTab(ws, t.id);
-        render();
-      };
-      tabsEl.appendChild(el);
-    });
-
-    // Stage cells
-    stageEl.classList.toggle('sync-mode', tab.syncMode && ui.isMulti);
-    cellsEl.innerHTML = '';
-    ui.cells.forEach((r) => {
-      const clip = engine.getClip(r.clipId);
-      const cell = document.createElement('div');
-      cell.className = 'cell' + (r.role.startsWith('split') ? ' split' : '');
-      cell.style.left = r.x + 'px';
-      cell.style.top = r.y + 'px';
-      cell.style.width = r.w + 'px';
-      cell.style.height = r.h + 'px';
-      if (r.role === 'split-b') cell.style.background = 'transparent';
-
-      const cv = document.createElement('canvas');
-      cell.appendChild(cv);
-      if (ui.isMulti && ui.effectiveLayout !== 'split') {
-        const b = document.createElement('div');
-        b.className = 'cell-border';
-        cell.appendChild(b);
-      }
-      cell.onclick = (e) => {
-        if (e.target.closest('button')) return;
-        if (controls.isOpen() || ctxMenu.isOpen()) { controls.closeAll(false); ctxMenu.close(false); return; }
-        ws = S.togglePlay(ws);
-        flashPlay(S.getTab(ws).playing);
-        render();
-      };
-
-      if (ui.isMulti) {
-        const ov = document.createElement('div');
-        ov.className = 'ov';
-        const isHero = r.role === 'hero';
-        const off = tab.offsets[r.clipId] || 0;
-        const pillCls = r.role === 'split-b' ? 'pill right' : 'pill';
-        ov.innerHTML =
-          '<div class="' + pillCls + '"><span class="ltr">' + r.letter + '</span><span class="nm">' + clip.name + '</span><span class="fr">#' + (tab.frame + off) + '</span></div>' +
-          (ui.effectiveLayout !== 'split'
-            ? '<div class="tile-top-acts"><button type="button" class="tbtn" data-enlarge="' + r.clipId + '" title="' + (isHero ? 'Back to grid' : 'Enlarge tile') + '">' + (isHero ? collapseSvg : expandSvg) + '</button>' +
-              '<button type="button" class="tbtn rm" data-rm="' + r.clipId + '" title="Remove from compare">' + closeSvg + '</button></div>'
-            : '') +
-          '<div class="sync-pill"><button type="button" data-off="' + r.clipId + '" data-d="-1">−</button><span>' + (off >= 0 ? '+' : '') + off + 'f</span><button type="button" data-off="' + r.clipId + '" data-d="1">+</button></div>';
-        ov.querySelectorAll('[data-enlarge]').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); ws = S.toggleEnlarge(ws, r.clipId); render(); }; });
-        ov.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const res = S.removeTile(ws, r.clipId); ws = res.state; if (res.toast) toast(res.toast); render(); }; });
-        ov.querySelectorAll('[data-off]').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); ws = S.nudgeOffset(ws, r.clipId, Number(b.dataset.d)); render(); }; });
-        cell.appendChild(ov);
-      }
-      cellsEl.appendChild(cell);
-      engine.draw(cv, r.clipId, tab.frame + (tab.offsets[r.clipId] || 0), {
-        splitClipRatio: r.role === 'split-b' ? tab.split : null,
-      });
-    });
-
-    if (ui.addSlot) {
-      const slot = document.createElement('div');
-      slot.className = 'cell add';
-      slot.style.left = ui.addSlot.x + 'px';
-      slot.style.top = ui.addSlot.y + 'px';
-      slot.style.width = ui.addSlot.w + 'px';
-      slot.style.height = ui.addSlot.h + 'px';
-      slot.innerHTML = '<button type="button" class="addcell">+ Add video</button>';
-      slot.querySelector('button').onclick = () => {
-        const next = engine.clips.find((c) => !tab.tiles.includes(c.id));
-        if (next) { const res = S.openVideo(ws, next.id, { label: next.name }); ws = res.state; if (res.toast) toast(res.toast); render(); }
-      };
-      cellsEl.appendChild(slot);
     }
-
-    splitterEl.hidden = !ui.showSplitter;
-    if (!splitterEl.hidden) splitterEl.style.top = Math.round(H * tab.heroRatio) + 'px';
-    dividerEl.hidden = !ui.showDivider;
-    if (!dividerEl.hidden) dividerEl.style.left = Math.round(W * tab.split) + 'px';
-    capBanner.hidden = !ui.showCaptureBanner;
-
-    // Real #bar controls reacting to PlayerState
-    if (tracksBtn) { tracksBtn.hidden = !ui.showCC; tracksBtn.classList.toggle('on', subKey !== 'off'); }
-    const folderCapEl = $('folderCap');
-    if (folderCapEl) folderCapEl.hidden = !ui.showFolderCapsule;
-    splitBtn.hidden = !ui.showSplitBtn;
-    splitBtn.classList.toggle('active', ui.effectiveLayout === 'split');
-    syncBtn.hidden = !ui.showSyncBtn;
-    syncBtn.classList.toggle('active', tab.syncMode);
-    cmpBtn.classList.toggle('cap-on', tab.capture);
-    cmpBtn.title = ui.captureTitle;
-    cmpBtn.innerHTML = tab.capture
-      ? '<span class="cap-pulse"></span><span>' + ui.captureLabel + '</span>'
-      : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/><path d="M12 4.5v15"/></svg><span>' + ui.captureLabel + '</span>';
-
-    seekEl.max = String(tab.maxFrame);
-    seekEl.value = String(tab.frame);
-    nowEl.textContent = fmtTime(tab.frame, tab.fps);
-    durEl.textContent = '/ ' + fmtTime(tab.maxFrame, tab.fps);
-    playBtn.classList.toggle('playing', tab.playing);
-    muteBtn.classList.toggle('muted', muted);
-    muteBtn.setAttribute('aria-pressed', String(muted));
-    volEl.value = String(volume);
-    VpeControls.drawStepBadges([prevSize, nextSize], stepSize);
-    VpeControls.drawRangeButtons(setABtn, setBBtn, ab);
-    const durS = tab.maxFrame / (tab.fps || 24);
-    VpeControls.drawRangeMarks(abMarks, abA, abB, ab.marks(durS));
-
-    pushRailList();
-
+    tabsEl.textContent = '';
+    for (const t of ws.tabs) {
+      const div = el('div', 'tab' + (t.id === tab.id ? ' active' : ''));
+      if (t.capture) { const d = el('span', 'tab-cap-dot'); d.title = 'Open new videos here'; div.appendChild(d); }
+      div.appendChild(el('span', '', t.tiles.length === 1 ? engine.getClip(t.tiles[0]).name : 'Compare (' + t.tiles.length + ')'));
+      if (ws.tabs.length > 1) { const x = el('span', 'tab-x', '×'); x.dataset.close = String(t.id); div.appendChild(x); }
+      div.onclick = (e) => {
+        const close = e.target && e.target.dataset && e.target.dataset.close;
+        ui$.setState(close ? S.closeTab(ui$.getState(), t.id) : S.selectTab(ui$.getState(), t.id));
+      };
+      tabsEl.appendChild(div);
+    }
     statePills.innerHTML =
       '<span class="harness-pill">Videos: <strong>' + ui.n + '</strong></span>' +
       '<span class="harness-pill">Layout: <strong>' + ui.layoutLabel + '</strong></span>' +
       '<span class="harness-pill">Capture: <strong>' + (tab.capture ? 'ON' : 'OFF') + '</strong></span>';
   }
 
-  // Wire real bar buttons
-  cmpBtn.onclick = (e) => { e.stopPropagation(); const res = S.toggleCapture(ws); ws = res.state; if (res.toast) toast(res.toast); render(); };
-  $('capStopBtn').onclick = cmpBtn.onclick;
-  $('capPickBtn').onclick = () => {
-    const tab = S.getTab(ws);
-    const next = engine.clips.find((c) => !tab.tiles.includes(c.id));
-    if (next) { const res = S.openVideo(ws, next.id, { label: next.name }); ws = res.state; if (res.toast) toast(res.toast); render(); }
-  };
-  splitBtn.onclick = (e) => { e.stopPropagation(); ws = S.toggleSplit(ws); render(); };
-  syncBtn.onclick = (e) => { e.stopPropagation(); ws = S.toggleSyncMode(ws); render(); };
-  playBtn.onclick = (e) => { e.stopPropagation(); ws = S.togglePlay(ws); flashPlay(S.getTab(ws).playing); render(); };
-  prevBtn.onclick = (e) => { e.stopPropagation(); ws = S.stepFrame(ws, -1); render(); };
-  nextBtn.onclick = (e) => { e.stopPropagation(); ws = S.stepFrame(ws, 1); render(); };
-  prevSize.onclick = (e) => { e.stopPropagation(); controls.toggle('step', prevSize); };
-  nextSize.onclick = (e) => { e.stopPropagation(); controls.toggle('step', nextSize); };
-  muteBtn.onclick = (e) => { e.stopPropagation(); muted = !muted; render(); };
-  volEl.oninput = () => { volume = Number(volEl.value); muted = volume === 0; render(); };
-  $('time').onclick = (e) => { e.stopPropagation(); timeMode = (timeMode + 1) % 3; render(); };
-  setABtn.onclick = (e) => { e.stopPropagation(); markAB('a'); };
-  setBBtn.onclick = (e) => { e.stopPropagation(); markAB('b'); };
-  cogBtn.onclick = (e) => { e.stopPropagation(); controls.toggle('main', cogBtn); };
-  infoBtn.onclick = (e) => { e.stopPropagation(); controls.toggle('info', infoBtn); };
-  rateBtn.onclick = (e) => { e.stopPropagation(); controls.toggle('speed', rateBtn); };
-  tracksBtn.onclick = (e) => { e.stopPropagation(); controls.toggle('subs', tracksBtn); };
-  picBtn.onclick = (e) => {
-    e.stopPropagation();
-    const modes = ['fit', 'fill', 'stretch', 'actual'];
-    picMode = modes[(modes.indexOf(picMode) + 1) % modes.length];
-    picBtn.dataset.mode = picMode;
-    toast('Picture size: ' + picMode);
-    controls.refresh();
-  };
-  fullBtn.onclick = (e) => { e.stopPropagation(); toast('Fullscreen (mock)'); };
-  seekEl.oninput = () => { ws = S.seekFrame(ws, Number(seekEl.value)); render(); };
-  $('railToggleBtn').onclick = () => { rail.toggle(); setTimeout(render, 20); };
+  const ui$ = globalThis.VpePlayerUi.create({
+    doc: document,
+    win: window,
+    stateApi: S,
+    engine,
+    host,
+    initial: SCENARIOS[INITIAL_KEY],
+    container: $('wb'),
+    onChange: chrome,
+  });
+  host.connect(ui$.onHostMessage);
+  globalThis.__vpeMockup = { ui: ui$, host, engine };
 
   function loadScenario(key) {
     const sc = SCENARIOS[key] || SCENARIOS.single;
-    ws = S.createWorkspaceState(sc);
-    ab.clear();
-    if (sc.railOpen) rail.show();
-    else if (rail.isOpen()) rail.close();
-    render();
+    ui$.setState(S.createWorkspaceState(sc));
+    if (sc.railOpen) ui$.rail.show();
+    else if (ui$.rail.isOpen()) ui$.rail.close();
   }
   scenarioSel.onchange = () => loadScenario(scenarioSel.value);
   $('resetBtn').onclick = () => loadScenario(scenarioSel.value);
-
-  splitterEl.onpointerdown = (e) => {
-    e.preventDefault();
-    splitterEl.classList.add('dragging');
-    const rect = stageEl.getBoundingClientRect();
-    const move = (ev) => { ws = S.setHeroRatio(ws, (ev.clientY - rect.top) / rect.height); render(); };
-    const up = () => { splitterEl.classList.remove('dragging'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
-  dividerEl.onpointerdown = (e) => {
-    e.preventDefault();
-    const rect = stageEl.getBoundingClientRect();
-    const move = (ev) => { ws = S.setSplitRatio(ws, (ev.clientX - rect.left) / rect.width); render(); };
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  };
-
-  setInterval(() => {
-    const tab = S.getTab(ws);
-    if (!tab.playing) return;
-    ws = S.seekFrame(ws, (tab.frame + 1) % (tab.maxFrame + 1));
-    render();
-  }, 42);
-
-  if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(() => render()).observe(stageEl);
-  }
-  window.addEventListener('resize', render);
+  $('railToggleBtn').onclick = () => { ui$.rail.toggle(); setTimeout(ui$.render, 20); };
   loadScenario(INITIAL_KEY);
 })();
 </script>
