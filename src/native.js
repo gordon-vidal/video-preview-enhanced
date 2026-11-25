@@ -54,7 +54,7 @@ function gpuFilterKey(filter, v) {
 class NativeDecoder {
   /**
    * method: the decoding method from the probe ('d3d11va', 'qsv', 'none'…; 'auto'
-   * before the probe has run). onFail(error): native ffmpeg can't play this file
+   * before the probe has run). onFail(error, rejectedMedia): native ffmpeg failed
    * (failed again in software after a GPU method failed); the caller switches to
    * the built-in decoder.
    * transport: how frames reach the webview. 'message': postMessage (postRaw). 'http' / 'ws': the
@@ -484,7 +484,9 @@ class NativeDecoder {
           return;
         }
         this.failed = true;
-        this.onFail(why || exit);
+        // A spawn error or external kill says nothing about whether the media can be decoded.
+        const rejectedMedia = !error && !!proc.pid && Number.isInteger(code) && code > 0 && !signal;
+        this.onFail(why || exit, rejectedMedia);
         return;
       }
       if (proc.stamped) this.pair(proc, true);

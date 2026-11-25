@@ -399,7 +399,8 @@ function afterOnboard(answer, now = Date.now()) {
 
 // ---- files native ffmpeg failed on -------------------------------------------------
 
-const FAILED_KEY = 'videoPreviewEnhanced.nativeFailed';
+// Earlier entries could include tool and spawn failures, so start with a fresh cache.
+const FAILED_KEY = 'videoPreviewEnhanced.nativeRejectedMedia';
 
 function failedBefore(list, file, st) {
   const e = list && list[file];

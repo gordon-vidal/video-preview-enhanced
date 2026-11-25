@@ -9,7 +9,7 @@ const { make } = require('../media/make_cases_media');
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function openCompare(clip) {
-  const h = load();
+  const h = load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin' } });
   const posts = [];
   let receive = null;
   const webview = {
@@ -19,7 +19,9 @@ async function openCompare(clip) {
   h.vscode.window.createWebviewPanel = () => ({ webview, onDidDispose() {}, onDidChangeViewState() {} });
   const compare = await h.vscode._commands['videoPreviewEnhanced.compare'](null, [clip, clip].map(h.vscode.Uri.file));
   const cfg = () => JSON.parse(/<script type="application\/json" id="cfg">([^<]*)<\/script>/.exec(webview.html)[1]);
-  return { h, compare, posts, receive: (m) => receive(m), cfg };
+  const boot = 'link-document';
+  await receive({ type: 'ready', page: cfg().page, boot });
+  return { h, compare, posts, receive: (m) => receive({ boot, ...m }), cfg };
 }
 
 (async () => {

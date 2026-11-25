@@ -195,11 +195,12 @@ class CompareSession {
       // A replaced page can still have messages in flight, with tile keys now assigned to other files.
       if (this.disposed || !m || typeof m !== 'object' || m.page !== this.page) return;
       if (this.link && m.type === 'nd') {
+        if (!this.boot || m.boot !== this.boot) return;
         const epoch = this.epoch;
         this.link.sendUp(m, () => { if (!this.disposed && m.page === this.page && epoch === this.epoch) this.receive(m); });
         return;
       }
-      this.receive(m);
+      return this.receive(m);
     });
     panel.onDidDispose(() => this.dispose());
     panel.onDidChangeViewState(() => {
@@ -318,6 +319,8 @@ class CompareSession {
 
   async renderPage() {
     const page = this.page = (this.page || 0) + 1;
+    this.boot = undefined;
+    this.boots = new Set();
     const rotation = await Promise.all(this.files.map(rotationOf));
     if (this.disposed || page !== this.page) return;
     this.rotation = rotation;
@@ -366,18 +369,29 @@ class CompareSession {
   post(msg) {
     if (this.disposed) return;
     const page = this.page;
+    const boot = this.boot;
+    const envelope = { ...msg, page, boot };
     if (this.link && msg.type === 'nd') {
       const epoch = this.epoch; // closeFiles() bumps it: a tile that was replaced gets nothing from the old one
       this.link.sendDown(msg, () => {
-        if (!this.disposed && page === this.page && epoch === this.epoch) this.webview.postMessage({ ...msg, page });
+        if (!this.disposed && page === this.page && epoch === this.epoch) this.webview.postMessage(envelope);
       });
       return;
     }
-    this.webview.postMessage({ ...msg, page });
+    this.webview.postMessage(envelope);
   }
 
   receive(m) {
-    this.onMessage(m).catch((e) => { if (m.page === this.page) this.fail(e); });
+    if (this.disposed || m.page !== this.page || typeof m.boot !== 'string' || !m.boot) return;
+    if (m.type === 'ready') {
+      // VS Code can recreate a document from the same HTML, with the same page number.
+      if (this.boots.has(m.boot)) return;
+      this.boots.add(m.boot);
+      this.boot = m.boot;
+    } else if (m.boot !== this.boot) return;
+    return this.onMessage(m).catch((e) => {
+      if (!this.disposed && m.page === this.page && m.boot === this.boot) this.fail(e);
+    });
   }
 
   fail(err) {
@@ -432,7 +446,7 @@ class CompareSession {
       case 'nd': {
         const i = TILE_KEYS.indexOf(m.key);
         const n = m.key?.length === 1 && this.natives[i];
-        if (!n || !m.m) return undefined;
+        if (!n || !m.m || (m.m.type === 'seek' && (!Number.isFinite(m.m.t) || m.m.t < 0))) return undefined;
         // The panel can hide after the host sent the page its initial visibility.
         if (m.m.type === 'open' && n instanceof EncodedStream && this.panel.visible === false) n.setHidden(true);
         return n.handle(m.m);

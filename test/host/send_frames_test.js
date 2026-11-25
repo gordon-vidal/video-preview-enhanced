@@ -25,6 +25,9 @@ const { load } = require('./mock_vscode');
     fs.unlinkSync(files[1]); // unreadable frame
     s.posted.length = 0;
     await s.send({ type: 'frames', indices: [0, 1, 2, 7] });
+    for (const indices of ['0', [NaN], [-1], [1.5], ['1'], Array(1), Array(126).fill(0)]) {
+      await s.send({ type: 'frames', indices });
+    }
     const got = s.posted.filter((m) => m.type === 'frame');
     assert.deepStrictEqual(got.map((m) => m.index), [0, 1, 2, 7], 'every index answered');
     assert.deepStrictEqual(got.map((m) => m.data.length), [3, 0, 3, 0]);

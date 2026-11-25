@@ -1512,7 +1512,14 @@ class Session {
   receive(m) {
     const pending = this.onMessage(m);
     const gen = this.loadGen;
-    return pending.catch((e) => { if (!this.stale(gen)) this.fail(e); });
+    return pending.catch((e) => {
+      if (this.stale(gen)) return;
+      if (['ready', 'frames', 'readBlock', 'nd', 'wcFailed', 'quality'].includes(m.type)) this.fail(e);
+      else {
+        log(`[${this.name}] ${m.type} failed: ${e?.stack || e}`);
+        this.post({ type: 'toast', text: `Video Preview action failed. ${e?.message || e}` });
+      }
+    });
   }
 
   canCompare() {
@@ -1675,7 +1682,11 @@ class Session {
       case 'loadSubs': return this.loadSubtitles();
       // The settings panel's "Extension settings" row: VS Code's Settings, filtered to this extension.
       case 'openSettings': return vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXT_ID}`);
-      case 'frames': return this.sendFrames(m.indices || []);
+      case 'frames':
+        // The frame player's largest request is 121 frames ahead (including the target) and 4 behind.
+        if (!Array.isArray(m.indices) || m.indices.length > 125) return undefined;
+        for (const index of m.indices) if (!Number.isSafeInteger(index) || index < 0) return undefined;
+        return this.sendFrames(m.indices);
       // checkJs: start
       case /** @satisfies {ReadBlockRequest['type']} */ ('readBlock'): {
         const request = /** @type {ReadBlockRequest} */ (m);
@@ -1688,10 +1699,11 @@ class Session {
       }
       // checkJs: end
       case 'nd':
+        if (!m.m || (m.m.type === 'seek' && (!Number.isFinite(m.m.t) || m.m.t < 0))) return undefined;
         // The page's picture area, with open and after a resize: the next prestart's guess (fitView).
         // A zoomed picture is no guess for the next video's player.
-        if (m.m && m.m.type === 'view' && !m.m.zoomed && m.m.w > 0 && m.m.h > 0) rememberView(m.m.w, m.m.h);
-        else if (m.m && m.m.type === 'open' && m.m.view && m.m.view.w > 0 && m.m.view.h > 0) rememberView(m.m.view.w, m.m.view.h);
+        if (m.m.type === 'view' && !m.m.zoomed && m.m.w > 0 && m.m.h > 0) rememberView(m.m.w, m.m.h);
+        else if (m.m.type === 'open' && m.m.view && m.m.view.w > 0 && m.m.view.h > 0) rememberView(m.m.view.w, m.m.view.h);
         return this.native ? this.native.handle(m.m) : undefined;
       case 'thumb': return m.page === this.page ? this.sendThumb(m) : undefined;
       case 'grabExactFrame': return this.sendExactFrame(m);
@@ -1808,6 +1820,7 @@ class Session {
       case 'focusModeExited': noteFocusModeExited(); return undefined;
       case 'copyText': return vscode.env.clipboard.writeText(String(m.text || ''));
       case 'copyLink': {
+        if (!Number.isSafeInteger(m.frame) || m.frame < 0) return undefined;
         if (this.url) { this.post({ type: 'toast', text: 'Frame links work for video files only, not URLs', ms: 3000 }); return undefined; }
         if (this.sequence) { this.post({ type: 'toast', text: 'Links work for video files only' }); return undefined; }
         await vscode.env.clipboard.writeText(frameLink(this.context, this.uri, m.frame, m.t, this.webview));
@@ -1912,7 +1925,7 @@ class Session {
           nd.attach({
             post: (msg) => { if (!signal.aborted) this.post({ type: 'nd', m: msg }); },
             postRaw: (msg) => { if (!signal.aborted) this.post(msg); },
-            onFail: (err) => this.nativeFailed(err, gen), origin: this.webviewOrigin,
+            onFail: (err, rejectedMedia) => this.nativeFailed(err, gen, rejectedMedia), origin: this.webviewOrigin,
           });
           this.native = nd;
           this.post({ type: 'libav', meta: { size: stat.size, duration: 0, label: '', native: true } });
@@ -1959,7 +1972,7 @@ class Session {
     const stream = info.kind !== 'media';
     // Native ffmpeg: streams always (the built-in decoder plays HLS VOD only), files by the decoder rule.
     let t = null;
-    if (this.nativePossible(c) && !this.noNative) {
+    if (this.nativePossible(c)) {
       t = await tools();
       if (this.stale(gen)) return undefined;
     }
@@ -1998,7 +2011,7 @@ class Session {
       nd.attach({
         post: (msg) => { if (!signal.aborted) this.post({ type: 'nd', m: msg }); },
         postRaw: (msg) => { if (!signal.aborted) this.post(msg); },
-        onFail: (err) => this.nativeFailed(err, gen), origin: this.webviewOrigin,
+        onFail: (err, rejectedMedia) => this.nativeFailed(err, gen, rejectedMedia), origin: this.webviewOrigin,
       });
       this.native = nd;
       this.postStream();
@@ -2164,7 +2177,7 @@ class Session {
   }
 
   nativePossible(c) {
-    return c.decoder !== 'builtin' && !this.fullRes && !this.noRemoteStream && vscode.workspace.isTrusted && nativeAllowedHere();
+    return c.decoder !== 'builtin' && !this.fullRes && !this.noNative && !this.noRemoteStream && vscode.workspace.isTrusted && nativeAllowedHere();
   }
 
   /** decide.decide() for native ffmpeg on this file (open() and the early start ask the same). */
@@ -2220,7 +2233,7 @@ class Session {
     const { signal } = this.pageAbort;
     const c = config();
     const remote = remoteName();
-    if (this.fullRes || this.noRemoteStream || !vscode.workspace.isTrusted) return false;
+    if (this.fullRes || this.noNative || this.noRemoteStream || !vscode.workspace.isTrusted) return false;
     if (c.decoder === 'builtin' || decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, stat)) return false;
     const t = probed ? probed.t : await tools();
     if (!t || this.stale(gen)) return false;
@@ -2694,8 +2707,8 @@ class Session {
     this.reload('full resolution asked for: built-in decoder');
   }
 
-  /** Native ffmpeg failed on this file (also in software): remembered, and the built-in decoder takes over. */
-  async nativeFailed(error, gen) {
+  /** Fall back to the built-in decoder. Remember failures only when ffmpeg ran and rejected the media. */
+  async nativeFailed(error, gen, rejectedMedia) {
     if (this.stale(gen)) return;
     if (this.url) { // not remembered (no file): this tab tries the built-in decoder
       log(`[${this.name}] native ffmpeg can't play this URL (${error}); trying the built-in decoder`);
@@ -2706,10 +2719,16 @@ class Session {
     log(`[${this.name}] native ffmpeg can't play this file (${error}); using the built-in decoder`);
     // The next window checks the tools again instead of trusting the stored check.
     globalState.update(TOOLS_KEY, undefined).then(undefined, () => {});
-    try {
-      const st = fs.statSync(this.file);
-      await globalState.update(decide.FAILED_KEY, decide.addFailed(globalState.get(decide.FAILED_KEY), this.file, st, error));
-    } catch { /* gone: nothing to remember */ }
+    if (rejectedMedia) {
+      try {
+        const st = fs.statSync(this.file);
+        await globalState.update(decide.FAILED_KEY, decide.addFailed(globalState.get(decide.FAILED_KEY), this.file, st, error));
+      } catch { this.noNative = String(error || 'ffmpeg failed'); }
+    } else {
+      // Stop retrying in this tab. A new tab can check the tools again.
+      this.noNative = String(error || 'ffmpeg failed');
+      toolsPromise = null;
+    }
     if (!this.stale(gen)) this.reload('native ffmpeg failed');
   }
 

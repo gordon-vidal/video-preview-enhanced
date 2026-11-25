@@ -57,10 +57,30 @@ const { fileOfKey } = require('../../src/compare');
     }
     assert.strictEqual(posts.length, 0, 'a bad key posts nothing');
     // ... also from the page: reported as an error, never as a read of file A.
-    receive({ type: 'readBlock', page: compare.page, key: 'tile-A', pos: 0, len: 64 });
+    const boot = 'compare-document';
+    await receive({ type: 'ready', page: compare.page, boot });
+    await receive({ type: 'readBlock', page: compare.page, boot, key: 'tile-A', pos: 0, len: 64 });
     await new Promise((r) => setImmediate(r));
     assert.strictEqual(blocks().length, 0);
     assert.strictEqual(errors().length, 1, 'the page learns about the bad key');
+
+    // VS Code recreated the document without changing the HTML or the page number.
+    const nextBoot = 'compare-recreated';
+    await receive({ type: 'ready', page: compare.page, boot: nextBoot });
+    const count = posts.length;
+    await receive({ type: 'ready', page: compare.page, boot });
+    for (const staleBoot of [boot, undefined]) {
+      await receive({ type: 'readBlock', page: compare.page, boot: staleBoot, key: 'A', pos: 0, len: 64 });
+    }
+    assert.strictEqual(posts.length, count, 'old and untagged requests are ignored');
+    await receive({ type: 'readBlock', page: compare.page, boot: nextBoot, key: 'A', pos: 0, len: 64 });
+    assert.strictEqual(posts.at(-1).boot, nextBoot, 'replies are tagged for the current document');
+    const seeks = [];
+    compare.natives[0] = { handle: (m) => seeks.push(m.t), dispose() {} };
+    for (const t of [NaN, Infinity, -1, '1', undefined, 0, 0.5]) {
+      await receive({ type: 'nd', page: compare.page, boot: nextBoot, key: 'A', m: { type: 'seek', t } });
+    }
+    assert.deepStrictEqual(seeks, [0, 0.5], 'only finite non-negative seek times reach the decoder');
 
     // A bad range answers an empty block once: no read at fd position -1, no RangeError.
     posts.length = 0;

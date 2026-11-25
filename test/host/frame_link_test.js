@@ -5,7 +5,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { load } = require('./mock_vscode');
+const { load, webviewConfig } = require('./mock_vscode');
 
 /** What the URI handler receives for a copied link (VS Code decodes the query once). */
 function linkUri(h, text) {
@@ -42,6 +42,18 @@ async function follow(h, text) {
     let r = await follow(h, text);
     assert.strictEqual(r.opened.length, 1, 'local link opens');
     assert.strictEqual(r.opened[0].scheme, 'file');
+
+    const s = h.open(file);
+    await s.shown;
+    const page = webviewConfig(s.panel.webview).page;
+    for (const frame of [undefined, '1', -1, 1.5, NaN, Infinity]) await s.send({ type: 'copyLink', frame });
+    assert.strictEqual(h.vscode.env.clipboard.text, text, 'invalid frame numbers never reach the clipboard');
+    h.vscode.window.showSaveDialog = async () => h.vscode.Uri.file(file);
+    h.vscode.workspace.fs.writeFile = async () => { throw new Error('Write denied'); };
+    await s.send({ type: 'saveFrame', page, frame: 0, data: new Uint8Array([1]) });
+    assert.ok(s.posted.some((m) => m.type === 'toast' && /Write denied/.test(m.text)));
+    assert.ok(s.posted.every((m) => m.type !== 'error'), 'a failed save does not cover the video');
+    s.panel.dispose();
 
     // Remote window with env.remoteAuthority: the link names the host.
     h = load();

@@ -57,12 +57,14 @@ const { make } = require('../media/make_cases_media');
     compare.post({ type: 'visible', visible: true });
     assert.strictEqual(posts.pop().page, page, 'host posts carry the page id');
     let handled = 0;
+    const boot = 'current-document';
+    await receive({ type: 'ready', page, boot });
     const onMessage = compare.onMessage;
     compare.onMessage = async () => { handled++; };
-    receive({ type: 'tileSize', page: page - 1 });
-    receive({ type: 'tileSize' });
+    receive({ type: 'tileSize', page: page - 1, boot });
+    receive({ type: 'tileSize', boot });
     assert.strictEqual(handled, 0, 'messages from an old page (or without one) are dropped');
-    receive({ type: 'tileSize', page });
+    receive({ type: 'tileSize', page, boot });
     assert.strictEqual(handled, 1, 'messages from the current page are handled');
     compare.onMessage = onMessage;
 

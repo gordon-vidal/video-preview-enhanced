@@ -34,7 +34,7 @@ The 60 fps HEVC fixture also showed about 60 fps over VS Code messages at 1080p 
 **When ffmpeg is used.** With `decoder` set to `auto` and ffmpeg installed, native ffmpeg plays everything except 8-bit H.264 and VP8: those stay on VS Code's GPU decoder (full resolution, no work for the extension host). The test above only picks how ffmpeg decodes (the GPU method or the CPU); until it has run, the GPU's maker picks the method (above). The built-in decoder plays instead:
 
 - in Remote-SSH and container windows: decoded frames would have to cross the connection (WSL is fine, at up to 720p); there the remote stream takes these formats instead (above);
-- for a file native ffmpeg failed on (remembered until the file changes), and in Restricted Mode;
+- for a file that ffmpeg failed to play after starting (remembered until the file changes), and in Restricted Mode;
 - in a tab where you asked for full resolution (below).
 
 **What changes with native ffmpeg.** Frames come out scaled to `nativeMaxHeight` (automatic: up to 2160p over the local connection but no larger than the player's picture needs, 1080p by VS Code messages, 720p in WSL) and as 8-bit 4:2:0. On 4:2:0 video, the CUDA path converts to 8-bit and scales before downloading frames from the GPU. Most of the player works the same; a few tools need the file's own pixels:
@@ -50,6 +50,6 @@ The 60 fps HEVC fixture also showed about 60 fps over VS Code messages at 1080p 
 | Embedded subtitles, switching audio tracks, seek-bar thumbnails | Built-in decoder only (native plays the first audio track). |
 | Compare | Each video uses native ffmpeg by the same rule as the player, with frames at its cell's size. |
 
-If native ffmpeg can't start a file with the GPU method, it retries on the CPU; if that fails too, the file plays with the built-in decoder.
+If native ffmpeg can't decode a file with the GPU method, it retries on the CPU. If that fails too, the file plays with the built-in decoder. If ffmpeg itself fails to start, reopen the video after restoring ffmpeg to try it again.
 
 Native ffmpeg never runs in Restricted Mode (untrusted workspaces).

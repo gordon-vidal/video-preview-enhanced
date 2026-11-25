@@ -34,8 +34,9 @@
   const cfg = JSON.parse(/** @type {HTMLElement} */ (document.getElementById('cfg')).textContent || '{}');
   // Every message carries this page's id: the host ignores a replaced page's late messages, and this
   // page ignores replies meant for the one before it (a reload reuses the tile keys).
+  const boot = Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-');
   const vscode = {
-    postMessage: (m) => api.postMessage({ ...m, page: cfg.page }),
+    postMessage: (m) => api.postMessage({ ...m, page: cfg.page, boot }),
     getState: () => api.getState(),
     setState: (state) => api.setState(state),
   };
@@ -2545,7 +2546,7 @@
 
   window.addEventListener('message', (e) => {
     const m = e.data;
-    if (!m || m.page !== cfg.page) return;
+    if (!m || m.page !== cfg.page || (m.boot !== undefined && m.boot !== boot)) return;
     switch (m.type) {
       case 'rail': if (rail) rail.onMessage(m); break;
       case 'abQuery': exportAB(); break;
@@ -2669,8 +2670,8 @@
   // Frames for native tiles come at the tile's size: tell the host how big a tile is.
   const tile = tileSize();
   lastTileSize = JSON.stringify(tile);
-  vscode.postMessage({ type: 'tileOrder', order: st.order });
   vscode.postMessage({ type: 'ready', tile, origin: window.location.origin });
+  vscode.postMessage({ type: 'tileOrder', order: st.order });
   // An add or remove reloads this page: the rail comes back as it was, and the add is said here.
   if (rail && cfg.railCarry) rail.adopt(cfg.railCarry);
   if (cfg.toast) toast(String(cfg.toast));

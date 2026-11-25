@@ -537,8 +537,10 @@ async function runSuiteB(rng, tmpDir) {
         }
       };
 
+      let bootCounter = 0;
       const send = (m) => {
-        receive(m);
+        const boot = m.type === 'ready' ? `document-${++bootCounter}` : compare.boot;
+        receive({ ...m, boot });
         notePageChange();
       };
 

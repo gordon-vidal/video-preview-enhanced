@@ -3,6 +3,9 @@
 // load() returns { ext, vscode, open(file) -> session handle with posted messages }.
 const Module = require('module');
 const path = require('path');
+const { configuration } = require('../../package.json').contributes;
+const defaults = new Map([configuration].flat().flatMap(({ properties }) =>
+  Object.entries(properties).map(([key, spec]) => [key, spec.default])));
 
 function makeVscode(settings = {}) {
   class Uri {
@@ -57,11 +60,16 @@ function makeVscode(settings = {}) {
     },
     workspace: {
       isTrusted: true,
-      getConfiguration: (sec) => ({
-        get: (k, d) => (settings[`${sec}.${k}`] !== undefined ? settings[`${sec}.${k}`] : d),
-        update: async (k, v) => { updates.push([`${sec}.${k}`, v]); },
-        inspect: () => ({}),
-      }),
+      getConfiguration: (sec) => {
+        const full = (k) => sec ? `${sec}.${k}` : k;
+        return {
+          get: (k, d) => settings[full(k)] !== undefined ? settings[full(k)]
+            : defaults.has(full(k)) ? defaults.get(full(k)) : d,
+          update: async (k, v) => { updates.push([full(k), v]); },
+          inspect: (k) => defaults.has(full(k)) || settings[full(k)] !== undefined
+            ? { defaultValue: defaults.get(full(k)), globalValue: settings[full(k)] } : undefined,
+        };
+      },
       onDidChangeConfiguration: () => ({ dispose() {} }),
       fs: { writeFile: async () => {} },
     },
@@ -145,4 +153,4 @@ function webviewConfig(webview) {
   return JSON.parse(/<script type="application\/json" id="cfg">([^<]*)<\/script>/.exec(webview.html)[1]);
 }
 
-module.exports = { load, webviewConfig };
+module.exports = { load, makeVscode, webviewConfig };
