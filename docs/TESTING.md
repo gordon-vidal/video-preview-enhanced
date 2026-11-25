@@ -161,7 +161,10 @@ reads bounded. CI uses only the small fixtures.
 Layer 2's `formats_cases.js` covers the playback format matrix. For the WASM formats covered only there,
 it checks the first picture, an advancing playback picture and a seek against ffmpeg, and requires decoded
 audio. The `frames_*.js` suites cover WASM seek and step sequences, rounded timestamps and the last picture
-when audio outlasts video.
+when audio outlasts video. `frames_webcodecs_error.js` drives the WebCodecs path of the engine and the real
+decoder worker with a stand-in `VideoDecoder` (Node has none) that fails as Chromium's does on a damaged
+picture: playback goes on at the next keyframe, the sound stays whole, and the third error falls back to the
+built-in decoder.
 
 Layer 3's `playback` exercises H.264 and VP8 WebCodecs, device-dependent High 10 and 4:4:4 H.264 decoding,
 odd-sized WebGL textures, WebCodecs video with AC-3 sound, video without audio and variable frame rates.

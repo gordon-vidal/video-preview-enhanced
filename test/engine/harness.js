@@ -76,6 +76,12 @@ function fakeGl(onLuma) {
       const view = offset ? data.subarray(offset) : data;
       onLuma(frames.thumbOfPlane(view, w, h, stride, deep ? 10 : 0), w, h, deep);
     },
+    // A WebCodecs VideoFrame drawn as it is (a test's stand-in decoder, frames_webcodecs_error.js): a shown
+    // picture without planes to compare.
+    texImage2D: (...a) => {
+      const src = a[a.length - 1];
+      if (src && typeof src === 'object' && 'timestamp' in src) onLuma(null, src.displayWidth, src.displayHeight, false);
+    },
     getShaderParameter: () => true,
     getProgramParameter: () => true,
     getUniformLocation: () => ({}),
