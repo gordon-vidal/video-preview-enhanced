@@ -149,19 +149,6 @@
   }
 
   /**
-   * Production parity: the keyCommand actions each shipped page handles (its KEY_ACTIONS table; any other key goes on
-   * to VS Code). test/host/player_ui_test.js holds media/player.js and media/compare.js to exactly these lists.
-   * create() is the unified proposal and handles more (UNIFIED_ONLY_IN_COMPARE below); it is not production.
-   */
-  const PAGE_KEY_ACTIONS = /** @type {const} */ ({
-    player: ['playPause', 'skip', 'jump', 'prevFrame', 'nextFrame', 'rateStep', 'volumeStep', 'home', 'end', 'mute',
-      'loop', 'fullscreen', 'nextVideo', 'prevVideo', 'setA', 'setB', 'clearAB', 'copyTime', 'cyclePicture', 'plus',
-      'minus', 'info', 'saveFrame', 'cc', 'scopes', 'pickVideo', 'capture', 'seekTenth'],
-    compare: ['playPause', 'skip', 'jump', 'prevFrame', 'nextFrame', 'rateStep', 'volumeStep', 'home', 'end', 'mute',
-      'loop', 'setA', 'setB', 'fullscreen', 'info', 'swap', 'cyclePicture', 'capture', 'minus', 'plus', 'escape'],
-  });
-
-  /**
    * What D ("pick another video") asks of the host, per surface:
    *   'player'  production single player: { type: 'comparePick', t } (a quick pick; Compare then takes the tab)
    *   'compare' production Compare: null (plain D has no handler; Compare › Add video posts startAddMode)
@@ -417,14 +404,23 @@
     let drag = null;
     const at = (/** @type {any} */ e) => { const r = splitRatioAt(e.clientX, o.stageRect(), o.pictureRect()); if (r !== null) o.set(r); };
     on(el, 'pointerdown', (/** @type {any} */ e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || drag) return;
       e.preventDefault();
       e.stopPropagation();
       drag = { id: e.pointerId, moved: false };
       try { el.setPointerCapture(e.pointerId); } catch { /* synthetic pointer (test hook) */ }
     });
-    on(el, 'pointermove', (/** @type {any} */ e) => { if (drag) { drag.moved = true; at(e); } });
-    const end = () => { if (!drag) return; const moved = drag.moved; drag = null; if (o.onDragEnd) o.onDragEnd(moved); };
+    on(el, 'pointermove', (/** @type {any} */ e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      drag.moved = true;
+      at(e);
+    });
+    const end = (/** @type {any} */ e) => {
+      if (!drag || (e && e.pointerId !== undefined && e.pointerId !== drag.id)) return;
+      const moved = drag.moved;
+      drag = null;
+      if (o.onDragEnd) o.onDragEnd(moved);
+    };
     on(el, 'pointerup', end);
     on(el, 'pointercancel', end);
     on(el, 'click', (/** @type {any} */ e) => e.stopPropagation());
@@ -936,15 +932,13 @@
       });
     };
     drag(splitterEl, (ev, rect) => commit(S.setHeroRatio(ws, spotlightRatioAt(tab().dock, ev.clientX - rect.left, ev.clientY - rect.top, rect.width, rect.height))));
-    // The Split Wipe divider: the same binding as media/compare.js. The fake engine has no letterbox model, so the
-    // displayed picture is the split cell deriveUi lays out.
+    // The Split Wipe divider: the same binding as media/compare.js. Reuses the last rendered split-a rect so drags
+    // do not re-run deriveUi() on every pointermove.
+    /** @type {{ x: number, w: number } | null} */
+    let lastSplitPic = null;
     bindSplitDivider(dividerEl, {
       stageRect: () => stageEl.getBoundingClientRect(),
-      pictureRect: () => {
-        const ui = S.deriveUi(tab(), { width: stageEl.clientWidth || 680, height: stageEl.clientHeight || 370 });
-        const c = ui.cells.find((/** @type {any} */ r) => r.role === 'split-a');
-        return c ? { x: c.x, w: c.w } : null;
-      },
+      pictureRect: () => lastSplitPic,
       get: () => tab().split,
       set: (r) => commit(S.setSplitRatio(ws, r)),
       listen: (el, type, fn) => listen(el, type, fn),
@@ -1087,8 +1081,16 @@
       const ui = S.deriveUi(t, { width, height });
 
       renderCells(t, ui);
+      const splitCell = ui.cells.find((/** @type {any} */ r) => r.role === 'split-a');
+      lastSplitPic = splitCell ? { x: splitCell.x, w: splitCell.w } : null;
       if (splitterEl) { splitterEl.hidden = !ui.showSplitter; if (ui.showSplitter) splitterEl.style.top = `${Math.round(height * t.heroRatio)}px`; }
-      if (dividerEl) { dividerEl.hidden = !ui.showDivider; if (ui.showDivider) dividerEl.style.left = `${Math.round(width * t.split)}px`; }
+      if (dividerEl) {
+        dividerEl.hidden = !ui.showDivider;
+        if (ui.showDivider) {
+          dividerEl.style.left = `${Math.round(width * t.split)}px`;
+          dividerEl.setAttribute('aria-valuenow', String(Math.round(t.split * 100)));
+        }
+      }
       if (capBanner) capBanner.hidden = !ui.showCaptureBanner;
 
       if (tracksBtn) tracksBtn.hidden = !ui.showCC;
@@ -1175,7 +1177,7 @@
   }
 
   const api = {
-    HOST_COMMANDS, PICTURE_MODES, TIME_MODE_NAMES, PAGE_KEY_ACTIONS, pickVideoMessage, defaultPrefs, keyCommand, keyAction, runKey, nextTimeMode, timeReadout,
+    HOST_COMMANDS, PICTURE_MODES, TIME_MODE_NAMES, pickVideoMessage, defaultPrefs, keyCommand, keyAction, runKey, nextTimeMode, timeReadout,
     formatTime, bindButtons, stepBy, bindStepBadges, pinPercent, bindAbPins, pictureButton, copyInfoText, createContextMenu,
     createFolderRail, goNeighbour, spotlightRatioAt, spotlightKeyRatio, splitKeyRatio, splitRatioAt,
     bindSplitDivider, applyHostMessage, compareRows, create,

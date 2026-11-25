@@ -72,18 +72,22 @@ const hasHandler = (src, action) => new RegExp(`\\n    ${action}: `).test(keysOf
   assert.strictEqual(PUI.runKey({ key: 'm' }, table), false, 'no handler: not handled');
   assert.deepStrictEqual(calls, ['pp', 5, true]);
 
-  // PRODUCTION PARITY. The shared map of what each shipped page handles (PAGE_KEY_ACTIONS) is exactly each page's
-  // KEY_ACTIONS table: a key added to or dropped from a page without updating the map fails here.
+  // PRODUCTION PARITY: expected handler sets for each shipped page (kept in the test rather than shipped in player-ui.js).
+  const EXPECTED_PLAYER_KEYS = ['playPause', 'skip', 'jump', 'prevFrame', 'nextFrame', 'rateStep', 'volumeStep', 'home', 'end', 'mute',
+    'loop', 'fullscreen', 'nextVideo', 'prevVideo', 'setA', 'setB', 'clearAB', 'copyTime', 'cyclePicture', 'plus',
+    'minus', 'info', 'saveFrame', 'cc', 'scopes', 'pickVideo', 'capture', 'seekTenth'];
+  const EXPECTED_COMPARE_KEYS = ['playPause', 'skip', 'jump', 'prevFrame', 'nextFrame', 'rateStep', 'volumeStep', 'home', 'end', 'mute',
+    'loop', 'setA', 'setB', 'fullscreen', 'info', 'swap', 'cyclePicture', 'capture', 'minus', 'plus', 'escape'];
   const keyNames = (src) => [...keysOf(src).matchAll(/\n {4}(\w+): /g)].map((m) => m[1]).sort();
-  assert.deepStrictEqual(keyNames(playerSrc), [...PUI.PAGE_KEY_ACTIONS.player].sort(), 'player.js KEY_ACTIONS = PAGE_KEY_ACTIONS.player');
-  assert.deepStrictEqual(keyNames(compareSrc), [...PUI.PAGE_KEY_ACTIONS.compare].sort(), 'compare.js KEY_ACTIONS = PAGE_KEY_ACTIONS.compare');
+  assert.deepStrictEqual(keyNames(playerSrc), [...EXPECTED_PLAYER_KEYS].sort(), 'player.js KEY_ACTIONS matches expected production keys');
+  assert.deepStrictEqual(keyNames(compareSrc), [...EXPECTED_COMPARE_KEYS].sort(), 'compare.js KEY_ACTIONS matches expected production keys');
   // D in production: the single player asks for a quick pick at the current time; Compare has no plain-D handler.
   assert.deepStrictEqual(PUI.pickVideoMessage('player', { t: 2.5 }), { type: 'comparePick', t: 2.5 });
   assert.deepStrictEqual(PUI.pickVideoMessage('player'), { type: 'comparePick', t: 0 }, 'no video yet: from 0');
   assert.strictEqual(PUI.pickVideoMessage('compare', { t: 2.5 }), null, 'Compare: plain D is not a Compare key');
   assert.ok(playerSrc.includes("VpePlayerUi.pickVideoMessage('player', {"), 'player.js posts D through the shared mapping');
   assert.ok(!playerSrc.includes("type: 'comparePick'"), 'player.js has no second copy of the D message');
-  assert.ok(!PUI.PAGE_KEY_ACTIONS.compare.includes('pickVideo'), 'Compare: D goes on to VS Code');
+  assert.ok(!EXPECTED_COMPARE_KEYS.includes('pickVideo'), 'Compare: D goes on to VS Code');
   // UNIFIED PROPOSAL (create(), the mockup): not production. D picks another video in any N, through the host.
   assert.deepStrictEqual(PUI.pickVideoMessage('unified', { exclude: ['clip-0', 'clip-1'] }), { type: 'pickVideo', exclude: ['clip-0', 'clip-1'] });
 
@@ -422,31 +426,11 @@ const hasHandler = (src, action) => new RegExp(`\\n    ${action}: `).test(keysOf
 }
 
 // ---- 7. create() end to end: real widgets on a strict fake DOM of the real markup, FakeEngine + FakeHost ----
-// The fixture is the production markup (src/bar.js, src/folder-rail-html.js) inside the stage / popup skeleton that
-// src/player-html.js and the mockup (tools/mockup/render.js) give it. test/host/fake-dom.js is strict: an id that is
-// not in this markup is null, so create() cannot quietly run against controls the real page does not have.
+// The fixture uses the exact shared stage/rail/bar/popup markup from tools/mockup/render.js (stageMarkupHtml)
+// so tests can never drift from the rendered harness. test/host/fake-dom.js is strict: unknown ids return null.
 const { createDom, Element: FakeElement, Node: FakeNode } = require('./fake-dom');
-const { barHtml, playFlashHtml } = require('../../src/bar');
-const { folderRailHtml } = require('../../src/folder-rail-html');
-const FIXTURE = `<div id="main">
-  <div id="stage" class="fit">
-    <div id="cells"></div>
-    ${playFlashHtml}
-    <div class="cap-banner" id="capBanner" hidden>
-      <span class="cap-pulse"></span><span>Open new videos in this compare view</span>
-      <button id="capPickBtn" type="button">Pick…</button><button id="capStopBtn" type="button">Pause</button>
-    </div>
-    <div class="splitter h" id="splitter" hidden><div class="splitter-bar"></div></div>
-    <div id="divider" role="slider" tabindex="0" hidden><div class="h">⇄</div></div>
-    <div id="toast" hidden aria-hidden="true"></div>
-  </div>
-  ${folderRailHtml()}
-</div>
-${barHtml({ compare: false, canCompare: true, compareOpen: false, folder: true })}
-<div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
-<div id="sheet" hidden></div>
-<div id="ctxmenu" class="ctxmenu" role="menu" aria-label="Player menu" tabindex="-1" hidden></div>
-<div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>`;
+const { stageMarkupHtml } = require('../../tools/mockup/render');
+const FIXTURE = stageMarkupHtml();
 const STAGE = { width: 680, height: 370 };
 const fixtureDom = (html = FIXTURE) => {
   const dom = createDom(html);
@@ -817,29 +801,76 @@ for (const key of Object.keys(SCENARIOS)) {
   }
 }
 
-// ---- 9. Boundary contract: UI shell / pure state / engine stay apart (CI; .dependency-cruiser.cjs checks imports) ----
+// ---- 9. Boundary contract: syntax-aware AST check (TypeScript parser) + .dependency-cruiser.cjs rules ----
 {
-  // Code only: comments and strings may name these words when they explain the boundary.
-  const code = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:\\])\/\/.*$/gm, '$1')
-    .replace(/'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`/g, '""');
-  const stateCode = code('media/player-state.js');
-  for (const name of ['document', 'window', 'acquireVsCodeApi', 'LibavPlayer', 'navigator', 'require', 'createEngine']) {
-    assert.ok(!new RegExp(`\\b${name}\\b`).test(stateCode), `media/player-state.js has no ${name} (pure state)`);
+  const ts = require('typescript');
+  /** Collect all executable Identifier names (including inside template literal `${...}` expressions). */
+  function findForbiddenIdentifiers(sourceText, forbiddenSet) {
+    const sf = ts.createSourceFile('check.js', sourceText, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
+    const hits = new Set();
+    const visit = (node) => {
+      if (ts.isIdentifier(node) && forbiddenSet.has(node.text)) {
+        // Ignore property names on member access (e.g. `obj.window`) and object literal keys (`{ document: 1 }`).
+        const p = node.parent;
+        const isPropName = (ts.isPropertyAccessExpression(p) && p.name === node)
+          || (ts.isPropertyAssignment(p) && p.name === node)
+          || (ts.isMethodDeclaration(p) && p.name === node);
+        if (!isPropName) hits.add(node.text);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    return [...hits];
   }
-  const uiCode = code('media/player-ui.js');
-  for (const name of ['acquireVsCodeApi', 'vscode', 'LibavPlayer', 'createEngine', 'VpeGlRenderer', 'VpeCompareCompositor',
-    'VpeFramePlayer', 'require', 'postMessage']) {
-    assert.ok(!new RegExp(`\\b${name}\\b`).test(uiCode), `media/player-ui.js has no ${name} (host and decoders come in as adapters)`);
-  }
+
+  const STATE_FORBIDDEN = new Set(['document', 'window', 'acquireVsCodeApi', 'LibavPlayer', 'navigator', 'require', 'createEngine', 'Worker', 'SharedWorker']);
+  const UI_FORBIDDEN = new Set(['acquireVsCodeApi', 'vscode', 'LibavPlayer', 'createEngine', 'VpeGlRenderer', 'VpeCompareCompositor', 'VpeFramePlayer', 'require', 'postMessage', 'Worker', 'SharedWorker']);
+
+  // Negative fixtures: prove executable template expressions and Worker instantiation are caught.
+  assert.deepStrictEqual(findForbiddenIdentifiers('const x = `${document.title}`;', STATE_FORBIDDEN), ['document'], 'catches template-expression DOM leak');
+  assert.deepStrictEqual(findForbiddenIdentifiers('const w = new Worker("a.js");', UI_FORBIDDEN), ['Worker'], 'catches Worker instantiation');
+  assert.deepStrictEqual(findForbiddenIdentifiers('acquireVsCodeApi();', UI_FORBIDDEN), ['acquireVsCodeApi'], 'catches VS Code API leak');
+
+  const stateSrc = fs.readFileSync(path.join(ROOT, 'media/player-state.js'), 'utf8');
+  const uiSrc = fs.readFileSync(path.join(ROOT, 'media/player-ui.js'), 'utf8');
+  assert.deepStrictEqual(findForbiddenIdentifiers(stateSrc, STATE_FORBIDDEN), [], 'media/player-state.js has zero forbidden references');
+  assert.deepStrictEqual(findForbiddenIdentifiers(uiSrc, UI_FORBIDDEN), [], 'media/player-ui.js has zero forbidden references');
+
+  // Rendered harness divider is keyboard-reachable and labelled as a slider.
+  const renderedHtml = buildMockupHtml({ scenario: 'split-wipe' });
+  assert.ok(/id="divider"[^>]*role="slider"[^>]*tabindex="0"/.test(renderedHtml), 'rendered mockup divider is a focusable slider');
+
   // The DOM-free halves load in Node with no browser globals (this test requires them at the top).
   assert.strictEqual(typeof S.deriveUi, 'function');
   assert.strictEqual(typeof PUI.create, 'function');
-  // The dependency rules that back this up are present (a deleted rule would otherwise go unnoticed).
-  const rules = require('../../.dependency-cruiser.cjs').forbidden.map((r) => r.name);
-  for (const r of ['player-state-imports-nothing', 'player-state-no-core', 'player-ui-not-to-host-or-engine', 'player-ui-no-core']) {
-    assert.ok(rules.includes(r), `.dependency-cruiser.cjs has ${r}`);
+  // The dependency rules that back this up are present with non-empty forbidden patterns.
+  const depRules = require('../../.dependency-cruiser.cjs').forbidden;
+  for (const name of ['player-state-imports-nothing', 'player-state-no-core', 'player-ui-not-to-host-or-engine', 'player-ui-no-core']) {
+    const rule = depRules.find((r) => r.name === name);
+    assert.ok(rule && rule.severity === 'error' && rule.from && rule.from.path, `.dependency-cruiser.cjs enforces ${name}`);
+  }
+  // Multi-pointer guard on bindSplitDivider: a second pointer cannot hijack or terminate an active drag.
+  {
+    const el = createDom('<div id="d" role="slider" tabindex="0"></div>').$('d');
+    let cur = 0.5;
+    let ended = 0;
+    PUI.bindSplitDivider(el, {
+      stageRect: () => ({ left: 0 }),
+      pictureRect: () => ({ x: 0, w: 100 }),
+      get: () => cur,
+      set: (r) => { cur = r; },
+      onDragEnd: () => { ended++; },
+    });
+    el.fire('pointerdown', { button: 0, pointerId: 1, clientX: 50 });
+    el.fire('pointerdown', { button: 0, pointerId: 2, clientX: 10 }); // ignored
+    el.fire('pointermove', { pointerId: 2, clientX: 10 }); // ignored
+    assert.strictEqual(cur, 0.5, 'stray pointer move ignored');
+    el.fire('pointerup', { pointerId: 2 }); // ignored
+    assert.strictEqual(ended, 0, 'stray pointer up does not end drag');
+    el.fire('pointermove', { pointerId: 1, clientX: 80 });
+    assert.strictEqual(cur, 0.8, 'initiating pointer moves divider');
+    el.fire('pointerup', { pointerId: 1 });
+    assert.strictEqual(ended, 1, 'initiating pointer ends drag');
   }
   // Production Compare has no private divider code left: the one binding is media/player-ui.js bindSplitDivider.
   assert.ok(!compareSrc.includes('VpePlayerUi.splitKeyRatio('), 'compare.js: the divider keys come with bindSplitDivider');

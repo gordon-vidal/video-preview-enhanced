@@ -39,6 +39,36 @@ function sanitizeCssForInlineFrame(css) {
 }
 
 /**
+ * Shared stage + rail + bar + popup markup used by both the rendered mockup harness and the strict Node DOM
+ * fixture (test/host/player_ui_test.js), so the test fixture can never drift from the rendered harness.
+ */
+function stageMarkupHtml() {
+  const realBarHtml = barHtml({ compare: false, canCompare: true, compareOpen: false, folder: true });
+  const realRailHtml = folderRailHtml();
+  return `<div id="main">
+    <div id="stage" class="fit">
+      <div id="cells"></div>
+      ${playFlashHtml}
+      <div class="cap-banner" id="capBanner" hidden>
+        <span class="cap-pulse"></span>
+        <span>Open new videos in this compare view</span>
+        <button id="capPickBtn" type="button">Pick…</button>
+        <button id="capStopBtn" type="button">Pause</button>
+      </div>
+      <div class="splitter h" id="splitter" hidden><div class="splitter-bar"></div></div>
+      <div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" hidden><div class="h">⇄</div></div>
+      <div id="toast" hidden aria-hidden="true"></div>
+    </div>
+    ${realRailHtml}
+  </div>
+  ${realBarHtml}
+  <div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
+  <div id="sheet" hidden></div>
+  <div id="ctxmenu" class="ctxmenu" role="menu" aria-label="Player menu" tabindex="-1" hidden></div>
+  <div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>`;
+}
+
+/**
  * Build a self-contained HTML mockup using the real production CSS, bar/rail markup, controls,
  * context menu, folder rail, and pure state modules.
  * @param {{ scenario?: string, theme?: 'dark' | 'light', height?: number }} [opts]
@@ -72,9 +102,6 @@ function buildMockupHtml(opts = {}) {
   const inlinedScripts = scriptFiles
     .map((rel) => `<script data-src="${rel}">\n${escapeScript(readRepoFile(rel))}\n</script>`)
     .join('\n');
-
-  const realBarHtml = barHtml({ compare: false, canCompare: true, compareOpen: false, folder: true });
-  const realRailHtml = folderRailHtml();
 
   const vscodeVars = theme === 'light'
     ? `--vscode-editor-background:#ffffff; --vscode-foreground:#1f2328; --vscode-editorWidget-background:#f3f3f3;
@@ -249,27 +276,7 @@ html, body {
     <div id="expList" style="display:flex;gap:5px;align-items:center;"></div>
   </div>
   <div class="tabs" id="tabs"></div>
-  <div id="main">
-    <div id="stage" class="fit">
-      <div id="cells"></div>
-      ${playFlashHtml}
-      <div class="cap-banner" id="capBanner" hidden>
-        <span class="cap-pulse"></span>
-        <span>Open new videos in this compare view</span>
-        <button id="capPickBtn" type="button">Pick…</button>
-        <button id="capStopBtn" type="button">Pause</button>
-      </div>
-      <div class="splitter h" id="splitter" hidden><div class="splitter-bar"></div></div>
-      <div id="divider" hidden><div class="h">⇄</div></div>
-      <div id="toast" hidden aria-hidden="true"></div>
-    </div>
-    ${realRailHtml}
-  </div>
-  ${realBarHtml}
-  <div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
-  <div id="sheet" hidden></div>
-  <div id="ctxmenu" class="ctxmenu" role="menu" aria-label="Player menu" tabindex="-1" hidden></div>
-  <div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  ${stageMarkupHtml()}
 </div>
 
 <div class="harness-foot">
@@ -391,4 +398,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { SCENARIOS, buildMockupHtml };
+module.exports = { SCENARIOS, stageMarkupHtml, buildMockupHtml };
