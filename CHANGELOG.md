@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **Compare playback and stepping:** seeking forward while playing no longer freezes every video when one of them lands on a picture just after the others (it could wait forever, most often over Remote-SSH); a video that stalls holds the others for 3 s at most; and stepping back after such a seek no longer leaves a video on its old picture.
+- **Compare:** the per-tile ⓘ clip details card has a × close button in its top-right corner (it closes the card like the ⓘ button does). The host log now says per tile why Live transcode was used or skipped, so a Compare that mixes Live transcode and "your GPU (built into VS Code)" tiles can be explained.
 
 ## 0.12.0 (2026-11-25)
 

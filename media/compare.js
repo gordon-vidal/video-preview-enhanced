@@ -699,7 +699,8 @@
             if (label === 'Video') return !!stRows.find((r) => r.key === 'Codec')?.diff;
             return !!(refMap && refMap.has(label) && refMap.get(label) !== value && (label === 'Quality'));
           };
-          statsEl.innerHTML = `<div class="itop"><div class="iname">${esc(f.title)}</div>${f.sub ? `<div class="isub">${esc(f.sub)}</div>` : ''}</div>`
+          statsEl.innerHTML = Grid.statsCloseHtml(i, tileLabel(i), ICONS.close)
+            + `<div class="itop"><div class="iname">${esc(f.title)}</div>${f.sub ? `<div class="isub">${esc(f.sub)}</div>` : ''}</div>`
             + `<dl class="igrid">${rows.map(([rk, rv]) => `<dt>${esc(rk)}</dt><dd${diffOf(rk, rv) ? ' class="diff"' : ''}>${esc(rv)}</dd>`).join('')}</dl>`;
         }
       }
@@ -1934,7 +1935,10 @@
       case 'move': moveWithArrow(el); break;
       case 'spot': promoteToSpotlight(i); break;
       case 'info':
-        if (statsIds.has(i)) statsIds.delete(i); else statsIds.add(i);
+        // The pill's ⓘ and the card's × share this action.
+        if (!Grid.toggleStats(statsIds, i) && el.classList.contains('tile-stats-close')) {
+          /** @type {HTMLElement|null} */ (cellsEl.querySelector(`[data-act="info"][data-i="${i}"].mute-mini`))?.focus();
+        }
         updateOverlays();
         break;
       case 'mute':
@@ -2000,7 +2004,7 @@
   stage.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || tileDrag || panDrag) return;
     const target = /** @type {any} */ (e.target);
-    if (target.closest('#divider, #splitter, #menu, .move, .tbtn, .mute-mini, .sync-pill, .addcell')) return;
+    if (target.closest('#divider, #splitter, #menu, .move, .tbtn, .mute-mini, .tile-stats-close, .sync-pill, .addcell')) return;
     const hit = cellAt(e.clientX, e.clientY);
     const fromZoomHandle = !!target.closest('[data-zoom-drag="1"]');
     const panBase = hit ? hit.c : clockCell();

@@ -1044,6 +1044,8 @@ function activate(context) {
           mode: c.transcode, remote, video: pr.video, compare: true,
           maxBitrateMbps: c.transcodeMaxBitrate, viewHeight: tile && tile.h, toneMap: transcodeArgs.toneMapSupport(t.gpuFilters),
         });
+        // Each tile decides on its own clip (codec, bit rate): say why, so a mixed grid can be explained from the log.
+        log(`compare ${path.basename(file)}: live transcode ${decision.action === 'stream' ? 'on' : 'skipped'}: ${decision.reason}`);
         if (decision.action === 'stream') {
           const stream = await transcodeOptions(t, pr, c, remoteLink, false);
           if (stream) return { tools: t, probed: pr, maxHeight: maxStreamHeight, stream, informTranscode: c.transcode !== 'always' };
