@@ -195,7 +195,8 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
 
     // A drop: videos only, not the file itself, files only.
     const before = panels.length;
-    await V._commands['videoPreviewEnhanced.compareDrop'](uriA, ['file:///tmp/readme.md', uriA.toString(), 'http://h/a.mp4'], { t: 0 });
+    await V._commands['videoPreviewEnhanced.compareDrop'](uriA, ['file:///tmp/readme.md', uriA.toString(), 'http://h/a.mp4',
+      'file://share.invalid/videos/a.mp4', 'file:////share.invalid/videos/a.mp4', 'vscode-remote://ssh-remote+other/a.mp4'], { t: 0 });
     assert.strictEqual(panels.length, before, 'nothing usable dropped');
     const dropped = await V._commands['videoPreviewEnhanced.compareDrop'](uriA, [V.Uri.file(b).toString()], { t: 0 });
     assert.strictEqual(panels.length, before + 1, 'a dropped video opens compare');

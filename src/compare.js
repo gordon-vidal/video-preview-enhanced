@@ -15,6 +15,7 @@ const setPickHook = (fn) => { testPick = fn; };
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { isLocalVideo } = require('./framelink');
 const { rotationOf } = require('./rotation');
 const { serveBlock, readFileBlock } = require('./read-block');
 const { NativeDecoder } = require('./native');
@@ -189,7 +190,7 @@ class CompareSession {
     panel.iconPath = new vscode.ThemeIcon('diff');
     this.panel = panel;
     this.webview = panel.webview;
-    this.webview.html = this.html();
+    this.rendered = this.renderPage();
     this.webview.onDidReceiveMessage((m) => {
       // A replaced page can still have messages in flight, with tile keys now assigned to other files.
       if (this.disposed || !m || typeof m !== 'object' || m.page !== this.page) return;
@@ -260,7 +261,7 @@ class CompareSession {
   }
 
   /** A rail video row: toggles membership in this Compare (adds up to compare.maxVideos, or removes down to 2). */
-  railAdd(file) {
+  async railAdd(file) {
     const uri = this.uriOf(file);
     const key = fileKey(uri);
     const idx = this.uris.findIndex((u) => fileKey(u) === key);
@@ -273,12 +274,15 @@ class CompareSession {
       this.originalTiles.splice(idx, 1);
       this.order = Grid.orderAfterRemoval(this.order, idx);
       this.nextToast = 'Removed from Compare';
-      this.reload(this.uris.filter((_, j) => j !== idx));
+      await this.reload(this.uris.filter((_, j) => j !== idx));
       return true;
     }
     const max = maxVideos();
     const plan = planFolderCompare({ videoKeys: [key], compareKeys: this.uris.map(fileKey), max });
-    if (plan.action === 'add') { this.addUris([uri], 'Added to Compare'); return true; }
+    if (plan.action === 'add') {
+      await this.addUris([uri], 'Added to Compare');
+      return true;
+    }
     this.post({ type: 'toast', text: `Compare is full (${max} videos)`, ms: 2500 });
     return false;
   }
@@ -296,7 +300,7 @@ class CompareSession {
       this.panel.title = this.title();
       if (this.addMode) this.addMode.sync(this);
     }
-    this.webview.html = this.html();
+    return this.rendered = this.renderPage();
   }
 
   closeFiles() {
@@ -312,14 +316,21 @@ class CompareSession {
     this.fhs = this.files.map(() => null);
   }
 
+  async renderPage() {
+    const page = this.page = (this.page || 0) + 1;
+    const rotation = await Promise.all(this.files.map(rotationOf));
+    if (this.disposed || page !== this.page) return;
+    this.rotation = rotation;
+    this.webview.html = this.html();
+  }
+
   html() {
     const w = this.webview;
     const uri = (...p) => w.asWebviewUri(vscode.Uri.joinPath(this.media, ...p)).toString();
     const ec = this.engineCfg(w);
     this.transcodePrefs = this.prefs();
-    this.rotation = this.files.map(rotationOf);
     const cfg = {
-      page: this.page = (this.page || 0) + 1,
+      page: this.page,
       names: this.names,
       dirs: this.files.map((f) => path.dirname(f)),
       engine: ec,
@@ -460,16 +471,14 @@ class CompareSession {
         this.log(`remove ${this.names[i]}`);
         this.originalTiles.splice(i, 1);
         this.order = Grid.orderAfterRemoval(this.order, i);
-        this.reload(this.uris.filter((_, j) => j !== i));
-        return undefined;
+        return this.reload(this.uris.filter((_, j) => j !== i));
       }
       case 'fullRes': {
         // Metrics on the files' real pixels: the built-in decoder for every tile (review 2026-11-19 #2).
         if (!this.natives.some(Boolean)) return undefined;
         this.log('full resolution: built-in decoder for all tiles');
         for (const f of this.files) this.noNative.add(f);
-        this.reload();
-        return undefined;
+        return this.reload();
       }
       case 'log': this.log(`webview: ${m.msg}`); return undefined;
       default: return undefined;
@@ -665,7 +674,7 @@ class CompareSession {
     if (room <= 0 || !this.pick) return;
     const picked = await this.pick(`Add to ${this.title()}`, vscode.Uri.joinPath(this.uris[0], '..'), true);
     if (!picked || !picked.length || this.disposed) return;
-    this.addUris(picked);
+    return this.addUris(picked);
   }
 
   /** Adds files after the ones shown (up to the setting's count); also the test hook's `compareAdd`. `said`: the next page's toast. */
@@ -680,7 +689,7 @@ class CompareSession {
     if (!add.length) return;
     this.log(`add ${add.map((u) => path.basename(u.fsPath)).join(', ')}`);
     if (said) this.nextToast = said;
-    this.reload([...this.uris, ...add]);
+    return this.reload([...this.uris, ...add]);
   }
 
   /** "Replace video…": tile i shows another file (picked in VS Code's open dialog). */
@@ -697,7 +706,7 @@ class CompareSession {
     this.log(`replace ${this.names[i]} with ${path.basename(uri.fsPath)}`);
     this.replaced = i;
     delete this.originalTiles[i];
-    this.reload(this.uris.map((u, j) => (j === i ? uri : u)));
+    return this.reload(this.uris.map((u, j) => (j === i ? uri : u)));
   }
 
   /** "Leave compare": the player opens video `keep` at `t` (its own seconds) in this tab's place. */
@@ -797,6 +806,12 @@ function registerCompare(context, deps) {
       ...deps, transport, frameSource, pick: pickMany, viewColumn, start: t, goto, mode, addMode: addModeApi, menu,
       railFolder: (sess, folderUri) => compareFolderRow(sess, folderUri, sess),
     });
+    await session.rendered;
+    // More Explorer clicks can join a promotion while the first page reads its rotation.
+    while (origin === 'armed' && !session.disposed && session.files.length < list.length) {
+      await session.reload(list);
+    }
+    if (session.disposed) return undefined;
     if (startsInAddMode({ origin, count: list.length })) armAddMode(session);
     session.panel.onDidDispose(() => deps.compareOpenChanged?.());
     deps.compareOpenChanged?.();
@@ -887,7 +902,7 @@ function registerCompare(context, deps) {
     (async () => {
       if (d.dup) { target.post({ type: 'toast', text: `${path.basename(uri.fsPath)} is in compare already`, ms: 2000 }); return; }
       if (isCompare(target)) {
-        target.addUris([uri]);
+        await target.addUris([uri]);
         if (d.full) target.post({ type: 'toast', text: `Compare is full (${maxVideos()} videos)`, ms: 2500 });
       } else if (promotion?.target === target) {
         promotion.files.push(uri);
@@ -1074,8 +1089,15 @@ function registerCompare(context, deps) {
   const compareDrop = async (uri, dropped, opts) => {
     const a = uri instanceof vscode.Uri ? uri : null;
     if (!a) return undefined;
-    const files = droppedVideos(dropped).map((s) => { try { return vscode.Uri.parse(s); } catch { return null; } })
-      .filter((u) => u && FS_SCHEMES.has(u.scheme) && u.toString() !== a.toString());
+    const authority = deps.remoteAuthority?.(playerOf(a)?.webview);
+    const files = droppedVideos(dropped).map((s) => {
+      try {
+        const uri = vscode.Uri.parse(s);
+        if (uri.scheme !== 'vscode-remote') return uri;
+        if (authority && uri.authority === authority) return uri.with({ scheme: 'file', authority: '' });
+      } catch { /* ignore invalid URI */ }
+      return null;
+    }).filter((u) => u && isLocalVideo(u, VIDEO_EXT) && u.toString() !== a.toString());
     if (!files.length) return undefined;
     const max = maxVideos();
     if (files.length > max - 1) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
@@ -1124,7 +1146,7 @@ function registerCompare(context, deps) {
       vscode.window.showInformationMessage(`Video Preview: skipped ${skipped} ${label} because Compare is full.`);
     }
     if (append) {
-      target.addUris(files);
+      await target.addUris(files);
       // The player's Add to Compare button: say what happened, since the Compare may be in another tab.
       const text = files.length ? `Added to Compare (${target.uris.length} videos)` : skipped ? '' : 'Already in Compare';
       if (from && text) from.post({ type: 'toast', text, ms: 2500 });
@@ -1155,7 +1177,7 @@ function registerCompare(context, deps) {
       const video = (uri instanceof vscode.Uri ? uri : null) || activePlayerUri();
       const compare = menu.latest();
       if (!compare || !video || !FS_SCHEMES.has(video.scheme) || !VIDEO_EXT.test(video.path)) return;
-      if (!compare.uris.some((uri) => fileKey(uri) === fileKey(video))) compare.addUris([video]);
+      if (!compare.uris.some((uri) => fileKey(uri) === fileKey(video))) return compare.addUris([video]);
     }),
     vscode.commands.registerCommand('videoPreviewEnhanced.addFromExplorer', () => {
       // The palette: the active compare or player (the page posts its own Shift+D with its Session).
@@ -1225,7 +1247,7 @@ function registerCompare(context, deps) {
       if (plan.action === 'open') return open([player.uri, targetUri], { from: player, t: Number.isFinite(t) ? t : 0, origin: 'rail' });
       const say = (text) => player.post({ type: 'toast', text, ms: 2500 });
       if (plan.action === 'add') {
-        compare.addUris([player.uri, targetUri].filter((u, i, all) => plan.keys.includes(fileKey(u)) && all.findIndex((x) => fileKey(x) === fileKey(u)) === i));
+        await compare.addUris([player.uri, targetUri].filter((u, i, all) => plan.keys.includes(fileKey(u)) && all.findIndex((x) => fileKey(x) === fileKey(u)) === i));
         say(`Added to Compare (${compare.uris.length} videos)${plan.skipped ? `; Compare is full (${max} videos)` : ''}`);
         return compare;
       }
@@ -1262,7 +1284,8 @@ function registerCompare(context, deps) {
       if (plan.action === 'add') {
         const text = `Added ${uris.length} from ${name} to Compare${plan.skipped ? `; Compare is full (${max} videos)` : ''}`;
         // Adding reloads the Compare page: its own rail hears it from the next page.
-        if (compare === player) compare.addUris(uris, text); else { compare.addUris(uris); say(text); }
+        await compare.addUris(uris, compare === player ? text : undefined);
+        if (compare !== player) say(text);
         return compare;
       }
       say(plan.action === 'few' ? (compare ? `No videos in ${name}` : `${name} has fewer than 2 videos to compare`)

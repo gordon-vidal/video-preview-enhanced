@@ -14,7 +14,7 @@ const { rotationOf } = require('../../src/rotation');
   assert.ok(file, 'a rotated test clip (ffmpeg on PATH makes one)');
   const tools = await ff.locateTools('', '');
   assert.ok(tools, 'ffmpeg on PATH');
-  const rot = rotationOf(file);
+  const rot = await rotationOf(file);
   assert.ok(rot === 90 || rot === 270, `test file is rotated (got ${rot})`);
   const frame = await new Promise((resolve, reject) => {
     const nd = new NativeDecoder({

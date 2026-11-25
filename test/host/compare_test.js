@@ -46,8 +46,8 @@ const { make } = require('../media/make_cases_media');
     assert.deepStrictEqual(compare.natives.map((n) => n.maxQueued), [queue, queue]);
 
     fs.copyFileSync(rotated, rewritten);
-    compare.reload();
-    const rotation = rotationOf(rotated);
+    await compare.reload();
+    const rotation = await rotationOf(rotated);
     assert.ok(rotation > 0, 'rotated fixture');
     assert.deepStrictEqual(cfg().rotation, [rotation, 0], 'reload reads the rewritten file');
 
@@ -76,7 +76,7 @@ const { make } = require('../media/make_cases_media');
     const read = compare.readBlock('A', 0, 32);
     await Promise.resolve();
     const remote = h.vscode.Uri.file(upright).with({ scheme: 'http' });
-    compare.addUris([remote, ...Array(2).fill(h.vscode.Uri.file(upright))]);
+    await compare.addUris([remote, ...Array(2).fill(h.vscode.Uri.file(upright))]);
     assert.strictEqual(cfg().names.length, 4, 'two usable files fill the two free slots');
     assert.deepStrictEqual(warnings, [], 'a skipped non-file URI is not counted as overflow');
     finishRead({ bytesRead: 32 });
@@ -104,7 +104,7 @@ const { make } = require('../media/make_cases_media');
       probed: { duration: 10, video: { width: 1920, height: 1080, fps: 30 } },
       stream: { encoder: 'h264_nvenc', cpuEncoder: null, remote: false },
     });
-    compare.reload(compare.uris.slice(0, 2));
+    await compare.reload(compare.uris.slice(0, 2));
     compare.panel.visible = false;
     const ready = () => compare.onMessage({ type: 'ready', tile: { w: 1280, h: 720, cols: 2, rows: 1 } });
     const caps = () => compare.natives.filter(Boolean).map((n) => n.activeCapKbps());
@@ -196,7 +196,7 @@ const { make } = require('../media/make_cases_media');
         probed: { duration: 30, video: h264Sdr, audio: { index: 1, codec: 'aac' } },
         stream: { encoder: 'h264_nvenc', cpuEncoder: 'libx264', audioEncoder: 'libopus', remote: true },
       });
-      compare.reload([upright, upright].map(h.vscode.Uri.file));
+      await compare.reload([upright, upright].map(h.vscode.Uri.file));
       await compare.onMessage({ type: 'ready', tile: { w: 3840, h: 2160, cols: 2, rows: 1 } });
       assert.strictEqual(informed, 0, 'informTranscode stays suppressed when all Compare tiles are lossless Direct Stream');
       assert.deepStrictEqual(compare.natives.map((n) => n.pipelineMode), ['direct-stream', 'direct-stream']);
@@ -270,13 +270,13 @@ const { make } = require('../media/make_cases_media');
 
       // ABR recovery back to tier 0 cleanly re-enters direct-stream and posts accurate lossless transcodeInfo.
       const goodSample = { type: 'remoteLink', gen: 1, kbps: 12000, videoKbps: 5000, mediaRate: 1, buffer: 1, starved: false, behind: false, readMs: 800, hostWaitMs: 0 };
-      while (tileA.tier > 0) {
+      for (let attempt = 0; tileA.tier > 0 && attempt < 20; attempt++) {
         tileA.settleAt = 0;
         tileA.link.upAfter = 0; // skip the real 28 s upgrade cooldown (src/stream-adapt.js UP_COOLDOWN_MS)
         posts.length = 0;
         for (let k = 0; k < 4; k++) await compare.onMessage({ type: 'nd', key: 'A', m: goodSample });
       }
-      assert.strictEqual(tileA.tier, 0);
+      assert.strictEqual(tileA.tier, 0, 'good samples recover within the test window');
       assert.strictEqual(tileA.lossy(), false, 'recovered Compare tile re-enters direct-stream');
       assert.strictEqual(tileA.videoEncoder, 'copy');
       assert.strictEqual(runsA.filter((r) => !r.audio).at(-1).directStream, true);
@@ -284,7 +284,7 @@ const { make } = require('../media/make_cases_media');
       assert.ok(upInfo && upInfo.m.transcode.mode === 'direct-stream' && upInfo.m.transcode.lossy === false && upInfo.m.transcode.adaptingDir === 'up');
 
       // Pre-open setCompareOutput updates lossy() / pipelineMode immediately.
-      compare.reload([upright, upright].map(h.vscode.Uri.file));
+      await compare.reload([upright, upright].map(h.vscode.Uri.file));
       await compare.onMessage({ type: 'ready', tile: { w: 3840, h: 2160, cols: 2, rows: 1 } });
       assert.deepStrictEqual(compare.natives.map((n) => n.lossy()), [false, false]);
       compare.updateTranscode(prefs = { ...prefs, transcodeMaxBitrate: 6, transcodeSplitBitrate: true });
@@ -300,7 +300,7 @@ const { make } = require('../media/make_cases_media');
         probed: { duration: 30, video: idx++ === 0 ? h264Sdr : hevcSdr, audio: null },
         stream: { encoder: 'h264_nvenc', cpuEncoder: 'libx264', remote: true },
       });
-      compare.reload([upright, upright].map(h.vscode.Uri.file));
+      await compare.reload([upright, upright].map(h.vscode.Uri.file));
       await compare.onMessage({ type: 'ready', tile: { w: 3840, h: 2160, cols: 2, rows: 1 } });
       assert.deepStrictEqual(compare.natives.map((n) => n.lossy()), [false, true], 'mixed session keeps H.264 lossless and HEVC lossy');
       assert.strictEqual(informed, 1, 'informTranscode fires when at least one Compare tile is lossy');

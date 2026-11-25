@@ -91,11 +91,15 @@ function canVaapiFullGpu(v, gpuFilters) {
  * @param {Set<string>|null|undefined} f
  * @returns {{ cpu: boolean, any: boolean }}
  */
-function toneMapSupport(f) {
+function toneMapSupport(f, encoder = undefined) {
   const has = (n) => !!f && f.has(n);
   const cpu = has('zscale') && has('tonemap');
-  const hw = has('vpp_qsv') || has('tonemap_vaapi') || has('libplacebo')
-    || (has('tonemap_opencl') && has('hwupload') && has('hwdownload'));
+  const hw = (!encoder || !CPU_ENCODERS.includes(encoder)) && (
+    ((!encoder || encoder === 'h264_qsv') && has('vpp_qsv'))
+    || ((!encoder || encoder === 'h264_vaapi') && has('tonemap_vaapi'))
+    || has('libplacebo')
+    || (encoder !== 'h264_vaapi' && has('tonemap_opencl') && has('hwupload') && has('hwdownload'))
+  );
   return { cpu, any: cpu || hw };
 }
 

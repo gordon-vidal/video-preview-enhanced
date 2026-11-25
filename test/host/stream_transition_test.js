@@ -392,4 +392,59 @@ for (const [action, cancel] of Object.entries(cancelBy)) {
   }
 }
 
+// Deferred seeks and fallbacks from a child close use the same guarded video launch.
+for (const trigger of ['seek timer', 'video close']) {
+  const { s, old } = overlapStream();
+  const failures = [];
+  s.onFail = (err) => failures.push(err);
+  delete s.spawnNow;
+  s.launch = () => { throw new Error('no HDR tone-mapping filter available'); };
+  if (trigger === 'seek timer') {
+    let fire;
+    const setTimer = global.setTimeout;
+    try {
+      global.setTimeout = (fn) => { fire = fn; return null; };
+      s.seek({ gen: 1, t: 20 });
+    } finally { global.setTimeout = setTimer; }
+    s.more({ gen: 1 });
+    fire();
+  } else {
+    s.hdr = true;
+    s.tonemapKind = 'libplacebo';
+    s.more({ gen: 0, videoUntil: 10 });
+    old.emit('close', 1, null);
+  }
+  assert.deepEqual(failures, ['no HDR tone-mapping filter available']);
+  assert.equal(s.waiting, null);
+  assert.equal(s.proc, null);
+  s.dispose();
+}
+
+{
+  const { s, old, children, posted } = overlapStream();
+  s.onFail = assert.fail;
+  s.audioEncoder = 'libopus';
+  s.buf.resetAudio(s.aNext);
+  s.spawnAudio(s.base + s.aNext / AUDIO_RATE, true);
+  const opus = children.at(-1);
+  const answer = s.answer;
+  s.answer = () => { throw new Error('cannot post batch'); };
+  assert.throws(() => opus.stdout.write(Buffer.alloc(1)), /cannot post batch/);
+  assert.equal(s.audioEncoder, 'libopus', 'answer failure does not select PCM');
+  s.answer = answer;
+
+  opus.emit('close', 1, null);
+  assert.equal(s.audioEncoder, null);
+  const pcm = children.at(-1);
+  assert.notEqual(pcm, opus);
+  pcm.emit('close', 1, null);
+  pcm.emit('close', 1, null);
+  assert.equal(s.proc, old);
+  assert.equal(s.audioEnded, true);
+  assert.equal(posted.filter((m) => m.type === 'remoteNotice' && m.kind === 'audio').length, 1);
+  s.more({ gen: 0 });
+  assert.ok(posted.at(-1).video.length, 'picture still ships after losing sound');
+  s.dispose();
+}
+
 console.log('stream transition tests passed');

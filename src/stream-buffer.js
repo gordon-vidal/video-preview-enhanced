@@ -19,6 +19,7 @@ const HISTORY_S = 8;
 const REMOTE_HISTORY_S = 15;
 const SEEK_KEEP_S = 3;
 const HISTORY_MAX_S = 20;
+const HISTORY_MAX_BYTES = 64 * 1024 ** 2;
 const MAX_QUEUED_AUDIO = 4 * AUDIO_RATE * 4; // four seconds of unsent stereo s16le
 const MAX_REGIONS = 4;
 
@@ -302,8 +303,24 @@ class SeekHistoryBuffer {
     if (!this.vNext) return;
     const lastT = this.vAll[this.vNext - 1].t;
     const keepT = historyKeepTime(lastT, this.seekT, this.remote);
-    let k = -1;
-    for (let i = this.vNext - 1; i >= 0; i--) if (this.vAll[i].key && this.vAll[i].t <= keepT) { k = i; break; }
+    let k = 0;
+    let bytes = 0;
+    let firstKey = this.vNext;
+    for (let i = this.vNext - 1; i >= 0; i--) {
+      const packet = this.vAll[i];
+      bytes += packet.data.byteLength;
+      if (bytes > HISTORY_MAX_BYTES) {
+        // A GOP may itself exceed the budget. Drop its sent packets and let older seeks restart.
+        k = firstKey;
+        break;
+      }
+      if (!packet.key) continue;
+      firstKey = i;
+      if (packet.t <= keepT) {
+        k = i;
+        break;
+      }
+    }
     if (k > 0) {
       this.vAll.splice(0, k);
       this.vNext -= k;

@@ -66,43 +66,57 @@ const sniff = async (buf, ext) => { const f = write(buf, ext); return sniffNativ
 
 (async () => {
   try {
+    const changing = write(mp4(track({ rot: 90, codec: 'hvc1' })));
+    const open = fs.promises.open;
+    let opens = 0;
+    fs.promises.open = (...args) => { opens++; return open(...args); };
+    try {
+      assert.deepStrictEqual(await Promise.all([rotationOf(changing), rotationOf(changing)]), [90, 90]);
+      assert.strictEqual(await rotationOf(changing), 90);
+      assert.strictEqual(opens, 1, 'concurrent and repeated lookups share one read');
+      fs.writeFileSync(changing, mp4(track({ rot: 270, codec: 'hvc1' })));
+      fs.utimesSync(changing, new Date(0), new Date(0));
+      assert.strictEqual(await rotationOf(changing), 270, 'same-size rewrite invalidates rotation');
+      assert.strictEqual(opens, 2);
+    } finally { fs.promises.open = open; }
+
     // ---- rotationOf ---------------------------------------------------------------
     for (const deg of [0, 90, 180, 270]) {
-      assert.strictEqual(rotationOf(write(mp4(track({ rot: deg, codec: 'hvc1' })))), deg, `${deg} degrees`);
-      assert.strictEqual(rotationOf(write(mp4(track({ rot: deg, codec: 'hvc1', v1: true })))), deg, `${deg} degrees, 64-bit tkhd`);
+      assert.strictEqual(await rotationOf(write(mp4(track({ rot: deg, codec: 'hvc1' })))), deg, `${deg} degrees`);
+      assert.strictEqual(await rotationOf(write(mp4(track({ rot: deg, codec: 'hvc1', v1: true })))), deg, `${deg} degrees, 64-bit tkhd`);
     }
-    assert.strictEqual(rotationOf(write(mp4(track({ rot: 270, codec: 'hvc1' })), '.MOV')), 270, 'extension is case-insensitive');
-    assert.strictEqual(rotationOf(write(mp4(track({ rot: 90, codec: 'hvc1' })), '.mkv')), 0, 'not an MP4 extension');
-    assert.strictEqual(rotationOf(write(mp4(track({ rot: 90, codec: 'hvc1' })), '')), 0);
-    assert.strictEqual(rotationOf(path.join(dir, 'missing.mp4')), 0, 'missing file');
-    assert.strictEqual(rotationOf(write(Buffer.alloc(0))), 0, 'empty file');
-    assert.strictEqual(rotationOf(write(Buffer.from('not an mp4 at all, just text'))), 0);
+    assert.strictEqual(await rotationOf(write(mp4(track({ rot: 270, codec: 'hvc1' })), '.MOV')), 270, 'extension is case-insensitive');
+    assert.strictEqual(await rotationOf(write(mp4(track({ rot: 90, codec: 'hvc1' })), '.mkv')), 0, 'not an MP4 extension');
+    assert.strictEqual(await rotationOf(write(mp4(track({ rot: 90, codec: 'hvc1' })), '')), 0);
+    assert.strictEqual(await rotationOf(path.join(dir, 'missing.mp4')), 0, 'missing file');
+    assert.strictEqual(await rotationOf(write(Buffer.alloc(0))), 0, 'empty file');
+    assert.strictEqual(await rotationOf(write(Buffer.from('not an mp4 at all, just text'))), 0);
     // An audio track first, rotated video second: the video track decides.
-    assert.strictEqual(rotationOf(write(mp4(track({ kind: 'soun', rot: 180 }), track({ rot: 90, codec: 'hvc1' })))), 90);
+    assert.strictEqual(await rotationOf(write(mp4(track({ kind: 'soun', rot: 180 }), track({ rot: 90, codec: 'hvc1' })))), 90);
     // Audio only: no video track, no rotation.
-    assert.strictEqual(rotationOf(write(mp4(track({ kind: 'soun', rot: 90 })))), 0);
+    assert.strictEqual(await rotationOf(write(mp4(track({ kind: 'soun', rot: 90 })))), 0);
     // A matrix that is not a multiple of 90 is rounded to the nearest quarter turn.
-    assert.strictEqual(rotationOf(write(mp4(track({ rot: 80, codec: 'hvc1' })))), 90);
-    assert.strictEqual(rotationOf(write(mp4(track({ rot: 44, codec: 'hvc1' })))), 0);
+    assert.strictEqual(await rotationOf(write(mp4(track({ rot: 80, codec: 'hvc1' })))), 90);
+    assert.strictEqual(await rotationOf(write(mp4(track({ rot: 44, codec: 'hvc1' })))), 0);
     // moov after mdat (the usual non-faststart layout).
     const late = Buffer.concat([box('ftyp', Buffer.from('isom', 'latin1'), zeros(8)), box('mdat', zeros(4096)), box('moov', track({ rot: 90, codec: 'hvc1' }))]);
-    assert.strictEqual(rotationOf(write(late)), 90);
+    assert.strictEqual(await rotationOf(write(late)), 90);
     // 64-bit mdat size (size field 1) before moov, and size 0 (to end of file) for the last box.
     const mdat64 = Buffer.concat([u32(1), Buffer.from('mdat'), Buffer.from([0, 0, 0, 0, 0, 0, 0, 16 + 8]), zeros(8)]);
-    assert.strictEqual(rotationOf(write(Buffer.concat([box('ftyp', zeros(8)), mdat64, box('moov', track({ rot: 270, codec: 'hvc1' }))]))), 270);
-    assert.strictEqual(rotationOf(write(Buffer.concat([box('ftyp', zeros(8)), Buffer.concat([u32(0), Buffer.from('free'), zeros(8)])]))), 0, 'size 0 box that is not moov');
+    assert.strictEqual(await rotationOf(write(Buffer.concat([box('ftyp', zeros(8)), mdat64, box('moov', track({ rot: 270, codec: 'hvc1' }))]))), 270);
+    assert.strictEqual(await rotationOf(write(Buffer.concat([box('ftyp', zeros(8)), Buffer.concat([u32(0), Buffer.from('free'), zeros(8)])]))), 0, 'size 0 box that is not moov');
     // Hostile: a size smaller than the header, larger than the file, a 64-bit size below 16, a huge moov.
-    assert.strictEqual(rotationOf(write(Buffer.concat([u32(4), Buffer.from('moov'), zeros(64)]))), 0);
-    assert.strictEqual(rotationOf(write(Buffer.concat([u32(0x7fffffff), Buffer.from('moov'), zeros(64)]))), 0);
-    assert.strictEqual(rotationOf(write(Buffer.concat([u32(1), Buffer.from('moov'), Buffer.from([0, 0, 0, 0, 0, 0, 0, 8]), zeros(16)]))), 0);
-    assert.strictEqual(rotationOf(write(Buffer.concat([u32(1), Buffer.from('moov'), zeros(3)]))), 0, 'truncated 64-bit header');
+    assert.strictEqual(await rotationOf(write(Buffer.concat([u32(4), Buffer.from('moov'), zeros(64)]))), 0);
+    assert.strictEqual(await rotationOf(write(Buffer.concat([u32(0x7fffffff), Buffer.from('moov'), zeros(64)]))), 0);
+    assert.strictEqual(await rotationOf(write(Buffer.concat([u32(1), Buffer.from('moov'), Buffer.from([0, 0, 0, 0, 0, 0, 0, 8]), zeros(16)]))), 0);
+    assert.strictEqual(await rotationOf(write(Buffer.concat([u32(1), Buffer.from('moov'), zeros(3)]))), 0, 'truncated 64-bit header');
     // tkhd cut short (matrix would lie outside it).
     const shortTkhd = box('trak', box('tkhd', zeros(20)), box('mdia', mdhd(1000), hdlr('vide')));
-    assert.strictEqual(rotationOf(write(mp4(shortTkhd))), 0);
+    assert.strictEqual(await rotationOf(write(mp4(shortTkhd))), 0);
     // A trak without tkhd / a truncated trak inside moov.
-    assert.strictEqual(rotationOf(write(mp4(box('trak', box('mdia', hdlr('vide')))))), 0);
+    assert.strictEqual(await rotationOf(write(mp4(box('trak', box('mdia', hdlr('vide')))))), 0);
     const cut = mp4(track({ rot: 90, codec: 'hvc1' }));
-    assert.strictEqual(rotationOf(write(cut.subarray(0, cut.length - 40))), 0, 'file cut inside moov/mdat');
+    assert.strictEqual(await rotationOf(write(cut.subarray(0, cut.length - 40))), 0, 'file cut inside moov/mdat');
 
     // ---- sniffNativeMp4 -----------------------------------------------------------
     const good = await sniff(mp4(track({ codec: 'hvc1', c: hvcC(10), fps: 25, scale: 25000 })));

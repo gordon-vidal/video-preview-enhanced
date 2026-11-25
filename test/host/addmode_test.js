@@ -87,7 +87,13 @@ const { make } = require('../media/make_cases_media');
     const W = h2.vscode;
     const ctx = () => (W.executed || [])
       .filter(([id, key]) => id === 'setContext' && key === 'videoPreviewEnhanced.addMode').map((c) => c[2]);
-    const tick = () => new Promise((r) => setTimeout(r, 20));
+    const until = async (ready, label) => {
+      const deadline = Date.now() + 5000;
+      while (!ready()) {
+        assert.ok(Date.now() < deadline, label);
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    };
     const resolve = (file) => {
       const p = { webview: { html: '', options: null, onDidReceiveMessage() {}, postMessage: async () => true, cspSource: 'x:', asWebviewUri: (u) => u }, fns: [], onDidDispose(fn) { p.fns.push(fn); }, onDidChangeViewState() {}, dispose() { p.disposed = true; for (const fn of p.fns) fn(); } };
       const r = W._providers['videoPreviewEnhanced.player'].resolveCustomEditor({ uri: W.Uri.file(file) }, p);
@@ -103,7 +109,7 @@ const { make } = require('../media/make_cases_media');
       assert.ok(W.executed.some((c) => c[0] === 'workbench.action.keepEditor'), 'the player tab is kept (not a preview)');
       const opened = resolve(b);
       assert.strictEqual(opened.r, undefined, 'no player for the claimed video');
-      await tick();
+      await until(() => opened.p.disposed && panels[0]?.posted.some((m) => m.type === 'addMode' && m.multi), 'Compare promoted');
       assert.ok(opened.p.disposed, 'its tab closes');
       assert.strictEqual(panels.length, 1, 'compare opened');
       assert.ok(pl.panel.webview && pl.posted && W.executed, 'sanity');
@@ -117,19 +123,19 @@ const { make } = require('../media/make_cases_media');
       const c = path.join(dir, 'c.mkv');
       const d = path.join(dir, 'd.webm');
       assert.strictEqual(resolve(c).r, undefined, 'c claimed');
-      await tick();
+      await until(() => cmp.webview.html.includes('"c.mkv"'), 'c rendered');
       assert.ok(/"names":\["s_h264\.mp4","rotated\.mp4","c\.mkv"\]/.test(cmp.webview.html), 'c added');
       resolve(b);
-      await tick();
+      await until(() => cmp.posted.some((m) => m.type === 'toast' && /in compare already/.test(m.text)), 'duplicate shown');
       assert.ok(cmp.posted.some((m) => m.type === 'toast' && /in compare already/.test(m.text)), 'a duplicate toasts');
       // Another editor's tab (VS Code's own preview, say) for a video: closed and added.
       tabListener({ opened: [{ input: { uri: W.Uri.file(d), viewType: 'vscode.videoPreview' } }], closed: [], changed: [] });
-      await tick();
+      await until(() => closedTabs.length && cmp.webview.html.includes('"d.webm"'), 'd rendered');
       assert.strictEqual(closedTabs.length, 1, 'the other editor tab closes');
       assert.ok(/"names":\[[^\]]*"d\.webm"\]/.test(cmp.webview.html), 'd added');
       for (const i of [5, 6, 7, 8]) {
         assert.strictEqual(resolve(path.join(dir, `video-${i}.mp4`)).r, undefined, `video ${i} claimed`);
-        await tick();
+        await until(() => cmp.webview.html.includes(`"video-${i}.mp4"`), `video ${i} rendered`);
         assert.ok(cmp.webview.html.includes(`"video-${i}.mp4"`), `video ${i} added`);
       }
       assert.strictEqual(ctx().pop(), false, 'full: off');

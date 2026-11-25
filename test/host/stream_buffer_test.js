@@ -58,6 +58,24 @@ function filled(seconds, gop, opts) {
   return b;
 }
 
+function testByteCappedHistory() {
+  const b = fresh({ remote: true });
+  const data = new Uint8Array(1024 ** 2);
+  for (let i = 0; i < 120; i++) b.vAll.push({ t: i / FPS, key: i % 10 === 0, data });
+  const queued = b.vAll.slice(110);
+  b.vNext = 110;
+  b.trim();
+  assert.ok(b.vAll[0].key);
+  assert.equal(b.vAll[0].t, 5, 'retain the oldest complete GOP within the byte budget');
+  assert.ok(b.vAll.slice(0, b.vNext).reduce((n, p) => n + p.data.byteLength, 0) <= 64 * 1024 ** 2);
+  assert.deepEqual(b.vAll.slice(b.vNext), queued, 'trimming does not drop unsent packets');
+
+  b.vAll.forEach((p) => { p.key = false; });
+  b.vNext = b.vAll.length;
+  b.trim();
+  assert.equal(b.vNext, 0, 'an oversized GOP cannot force retention past the cap');
+}
+
 function testTrim() {
   const b = filled(40, 10, {});
   b.vNext = b.vAll.length;
@@ -308,7 +326,7 @@ function testSplitMpegTs() {
   assert.ok(Math.abs(b.vAll[1].t - 0.04) < 1e-4);
 }
 
-for (const t of [testSplitAcrossChunks, testPacketTimes, testSplitMpegTs, testTrim, testTrimSound, testAddAudio,
+for (const t of [testSplitAcrossChunks, testPacketTimes, testSplitMpegTs, testByteCappedHistory, testTrim, testTrimSound, testAddAudio,
   testReuse, testResetAndClear, testRegionBounce, testRegionEviction, testRegionConfiguration, testRegionAudioCoverage,
   testResumeAudioPreservesHistory]) {
   t();

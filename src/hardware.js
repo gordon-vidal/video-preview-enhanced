@@ -3,7 +3,12 @@
 // version (which decides which ffmpeg builds can use NVENC). No admin rights needed.
 
 const fs = require('fs');
+const os = require('os');
 const { run } = require('./ffmpeg');
+
+function gpuCacheKey(remoteName, hostname = os.hostname(), platform = process.platform) {
+  return 'videoPreviewEnhanced.gpus@' + JSON.stringify([remoteName || 'local', platform, hostname]);
+}
 
 function vendorOf(text) {
   const t = String(text).toLowerCase();
@@ -158,4 +163,4 @@ async function testEncoders(ffmpeg, encoders) {
   return results;
 }
 
-module.exports = { detect, candidateEncoders, testEncoders, nvidiaFromWindowsVersion, parseRegistryGpus };
+module.exports = { gpuCacheKey, detect, candidateEncoders, testEncoders, nvidiaFromWindowsVersion, parseRegistryGpus };

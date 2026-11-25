@@ -557,6 +557,7 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
     assert.deepStrictEqual(args.toneMapSupport(new Set(['zscale'])), { cpu: false, any: false }, 'zscale alone cannot tone-map');
     assert.deepStrictEqual(args.toneMapSupport(new Set(['tonemap_opencl'])), { cpu: false, any: false }, 'OpenCL needs hwupload and hwdownload');
     assert.strictEqual(args.toneMapSupport(new Set(['vpp_qsv'])).any, true);
+    assert.strictEqual(args.toneMapSupport(new Set(['vpp_qsv']), 'libx264').any, false);
     assert.strictEqual(args.toneMapSupport(new Set(['tonemap_vaapi'])).any, true);
     assert.strictEqual(args.toneMapSupport(new Set(['libplacebo'])).any, true);
     assert.strictEqual(args.toneMapSupport(null).any, false);

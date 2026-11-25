@@ -229,4 +229,9 @@ function createFrameLink(deps) {
 }
 // checkJs: end
 
-module.exports = { createFrameLink, gotoFrom, sameFile, hlsPlanText };
+/** A video URI already mapped to a file on this extension host. */
+function isLocalVideo(uri, videoExt) {
+  return uri.scheme === 'file' && !uri.authority && !/^[\\/]{2}/.test(uri.fsPath || '') && videoExt.test(uri.path);
+}
+
+module.exports = { isLocalVideo, createFrameLink, gotoFrom, sameFile, hlsPlanText };

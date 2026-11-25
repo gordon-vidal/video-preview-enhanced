@@ -11,7 +11,7 @@ const native = require('../../src/native');
 const { load } = require('./mock_vscode');
 
 const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mkv');
-const HW_KEY = 'videoPreviewEnhanced.gpus';
+const HW_KEY = hardware.gpuCacheKey();
 const DAY = 24 * 3600e3;
 
 let detects = 0;

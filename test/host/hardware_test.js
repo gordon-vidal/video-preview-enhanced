@@ -20,6 +20,12 @@ const realPlatform = process.platform;
 
 (async () => {
   try {
+    const local = hw.gpuCacheKey(undefined, 'workstation', 'win32');
+    assert.strictEqual(local, hw.gpuCacheKey('local', 'workstation', 'win32'));
+    assert.notStrictEqual(local, hw.gpuCacheKey('wsl', 'workstation', 'win32'));
+    assert.notStrictEqual(local, hw.gpuCacheKey(undefined, 'workstation', 'linux'));
+    assert.notStrictEqual(hw.gpuCacheKey('ssh-remote', 'alpha', 'linux'), hw.gpuCacheKey('ssh-remote', 'beta', 'linux'));
+
     // ---- driver versions ----------------------------------------------------------
     assert.strictEqual(hw.nvidiaFromWindowsVersion('32.0.15.8115'), '581.15');
     assert.strictEqual(hw.nvidiaFromWindowsVersion('31.0.15.3623'), '536.23');

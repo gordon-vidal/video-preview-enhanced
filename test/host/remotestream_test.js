@@ -310,20 +310,16 @@ async function withFfmpeg(tools) {
       assert.strictEqual(st.audio[0].t, 0);
       out.opusReuse = 'pause, memory seek, loop to zero';
     } finally { st.rs.dispose(); }
-    // A runtime encoder failure refreshes from the playhead with s16 PCM, never silent audio.
+    // A runtime Opus failure restarts only the sound process in PCM.
     const fallback = driver(tools, file, pr, { audioEncoder: 'no-such-encoder' });
-    const post = fallback.rs.post;
-    fallback.rs.post = (m) => {
-      if (m.type === 'refresh') { fallback.seek(1.24); return; }
-      return post(m);
-    };
     try {
       await fallback.rs.open(); fallback.more();
       await until(() => fallback.audio.length, 's16 after failed Opus encoder');
       assert.strictEqual(fallback.rs.audioEncoder, null);
-      assert.strictEqual(fallback.audio[0].t, 1.24);
+      assert.strictEqual(fallback.audio[0].t, 0);
+      assert.strictEqual(fallback.rs.spawns, 1);
       assert.deepStrictEqual(fallback.fails, []);
-      out.opusFallback = 's16 at the playhead';
+      out.opusFallback = 's16 with the original video process';
     } finally { fallback.rs.dispose(); }
     // Ogg pages can span arbitrary stdout chunks. The final granule must remove padding.
     const encoded = spawnSync(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i',

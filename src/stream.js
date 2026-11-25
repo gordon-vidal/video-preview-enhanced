@@ -324,7 +324,7 @@ class EncodedStream {
   }
 
   async handle(m) {
-    if (this.disposed) return undefined;
+    if (this.disposed || this.failed) return undefined;
     switch (m.type) {
       case 'open':
         if (m.hidden) this.setHidden(true);
@@ -332,10 +332,14 @@ class EncodedStream {
         return this.open();
       case 'view': return this.setView(m, !!m.playing);
       case 'playback': this.playing = !!m.playing; return undefined;
-      case 'remoteAudioFailed': return this.audioFallback(m.message);
+      case 'remoteAudioFailed':
+        if (!this.audioEncoder) return;
+        this.audioFallback(m.message);
+        // The page discarded the batch that contained the undecodable sound.
+        return this.post({ type: 'refresh' });
       case 'config':
         if (m.video !== 'webcodecs' && this.pr.video) { this.onFail('H.264 WebCodecs not available in this webview'); return undefined; }
-        return this.post({ type: 'configured', video: this.pr.video ? m.video : 'none', audio: this.pr.audio ? m.audio : 'none' });
+        return this.post({ type: 'configured', video: this.pr.video ? m.video : 'none', audio: this.buf.hasAudio ? m.audio : 'none' });
       case 'more': return this.more(m);
       case 'seek': return this.seek(m);
       case 'remoteLink': return this.adapt(m);
@@ -371,8 +375,8 @@ class EncodedStream {
 
   open() {
     const v = this.pr.video;
-    if (this.hdr && !toneMapSupport(this.tools && this.tools.gpuFilters).any) {
-      this.onFail('HDR needs ffmpeg with zscale and tonemap (or a GPU tone-mapper)');
+    if (this.hdr && !toneMapSupport(this.tools && this.tools.gpuFilters, this.encoder).any) {
+      this.fail('HDR needs ffmpeg with zscale and tonemap (or a GPU tone-mapper)');
       return undefined;
     }
     this.sizeVideo();
@@ -381,6 +385,7 @@ class EncodedStream {
       this.pipelineMode = this.defaultPipelineMode();
     } else {
       this.startAt(0);
+      if (this.failed) return;
     }
     const level = defaultCodecLevel(this.w, this.h, this.fps);
     this.post({
@@ -394,7 +399,7 @@ class EncodedStream {
         transcode: this.transcodeInfo(),
         // H.264 High, Annex B (no description: SPS/PPS come in-band before every IDR), SDR BT.709.
         video: { codec: 'h264', width: this.w, height: this.h, profile: 100, level, colorSpace: 1, colorTrc: 0 },
-        audio: this.pr.audio ? { codec: this.audioEncoder ? 'opus' : 'pcm_s16le', sampleRate: AUDIO_RATE, channels: 2 } : null,
+        audio: this.buf.hasAudio ? { codec: this.audioEncoder ? 'opus' : 'pcm_s16le', sampleRate: AUDIO_RATE, channels: 2 } : null,
       },
     });
   }
@@ -495,7 +500,7 @@ class EncodedStream {
     this.restored = false;
     this.mixedHistoryFrom = null;
     this.videoEnded = false;
-    this.audioEnded = !this.pr.audio;
+    this.audioEnded = !this.buf.hasAudio;
     this.audioPaused = false;
     this.waiting = null;
     this.videoFragment = null;
@@ -505,6 +510,7 @@ class EncodedStream {
 
   startAt(t) {
     if (this.disposed) return;
+    this.failed = false;
     this.reset(t);
     this.spawnNow();
   }
@@ -514,37 +520,57 @@ class EncodedStream {
     this.log(`live transcode: Opus failed (${why}); using s16 PCM`);
     this.audioEncoder = null;
     this.buf.setConfiguration('');
-    this.takeStandby(NaN);
-    this.reset(this.base);
-    this.post({ type: 'refresh' });
+    const proc = this.audioProc;
+    this.audioProc = null;
+    this.stopProcess(proc);
+    this.audioPaused = false;
+    this.buf.resetAudio(this.aNext);
+    this.audioEnded = false;
+    if (!this.hidden) this.spawnAudio(this.base + this.aNext / AUDIO_RATE, true);
+  }
+
+  audioFailed(why) {
+    if (this.audioEncoder) return this.audioFallback(why);
+    const proc = this.audioProc;
+    this.audioProc = null;
+    this.stopProcess(proc);
+    this.audioPaused = false;
+    this.buf.hasAudio = false;
+    this.buf.setConfiguration('');
+    this.audioEnded = true;
+    this.notice('audio', `No sound: ${why}`);
+    if (this.videoEnded) this.prepareLoop();
   }
 
   /** Starts ffmpeg for the current (reset) stream. */
   spawnNow() {
-    if (this.disposed) return;
+    if (this.disposed || this.failed) return;
     this.hidden = false;
     clearTimeout(this.startTimer);
     this.startTimer = null;
     this.deferredSince = null;
     if (this.resizePending) this.sizeVideo();
-    this.spawnVideo();
+    if (!this.spawnVideo()) return;
     this.buf.setConfiguration(this.cacheConfiguration());
-    if (this.pr.audio) this.spawnAudio(this.base);
+    if (this.buf.hasAudio) this.spawnAudio(this.base);
   }
 
   spawnAudio(t, exact = false) {
-    const proc = this.launch(t, true, { exactAudio: exact });
+    let proc;
+    try { proc = this.launch(t, true, { exactAudio: exact }); }
+    catch (e) { this.audioFailed(e.message); return; }
     this.audioProc = proc;
     proc.stdout.on('data', (d) => {
       if (proc !== this.audioProc) return;
-      try { this.addAudio(d); this.answer(); } catch (e) { this.audioFallback(e.message); }
+      try { this.addAudio(d); } catch (e) { this.audioFailed(e.message); }
+      this.answer();
     });
     this.onExit(proc, (code, signal) => {
       if (proc !== this.audioProc) return;
       this.audioProc = null;
       if (code !== 0 || signal) {
-        if (this.audioEncoder) this.audioFallback(this.exitReason(proc, code, signal));
-        else this.fail(`audio: ${this.exitReason(proc, code, signal)}`);
+        this.audioFailed(this.exitReason(proc, code, signal));
+        this.answer();
         return;
       }
       this.audioEnded = true;
@@ -554,14 +580,18 @@ class EncodedStream {
   }
 
   spawnVideo() {
+    if (this.failed || this.disposed) return false;
     const t = this.vBase;
-    const proc = this.takeStandby(t) || this.launch(t);
+    let proc;
+    try { proc = this.takeStandby(t) || this.launch(t); }
+    catch (e) { this.fail(e.message); return false; }
     this.proc = proc;
     this.spawns++;
     this.lastSpawnAt = Date.now();
     this.watchVideo(proc);
     const cap = this.activeCapKbps();
     this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${cap ? `, ${cap} kb/s cap` : ''})`);
+    return true;
   }
 
   watchVideo(proc, overlap = null) {
@@ -675,7 +705,12 @@ class EncodedStream {
   }
 
   fail(why) {
+    if (this.failed || this.disposed) return;
+    this.failed = true;
+    clearTimeout(this.startTimer);
+    this.startTimer = null;
     this.kill();
+    this.takeStandby(NaN);
     this.waiting = null;
     this.onFail(why);
   }
@@ -795,7 +830,7 @@ class EncodedStream {
   adapt(m) {
     if (!this.allowLinkAdapt || this.lockHeight) return; // a resolution fixed by the user stays
     if (m.gen !== this.gen || (!this.proc && this.vNext === this.vAll.length)) return;
-    const pcm = this.pr.audio ? (this.audioEncoder ? OPUS_KBPS : PCM_KBPS) : 0;
+    const pcm = this.buf.hasAudio ? (this.audioEncoder ? OPUS_KBPS : PCM_KBPS) : 0;
     const timestamp = Date.now();
     const samples = this.link.bwSamples;
     const d = this.link.onSample(m, timestamp, pcm);
@@ -837,18 +872,23 @@ class EncodedStream {
     proc.t = t;
     proc.directStream = !audio && this.pipelineMode === 'direct-stream';
     proc.err = { text: '' };
-    proc.stderr.on('data', (d) => { proc.err.text = (proc.err.text + d).slice(-2000); });
     proc.on('error', (e) => { proc.err.text += String(e); });
+    if (!proc.stdout || !proc.stderr) throw new Error('ffmpeg could not open its output pipes');
+    proc.stderr.on('data', (d) => { proc.err.text = (proc.err.text + d).slice(-2000); });
     return proc;
   }
 
   prepareLoop() {
-    if (this.standby || this.disposed) return;
+    if (this.standby || this.disposed || this.failed) return;
     const mode = this.pipelineMode;
     const tonemap = this.tonemapKind;
-    const sb = this.launch(0);
-    this.pipelineMode = mode;
-    this.tonemapKind = tonemap;
+    let sb;
+    try { sb = this.launch(0); }
+    catch (e) { this.log(`live transcode: loop standby unavailable (${e.message})`); return; }
+    finally {
+      this.pipelineMode = mode;
+      this.tonemapKind = tonemap;
+    }
     this.standby = sb;
     sb.timer = setTimeout(() => { if (this.standby === sb) { this.standby = null; sb.kill('SIGKILL'); } }, 20000);
   }
@@ -881,6 +921,7 @@ class EncodedStream {
     const m = this.waiting;
     if (!m) return;
     if (this.restored) this.continueRegion();
+    if (this.failed) return;
     const gen = this.gen;
     // A remote link keeps at most REMOTE_BATCH_BYTES in flight even at tier 0: the pipe is a FIFO, so a seek's reply
     // waits behind every old-generation byte already queued (4 Mb/s SSH: 384 KB x several batches = seconds).
@@ -913,7 +954,7 @@ class EncodedStream {
     this.videoFragment = null;
     const videoUntil = m.videoUntil ?? Infinity;
     // Even at the top tier, picture must not outrun the half second of Opus we can send per reply.
-    const frameLimit = this.pr.audio && (this.tier || this.audioEncoder) ? Math.max(1, Math.floor(this.fps / 2)) : Infinity;
+    const frameLimit = this.buf.hasAudio && (this.tier || this.audioEncoder) ? Math.max(1, Math.floor(this.fps / 2)) : Infinity;
     let end = this.vNext + (lastPiece ? 1 : 0);
     let bytes = lastPiece ? lastPiece.video[0].data.byteLength : 0;
     while (!lastPiece && end < this.vAll.length && this.vAll[end].t < boundary && end - this.vNext < frameLimit
@@ -1025,7 +1066,7 @@ class EncodedStream {
       this.deferredSince = null;
       this.restored = true;
       this.videoEnded = region.videoEnded;
-      this.audioEnded = region.audioEnded;
+      this.audioEnded = !this.buf.hasAudio || region.audioEnded;
       this.audioPaused = false;
       at = region.at;
     }
@@ -1048,7 +1089,7 @@ class EncodedStream {
       this.vBase = this.nextVideoTime();
       this.frameIndex = 0;
       this.gotOutput = false;
-      this.spawnVideo();
+      if (!this.spawnVideo()) return;
     }
     if (!this.audioProc && !this.audioEnded && this.aNext >= this.aEnd) {
       this.buf.resumeAudio(this.aNext);

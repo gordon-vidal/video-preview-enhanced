@@ -52,7 +52,7 @@ const urlsource = lazy(() => require('./urlsource')); // Open Video URL… (docs
 const { createSettings, PREFS } = require('./settings'); // settings, player prefs, globalState fallback
 const { createOffers } = require('./offers'); // onboarding, hint, GPU test and remote ffmpeg offers
 const { createAssociations } = require('./associations'); // default viewer for MP4/WebM, file icons
-const { createFrameLink, sameFile, hlsPlanText } = require('./framelink'); // frame links, native frame sizes, log texts
+const { createFrameLink, isLocalVideo, sameFile, hlsPlanText } = require('./framelink'); // frame links, native frame sizes, log texts
 const { createDebugCommands } = require('./debug-cmd'); // the VPE_LOG test hook (<log>.cmd)
 const { linkSimulatorFromEnv, effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VPE_SIMULATE_REMOTE
 const { LinkSessionMemory } = require('./stream-adapt');
@@ -179,7 +179,7 @@ function machine() {
       if (!hw) return;
       hwKnown = { os: hw.os, gpus: hw.gpus.map((g) => ({ vendor: g.vendor, name: g.name })), at: Date.now() };
       hwStale = false;
-      if (globalState) globalState.update(HW_KEY, hwKnown);
+      if (globalState) globalState.update(gpuCacheKey(), hwKnown);
     }, () => {});
   }
   return hwPromise;
@@ -187,7 +187,7 @@ function machine() {
 
 // The GPUs found last (hardware.detect(): a WMI / lspci query, nothing decodes), kept across sessions:
 // before any GPU test, they choose ffmpeg's method (decide.vendorMethod; docs/notes/cpu-4k.md).
-const HW_KEY = 'videoPreviewEnhanced.gpus';
+function gpuCacheKey() { return hardware.gpuCacheKey(vscode.env.remoteName); }
 let hwKnown = null;
 // Detected again only when the stored record is older than this, or a method guessed from it produced no
 // picture (hwStale: a new GPU or driver); one PowerShell start (~0.3-1 s of CPU) per session otherwise.
@@ -844,7 +844,7 @@ function activate(context) {
   globalState = context.globalState;
   linkSim = linkSimulatorFromEnv(process.env, log);
   if (linkSim) context.subscriptions.push({ dispose: () => { if (linkSim) linkSim.dispose(); linkSim = null; } });
-  hwKnown = globalState.get(HW_KEY) || null;
+  hwKnown = globalState.get(gpuCacheKey()) || null;
   offers = createOffers({
     vscode, globalState, log, decide, probe, remoteff, setup, tools, config, probeRecordFor, probeRunning: () => !!probeRun, machine, runProbeUi,
     setupFfmpeg,
@@ -987,7 +987,7 @@ function activate(context) {
   // ---- Compare and Add to Compare (src/compare.js) ----
   let testCompareFiles;
   compareApi = registerCompare(context, {
-    vscode, log, sessions, compareSessions, nativeTransport, nativeQueue, exportClips, linkSim,
+    vscode, log, sessions, compareSessions, nativeTransport, nativeQueue, exportClips, linkSim, remoteAuthority,
     compareOpenChanged: () => { for (const session of sessions) session.sendCompareOpen(); },
     showOpenDialog: logFile ? (options) => {
       const files = testCompareFiles;
@@ -1079,8 +1079,7 @@ function resolveLinkTarget(rawTarget) {
   }
   // Links come from anywhere (a chat, a web page): only video files on a real file
   // system, never a share on another machine (opening \\host\share reaches out to it).
-  const unc = !!target.authority || /^[\\/]{2}/.test(target.fsPath || '');
-  if (!FS_SCHEMES.has(target.scheme) || unc || !VIDEO_EXT.test(target.path)) {
+  if (!isLocalVideo(target, VIDEO_EXT)) {
     log(`link refused: ${target.toString()}`);
     return { error: 'Video Preview: frame links only open video files (no network shares or other schemes).' };
   }
@@ -1202,8 +1201,8 @@ class Session {
       try { await frameserver.start(); this.framePort = frameserver.port; }
       catch (e) { log(`frame server could not start: ${e.message}`); }
     }
+    await this.renderPage();
     if (this.disposed) return;
-    this.webview.html = this.html();
     this.watch();
     this.shown = true;
     this.startEarly();
@@ -1456,7 +1455,18 @@ class Session {
     this.resetPage();
     this.boot = undefined;
     this.boots.clear();
-    this.webview.html = `${this.html()}<!-- ${Date.now()} -->`;
+    return this.renderPage(true);
+  }
+
+  async renderPage(reload = false) {
+    if (this.disposed) return;
+    const gen = this.loadGen;
+    this.renderingPage = true;
+    const rotation = this.sequence || this.url ? 0 : await rotationOf(this.file);
+    if (this.disposed || gen !== this.loadGen) return;
+    this.rotation = rotation;
+    this.renderingPage = false;
+    this.webview.html = this.html() + (reload ? `<!-- ${Date.now()} -->` : '');
   }
 
   resetPage() {
@@ -1556,7 +1566,7 @@ class Session {
         remote: !!remoteName(), whenSlow: c.whenSlow, fastWhenBehind: c.fastWhenBehind,
         net: !!this.url, // blocks come over the network: larger blocks, more read-ahead, no seek-bar thumbnails
         wcFailed: [...wcFailed],
-        rotation: this.sequence || this.url ? 0 : rotationOf(this.file),
+        rotation: this.rotation,
         pool: debugPool,
         mem: memBudgets(),
         hdrOutput: c.hdrOutput,
@@ -1631,7 +1641,7 @@ class Session {
       reply({ error: 'exact frames are for Live transcode or downscaled native ffmpeg of a video file' });
       return undefined;
     }
-    const r = await this.exact.grab({ tools: nd.tools, file: nd.file, t, video, rotation: rotationOf(nd.file), page, isCurrent: (p) => !this.stale(gen) && p === this.page });
+    const r = await this.exact.grab({ tools: nd.tools, file: nd.file, t, video, rotation: this.rotation, page, isCurrent: (p) => !this.stale(gen) && p === this.page });
     if (r.cancelled || r.stale) return undefined; // superseded or replaced: the newer request answers
     reply(r.png ? { png: new Uint8Array(r.png.buffer, r.png.byteOffset, r.png.length), w: r.w, h: r.h, matrix: r.matrix } : { error: r.error || 'failed' });
     return undefined;
@@ -1640,7 +1650,7 @@ class Session {
   async onMessage(m) {
     // A page can only send objects; null or a primitive is not one of ours.
     if (!m || typeof m !== 'object') return undefined;
-    if (this.disposed || (m.type !== 'ready' && m.boot !== undefined && m.boot !== this.boot)) return undefined;
+    if (this.disposed || this.renderingPage || (m.type !== 'ready' && m.boot !== undefined && m.boot !== this.boot)) return undefined;
     switch (m.type) {
       case 'ready':
         if (m.page !== this.page || typeof m.boot !== 'string' || !m.boot || this.boots.has(m.boot)) return undefined;
@@ -2245,7 +2255,7 @@ class Session {
       resolution: this.transcodeHeight,
       initialLink: isRemoteLink ? sessionLink.read() : undefined,
       onLinkUpdate: (snapshot) => { if (!signal.aborted) sessionLink.update(snapshot); },
-      rotation: rotationOf(this.file),
+      rotation: this.rotation,
       post: (msg) => {
         if (!signal.aborted) this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg });
       },
@@ -2799,6 +2809,7 @@ class Session {
 }
 
 function deactivate() {
+  for (const s of sessions) s.dispose();
   resetFocusMode();
 }
 
