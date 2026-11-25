@@ -1,0 +1,691 @@
+'use strict';
+// Millisecond tests for the player's tool controllers (media/player-ui-tools.js) on the strict fake DOM
+// (test/host/fake-dom.js): the #notice banner (reduced resolution, slow playback, A-B clip refusal, dismissals, Esc),
+// inspection (scopes, pixel inspector, stats, Codec X-ray, keyframe and chapter steps, Esc order, missing engine
+// hooks), subtitles (CC button, keys, delay / size, the host's tracks, cue placement) and frame export (save, copy,
+// clipboard fallback, timestamp, link, the A-B export protocol). Nothing decodes video: the engine is a stub.
+const assert = require('assert');
+const T = require('../../media/player-ui-tools');
+const reducedResNotice = require('../../media/reduced-res-notice');
+const slowNotice = require('../../media/slow-notice');
+const { createDom } = require('./fake-dom');
+
+const T0 = Date.now();
+let count = 0;
+const tests = [];
+const test = (name, fn) => tests.push([name, fn]);
+const tick = () => new Promise((r) => setImmediate(r));
+
+const NOTICE_HTML = `<div id="stage"><canvas id="cv"></canvas><div id="subs" hidden></div>
+  <div id="notice" hidden>
+    <span id="noticeText"></span>
+    <button id="noticeAction"></button>
+    <button id="noticeSettings" class="noticeSecondary" hidden></button>
+    <button id="noticeHide" class="noticeSecondary" hidden></button>
+    <button id="noticeClose" title="Dismiss" aria-label="Dismiss">×</button>
+  </div></div><button id="play">Play</button>`;
+
+function noticeSetup(opts = {}) {
+  const dom = createDom(NOTICE_HTML);
+  const log = { actions: [], dismissed: [], announced: [], stageClicks: 0 };
+  dom.$('stage').addEventListener('click', () => { log.stageClicks++; });
+  const n = T.createNoticeController({
+    doc: dom.doc, win: dom.win, noticeEl: dom.$('notice'), playBtnEl: dom.$('play'),
+    reducedResHelper: reducedResNotice, slowHelper: slowNotice,
+    onAction: (id, detail) => log.actions.push(detail ? [id, detail] : id),
+    onDismiss: (kind, d) => log.dismissed.push([kind, d]),
+    onAnnounce: (t) => log.announced.push(t),
+    ...opts,
+  });
+  return { ...dom, n, log };
+}
+
+// ---- 1. notice banner ----
+
+test('notice: reduced resolution shows once, with its buttons', () => {
+  const { $, n, log } = noticeSetup();
+  assert.strictEqual(n.maybeShowReducedRes({ nativeLossy: false }), false, 'exact pixels: no notice');
+  const video = { width: 1280, height: 720, sourceWidth: 3840, sourceHeight: 2160, pixFmt: 'yuv420p10le', depth: 8 };
+  assert.strictEqual(n.maybeShowReducedRes({ reason: 'inspector', nativeLossy: true, video }), true);
+  assert.strictEqual($('notice').hidden, false);
+  assert.strictEqual($('notice').dataset.kind, 'reducedRes');
+  assert.match($('noticeText').textContent, /^Playing at 1280×720 \(8-bit\).*original 3840×2160 \(10-bit\) file\.$/);
+  assert.deepStrictEqual(log.announced, [$('noticeText').textContent]);
+  assert.strictEqual($('noticeAction').textContent, 'Use full resolution (this tab)');
+  assert.strictEqual($('noticeSettings').hidden, false);
+  assert.strictEqual($('noticeHide').textContent, "Don't show again");
+  $('noticeSettings').click();
+  assert.deepStrictEqual(log.actions, ['nativeResolutionSettings']);
+  assert.strictEqual(n.isOpen(), true, 'Settings does not close');
+  $('noticeAction').click();
+  assert.deepStrictEqual(log.actions, ['nativeResolutionSettings', 'fullRes']);
+  $('noticeHide').click();
+  assert.deepStrictEqual(log.actions.slice(-1), ['hideReducedResNotice']);
+  assert.strictEqual(n.isOpen(), false);
+  assert.deepStrictEqual(log.dismissed, [['reducedRes', { reducedRes: true }]]);
+  assert.strictEqual(n.maybeShowReducedRes({ nativeLossy: true, video }), false, 'once per page');
+});
+
+test('notice: reduced resolution for Live transcode points at the transcode settings', () => {
+  const { $, n } = noticeSetup();
+  n.maybeShowReducedRes({ transcoded: true, stream: { sourceWidth: 1920, sourceHeight: 1080 }, display: { width: 960, height: 540 } });
+  assert.match($('noticeText').textContent, /Live transcode \(960×540\)/);
+  $('noticeSettings').click();
+});
+
+test('notice: a persisted dismissal keeps it away; setDismissals / getDismissals', () => {
+  const { n } = noticeSetup({ dismissals: { reducedRes: true } });
+  assert.strictEqual(n.maybeShowReducedRes({ nativeLossy: true }), false);
+  assert.deepStrictEqual(n.getDismissals(), { reducedRes: true });
+  n.setDismissals({});
+  assert.strictEqual(n.maybeShowReducedRes({ nativeLossy: true }), true);
+  n.setDismissals({ slowPlayback: true });
+  assert.strictEqual(n.maybeShowSlowPlayback('skip'), false);
+});
+
+test('notice: Esc closes, returns focus to Play and persists; the banner click does not reach the stage', () => {
+  const { $, doc, n, log } = noticeSetup();
+  n.maybeShowReducedRes({ nativeLossy: true });
+  $('noticeAction').focus();
+  const click = $('noticeText').fire('click');
+  assert.strictEqual(click.propagationStopped, true);
+  $('notice').fire('pointerdown');
+  assert.strictEqual(log.stageClicks, 0, 'the stage never saw it');
+  doc.body.focus();
+  const esc = doc.body.fire('keydown', { key: 'Escape' });
+  assert.strictEqual(esc.defaultPrevented, true);
+  assert.strictEqual($('notice').hidden, true);
+  assert.strictEqual(doc.activeElement, $('play'), 'Esc always returns focus to Play');
+  assert.deepStrictEqual(log.dismissed.map((d) => d[0]), ['reducedRes']);
+  const again = doc.body.fire('keydown', { key: 'Escape' });
+  assert.strictEqual(again.defaultPrevented, false, 'closed: Esc is not taken');
+});
+
+test('notice: × returns focus to Play only when the focus was inside', () => {
+  const { $, doc, n } = noticeSetup();
+  n.showClipRefusal({ transcoded: true });
+  doc.body.focus();
+  $('noticeClose').click();
+  assert.strictEqual(doc.activeElement, doc.body);
+  n.showClipRefusal({});
+  $('noticeClose').focus();
+  $('noticeClose').click();
+  assert.strictEqual(doc.activeElement, $('play'));
+});
+
+test('notice: slow playback once per kind, whenSlow action, × persists, Don\'t show again posts', () => {
+  const { $, n, log } = noticeSetup();
+  assert.strictEqual(n.maybeShowSlowPlayback('every'), true);
+  assert.strictEqual($('notice').dataset.kind, 'slowPlayback');
+  assert.strictEqual($('noticeAction').textContent, 'Skip frames (all videos)');
+  $('noticeAction').click();
+  assert.deepStrictEqual(log.actions, [['whenSlow', { value: 'skip' }]]);
+  assert.strictEqual(n.isOpen(), false, 'the action closes');
+  assert.deepStrictEqual(log.dismissed, [], 'an action is not a dismissal');
+  assert.strictEqual(n.maybeShowSlowPlayback('skip'), false, "kind 'slow' already shown");
+  assert.strictEqual(n.maybeShowSlowPlayback({ variant: 'setupFfmpeg', mb: 75 }), true);
+  assert.strictEqual($('noticeAction').textContent, 'Set up ffmpeg');
+  assert.match($('noticeAction').title, /about 75 MB/);
+  $('noticeAction').click();
+  assert.deepStrictEqual(log.actions.slice(-1), ['setupFfmpeg']);
+  // A fresh page: the × remembers.
+  const s = noticeSetup();
+  s.n.maybeShowSlowPlayback('fast');
+  assert.strictEqual(s.$('noticeAction').hidden, true, 'fast: no action');
+  s.$('noticeSettings').click();
+  assert.deepStrictEqual(s.log.actions, ['fastPreviewSettings']);
+  s.$('noticeClose').click();
+  assert.deepStrictEqual(s.log.dismissed, [['slowPlayback', { slowPlayback: true }]]);
+  assert.strictEqual(s.n.maybeShowSlowPlayback('setupFfmpeg'), false);
+  const h = noticeSetup();
+  h.n.maybeShowSlowPlayback('autoEvery');
+  h.$('noticeHide').click();
+  assert.deepStrictEqual(h.log.actions, ['hideSlowPlaybackNotice']);
+  assert.strictEqual(h.n.isOpen(), false);
+});
+
+test('notice: clip refusal variants offer fullRes', () => {
+  const { $, n, log } = noticeSetup();
+  n.showClipRefusal({ syntheticTimes: true });
+  assert.match($('noticeText').textContent, /^This ffmpeg cannot report/);
+  assert.strictEqual($('noticeAction').textContent, 'Switch to built-in decoder');
+  assert.strictEqual($('noticeSettings').hidden, true);
+  assert.strictEqual($('noticeHide').hidden, true);
+  n.showClipRefusal({ transcoded: true });
+  assert.strictEqual($('noticeAction').textContent, 'Use original video');
+  $('noticeAction').click();
+  assert.deepStrictEqual(log.actions, ['fullRes']);
+  assert.strictEqual(n.isOpen(), false);
+});
+
+test('notice: hide(kind), handleEscape, dispose; missing children are created', () => {
+  const { n } = noticeSetup();
+  n.showClipRefusal({});
+  n.hide('reducedRes');
+  assert.strictEqual(n.isOpen(), true, 'another kind: stays');
+  n.hide('clipRefusal');
+  assert.strictEqual(n.isOpen(), false);
+  assert.strictEqual(n.handleEscape(), false);
+  n.showClipRefusal({});
+  assert.strictEqual(n.handleEscape(), true);
+  n.dispose();
+  const dom = createDom('<div id="notice" hidden></div><button id="play"></button>');
+  const bare = T.createNoticeController({ doc: dom.doc, noticeEl: dom.$('notice'), playBtnEl: dom.$('play') });
+  bare.maybeShowReducedRes({ nativeLossy: true });
+  assert.ok(dom.$('noticeText').textContent.length > 0, 'fallback text without the helper');
+  assert.strictEqual(dom.$('noticeClose').getAttribute('aria-label'), 'Dismiss');
+});
+
+// ---- 2. inspection ----
+
+function inspectSetup(engine, opts = {}) {
+  const dom = createDom('<div id="stage"><pre id="stats" class="stats" hidden></pre></div>');
+  const log = { toasts: [], seeks: [], before: [], posts: [], scopes: [], insp: [], xray: [] };
+  let t = 5;
+  const c = T.createInspectionController({
+    doc: dom.doc, win: dom.win, engine,
+    host: { postMessage: (m) => log.posts.push(m) },
+    widgets: {
+      scopes: { setMode: (m) => log.scopes.push(m) },
+      inspector: { setMode: (m) => log.insp.push(m) },
+      stats: dom.$('stats'),
+      xray: { show: (p) => log.xray.push(['show', p.length]), hide: () => log.xray.push(['hide']) },
+    },
+    getActiveClip: () => 'clipA',
+    getFrame: () => ({ frame: Math.round(t * 25), t }),
+    onToast: (s) => log.toasts.push(s),
+    onSeek: (x) => { log.seeks.push(x); t = x; },
+    onBeforeInspect: (k) => log.before.push(k),
+    ...opts,
+  });
+  return { ...dom, c, log, setT: (x) => { t = x; } };
+}
+const fullEngine = () => ({
+  statsCalls: 0,
+  statsText(id) { this.statsCalls++; return `stats for ${id} #${this.statsCalls}`; },
+  packetIndex: (id) => Promise.resolve([
+    { t: 0, key: true }, { t: 0.04 }, { t: 2, key: true }, { t: 2.04 }, { t: 4, key: true }, { t: 8, key: true },
+  ].map((p) => ({ ...p, id }))),
+  chapters: () => [{ start: 0, title: 'Intro' }, { start: 3, title: 'Middle' }, { start: 10, title: '' }],
+  pixelAt: (id, x, y) => ({ text: `${id} ${x},${y} rgb(1, 2, 3)` }),
+});
+
+test('inspection: W cycles the four scopes, then off', () => {
+  const { doc, c, log } = inspectSetup(fullEngine());
+  for (let i = 0; i < 5; i++) doc.body.fire('keydown', { key: 'w' });
+  assert.deepStrictEqual(log.scopes, ['waveform', 'parade', 'vector', 'histogram', null]);
+  assert.deepStrictEqual(log.toasts, ['Luma waveform', 'RGB parade', 'Vectorscope', 'Histogram', 'Scopes off']);
+  assert.deepStrictEqual(log.before, ['scopes', 'scopes', 'scopes', 'scopes', 'scopes']);
+  assert.strictEqual(c.getState().scopes, null);
+  const e = doc.body.fire('keydown', { key: 'W', shiftKey: true });
+  assert.strictEqual(e.defaultPrevented, false, 'Shift+W is not a scope key');
+});
+
+test('inspection: X cycles loupe, readout, off; a click copies the pixel; X is not the inspector in compare', () => {
+  const { doc, c, log } = inspectSetup(fullEngine());
+  assert.strictEqual(c.pickAt(1, 2), false, 'off: the click is not taken');
+  doc.body.fire('keydown', { key: 'x' });
+  assert.strictEqual(c.getState().inspector, 'loupe');
+  assert.strictEqual(c.pickAt(10, 20), true);
+  assert.deepStrictEqual(log.posts, [{ type: 'copyText', text: 'clipA 10,20 rgb(1, 2, 3)' }]);
+  doc.body.fire('keydown', { key: 'X' });
+  assert.strictEqual(c.getState().inspector, 'readout');
+  doc.body.fire('keydown', { key: 'x' });
+  assert.deepStrictEqual(log.insp, ['loupe', 'readout', null]);
+  assert.deepStrictEqual(log.toasts, ['Pixel inspector: click copies the value (X again: no loupe)', 'Pixel value copied',
+    'Pixel inspector without loupe', 'Pixel inspector off']);
+  const compare = inspectSetup(fullEngine(), { isSingle: () => false });
+  const e = compare.doc.body.fire('keydown', { key: 'x' });
+  assert.strictEqual(e.defaultPrevented, false);
+  assert.strictEqual(compare.c.getState().inspector, null);
+});
+
+test('inspection: Shift+I stats refresh every 250 ms and stop on toggle and dispose', () => {
+  const engine = fullEngine();
+  const { doc, $, c, timers } = inspectSetup(engine);
+  doc.body.fire('keydown', { key: 'I', shiftKey: true });
+  assert.strictEqual($('stats').hidden, false);
+  assert.strictEqual($('stats').textContent, 'stats for clipA #1', 'drawn at once');
+  const live = timers.filter(Boolean);
+  assert.strictEqual(live.length, 1);
+  assert.strictEqual(live[0].ms, T.STATS_MS);
+  live[0].fn();
+  assert.strictEqual($('stats').textContent, 'stats for clipA #2');
+  doc.body.fire('keydown', { key: 'I', shiftKey: true });
+  assert.strictEqual($('stats').hidden, true);
+  assert.strictEqual(timers.filter(Boolean).length, 0, 'timer cleared');
+  c.toggleStats(true);
+  assert.strictEqual(timers.filter(Boolean).length, 1);
+  engine.statsText = () => { throw new Error('gone'); };
+  c.refresh();
+  assert.strictEqual($('stats').textContent, 'stats: gone');
+  c.dispose();
+  assert.strictEqual(timers.filter(Boolean).length, 0, 'dispose clears the timer');
+  const after = doc.body.fire('keydown', { key: 'w' });
+  assert.strictEqual(after.defaultPrevented, false, 'dispose removes the key listener');
+});
+
+test('inspection: Shift+X X-ray, { } keyframes, PageUp / PageDown chapters', async () => {
+  const { doc, c, log, setT } = inspectSetup(fullEngine());
+  doc.body.fire('keydown', { key: 'X', shiftKey: true });
+  await tick();
+  assert.strictEqual(c.getState().xray, true);
+  assert.deepStrictEqual(log.xray, [['show', 6]]);
+  assert.strictEqual(c.getState().inspector, null, 'Shift+X is not the inspector');
+  setT(2.5);
+  await c.stepKey(1);
+  assert.deepStrictEqual(log.seeks, [4]);
+  doc.body.fire('keydown', { key: '{' });
+  await tick(); await tick();
+  assert.deepStrictEqual(log.seeks, [4, 2]);
+  setT(8);
+  await c.stepKey(1);
+  assert.strictEqual(log.toasts.at(-1), 'No later keyframe');
+  setT(0);
+  await c.stepKey(-1);
+  assert.strictEqual(log.toasts.at(-1), 'No earlier keyframe');
+  // Chapters: forward from 0.5 → Middle; back from 3.5 (near its start) → Intro; back from 0.5 → Start.
+  setT(0.5);
+  doc.body.fire('keydown', { key: 'PageDown' });
+  assert.strictEqual(log.seeks.at(-1), 3);
+  assert.strictEqual(log.toasts.at(-1), 'Chapter 2: Middle');
+  setT(3.5);
+  doc.body.fire('keydown', { key: 'PageUp' });
+  assert.strictEqual(log.seeks.at(-1), 0);
+  assert.strictEqual(log.toasts.at(-1), 'Chapter 1: Intro');
+  setT(5);
+  c.stepChapter(1);
+  assert.strictEqual(log.toasts.at(-1), 'Chapter 3');
+  c.stepChapter(1);
+  assert.strictEqual(log.toasts.at(-1), 'Last chapter');
+  setT(0.5);
+  c.stepChapter(-1);
+  assert.strictEqual(log.toasts.at(-1), 'Start');
+  doc.body.fire('keydown', { key: 'X', shiftKey: true });
+  assert.deepStrictEqual(log.xray.at(-1), ['hide']);
+  assert.strictEqual(log.toasts.at(-1), 'Codec X-ray off');
+  // Ctrl / Meta / typing are not tool keys.
+  assert.strictEqual(doc.body.fire('keydown', { key: '}', ctrlKey: true }).defaultPrevented, false);
+  const input = doc.createElement('input');
+  doc.body.appendChild(input);
+  assert.strictEqual(input.fire('keydown', { key: 'w' }).defaultPrevented, false);
+  // AltGr types { } on many layouts: still the keyframe key.
+  const altGr = doc.body.fire('keydown', { key: '}', ctrlKey: true, altKey: true, getModifierState: (k) => k === 'AltGraph' });
+  assert.strictEqual(altGr.defaultPrevented, true);
+});
+
+test('inspection: Esc closes inspector, then scopes, then X-ray', async () => {
+  const { doc, c } = inspectSetup(fullEngine());
+  c.cycleScopes();
+  c.cycleInspector();
+  await c.toggleXray(true);
+  c.toggleStats(true);
+  assert.strictEqual(c.handleEscape(), true);
+  assert.deepStrictEqual(c.getState(), { scopes: 'waveform', inspector: null, stats: true, xray: true });
+  const e = doc.body.fire('keydown', { key: 'Escape' });
+  assert.strictEqual(e.defaultPrevented, true);
+  assert.deepStrictEqual(c.getState(), { scopes: null, inspector: null, stats: true, xray: true });
+  assert.strictEqual(c.handleEscape(), true);
+  assert.deepStrictEqual(c.getState(), { scopes: null, inspector: null, stats: true, xray: false });
+  assert.strictEqual(c.handleEscape(), false, 'stats are not closed by Esc');
+  assert.strictEqual(c.isAnyOpen(), true);
+  c.toggleStats(false);
+  assert.strictEqual(c.isAnyOpen(), false);
+  c.dispose();
+});
+
+test('inspection: an engine without the optional hooks says so and never throws', async () => {
+  const { doc, $, c, log, timers } = inspectSetup({}, { widgets: {} });
+  doc.body.fire('keydown', { key: 'I', shiftKey: true });
+  assert.strictEqual(c.getState().stats, false);
+  assert.strictEqual(timers.filter(Boolean).length, 0);
+  doc.body.fire('keydown', { key: 'X', shiftKey: true });
+  assert.strictEqual(c.getState().xray, false);
+  await c.stepKey(1);
+  c.stepChapter(-1);
+  c.cycleScopes(); // no scopes widget: the state still cycles
+  c.cycleInspector();
+  c.pickAt(1, 1);
+  assert.deepStrictEqual(log.toasts, [
+    'Stats are not available for this video',
+    'Codec X-ray needs the built-in decoder engine (not used for this file)',
+    'Keyframe steps need the built-in decoder engine',
+    'No chapters in this file',
+    'Luma waveform',
+    'Pixel inspector: click copies the value (X again: no loupe)',
+    'Pixel values are not available for this video',
+  ]);
+  assert.strictEqual($('stats').hidden, true, 'the given element is untouched');
+  assert.ok(doc.querySelector('pre.stats'), 'a stats element exists');
+  // A packet index that fails: no keyframe index; null engine: no crash.
+  const bad = inspectSetup({ packetIndex: () => Promise.reject(new Error('x')), chapters: () => { throw new Error('y'); } });
+  await bad.c.stepKey(1);
+  bad.c.stepChapter(1);
+  assert.deepStrictEqual(bad.log.toasts, ['No keyframe index for this file', 'No chapters in this file']);
+  const none = inspectSetup(null);
+  none.c.toggleStats(true);
+  await none.c.toggleXray(true);
+  assert.strictEqual(none.c.isAnyOpen(), false);
+});
+
+test('inspection: refresh with a new clip reads the packet index again', async () => {
+  let calls = 0;
+  const engine = { packetIndex: () => { calls++; return [{ t: 1, key: true }]; } };
+  const { c, log } = inspectSetup(engine);
+  await c.toggleXray(true);
+  await c.stepKey(1);
+  assert.strictEqual(calls, 1, 'cached');
+  c.refresh({ clipChanged: true });
+  await tick();
+  assert.strictEqual(calls, 2);
+  assert.deepStrictEqual(log.xray, [['show', 1], ['show', 1]]);
+});
+
+// ---- 3. subtitles ----
+
+function subsSetup(opts = {}) {
+  const dom = createDom(NOTICE_HTML);
+  const log = { toasts: [], updates: [], pages: [], selected: [] };
+  let t = 10;
+  const cues = [{ a: 9, b: 11, text: 'Hello\nthere' }, { a: 11, b: 12, text: 'Later' }];
+  const engine = {
+    cueAt: (id, at, track) => (track === 1 ? 'Second track' : cues.find((c) => at >= c.a && at < c.b) || null),
+    selectSubtitle: (id, track) => log.selected.push([id, track]),
+  };
+  const s = T.createSubtitleController({
+    doc: dom.doc, win: dom.win, subsEl: dom.$('subs'), engine,
+    getClipId: () => 'clipA', getTime: () => t,
+    getPictureRect: () => ({ x: 100, y: 50, w: 800, h: 450 }),
+    onToast: (x) => log.toasts.push(x), onUpdate: (st) => log.updates.push(st), onOpenPage: (p) => log.pages.push(p),
+    ...opts,
+  });
+  return { ...dom, s, log, engine, setT: (x) => { t = x; } };
+}
+
+test('subtitles: no tracks: CC hidden, CC click opens the Subtitles page, keys toast', () => {
+  const { s, log } = subsSetup();
+  assert.deepStrictEqual(s.getCcButtonState(), { visible: false, on: false, label: 'Subtitles', title: 'Subtitles  C' });
+  assert.strictEqual(s.ccClick(), 'page');
+  assert.deepStrictEqual(log.pages, ['subs']);
+  s.nextTrack();
+  s.toggle();
+  assert.deepStrictEqual(log.toasts, ['No subtitles · Load a file in Settings › Subtitles', 'No subtitles · Load a file in Settings › Subtitles']);
+});
+
+test('subtitles: host subs reply auto-selects; C, V, Shift+V; CC state', () => {
+  const { $, s, log } = subsSetup();
+  assert.strictEqual(s.onHostMessage({ type: 'other' }), false);
+  assert.strictEqual(s.onHostMessage({ type: 'subs', tracks: [{ name: 'English' }, { lang: 'de' }] }), true);
+  assert.deepStrictEqual(log.toasts, ['Subtitles: English']);
+  assert.deepStrictEqual(s.getCcButtonState(), { visible: true, on: true, label: 'Subtitles on: English', title: 'Subtitles on: English  C' });
+  assert.deepStrictEqual(log.selected.at(-1), ['clipA', 0]);
+  assert.strictEqual($('subs').hidden, false);
+  assert.strictEqual(s.handleKey({ key: 'C' }), true);
+  assert.deepStrictEqual(s.getCcButtonState(), { visible: true, on: false, label: 'Subtitles off', title: 'Subtitles off  C' });
+  assert.strictEqual($('subs').hidden, true);
+  assert.strictEqual(s.handleKey({ key: 'C', shiftKey: true }), false, 'Shift+C is Copy link');
+  s.handleKey({ key: 'V', shiftKey: true });
+  assert.strictEqual(s.getState().track, 0, 'Shift+V back to the last track');
+  s.handleKey({ key: 'v' });
+  assert.strictEqual(s.getState().label, 'de');
+  s.handleKey({ key: 'V' });
+  assert.strictEqual(s.getState().track, -1, 'V without Shift cycles to off');
+  assert.deepStrictEqual(log.toasts.slice(1), ['Subtitles off', 'Subtitles: English', 'Subtitles: de', 'Subtitles off']);
+  assert.strictEqual(s.ccClick(), 'toggled');
+  assert.strictEqual(s.getState().track, 1, 'toggle returns to the last track on');
+  assert.ok(log.updates.length >= 6);
+  // The user turned them off: more tracks arriving do not turn them on; select: true does.
+  s.toggle();
+  s.onHostMessage({ type: 'subs', tracks: [{ name: 'Sidecar' }] });
+  assert.strictEqual(s.getState().track, -1);
+  s.onHostMessage({ type: 'subs', tracks: [{ name: 'Loaded' }], select: true });
+  assert.strictEqual(s.getState().label, 'Loaded');
+  assert.strictEqual(log.toasts.at(-1), 'Subtitles: Loaded');
+});
+
+test('subtitles: G / H delay, size, resets; the cue follows the delay', () => {
+  const { $, s, log, setT } = subsSetup();
+  s.onHostMessage({ type: 'subs', tracks: [{ name: 'English' }] });
+  assert.strictEqual($('subs').textContent, 'Hello\nthere');
+  s.handleKey({ key: 'g' });
+  s.handleKey({ key: 'G' });
+  assert.strictEqual(s.getState().delayMs, -100);
+  s.handleKey({ key: 'h' });
+  assert.deepStrictEqual(log.toasts.slice(-3), ['Subtitle delay -50 ms', 'Subtitle delay -100 ms', 'Subtitle delay -50 ms']);
+  s.adjustDelay(1050);
+  assert.strictEqual(log.toasts.at(-1), 'Subtitle delay +1000 ms');
+  // t 10, delay +1 s: the cue at 9 s.
+  setT(12);
+  s.render();
+  assert.strictEqual($('subs').textContent, 'Later', 'cue at 11 s');
+  s.resetDelay();
+  assert.strictEqual(s.getState().delayMs, 0);
+  assert.strictEqual($('subs').hidden, true, 'no cue at 12 s');
+  s.adjustSize(10);
+  assert.strictEqual(log.toasts.at(-1), 'Subtitle size 110%');
+  s.adjustSize(500);
+  assert.strictEqual(s.getState().sizePct, 250, 'clamped');
+  s.adjustSize(-1000);
+  assert.strictEqual(s.getState().sizePct, 50);
+  s.resetSize();
+  assert.strictEqual(s.getState().sizePct, 100);
+  assert.strictEqual(s.handleKey({ key: 'g', ctrlKey: true }), false);
+  assert.strictEqual(s.handleKey({ key: 'q' }), false);
+});
+
+test('subtitles: the cue is placed inside the picture rectangle and scales with size', () => {
+  const { $, s } = subsSetup();
+  s.onHostMessage({ type: 'subs', tracks: [{ name: 'English' }] });
+  const st = $('subs').style;
+  const px = (v) => Number(String(v).replace('px', ''));
+  assert.strictEqual(px(st.left), 100);
+  assert.strictEqual(px(st.width), 800);
+  assert.ok(px(st.top) > 50 && px(st.top) <= 50 + 450, `top ${st.top} inside the picture`);
+  assert.strictEqual(px(st.fontSize), 22.5, '5% of the picture height');
+  s.adjustSize(100);
+  assert.strictEqual(px(st.fontSize), 45);
+  // No picture yet, or no cueAt: hidden, no throw.
+  const none = subsSetup({ getPictureRect: () => null });
+  none.s.onHostMessage({ type: 'subs', tracks: [{ name: 'x' }] });
+  assert.strictEqual(none.$('subs').hidden, true);
+  const dom = createDom('<div id="subs"></div>');
+  const bare = T.createSubtitleController({ doc: dom.doc, subsEl: dom.$('subs'), engine: {} });
+  bare.onHostMessage({ type: 'subs', tracks: [{}] });
+  assert.strictEqual(bare.getState().label, 'Track 1');
+  assert.strictEqual(dom.$('subs').hidden, true);
+  bare.dispose();
+});
+
+// ---- 4. frame export ----
+
+function exportSetup(opts = {}) {
+  const dom = createDom('<div id="stage"></div>');
+  const log = { posts: [], toasts: [], pauses: 0, before: [], written: [], refused: [] };
+  const ctx = { clipId: 'clipA', frame: 41, t: 1.64, fps: 25, page: 'p1' };
+  const png = new Uint8Array([137, 80, 78, 71]);
+  const engine = {
+    snapshot: async () => new Blob([png], { type: 'image/png' }),
+    showFrame: async (_id, k) => { ctx.frame = k; return k; },
+  };
+  class ClipboardItem { constructor(items) { this.items = items; } }
+  dom.win.ClipboardItem = ClipboardItem;
+  dom.win.navigator = { clipboard: { write: async (items) => { log.written.push(items); } } };
+  const range = { exportRange: { a: 1, b: 5 }, clipRange: { a: 0.1, b: 2 }, ffmpegRange: null };
+  const x = T.createFrameExportController({
+    win: dom.win, engine, host: { postMessage: (m) => log.posts.push(m) },
+    getContext: () => ({ ...ctx }),
+    onToast: (s) => log.toasts.push(s), onPause: () => { log.pauses++; }, onBeforeSnapshot: (w) => log.before.push(w),
+    getRange: (k) => range[k], onRefuse: (r) => log.refused.push(r),
+    ...opts,
+  });
+  return { ...dom, x, log, ctx, engine, png, range };
+}
+
+test('export: saveFrame pauses and posts the frame taken before the await', async () => {
+  const { x, log, ctx, engine, png } = exportSetup();
+  engine.snapshot = async () => { const b = new Blob([png]); ctx.frame = 41; return b; };
+  assert.strictEqual(await x.saveFrame(), true);
+  assert.strictEqual(log.pauses, 1);
+  assert.deepStrictEqual(log.before, ['save']);
+  assert.strictEqual(log.posts.length, 1);
+  const m = log.posts[0];
+  assert.strictEqual(m.type, 'saveFrame');
+  assert.strictEqual(m.frame, 41);
+  assert.strictEqual(m.page, 'p1');
+  assert.deepStrictEqual([...m.data], [...png]);
+  // The frame changed while the snapshot was taken: cancelled.
+  engine.snapshot = async () => { ctx.frame = 42; return png; };
+  assert.strictEqual(await x.saveFrame(), false);
+  assert.strictEqual(log.toasts.at(-1), 'Save cancelled: the frame changed');
+  // No picture, no snapshot hook.
+  engine.snapshot = async () => null;
+  assert.strictEqual(await x.saveFrame(), false);
+  delete engine.snapshot;
+  assert.strictEqual(await x.saveFrame(), false);
+  assert.strictEqual(log.toasts.at(-1), 'Frames cannot be saved from this video');
+  assert.strictEqual(log.posts.length, 1);
+});
+
+test('export: copyFrame writes a PNG ClipboardItem; View / transcoded wording', async () => {
+  const s = exportSetup();
+  assert.strictEqual(await s.x.copyFrame(), true);
+  assert.strictEqual(s.log.written.length, 1);
+  const item = s.log.written[0][0];
+  assert.ok(item.items['image/png'] instanceof Blob);
+  assert.strictEqual(s.log.toasts.at(-1), 'Frame copied');
+  assert.strictEqual(s.log.posts.length, 0, 'nothing for the host');
+  const v = exportSetup({ getContext: () => ({ clipId: 0, frame: 1, t: 0, compare: true }) });
+  await v.x.copyFrame();
+  assert.strictEqual(v.log.toasts.at(-1), 'View copied');
+  const tr = exportSetup({ getContext: () => ({ clipId: 0, frame: 1, t: 0, transcoded: true }) });
+  tr.engine.snapshot = async () => tr.png; // raw bytes are wrapped in a Blob
+  await tr.x.copyFrame();
+  assert.strictEqual(tr.log.toasts.at(-1), 'Frame copied with transcoded pixels. For the original, see About.');
+});
+
+test('export: copyFrame falls back to saving when the clipboard refuses; cancels when the frame changes', async () => {
+  const s = exportSetup();
+  s.win.navigator.clipboard.write = async () => { throw new Error('NotAllowedError'); };
+  assert.strictEqual(await s.x.copyFrame(), true);
+  assert.deepStrictEqual(s.log.toasts, ['Copy not allowed here; saving instead']);
+  assert.strictEqual(s.log.posts.length, 1);
+  assert.strictEqual(s.log.posts[0].type, 'saveFrame');
+  assert.strictEqual(s.log.pauses, 2);
+  const noClip = exportSetup();
+  delete noClip.win.navigator;
+  await noClip.x.copyFrame();
+  assert.strictEqual(noClip.log.posts[0].type, 'saveFrame', 'no clipboard API: saved');
+  const moved = exportSetup();
+  moved.engine.snapshot = async () => { moved.ctx.frame = 99; return moved.png; };
+  assert.strictEqual(await moved.x.copyFrame(), false);
+  assert.deepStrictEqual(moved.log.toasts, ['Copy cancelled: the frame changed']);
+  assert.strictEqual(moved.log.written.length, 0);
+  assert.strictEqual(moved.log.posts.length, 0);
+});
+
+test('export: copyTimestamp and copyLink', () => {
+  const { x, log, ctx } = exportSetup();
+  ctx.t = 75.5;
+  x.copyTimestamp();
+  assert.deepStrictEqual(log.posts.at(-1), { type: 'copyText', text: '1:15.500' });
+  assert.strictEqual(log.toasts.at(-1), 'Timestamp copied');
+  assert.strictEqual(T.fmtStamp(0.0004), '0:00.000');
+  assert.strictEqual(T.fmtStamp(3723.0456), '1:02:03.046');
+  x.copyLink();
+  assert.deepStrictEqual(log.posts.at(-1), { type: 'copyLink', frame: 42, t: 1.66, page: 'p1' });
+  const noFps = exportSetup({ getContext: () => ({ frame: 3, t: 0.123456 }) });
+  noFps.x.copyLink();
+  assert.deepStrictEqual(noFps.log.posts[0], { type: 'copyLink', frame: 4, t: 0.1235 });
+  const none = exportSetup({ getContext: () => null });
+  assert.strictEqual(none.x.copyTimestamp(), false);
+  assert.strictEqual(none.x.copyLink(), false);
+});
+
+test('export: exportAb kinds, empty range, refused clip, abQuery', () => {
+  const { x, log, range } = exportSetup();
+  assert.strictEqual(x.exportAb('exportRange'), true);
+  assert.deepStrictEqual(log.posts.at(-1), { type: 'exportRange', range: { a: 1, b: 5 }, page: 'p1' });
+  assert.strictEqual(x.exportAb('ffmpegRange'), false);
+  assert.strictEqual(log.toasts.at(-1), 'Set an A–B range first (A, B)');
+  range.clipRange = { a: 0, b: 1, native: true };
+  assert.strictEqual(x.exportAb('clipRange'), false);
+  assert.deepStrictEqual(log.refused, [range.clipRange]);
+  // The host asks: an empty range still goes back so the host can prompt.
+  assert.strictEqual(x.onHostMessage({ type: 'abQuery', then: 'ffmpeg' }), true);
+  assert.deepStrictEqual(log.posts.at(-1), { type: 'ffmpegRange', range: null, page: 'p1' });
+  range.clipRange = { a: 0, b: 1 };
+  x.onHostMessage({ type: 'abQuery', then: 'clip' });
+  assert.strictEqual(log.posts.at(-1).type, 'clipRange');
+  x.onHostMessage({ type: 'abQuery' });
+  assert.strictEqual(log.posts.at(-1).type, 'exportRange');
+  assert.strictEqual(x.onHostMessage({ type: 'exportEnd' }), true);
+  assert.strictEqual(x.onHostMessage({ type: 'nope' }), false);
+});
+
+test('export: exportGrab shows each frame in order and posts exportFrame; errors are posted', async () => {
+  const { x, log, engine, png } = exportSetup();
+  const order = [];
+  engine.showFrame = async (_id, k) => { order.push(k); return k === 7 ? 8 : k; }; // VFR: lands on a neighbour
+  x.onHostMessage({ type: 'exportGrab', page: 'p1', id: 'r1', frame: 3 });
+  x.onHostMessage({ type: 'exportGrab', page: 'p1', id: 'r1', frame: 7 });
+  x.onHostMessage({ type: 'exportGrab', page: 'other', id: 'r1', frame: 9 });
+  await x.idle();
+  assert.deepStrictEqual(order, [3, 7], 'another page: ignored');
+  assert.deepStrictEqual(log.posts.map((m) => [m.type, m.id, m.frame, m.page]), [['exportFrame', 'r1', 3, 'p1'], ['exportFrame', 'r1', 8, 'p1']]);
+  assert.deepStrictEqual([...log.posts[0].data], [...png]);
+  assert.ok(log.pauses >= 2);
+  assert.deepStrictEqual(log.before, ['export', 'export']);
+  engine.showFrame = async () => null;
+  x.exportGrab('r2', 4);
+  await x.idle();
+  assert.deepStrictEqual(log.posts.at(-1), { type: 'exportFrame', id: 'r2', frame: 4, error: 'frame 5 did not show', page: 'p1' });
+  engine.showFrame = async (_id, k) => k;
+  engine.snapshot = async () => null;
+  x.exportGrab('r3', 1);
+  await x.idle();
+  assert.strictEqual(log.posts.at(-1).error, 'no picture');
+  delete engine.showFrame;
+  x.exportGrab('r4', 1);
+  await x.idle();
+  assert.strictEqual(log.posts.at(-1).error, 'cannot show frames');
+});
+
+test('export: a frame that never shows times out after 20 s; cancel and dispose abort quietly', async () => {
+  const { x, log, engine, timers } = exportSetup();
+  engine.showFrame = () => new Promise(() => {}); // never settles
+  x.exportGrab('r1', 5);
+  await tick();
+  const timeout = timers.filter(Boolean).find((t) => t.ms === T.EXPORT_FRAME_TIMEOUT_MS);
+  assert.ok(timeout, '20 s timer armed');
+  timeout.fn();
+  await x.idle();
+  assert.deepStrictEqual(log.posts, [{ type: 'exportFrame', id: 'r1', frame: 5, error: 'frame 6 did not show', page: 'p1' }]);
+  // Cancel while waiting: nothing is posted, and later grabs still work.
+  let seen = null;
+  engine.showFrame = (_id, _k, { signal }) => { seen = signal; return new Promise(() => {}); };
+  x.exportGrab('r2', 6);
+  await tick();
+  x.cancelExport();
+  await x.idle();
+  assert.strictEqual(seen.aborted, true, 'the engine saw the abort');
+  assert.strictEqual(log.posts.length, 1);
+  engine.showFrame = async (_id, k) => k;
+  x.exportGrab('r3', 2);
+  await x.idle();
+  assert.strictEqual(log.posts.at(-1).id, 'r3');
+  // Dispose mid-wait: aborted, nothing posted, further messages ignored.
+  engine.showFrame = () => new Promise(() => {});
+  x.exportGrab('r4', 3);
+  await tick();
+  x.dispose();
+  await x.idle();
+  assert.strictEqual(log.posts.length, 2);
+  assert.strictEqual(x.onHostMessage({ type: 'exportGrab', id: 'r5', frame: 1 }), false);
+});
+
+(async () => {
+  for (const [name, fn] of tests) {
+    try { await fn(); count++; } catch (e) { e.message = `${name}: ${e.message}`; console.error(e); process.exit(1); }
+  }
+  console.log(`player_ui_tools_test: ${count} tests ok (${Date.now() - T0} ms)`);
+})();
