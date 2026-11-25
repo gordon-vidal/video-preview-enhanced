@@ -1127,7 +1127,7 @@
   /** Compare: VS Code's open dialog picks the other videos; compare then takes this tab's place, from here. */
   function compareWith() { vscode.postMessage({ type: 'compareWith', t: player ? player.currentTime() : 0 }); }
   /** Key D: a quick pick of other videos (same folder first); compare then takes this tab's place. */
-  function comparePick() { vscode.postMessage({ type: 'comparePick', t: player ? player.currentTime() : 0 }); }
+  function comparePick() { vscode.postMessage(VpePlayerUi.pickVideoMessage('player', { t: player ? player.currentTime() : 0 })); }
   /** Shift+D: the next video opened in VS Code (an Explorer click) is compared with this one (src/addmode.js). */
   function addMode() { vscode.postMessage({ type: 'addMode', t: player ? player.currentTime() : 0 }); }
   // The add mode's hint, while it is on (the host says so with 'addMode' messages).

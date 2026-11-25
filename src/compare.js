@@ -72,8 +72,8 @@ function compareScripts(large) {
     'engine.js', 'picture.js', 'modes.js', 'range-drag.js', 'controls.js', 'abloop.js', 'comparerange.js', 'stepgoal.js',
     'timefmt.js', ...(large ? ['membudget.js'] : []),
     'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js', 'compare-debug.js', 'compare-sync.js', 'folder-rail.js',
-    // The shared UI seam (docs/notes/player-ui-controller.md): pure state, then the UI helpers compare.js calls.
-    'player-state.js', 'player-ui.js', 'compare.js',
+    // The shared UI helpers compare.js calls (docs/notes/player-ui-controller.md); player-state.js is not loaded yet.
+    'player-ui.js', 'compare.js',
   ];
 }
 

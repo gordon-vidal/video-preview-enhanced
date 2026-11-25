@@ -733,30 +733,15 @@
     if (d && cells[0]) placeDivider(d, cells[0]);
     save();
   }
-  let dividerDrag = null;
   function bindDivider() {
-    const dv = cellsEl.querySelector('#divider');
-    if (!dv) return;
-    const at = (e) => { const c = cells[0]; const r = stage.getBoundingClientRect(); setSplit((e.clientX - r.left - c.pic.x) / c.pic.w); };
-    dv.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      dividerDrag = { id: e.pointerId, moved: false };
-      try { dv.setPointerCapture(e.pointerId); } catch { /* synthetic pointer (test hook) */ }
-    });
-    dv.addEventListener('pointermove', (e) => { if (dividerDrag) { dividerDrag.moved = true; at(e); } });
-    // The click that ends a drag must not play or pause.
-    const end = () => { if (dividerDrag) { if (dividerDrag.moved) dragEnded = performance.now(); dividerDrag = null; } };
-    dv.addEventListener('pointerup', end);
-    dv.addEventListener('pointercancel', end);
-    dv.addEventListener('click', (e) => e.stopPropagation());
-    dv.addEventListener('keydown', (e) => {
-      const next = VpePlayerUi.splitKeyRatio(e, st.split);
-      if (next === null) return;
-      setSplit(next);
-      e.preventDefault();
-      e.stopPropagation();
+    // The shared binding (media/player-ui.js): drag over the displayed picture (letterbox-aware), keys 0–100 %.
+    VpePlayerUi.bindSplitDivider(cellsEl.querySelector('#divider'), {
+      stageRect: () => stage.getBoundingClientRect(),
+      pictureRect: () => (cells[0] ? cells[0].pic : null),
+      get: () => st.split,
+      set: setSplit,
+      // The click that ends a drag must not play or pause.
+      onDragEnd: (moved) => { if (moved) dragEnded = performance.now(); },
     });
   }
   let dragEnded = 0;

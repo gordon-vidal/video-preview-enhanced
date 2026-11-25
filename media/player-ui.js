@@ -148,6 +148,34 @@
     return table[c.action](c.arg, e) !== false;
   }
 
+  /**
+   * Production parity: the keyCommand actions each shipped page handles (its KEY_ACTIONS table; any other key goes on
+   * to VS Code). test/host/player_ui_test.js holds media/player.js and media/compare.js to exactly these lists.
+   * create() is the unified proposal and handles more (UNIFIED_ONLY_IN_COMPARE below); it is not production.
+   */
+  const PAGE_KEY_ACTIONS = /** @type {const} */ ({
+    player: ['playPause', 'skip', 'jump', 'prevFrame', 'nextFrame', 'rateStep', 'volumeStep', 'home', 'end', 'mute',
+      'loop', 'fullscreen', 'nextVideo', 'prevVideo', 'setA', 'setB', 'clearAB', 'copyTime', 'cyclePicture', 'plus',
+      'minus', 'info', 'saveFrame', 'cc', 'scopes', 'pickVideo', 'capture', 'seekTenth'],
+    compare: ['playPause', 'skip', 'jump', 'prevFrame', 'nextFrame', 'rateStep', 'volumeStep', 'home', 'end', 'mute',
+      'loop', 'setA', 'setB', 'fullscreen', 'info', 'swap', 'cyclePicture', 'capture', 'minus', 'plus', 'escape'],
+  });
+
+  /**
+   * What D ("pick another video") asks of the host, per surface:
+   *   'player'  production single player: { type: 'comparePick', t } (a quick pick; Compare then takes the tab)
+   *   'compare' production Compare: null (plain D has no handler; Compare › Add video posts startAddMode)
+   *   'unified' create() proposal, any N: { type: 'pickVideo', exclude } (the host answers with openVideo)
+   * @param {'player' | 'compare' | 'unified'} surface
+   * @param {{ t?: number, exclude?: string[] }} [ctx]
+   * @returns {{ type: string, t?: number, exclude?: string[] } | null}
+   */
+  function pickVideoMessage(surface, ctx = {}) {
+    if (surface === 'player') return { type: 'comparePick', t: ctx.t === undefined ? 0 : ctx.t };
+    if (surface === 'unified') return { type: 'pickVideo', exclude: (ctx.exclude || []).slice() };
+    return null;
+  }
+
   /** What a click on the bar's time shows next: clock, SMPTE timecode, frame number (the toast says which). */
   const TIME_MODE_NAMES = /** @type {const} */ (['Time', 'Timecode', 'Frame number']);
   const nextTimeMode = (/** @type {number} */ m) => ((Number(m) || 0) + 1) % 3;
@@ -360,6 +388,53 @@
       case 'End': return 1;
       default: return null;
     }
+  }
+
+  /**
+   * Split Wipe: the divider's share for a pointer at clientX, over the picture as it is shown. `pic` is the displayed
+   * picture rect in stage coordinates (letterboxing, Picture size): the divider tracks the picture, not the stage.
+   * @param {number} clientX @param {{ left: number }} stageRect @param {{ x: number, w: number } | null} pic
+   * @returns {number | null} 0..1, or null without a picture
+   */
+  function splitRatioAt(clientX, stageRect, pic) {
+    if (!pic || !(pic.w > 0)) return null;
+    return Math.max(0, Math.min(1, (clientX - stageRect.left - pic.x) / pic.w));
+  }
+
+  /**
+   * The Split Wipe divider, end to end: a primary-button drag with pointer capture over the displayed picture
+   * (splitRatioAt), the keys (splitKeyRatio: arrows 1 %, Shift / PageUp / PageDown 10 %, Home 0 %, End 100 %), and
+   * no click through to the stage (which would play / pause). media/compare.js and create() both bind it here.
+   * @param {any} el the divider (role="slider")
+   * @param {{ stageRect: () => { left: number }, pictureRect: () => ({ x: number, w: number } | null),
+   *   get: () => number, set: (ratio: number) => void, onDragEnd?: (moved: boolean) => void,
+   *   listen?: (el: any, type: string, fn: (e: any) => void) => void }} o
+   */
+  function bindSplitDivider(el, o) {
+    if (!el) return;
+    const on = o.listen || ((/** @type {any} */ t, /** @type {string} */ type, /** @type {(e: any) => void} */ fn) => t.addEventListener(type, fn));
+    /** @type {{ id: number, moved: boolean } | null} */
+    let drag = null;
+    const at = (/** @type {any} */ e) => { const r = splitRatioAt(e.clientX, o.stageRect(), o.pictureRect()); if (r !== null) o.set(r); };
+    on(el, 'pointerdown', (/** @type {any} */ e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      drag = { id: e.pointerId, moved: false };
+      try { el.setPointerCapture(e.pointerId); } catch { /* synthetic pointer (test hook) */ }
+    });
+    on(el, 'pointermove', (/** @type {any} */ e) => { if (drag) { drag.moved = true; at(e); } });
+    const end = () => { if (!drag) return; const moved = drag.moved; drag = null; if (o.onDragEnd) o.onDragEnd(moved); };
+    on(el, 'pointerup', end);
+    on(el, 'pointercancel', end);
+    on(el, 'click', (/** @type {any} */ e) => e.stopPropagation());
+    on(el, 'keydown', (/** @type {any} */ e) => {
+      const next = splitKeyRatio(e, o.get());
+      if (next === null) return;
+      o.set(Math.max(0, Math.min(1, next)));
+      e.preventDefault();
+      e.stopPropagation();
+    });
   }
 
   /** @param {any} stateApi @param {any} tab */
@@ -802,7 +877,7 @@
         for (const id of tab().tiles.slice(1)) { const r = S.removeTile(next, id); next = r.state; text = r.toast || text; }
         commit(next, text);
       },
-      pickVideo: () => postHost({ type: 'pickVideo', exclude: tab().tiles.slice() }),
+      pickVideo: () => postHost(pickVideoMessage('unified', { exclude: tab().tiles })),
       nextVideo: () => goNeighbour(rail, postHost, 1),
       prevVideo: () => goNeighbour(rail, postHost, -1),
     };
@@ -861,20 +936,26 @@
       });
     };
     drag(splitterEl, (ev, rect) => commit(S.setHeroRatio(ws, spotlightRatioAt(tab().dock, ev.clientX - rect.left, ev.clientY - rect.top, rect.width, rect.height))));
-    drag(dividerEl, (ev, rect) => commit(S.setSplitRatio(ws, (ev.clientX - rect.left) / rect.width)));
-    // The same keys as Compare's splitter and divider (media/compare.js): arrows, Shift for big steps, Home / End.
+    // The Split Wipe divider: the same binding as media/compare.js. The fake engine has no letterbox model, so the
+    // displayed picture is the split cell deriveUi lays out.
+    bindSplitDivider(dividerEl, {
+      stageRect: () => stageEl.getBoundingClientRect(),
+      pictureRect: () => {
+        const ui = S.deriveUi(tab(), { width: stageEl.clientWidth || 680, height: stageEl.clientHeight || 370 });
+        const c = ui.cells.find((/** @type {any} */ r) => r.role === 'split-a');
+        return c ? { x: c.x, w: c.w } : null;
+      },
+      get: () => tab().split,
+      set: (r) => commit(S.setSplitRatio(ws, r)),
+      listen: (el, type, fn) => listen(el, type, fn),
+    });
+    // The same keys as Compare's splitter (media/compare.js): arrows, Shift for big steps, Home / End.
     const keyDrag = (/** @type {any} */ el, /** @type {(e: KeyboardEvent) => void} */ fn) => { if (el) listen(el, 'keydown', fn); };
     keyDrag(splitterEl, (e) => {
       const next = spotlightKeyRatio(e, tab().dock, tab().heroRatio, 0.1, 0.9);
       if (next === null) return;
       e.preventDefault(); e.stopPropagation();
       commit(S.setHeroRatio(ws, next));
-    });
-    keyDrag(dividerEl, (e) => {
-      const next = splitKeyRatio(e, tab().split);
-      if (next === null) return;
-      e.preventDefault(); e.stopPropagation();
-      commit(S.setSplitRatio(ws, next));
     });
 
     // ---- keyboard shortcuts ----
@@ -1094,9 +1175,10 @@
   }
 
   const api = {
-    HOST_COMMANDS, PICTURE_MODES, TIME_MODE_NAMES, defaultPrefs, keyCommand, keyAction, runKey, nextTimeMode, timeReadout,
+    HOST_COMMANDS, PICTURE_MODES, TIME_MODE_NAMES, PAGE_KEY_ACTIONS, pickVideoMessage, defaultPrefs, keyCommand, keyAction, runKey, nextTimeMode, timeReadout,
     formatTime, bindButtons, stepBy, bindStepBadges, pinPercent, bindAbPins, pictureButton, copyInfoText, createContextMenu,
-    createFolderRail, goNeighbour, spotlightRatioAt, spotlightKeyRatio, splitKeyRatio, applyHostMessage, compareRows, create,
+    createFolderRail, goNeighbour, spotlightRatioAt, spotlightKeyRatio, splitKeyRatio, splitRatioAt,
+    bindSplitDivider, applyHostMessage, compareRows, create,
   };
   // checkJs: end
 

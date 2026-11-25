@@ -31,7 +31,7 @@
    * @property {string | null} spotlightId clip id currently enlarged in Spotlight (null in Grid/Split)
    * @property {DockSide} dock which edge the Spotlight main tile sits on
    * @property {number} heroRatio Spotlight main tile fraction (0.10-0.90)
-   * @property {number} split Split Wipe divider fraction (0.05-0.95)
+   * @property {number} split Split Wipe divider fraction (0-1, as in Compare: Home 0 %, End 100 %)
    * @property {Record<string, number>} offsets per-clip frame offsets
    * @property {boolean} syncMode whether per-tile offset steppers are shown
    * @property {boolean} playing
@@ -128,7 +128,7 @@
       spotlightId,
       dock,
       heroRatio: clamp(init.heroRatio ?? 0.70, 0.10, 0.90),
-      split: clamp(init.split ?? 0.5, 0.05, 0.95),
+      split: clamp(init.split ?? 0.5, 0, 1),
       offsets: { ...(init.offsets || {}) },
       syncMode: tiles.length >= 2 && !!init.syncMode,
       playing: !!init.playing,
@@ -378,7 +378,7 @@
    */
   function setSplitRatio(ws, ratio, tabId) {
     const target = getTab(ws, tabId);
-    return updateTab(ws, target.id, (t) => ({ ...t, split: clamp(ratio, 0.05, 0.95) }));
+    return updateTab(ws, target.id, (t) => ({ ...t, split: clamp(ratio, 0, 1) }));
   }
 
   /**

@@ -98,6 +98,12 @@ const { SCENARIOS, buildMockupHtml } = require('../../tools/mockup/render');
   assert.strictEqual(ui.effectiveLayout, 'split');
   assert.strictEqual(ui.showDivider, true);
   assert.deepStrictEqual(ui.cells.map((c) => c.role), ['split-a', 'split-b']);
+  // The divider spans 0–100 % as in production Compare (media/compare.js setSplit; Home / End).
+  assert.strictEqual(S.getTab(S.setSplitRatio(ws, 0)).split, 0);
+  assert.strictEqual(S.getTab(S.setSplitRatio(ws, 1)).split, 1);
+  assert.strictEqual(S.getTab(S.setSplitRatio(ws, -0.2)).split, 0);
+  assert.strictEqual(S.getTab(S.setSplitRatio(ws, 1.7)).split, 1);
+  assert.deepStrictEqual([0, 1, 1.5].map((split) => S.createTab({ id: 9, tiles: ['clip-0', 'clip-1'], split }).split), [0, 1, 1]);
 
   // Adding a 3rd video drops back to Grid
   ws = S.openVideo(ws, 'clip-2').state;

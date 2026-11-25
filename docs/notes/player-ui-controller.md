@@ -1,8 +1,10 @@
 # Shared UI controller (`media/player-ui.js`)
 
-Status: in production. `media/player.js` and `media/compare.js` call the shared helpers below for their UI wiring;
-the mockup harness (`tools/mockup/render.js`) mounts the same file through `create()`. What is still page-specific
-is listed under "What stays in the pages".
+Status: the helpers are in production; `create()` is a proposal. `media/player.js` and `media/compare.js` call the
+shared helpers below for their UI wiring (per interaction: docs/TESTING.md, "What is shared with production"); the
+mockup harness (`tools/mockup/render.js`) mounts the same file through `create()`, which previews the unified
+1 → N page over `media/player-state.js`. No production page loads `player-state.js` yet. What is still
+page-specific is listed under "What stays in the pages".
 
 ## Problem
 
@@ -62,14 +64,20 @@ splitter drag, Split Wipe divider drag, the `+ Add video` slot.
 
 Keys (`keyCommand`, the same table the pages use): `Space`/`K`, `J`/`L`, arrows (with Shift), `,` `.`, `[` `]`
 `<` `>`, `↑` `↓`, `Home`/`End`, `0`-`9`, `M`, `R`, `A` `B` `Backspace`, `T`, `S`, `Z`, `I`, `?`, `Esc` (panels,
-then menu, then collapse Spotlight), `D` (pick), `Shift+D` (capture), `Shift+N`/`Shift+P` (folder ‹ / ›), `F`.
+then menu, then collapse Spotlight), `D` (pick: proposal, see below), `Shift+D` (capture), `Shift+N`/`Shift+P` (folder ‹ / ›), `F`.
 Keys a focused control owns (`VpeModes.ownsKey`: the rail filter, a list box) are ignored. The splitter and the
-divider take Compare's keys (arrows, Shift / PageUp / PageDown, Home / End).
+divider take Compare's keys (arrows, Shift / PageUp / PageDown, Home / End); the divider is Compare's own binding
+(`bindSplitDivider`, 0–100 %).
+
+**Production parity vs. proposal.** `PAGE_KEY_ACTIONS` lists the actions each shipped page handles; the test pins
+each page's `KEY_ACTIONS` to it. `pickVideoMessage(surface)` is the one mapping for `D`: the single player posts
+`{ type: 'comparePick', t }`, production Compare has no plain-`D` key, and `create()` (proposal) posts
+`{ type: 'pickVideo', exclude }` in any N. The tests keep the two kinds of assertions apart.
 
 ## The shared helpers (production and mockup)
 
-Both production pages load `player-state.js` and `player-ui.js` right before their own script
-(`src/player-html.js` `SCRIPTS`, `src/compare.js` `compareScripts`) and call these helpers instead of keeping
+Both production pages load `player-ui.js` right before their own script (`src/player-html.js` `SCRIPTS`,
+`src/compare.js` `compareScripts`; `player-state.js` stays out until a page calls it) and call these helpers instead of keeping
 their own copies. `create()` uses the same helpers, so the mockup runs the production wiring:
 
 | Helper | What it replaces | `player.js` | `compare.js` | `create()` |
@@ -83,11 +91,14 @@ their own copies. `create()` uses the same helpers, so the mockup runs the produ
 | `copyInfoText` | ⓘ › Copy details | yes | yes | yes |
 | `createContextMenu` | the `VpeCtxMenu.create` + action lookup | yes | (Compare has its own tile menu) | yes |
 | `createFolderRail`, `goNeighbour` | the `#rail` guard and Shift+N / Shift+P fallback | yes | yes (rail) | yes |
-| `spotlightRatioAt`, `spotlightKeyRatio`, `splitKeyRatio` | the Spotlight splitter and Split Wipe divider math | | yes | yes |
+| `spotlightRatioAt`, `spotlightKeyRatio` | the Spotlight splitter math | | yes | yes |
+| `bindSplitDivider` (`splitRatioAt`, `splitKeyRatio`) | the whole Split Wipe divider: drag over the displayed (letterboxed) picture with pointer capture, keys, Home 0 % / End 100 %, no click through | | yes | yes |
+| `PAGE_KEY_ACTIONS`, `pickVideoMessage` | each page's key set; the `D` message per surface | yes | yes (no `D`) | yes (proposal) |
 
 The helpers take the widget modules as arguments (never a page global) and touch no decoder, so
 `test/host/player_ui_test.js` loads them in Node. `media/player-ui.js` stays in `tsconfig.check.json` and under the
-webview boundary rules of `.dependency-cruiser.cjs`.
+webview boundary rules of `.dependency-cruiser.cjs`, which also lock the 3-way split: `player-state.js` imports
+nothing, `player-ui.js` imports no `src/`, Node built-in or decoder module.
 
 ## What stays in the pages, and why
 
@@ -104,19 +115,27 @@ webview boundary rules of `.dependency-cruiser.cjs`.
 
 ## Tests
 
-`test/host/player_ui_test.js` (layer 1, about 0.1 s, no video decoded) checks:
+`test/host/player_ui_test.js` (layer 1B, about 2 s, no video decoded) checks:
 
+- production parity, apart from the proposal: each page's `KEY_ACTIONS` equals `PAGE_KEY_ACTIONS`, `D` posts
+  `comparePick` with the time in the player and is not a Compare key; then, separately, `create()`'s `pickVideo`;
 - the key table, `runKey`, and the parity of the player's and Compare's `KEY_ACTIONS` tables (which page handles which
   key; every handler name is a `keyCommand` action; no second key switch left in either page);
 - the pure helpers (time readout, Picture size, Copy details, step size, pin position and tip, splitter and
   divider math by dock and key, `bindButtons` stop policy, context-menu and rail creation) and that both pages
   call them instead of local copies;
 - the FakeHost protocol;
-- `create()` over the real widgets on a small fake DOM: bar clicks, every key including AltGr and Ctrl rules, the
+- `bindSplitDivider` alone over a letterboxed picture (stage 800 × 400, picture inset x = 100, w = 600): 0 % and
+  100 % by drag and by Home / End, pointer capture, right button ignored, no click through to the stage;
+- `create()` over the real widgets on a strict fake DOM of the real markup (`test/host/fake-dom.js`: unknown ids
+  are `null`, real `closest()` and parent-chain bubbling; `create()` refuses a page missing a required control):
+  tile Enlarge / Remove / Sync buttons (and their icons) run their action without bubbling into play / pause; bar clicks, every key including AltGr and Ctrl rules, the
   real `abloop.js` pin drag, context-menu items, the rail round trip, Compare N = 1 → 2 → 3 → 1, cell DOM reuse
   across playback ticks, click to pause and double-click to enlarge mid-playback, Split Wipe divider and
   Spotlight splitter by keys and drag, panels, `dispose()`;
-- that the harness mounts `VpePlayerUi.create(` and carries none of the old wiring.
+- that the harness mounts `VpePlayerUi.create(` and carries none of the old wiring;
+- the boundary contract: no DOM / VS Code / decoder names in `player-state.js`, no VS Code / decoder names in
+  `player-ui.js`, and the dependency-cruiser rules are present.
 
 `test/host/player_html_test.js` checks the script order of both pages. See docs/TESTING.md, "UI and gesture tests
 without video", for what stays in layer 3.
