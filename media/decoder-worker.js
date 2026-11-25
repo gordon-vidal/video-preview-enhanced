@@ -99,6 +99,7 @@ self.onmessage = (e) => {
         case 'skipNonRef': return await skipNonRef(m);
         case 'fastDecode': return await fastDecode(m);
         case 'videoMode': return await videoToSoft();
+        case 'rereadVideo': return await rereadVideo(m);
         default: return undefined;
       }
     } catch (err) {
@@ -809,8 +810,9 @@ function afterRewind(X, list) {
  * Seeks the demuxer back to t at most, for a new sound or subtitle track. The
  * picture (and the sound, when it stays) continue after the packets already
  * handed out. Returns false when that can't be done safely.
+ * keepVideo false (rereadVideo): the picture's packets are handed out again from there.
  */
-async function rewind(t, keepAudio) {
+async function rewind(t, keepAudio, keepVideo = true) {
   // Packets read by seek() but not handed out yet: continue at their first one (kept) instead.
   const pend = pendingRead && pendingRead[1];
   const firstPending = (X) => {
@@ -818,7 +820,7 @@ async function rewind(t, keepAudio) {
     return p ? { key: pktKey(p), t: packetTime(p, X.tb), incl: true } : null;
   };
   const skips = [];
-  for (const X of [V, ...(keepAudio ? [A] : [])]) {
+  for (const X of [...(keepVideo ? [V] : []), ...(keepAudio ? [A] : [])]) {
     if (X.idx < 0 || X.mode === 'none' || (X === V && V.off)) continue;
     const mark = firstPending(X) || (pend ? null : X.last);
     if (mark) skips.push([X, mark]);
@@ -835,12 +837,27 @@ async function rewind(t, keepAudio) {
   if (r < 0) { log(`rewind to ${target} returned ${r}`); return false; }
   pendingRead = null;
   readPos = target;
+  if (!keepVideo) V.skip = null;
   for (const [X, mark] of skips) X.skip = mark;
   if (!keepAudio && A.mode === 'soft' && A.c) await libav.avcodec_flush_buffers(A.c);
   eof = false;
-  V.drained = false;
-  A.drained = false;
+  // A stream that continues after its last packet gets none here: drained stays drained (a second drain is an error).
+  if (!keepVideo) V.drained = false;
+  if (!keepAudio) A.drained = false;
   return true;
+}
+
+// ---- the picture again after a WebCodecs error ----
+
+/**
+ * The engine's VideoDecoder failed and took the packets it still held with it (in a short file every packet
+ * to the end): hand the picture's packets out again from the keyframe at or before t. The engine starts its
+ * new decoder at the first keyframe after t; the sound continues after its last packet.
+ */
+async function rereadVideo(m) {
+  let rewound = false;
+  if (m.gen === gen && V.idx >= 0 && V.mode === 'webcodecs' && !V.off) rewound = await rewind(m.t, true, false);
+  post({ type: 'videoReread', gen: m.gen, rewound });
 }
 
 // ---- sound track ----

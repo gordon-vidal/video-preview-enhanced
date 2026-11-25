@@ -299,6 +299,97 @@ test('#10 a WebCodecs error restarts the decoder at a keyframe, then falls back 
   assert.ok(p.worker.msgs.some((m) => m.type === 'seek'));
 });
 
+test('a WebCodecs error reads the picture again from the failure; the end of the file waits for the answer', async () => {
+  const { VideoDecoder, EncodedVideoChunk } = ctx;
+  const made = [];
+  ctx.EncodedVideoChunk = class { constructor(init) { Object.assign(this, init); } };
+  ctx.VideoDecoder = class {
+    constructor(cb) { this.cb = cb; this.state = 'configured'; this.decodeQueueSize = 0; this.chunks = []; made.push(this); }
+    configure() {}
+    decode(chunk) { this.chunks.push(chunk.timestamp / 2e6); }
+    flush() { return new Promise((res, rej) => { this.flushed = { res, rej }; }); }
+    close() { this.state = 'closed'; }
+    /** As Chromium: closed, the pending flush rejected, the packets it held gone, then the error callback. */
+    fail() { this.state = 'closed'; if (this.flushed) this.flushed.rej(new Error('EncodingError')); this.cb.error(new Error('damaged packet')); }
+  };
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const pk = (t, key = false) => ({ kind: 'packet', t, key, idr: key ? true : undefined, data: new Uint8Array(1) });
+  const file = () => [pk(0, true), pk(0.5), pk(1, true), pk(1.5), pk(2, true), pk(2.5)];
+  const vf = (t) => ({ timestamp: Math.round(t * 1e6) * 2, displayWidth: 2, displayHeight: 2, close: noop });
+  const start = () => {
+    const p = player({ vmode: 'webcodecs', amode: 'none', vconf: {}, noSpill: true, gl: { norm16: null }, addFrame: noop });
+    made.length = 0;
+    p.makeVideoDecoder();
+    return p;
+  };
+  const sent = (p, type) => p.worker.msgs.filter((m) => m.type === type);
+  try {
+    // A short file: every packet and the end of the file are in the decoder's hands when it fails after 0.5 s.
+    let p = start();
+    p.onBatch({ gen: 0, eof: true, video: file(), audio: [] });
+    assert.deepStrictEqual(made[0].chunks, [0, 0.5, 1, 1.5, 2, 2.5]);
+    made[0].cb.output(vf(0));
+    made[0].cb.output(vf(0.5));
+    made[0].fail();
+    assert.strictEqual(made.length, 2, 'no new decoder after the error');
+    assert.deepStrictEqual(sent(p, 'rereadVideo').map((m) => [m.gen, m.t]), [[0, 0.5]], 'the picture is not asked for again from the last one that came out');
+    await tick();
+    assert.strictEqual(p.eof, false, 'the failed flush counts as the end of the file');
+    p.pump();
+    assert.strictEqual(sent(p, 'more').length, 0, 'reads go on before the worker has rewound');
+    // A batch read before the rewind arrives late: its picture comes again, it must not reach the new decoder twice.
+    p.onBatch({ gen: 0, eof: false, video: [pk(2, true)], audio: [] });
+    assert.deepStrictEqual(made[1].chunks, []);
+    p.worker.msgs.length = 0;
+    await p.onWorker({ type: 'videoReread', gen: 0, rewound: true });
+    assert.strictEqual(sent(p, 'more').length, 1, 'no read after the rewind');
+    // The worker starts again at the keyframe before the failure: the new decoder takes the first one after it.
+    p.onBatch({ gen: 0, eof: true, video: file(), audio: [] });
+    assert.deepStrictEqual(made[1].chunks, [1, 1.5, 2, 2.5]);
+    assert.strictEqual(p.eof, false);
+    made[1].flushed.res();
+    await tick();
+    assert.strictEqual(p.eof, true, 'no end of the file after the re-read');
+
+    // The worker can't rewind (no timestamps to find the place): the end that was held back is reached after all.
+    p = start();
+    p.onBatch({ gen: 0, eof: true, video: file(), audio: [] });
+    made[0].cb.output(vf(0));
+    made[0].fail();
+    await tick();
+    assert.strictEqual(p.eof, false);
+    await p.onWorker({ type: 'videoReread', gen: 0, rewound: false });
+    made[1].flushed.res();
+    await tick();
+    assert.strictEqual(p.eof, true, 'the end of the file is lost when the picture can not be read again');
+    assert.strictEqual(sent(p, 'more').length, 0);
+
+    // A damaged keyframe (nothing comes out of the decoder started on it): on at the next one, not the same again.
+    p = start();
+    p.onBatch({ gen: 0, eof: false, video: file().slice(2), audio: [] });
+    made[0].fail();
+    assert.deepStrictEqual(sent(p, 'rereadVideo').map((m) => m.t), [1]);
+    await p.onWorker({ type: 'videoReread', gen: 0, rewound: true });
+    p.onBatch({ gen: 0, eof: false, video: file(), audio: [] });
+    assert.deepStrictEqual(made[1].chunks, [2, 2.5]);
+
+    // A seek meanwhile: the answer to the old read is ignored, and the new read is not held up.
+    p = start();
+    p.onBatch({ gen: 0, eof: false, video: file(), audio: [] });
+    made[0].cb.output(vf(0));
+    made[0].fail();
+    p.worker.msgs.length = 0;
+    p.seekAbs(2);
+    await p.onWorker({ type: 'videoReread', gen: 0, rewound: true });
+    await p.onWorker({ type: 'seeked', gen: 1 });
+    assert.strictEqual(sent(p, 'more').length, 1, 'the read after the seek is held up');
+    p.onBatch({ gen: 1, eof: false, video: file().slice(4), audio: [] });
+    assert.deepStrictEqual(made[made.length - 1].chunks, [2, 2.5], 'the seek does not start at its own keyframe');
+  } finally {
+    Object.assign(ctx, { VideoDecoder, EncodedVideoChunk });
+  }
+});
+
 test('decode speed: bursts of frames read sanely, a stalled decoder decays, the pill never says Infinity', () => {
   ctx.perfNow = 1000;
   const p = player({ playing: false });

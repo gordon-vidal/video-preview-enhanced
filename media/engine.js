@@ -243,6 +243,7 @@ function createEngine(env) {
           break;
         case 'subs': this.onSubs(m); break;
         case 'videoMode': this.onVideoMode(m); break;
+        case 'videoReread': this.onVideoReread(m); break;
         case 'log': log(m.msg); break;
         case 'error':
           this.loopCache = null;
@@ -250,6 +251,8 @@ function createEngine(env) {
           if (m.where === 'open') showMessage('This file could not be opened.', 'It may be damaged or incomplete (for example a recording that was cut off before it finished), or not a video file.');
           else if (m.where === 'init') showMessage('The decoder could not be loaded.', m.message);
           this.requesting = false;
+          // The re-read after a decoder error failed in the worker: go on as if it had answered so.
+          if (m.where === 'rereadVideo') this.onVideoReread({ gen: this.gen, rewound: false });
           break;
       }
     }
@@ -377,8 +380,10 @@ function createEngine(env) {
       this.pump();
     }
 
-    makeVideoDecoder() {
+    /** resume: the decoder that replaces a failed one in the same read (resumeAfterVideoError); else a new read starts. */
+    makeVideoDecoder(resume = false) {
       const g = this.gen;
+      if (!resume) { this.vOutT = undefined; this.vKeyT = undefined; this.keyAfter = undefined; this.vRereadTo = undefined; }
       this.vdec = new VideoDecoder({
         output: (vf) => {
           wake();
@@ -386,6 +391,7 @@ function createEngine(env) {
           let t = vf.timestamp / 2e6;
           if (this.noPts) t = (this.ptsBase || 0) + this.outCount / (this.fps || 30);
           this.outCount++;
+          if (!(t <= this.vOutT)) this.vOutT = t; // how far the picture got out of this read (resumeAfterVideoError)
           const fr = { t, vf, bytes: vf.displayWidth * vf.displayHeight * 1.5 };
           // Chromium can default to BT.709 for untagged SD or miss a container-only tag.
           // When its matrix differs, let our shader convert the decoded planes.
@@ -398,7 +404,7 @@ function createEngine(env) {
           this.loopCache = null;
           // The error closed the decoder: a new one continues from the next keyframe. Keeps failing: decode in software.
           this.vErrors = (this.vErrors || 0) + 1;
-          if (this.vErrors < 3) { this.makeVideoDecoder(); return; }
+          if (this.vErrors < 3) { this.resumeAfterVideoError(); return; }
           log('VideoDecoder keeps failing; decoding the picture in software');
           this.wcInfo = { ...(this.wcInfo || {}), failed: `${this.vErrors} decode errors` };
           this.vdec = null;
@@ -411,6 +417,43 @@ function createEngine(env) {
       this.vdec.ondequeue = () => wake();
       this.vdec.configure(this.vconf);
       this.needKey = true;
+    }
+
+    /**
+     * A new decoder after a WebCodecs error. The failed one took every packet it still held with it, and
+     * WebCodecs is handed packets far ahead of what it has decoded: in a short file all of them, to the end.
+     * So the worker reads the picture again from the failure, and the new decoder starts at the first keyframe
+     * after it. (Without the re-read the end of the file followed the error: a 5 s clip with one damaged
+     * picture at 2.5 s stopped there as "fully decoded".)
+     */
+    resumeAfterVideoError() {
+      // The failure lies after the last picture that came out, or at the keyframe the decoder started with.
+      const from = Math.max(this.vOutT ?? -Infinity, this.vKeyT ?? -Infinity);
+      this.makeVideoDecoder(true);
+      // No presentation times to find the place by, or packets fed by the host (Live transcode: no demuxer
+      // here to rewind): the new decoder takes the next keyframe that is read.
+      if (this.noPts || !Number.isFinite(from) || this.cfg.native) return;
+      this.keyAfter = from;
+      this.vRereadTo = this.readVT; // packets up to here were counted for the frame rate already
+      this.vReread = this.gen; // pending until 'videoReread': no reads meanwhile (pump), and no end of file
+      this.worker.postMessage({ type: 'rereadVideo', gen: this.gen, t: from });
+    }
+
+    /** The worker's answer to 'rereadVideo': the picture comes again from the failure on, or it can't (rewound false). */
+    onVideoReread(m) {
+      if (m.gen !== this.gen || this.vReread !== this.gen) return;
+      this.vReread = undefined;
+      const held = this.eofHeld === this.gen;
+      this.eofHeld = undefined;
+      if (m.rewound) {
+        // Also for an end of file that is being flushed or was reached with the failed decoder: read on.
+        this.eof = false;
+        this.rewinds = (this.rewinds || 0) + 1;
+      } else {
+        log('the picture could not be read again after the decoder error; continuing at the next keyframe read');
+        if (held) { this.finishEof(); return; }
+      }
+      this.pump();
     }
 
     openGopToSoft() {
@@ -692,6 +735,10 @@ function createEngine(env) {
         if (it.t !== null && it.t !== undefined && !(it.t <= this.readVT)) this.readVT = it.t;
         if (it.kind === 'packet') {
           if (!this.vdec || this.vdec.state !== 'configured') continue;
+          // Read before the worker rewound the picture after a decoder error: it comes again.
+          if (this.vReread === this.gen) continue;
+          // After a decoder error the pictures up to the failure are out or lost: on at the first keyframe after it.
+          if (this.needKey && this.keyAfter !== undefined && it.t !== null && !(it.t > this.keyAfter + 5e-4)) continue;
           // After configure/flush WebCodecs needs an IDR. An open-GOP I-frame (idr false) is
           // no entry point for it, and IDRs can be minutes apart: decode in software instead.
           if (this.needKey && it.key && it.idr === false) {
@@ -700,11 +747,13 @@ function createEngine(env) {
             return;
           }
           if (this.needKey && !it.key) continue;
+          if (this.needKey) this.vKeyT = it.t === null ? undefined : it.t;
           this.needKey = false;
           if (it.t === null) { this.noPts = true; if (this.ptsBase === undefined) this.ptsBase = it.dts || 0; }
           const ts = Math.round((it.t === null ? (it.dts || 0) : it.t) * 1e6);
           // No presentation times (H.264 in AVI): the decode times are frame-spaced, so they give the rate.
-          this.trackTs(it.t === null ? (Number.isFinite(it.dts) ? it.dts : null) : it.t);
+          // (Not a second time for packets read again after a decoder error.)
+          if (!(it.t <= this.vRereadTo)) this.trackTs(it.t === null ? (Number.isFinite(it.dts) ? it.dts : null) : it.t);
           try {
             // Carry discard on the chunk itself. Multiple edits can put a visible
             // packet and a decode-only dependency at the same presentation time.
@@ -748,31 +797,35 @@ function createEngine(env) {
           this.addAudio(t, it.sampleRate, planes, it.mask);
         }
       }
-      if (m.eof) {
-        // WebCodecs still holds the last frames and sound: the end is reached when both flushes are done.
-        const g = this.gen;
-        const rw = this.rewinds || 0;
-        const flushes = [this.vdec, this.adec].filter((d) => d && d.state === 'configured').map((d) => d.flush().catch(() => {}));
-        this.requesting = true;
-        Promise.all(flushes).then(() => {
-          if (g !== this.gen) return;
-          this.requesting = false;
-          // A track switch rewound the demuxer while this end was flushed: read on instead.
-          if (rw !== (this.rewinds || 0)) { this.pump(); return; }
-          this.eof = true;
-          // A short file with no rate in its container: the timestamps seen are all there are.
-          if (!this.fps && this.tsSeen.length >= 3 && this.tsSeen.length < 24) this.measureRate();
-          // A seek past the last frame (End): show the last one.
-          if (this.seekTarget !== null) {
-            this.insertHold();
-            this.seekTarget = null;
-            this.seekBefore = null;
-            if (this.playing) { this.stopAudio(); this.anchor(this.pauseT); }
-          }
-          this.pump();
-        });
-      }
+      if (m.eof) this.finishEof();
       this.pump();
+    }
+
+    /** The demuxer is at the end. WebCodecs still holds the last frames and sound: the end is reached when both flushes are done. */
+    finishEof() {
+      const g = this.gen;
+      const rw = this.rewinds || 0;
+      const flushes = [this.vdec, this.adec].filter((d) => d && d.state === 'configured').map((d) => d.flush().catch(() => {}));
+      this.requesting = true;
+      Promise.all(flushes).then(() => {
+        if (g !== this.gen) return;
+        this.requesting = false;
+        // A track switch (or the re-read after a decoder error) rewound the demuxer while this end was flushed: read on instead.
+        if (rw !== (this.rewinds || 0)) { this.pump(); return; }
+        // The video decoder failed (its flush with it) and its packets are asked for again: onVideoReread decides.
+        if (this.vReread === this.gen) { this.eofHeld = this.gen; return; }
+        this.eof = true;
+        // A short file with no rate in its container: the timestamps seen are all there are.
+        if (!this.fps && this.tsSeen.length >= 3 && this.tsSeen.length < 24) this.measureRate();
+        // A seek past the last frame (End): show the last one.
+        if (this.seekTarget !== null) {
+          this.insertHold();
+          this.seekTarget = null;
+          this.seekBefore = null;
+          if (this.playing) { this.stopAudio(); this.anchor(this.pauseT); }
+        }
+        this.pump();
+      });
     }
 
     /** Native backend: one raw frame per message (or frame server record). recycle: its buffer holds only this frame and comes back through keepBuffers. */
@@ -1082,6 +1135,7 @@ function createEngine(env) {
 
     pump() {
       if (this.scrubHeldT !== undefined || this.requesting || this.eof || !this.worker || this.vmode === undefined) return;
+      if (this.vReread === this.gen) return; // the worker is rewinding the picture after a decoder error (onVideoReread reads on)
       const now = this.now();
       // A paused remote stream can fill its decode cache far past the shown frame and evict
       // that frame's seek history on the host. Leave room in the host's 20 s window for steps back.
