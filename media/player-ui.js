@@ -8,16 +8,25 @@
 //                  mockup: tools/mockup/fake-host.js). The host answers through the returned `onHostMessage(msg)`.
 //
 // Zero VS Code, zero decoder coupling. The widget modules come in through `env.widgets` (default: the page globals)
-// so nothing here reaches for a global the caller did not choose. Pure helpers at the top are exported for the
+// so nothing here reaches for a global the caller did not choose. Optional ones switch features on: VpePlayerUiTiles
+// + CompareGrid (tile glide, drag / dock, tile menu, details card, ▲ / ▼, hover) and VpePlayerUiInput (seek tip and
+// thumbnail, wheel step / zoom / pan, idle bar, Zen Esc Esc, auto-pause, live region, go-to box). Pure helpers at the top are exported for the
 // millisecond Node tests (test/host/player_ui_test.js); `create(env)` is the DOM part.
 //
 // Host -> page messages: { type: 'rail', op, ... }      the folder rail protocol (src/folder-rail.js)
 //                        { type: 'openVideo', clipId, label?, compare?, replace?, forceNewTab? }
 //                        { type: 'removeVideo', clipId }  a rail click on a video already in this Compare
 //                        { type: 'toast', text }
+//                        { type: 'replaceTile', oldId, newId, label? }  the answer to 'replaceVideo'
+//                        { type: 'focusMode', active }    Zen Mode on / off (Esc Esc then posts 'focusModeExited')
+//                        { type: 'setVisible', visible, active? }  the webview panel shown / hidden (auto-pause)
 // Page -> host messages: { type: 'rail' | 'neighbour', ... }  posted by VpeFolderRail itself
 //                        { type: 'tiles', tabId, tiles, current }  after any change of the active tab's videos
 //                        { type: 'pickVideo', exclude }            "+ Add video" / "Pick…" / Compare › Add video
+//                        { type: 'tileOrder', order, current }    after a drag, ▲ / ▼ or Swap reordered the tiles
+//                        { type: 'replaceVideo', oldId, exclude }  tile menu / Compare › video › Replace video…
+//                        { type: 'leaveCompare', keepId, t }      Leave compare (keeps the clock tile)
+//                        { type: 'copyFrame', clipId? }           a tile's frame (tile menu) or the view
 //                        { type: 'copyText', text } and the command requests listed in HOST_COMMANDS
 'use strict';
 
@@ -36,8 +45,15 @@
    * @typedef {object} EngineAdapter
    * @property {ClipMeta[]} clips
    * @property {(id: string) => ClipMeta} getClip
-   * @property {(canvas: HTMLCanvasElement, clipId: string, frame: number, opts?: { width?: number, height?: number, splitClipRatio?: number | null }) => void} draw
+   * @property {(canvas: HTMLCanvasElement, clipId: string, frame: number, opts?: { width?: number, height?: number, splitClipRatio?: number | null, picMode?: string, zoom?: number, panX?: number, panY?: number }) => void} draw
    * @property {(clipId: string) => { title: string, sub: string, rows: string[][] }} [facts]
+   * @property {(clipId: string) => boolean} [hasAudio]
+   * @property {(clipId: string, clockFrame: number, offset?: { unit: string, v: number } | number | null) => { frame: number | null, outOfRange: boolean }} [shownFrame]
+   * @property {(clipId: string, cellW: number, cellH: number, picMode?: string, zoom?: number, panX?: number, panY?: number) => { x: number, y: number, w: number, h: number }} [pictureRect]
+   * @property {(clipId: string, seconds: number, cb: any, scrubbing?: boolean) => void} [thumbnail]
+   * @property {(immediate?: boolean) => void} [thumbnailLeave]
+   * @property {(clipId: string | null) => void} [setSoundSource]
+   * @property {(volume: number, muted: boolean) => void} [setVolume]
    */
   /**
    * @typedef {object} HostAdapter
@@ -451,6 +467,12 @@
       const r = S.removeTile(ws, msg.clipId);
       return { state: r.state, toast: r.state === ws ? '' : (r.toast || 'Removed from Compare'), handled: true };
     }
+    // The host's answer to 'replaceVideo' (tile menu / panel "Replace…"): the new video takes the old one's slot.
+    if (msg && msg.type === 'replaceTile' && typeof msg.oldId === 'string' && typeof msg.newId === 'string') {
+      const next = S.replaceTile(ws, msg.oldId, msg.newId);
+      const label = msg.label || (getClip(msg.newId) || { name: msg.newId }).name;
+      return { state: next, toast: next === ws ? '' : `Replaced with ${label}`, handled: true };
+    }
     if (!msg || msg.type !== 'openVideo' || typeof msg.clipId !== 'string') return { state: ws, toast: '', handled: false };
     const label = msg.label || (getClip(msg.clipId) || { name: msg.clipId }).name;
     if (msg.replace) {
@@ -464,13 +486,18 @@
   }
 
   /**
-   * What the Compare page lists (media/compare.js renderCompare, over the unified state).
+   * What the Compare page lists (media/compare.js renderCompare, over the unified state): each tile's letter,
+   * name, offset ({ unit, v }) and its short text ("0", "+3 f", "−40 ms"), and whether it sets the clock or is heard.
    * @param {any} S @param {any} tab TabState @param {(id: string) => ClipMeta} getClip
    */
   function compareRows(S, tab, getClip) {
     return tab.tiles.map((/** @type {string} */ id, /** @type {number} */ i) => {
-      const off = tab.offsets[id] || 0;
-      return { id, letter: S.TILE_KEYS[i], name: (getClip(id) || { name: id }).name, offset: off, offText: `${off >= 0 ? '+' : ''}${off} f` };
+      const off = S.getOffset(tab, id);
+      const txt = S.formatOffset(off);
+      return {
+        id, letter: S.TILE_KEYS[i], name: (getClip(id) || { name: id }).name, offset: off,
+        offText: txt.short, offLong: txt.long, clock: tab.clockId === id, sound: tab.soundId === id,
+      };
     });
   }
 
@@ -478,14 +505,29 @@
   const ICONS = {
     split: SVG('<rect x="4" y="5" width="16" height="14" rx="1.6"/><path d="M12 3v18"/>'),
     sync: SVG('<rect x="4" y="6" width="11.5" height="4.2" rx="1.1"/><rect x="8.5" y="13.8" width="11.5" height="4.2" rx="1.1"/><path d="M12 3.5v17" stroke-dasharray="1.8 2.2"/>'),
+    spotlight: SVG('<rect x="3" y="4" width="18" height="10" rx="1.4"/><rect x="3" y="16" width="5" height="4" rx="0.8"/><rect x="9.5" y="16" width="5" height="4" rx="0.8"/><rect x="16" y="16" width="5" height="4" rx="0.8"/>'),
+    grid: SVG('<rect x="3.5" y="4" width="7.5" height="7" rx="1.2"/><rect x="13" y="4" width="7.5" height="7" rx="1.2"/><rect x="3.5" y="13" width="7.5" height="7" rx="1.2"/><rect x="13" y="13" width="7.5" height="7" rx="1.2"/>'),
+    swap: SVG('<path d="M7 7h12l-3-3M17 17H5l3 3"/>'),
     compare: SVG('<rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/><path d="M12 4.5v15"/>', 16),
     expand: SVG('<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>', 13, 2),
     collapse: SVG('<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7"/>', 13, 2),
     close: SVG('<path d="M6 6l12 12M18 6L6 18"/>', 12, 2.1),
     plus: SVG('<path d="M12 5v14M5 12h14"/>'),
     leave: SVG('<path d="M10 17l-5-5 5-5M5 12h11a4 4 0 0 1 4 4v3"/>'),
+    info: SVG('<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.2"/>', 13, 2),
+    sound: SVG('<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>', 13, 1.9),
+    muted: SVG('<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>', 13, 1.9),
+    noAudio: SVG('<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M3 3l18 18"/>', 13, 1.9),
+    up: SVG('<path d="M6 14l6-6 6 6"/>', 14, 2),
+    down: SVG('<path d="M6 10l6 6 6-6"/>', 14, 2),
   };
   const esc = (/** @type {string} */ s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] || c);
+  /** Compare's dense grid: from this many videos the tile chrome shrinks (media/compare-grid.js LARGE). */
+  const DENSE_FROM = 5;
+  /** Click guard after a splitter drag, as the tile drag's RECENT_DRAG_MS. */
+  const DRAG_CLICK_MS = 300;
+  /** −/+ in the single player: one zoom step. */
+  const ZOOM_STEP = 1.25;
 
   /**
    * @param {{
@@ -494,7 +536,8 @@
    *   stateApi: any,
    *   engine: EngineAdapter,
    *   host: HostAdapter,
-   *   widgets?: { VpeControls?: any, VpeFolderRail?: any, VpeCtxMenu?: any, VpeAbLoop?: any, VpeAutoplay?: any, VpeTime?: any, VpePicture?: any, VpeModes?: any },
+   *   widgets?: { VpeControls?: any, VpeFolderRail?: any, VpeCtxMenu?: any, VpeAbLoop?: any, VpeAutoplay?: any,
+   *     VpeTime?: any, VpePicture?: any, VpeModes?: any, VpePlayerUiTiles?: any, VpePlayerUiInput?: any, CompareGrid?: any },
    *   initial?: any,
    *   prefs?: Partial<Prefs>,
    *   railCfg?: { layout?: string, width?: number, column?: string, playable?: boolean },
@@ -515,10 +558,16 @@
 
     const doc = env.doc;
     const win = /** @type {any} */ (env.win || doc.defaultView || globalThis);
-    const W = /** @type {any} */ ({ ...{ VpeControls: win.VpeControls, VpeFolderRail: win.VpeFolderRail, VpeCtxMenu: win.VpeCtxMenu, VpeAbLoop: win.VpeAbLoop, VpeAutoplay: win.VpeAutoplay, VpeTime: win.VpeTime, VpePicture: win.VpePicture, VpeModes: win.VpeModes }, ...(env.widgets || {}) });
+    const GLOBAL_WIDGETS = ['VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay', 'VpeTime', 'VpePicture',
+      'VpeModes', 'VpePlayerUiTiles', 'VpePlayerUiInput', 'CompareGrid'];
+    const W = /** @type {any} */ ({ ...Object.fromEntries(GLOBAL_WIDGETS.map((k) => [k, win[k]])), ...(env.widgets || {}) });
     for (const k of ['VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay']) {
       if (!W[k]) throw new Error(`player-ui: widget ${k} is missing`);
     }
+    /** Optional widgets: without them the tile gestures (Tiles + CompareGrid) or the input extras (Input) stay off. */
+    const Tiles = W.VpePlayerUiTiles && W.CompareGrid ? W.VpePlayerUiTiles : null;
+    const Grid = W.CompareGrid || null;
+    const Input = W.VpePlayerUiInput || null;
     const $ = (/** @type {string} */ id) => /** @type {any} */ (doc.getElementById(id));
     const need = (/** @type {string} */ id) => { const x = $(id); if (!x) throw new Error(`player-ui: #${id} is missing`); return x; };
 
@@ -533,8 +582,10 @@
     const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate');
     const cogBtn = need('cog'), infoBtn = need('infoBtn'), picBtn = $('picBtn'), fullBtn = $('full');
     const setABtn = $('setABtn'), setBBtn = $('setBBtn'), abMarks = $('abMarks'), abA = $('abA'), abB = $('abB');
+    /** The tiles' right-click menu (#menu, compare.css); pages without it get one. */
+    const tileMenuEl = $('menu') || doc.body.appendChild(Object.assign(doc.createElement('div'), { id: 'menu', hidden: true }));
 
-    /** Unified Split (N = 2) and Sync (N >= 2) buttons sit beside Compare; src/bar.js does not draw them yet. */
+    /** Compare's layout and Swap buttons sit beside Compare; src/bar.js does not draw them yet. */
     const barButton = (/** @type {string} */ id, /** @type {string} */ title, /** @type {string} */ icon) => {
       let b = $(id);
       if (!b) {
@@ -546,10 +597,23 @@
       }
       return b;
     };
+    const spotBtn = barButton('spotlightBtn', 'Spotlight', ICONS.spotlight);
+    const gridBtn = barButton('gridBtn', 'Equal Grid', ICONS.grid);
     const splitBtn = barButton('splitBtn', 'Split Wipe (2 videos)', ICONS.split);
+    const swapBtn = barButton('swapBtn', 'Swap sides  X', ICONS.swap);
     const syncBtn = barButton('syncBtn', 'Sync frame offsets', ICONS.sync);
 
-    const announce = (/** @type {string} */ t) => { const l = $('live'); if (l) l.textContent = t; };
+    /** @type {(() => void)[]} */
+    const cleanups = [];
+    const listen = (/** @type {any} */ target, /** @type {string} */ type, /** @type {any} */ fn, /** @type {any} */ opts) => {
+      target.addEventListener(type, fn, opts);
+      cleanups.push(() => target.removeEventListener(type, fn, opts));
+    };
+    // One polite live region: emptied first, written 50 ms later, so a repeated text is read again.
+    const liveEl = $('live');
+    const live = Input && liveEl ? Input.createLiveAnnouncer({ liveEl, win }) : null;
+    if (live) cleanups.push(live.dispose);
+    const announce = (/** @type {string} */ t) => { if (live) live.announce(t); else if (liveEl) liveEl.textContent = t; };
     const toast = $('toast') ? W.VpeControls.createToast($('toast'), announce) : announce;
     const flashPlay = $('playFlash') ? W.VpeControls.createPlayFlash($('playFlash'), stageEl) : () => {};
 
@@ -560,12 +624,6 @@
     const ab = W.VpeAbLoop.create();
     let lastTilesKey = '';
     let disposed = false;
-    /** @type {(() => void)[]} */
-    const cleanups = [];
-    const listen = (/** @type {any} */ target, /** @type {string} */ type, /** @type {any} */ fn, /** @type {any} */ opts) => {
-      target.addEventListener(type, fn, opts);
-      cleanups.push(() => target.removeEventListener(type, fn, opts));
-    };
     const tab = () => S.getTab(ws);
     const fps = () => tab().fps || 24;
     const fmt = (/** @type {number} */ f) => formatTime(f, fps(), prefs.timeMode, W.VpeTime ? W.VpeTime.fmtTimecode : null);
@@ -573,6 +631,36 @@
     /** The arrow keys' jump sizes (settings videoPreviewEnhanced.jump.*): seconds, or 'frame'. */
     const JUMP = { arrow: 5, shift: 1, ctrl: 'frame' };
     const clipName = (/** @type {string} */ id) => (engine.getClip(id) || { name: id }).name;
+    const letterOf = (/** @type {any} */ t, /** @type {string} */ id) => S.TILE_KEYS[Math.max(0, t.tiles.indexOf(id))];
+    const hasAudio = (/** @type {string | null} */ id) => !id || typeof engine.hasAudio !== 'function' || !!engine.hasAudio(id);
+    const clipFps = (/** @type {string} */ id) => (engine.getClip(id) || {}).fps || fps();
+
+    /** Stable video numbers for the tile modules (they key cells by `data-tile`, as Compare's video indexes). */
+    /** @type {Map<string, number>} */
+    const vidOf = new Map();
+    /** @type {Map<number, string>} */
+    const idOfVid = new Map();
+    const vid = (/** @type {string} */ id) => {
+      let v = vidOf.get(id);
+      if (v === undefined) { v = vidOf.size; vidOf.set(id, v); idOfVid.set(v, id); }
+      return v;
+    };
+
+    // ---- FLIP glide (media/player-ui-tiles.js): cells glide on reorder, swap, dock and layout switches ----
+    const glide = Tiles ? Tiles.createGlide({ doc, win }) : null;
+    if (glide) cleanups.push(() => glide.cancel());
+    /**
+     * Run a state change with the cells gliding from where they were; never to or from Split Wipe. `skip`: a clip
+     * whose cell must not glide (the lifted tile follows the pointer by its own transform).
+     */
+    const withGlide = (/** @type {() => void} */ fn, /** @type {string | null} */ skip = null) => {
+      const before = tab().layout;
+      const els = () => [...cellNodes.entries()].filter(([id]) => id !== skip).map(([, e]) => e.cell);
+      if (glide) glide.capture(els());
+      fn();
+      if (glide && before !== 'split' && tab().layout !== 'split') glide.play(els());
+      else if (glide) glide.cancel();
+    };
 
     /** One state transition: replace the state, say the toast, redraw. */
     const commit = (/** @type {any} */ next, toastText = '') => {
@@ -587,6 +675,8 @@
     let controls = null;
     /** @type {any} */
     let ctxMenu = null;
+    /** @type {any} */
+    let tileMenu = null;
     const setOnEnd = (/** @type {string} */ m) => {
       prefs.onEnd = m;
       rail.refreshOnEnd();
@@ -626,7 +716,20 @@
         ],
       };
     };
-    let selTile = 0;
+    /** The clip as compare-grid tileStatsRows reads it (size, fps, frames, codec). */
+    const statsClip = (/** @type {string} */ id) => {
+      const f = /** @type {any} */ (facts(id));
+      const c = /** @type {any} */ (engine.getClip(id) || {});
+      return { w: f.width || c.width || 0, h: f.height || c.height || 0, fps: f.fps || c.fps || 0, frames: f.frames || c.frames || 0, codec: f.codec || c.codec || '' };
+    };
+    /** The tile the Compare › video page shows (a clip id; falls back to the clock tile). */
+    let selId = /** @type {string | null} */ (null);
+    const selected = () => { const t = tab(); return selId && t.tiles.includes(selId) ? selId : (t.clockId || t.tiles[0]); };
+    const switchRow = (/** @type {any} */ k, /** @type {string} */ label, /** @type {boolean} */ on, /** @type {() => void} */ run, /** @type {any} */ extra = {}) => {
+      const b = k.btn('row', label, run, { ...extra, aria: { role: 'switch', 'aria-checked': String(on), ...(extra.aria || {}) } });
+      b.appendChild(k.sw(on));
+      return b;
+    };
     const cmpViews = {
       cmp: {
         label: 'Compare', button: 'cmp',
@@ -634,19 +737,21 @@
           const t = tab();
           const f = doc.createDocumentFragment();
           f.appendChild(k.heading('Videos'));
-          compareRows(S, t, engine.getClip).forEach((r, i) => {
-            const b = k.btn('row cvid', r.name, () => { selTile = i; k.show('cmpVid'); }, { value: r.offText, chev: true, aria: { 'aria-label': `${r.letter}: ${r.name}, offset ${r.offText}` } });
+          for (const r of compareRows(S, t, engine.getClip)) {
+            const marks = [r.clock ? 'clock' : '', r.sound ? 'sound' : ''].filter(Boolean);
+            const b = k.btn('row cvid', r.name, () => { selId = r.id; k.show('cmpVid'); }, {
+              value: `${r.clock ? '⏱ ' : ''}${r.sound && !prefs.muted ? '🔊 ' : ''}${r.offText}`, chev: true,
+              aria: { 'aria-label': `${r.letter}: ${r.name}, offset ${r.offLong}${marks.length ? `, ${marks.map((m) => (m === 'clock' ? 'sets the clock' : 'sound on')).join(', ')}` : ''}` },
+            });
             const ltr = k.el('span', 'ltr', r.letter);
             ltr.setAttribute('aria-hidden', 'true');
             b.insertBefore(ltr, b.firstChild);
             f.appendChild(b);
-          });
+          }
           if (t.tiles.length < t.maxVideos) {
             f.appendChild(k.btn('row', 'Add video…', () => { k.close(false); act.pickVideo(); }, { icon: ICONS.plus, value: `${t.tiles.length} of ${t.maxVideos}` }));
           }
-          const cap = k.btn('row', 'Open new videos here', () => { act.capture(); k.render(); }, { icon: ICONS.plus, kbd: 'Shift+D', aria: { role: 'switch', 'aria-checked': String(t.capture) } });
-          cap.appendChild(k.sw(t.capture));
-          f.appendChild(cap);
+          f.appendChild(switchRow(k, 'Open new videos here', t.capture, () => { act.capture(); k.render(); }, { icon: ICONS.plus, kbd: 'Shift+D' }));
           f.appendChild(k.el('div', 'sep'));
           if (t.tiles.length >= 2) {
             const row = k.el('div', 'row static');
@@ -654,42 +759,61 @@
             const seg = k.el('div', 'seg');
             seg.setAttribute('role', 'group');
             seg.setAttribute('aria-label', 'Layout');
-            const ui = S.deriveUi(t, { width: 1, height: 1 });
+            const ui = S.deriveUi(t);
             const modes = t.tiles.length === 2 ? [['spotlight', 'Spotlight'], ['grid', 'Grid'], ['split', 'Split']] : [['spotlight', 'Spotlight'], ['grid', 'Equal Grid']];
             for (const [m, label] of modes) {
               seg.appendChild(k.btn('chip', label, () => { act.layout(m); k.render(); }, { aria: { 'aria-pressed': String(ui.effectiveLayout === m) } }));
             }
             row.appendChild(seg);
             f.appendChild(row);
-            const sync = k.btn('row', 'Sync offsets on tiles', () => { act.sync(); k.render(); }, { aria: { role: 'switch', 'aria-checked': String(t.syncMode) } });
-            sync.appendChild(k.sw(t.syncMode));
-            f.appendChild(sync);
+            if (t.tiles.length === 2) f.appendChild(k.btn('row', 'Swap sides', () => { act.swap(); k.render(); }, { icon: ICONS.swap, kbd: 'X' }));
+            f.appendChild(switchRow(k, 'Sync offsets on tiles', t.syncMode, () => { act.sync(); k.render(); }));
             f.appendChild(k.el('div', 'sep'));
-            f.appendChild(k.btn('row', 'Leave compare', () => { k.close(false); act.leaveCompare(); }, { icon: ICONS.leave, value: `keep ${S.TILE_KEYS[0]}`, aria: { 'aria-label': `Leave compare, keep ${S.TILE_KEYS[0]}` } }));
+            const keep = letterOf(t, t.clockId || t.tiles[0]);
+            f.appendChild(k.btn('row', 'Leave compare', () => { k.close(false); act.leaveCompare(); }, { icon: ICONS.leave, value: `keep ${keep}`, aria: { 'aria-label': `Leave compare, keep ${keep}` } }));
           }
           return f;
         },
       },
       cmpVid: {
-        label: () => { const r = compareRows(S, tab(), engine.getClip)[selTile]; return r ? `${r.letter}: ${r.name}` : 'Video'; },
+        label: () => { const t = tab(); const id = selected(); return id ? `${letterOf(t, id)}: ${clipName(id)}` : 'Video'; },
         button: 'cmp', parent: 'cmp',
         render: (/** @type {any} */ _s, /** @type {any} */ k) => {
           const t = tab();
-          const rows = compareRows(S, t, engine.getClip);
-          const r = rows[Math.min(selTile, rows.length - 1)];
+          const id = selected();
+          const r = compareRows(S, t, engine.getClip).find((x) => x.id === id) || compareRows(S, t, engine.getClip)[0];
           const f = doc.createDocumentFragment();
           f.appendChild(k.head(`${r.letter} ${r.name}`, 'cmp'));
           f.appendChild(k.heading('Offset'));
           const top = k.el('div', 'speedTop');
-          const minus = k.btn('big', null, () => { commit(S.nudgeOffset(ws, r.id, -1)); k.render(); }, { aria: { 'aria-label': `${r.letter} earlier` } });
-          const plus = k.btn('big', null, () => { commit(S.nudgeOffset(ws, r.id, 1)); k.render(); }, { aria: { 'aria-label': `${r.letter} later` } });
+          const minus = k.btn('big', null, () => { act.nudge(r.id, -1); k.render(); }, { aria: { 'aria-label': `${r.letter} earlier` } });
+          const plus = k.btn('big', null, () => { act.nudge(r.id, 1); k.render(); }, { aria: { 'aria-label': `${r.letter} later` } });
           minus.textContent = '−';
           plus.textContent = '+';
-          top.append(minus, k.el('div', 'readout off', r.offText), plus);
+          const readout = k.el('div', 'readout off', r.offText);
+          readout.setAttribute('aria-label', `Offset of ${r.letter}: ${r.offLong}`);
+          top.append(minus, readout, plus);
           f.appendChild(top);
-          if (r.offset) f.appendChild(k.btn('link', 'Reset', () => { commit(S.nudgeOffset(ws, r.id, -r.offset), `${r.letter} in step`); k.render(); }, { aria: { 'aria-label': `Reset the offset of ${r.letter}` } }));
+          // Frames or ms: the moment the offset stands for is kept (player-state setOffsetUnit).
+          const unitRow = k.el('div', 'row static');
+          unitRow.appendChild(k.el('span', 'grow', 'Unit'));
+          const seg = k.el('div', 'seg');
+          seg.setAttribute('role', 'group');
+          seg.setAttribute('aria-label', `Offset unit of ${r.letter}`);
+          for (const [u, label] of [['frames', 'Frames'], ['ms', 'Time ms']]) {
+            seg.appendChild(k.btn('chip', label, () => { commit(S.setOffsetUnit(ws, r.id, u, clipFps(r.id))); k.render(); }, { aria: { 'aria-pressed': String(r.offset.unit === u) } }));
+          }
+          unitRow.appendChild(seg);
+          f.appendChild(unitRow);
+          if (r.offset.v) f.appendChild(k.btn('link', 'Reset offset', () => { commit(S.resetOffset(ws, r.id), `${r.letter} in step`); k.render(); }, { aria: { 'aria-label': `Reset the offset of ${r.letter}` } }));
           f.appendChild(k.el('div', 'sep'));
-          f.appendChild(k.btn('row', t.layout === 'spotlight' && t.spotlightId === r.id ? 'Back to grid' : 'Enlarge tile', () => { commit(S.toggleEnlarge(ws, r.id)); k.render(); }));
+          f.appendChild(switchRow(k, `${r.letter} sets the clock`, r.clock, () => { act.setClock(r.id); k.render(); }));
+          if (hasAudio(r.id)) f.appendChild(switchRow(k, `Sound from ${r.letter}`, r.sound, () => { act.setSound(r.id); k.render(); }));
+          else f.appendChild(k.btn('row', `No audio track in ${r.letter}`, () => {}, { aria: { 'aria-disabled': 'true' } }));
+          f.appendChild(k.el('div', 'sep'));
+          if (t.tiles.length === 2) f.appendChild(k.btn('row', 'Swap sides', () => { act.swap(); k.render(); }, { icon: ICONS.swap, kbd: 'X' }));
+          f.appendChild(k.btn('row', t.layout === 'spotlight' && t.spotlightId === r.id ? 'Back to grid' : 'Enlarge tile', () => { act.enlarge(r.id); k.render(); }));
+          f.appendChild(k.btn('row', 'Replace video…', () => { k.close(false); act.replace(r.id); }));
           f.appendChild(k.btn('row', 'Remove from compare', () => { k.show('cmp'); act.removeTile(r.id); }, { icon: ICONS.close }));
           return f;
         },
@@ -700,7 +824,7 @@
       panel: need('panel'),
       sheet: need('sheet'),
       bar: barEl,
-      onShow: () => { if (ctxMenu) ctxMenu.close(false); },
+      onShow: () => { if (ctxMenu) ctxMenu.close(false); if (tileMenu) tileMenu.close(); },
       buttons: { cog: cogBtn, info: infoBtn, rate: rateBtn, tracks: tracksBtn, cmp: cmpBtn, stepPrev: prevSize, stepNext: nextSize },
       views: cmpViews,
       get: () => {
@@ -708,7 +832,7 @@
         const isMulti = t.tiles.length >= 2;
         const sel = Math.min(infoSel, t.tiles.length - 1);
         return {
-          compare: isMulti ? { soundLabel: `from ${S.TILE_KEYS[0]}` } : null,
+          compare: isMulti ? { soundLabel: `from ${letterOf(t, t.soundId || t.tiles[0])}` } : null,
           rate: prefs.rate,
           loop: prefs.onEnd === 'loop',
           autoplay: { mode: prefs.onEnd, label: W.VpeAutoplay.label(prefs.onEnd), next: !isMulti },
@@ -716,7 +840,7 @@
           stepButtons: 'frame',
           stepSize: prefs.stepSize,
           abLabel: abLabel(),
-          picture: { mode: prefs.picMode, pct: Math.round(prefs.picZoom * 100), zoomed: prefs.picZoom !== 1 },
+          picture: { mode: t.picMode, pct: Math.round(t.zoom * 100), zoomed: t.zoom !== 1 },
           tools: [
             isMulti
               ? { id: 'compare', label: 'Compare', note: `${t.tiles.length} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', cmpBtn) }
@@ -732,7 +856,7 @@
           },
           subsLabel: prefs.subKey === 'off' ? 'Off' : 'English (SRT)',
           audioLabel: prefs.audioId === 'a0' ? 'English (AAC 2.0)' : 'Director Commentary',
-          hasSound: true,
+          hasSound: hasAudio(t.soundId),
           tracks: {
             on: prefs.subKey !== 'off',
             label: prefs.subKey === 'off' ? 'Off' : 'English (SRT)',
@@ -758,7 +882,7 @@
         };
       },
       act: {
-        stepSize: (/** @type {string} */ v) => { prefs.stepSize = v; drawBar(); controls.refresh(); toast(`Step: ${W.VpeControls.stepName(v)}`); },
+        stepSize: (/** @type {string} */ v) => { prefs.stepSize = v; drawBar(); controls.refresh(); toast(`Step buttons: ${W.VpeControls.stepName(v)}`); },
         loop: () => act.loop(),
         setAutoplay: (/** @type {string} */ m) => setOnEnd(m),
         cycleAB: () => markAB(null),
@@ -771,8 +895,8 @@
         setTranscodeResolution: (/** @type {number} */ h) => { prefs.transcodeRes = h; controls.refresh(); },
         saveTranscodeResolution: (/** @type {number} */ h) => { prefs.transcodeRes = h; controls.refresh(); toast('Saved default resolution'); },
         setPicture: (/** @type {string} */ m) => setPicture(m),
-        zoomPicture: (/** @type {number} */ d) => { prefs.picZoom = Math.max(0.5, Math.min(4, +(prefs.picZoom + d * 0.25).toFixed(2))); controls.refresh(); },
-        resetPicture: () => { prefs.picZoom = 1; setPicture('fit'); },
+        zoomPicture: (/** @type {number} */ d) => { commit(S.setZoom(ws, Math.max(0.5, Math.min(4, +(tab().zoom + d * 0.25).toFixed(2))))); controls.refresh(); },
+        resetPicture: () => { commit(S.resetView(ws)); setPicture('fit'); },
         selectSub: (/** @type {string} */ k) => { prefs.subKey = k; drawBar(); controls.refresh(); toast(k === 'off' ? 'Subtitles off' : 'Subtitles: English'); },
         selectAudio: (/** @type {string} */ id) => { prefs.audioId = id; controls.refresh(); toast('Audio track switched'); },
         loadSubs: () => postHost({ type: 'loadSubs' }),
@@ -786,7 +910,8 @@
       },
     });
 
-    // ---- the real right-click menu ----
+    // ---- the real right-click menu (one video); with N >= 2 the tile menu takes the right-click instead ----
+    // ctxmenu.js listens on the document itself, so create() adds no second opener (it used to open twice).
     ctxMenu = createContextMenu(W.VpeCtxMenu, {
       menu: need('ctxmenu'),
       container: env.container || doc.body,
@@ -794,15 +919,68 @@
         const t = tab();
         return { ready: true, playing: t.playing, loop: prefs.onEnd === 'loop', abSet: ab.isSet(), file: true, compareOpen: t.tiles.length >= 2 };
       },
-      beforeOpen: () => controls.closeAll(false),
+      beforeOpen: () => { controls.closeAll(false); if (tileMenu) tileMenu.close(); },
       actions: {
         playPause: () => act.playPause(), loop: () => act.loop(), setA: () => act.setA(), setB: () => act.setB(),
         clearAB: () => act.clearAB(), copyFrame: () => act.copyFrame(), saveFrame: () => act.saveFrame(),
-        copyTime: () => act.copyTime(), startCompare: () => act.capture(), addToCompare: () => act.capture(),
+        copyTime: () => act.copyTime(), startCompare: () => act.capture(),
+        // Add to Compare never turns a running capture off: with capture on it picks the next video instead.
+        addToCompare: () => { if (tab().capture) act.pickVideo(); else act.capture(); },
         keys: () => controls.openSheet(cogBtn), cog: () => controls.show('main', cogBtn),
       },
     });
-    listen(stageEl, 'contextmenu', (/** @type {MouseEvent} */ e) => { e.preventDefault(); ctxMenu.open(e.clientX, e.clientY); });
+
+    // ---- the tiles' right-click menu (media/player-ui-tiles.js createTileMenu), N >= 2 ----
+    if (Tiles) {
+      tileMenu = Tiles.createTileMenu({
+        doc, win, menuEl: tileMenuEl,
+        onAction: (/** @type {string} */ a, /** @type {any} */ c) => {
+          const id = idOfVid.get(c.tile);
+          if (!id || !tab().tiles.includes(id)) return;
+          switch (a) {
+            case 'playPause': act.playPause(); break;
+            case 'setClock': act.setClock(id); break;
+            case 'setSound': act.setSound(id); break;
+            case 'offset': act.openTile(id); break;
+            case 'copyFrame': postHost({ type: 'copyFrame', clipId: id }); toast(c.dense ? `Tile ${c.letter} copied` : `Frame ${c.letter} copied`); break;
+            case 'copyTime': act.copyTileTime(id); break;
+            case 'replace': act.replace(id); break;
+            case 'remove': act.removeTile(id); break;
+            case 'add': act.pickVideo(); break;
+            case 'leave': act.leaveCompare(); break;
+            case 'keys': controls.openSheet(cogBtn); break;
+            case 'settings': controls.show('main', cogBtn); break;
+            default: break;
+          }
+        },
+      });
+      cleanups.push(() => tileMenu.dispose());
+    }
+    /** The tile under a pointer event (Split Wipe: the side of the divider), or null. */
+    const tileIdAt = (/** @type {any} */ e) => {
+      if (!Tiles) return null;
+      const v = Tiles.tileAt(e.target, e.clientX, { stageLeft: stageEl.getBoundingClientRect().left, split: splitInfo() });
+      return v === null ? null : (idOfVid.get(v) || null);
+    };
+    const openTileMenu = (/** @type {string} */ id, /** @type {number} */ x, /** @type {number} */ y) => {
+      const t = tab();
+      const off = S.getOffset(t, id);
+      controls.closeAll(false);
+      ctxMenu.close(false);
+      tileMenu.open(x, y, {
+        tile: vid(id), letter: letterOf(t, id), playing: t.playing, isClock: t.clockId === id, isSound: t.soundId === id,
+        offsetHint: S.formatOffset(off).short, timeHint: fmt(shownOf(t, id).frame), dense: t.tiles.length >= DENSE_FROM,
+        canAdd: t.tiles.length < t.maxVideos,
+      });
+    };
+    listen(stageEl, 'contextmenu', (/** @type {MouseEvent} */ e) => {
+      if (!tileMenu || tab().tiles.length < 2) return; // one video: ctxmenu.js's own document listener opens it
+      const id = tileIdAt(e);
+      if (!id) return;
+      e.preventDefault();
+      e.stopPropagation(); // the document's player menu stays shut
+      openTileMenu(id, e.clientX, e.clientY);
+    });
 
     // ---- actions (the bar, the keys, the menus and the panels all land here) ----
     function setRate(/** @type {number} */ r) {
@@ -812,7 +990,7 @@
     }
     function setPicture(/** @type {string} */ m) {
       prefs.picMode = m;
-      drawBar();
+      commit(S.setPicMode(ws, m));
       controls.refresh();
       toast(`Picture size: ${m}`);
     }
@@ -825,11 +1003,46 @@
       controls.refresh();
       render();
     }
+    /** Zoom every tile by `factor` about a stage point (client coordinates); the picture under it stays put. */
+    function zoomAt(/** @type {number} */ factor, /** @type {number | null} */ cx, /** @type {number | null} */ cy) {
+      const t = tab();
+      const z = Math.max(S.ZOOM_MIN, Math.min(S.ZOOM_MAX, t.zoom * factor));
+      if (z === t.zoom) return;
+      const r = stageEl.getBoundingClientRect();
+      const ox = cx === null ? 0 : cx - (r.left + r.width / 2);
+      const oy = cy === null ? 0 : cy - (r.top + r.height / 2);
+      const k = z / t.zoom;
+      commit(S.setZoom(ws, z, ox - (ox - t.panX) * k, oy - (oy - t.panY) * k));
+      controls.refresh();
+    }
     /** A jump of the arrow keys: seconds, or 'frame' (one frame, paused). */
     const jumpBy = (/** @type {number | string} */ v, /** @type {number} */ dir) => (v === 'frame' ? commit(S.stepFrame(ws, dir)) : act.skip(dir * Number(v)));
+    /** Reorder the tiles to `ids` (each step a player-state moveTile, so offsets and clock follow their clips). */
+    const reorderTo = (/** @type {any} */ state, /** @type {string[]} */ ids) => {
+      let next = state;
+      ids.forEach((id, i) => {
+        const from = S.getTab(next).tiles.indexOf(id);
+        if (from >= 0 && from !== i) next = S.moveTile(next, from, i);
+      });
+      return next;
+    };
+    const tellOrder = () => { const t = tab(); postHost({ type: 'tileOrder', order: t.tiles.slice(), current: t.tiles[0] }); };
+    /** The video a − / + key nudges in Compare: the tile under the pointer, else the one the panel shows. */
+    const nudgeTarget = () => {
+      const h = hover ? hover.current() : null;
+      const id = h !== null && h !== undefined ? idOfVid.get(h) : null;
+      return id && tab().tiles.includes(id) ? id : selected();
+    };
     const act = {
-      playPause: () => { ws = S.togglePlay(ws); flashPlay(tab().playing); render(); },
+      playPause: () => {
+        if (vis) vis.forgetResume();
+        ws = S.togglePlay(ws);
+        flashPlay(tab().playing);
+        render();
+      },
       skip: (/** @type {number} */ sec) => commit(S.seekFrame(ws, tab().frame + Math.round(sec * fps()))),
+      /** J / L: ten seconds, with the toast the player shows. */
+      skipKey: (/** @type {number} */ sec) => { act.skip(sec); toast(`${sec > 0 ? '+' : ''}${sec} s`); },
       jump: (/** @type {{ dir: number, shift?: boolean }} */ o) => jumpBy(o.shift ? JUMP.shift : JUMP.arrow, o.dir),
       stepButton: (/** @type {number} */ dir) => stepBy(W.VpeControls, prefs, dir, { step: (n) => commit(S.stepFrame(ws, n)), skip: (sec) => act.skip(sec) }),
       home: () => commit(S.seekFrame(ws, 0)),
@@ -838,47 +1051,123 @@
       rateStep: (/** @type {number} */ d) => { setRate(prefs.rate + d * W.VpeControls.SPEED_STEP); toast(W.VpeControls.speedText ? W.VpeControls.speedText(prefs.rate) : `${prefs.rate}×`); },
       volumeStep: (/** @type {number} */ d) => { act.volume(prefs.volume + d); toast(`Volume ${Math.round(prefs.volume * 100)}%`); },
       copyTime: () => { const text = fmt(tab().frame); postHost({ type: 'copyText', text }); toast(`Copied ${text}`); },
+      copyTileTime: (/** @type {string} */ id) => {
+        const t = tab();
+        const text = `${letterOf(t, id)} ${fmt(shownOf(t, id).frame)}`;
+        postHost({ type: 'copyText', text });
+        toast(`Copied ${text}`);
+      },
       saveFrame: () => postHost({ type: 'saveFrame' }),
       prevFrame: () => commit(S.stepFrame(ws, -1)),
       nextFrame: () => commit(S.stepFrame(ws, 1)),
       seek: (/** @type {number} */ f) => commit(S.seekFrame(ws, f)),
-      mute: () => { prefs.muted = !prefs.muted; render(); },
+      mute: () => {
+        if (!hasAudio(tab().soundId)) { toast('No audio track'); return; }
+        prefs.muted = !prefs.muted;
+        render();
+      },
       volume: (/** @type {number} */ v) => { prefs.volume = Math.max(0, Math.min(1, v)); prefs.muted = prefs.volume === 0; render(); },
       loop: () => { prefs.onEnd = W.VpeAutoplay.toggleLoop ? W.VpeAutoplay.toggleLoop(prefs.onEnd) : (prefs.onEnd === 'loop' ? 'off' : 'loop'); rail.refreshOnEnd(); controls.refresh(); toast(prefs.onEnd === 'loop' ? 'Loop on' : 'Loop off'); },
       setA: () => markAB('a'),
       setB: () => markAB('b'),
       clearAB: () => { ab.clear(); controls.refresh(); render(); toast('A–B range cleared'); },
       cycleTime: () => { prefs.timeMode = nextTimeMode(prefs.timeMode); render(); toast(TIME_MODE_NAMES[prefs.timeMode]); },
-      cyclePicture: () => setPicture(PICTURE_MODES[(PICTURE_MODES.indexOf(/** @type {any} */ (prefs.picMode)) + 1) % PICTURE_MODES.length]),
+      cyclePicture: () => setPicture(PICTURE_MODES[(PICTURE_MODES.indexOf(/** @type {any} */ (tab().picMode)) + 1) % PICTURE_MODES.length]),
       copyFrame: () => { postHost({ type: 'copyFrame' }); toast(tab().tiles.length > 1 ? 'View copied' : 'Frame copied'); },
       fullscreen: () => postHost({ type: 'fullscreen' }),
       info: () => controls.toggle('info', infoBtn),
       keys: () => controls.toggleSheet(),
+      gotoBox: () => { if (gotoBox) gotoBox.open(); else return false; return true; },
       escape: () => {
+        const t = tab();
         if (controls.anyOpen()) { controls.closeAll(true); return true; }
         if (ctxMenu.isOpen()) { ctxMenu.close(true); return true; }
-        if (tab().layout === 'spotlight' && tab().spotlightId) { commit(S.toggleEnlarge(ws, tab().spotlightId)); return true; }
+        if (tileMenu && tileMenu.isOpen()) { tileMenu.close(); return true; }
+        if (t.removeConfirmId) { commit(S.setRemoveConfirm(ws, null)); return true; }
+        if (t.syncMode) { commit(S.toggleSyncMode(ws), 'Sync offsets off'); return true; }
+        if (t.layout === 'spotlight' && t.spotlightId) { withGlide(() => commit(S.toggleEnlarge(ws, t.spotlightId))); return true; }
         return false;
       },
       capture: () => { const r = S.toggleCapture(ws); commit(r.state, r.toast); },
       split: () => commit(S.toggleSplit(ws)),
-      sync: () => commit(S.toggleSyncMode(ws)),
+      sync: () => {
+        commit(S.toggleSyncMode(ws));
+        toast(tab().syncMode ? 'Sync offsets: nudge each tile with − / +, Esc to finish' : 'Sync offsets off');
+      },
       layout: (/** @type {string} */ m) => {
         const t = tab();
-        if (m === 'split') { if (t.layout !== 'split') commit(S.toggleSplit(ws)); return; }
-        if (m === 'spotlight') { if (t.layout !== 'spotlight') commit(S.toggleEnlarge(ws, t.spotlightId || t.tiles[0])); return; }
-        if (t.layout === 'split') commit(S.toggleSplit(ws));
-        else if (t.layout === 'spotlight' && t.spotlightId) commit(S.toggleEnlarge(ws, t.spotlightId));
+        if (S.normalizeLayout(m) === t.layout) return;
+        withGlide(() => commit(S.setLayout(ws, m)));
+        const ui = S.deriveUi(tab());
+        if (ui.isMulti) announce(`Layout: ${ui.layoutLabel}`);
       },
-      enlarge: (/** @type {string} */ id) => commit(S.toggleEnlarge(ws, id)),
-      removeTile: (/** @type {string} */ id) => { const r = S.removeTile(ws, id); commit(r.state, r.toast); },
-      nudge: (/** @type {string} */ id, /** @type {number} */ d) => commit(S.nudgeOffset(ws, id, d)),
+      enlarge: (/** @type {string} */ id) => withGlide(() => commit(S.toggleEnlarge(ws, id))),
+      swap: () => {
+        const t = tab();
+        if (t.tiles.length !== 2) return false;
+        withGlide(() => commit(S.swapSides(ws)));
+        tellOrder();
+        const n = tab();
+        announce(`Swapped: ${clipName(n.tiles[0])} is A, ${clipName(n.tiles[1])} is B`);
+        return true;
+      },
+      /** Move a tile one slot earlier (-1) or later (1): the ▲ / ▼ buttons. */
+      move: (/** @type {string} */ id, /** @type {number} */ d) => {
+        const t = tab();
+        const from = t.tiles.indexOf(id);
+        const to = from + d;
+        if (from < 0 || to < 0 || to >= t.tiles.length) return;
+        withGlide(() => commit(S.moveTile(ws, from, to)));
+        tellOrder();
+        announce(`Moved ${clipName(id)} to ${S.TILE_KEYS[to]}`);
+      },
+      removeTile: (/** @type {string} */ id) => {
+        const t = tab();
+        if (t.tiles.length <= 1 || !t.tiles.includes(id)) return;
+        // Leaving 2 videos for 1 is the way back to the single player: it keeps the clock (S.removeTile, unified).
+        const r = S.removeTile(ws, id);
+        commit(r.state, r.toast || `Removed ${clipName(id)}`);
+      },
+      /** The tile's remove button: from 3 videos on the first click asks "Remove?" and the second removes. */
+      removeClick: (/** @type {string} */ id) => {
+        const t = tab();
+        if (t.tiles.length > 2 && t.removeConfirmId !== id) { commit(S.setRemoveConfirm(ws, id)); announce(`Remove ${clipName(id)}? Click again to remove`); return; }
+        act.removeTile(id);
+      },
+      nudge: (/** @type {string} */ id, /** @type {number} */ d) => {
+        commit(S.nudgeOffset(ws, id, d, clipFps(id)));
+        const t = tab();
+        announce(`${letterOf(t, id)} ${S.formatOffset(S.getOffset(t, id)).long}`);
+      },
+      setClock: (/** @type {string} */ id) => {
+        const next = S.setClock(ws, id);
+        if (next === ws) return;
+        commit(next);
+        announce(`${letterOf(tab(), id)} sets the clock`);
+      },
+      setSound: (/** @type {string} */ id) => {
+        if (!hasAudio(id)) { toast(`No audio track in ${letterOf(tab(), id)}`); return; }
+        const was = tab().soundId;
+        if (was === id) { prefs.muted = !prefs.muted; render(); toast(prefs.muted ? 'Muted' : `Sound from ${letterOf(tab(), id)}`); return; }
+        prefs.muted = false;
+        commit(S.setSound(ws, id), `Sound from ${letterOf(tab(), id)}`);
+      },
+      toggleStats: (/** @type {string} */ id) => commit(S.toggleTileStats(ws, id)),
+      openTile: (/** @type {string} */ id) => { selId = id; controls.show('cmpVid', cmpBtn); },
+      replace: (/** @type {string} */ id) => postHost({ type: 'replaceVideo', oldId: id, exclude: tab().tiles.slice() }),
       leaveCompare: () => {
-        let next = ws;
-        let text = '';
-        for (const id of tab().tiles.slice(1)) { const r = S.removeTile(next, id); next = r.state; text = r.toast || text; }
-        commit(next, text);
+        const t = tab();
+        const keepId = t.clockId || t.tiles[0];
+        const r = S.leaveCompare(ws, keepId);
+        if (r.state === ws) return;
+        postHost({ type: 'leaveCompare', keepId, t: t.frame / fps() });
+        commit(r.state, r.toast);
       },
+      /** − / +: Compare nudges the hovered (else the selected) tile; the single player zooms. */
+      minus: () => { if (tab().tiles.length >= 2) act.nudge(nudgeTarget(), -1); else zoomAt(1 / ZOOM_STEP, null, null); },
+      plus: () => { if (tab().tiles.length >= 2) act.nudge(nudgeTarget(), 1); else zoomAt(ZOOM_STEP, null, null); },
+      zoomAt: (/** @type {number} */ factor, /** @type {number} */ cx, /** @type {number} */ cy) => zoomAt(factor, cx, cy),
+      resetView: () => commit(S.resetView(ws)),
       pickVideo: () => postHost(pickVideoMessage('unified', { exclude: tab().tiles })),
       nextVideo: () => goNeighbour(rail, postHost, 1),
       prevVideo: () => goNeighbour(rail, postHost, -1),
@@ -892,11 +1181,14 @@
       const fn = /** @type {(...a: any[]) => any} */ (f);
       keyTable[name] = (/** @type {any} */ arg) => (arg === undefined ? fn() : fn(arg));
     }
+    keyTable.skip = (/** @type {number} */ sec) => act.skipKey(sec);
 
     // ---- the real #bar ----
     const onClick = (/** @type {any} */ el, /** @type {(e?: any) => void} */ fn) => listen(el, 'click', fn);
     bindButtons([
-      [cmpBtn, act.capture, true], [splitBtn, act.split, true], [syncBtn, act.sync, true],
+      [cmpBtn, act.capture, true], [splitBtn, () => act.layout(tab().layout === 'split' ? 'grid' : 'split'), true],
+      [spotBtn, () => act.layout('spotlight'), true], [gridBtn, () => act.layout('grid'), true], [swapBtn, act.swap, true],
+      [syncBtn, act.sync, true],
       [playBtn, act.playPause, true], [prevBtn, () => act.stepButton(-1), true], [nextBtn, () => act.stepButton(1), true],
       [muteBtn, act.mute, true], [timeEl, act.cycleTime, true], [setABtn, act.setA, true], [setBBtn, act.setB, true],
       [cogBtn, () => controls.toggle('main', cogBtn), true], [infoBtn, act.info, true],
@@ -924,22 +1216,79 @@
       });
     }
 
-    // ---- Spotlight splitter and Split Wipe divider drags ----
-    const drag = (/** @type {any} */ el, /** @type {(ev: PointerEvent, rect: DOMRect) => void} */ onMove) => {
-      if (!el) return;
-      listen(el, 'pointerdown', (/** @type {PointerEvent} */ e) => {
+    // ---- seek bar hover tip and thumbnail (media/player-ui-input.js) ----
+    /** @type {any} */
+    let thumbCanvas = null;
+    if (Input && tipEl && typeof engine.thumbnail === 'function') {
+      thumbCanvas = doc.createElement('canvas');
+      thumbCanvas.className = 'seek-thumb';
+      thumbCanvas.hidden = true;
+      thumbCanvas.setAttribute('aria-hidden', 'true');
+      if (tipEl.parentNode) tipEl.parentNode.insertBefore(thumbCanvas, tipEl);
+      cleanups.push(() => { if (thumbCanvas.parentNode) thumbCanvas.parentNode.removeChild(thumbCanvas); });
+    }
+    const seekHover = Input && tipEl ? Input.bindSeekHover({
+      seekEl, tipEl, thumbCanvas, win,
+      getInfo: () => {
+        const t = tab();
+        return { frames: t.maxFrame + 1, fps: fps(), duration: t.maxFrame / fps(), letter: t.tiles.length >= 2 ? letterOf(t, t.clockId) : undefined, formatTime: clockText };
+      },
+      onThumbnail: thumbCanvas ? (/** @type {number} */ sec, /** @type {any} */ cv, /** @type {boolean} */ scrubbing, /** @type {{ px: number }} */ place) => {
+        cv.hidden = false;
+        cv.style.left = `${place.px}px`;
+        /** @type {any} */ (engine).thumbnail(tab().clockId || tab().tiles[0], sec, cv, scrubbing);
+      } : undefined,
+      onThumbnailLeave: (/** @type {boolean} */ immediate) => {
+        if (thumbCanvas) thumbCanvas.hidden = true;
+        if (typeof engine.thumbnailLeave === 'function') engine.thumbnailLeave(immediate);
+      },
+    }) : null;
+    if (seekHover) cleanups.push(() => seekHover.dispose());
+
+    // ---- Spotlight splitter (along tab.dock) and Split Wipe divider ----
+    /** When a splitter drag ended: the click that follows is not a play / pause. */
+    let splitterEndedAt = -Infinity;
+    if (splitterEl) {
+      /** @type {{ id: number } | null} */
+      let sDrag = null;
+      const ratioFrom = (/** @type {any} */ ev) => {
+        const r = stageEl.getBoundingClientRect();
+        const w = Math.max(1, r.width - S.GAP), h = Math.max(1, r.height - S.GAP);
+        return spotlightRatioAt(tab().dock, ev.clientX - r.left, ev.clientY - r.top, w, h);
+      };
+      listen(splitterEl, 'pointerdown', (/** @type {any} */ e) => {
+        if (e.button !== 0 || sDrag || tab().layout !== 'spotlight') return;
         e.preventDefault();
-        el.classList.add('dragging');
-        const rect = stageEl.getBoundingClientRect();
-        const move = (/** @type {PointerEvent} */ ev) => onMove(ev, rect);
-        const up = () => { el.classList.remove('dragging'); win.removeEventListener('pointermove', move); win.removeEventListener('pointerup', up); };
-        win.addEventListener('pointermove', move);
-        win.addEventListener('pointerup', up);
+        e.stopPropagation();
+        sDrag = { id: e.pointerId };
+        splitterEl.classList.add('dragging');
+        try { splitterEl.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
       });
-    };
-    drag(splitterEl, (ev, rect) => commit(S.setHeroRatio(ws, spotlightRatioAt(tab().dock, ev.clientX - rect.left, ev.clientY - rect.top, rect.width, rect.height))));
-    // The Split Wipe divider: the same binding as media/compare.js. Reuses the last rendered split-a rect so drags
-    // do not re-run deriveUi() on every pointermove.
+      listen(splitterEl, 'pointermove', (/** @type {any} */ e) => {
+        if (!sDrag || e.pointerId !== sDrag.id) return;
+        commit(S.setHeroRatio(ws, ratioFrom(e)));
+      });
+      const endS = (/** @type {any} */ e) => {
+        if (!sDrag || (e && e.pointerId !== undefined && e.pointerId !== sDrag.id)) return;
+        const id = sDrag.id;
+        sDrag = null;
+        splitterEl.classList.remove('dragging');
+        try { if (splitterEl.hasPointerCapture(id)) splitterEl.releasePointerCapture(id); } catch { /* synthetic pointer */ }
+        splitterEndedAt = Date.now();
+      };
+      listen(splitterEl, 'pointerup', endS);
+      listen(splitterEl, 'pointercancel', endS);
+      listen(splitterEl, 'click', (/** @type {any} */ e) => e.stopPropagation());
+      listen(splitterEl, 'dblclick', (/** @type {any} */ e) => { e.stopPropagation(); commit(S.setHeroRatio(ws, S.HERO_DEFAULT)); });
+      // The same keys as Compare's splitter (media/compare.js): arrows along the dock, Shift for big steps, Home / End.
+      listen(splitterEl, 'keydown', (/** @type {KeyboardEvent} */ e) => {
+        const next = spotlightKeyRatio(e, tab().dock, tab().heroRatio, 0.1, 0.9);
+        if (next === null) return;
+        e.preventDefault(); e.stopPropagation();
+        commit(S.setHeroRatio(ws, next));
+      });
+    }
+    // The Split Wipe divider: the same binding as media/compare.js, over the picture as shown (letterboxing).
     /** @type {{ x: number, w: number } | null} */
     let lastSplitPic = null;
     bindSplitDivider(dividerEl, {
@@ -947,16 +1296,161 @@
       pictureRect: () => lastSplitPic,
       get: () => tab().split,
       set: (r) => commit(S.setSplitRatio(ws, r)),
+      onDragEnd: (moved) => { if (moved) splitterEndedAt = Date.now(); },
       listen: (el, type, fn) => listen(el, type, fn),
     });
-    // The same keys as Compare's splitter (media/compare.js): arrows, Shift for big steps, Home / End.
-    const keyDrag = (/** @type {any} */ el, /** @type {(e: KeyboardEvent) => void} */ fn) => { if (el) listen(el, 'keydown', fn); };
-    keyDrag(splitterEl, (e) => {
-      const next = spotlightKeyRatio(e, tab().dock, tab().heroRatio, 0.1, 0.9);
-      if (next === null) return;
-      e.preventDefault(); e.stopPropagation();
-      commit(S.setHeroRatio(ws, next));
-    });
+    /** Split Wipe for the tile modules: [A, B] video numbers and the divider over the picture. */
+    const splitInfo = () => {
+      const t = tab();
+      if (t.layout !== 'split' || t.tiles.length !== 2 || !lastSplitPic) return null;
+      return { tiles: [vid(t.tiles[0]), vid(t.tiles[1])], picX: lastSplitPic.x, picW: lastSplitPic.w, ratio: t.split };
+    };
+
+    // ---- the tile under the pointer: a pending "Remove?" is cancelled when the pointer leaves its tile ----
+    const hover = Tiles ? Tiles.hoverTracker({
+      cellsEl, stage: stageEl, getSplit: splitInfo,
+      onChange: (/** @type {number | null} */ _next, /** @type {number | null} */ prev) => {
+        const t = tab();
+        if (prev !== null && t.removeConfirmId && idOfVid.get(prev) === t.removeConfirmId) commit(S.setRemoveConfirm(ws, null));
+      },
+    }) : null;
+    if (hover) cleanups.push(() => hover.dispose());
+
+    // ---- tile drag: reorder, Spotlight swap, Spotlight edge dock (media/player-ui-tiles.js bindTileDrag) ----
+    /** @type {{ order: string[], dock: string, video: number, dx: number, dy: number } | null} */
+    let preview = null;
+    /** @type {any} */
+    let skeletonEl = null;
+    const showSkeleton = (/** @type {any} */ sk) => {
+      if (!sk) { if (skeletonEl) skeletonEl.hidden = true; return; }
+      if (!skeletonEl) {
+        skeletonEl = doc.createElement('div');
+        skeletonEl.className = 'skeleton';
+        skeletonEl.innerHTML = '<span class="skeleton-label"></span>';
+        stageEl.appendChild(skeletonEl);
+        cleanups.push(() => { if (skeletonEl.parentNode) skeletonEl.parentNode.removeChild(skeletonEl); });
+      }
+      skeletonEl.hidden = false;
+      Object.assign(skeletonEl.style, { left: `${sk.rect.x}px`, top: `${sk.rect.y}px`, width: `${sk.rect.w}px`, height: `${sk.rect.h}px` });
+      skeletonEl.firstChild.textContent = sk.label;
+    };
+    /** Drag order: the Spotlight main tile first (the tile module's hero is order[0]), then the slots. */
+    const dragOrder = () => {
+      const t = tab();
+      const ids = t.layout === 'spotlight' && t.spotlightId ? [t.spotlightId, ...t.tiles.filter((x) => x !== t.spotlightId)] : t.tiles;
+      return ids.map(vid);
+    };
+    /** A tab drawn in `order` (video numbers) with `dock`: the state the drop would make. */
+    const tabFor = (/** @type {number[]} */ order, /** @type {string} */ dock) => {
+      const t = tab();
+      const ids = order.map((v) => /** @type {string} */ (idOfVid.get(v)));
+      return { ...t, tiles: ids, dock, spotlightId: t.layout === 'spotlight' ? ids[0] : null };
+    };
+    const stageSize = () => ({ width: stageEl.clientWidth || 680, height: stageEl.clientHeight || 370 });
+    const tileDrag = Tiles ? Tiles.bindTileDrag({
+      stage: stageEl, cellsEl, win, grid: Grid,
+      getLayout: () => ({ mode: S.deriveUi(tab()).effectiveLayout, dock: tab().dock }),
+      getOrder: dragOrder,
+      getCells: (/** @type {number[]} */ order, /** @type {string} */ dock) => S.deriveUi(tabFor(order, dock), stageSize()).cells
+        .map((/** @type {any} */ c) => ({ x: c.x, y: c.y, w: c.w, h: c.h, tiles: [vid(c.clipId)] })),
+      isZoomed: () => tab().zoom !== 1,
+      onBusyChange: (/** @type {boolean} */ busy) => {
+        if (!busy) return;
+        controls.closeAll(false);
+        ctxMenu.close(false);
+        if (tileMenu) tileMenu.close();
+        if (tab().removeConfirmId) commit(S.setRemoveConfirm(ws, null));
+      },
+      onPreview: (/** @type {any} */ p) => {
+        const changed = !preview || p.changed;
+        preview = { order: p.order.map((/** @type {number} */ v) => /** @type {string} */ (idOfVid.get(v))), dock: p.dock, video: p.video, dx: p.dx, dy: p.dy };
+        showSkeleton(p.skeleton);
+        if (changed) withGlide(render, preview.order.find((id) => vid(id) === p.video) || null); else render();
+      },
+      onCommitOrder: (/** @type {number[]} */ order) => {
+        preview = null;
+        showSkeleton(null);
+        const ids = order.map((v) => /** @type {string} */ (idOfVid.get(v)));
+        const t = tab();
+        withGlide(() => {
+          let next = reorderTo(ws, ids);
+          if (t.layout === 'spotlight' && S.getTab(next).spotlightId !== ids[0]) next = S.toggleEnlarge(next, ids[0]);
+          commit(next);
+        });
+        tellOrder();
+        const moved = ids.find((id, i) => t.tiles[i] !== id);
+        if (t.layout === 'spotlight' && t.spotlightId !== ids[0]) announce(`${clipName(ids[0])} in Spotlight`);
+        else if (moved) announce(`Moved ${clipName(moved)} to ${letterOf(tab(), moved)}`);
+      },
+      onCommitDock: (/** @type {string} */ edge) => {
+        preview = null;
+        showSkeleton(null);
+        withGlide(() => commit(S.setDock(ws, edge)));
+        announce(`Spotlight docked ${edge}`);
+      },
+      onCancel: () => { preview = null; showSkeleton(null); withGlide(render); },
+    }) : null;
+    if (tileDrag) cleanups.push(() => tileDrag.dispose());
+
+    // ---- wheel: step while paused, Ctrl+wheel zoom about the pointer, drag to pan a zoomed picture ----
+    let panLast = { dx: 0, dy: 0 };
+    const wheelPan = Input ? Input.bindStageWheelAndPan({
+      stage: stageEl, win,
+      isPlaying: () => tab().playing,
+      isZoomed: () => tab().zoom !== 1,
+      isBlocked: () => !!(tileDrag && tileDrag.isDragging()),
+      getZoom: () => tab().zoom,
+      onStepWheel: (/** @type {number} */ dir, /** @type {boolean} */ shift) => (shift ? act.jump({ dir, shift: true }) : commit(S.stepFrame(ws, dir))),
+      onZoomWheel: (/** @type {number} */ factor, /** @type {number} */ cx, /** @type {number} */ cy) => zoomAt(factor, cx, cy),
+      onPanStart: () => { panLast = { dx: 0, dy: 0 }; return true; },
+      onPanMove: (/** @type {number} */ dx, /** @type {number} */ dy) => {
+        const next = S.panBy(ws, dx - panLast.dx, dy - panLast.dy);
+        panLast = { dx, dy };
+        commit(next);
+      },
+    }) : null;
+    if (wheelPan) cleanups.push(() => wheelPan.dispose());
+    /** The click after a tile drag, a pan or a splitter drag is its release, not a play / pause. */
+    const consumeDragClick = () => (tileDrag && tileDrag.wasRecentDrag())
+      || (wheelPan && wheelPan.wasRecentPan()) || Date.now() - splitterEndedAt < DRAG_CLICK_MS;
+
+    // ---- fullscreen idle bar, Zen Mode Esc Esc, auto-pause hidden tabs, the go-to box ----
+    const idle = Input ? Input.createIdleController({ doc, win, isPlaying: () => tab().playing }) : null;
+    if (idle) cleanups.push(() => idle.dispose());
+    const zen = Input ? Input.createZenEscTracker({ win, onExitZen: () => postHost({ type: 'focusModeExited' }) }) : null;
+    const vis = Input ? Input.createVisibilityController({
+      doc, win,
+      isPlaying: () => tab().playing,
+      onAutoPause: () => { ws = S.togglePlay(ws); render(); },
+      onAutoResume: () => { if (!tab().playing) { ws = S.togglePlay(ws); render(); } },
+      onHideCleanup: () => {
+        if (seekHover) seekHover.cancel(true);
+        if (tileDrag) tileDrag.cancel();
+        if (wheelPan) wheelPan.cancel();
+      },
+    }) : null;
+    if (vis) cleanups.push(() => vis.dispose());
+    /** @type {any} */
+    let gotoBox = null;
+    if (Input) {
+      const boxEl = doc.createElement('div');
+      boxEl.id = 'goto';
+      boxEl.hidden = true;
+      boxEl.innerHTML = '<input id="gotoInput" type="text" autocomplete="off" spellcheck="false" aria-label="Go to frame, time or percent" placeholder="Frame, 1:23.4 or 50%">';
+      stageEl.appendChild(boxEl);
+      cleanups.push(() => { if (boxEl.parentNode) boxEl.parentNode.removeChild(boxEl); });
+      gotoBox = Input.createGotoBox({
+        doc, win, inputEl: boxEl.querySelector('input'), boxEl,
+        getClipMeta: () => { const t = tab(); return { fps: fps(), duration: t.maxFrame / fps(), frames: t.maxFrame + 1, current: t.frame }; },
+        onSeek: (/** @type {any} */ g) => {
+          const base = tab().playing ? S.togglePlay(ws) : ws;
+          commit(S.seekFrame(base, 'frame' in g ? g.frame : Math.round(g.time * fps())));
+        },
+        onToast: toast,
+        formatTime: clockText,
+      });
+      cleanups.push(() => gotoBox.dispose());
+    }
 
     // ---- keyboard shortcuts ----
     listen(env.keyTarget || doc, 'keydown', (/** @type {KeyboardEvent} */ e) => {
@@ -965,15 +1459,25 @@
         const t = /** @type {any} */ (e.target);
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       }
+      // Ctrl / Cmd keys the shared table leaves to VS Code, except the player's own: ←/→ jump, C copy, G go to.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        const k = e.key;
+        let used = false;
+        if (k === 'ArrowLeft' || k === 'ArrowRight') { jumpBy(JUMP.ctrl, k === 'ArrowLeft' ? -1 : 1); used = true; }
+        else if (k === 'c' || k === 'C') { act.copyFrame(); used = true; }
+        else if (k === 'g' || k === 'G') used = act.gotoBox() !== false;
+        if (used) { e.preventDefault(); return; }
+      }
       const altGr = !!(e.getModifierState && e.getModifierState('AltGraph'));
-      if (runKey(e, keyTable, { altGr })) e.preventDefault();
+      if (runKey(e, keyTable, { altGr })) { e.preventDefault(); return; }
+      if (zen && e.key === 'Escape') zen.onKey(e);
     });
 
     // ---- the stage: one cell per tile, from deriveUi ----
-    // Reuse .cell DOM nodes across frame/seek/resize ticks so pointerdown -> pointerup clicks and dblclicks
-    // never drop mid-playback when the 42 ms play timer advances frames.
+    // Cells are kept per clip while the structure (single / multi, Split or not) holds, so a click lands mid-playback
+    // and reorder, swap, dock and layout changes glide the same elements (FLIP) instead of rebuilding them.
     let lastCellsKey = '';
-    /** @type {Map<string, { cell: any, cv: any, frEl: any, offEl: any }>} */
+    /** @type {Map<string, { cell: any, cv: any, ov: any, stats: any, move: any, frEl: any, offEl: any, ovKey: string, statsKey: string }>} */
     const cellNodes = new Map();
     /** @type {any} */
     let addSlotNode = null;
@@ -981,112 +1485,278 @@
     let clickTimer = 0;
     const DBLCLICK_MS = 250;
     cleanups.push(() => { if (clickTimer) win.clearTimeout(clickTimer); });
-    /** When the last tile drag ended: the click that follows a drag is not a play / pause. */
-    let dragEndedAt = -Infinity;
-    const consumeDragClick = () => Date.now() - dragEndedAt < 300;
+    const NOT_A_TILE_CLICK = 'button, .tile-stats, #menu';
+
+    /** The frame a tile shows at the clock frame (offset in frames or ms), and whether it is past either end. */
+    function shownOf(/** @type {any} */ t, /** @type {string} */ id) {
+      const off = S.getOffset(t, id);
+      if (typeof engine.shownFrame === 'function') {
+        const r = engine.shownFrame(id, t.frame, off);
+        if (r && r.frame !== null) return { frame: r.frame, out: !!r.outOfRange };
+        const f = t.frame + (off.unit === 'ms' ? Math.round((off.v / 1000) * clipFps(id)) : off.v);
+        return { frame: Math.max(0, f), out: true };
+      }
+      const f = t.frame + (off.unit === 'ms' ? Math.round((off.v / 1000) * clipFps(id)) : off.v);
+      return { frame: Math.max(0, f), out: f < 0 || f > t.maxFrame };
+    }
+
+    /** One tile's overlay markup (Compare's pill, ⓘ, sound, remove, nudge, ▲ / ▼), as media/compare.js draws it. */
+    function overlayHtml(/** @type {any} */ t, /** @type {any} */ r, /** @type {any} */ ui) {
+      const id = r.clipId;
+      const v = vid(id);
+      const k = r.letter;
+      const name = esc(clipName(id));
+      const n = t.tiles.length;
+      const side = r.role === 'split-a' ? 'L' : r.role === 'split-b' ? 'R' : '';
+      const isHero = r.role === 'hero';
+      const confirming = t.removeConfirmId === id;
+      const statsOn = t.statsOpen.includes(id);
+      const audio = hasAudio(id);
+      const heard = audio && t.soundId === id && !prefs.muted;
+      const isClock = t.clockId === id;
+      const off = S.formatOffset(S.getOffset(t, id));
+      const enl = isHero ? 'Back to grid' : 'Enlarge tile';
+      let rm = '';
+      if (n > 2 && confirming) rm = `<button type="button" class="tbtn rm confirm" data-act="remove" data-rm data-i="${v}" aria-label="Confirm remove ${name} from Compare" title="Click again to remove">Remove?</button>`;
+      else rm = `<button type="button" class="tbtn rm" data-act="remove" data-rm data-i="${v}" aria-label="Remove ${k} from compare" title="${n > 2 ? 'Remove from compare' : 'Remove from compare (back to one video)'}">${ICONS.close}</button>`;
+      const top = side ? '' : `<div class="tile-top-acts"><button type="button" class="tbtn" data-act="enlarge" data-enlarge data-i="${v}" title="${enl}" aria-label="${enl} ${k}">${isHero ? ICONS.collapse : ICONS.expand}</button>${rm}</div>`;
+      const soundBtn = !audio
+        ? `<button class="mute-mini no-audio" type="button" data-act="sound" data-i="${v}" aria-label="No audio track in ${k}" aria-disabled="true" title="No audio track">${ICONS.noAudio}</button>`
+        : `<button class="mute-mini${heard ? ' on' : ''}" type="button" data-act="sound" data-i="${v}" aria-label="${heard ? `Mute ${k}` : `Sound from ${k}`}" aria-pressed="${heard}" title="${heard ? 'Mute' : `Sound from ${k}`}">${heard ? ICONS.sound : ICONS.muted}</button>`;
+      const pill = `<div class="tile-bottom-pill pill ${side === 'R' ? 'right' : 'left'}${isClock ? ' clock' : ''}" data-zoom-drag="1">`
+        + '<span class="zoom-grip" title="Drag here to reposition while zoomed" aria-hidden="true">⋮⋮</span>'
+        + `<button class="pill-open" type="button" data-act="openVid" data-i="${v}" title="${name}: offset, clock, sound, replace, remove" aria-label="${k}: ${name}${isClock ? ', sets the clock' : ''}. Offset, clock and sound"><span class="ltr">${k}</span><span class="nm">${name}</span><span class="fr mono"></span></button>`
+        + (side ? '' : `<button class="mute-mini${statsOn ? ' info-on' : ''}" type="button" data-act="info" data-i="${v}" aria-label="Toggle details for ${k}" aria-pressed="${statsOn}" title="Toggle clip details (mismatch highlighted)">${ICONS.info}</button>`)
+        + soundBtn
+        + '</div>';
+      const nudge = `<div class="sync-pill nudge${side === 'R' ? ' right below' : side === 'L' ? ' left below' : ''}" role="group" aria-label="Offset of ${k}">`
+        + `<button type="button" data-act="nudge" data-i="${v}" data-d="-1" aria-label="${k} earlier" title="Earlier (−)">−</button>`
+        + `<button class="offv mono" type="button" data-act="openVid" data-i="${v}" title="Offset of ${k}" aria-label="Offset of ${k}: ${off.long}">${off.short}</button>`
+        + `<button type="button" data-act="nudge" data-i="${v}" data-d="1" aria-label="${k} later" title="Later (+)">+</button>`
+        + '</div>';
+      void ui;
+      return top + pill + nudge;
+    }
+    function moveHtml(/** @type {any} */ t, /** @type {string} */ id) {
+      const v = vid(id);
+      const pos = t.tiles.indexOf(id);
+      return [-1, 1].map((d) => {
+        const label = `Move ${esc(clipName(id))} ${d < 0 ? 'earlier' : 'later'}`;
+        const dis = pos + d < 0 || pos + d >= t.tiles.length ? ' disabled' : '';
+        return `<button type="button" data-act="move" data-i="${v}" data-d="${d}" aria-label="${label}" title="${label}"${dis}>${d < 0 ? ICONS.up : ICONS.down}</button>`;
+      }).join('');
+    }
+
+    // One delegated click handler for every tile button: the overlays are rebuilt when their state changes.
+    listen(cellsEl, 'click', (/** @type {any} */ e) => {
+      const b = e.target && e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!b || !cellsEl.contains(b) || b.disabled) return;
+      const id = idOfVid.get(Number(b.dataset.i));
+      if (!id || !tab().tiles.includes(id)) return;
+      e.stopPropagation();
+      switch (b.dataset.act) {
+        case 'enlarge': act.enlarge(id); break;
+        case 'remove': act.removeClick(id); break;
+        case 'nudge': act.nudge(id, Number(b.dataset.d)); break;
+        case 'openVid': act.openTile(id); break;
+        case 'info': act.toggleStats(id); break;
+        case 'sound': act.setSound(id); break;
+        case 'move': {
+          const d = Number(b.dataset.d);
+          const focused = Tiles ? Tiles.moveArrowHandlers.wasFocused(doc, b) : false;
+          act.move(id, d);
+          if (focused && Tiles) Tiles.moveArrowHandlers.refocus(cellsEl, vid(id), d);
+          break;
+        }
+        default: break;
+      }
+    });
+
+    function buildCells(/** @type {any} */ ui) {
+      cellNodes.clear();
+      addSlotNode = null;
+      cellsEl.textContent = '';
+      for (const r of ui.cells) {
+        const cell = doc.createElement('div');
+        const split = r.role.startsWith('split');
+        cell.className = `cell${split ? ' split' : ''}`;
+        cell.dataset.clip = r.clipId;
+        cell.dataset.role = r.role;
+        cell.dataset.tile = split ? 'split' : String(vid(r.clipId));
+        if (r.role === 'split-b') cell.style.background = 'transparent';
+        const cv = doc.createElement('canvas');
+        cell.appendChild(cv);
+        /** @type {any} */
+        let ov = null, stats = null, move = null;
+        if (ui.isMulti) {
+          if (!split) {
+            cell.appendChild(Object.assign(doc.createElement('div'), { className: 'cell-border' }));
+            const ended = doc.createElement('div');
+            ended.className = 'ended-ov';
+            ended.innerHTML = '<span class="ended-badge">No frame (clip ended)</span>';
+            cell.appendChild(ended);
+            stats = doc.createElement('div');
+            stats.className = 'tile-stats';
+            cell.appendChild(stats);
+          } else if (r.role === 'split-b') {
+            const oor = doc.createElement('div');
+            oor.className = 'oor';
+            oor.hidden = true;
+            oor.textContent = 'One side has no picture at this moment';
+            cell.appendChild(oor);
+          }
+          ov = doc.createElement('div');
+          ov.className = 'ov';
+          cell.appendChild(ov);
+          if (!split) {
+            move = doc.createElement('div');
+            move.className = 'move';
+            cell.appendChild(move);
+          }
+        }
+        // A tile's double-click enlarges it, so its single click waits out the double-click window: playback
+        // never stutters pause → play before the enlarge. One video (and Split) play at once, as media/player.js.
+        const enlargeable = ui.isMulti && !split;
+        cell.addEventListener('click', (/** @type {any} */ e) => {
+          if (e.target && e.target.closest && e.target.closest(NOT_A_TILE_CLICK)) return;
+          if (consumeDragClick()) return;
+          if (controls.anyOpen() || ctxMenu.isOpen() || (tileMenu && tileMenu.isOpen())) {
+            controls.closeAll(false); ctxMenu.close(false); if (tileMenu) tileMenu.close(); return;
+          }
+          if (!enlargeable) { act.playPause(); return; }
+          if (clickTimer) win.clearTimeout(clickTimer);
+          clickTimer = win.setTimeout(() => { clickTimer = 0; act.playPause(); }, DBLCLICK_MS);
+        });
+        cell.addEventListener('dblclick', (/** @type {any} */ e) => {
+          if (e.target && e.target.closest && e.target.closest(NOT_A_TILE_CLICK)) return;
+          if (clickTimer) { win.clearTimeout(clickTimer); clickTimer = 0; }
+          if (enlargeable) act.enlarge(r.clipId); else if (!ui.isMulti) act.fullscreen();
+        });
+        cellsEl.appendChild(cell);
+        cellNodes.set(r.clipId, { cell, cv, ov, stats, move, frEl: null, offEl: null, ovKey: '', statsKey: '' });
+      }
+      if (ui.addSlot) {
+        const slot = doc.createElement('div');
+        slot.className = 'cell add';
+        slot.innerHTML = '<button type="button" class="addcell">+ Add video</button>';
+        // Clicking the empty space around the compact button still toggles play/pause like any tile.
+        slot.addEventListener('click', (/** @type {any} */ e) => {
+          if (e.target && e.target.closest && e.target.closest('button')) return;
+          if (controls.anyOpen() || ctxMenu.isOpen()) { controls.closeAll(false); ctxMenu.close(false); return; }
+          act.playPause();
+        });
+        const b = slot.querySelector('button');
+        if (b) b.addEventListener('click', (e) => { e.stopPropagation(); rail.open(); });
+        cellsEl.appendChild(slot);
+        addSlotNode = slot;
+      }
+    }
 
     function renderCells(/** @type {any} */ t, /** @type {any} */ ui) {
       stageEl.classList.toggle('sync-mode', t.syncMode && ui.isMulti);
-      const key = `${ui.isMulti ? 1 : 0}|${ui.effectiveLayout}|${ui.addSlot ? 1 : 0}|${ui.cells.map((/** @type {any} */ r) => `${r.clipId}:${r.role}:${r.letter}`).join(',')}`;
-      if (key !== lastCellsKey) {
-        lastCellsKey = key;
-        cellNodes.clear();
-        addSlotNode = null;
-        cellsEl.textContent = '';
-        for (const r of ui.cells) {
-          const cell = doc.createElement('div');
-          cell.className = `cell${r.role.startsWith('split') ? ' split' : ''}`;
-          cell.dataset.clip = r.clipId;
-          cell.dataset.role = r.role;
-          if (r.role === 'split-b') cell.style.background = 'transparent';
-          const cv = doc.createElement('canvas');
-          cell.appendChild(cv);
-          if (ui.isMulti && ui.effectiveLayout !== 'split') cell.appendChild(Object.assign(doc.createElement('div'), { className: 'cell-border' }));
-          // A tile's double-click enlarges it, so its single click waits out the double-click window: playback
-          // never stutters pause → play before the enlarge. One video (and Split) play at once, as media/player.js.
-          const enlargeable = ui.isMulti && ui.effectiveLayout !== 'split';
-          cell.addEventListener('click', (/** @type {any} */ e) => {
-            if (e.target && e.target.closest && e.target.closest('button')) return;
-            if (consumeDragClick()) return;
-            if (controls.anyOpen() || ctxMenu.isOpen()) { controls.closeAll(false); ctxMenu.close(false); return; }
-            if (!enlargeable) { act.playPause(); return; }
-            if (clickTimer) win.clearTimeout(clickTimer);
-            clickTimer = win.setTimeout(() => { clickTimer = 0; act.playPause(); }, DBLCLICK_MS);
-          });
-          cell.addEventListener('dblclick', (/** @type {any} */ e) => {
-            if (e.target && e.target.closest && e.target.closest('button')) return;
-            if (clickTimer) { win.clearTimeout(clickTimer); clickTimer = 0; }
-            if (enlargeable) act.enlarge(r.clipId); else if (!ui.isMulti) act.fullscreen();
-          });
-          /** @type {any} */
-          let frEl = null;
-          /** @type {any} */
-          let offEl = null;
-          if (ui.isMulti) {
-            const ov = doc.createElement('div');
-            ov.className = 'ov';
-            const isHero = r.role === 'hero';
-            ov.innerHTML =
-              `<div class="${r.role === 'split-b' ? 'pill right' : 'pill'}"><span class="ltr">${r.letter}</span><span class="nm">${esc(clipName(r.clipId))}</span><span class="fr"></span></div>`
-              + (ui.effectiveLayout !== 'split'
-                ? `<div class="tile-top-acts"><button type="button" class="tbtn" data-enlarge title="${isHero ? 'Back to grid' : 'Enlarge tile'}" aria-label="${isHero ? 'Back to grid' : 'Enlarge tile'} ${r.letter}">${isHero ? ICONS.collapse : ICONS.expand}</button>`
-                  + `<button type="button" class="tbtn rm" data-rm title="Remove from compare" aria-label="Remove ${r.letter} from compare">${ICONS.close}</button></div>`
-                : '')
-              + `<div class="sync-pill"><button type="button" data-d="-1" aria-label="${r.letter} earlier">−</button><span class="offv"></span><button type="button" data-d="1" aria-label="${r.letter} later">+</button></div>`;
-            const on = (/** @type {string} */ sel, /** @type {(b: any) => void} */ fn) => ov.querySelectorAll(sel).forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); fn(b); }));
-            on('[data-enlarge]', () => act.enlarge(r.clipId));
-            on('[data-rm]', () => act.removeTile(r.clipId));
-            on('[data-d]', (b) => act.nudge(r.clipId, Number(b.dataset.d)));
-            frEl = ov.querySelector('.fr');
-            offEl = ov.querySelector('.offv');
-            cell.appendChild(ov);
-          }
-          cellsEl.appendChild(cell);
-          cellNodes.set(r.clipId, { cell, cv, frEl, offEl });
-        }
-        if (ui.addSlot) {
-          const slot = doc.createElement('div');
-          slot.className = 'cell add';
-          slot.innerHTML = '<button type="button" class="addcell">+ Add video</button>';
-          // Clicking the empty space around the compact button still toggles play/pause like any tile.
-          slot.addEventListener('click', (/** @type {any} */ e) => {
-            if (e.target && e.target.closest && e.target.closest('button')) return;
-            if (controls.anyOpen() || ctxMenu.isOpen()) { controls.closeAll(false); ctxMenu.close(false); return; }
-            act.playPause();
-          });
-          const b = slot.querySelector('button');
-          if (b) b.addEventListener('click', (e) => { e.stopPropagation(); rail.open(); });
-          cellsEl.appendChild(slot);
-          addSlotNode = slot;
-        }
-      }
-
-      for (const r of ui.cells) {
+      cellsEl.classList.toggle('dense', ui.n >= DENSE_FROM);
+      // The structure: which clips, single or multi, Split or not, whether there is a "+ Add video" cell.
+      const key = `${ui.isMulti ? 1 : 0}|${ui.effectiveLayout === 'split' ? 1 : 0}|${ui.addSlot ? 1 : 0}|${t.tiles.slice().sort().join(',')}`;
+      if (key !== lastCellsKey) { lastCellsKey = key; buildCells(ui); }
+      // A drag preview lays the cells out as the drop would (the state changes only on the drop).
+      const lay = preview && ui.effectiveLayout !== 'split' ? S.deriveUi({ ...t, tiles: preview.order, dock: preview.dock, spotlightId: t.layout === 'spotlight' ? preview.order[0] : null }, stageSize()) : ui;
+      const baseA = t.tiles[0] ? statsClip(t.tiles[0]) : null;
+      const factsA = t.tiles[0] ? facts(t.tiles[0]) : null;
+      for (const r of lay.cells) {
         const entry = cellNodes.get(r.clipId);
         if (!entry) continue;
-        Object.assign(entry.cell.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
-        const off = t.offsets[r.clipId] || 0;
-        if (entry.frEl) entry.frEl.textContent = `#${t.frame + off}`;
-        if (entry.offEl) entry.offEl.textContent = `${off >= 0 ? '+' : ''}${off}f`;
-        engine.draw(entry.cv, r.clipId, t.frame + off, {
-          width: r.w,
-          height: r.h,
+        const real = ui.cells.find((/** @type {any} */ c) => c.clipId === r.clipId) || r;
+        const lifted = preview && preview.video === vid(r.clipId);
+        const at = lifted ? real : r;
+        Object.assign(entry.cell.style, { left: `${at.x}px`, top: `${at.y}px`, width: `${at.w}px`, height: `${at.h}px` });
+        entry.cell.style.transform = lifted && preview ? `translate(${preview.dx}px, ${preview.dy}px)` : (glide && glide.isActive() ? entry.cell.style.transform : '');
+        entry.cell.style.zIndex = lifted ? '5' : '';
+        entry.cell.dataset.letter = real.letter;
+        // Letterboxing: the tile chrome hugs the picture as shown (media/compare.js --pic-l / -r / -t / -b).
+        const pic = typeof engine.pictureRect === 'function'
+          ? engine.pictureRect(r.clipId, at.w, at.h, t.picMode, t.zoom, t.panX, t.panY)
+          : { x: 0, y: 0, w: at.w, h: at.h };
+        const inset = (/** @type {number} */ v) => `${Math.max(0, Math.round(v))}px`;
+        entry.cell.style.setProperty('--pic-l', inset(pic.x));
+        entry.cell.style.setProperty('--pic-t', inset(pic.y));
+        entry.cell.style.setProperty('--pic-r', inset(at.w - pic.x - pic.w));
+        entry.cell.style.setProperty('--pic-b', inset(at.h - pic.y - pic.h));
+        if (r.role === 'split-a') lastSplitPic = { x: at.x + Math.max(0, pic.x), w: Math.min(at.w, pic.w) };
+        const shown = shownOf(t, r.clipId);
+        if (entry.ov) {
+          const ovKey = [real.letter, real.role, t.tiles.length, t.removeConfirmId === r.clipId, t.statsOpen.includes(r.clipId),
+            t.soundId === r.clipId, prefs.muted, t.clockId === r.clipId, JSON.stringify(S.getOffset(t, r.clipId)), t.tiles.indexOf(r.clipId)].join('|');
+          if (ovKey !== entry.ovKey) {
+            entry.ovKey = ovKey;
+            entry.ov.innerHTML = overlayHtml(t, real, ui);
+            if (entry.move) entry.move.innerHTML = moveHtml(t, r.clipId);
+            entry.frEl = entry.ov.querySelector('.fr');
+            entry.offEl = entry.ov.querySelector('.offv');
+          }
+          entry.cell.classList.toggle('confirming', t.removeConfirmId === r.clipId);
+          if (entry.frEl) entry.frEl.textContent = shown.out ? '—' : `#${shown.frame}`;
+        }
+        if (entry.stats) {
+          const open = t.statsOpen.includes(r.clipId);
+          entry.cell.classList.toggle('show-stats', open);
+          const statsKey = open ? `${real.letter}|${t.tiles[0]}` : '';
+          if (statsKey !== entry.statsKey) {
+            entry.statsKey = statsKey;
+            if (open && Tiles && Grid) {
+              const isA = t.tiles[0] === r.clipId;
+              Tiles.renderTileStatsCard({
+                doc, el: entry.stats, index: vid(r.clipId), clip: statsClip(r.clipId), facts: facts(r.clipId),
+                baseClip: isA ? null : baseA, baseFacts: isA ? null : factsA, letter: real.letter, closeIcon: ICONS.close,
+                grid: Grid, onClose: () => act.toggleStats(r.clipId), focusRoot: cellsEl,
+              });
+            } else entry.stats.textContent = '';
+          }
+        }
+        if (r.role === 'split-b') {
+          const oor = entry.cell.querySelector('.oor');
+          if (oor) oor.hidden = !(shown.out || shownOf(t, t.tiles[0]).out);
+        } else if (ui.isMulti) entry.cell.classList.toggle('ended', shown.out);
+        engine.draw(entry.cv, r.clipId, shown.frame, {
+          width: at.w,
+          height: at.h,
           splitClipRatio: r.role === 'split-b' ? t.split : null,
+          picMode: t.picMode, zoom: t.zoom, panX: t.panX, panY: t.panY,
         });
       }
-      if (ui.addSlot && addSlotNode) {
-        Object.assign(addSlotNode.style, { left: `${ui.addSlot.x}px`, top: `${ui.addSlot.y}px`, width: `${ui.addSlot.w}px`, height: `${ui.addSlot.h}px` });
+      if (lay.addSlot && addSlotNode) {
+        Object.assign(addSlotNode.style, { left: `${lay.addSlot.x}px`, top: `${lay.addSlot.y}px`, width: `${lay.addSlot.w}px`, height: `${lay.addSlot.h}px` });
       }
     }
 
     /** The bar's own state (prefs-driven parts that do not need the stage size). */
     function drawBar() {
       const t = tab();
-      if (rateBtn) rateBtn.textContent = W.VpeControls.speedText ? W.VpeControls.speedText(prefs.rate) : `${prefs.rate}×`;
-      if (picBtn && W.VpePicture) pictureButton(picBtn, W.VpePicture, prefs.picMode, t.tiles.length > 1 ? 'all videos' : '');
-      else if (picBtn) picBtn.dataset.mode = prefs.picMode;
+      const multi = t.tiles.length > 1;
+      if (rateBtn) {
+        const sp = W.VpeControls.speedText ? W.VpeControls.speedText(prefs.rate) : `${prefs.rate}×`;
+        rateBtn.textContent = sp;
+        rateBtn.setAttribute('aria-label', `Speed ${sp}`);
+      }
+      if (picBtn && W.VpePicture) pictureButton(picBtn, W.VpePicture, t.picMode, multi ? 'all videos' : '');
+      else if (picBtn) picBtn.dataset.mode = t.picMode;
       if (tracksBtn) tracksBtn.classList.toggle('on', prefs.subKey !== 'off');
-      if (muteBtn) { muteBtn.classList.toggle('muted', prefs.muted); muteBtn.setAttribute('aria-pressed', String(prefs.muted)); }
+      if (muteBtn) {
+        const noAudio = !hasAudio(t.soundId);
+        muteBtn.disabled = noAudio;
+        if (volEl) volEl.disabled = noAudio;
+        if (muteBtn.parentElement) muteBtn.parentElement.classList.toggle('no-audio', noAudio);
+        if (noAudio) {
+          muteBtn.classList.toggle('muted', true);
+          muteBtn.removeAttribute('aria-pressed');
+          muteBtn.setAttribute('aria-label', 'No audio track');
+          muteBtn.title = 'No audio track';
+        } else {
+          muteBtn.classList.toggle('muted', prefs.muted);
+          muteBtn.setAttribute('aria-pressed', String(prefs.muted));
+          muteBtn.setAttribute('aria-label', prefs.muted ? 'Unmute' : 'Mute');
+          muteBtn.title = prefs.muted ? 'Unmute  M' : 'Mute  M';
+        }
+      }
       if (volEl) volEl.value = String(prefs.muted ? 0 : prefs.volume);
       if (prevSize && nextSize) W.VpeControls.drawStepBadges([prevSize, nextSize], prefs.stepSize);
       if (setABtn && setBBtn) W.VpeControls.drawRangeButtons(setABtn, setBBtn, ab);
@@ -1099,33 +1769,64 @@
       if (folderCap && isMulti) folderCap.hidden = true;
     }
 
+    /** The Spotlight splitter on the band between the main tile and the strip, along the dock. */
+    function drawSplitter(/** @type {any} */ t, /** @type {any} */ ui) {
+      if (!splitterEl) return;
+      splitterEl.hidden = !ui.showSplitter || !ui.splitter;
+      if (splitterEl.hidden) return;
+      const sp = ui.splitter;
+      const horiz = sp.orientation === 'horizontal';
+      splitterEl.classList.toggle('h', horiz);
+      splitterEl.classList.toggle('v', !horiz);
+      splitterEl.setAttribute('role', 'separator');
+      splitterEl.setAttribute('tabindex', '0');
+      splitterEl.setAttribute('aria-label', 'Spotlight size');
+      // The bar is 8 px wider than the gap so it is easy to grab (compare-grid spotlightLayout).
+      Object.assign(splitterEl.style, horiz
+        ? { left: `${sp.x}px`, top: `${sp.y - 4}px`, width: `${sp.w}px`, height: `${sp.h + 8}px` }
+        : { left: `${sp.x - 4}px`, top: `${sp.y}px`, width: `${sp.w + 8}px`, height: `${sp.h}px` });
+      const pct = Math.round(t.heroRatio * 100);
+      splitterEl.setAttribute('aria-orientation', horiz ? 'horizontal' : 'vertical');
+      splitterEl.setAttribute('aria-valuemin', '10');
+      splitterEl.setAttribute('aria-valuemax', '90');
+      splitterEl.setAttribute('aria-valuenow', String(pct));
+      splitterEl.setAttribute('aria-valuetext', `Spotlight ${pct}%`);
+    }
+
+    let lastSound = '';
     function render() {
       if (disposed) return;
       const t = tab();
-      const width = stageEl.clientWidth || 680;
-      const height = stageEl.clientHeight || 370;
+      const { width, height } = stageSize();
       const ui = S.deriveUi(t, { width, height });
 
+      lastSplitPic = null;
       renderCells(t, ui);
-      const splitCell = ui.cells.find((/** @type {any} */ r) => r.role === 'split-a');
-      lastSplitPic = splitCell ? { x: splitCell.x, w: splitCell.w } : null;
-      if (splitterEl) { splitterEl.hidden = !ui.showSplitter; if (ui.showSplitter) splitterEl.style.top = `${Math.round(height * t.heroRatio)}px`; }
+      drawSplitter(t, ui);
       if (dividerEl) {
         dividerEl.hidden = !ui.showDivider;
         if (ui.showDivider) {
-          dividerEl.style.left = `${Math.round(width * t.split)}px`;
-          dividerEl.setAttribute('aria-valuenow', String(Math.round(t.split * 100)));
+          const pic = lastSplitPic || { x: 0, w: width };
+          dividerEl.style.left = `${Math.round(pic.x + pic.w * t.split)}px`;
+          const pct = Math.round(t.split * 100);
+          dividerEl.setAttribute('aria-valuenow', String(pct));
+          dividerEl.setAttribute('aria-valuetext', `A ${pct}%, B ${100 - pct}%`);
         }
       }
       if (capBanner) capBanner.hidden = !ui.showCaptureBanner;
 
       if (tracksBtn) tracksBtn.hidden = !ui.showCC;
-      splitBtn.hidden = !ui.showSplitBtn;
-      splitBtn.classList.toggle('active', ui.effectiveLayout === 'split');
-      splitBtn.setAttribute('aria-pressed', String(ui.effectiveLayout === 'split'));
-      syncBtn.hidden = !ui.showSyncBtn;
-      syncBtn.classList.toggle('active', t.syncMode);
-      syncBtn.setAttribute('aria-pressed', String(t.syncMode));
+      // Compare's layout buttons: Spotlight / Equal Grid (N >= 2), Split Wipe and Swap (N = 2).
+      const layoutBtn = (/** @type {any} */ b, /** @type {boolean} */ show, /** @type {boolean} */ on) => {
+        b.hidden = !show;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', String(on));
+      };
+      layoutBtn(spotBtn, ui.isMulti, ui.effectiveLayout === 'spotlight');
+      layoutBtn(gridBtn, ui.isMulti, ui.effectiveLayout === 'grid');
+      layoutBtn(splitBtn, ui.showSplitBtn, ui.effectiveLayout === 'split');
+      swapBtn.hidden = ui.n !== 2;
+      layoutBtn(syncBtn, ui.showSyncBtn, t.syncMode);
       cmpBtn.classList.toggle('cap-on', t.capture);
       cmpBtn.title = ui.captureTitle;
       cmpBtn.setAttribute('aria-pressed', String(t.capture));
@@ -1141,8 +1842,25 @@
       });
       if (nowEl) nowEl.textContent = rd.now;
       if (durEl) durEl.textContent = rd.dur;
+      // The seek slider speaks the clock tile's time (Compare: with its letter first).
+      const letter = ui.isMulti ? letterOf(t, t.clockId) : undefined;
+      const aria = Input
+        ? Input.formatSeekAria({ letter, timeText: clockText(t.frame / fps()), durText: clockText(t.maxFrame / fps()), frame: t.frame })
+        : `${letter ? `${letter} ` : ''}${clockText(t.frame / fps())} of ${clockText(t.maxFrame / fps())}, frame ${t.frame + 1}`;
+      seekEl.setAttribute('aria-valuetext', aria);
       playBtn.classList.toggle('playing', t.playing);
+      const playLabel = `${t.playing ? 'Pause' : 'Play'}${ui.isMulti ? ' all' : ''}`;
+      playBtn.setAttribute('aria-label', playLabel);
+      playBtn.title = `${playLabel}  Space`;
       drawBar();
+
+      // The engine hears one tile (none while muted).
+      const sound = `${prefs.muted ? '' : t.soundId}|${prefs.volume}|${prefs.muted}`;
+      if (sound !== lastSound) {
+        lastSound = sound;
+        if (typeof engine.setSoundSource === 'function') engine.setSoundSource(prefs.muted ? null : t.soundId);
+        if (typeof engine.setVolume === 'function') engine.setVolume(prefs.volume, prefs.muted);
+      }
 
       // The host learns about every change of this tab's videos (rail members, folder position).
       const key = tilesKey(S, t);
@@ -1152,6 +1870,7 @@
       }
       syncCapsule(ui.isMulti);
       if (controls && controls.view && (controls.view() === 'cmp' || controls.view() === 'cmpVid') && !ui.isMulti) controls.close(false);
+      if (tileMenu && !ui.isMulti && tileMenu.isOpen()) tileMenu.close();
       if (env.onChange) env.onChange(ws, ui);
     }
 
@@ -1178,6 +1897,8 @@
       if (!msg || disposed) return;
       if (msg.type === 'rail') { rail.onMessage(msg); syncCapsule(tab().tiles.length >= 2); return; }
       if (msg.type === 'toast') { toast(String(msg.text || '')); return; }
+      if (msg.type === 'focusMode') { if (zen) zen.setActive(!!msg.active); return; }
+      if (msg.type === 'setVisible') { if (vis) vis.setVisible(msg.visible !== false, msg.active !== false); return; }
       const r = applyHostMessage(S, ws, msg, engine.getClip);
       if (r.handled) commit(r.state, r.toast);
     }
@@ -1193,11 +1914,14 @@
       actions: () => Object.keys(dispatchTable),
       getState: () => ws,
       setState: (/** @type {any} */ next) => { ws = next; ab.clear(); render(); },
-      getPrefs: () => ({ ...prefs }),
+      getPrefs: () => ({ ...prefs, picMode: tab().picMode }),
       rail,
       controls,
       ctxMenu,
+      tileMenu,
       ab,
+      /** The tile gesture and input controllers (null without their widget modules), for tests and the harness. */
+      parts: { glide, tileDrag, hover, seekHover, wheelPan, idle, zen, vis, gotoBox },
       dispose: () => { disposed = true; for (const c of cleanups.splice(0)) c(); },
     };
   }
