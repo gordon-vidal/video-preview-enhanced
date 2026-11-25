@@ -116,6 +116,7 @@
           hasRm: !!d.querySelector('[data-act="remove"]'),
           rmConfirm: !!d.querySelector('[data-act="remove"].confirm'),
           statsOpen: d.classList.contains('show-stats'),
+          info: (() => { const b = d.querySelector('.mute-mini[data-act="info"]'); return b ? { pressed: b.getAttribute('aria-pressed'), focused: b === document.activeElement } : null; })(),
           ended: d.classList.contains('ended'),
           pillRects: [...d.querySelectorAll('.pill')].map(rect),
           nudgeRects: [...d.querySelectorAll('.nudge')].map(rect),

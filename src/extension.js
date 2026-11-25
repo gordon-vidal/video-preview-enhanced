@@ -1045,9 +1045,13 @@ function activate(context) {
           maxBitrateMbps: c.transcodeMaxBitrate, viewHeight: tile && tile.h, toneMap: transcodeArgs.toneMapSupport(t.gpuFilters),
         });
         // Each tile decides on its own clip (codec, bit rate): say why, so a mixed grid can be explained from the log.
-        log(`compare ${path.basename(file)}: live transcode ${decision.action === 'stream' ? 'on' : 'skipped'}: ${decision.reason}`);
-        if (decision.action === 'stream') {
+        const name = path.basename(file);
+        if (decision.action !== 'stream') log(`compare ${name}: live transcode skipped: ${decision.reason}`);
+        else {
           const stream = await transcodeOptions(t, pr, c, remoteLink, false);
+          // Policy chose it; whether it runs depends on an encoder being available.
+          log(stream ? `compare ${name}: live transcode on: ${decision.reason}`
+            : `compare ${name}: live transcode chosen (${decision.reason}) but no encoder is available: falling back`);
           if (stream) return { tools: t, probed: pr, maxHeight: maxStreamHeight, stream, informTranscode: c.transcode !== 'always' };
         }
       }

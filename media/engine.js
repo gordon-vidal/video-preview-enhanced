@@ -1205,11 +1205,13 @@ function createEngine(env) {
       const fps = this.fps || 30;
       const nextQueuedT = this.queue[0]?.t ?? null;
       const due = pauseT + 0.25 / fps;
-      const ready = seekTarget === null && shownT !== null && startT !== null;
+      const current = shownT !== null && (!this.shownStale || this.vmode === 'none');
+      // A stale picture can pass the time checks below while the queue head is still ahead: never call it settled.
+      const ready = seekTarget === null && current && startT !== null;
       return Object.freeze({
         startT, shownT, pauseT, seekTarget, nextQueuedT, eof, gen, fps, shownCount: this.shownCount || 0,
         // Whether the shown picture continues into the queue: false from a seek or jump until its first picture shows.
-        current: shownT !== null && (!this.shownStale || this.vmode === 'none'),
+        current,
         firstFrameReady: ready && shownT === startT && due < startT + 0.75 / fps,
         settled: ready && shownT <= due + 1e-6 && (nextQueuedT === null ? eof : nextQueuedT > due),
       });

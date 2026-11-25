@@ -1725,6 +1725,7 @@ test('compare: a step back seeks a follower whose picture predates its last seek
   follower.tick(ctx.perfNow);
   assert.strictEqual(follower.shownT, 1, 'nothing due: the old picture stays');
   assert.strictEqual(follower.syncState().current, false);
+  assert.strictEqual(follower.syncState().settled, false, 'a stale picture is never settled');
   const gen = follower.gen;
   sync.seekFollowers(149 / 30); // a step back on the clock
   assert.strictEqual(follower.gen, gen + 1, 'the follower seeks instead of keeping its stale picture');
@@ -1734,6 +1735,62 @@ test('compare: a step back seeks a follower whose picture predates its last seek
   assert.ok(Math.abs(follower.shownT - 149 / 30) < 1e-9, `shows the clock's frame: ${follower.shownT}`);
   assert.strictEqual(follower.syncState().current, true);
   assert.strictEqual(follower.syncState().settled, true);
+});
+
+test('compare: five mixed tiles, a streamed one delivers late: stepping back after a paused seek lands every tile', () => {
+  ctx.perfNow = 0;
+  const tiles = [compareTile('A'), compareTile('B'), compareTile('C'), compareTile('D', { remoteStream: true }),
+    compareTile('E')];
+  const [clock, , , streamed] = tiles;
+  const sync = new CompareSyncController({ tiles: () => tiles, offset: () => 0, sound: () => 0, now: () => ctx.perfNow });
+  sync.setClock(0, false);
+  const run = (ms) => {
+    for (const end = ctx.perfNow + ms; ctx.perfNow < end;) {
+      ctx.perfNow += 1000 / 60;
+      clock.tick(ctx.perfNow);
+      sync.syncPlaying();
+      tiles.slice(1).forEach((t) => t.tick(ctx.perfNow));
+    }
+  };
+  for (const t of tiles) t.queue = grid30(0, 1);
+  clock.play();
+  sync.syncPlaying();
+  run(300);
+  clock.seekTime(5.02);
+  sync.syncPlaying(true);
+  const deliver = (t) => { for (const fr of grid30(4.6, 7)) t.addFrame(fr); };
+  for (const t of tiles) if (t !== streamed) deliver(t);
+  // The streamed tile has not delivered: it holds the group, but only for the stall limit (3 s of virtual time).
+  run(500);
+  assert.ok(sync.waiting, 'the late tile holds the group');
+  const held = clock.shownT;
+  run(1500);
+  assert.ok(Math.abs(clock.shownT - held) < 2 / 30, `held while within the stall limit (${held} -> ${clock.shownT})`);
+  // Pause before the delayed landing, then step back twice (as compare.js step(-1) does through the clock).
+  clock.pause();
+  tiles.slice(1).forEach((t) => { if (t.playing) t.pause(); });
+  const at = clock.shownT;
+  const target = Math.round(at * 30) - 2;
+  clock.seekTime(target / 30);
+  sync.seekFollowers(target / 30);
+  deliver(streamed);
+  for (const t of tiles) { t.tick(ctx.perfNow); }
+  tiles.forEach((t, i) => {
+    if (t.seekTarget !== null) deliver(t);
+    t.tick(ctx.perfNow);
+    assert.ok(Math.abs(t.shownT - target / 30) < 1.5 / 30,
+      `tile ${i} shows ${t.shownT} after stepping back to ${target / 30}`);
+  });
+  // A tile that never delivers does not freeze the clock for good: after the stall limit the others play on.
+  const blackout = compareTile('F');
+  tiles.push(blackout);
+  sync.followClock(blackout, 5);
+  clock.play();
+  sync.syncPlaying(true);
+  blackout.seekTarget = 3; // decoding forever
+  const before = clock.shownT;
+  run(3500);
+  assert.ok(clock.shownT > before + 0.3, `the clock plays on after the stall limit (${before} -> ${clock.shownT})`);
 });
 
 (async () => {

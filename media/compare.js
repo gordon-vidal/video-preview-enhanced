@@ -1936,10 +1936,10 @@
       case 'spot': promoteToSpotlight(i); break;
       case 'info':
         // The pill's ⓘ and the card's × share this action.
-        if (!Grid.toggleStats(statsIds, i) && el.classList.contains('tile-stats-close')) {
-          /** @type {HTMLElement|null} */ (cellsEl.querySelector(`[data-act="info"][data-i="${i}"].mute-mini`))?.focus();
-        }
+        const closedByCard = !Grid.toggleStats(statsIds, i) && el.classList.contains('tile-stats-close');
         updateOverlays();
+        // updateOverlays() rebuilds the overlay, so the pill's ⓘ is a new element: focus it after, not before.
+        if (closedByCard) /** @type {HTMLElement|null} */ (cellsEl.querySelector(`[data-act="info"][data-i="${i}"].mute-mini`))?.focus();
         break;
       case 'mute':
         if (st.muted || i !== st.sound) {
