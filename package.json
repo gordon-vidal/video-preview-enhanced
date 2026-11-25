@@ -518,8 +518,8 @@
         },
         "videoPreviewEnhanced.loop": {
           "type": "boolean",
-          "default": true,
-          "description": "Loop playback by default.",
+          "default": false,
+          "description": "Deprecated: use Autoplay (`onEnd`). Only a value you set yourself is read.",
           "markdownDeprecationMessage": "Use `#videoPreviewEnhanced.onEnd#` (Autoplay: Off, Play next in folder, Loop). While Autoplay is not set, a value set here still applies: `true` is Loop, `false` is Off."
         },
         "videoPreviewEnhanced.folderRail.layout": {

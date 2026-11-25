@@ -271,6 +271,7 @@ const { make } = require('../media/make_cases_media');
       const goodSample = { type: 'remoteLink', gen: 1, kbps: 12000, videoKbps: 5000, mediaRate: 1, buffer: 1, starved: false, behind: false, readMs: 800, hostWaitMs: 0 };
       while (tileA.tier > 0) {
         tileA.settleAt = 0;
+        tileA.link.upAfter = 0; // skip the real 28 s upgrade cooldown (src/stream-adapt.js UP_COOLDOWN_MS)
         posts.length = 0;
         for (let k = 0; k < 4; k++) await compare.onMessage({ type: 'nd', key: 'A', m: goodSample });
       }

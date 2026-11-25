@@ -43,7 +43,7 @@ const TIMEOUTS = {
   'test/host/build_choice_test.js': 20000,
   'test/host/compare_factor_test.js': 20000,
   'test/host/compare_grid_test.js': 20000,
-  'test/host/compare_test.js': 60000,
+  'test/host/compare_test.js': 20000,
   'test/host/comparepick_test.js': 20000,
   'test/host/controls_test.js': 20000,
   'test/host/ctxmenu_test.js': 20000,
