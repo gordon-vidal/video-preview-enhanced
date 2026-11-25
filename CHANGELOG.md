@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Start / Add to Compare on a folder now follows symlinked subfolders and Docker / remote-mount directory entries (loops are detected), and searches level by level so one huge empty subfolder no longer hides videos in its siblings.
+
 ## 0.12.0 (2026-11-25)
 
 Compact Folder Rail in both single-video and Compare views, new Autoplay modes (Off / Play next in folder / Loop), Compare deep links (`vscode://.../compare`), per-video Live transcode resolution picker, seek-bar keyframe previews and cached seeks during Live transcode, major slow-SSH responsiveness upgrades (128 KB bounded pipe, ~3 KB JPEG host thumbnails, session link memory, deeper remote buffer, GOP step-back caching), plus recovery fixes for damaged H.264 streams, open-GOP Direct Stream seeks, long-recording timestamps, exact-frame timeouts, and Windows folder-watch cleanup.

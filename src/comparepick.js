@@ -57,14 +57,19 @@ function folderVideos(names) {
 }
 
 /**
- * Recursively collect video URIs under `rootUri` in natural order (videos in each folder before its
- * subfolders; subfolders visited in natural name order). Skips symlinked directories and bounds depth
- * and directory count so circular links or huge trees cannot stall the host.
+ * Recursively collect video URIs under `rootUri`, level by level (breadth first; natural name order within a
+ * folder: its videos first, then its subfolders queued in natural order), so one huge empty subtree cannot use
+ * up the directory budget before sibling folders are looked at. Symlinked directories are followed; each
+ * canonical directory (`realPath`, else the uri's own key) is walked once, so loops like `a -> root` end and
+ * no video is listed twice. Entries a remote / FUSE / Docker mount reports as a bare symlink or unknown
+ * (type 0) are resolved with `stat` when given. Depth and directory count are bounded.
  * @template T
  * @param {T} rootUri
  * @param {(dir: T) => Promise<[string, number][]>} readDirectory
  * @param {(dir: T, name: string) => T} joinPath
- * @param {{ dir?: number, symlink?: number, maxDepth?: number, maxDirs?: number }} [opts]
+ * @param {{ dir?: number, symlink?: number, maxDepth?: number, maxDirs?: number,
+ *   stat?: (uri: T) => Promise<{ type: number }>, realPath?: (uri: T) => Promise<string>,
+ *   key?: (uri: T) => string, log?: (msg: string) => void }} [opts]
  * @returns {Promise<T[]>}
  */
 async function collectFolderVideos(rootUri, readDirectory, joinPath, opts = {}) {
@@ -72,31 +77,59 @@ async function collectFolderVideos(rootUri, readDirectory, joinPath, opts = {}) 
   const symlink = opts.symlink ?? 64;
   const maxDepth = opts.maxDepth ?? FOLDER_MAX_DEPTH;
   const maxDirs = opts.maxDirs ?? FOLDER_MAX_DIRS;
+  const { stat, realPath, log } = opts;
+  const keyOf = opts.key || String;
   const out = [];
-  let visited = 0;
-  const walk = async (folder, depth) => {
-    if (visited >= maxDirs) return;
-    visited++;
-    let entries;
-    try { entries = await readDirectory(folder); } catch { return; }
-    const fileNames = [];
-    const subDirs = [];
-    for (const [name, type] of entries || []) {
-      if (type & dir) {
-        if (!(type & symlink)) subDirs.push(name);
-      } else {
-        fileNames.push(name);
-      }
+  const seenDirs = new Set();
+  const seenFiles = new Set();
+  const canonical = async (uri) => {
+    if (realPath) {
+      try { return 'real:' + await realPath(uri); } catch (e) { if (log) log(`realpath ${keyOf(uri)}: ${e && e.message || e}`); }
     }
-    for (const name of folderVideos(fileNames)) out.push(joinPath(folder, name));
-    if (depth >= maxDepth) return;
-    subDirs.sort((a, b) => coll.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0));
-    for (const name of [...new Set(subDirs)]) {
-      if (visited >= maxDirs) break;
-      await walk(joinPath(folder, name), depth + 1);
-    }
+    return 'uri:' + keyOf(uri);
   };
-  await walk(rootUri, 0);
+  let visited = 0;
+  let level = [rootUri];
+  for (let depth = 0; level.length && visited < maxDirs; depth++) {
+    const next = [];
+    for (const folder of level) {
+      if (visited >= maxDirs) break;
+      const id = await canonical(folder);
+      if (seenDirs.has(id)) continue;
+      seenDirs.add(id);
+      visited++;
+      let entries;
+      try { entries = await readDirectory(folder); } catch (e) {
+        if (log) log(`readDirectory ${keyOf(folder)}: ${e && e.message || e}`);
+        continue;
+      }
+      const fileNames = [];
+      const subDirs = [];
+      for (const [name, type] of entries || []) {
+        if (type & dir) { subDirs.push(name); continue; }
+        if (!(type === 0 || (type & symlink))) { fileNames.push(name); continue; }
+        if (VIDEO_EXT.test(name)) { fileNames.push(name); continue; }
+        if (!stat) continue;
+        try {
+          const st = await stat(joinPath(folder, name));
+          if (st && (st.type & dir)) subDirs.push(name);
+        } catch (e) {
+          if (log) log(`stat ${keyOf(joinPath(folder, name))}: ${e && e.message || e}`);
+        }
+      }
+      for (const name of folderVideos(fileNames)) {
+        const uri = joinPath(folder, name);
+        const k = keyOf(uri);
+        if (seenFiles.has(k)) continue;
+        seenFiles.add(k);
+        out.push(uri);
+      }
+      if (depth >= maxDepth) continue;
+      subDirs.sort((x, y) => coll.compare(x, y) || (x < y ? -1 : x > y ? 1 : 0));
+      for (const name of new Set(subDirs)) next.push(joinPath(folder, name));
+    }
+    level = next;
+  }
   return out;
 }
 

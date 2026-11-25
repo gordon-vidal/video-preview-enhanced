@@ -153,12 +153,13 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
       const join = (p, name) => `${p}/${name}`;
       assert.deepStrictEqual(
         await collectFolderVideos('/rec', readDir, join),
-        ['/rec/intro.mp4', '/rec/cam1/video.mp4', '/rec/cam1/sub/deep.mkv', '/rec/cam2/video.mp4', '/rec/cam10/video.mp4'],
-        'collectFolderVideos walks subfolders in natural order, includes symlinked files, skips symlinked & unreadable dirs',
+        ['/rec/intro.mp4', '/rec/cam1/video.mp4', '/rec/cam2/video.mp4', '/rec/cam10/video.mp4',
+          '/rec/link-loop/bad.mp4', '/rec/cam1/sub/deep.mkv'],
+        'collectFolderVideos walks level by level in natural order, follows symlinked dirs, skips unreadable ones',
       );
       assert.deepStrictEqual(
         await collectFolderVideos('/rec', readDir, join, { maxDepth: 1 }),
-        ['/rec/intro.mp4', '/rec/cam1/video.mp4', '/rec/cam2/video.mp4', '/rec/cam10/video.mp4'],
+        ['/rec/intro.mp4', '/rec/cam1/video.mp4', '/rec/cam2/video.mp4', '/rec/cam10/video.mp4', '/rec/link-loop/bad.mp4'],
         'maxDepth stops deeper recursion',
       );
       assert.deepStrictEqual(
@@ -166,6 +167,47 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
         ['/rec/intro.mp4', '/rec/cam1/video.mp4'],
         'maxDirs bounds total directories visited',
       );
+      // Symlinked subfolder with videos; bare symlink / unknown entries resolved by stat (Docker, FUSE, remote).
+      {
+        const t = {
+          '/r': [['lnk', 2 | 64], ['mnt', 64], ['unk', 0], ['f', 0], ['a.mp4', 1]],
+          '/r/lnk': [['x.mp4', 1]], '/r/mnt': [['y.mkv', 1]], '/r/unk': [['z.mov', 1]],
+        };
+        const rd = async (p) => t[p] || [];
+        const st = async (p) => ({ type: p === '/r/f' ? 1 : 2 });
+        assert.deepStrictEqual(await collectFolderVideos('/r', rd, join, { stat: st }),
+          ['/r/a.mp4', '/r/lnk/x.mp4', '/r/mnt/y.mkv', '/r/unk/z.mov'], 'symlink and unknown dirs are followed');
+        assert.deepStrictEqual(await collectFolderVideos('/r', rd, join), ['/r/a.mp4', '/r/lnk/x.mp4'],
+          'without stat only flagged directories are followed');
+        const logs = [];
+        await collectFolderVideos('/r', rd, join, { stat: async () => { throw new Error('boom'); }, log: (m) => logs.push(m) });
+        assert.ok(logs.some((m) => /boom/.test(m)), 'stat errors are logged');
+      }
+      // Cycles: root/loop -> root, a/b -> a, via a realPath that resolves links.
+      {
+        const real = { '/c/loop': '/c', '/c/a/b': '/c/a', '/c/a/b/b': '/c/a' };
+        const t = {
+          '/c': [['loop', 2 | 64], ['a', 2], ['top.mp4', 1]],
+          '/c/a': [['b', 2 | 64], ['in.mp4', 1]],
+        };
+        const rd = async (p) => t[real[p] || p] || [];
+        const rp = async (p) => real[p] || p;
+        assert.deepStrictEqual(await collectFolderVideos('/c', rd, join, { realPath: rp }),
+          ['/c/top.mp4', '/c/a/in.mp4'], 'circular symlinks end, no duplicates');
+        // No realPath: maxDepth still ends the loop, and no URI is listed twice.
+        const seen = await collectFolderVideos('/c', rd, join, { maxDepth: 3 });
+        assert.strictEqual(new Set(seen).size, seen.length, 'no duplicate URIs');
+      }
+      // A deep empty subtree must not starve siblings.
+      {
+        const rd = async (p) => {
+          if (p === '/d') return [['aaa', 2], ['zzz', 2]];
+          if (p === '/d/zzz') return [['v.mp4', 1]];
+          return p.split('/').length < 14 ? [['n', 2], ['m', 2]] : [];
+        };
+        assert.deepStrictEqual(await collectFolderVideos('/d', rd, join, { maxDirs: 50 }), ['/d/zzz/v.mp4'],
+          'breadth-first: sibling video found before the budget runs out');
+      }
     }
     const other = await V._commands['videoPreviewEnhanced.compare'](uriA, [uriA, V.Uri.file(b)]);
     current.active = true;
