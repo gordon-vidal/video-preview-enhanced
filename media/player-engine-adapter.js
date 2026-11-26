@@ -142,6 +142,44 @@
     return Math.round((f / cf) * tileFps);
   }
 
+  /** An offset in seconds of the clip (frames at the clip's own rate, or ms). @param {Offset} offset @param {number} fps */
+  function offsetSeconds(offset, fps) {
+    if (offset && typeof offset === 'object' && offset.unit === 'ms') return (Number(offset.v) || 0) / 1000;
+    return fps > 0 ? offsetFrames(offset, fps) / fps : 0;
+  }
+
+  /**
+   * The one timeline mapping of Compare (forward): the tile frame at the shared clock frame, mapped through time when
+   * the clock runs at another rate, plus the tile's offset in its own frames, rounded once (rounding the mapped frame
+   * and the offset separately drifts a frame for mixed rates and fractional ms offsets).
+   * @param {number} sharedFrame @param {number} tileFps @param {number | undefined} clockFps @param {Offset} [offset]
+   */
+  function tileFrameAt(sharedFrame, tileFps, clockFps, offset) {
+    const f = Number(sharedFrame) || 0;
+    const cf = Number(clockFps);
+    const same = !(cf > 0) || !Number.isFinite(cf) || !(tileFps > 0) || Math.abs(cf - tileFps) < 1e-9;
+    const v = (same ? f : (f / cf) * tileFps) + offsetFrames(offset, tileFps);
+    const r = Math.round(Number(v.toFixed(6))); // float noise (59.9999999) never decides the frame
+    return r === 0 ? 0 : r; // never -0
+  }
+
+  /**
+   * The inverse of tileFrameAt: the shared clock frame at which a tile shows `tileFrame` (the latest one, when several
+   * do), so a clock decoder's frame read back and sent out again lands on the same decoder frame.
+   * @param {number} tileFrame @param {number} tileFps @param {number | undefined} clockFps @param {Offset} [offset]
+   */
+  function sharedFrameAt(tileFrame, tileFps, clockFps, offset) {
+    const x = Math.round(Number(tileFrame) || 0);
+    const cf = Number(clockFps);
+    const same = !(cf > 0) || !Number.isFinite(cf) || !(tileFps > 0) || Math.abs(cf - tileFps) < 1e-9;
+    const ratio = same ? 1 : tileFps / cf;
+    const est = (x - offsetFrames(offset, tileFps)) / ratio;
+    for (let g = Math.ceil(est) + 1; g >= Math.floor(est) - 1; g--) {
+      if (tileFrameAt(g, tileFps, clockFps, offset) <= x) return g;
+    }
+    return Math.floor(est);
+  }
+
   const hex2 = (/** @type {number} */ v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
 
   /**
@@ -274,9 +312,20 @@
     function shownFrame(clipId, clockFrame, offset, clockFps) {
       const c = clipOrFirst(clipId);
       if (!c) return { frame: null, outOfRange: true };
-      const f = clockToTileFrame(clockFrame, c.fps, clockFps) + Math.round(offsetFrames(offset, c.fps));
+      const f = tileFrameAt(clockFrame, c.fps, clockFps, offset);
       if (f < 0 || f >= c.frames) return { frame: null, outOfRange: true };
       return { frame: f, outOfRange: false };
+    }
+
+    /**
+     * shownFrame's inverse for the clock tile: the shared clock frame at which the clip's decoder shows
+     * `decoderFrame` with its offset (not clamped: the caller keeps it inside the timeline).
+     * @param {string} clipId @param {number} decoderFrame @param {Offset} [offset] @param {number} [clockFps]
+     */
+    function clockFrameFromDecoder(clipId, decoderFrame, offset, clockFps) {
+      const c = clipOrFirst(clipId);
+      const fps = c && c.fps > 0 ? c.fps : Number(clockFps) || 0;
+      return sharedFrameAt(decoderFrame, fps, clockFps, offset);
     }
 
     /**
@@ -717,6 +766,7 @@
       hasAudio(id) { const c = clipOrFirst(id); return !!(c && c.hasAudio); },
       facts,
       shownFrame,
+      clockFrameFromDecoder,
       pictureRect,
       draw,
       thumbnail,
@@ -746,7 +796,7 @@
     return /** @satisfies {EngineAdapter} */ (adapter);
   }
 
-  const api = { create, offsetFrames, plainRect, clockToTileFrame, formatPixel, drawThumbPicture, NEAREST_AT };
+  const api = { create, offsetFrames, offsetSeconds, tileFrameAt, sharedFrameAt, plainRect, clockToTileFrame, formatPixel, drawThumbPicture, NEAREST_AT };
   // checkJs: end
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VpeEngineAdapter = api;

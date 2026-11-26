@@ -124,6 +124,8 @@ export interface EngineAdapter {
   hasAudio(id: string): boolean;
   facts(id: string): ClipFacts;
   shownFrame(clipId: string, clockFrame: number, offset?: OffsetSpec, clockFps?: number): ShownFrame;
+  /** shownFrame's inverse for the clock tile: the shared clock frame its decoder's frame stands for (optional). */
+  clockFrameFromDecoder?(clipId: string, decoderFrame: number, offset?: OffsetSpec, clockFps?: number): number;
   /** Shows a frame of the clip's decoder; resolves with the frame shown, or null (aborted, unknown clip). */
   showFrame(clipId: string, frame: number, opts?: { signal?: AbortSignal | null }): Promise<number | null>;
   pictureRect(

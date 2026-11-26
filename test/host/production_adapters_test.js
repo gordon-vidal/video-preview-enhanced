@@ -371,6 +371,42 @@ function makeBridge(/** @type {{ page?: string, boot?: string }} */ env = { page
     assert.deepStrictEqual(engine.shownFrame('P60', 24, { unit: 'ms', v: 500 }, 24), { frame: 90, outOfRange: false }, 'then +500 ms at 60 fps');
     assert.deepStrictEqual(engine.shownFrame('A', 60, 0, 60), { frame: 24, outOfRange: false }, 'and back: 1.0 s of a 60 fps clock on a 24 fps tile');
     assert.deepStrictEqual(engine.shownFrame('A', 600, 0, 60), { frame: null, outOfRange: true }, '10 s is past a 10 s tile');
+    // Mapped and offset rounded once: 10 frames of a 24 fps clock is 25 frames at 60, +62.5 ms is 3.75 more: 29
+    // (rounding 25 and 3.75 apart gives 29 too, but 1 frame of 24 at 60 = 2.5, +1.5 f gives 4, not 3 + 2 = 5).
+    assert.deepStrictEqual(engine.shownFrame('P60', 10, { unit: 'ms', v: 62.5 }, 24), { frame: 29, outOfRange: false });
+    assert.deepStrictEqual(engine.shownFrame('P60', 1, 1.5, 24), { frame: 4, outOfRange: false }, 'one rounding, not two');
+    // shownFrame's inverse for a clock tile lands back on the frame it came from.
+    assert.strictEqual(engine.clockFrameFromDecoder('P60', 66, 6, 60), 60);
+    assert.strictEqual(engine.clockFrameFromDecoder('A', 25, { unit: 'ms', v: 62.5 }), 23, '62.5 ms is 1.5 frames at 24 fps: 23 + 1.5 rounds to 25');
+  }
+
+  // ---- engine: one timeline mapping, forward and back, for every rate pair and offset (no 1-frame drift) ----
+  {
+    const { tileFrameAt, sharedFrameAt, offsetSeconds } = VpeEngineAdapter;
+    assert.strictEqual(offsetSeconds({ unit: 'ms', v: 250 }, 24), 0.25);
+    assert.strictEqual(offsetSeconds({ unit: 'frames', v: 12 }, 24), 0.5);
+    assert.strictEqual(offsetSeconds(6, 24), 0.25);
+    assert.strictEqual(offsetSeconds(null, 24), 0);
+    const rates = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
+    const offsets = [0, 3, -7, { unit: 'ms', v: 62.5 }, { unit: 'ms', v: -41 }, { unit: 'ms', v: 1000 }, 1.5];
+    for (const tileFps of rates) {
+      for (const clockFps of [undefined, ...rates]) {
+        for (const off of offsets) {
+          let last = -Infinity;
+          for (let g = 0; g < 400; g++) {
+            const x = tileFrameAt(g, tileFps, clockFps, off);
+            const at = `tile ${tileFps}, clock ${clockFps}, offset ${JSON.stringify(off)}, shared ${g} -> ${x}`;
+            assert.ok(x >= last, `${at}: never goes backwards`);
+            last = x;
+            const back = sharedFrameAt(x, tileFps, clockFps, off);
+            // The tile frame read back stands for a shared frame that shows that same tile frame again.
+            assert.strictEqual(tileFrameAt(back, tileFps, clockFps, off), x, `${at} -> ${back}: round trip`);
+            // For the clock tile itself (its own rate) the trip is exact: frame read back, frame sent out.
+            if (clockFps === tileFps || clockFps === undefined) assert.strictEqual(back, g, `${at}: the clock's own frames are exact`);
+          }
+        }
+      }
+    }
   }
 
   // ---- engine: a clip opened after boot replaces the original as the only tile ----

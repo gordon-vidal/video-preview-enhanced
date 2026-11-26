@@ -297,8 +297,11 @@ test('pagehide disposes the decoders, the controller and the host adapter', () =
   withPage(({ win, app, send, made, posted }) => {
     send({ type: 'open' });
     send({ type: 'openVideo', clipId: 'B', compare: true, clip: CLIPS[1] });
-    const before = posted.length;
+    const atHide = posted.length;
     win.fire('pagehide');
+    // The last position goes out while the page hides (nothing lost to the 2 s report interval), then nothing.
+    assert.deepStrictEqual(posted.slice(atHide).map((m) => m.type), ['pos'], 'the position is flushed once on pagehide');
+    const before = posted.length;
     assert.strictEqual(app.isDisposed(), true);
     assert.ok(made.every((p) => p.disposed), 'every decoder closed');
     assert.strictEqual(app.players.size, 0);
@@ -1447,65 +1450,93 @@ test('compare: when a shorter clock ends, longer followers pause too and stay pa
   });
 });
 
-test('compare transport invariant fuzzer: mixed clip lengths + mid-clip eof never desync paused state or reset mid-clip to 0', () => {
+/**
+ * A decoder shaped like media/engine.js for Compare's transport: playing advances a frame per tick and stops itself on
+ * its last frame (onEnded, as ended() does); play() on the last frame starts over from 0 (engine.js play(), no follower
+ * mode); a seek pauses it until it is told to play again. `restartsByPlay` counts the starts-over play() caused.
+ */
+function selfStoppingPlayer(clip, host, hooks) {
+  const p = stubPlayer(clip, host, hooks);
+  const n = clip.frames;
+  const clamp = (f) => Math.max(0, Math.min(n - 1, Math.round(f)));
+  Object.assign(p, {
+    n, fps: clip.fps, firstShown: true, shownCount: 1, seekTarget: null, eof: false, restartsByPlay: 0, seekPending: false,
+    frameSeekTime: (f) => (f + 0.5) / clip.fps,
+    seekFrame(f) { p.calls.push(['seek', f]); p.frame = clamp(f); p.playing = false; p.seekPending = true; },
+    seekTime(s, stepping) {
+      p.calls.push(['seekTime', s, !!stepping]);
+      p.frame = clamp(s * clip.fps - 0.5);
+      p.playing = false;
+      p.seekPending = true;
+    },
+    play() {
+      p.calls.push(['play']);
+      // engine.js play(): starts over only at the end with no seek pending (seekTarget === null).
+      if (p.frame >= n - 1 && !p.seekPending) { p.frame = 0; p.restartsByPlay++; }
+      p.playing = true;
+    },
+    tick() {
+      p.seekPending = false;
+      if (!p.playing) return;
+      if (p.frame >= n - 1) { p.playing = false; hooks.onEnded({ natural: true }); return; }
+      p.frame++;
+    },
+  });
+  return p;
+}
+const SHORT_LONG = {
+  clips: [
+    { id: 'A', name: 'long.mp4', fps: 30, frames: 300 },
+    { id: 'B', name: 'short.mp4', fps: 30, frames: 60 },
+  ],
+  tiles: ['A', 'B'],
+};
+const playsOf = (p) => p.calls.filter((c) => c[0] === 'play').length;
+
+test('compare transport invariant fuzzer: no tile out of its clip plays, every other one plays with the tab, none starts over from 0', () => {
   // Deterministic LCG so failures are 100% reproducible.
   let seed = 0x51a7c0de;
   const rnd = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 0x100000000; };
   const pick = (n) => Math.floor(rnd() * n);
   withPage(({ app, send, made, frames }) => {
     send({ type: 'open' });
-    const [pA, pB, pC] = made;
-    for (const p of made) {
-      p.n = p.clip.frames;
-      p.seekTime = (s) => { p.calls.push(['seekTime', s]); p.frame = Math.max(0, Math.min(p.n - 1, Math.round(s * p.clip.fps))); };
-    }
-    const assertInvariants = (step) => {
+    frames(2);
+    const playerOf = (id) => made.filter((p) => p.clip.id === id).pop();
+    const assertInvariants = (step, what) => {
       const tab = S.getTab(app.ui.getState());
-      const active = tab.tiles.map((id) => made.find((p) => p.clip.id === id)).filter(Boolean);
-      if (!tab.playing) {
-        for (const p of active) {
-          assert.strictEqual(p.isPlaying(), false, `step ${step}: tab is paused but tile ${p.clip.id} is still playing`);
+      for (const id of tab.tiles) {
+        const p = playerOf(id);
+        const s = app.engine.shownFrame(id, tab.frame, S.getOffset(tab, id), tab.fps);
+        const at = `step ${step} (${what}), tile ${id} at ${p.frame}/${p.n - 1}, target ${s.frame}, tab ${tab.playing ? 'playing' : 'paused'}`;
+        // (a) outside its clip: never playing (nor heard from 0 behind "No frame").
+        if (s.frame === null) assert.strictEqual(p.isPlaying(), false, `${at}: out of range but playing`);
+        // (b) and (c) in its clip: plays exactly when the tab plays (a paused seek leaves none playing), except a tile
+        // resting on its own last frame that the timeline has not left.
+        else if (!(tab.playing && p.frame === p.n - 1 && s.frame >= p.n - 1)) {
+          assert.strictEqual(p.isPlaying(), tab.playing, `${at}: isPlaying() does not match the tab`);
         }
+        // (d) play() never landed on a decoder's end (it would start over from 0, mid-timeline).
+        assert.strictEqual(p.restartsByPlay, 0, `${at}: play() at its end restarted it from 0`);
       }
     };
-    for (let step = 0; step < 150; step++) {
+    const ops = ['playPause', 'seek', 'step', 'selfEnd', 'setClock', 'nudge', 'loop', 'play on'];
+    for (let step = 0; step < 400; step++) {
       const tab = S.getTab(app.ui.getState());
-      // Randomly simulate demuxer EOF mid-clip on any tile (like short fully-buffered videos).
+      // Demuxer end of file mid-clip on any tile (short, fully decoded videos): not the playhead's end.
       if (rnd() < 0.3) made[pick(made.length)].eof = true;
-      const op = pick(7);
-      if (op === 0) {
-        // Play/pause: if paused mid-clip with eof=true, clock must not jump back to frame 0.
-        const clk = made.find((p) => p.clip.id === tab.clockId);
-        const midBefore = !tab.playing && clk && clk.eof && clk.currentFrame() > 0 && clk.currentFrame() < clk.n - 1;
-        const frameBefore = clk ? clk.currentFrame() : 0;
-        app.ui.dispatch('playPause');
-        if (midBefore) {
-          assert.notStrictEqual(clk.currentFrame(), 0, `step ${step}: play from mid-clip frame ${frameBefore} with eof=true reset to 0`);
-        }
-      } else if (op === 1) {
-        app.ui.dispatch('seek', pick(60));
-      } else if (op === 2) {
-        app.ui.dispatch(rnd() < 0.5 ? 'nextFrame' : 'prevFrame');
-      } else if (op === 3) {
-        // Natural EOF on a random tile (often the shorter clock while longer followers are mid-clip).
-        const p = made[pick(made.length)];
-        p.playing = false;
-        p.frame = p.n - 1;
-        p.hooks.onEnded({ natural: true });
-      } else if (op === 4) {
-        const nextClk = tab.tiles[pick(tab.tiles.length)];
-        app.ui.dispatch('setClock', nextClk);
-      } else if (op === 5) {
-        const id = tab.tiles[pick(tab.tiles.length)];
-        app.ui.setState(S.nudgeOffset(app.ui.getState(), id, pick(11) - 5));
-      } else {
-        // Advance a few rAF ticks while playing or paused.
-        for (const p of made) {
-          if (p.playing) p.frame = Math.min(p.n - 1, p.frame + 1);
-        }
-      }
-      frames(2);
-      assertInvariants(step);
+      const op = ops[pick(ops.length)];
+      if (op === 'playPause') app.ui.dispatch('playPause');
+      else if (op === 'seek') app.ui.dispatch('seek', pick(Math.max(1, tab.maxFrame + 1)));
+      else if (op === 'step') app.ui.dispatch(rnd() < 0.5 ? 'nextFrame' : 'prevFrame');
+      else if (op === 'selfEnd') {
+        // A tile runs into its end by itself (often the shorter one while the others are mid-clip).
+        const p = playerOf(tab.tiles[pick(tab.tiles.length)]);
+        if (p.playing) { p.frame = p.n - 1; p.tick(); }
+      } else if (op === 'setClock') app.ui.dispatch('setClock', tab.tiles[pick(tab.tiles.length)]);
+      else if (op === 'nudge') app.ui.setState(S.nudgeOffset(app.ui.getState(), tab.tiles[pick(tab.tiles.length)], pick(41) - 20));
+      else if (op === 'loop') app.ui.dispatch('loop');
+      frames(1 + pick(6));
+      assertInvariants(step, op);
     }
   }, {
     cfg: {
@@ -1516,53 +1547,122 @@ test('compare transport invariant fuzzer: mixed clip lengths + mid-clip eof neve
       ],
       tiles: ['A', 'B', 'C'],
     },
-    createPlayer: enginePlayer,
+    createPlayer: selfStoppingPlayer,
     raf: true,
   });
 });
 
-test('Astra regressions: offset nudge keeps playing, Compare loop stays shared, clock offset does not double-shift, follower recovery does not rewind, FramePlayer autoplays, natural end reports pos', () => {
-  // 1-4: Compare cases (offset nudge during play, Compare loop=false on decoders, clock with offset, follower recovery).
+test('compare: a follower outside its clip is paused and never played, so it is not heard from 0', () => {
   withPage(({ app, send, made, frames }) => {
     send({ type: 'open' });
     const [pA, pB] = made;
-    pA.n = 120; pB.n = 240;
-    pA.frameSeekTime = (f) => f / 30;
-    pB.frameSeekTime = (f) => f / 30;
-    pA.seekTime = (s, keep) => { pA.calls.push(['seekTime', s, !!keep]); pA.frame = Math.round(s * 30); pA.playing = !!keep; };
-    pB.seekTime = (s, keep) => { pB.calls.push(['seekTime', s, !!keep]); pB.frame = Math.round(s * 30); pB.playing = !!keep; };
-    pA.setLoop = (v) => { pA.loop = !!v; };
-    pB.setLoop = (v) => { pB.loop = !!v; };
-    app.ui.render();
-    pA.loop = true; pB.loop = true;
-
-    // #2: Enabling Loop in Compare must NOT enable per-decoder loop (shared onEnded wraps all tiles together).
-    app.ui.dispatch('loop');
-    assert.deepStrictEqual([!!pA.loop, !!pB.loop], [false, false], 'Compare keeps per-decoder loop off');
-
-    // #1: Nudging a follower offset while playing keeps that follower playing.
     app.ui.dispatch('playPause');
+    frames(2);
     assert.deepStrictEqual([pA.isPlaying(), pB.isPlaying()], [true, true]);
-    app.ui.setState(S.nudgeOffset(app.ui.getState(), 'B', 10));
-    assert.strictEqual(pB.isPlaying(), true, 'follower B stays playing after offset edit');
+    const plays = playsOf(pB);
+    app.ui.dispatch('seek', 100); // B has 60 frames: "No frame (clip ended)"
+    frames(5);
+    assert.strictEqual(pA.isPlaying(), true, 'the clock plays on');
+    assert.strictEqual(pB.isPlaying(), false, 'B is paused outside its clip');
+    assert.strictEqual(playsOf(pB), plays, 'B was never told to play');
+    assert.strictEqual(pB.restartsByPlay, 0);
+    // Pause and play again outside B's clip: still not B.
+    app.ui.dispatch('playPause');
+    app.ui.dispatch('playPause');
+    frames(3);
+    assert.strictEqual(pB.isPlaying(), false);
+    assert.strictEqual(playsOf(pB), plays);
+  }, { cfg: SHORT_LONG, createPlayer: selfStoppingPlayer, raf: true });
+});
 
-    // #3: Making B (with +10f offset) the clock does not double-shift the shared frame on pump.
-    app.ui.dispatch('playPause'); // pause
-    app.ui.dispatch('seek', 40);
+test('compare: a shorter follower that stopped at its end plays again from the frame a seek back takes it to', () => {
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    const [pA, pB] = made;
+    app.ui.dispatch('seek', 55);
     frames(2);
-    assert.strictEqual(pB.currentFrame(), 50, 'B is at 40 + 10');
+    app.ui.dispatch('playPause');
+    frames(10); // B runs into its end (frame 59) and stops itself; A plays on
+    assert.strictEqual(pB.frame, 59);
+    assert.strictEqual(pB.isPlaying(), false, 'B stopped itself at its end');
+    assert.strictEqual(pA.isPlaying(), true);
+    assert.strictEqual(S.getTab(app.ui.getState()).playing, true);
+    app.ui.dispatch('seek', 20); // back into B's clip while playing
+    frames(1);
+    assert.deepStrictEqual(seeksOf(pB).slice(-1), [20], 'B is sought to the timeline\'s frame');
+    assert.strictEqual(pB.isPlaying(), true, 'and plays again');
+    assert.strictEqual(pB.restartsByPlay, 0, 'not from 0');
+    assert.ok(pB.frame >= 20 && pB.frame < 25, `B plays on from 20 (at ${pB.frame})`);
+  }, { cfg: SHORT_LONG, createPlayer: selfStoppingPlayer, raf: true });
+});
+
+test('compare: a follower with a positive offset is sought to its first frame when the timeline reaches it while playing', () => {
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    const pB = made[1];
+    app.ui.setState(S.setOffset(app.ui.getState(), 'B', -10)); // B starts 10 frames into the timeline
+    app.ui.dispatch('seek', 2);
+    frames(2);
+    const stale = pB.frame;
+    app.ui.dispatch('playPause');
+    frames(3);
+    assert.strictEqual(pB.isPlaying(), false, 'outside its clip before its start');
+    frames(10);
+    assert.strictEqual(pB.isPlaying(), true, 'playing once inside its clip');
+    assert.ok(seeksOf(pB).includes(0), `B was sought to its first frame (seeks ${seeksOf(pB)}, stale ${stale})`);
+  }, { cfg: SHORT_LONG, createPlayer: selfStoppingPlayer, raf: true });
+});
+
+test('compare: playing seeks never pass stepping = true to seekTime (that flag keeps a step goal, not playback)', () => {
+  const timeOnly = (clip, host, hooks) => {
+    const p = selfStoppingPlayer(clip, host, hooks);
+    delete p.seekFrame;
+    return p;
+  };
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    app.ui.dispatch('playPause');
+    frames(2);
+    app.ui.dispatch('seek', 30);
+    app.ui.setState(S.nudgeOffset(app.ui.getState(), 'B', 3));
+    frames(2);
+    const calls = made.flatMap((p) => p.calls.filter((c) => c[0] === 'seekTime'));
+    assert.ok(calls.length >= 2, 'the seeks went through seekTime');
+    assert.ok(calls.every((c) => c[2] === false), `no seekTime(t, true): ${JSON.stringify(calls)}`);
+    assert.deepStrictEqual(made.map((p) => p.isPlaying()), [true, true], 'and both play on');
+  }, { cfg: SHORT_LONG, createPlayer: timeOnly, raf: true });
+});
+
+test('play on the clock\'s last frame starts the whole timeline over; a paused tile on its own last frame is not played', () => {
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    const [pA, pB] = made;
     app.ui.dispatch('setClock', 'B');
+    app.ui.dispatch('seek', 59); // B (the clock) on its last frame, A mid-clip
     frames(2);
-    assert.strictEqual(S.getTab(app.ui.getState()).frame, 40, 'shared frame stays 40 when B (+10f) is clock');
+    app.ui.dispatch('playPause');
+    assert.strictEqual(pB.restartsByPlay, 0, 'not by play() at the end');
+    assert.strictEqual(pB.calls.filter((c) => c[0] === 'seekTime').pop()[1], 0, 'the clock went back to its start');
+    assert.deepStrictEqual(seeksOf(pA).slice(-1), [0], 'and A to the timeline\'s start');
+    frames(3);
+    assert.deepStrictEqual([pA.isPlaying(), pB.isPlaying()], [true, true]);
+    assert.ok(S.getTab(app.ui.getState()).frame < 10, 'the bar follows the clock from the start');
+  }, { cfg: SHORT_LONG, createPlayer: selfStoppingPlayer, raf: true });
+});
 
-    // #4: A recovering follower (A) catches up to the live frame/play state without rewinding the workspace.
-    app.ui.dispatch('seek', 50);
-    send({ type: 'libav', clipId: 'A', meta: { size: 1, duration: 4 } }); // restarts follower A while at frame 50
-    const pA2 = made[made.length - 1];
-    app.ui.dispatch('seek', 70); // user seeks to 70 while A is still reopening
-    pA2.firstShown = true;
-    frames(2);
-    assert.strictEqual(S.getTab(app.ui.getState()).frame, 70, 'recovering follower A does not rewind workspace to 50');
+/** Two 30 fps tiles on enginePlayer decoders that loop and seek by time, for the Compare cases below. */
+function withTwoTiles(fn) {
+  withPage((page) => {
+    page.send({ type: 'open' });
+    const [pA, pB] = page.made;
+    pA.n = 120; pB.n = 240;
+    for (const p of [pA, pB]) {
+      p.frameSeekTime = (f) => f / 30;
+      p.seekTime = (s) => { p.calls.push(['seekTime', s]); p.frame = Math.round(s * 30); };
+      p.setLoop = (v) => { p.loop = !!v; };
+    }
+    page.app.ui.render();
+    fn({ ...page, pA, pB });
   }, {
     cfg: {
       clips: [
@@ -1574,8 +1674,65 @@ test('Astra regressions: offset nudge keeps playing, Compare loop stays shared, 
     createPlayer: enginePlayer,
     raf: true,
   });
+}
 
-  // #5 & #6: FramePlayer (shown >= 0, no firstShown) triggers autoplay; natural end posts final pos.
+test('compare: Loop keeps every decoder\'s own loop off (one shared wrap through the clock\'s end)', () => {
+  withTwoTiles(({ app, pA, pB }) => {
+    pA.loop = true; pB.loop = true;
+    app.ui.dispatch('loop');
+    assert.deepStrictEqual([!!pA.loop, !!pB.loop], [false, false]);
+  });
+});
+
+test('compare: a follower\'s offset edit while playing keeps it playing', () => {
+  withTwoTiles(({ app, pA, pB }) => {
+    app.ui.dispatch('playPause');
+    assert.deepStrictEqual([pA.isPlaying(), pB.isPlaying()], [true, true]);
+    app.ui.setState(S.nudgeOffset(app.ui.getState(), 'B', 10));
+    assert.strictEqual(pB.isPlaying(), true);
+  });
+});
+
+test('compare: a clock with an offset does not shift the shared frame twice', () => {
+  withTwoTiles(({ app, pB, frames }) => {
+    app.ui.setState(S.nudgeOffset(app.ui.getState(), 'B', 10));
+    app.ui.dispatch('seek', 40);
+    frames(2);
+    assert.strictEqual(pB.currentFrame(), 50, 'B is at 40 + 10');
+    app.ui.dispatch('setClock', 'B');
+    frames(2);
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 40, 'the shared frame stays 40 with B (+10 f) the clock');
+  });
+});
+
+test('compare: a reopened follower catches up with the timeline instead of rewinding it', () => {
+  withTwoTiles(({ app, send, made, frames }) => {
+    app.ui.dispatch('setClock', 'B');
+    app.ui.dispatch('seek', 50);
+    send({ type: 'libav', clipId: 'A', meta: { size: 1, duration: 4 } }); // restarts follower A at frame 50
+    const pA2 = made[made.length - 1];
+    app.ui.dispatch('seek', 70); // the user seeks while A is still reopening
+    pA2.firstShown = true;
+    frames(2);
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 70, 'the timeline stays at 70');
+  });
+});
+
+test('clock frames with a fractional ms offset map back to the shared frame they were sent from (no 1-frame drift)', () => {
+  withPage(({ app, send, made }) => {
+    send({ type: 'open' });
+    const pA = made[0];
+    app.ui.setState(S.setOffset(app.ui.getState(), 'A', { unit: 'ms', v: 62.5 })); // 1.5 frames at 24 fps
+    for (const f of [0, 1, 24, 100, 200]) {
+      app.ui.dispatch('seek', f);
+      const sent = seeksOf(pA).pop();
+      pA.hooks.onFrame(sent);
+      assert.strictEqual(S.getTab(app.ui.getState()).frame, f, `shared ${f} -> decoder ${sent} -> back`);
+    }
+  }, { cfg: { clips: [MIXED[0], MIXED[1]], tiles: ['A', 'B'] } });
+});
+
+test('a FramePlayer (shown counter, no firstShown) starts autoplay', () => {
   const framePlayerStub = (clip, host, hooks) => {
     const p = enginePlayer(clip, host, hooks);
     p.firstShown = undefined;
@@ -1583,21 +1740,82 @@ test('Astra regressions: offset nudge keeps playing, Compare loop stays shared, 
     p.shownCount = 1;
     return p;
   };
-  withPage(({ app, send, made, posted, frames }) => {
+  withPage(({ app, send, frames }) => {
     send({ type: 'open' });
     frames(2);
-    assert.strictEqual(S.getTab(app.ui.getState()).playing, true, 'FramePlayer with shown=0 triggers autoplay');
-    const p = made[0];
-    p.playing = false;
-    p.frame = p.n - 1;
-    p.hooks.onEnded({ natural: true });
-    const posMsgs = posted.filter((m) => m.type === 'pos');
-    assert.ok(posMsgs.length > 0 && posMsgs[posMsgs.length - 1].t >= 2.9, 'natural end posts final pos to clear bookmark');
+    assert.strictEqual(S.getTab(app.ui.getState()).playing, true);
   }, {
     cfg: { clips: [{ id: 'A', name: 'seq', fps: 30, frames: 90, duration: 3 }], prefs: { autoplay: true } },
     createPlayer: framePlayerStub,
     raf: true,
   });
+});
+
+test('a natural end reports the final position (the bookmark is cleared)', () => {
+  withPage(({ send, made, posted }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    p.frame = p.n - 1;
+    p.hooks.onEnded({ natural: true });
+    const pos = posted.filter((m) => m.type === 'pos').pop();
+    assert.ok(pos && pos.t >= 2.9, `final pos ${pos && pos.t}`);
+  }, { cfg: { clips: [{ id: 'A', name: 'a.mp4', fps: 30, frames: 90, duration: 3 }] }, createPlayer: enginePlayer, raf: true });
+});
+
+test('playing on, the position is flushed when the page hides (not lost to the 2 s report interval)', () => {
+  withPage(({ doc, app, send, made, posted }) => {
+    send({ type: 'open' });
+    app.ui.dispatch('playPause');
+    made[0].hooks.onFrame(40);
+    made[0].hooks.onFrame(41); // within 2 s: not reported
+    const n = posted.filter((m) => m.type === 'pos').length;
+    doc.visibilityState = 'hidden';
+    doc.fire('visibilitychange');
+    const pos = posted.filter((m) => m.type === 'pos');
+    assert.strictEqual(pos.length, n + 1);
+    assert.ok(Math.abs(pos[pos.length - 1].t - 41 / 25) < 1e-9, `t ${pos[pos.length - 1].t}`);
+  });
+});
+
+test('Opening… stays after a decoder says ready until it presents a picture', () => {
+  const lateFrame = (clip, host, hooks) => {
+    const p = enginePlayer(clip, host, hooks);
+    const tick = p.tick;
+    p.tick = (now) => { if (!p.opened) { p.opened = true; hooks.onReady(); return; } tick(now); };
+    return p;
+  };
+  withPage(({ doc, send, made, frames }) => {
+    send({ type: 'open' });
+    frames(1); // the decoder opened its file: onReady, no picture yet
+    assert.strictEqual(made[0].opened, true);
+    assert.strictEqual(made[0].firstShown, false);
+    assert.strictEqual(doc.getElementById('overlay').hidden, false, 'still opening');
+    frames(1);
+    assert.strictEqual(made[0].firstShown, true);
+    assert.strictEqual(doc.getElementById('overlay').hidden, true, 'the first picture takes it away');
+  }, { createPlayer: lateFrame, raf: true });
+});
+
+test('Audio track page in Compare: the sound tile\'s streams, and a pick switches that decoder', () => {
+  const twoTrackPlayer = (clip, host, hooks) => {
+    const p = trackPlayer(clip, host, hooks);
+    if (clip.id === 'B') p.audioTracks = [{ id: 7, codec: 'opus', lang: 'fra', title: 'Français' }, { id: 8, codec: 'aac', lang: 'spa', title: 'Español' }];
+    return p;
+  };
+  withPage(({ doc, app, send, made }) => {
+    send({ type: 'open' });
+    const [pA, pB] = made;
+    pA.hooks.onTracks(pA);
+    pB.hooks.onTracks(pB);
+    app.ui.setState(S.setSound(app.ui.getState(), 'B'));
+    app.ui.controls.show('audio');
+    const radios = () => Array.from(doc.getElementById('panel').querySelectorAll('[role=radio]'));
+    const text = radios().map((b) => b.textContent).join(' | ');
+    assert.ok(/Français/.test(text) && /Español/.test(text) && !/English/.test(text), text);
+    radios()[1].click();
+    assert.deepStrictEqual(pB.calls.filter((c) => c[0] === 'selectAudio'), [['selectAudio', 8]]);
+    assert.deepStrictEqual(pA.calls.filter((c) => c[0] === 'selectAudio'), []);
+  }, { cfg: { clips: [CLIPS[0], CLIPS[1]], tiles: ['A', 'B'] }, createPlayer: twoTrackPlayer, extraWidgets: { Subtitles: SubtitlesStub } });
 });
 
 test('native thumbnails: the host\'s reply reaches media/engine.js onHostThumb with this page\'s id', () => {
