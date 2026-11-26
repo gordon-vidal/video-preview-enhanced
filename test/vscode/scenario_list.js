@@ -71,7 +71,7 @@ module.exports = [
     name: 'clip-export',
     journey: 'Lossless A–B clip export in the player and in an offset Compare with an ineligible tile',
     sources: ['src/clipexport.js', 'src/clipsource.js', 'src/nativepts.js', 'src/clipmovie.js', 'src/cliprange.js', 'src/rangecmd.js',
-      'media/comparerange.js', ...PLAYER, ...COMPARE, ...HOST],
+      ...PLAYER, ...COMPARE, ...HOST],
     steps: [{ case: 'clip_export' }, { case: 'clip_export_native' }],
   },
   {

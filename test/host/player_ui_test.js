@@ -1974,6 +1974,18 @@ async function phase34() {
     assert.strictEqual($('toast').textContent, 'Default');
   });
 
+  // Production defaults: no tickMs means a decoder clock (no page timer), and without a subtitle controller or a
+  // decoder's streams the panel lists no tracks (the mock-up's demo list lives in tools/mockup/render.js).
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, dom, $ }) => {
+    assert.ok(!dom.timers.some((x) => x && x.ms === 42), 'no page clock by default');
+    ui.controls.show('audio');
+    assert.strictEqual($('panel').querySelectorAll('[role=radio]').length, 0, 'no demo audio tracks');
+    assert.ok(!/Director Commentary|English \(AAC 2\.0\)/.test($('panel').textContent), 'no demo audio names');
+    ui.controls.show('subs');
+    assert.ok(!/English \(SRT\)/.test($('panel').textContent), 'no demo subtitle track');
+    assert.strictEqual($('panel').querySelectorAll('[role=radio]').length, 0, 'no subtitle choices without tracks');
+  }, { env: { tickMs: undefined, widgets: { ...toolWidgets(), VpePlayerUiTools: undefined } } });
+
   // A decoder clock (tickMs: 0): user transport goes out through onTransport, decoder frames and ends come in.
   {
     const evs = [];

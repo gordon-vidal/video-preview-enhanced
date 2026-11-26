@@ -1,7 +1,7 @@
 'use strict';
-// The player's bar (seek bar and buttons), shared by the player (src/extension.js html()) and compare
-// (src/unified-html.js, one page for 1 to N videos), so both look and behave the same (docs/notes/ui-simple.md, docs/notes/compare-ui.md).
-// Compare leaves out CC and the player's Compare button, and adds its own panel and reorder buttons.
+// The player's bar (seek bar and buttons) of the unified page (src/unified-html.js, one page for 1 to N videos;
+// docs/notes/ui-simple.md, docs/notes/compare-ui.md). Compare's layout, sync and panel buttons are not here: the page's
+// controller adds them (media/player-ui.js barButton).
 
 // Every bar icon: an 18 px box on a 24-unit grid with 1.6 stroke (= 1.20 px rendered) and uniform ~14.4-15u vertical span.
 const STROKE = '1.6';
@@ -23,22 +23,6 @@ const icons = {
   cc: svg('<rect x="3" y="5" width="18" height="14" rx="2"/>' +
     '<path d="M10.5 10h-2a1.5 1.5 0 0 0-1.5 1.5v1A1.5 1.5 0 0 0 8.5 14h2m6.5-4h-2a1.5 1.5 0 0 0-1.5 1.5v1A1.5 1.5 0 0 0 15 14h2"/>'),
   compare: svg(frame + '<path d="M12 4.5v15"/>'),
-  cmpPanel: svg('<path d="M9.5 6.5h10M9.5 12h10M9.5 17.5h10"/>' +
-    '<circle cx="5.2" cy="6.5" r="0.9" fill="currentColor" stroke="none"/>' +
-    '<circle cx="5.2" cy="12" r="0.9" fill="currentColor" stroke="none"/>' +
-    '<circle cx="5.2" cy="17.5" r="0.9" fill="currentColor" stroke="none"/>'),
-  spotlight: svg('<rect x="4" y="4.5" width="16" height="9.5" rx="1.6"/>' +
-    '<rect x="4" y="16.5" width="6.8" height="3.2" rx="0.9"/>' +
-    '<rect x="13.2" y="16.5" width="6.8" height="3.2" rx="0.9"/>'),
-  grid: svg('<rect x="4" y="4" width="6.8" height="6.8" rx="1.3"/>' +
-    '<rect x="13.2" y="4" width="6.8" height="6.8" rx="1.3"/>' +
-    '<rect x="4" y="13.2" width="6.8" height="6.8" rx="1.3"/>' +
-    '<rect x="13.2" y="13.2" width="6.8" height="6.8" rx="1.3"/>'),
-  split: svg('<rect x="4" y="5" width="16" height="14" rx="1.6"/><path d="M12 3v18"/>'),
-  plus: svg('<path d="M12 5.5v13M5.5 12h13"/>'),
-  sync: svg('<rect x="4" y="6" width="11.5" height="4.2" rx="1.1"/>' +
-    '<rect x="8.5" y="13.8" width="11.5" height="4.2" rx="1.1"/>' +
-    '<path d="M12 3.5v17" stroke-dasharray="1.8 2.2"/>'),
   about: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-9.5v.01"/>'),
   settings: svg('<circle cx="12" cy="12" r="3"/>' +
     '<path d="M10 3h4l.7 2.6 2.1 1.2 2.6-.7 2 3.5-1.9 1.9v2.4l1.9 1.9-2 3.5-2.6-.7-2.1 1.2L14 22h-4l-.7-2.2-2.1-1.2-2.6.7-2-3.5 1.9-1.9v-2.4L2.6 9.6l2-3.5 2.6.7 2.1-1.2Z" transform="translate(0 -.5)"/>'),
@@ -59,15 +43,6 @@ const pictures = [
   svg(frame + '<path d="M9 9h6v6H9Zm3 0v6m-3-3h6"/>', 'i-actual'),
 ].join('');
 
-const compareCapsule = `    <div id="cmpGroup" class="cmp-group" role="group" aria-label="Compare controls">
-      <button id="layoutSpotlightBtn" class="ib" data-layout="spotlight" title="Spotlight layout" aria-label="Spotlight layout" aria-pressed="false">${icons.spotlight}</button>
-      <button id="layoutGridBtn" class="ib" data-layout="grid" title="Equal Grid layout" aria-label="Equal Grid layout" aria-pressed="true">${icons.grid}</button>
-      <button id="layoutSplitBtn" class="ib" data-layout="split" title="Split Wipe (2 videos)" aria-label="Split Wipe layout" aria-pressed="false" hidden>${icons.split}</button>
-      <span class="cmp-sep" aria-hidden="true"></span>
-      <button id="addPopBtn" class="ib" title="Add video to Compare" aria-label="Add video to Compare" aria-expanded="false" aria-controls="addPop">${icons.plus}</button>
-      <button id="syncModeBtn" class="ib" title="Sync mode: adjust per-clip frame offsets" aria-label="Sync mode" aria-pressed="false">${icons.sync}</button>
-      <button id="cmpBtn" class="ib" title="Compare: videos, offsets, clock, sound" aria-label="Compare" aria-expanded="false" aria-controls="panel">${icons.cmpPanel}</button>
-    </div>\n`;
 /** The player's Compare button: starts Compare after a confirmation, or adds to an open one (`open`). */
 const playerCompareButton = (visible, open) => {
   const label = open ? 'Add to Compare' : 'Compare';
@@ -89,8 +64,11 @@ const folderCapsule = `    <div id="folderCap" class="folder-cap" role="group" a
     </div>
 `;
 
-/** The bar's markup; `compare`: the compare page's variant; `folder`: the player of a file (adds the folder capsule). */
-function barHtml({ compare = false, canCompare = true, compareOpen = false, folder = false } = {}) {
+/**
+ * The bar's markup. `compareOpen`: the Compare button adds to an open Compare ("Add to Compare"); `folder`: the player of
+ * a file (adds the folder capsule).
+ */
+function barHtml({ canCompare = true, compareOpen = false, folder = false } = {}) {
   return `<div id="bar">
   <div id="seekRow">
     <input id="seek" type="range" min="0" max="0" value="0" step="1" aria-label="Position">
@@ -110,9 +88,8 @@ function barHtml({ compare = false, canCompare = true, compareOpen = false, fold
     <button id="setBBtn" class="ib rng" title="Set range end (B)" aria-label="Set range end (B)" aria-pressed="false" aria-keyshortcuts="B">${rangeLabel('B')}</button>
     <span class="spacer"></span>
     <button id="remoteLiveBtn" class="ib live-chip mono" title="Live transcode settings" aria-label="Live transcode settings" aria-expanded="false" aria-controls="panel" hidden></button>
-${compare ? '' : `    <button id="tracks" class="ib" title="Subtitles  C" aria-label="Subtitles" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="C" hidden><span class="ccline">${icons.cc}</span></button>
-`}
-${compare ? compareCapsule : (folder ? folderCapsule : '') + playerCompareButton(canCompare, compareOpen)}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I">${icons.about}</button>
+    <button id="tracks" class="ib" title="Subtitles  C" aria-label="Subtitles" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="C" hidden><span class="ccline">${icons.cc}</span></button>
+${(folder ? folderCapsule : '') + playerCompareButton(canCompare, compareOpen)}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I">${icons.about}</button>
     <button id="rate" class="ib speed mono" title="Speed: click, or scroll to change" aria-label="Speed 1×" aria-expanded="false" aria-controls="panel">1×</button>
     <button id="cog" class="ib" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="panel">${icons.settings}</button>
     <button id="picBtn" class="ib" data-mode="fit" title="Picture size: Fit. Click for Fill  Z" aria-label="Picture size: Fit. Next: Fill" aria-keyshortcuts="Z">${pictures}</button>

@@ -683,6 +683,86 @@ const context = { extensionUri: Uri.file(ROOT) };
       handlers.dispose();
     }
 
+    { // reloadAll (ffmpeg set up or changed) is one host transaction: no throwaway replaceTile per tile before the
+      // refresh, the webview is set once, and the new page's sessionState carries every reloaded tile.
+      const { panel, posts, handlers } = fakePanel();
+      const clipA = await prepareClip(a, {});
+      const viewer = createUnifiedViewer({ vscode, context, panel, clip: clipA, registry: null, deps: deps() });
+      viewer.show();
+      await open(handlers);
+      assert.ok(await viewer.addUri(b));
+      await settle();
+      let sets = 0;
+      let html = panel.webview.html;
+      Object.defineProperty(panel.webview, 'html', { get: () => html, set: (v) => { sets++; html = v; }, configurable: true });
+      posts.length = 0;
+      await viewer.reloadAll('ffmpeg');
+      assert.deepStrictEqual(posts.filter((m) => m.type === 'replaceTile'), [], 'no replaceTile before the refresh');
+      assert.strictEqual(sets, 1, 'one webview refresh');
+      await open(handlers, 2);
+      const st = posts.find((m) => m.type === 'sessionState');
+      assert.deepStrictEqual(st.clips.map((c) => c.label), ['a.mp4', 'b.mp4'], 'both tiles, in order');
+      assert.ok(st.clips.every((c) => c.clipId !== clipA.id), 'under new ids (new decoders)');
+      handlers.dispose();
+    }
+
+    { // Folder: latest request wins. A slow Next is overtaken by a later choice (here: the video already shown, a no-op);
+      // the slow preparation finishing afterwards must not replace the tile.
+      const sub = path.join(dir, 'rapid');
+      fs.mkdirSync(sub);
+      const w = (n) => { const p = path.join(sub, n); fs.writeFileSync(p, Buffer.from([1, 2, 3])); return Uri.file(p); };
+      const x1 = w('x1.mp4');
+      w('x2.mp4');
+      w('x3.mp4');
+      let hold = null;
+      const nativeFor = async (file) => { if (hold && path.basename(file) === 'x2.mp4') await hold; return null; };
+      const { panel, posts, handlers } = fakePanel();
+      const clip1 = await prepareClip(x1, {});
+      const replyOf = {};
+      createUnifiedViewer({ vscode, context, panel, clip: clip1, registry: null, deps: deps({
+        nativeFor,
+        pick: async (title) => (replyOf[title] ? replyOf[title]() : undefined),
+        rail: { cache: null, probe: null, prefs: { get: () => ({}), set: () => {} }, layout: () => 'side', caseless: false },
+      }) }).show();
+      await open(handlers);
+      await settle();
+      await handlers.message({ type: 'rail', page: 1, op: 'open' });
+      await settle();
+      const list = posts.filter((m) => m.type === 'rail' && m.op === 'list').pop();
+      const idOf = (name) => list.entries.find((e) => e.name === name).id;
+      posts.length = 0;
+      let release;
+      hold = new Promise((r) => { release = r; });
+      const slow = handlers.message({ type: 'neighbour', page: 1, d: 1 }); // Next → x2.mp4, held in preparation
+      await tick();
+      await handlers.message({ type: 'rail', page: 1, op: 'activate', gen: list.gen, id: idOf('x1.mp4') }); // stay on x1
+      release();
+      await slow;
+      await settle();
+      assert.deepStrictEqual(posts.filter((m) => m.type === 'replaceTile').map((m) => m.clip.label), [], 'the stale Next is dropped');
+      // A newer request that does replace still shows.
+      hold = null;
+      await handlers.message({ type: 'rail', page: 1, op: 'activate', gen: list.gen, id: idOf('x3.mp4') });
+      await settle();
+      assert.deepStrictEqual(posts.filter((m) => m.type === 'replaceTile').map((m) => m.clip.label), ['x3.mp4']);
+
+      // Replace video: a second Replace on the same tile (here cancelled) makes the first, still preparing, stale.
+      const shown = posts.filter((m) => m.type === 'replaceTile').pop().newId;
+      posts.length = 0;
+      hold = new Promise((r) => { release = r; });
+      let calls = 0;
+      replyOf['Replace x3.mp4'] = async () => (++calls === 1 ? [Uri.file(path.join(sub, 'x2.mp4'))] : undefined);
+      const first = handlers.message({ type: 'replaceVideo', page: 1, clipId: shown });
+      await tick();
+      await handlers.message({ type: 'replaceVideo', page: 1, clipId: shown });
+      release();
+      await first;
+      await settle();
+      assert.strictEqual(calls, 2);
+      assert.deepStrictEqual(posts.filter((m) => m.type === 'replaceTile'), [], 'the older Replace is dropped');
+      handlers.dispose();
+    }
+
     { // Folder ‹ / › with openFolderFile (Option B tab swap): delegates to host with rail state & fromAutoNext instead of replacing in place.
       const { panel, posts, handlers } = fakePanel();
       const clipA = await prepareClip(a, {});

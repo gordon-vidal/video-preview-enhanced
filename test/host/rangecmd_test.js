@@ -78,7 +78,6 @@ assert.strictEqual(c.ss, String(Math.round((11.5 * 1001 / 30000) * 1e4) / 1e4));
 assert.ok(c.exact.includes(`-i '/home/u/it'\\''s.mov' `), c.exact);
 
 const { containerFor, fallbackFor, streamsForClip, validRange, selectRange, copyArgs } = require('../../src/cliprange');
-const { offsetSeconds, mapRange } = require('../../media/comparerange');
 assert.strictEqual(containerFor('clip.mov', 'mov,mp4,m4a'), '.mov');
 assert.strictEqual(containerFor('clip.avi', 'avi'), '.mp4');
 assert.strictEqual(fallbackFor('clip.webm', 'matroska,webm'), '.webm');
@@ -92,14 +91,6 @@ assert.deepStrictEqual(streamsForClip([
 ]), { video, audio, subtitles });
 assert(!validRange({ a: 2, b: 1, early: 0 }));
 assert(!validRange({ a: 1, b: Infinity, early: 0 }));
-const masterOffset = offsetSeconds({ v: 2, unit: 'frames' }, 25);
-const followerOffset = offsetSeconds({ v: -50, unit: 'ms' }, 30);
-const follower = mapRange(0.25 - masterOffset, 0.5 - masterOffset, followerOffset, 30, false);
-assert(Math.abs(follower.a - 0.12) < 1e-9 && Math.abs(follower.b - 0.37) < 1e-9);
-assert.strictEqual(follower.early, 1 / 60);
-const newClock = mapRange(0.25 - masterOffset, 0.5 - masterOffset, followerOffset, 30, true);
-assert.strictEqual(newClock.a, follower.a);
-assert.strictEqual(newClock.early, 0);
 const frames = [10, 10.04, 10.11, 10.14].map((t) => ({ t, duration: 0.04 }));
 assert.deepStrictEqual(selectRange({ a: 0.04, b: 0.11, early: 0 }, frames, 10, 0.001, 10.18), {
   first: 1, last: 2, start: 10.04, end: 10.14,

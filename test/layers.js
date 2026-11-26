@@ -216,7 +216,6 @@ const unit = [
   { file: 'test/unit/codec_utils_test.js', sources: ['media/codec-utils.js', 'media/engine.js'] },
   { file: 'test/unit/compare_metrics_test.js', sources: ['media/compare-metrics.js', 'media/compare-compositor.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
   { file: 'test/unit/frame_player_test.js', sources: ['media/frame-player.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
-  { file: 'test/unit/comparerange_test.js', sources: ['media/comparerange.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
   { file: 'test/unit/gl_renderer_test.js', sources: ['media/gl-renderer.js', 'media/engine.js', 'media/compare-compositor.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
   { file: 'test/unit/scrub_drag_test.js', sources: ['media/range-drag.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
   { file: 'test/unit/stepgoal_test.js', sources: ['media/stepgoal.js', 'media/compare-sync.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },

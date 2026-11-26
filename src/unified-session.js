@@ -84,6 +84,8 @@ const DEFAULT_MAX = 8;
 const TITLE_NAMES = 3;
 /** Page state the 'sessionState' message on 'ready' carries anyway: not queued before the page is ready. */
 const STATE_MESSAGES = new Set(['openVideo', 'replaceTile']);
+/** What a batch (session.batch) drops: the tile changes its closing render carries in the new page's sessionState. */
+const BATCH_DROPPED = new Set([...STATE_MESSAGES, 'removeVideo']);
 
 const SOURCE_KINDS = new Set(['file', 'url', 'sequence']);
 const AB_KINDS = new Set(['exportRange', 'clipRange', 'ffmpegRange', 'exportFrame']);
@@ -237,6 +239,8 @@ function createUnifiedSession(deps) {
   let ready = false;
   /** @type {HostToPageMessage[]} posts before the page is ready (toasts): sent on 'ready' */
   let queued = [];
+  /** Open session.batch calls: while > 0 tile changes are not posted one by one, other posts wait for the new page. */
+  let batchDepth = 0;
   /** @type {Map<string, { w: number, h: number }>} */
   const tileSizes = new Map();
   /** @type {TileSize | null} the last size the page reported, for any tile */
@@ -276,6 +280,10 @@ function createUnifiedSession(deps) {
   /** @param {HostToPageMessage} m */
   function post(m) {
     if (disposed) return;
+    if (batchDepth > 0) {
+      if (!BATCH_DROPPED.has(m.type)) queued.push(m);
+      return;
+    }
     if (!ready) {
       if (!STATE_MESSAGES.has(m.type)) queued.push(m);
       return;
@@ -631,6 +639,32 @@ function createUnifiedSession(deps) {
     return html;
   }
 
+  /**
+   * A host transaction: the clip changes `fn` makes (addClip, replaceClip, reloadClip, removeClip ...) post nothing
+   * one by one; the page is set once at the end (render), and its 'ready' sessionState carries them all. Other posts
+   * made meanwhile (toasts) wait for that page. `fn` may be async: the batch ends when its promise settles, also on a
+   * failure (the changes made until then still show). Nested batches render once, at the outermost end.
+   * @template T
+   * @param {() => T} fn
+   * @returns {T}
+   */
+  function batch(fn) {
+    batchDepth++;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (--batchDepth === 0 && !disposed) render();
+    };
+    let out;
+    try { out = fn(); } catch (e) { finish(); throw e; }
+    if (out && typeof (/** @type {any} */ (out)).then === 'function') {
+      return /** @type {any} */ (Promise.resolve(out).finally(finish));
+    }
+    finish();
+    return out;
+  }
+
   function dispose() {
     if (disposed) return;
     capture = false;
@@ -643,8 +677,10 @@ function createUnifiedSession(deps) {
   }
 
   const session = {
-    addClip, removeClip, replaceClip, reloadClip, leaveCompare, shouldCapture, onMessage, render, dispose, post, postNativeReply,
-    clipFor, setOpenTarget,
+    addClip, removeClip, replaceClip, reloadClip, leaveCompare, shouldCapture, onMessage, render, batch, dispose, post,
+    postNativeReply, clipFor, setOpenTarget,
+    /** A session.batch is open (its tile changes wait for one render). */
+    get batching() { return batchDepth > 0; },
     /** What the next page shows first (null: nothing), until its 'ready' spends it. */
     get openTarget() { return openTarget; },
     /** A clip's last reported position, or null. @param {string} id */

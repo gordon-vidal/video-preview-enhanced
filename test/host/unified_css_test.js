@@ -290,6 +290,17 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.ok(z(RAIL, '.rail-collapse-tab') > z(RAIL, '.rail'), '.rail-collapse-tab above .rail');
   assert.ok(z(PLAYER, '#notice') > z(PLAYER, '#toast'), '#notice above #toast');
   assert.ok(z(PLAYER, '#pxread') > z(PLAYER, '#toast'), '#pxread above #toast');
+  // Panels sit strictly above the rail (no tie decided by DOM order) and its collapse tab; the modal #sheet above
+  // every panel, popover, menu and the rail.
+  assert.ok(z(PLAYER, '.panel') > z(RAIL, '.rail'), '.panel above .rail');
+  assert.ok(z(PLAYER, '.panel') > z(RAIL, '.edge-zone'), '.panel above the rail edge tab');
+  const overlays = [[PLAYER, '.panel'], [PLAYER, '#ctxmenu'], [COMPARE, '#menu'], [RAIL, '.rail'], [RAIL, '.rail-collapse-tab'],
+    [RAIL, '.vpe-pop'], [RAIL, '.hover-pop'], [COMPARE, '.add-pop'], [COMPARE, '.cell.lifted'], [COMPARE, '.splitter']];
+  for (const [css, sel] of overlays) assert.ok(z(PLAYER, '#sheet') > z(css, sel), `#sheet above ${sel}`);
+  // One #pxread-only layer rule (besides the shared #pxread, #stats, #goto base): a duplicate drifted out of sync before.
+  const pxRules = rules(PLAYER).filter((x) => !x.at && x.selectors.length === 1 && norm(x.selectors[0]) === '#pxread'
+    && /z-index/.test(x.body));
+  assert.strictEqual(pxRules.length, 1, '#pxread z-index is set once');
 }
 
 console.log('unified_css: ok');

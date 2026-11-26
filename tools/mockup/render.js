@@ -46,7 +46,7 @@ function sanitizeCssForInlineFrame(css) {
  * and #notice banner, so the tool and lifecycle controllers run against the same elements as production.
  */
 function stageMarkupHtml() {
-  const realBarHtml = barHtml({ compare: false, canCompare: true, compareOpen: false, folder: true });
+  const realBarHtml = barHtml({ canCompare: true, compareOpen: false, folder: true });
   const realRailHtml = folderRailHtml();
   return `<div id="main">
     <div id="stage" class="fit">
@@ -363,6 +363,39 @@ ${inlinedScripts}
       '<span class="harness-pill">Capture: <strong>' + (tab.capture ? (inOtherEditor ? 'PAUSED (other tab)' : 'ON') : 'OFF') + '</strong></span>';
   }
 
+  // The mock-up's demo sound and subtitle tracks: media/player-ui.js shows none without a decoder, so the harness wraps
+  // VpeControls the way media/player-unified.js wrapControls does with the decoder's real streams.
+  const demoTracks = { audio: 'a0', sub: 'en' };
+  const DEMO_AUDIO = [{ id: 'a0', main: 'English (AAC 2.0)' }, { id: 'a1', main: 'Director Commentary' }];
+  const DEMO_SUBS = [{ key: 'en', main: 'English (SRT)', sub: 'Sidecar' }];
+  function demoControls(C) {
+    if (!C || typeof C.create !== 'function') return C;
+    return Object.assign({}, C, {
+      create(o) {
+        let inst = null;
+        const act = Object.assign({}, o.act, {
+          selectAudio(id) { demoTracks.audio = id; inst.refresh(); },
+          selectSub(k) { demoTracks.sub = k; inst.refresh(); },
+        });
+        const get = () => {
+          const s = o.get();
+          const sub = DEMO_SUBS.find((x) => x.key === demoTracks.sub);
+          const audio = DEMO_AUDIO.map((a) => Object.assign({}, a, { checked: a.id === demoTracks.audio }));
+          return Object.assign({}, s, {
+            subsLabel: sub ? sub.main : 'Off',
+            audioLabel: (DEMO_AUDIO.find((a) => a.id === demoTracks.audio) || DEMO_AUDIO[0]).main,
+            tracks: Object.assign({}, s.tracks, {
+              on: !!sub, label: sub ? sub.main : 'Off', sel: demoTracks.sub, audio,
+              subs: DEMO_SUBS.map((x) => Object.assign({}, x, { checked: x.key === demoTracks.sub })),
+            }),
+          });
+        };
+        inst = C.create(Object.assign({}, o, { get, act }));
+        return inst;
+      },
+    });
+  }
+
   const ui$ = globalThis.VpePlayerUi.create({
     doc: document,
     win: window,
@@ -370,7 +403,7 @@ ${inlinedScripts}
     engine,
     host,
     widgets: {
-      VpeControls: typeof VpeControls !== 'undefined' ? VpeControls : globalThis.VpeControls,
+      VpeControls: demoControls(typeof VpeControls !== 'undefined' ? VpeControls : globalThis.VpeControls),
       VpeFolderRail: typeof VpeFolderRail !== 'undefined' ? VpeFolderRail : globalThis.VpeFolderRail,
       VpeCtxMenu: typeof VpeCtxMenu !== 'undefined' ? VpeCtxMenu : globalThis.VpeCtxMenu,
       VpeAbLoop: typeof VpeAbLoop !== 'undefined' ? VpeAbLoop : globalThis.VpeAbLoop,
@@ -388,6 +421,8 @@ ${inlinedScripts}
     },
     initial: SCENARIOS[INITIAL_KEY],
     container: $('wb'),
+    // No decoder here: the page's own clock plays the fake engine (the production default, 0, waits for a decoder).
+    tickMs: 42,
     onChange: chrome,
   });
   host.connect(ui$.onHostMessage);

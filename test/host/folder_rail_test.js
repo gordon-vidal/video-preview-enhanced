@@ -467,7 +467,6 @@ function rail(fsys, o = {}) {
     assert.match(html, /stroke-width="1.6"/);
     assert.match(barHtml({ folder: true }), /<div id="folderCap"[^>]*hidden>[\s\S]*id="capPrev"[\s\S]*id="capCount"[\s\S]*id="capNext"[\s\S]*<\/div>\s*<button id="startCompareBtn"/, 'capsule right before Compare');
     assert.doesNotMatch(barHtml({}), /folderCap/, 'not for URLs and image sequences');
-    assert.doesNotMatch(barHtml({ compare: true, folder: true }), /folderCap/, 'not in Compare');
     const input = (folder) => ({ cspSource: 'c', uri: (...p) => p.join('/'), base: 'b', loader: 'l.js', nonce: 'n', cfg: {}, sequence: false, transport: 'message', debug: false, folder });
     const page = unifiedHtml(input(true));
     assert.match(page, /<div id="main">\s*<div id="stage"/, 'the stage sits in #main');

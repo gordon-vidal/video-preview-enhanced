@@ -67,8 +67,6 @@
    * @property {string | null} stepSize  null: the setting stepButtons decides
    * @property {string} picMode     'fit' | 'fill' | 'stretch' | 'actual'
    * @property {number} picZoom
-   * @property {string} subKey
-   * @property {string} audioId
    * @property {string} transcodeMode
    * @property {number} transcodeMaxBitrate
    * @property {number} transcodeRes
@@ -85,7 +83,7 @@
   function defaultPrefs() {
     return {
       onEnd: 'off', rate: 1, muted: true, volume: 0.85, stepSize: 'frame', picMode: 'fit', picZoom: 1,
-      subKey: 'en', audioId: 'a0', transcodeMode: 'auto', transcodeMaxBitrate: 0, transcodeRes: 0, timeMode: 0,
+      transcodeMode: 'auto', transcodeMaxBitrate: 0, transcodeRes: 0, timeMode: 0,
     };
   }
 
@@ -576,7 +574,8 @@
    *   onChange?: (ws: any, ui: any) => void,
    *   onTransport?: (ev: TransportCommand) => void,
    * }} env
-   * `tickMs: 0` hands the clock to a decoder: the page then reports what the user does through `onTransport` and
+   * `tickMs: 0` (the default) hands the clock to a decoder: a page without one (the mock-up) passes a tick, e.g. 42 ms.
+   * The page then reports what the user does through `onTransport` and
    * follows the decoder through the controller's `onDecoderFrame` / `onDecoderEnded`.
    */
   function create(env) {
@@ -641,7 +640,7 @@
     const splitBtn = barButton('splitBtn', 'Split Wipe (2 videos)', ICONS.split);
     const swapBtn = barButton('swapBtn', 'Swap sides  X', ICONS.swap);
     const syncBtn = barButton('syncBtn', 'Sync frame offsets', ICONS.sync);
-    // Compare's own panel button (src/bar.js barHtml({ compare }) has it; the unified bar does not): videos, offsets,
+    // Compare's own panel button (the bar of src/bar.js does not have it): videos, offsets,
     // clock and sound. Shown with two videos or more; the Compare / capture toggle beside it stays what it is.
     const cmpPanelBtn = (() => {
       let b = $('cmpBtn');
@@ -1097,12 +1096,12 @@
         tool('Codec X-ray', 'Codec X-ray', 'Shift+X', st.xray, () => insp.toggleXray()),
       ];
     };
-    /** ⚙ › Subtitles: the subtitle controller's tracks, delay and size (else the mockup's demo list). */
+    /**
+     * ⚙ › Subtitles: the subtitle controller's tracks, delay and size; none without it. The sound streams come from the
+     * page that knows the decoder (media/player-unified.js wrapControls fills `audio` and handles selectAudio).
+     */
     const subsPanel = () => {
-      const audio = [
-        { id: 'a0', main: 'English (AAC 2.0)', checked: prefs.audioId === 'a0' },
-        { id: 'a1', main: 'Director Commentary', checked: prefs.audioId === 'a1' },
-      ];
+      const audio = /** @type {any[]} */ ([]);
       if (subs) {
         const st = subs.getState();
         return {
@@ -1113,16 +1112,7 @@
           audio, delay: st.delayMs / 1000, size: st.sizePct / 100,
         };
       }
-      return {
-        on: prefs.subKey !== 'off',
-        label: prefs.subKey === 'off' ? 'Off' : 'English (SRT)',
-        sel: prefs.subKey,
-        subs: [
-          { key: 'off', main: 'Off', checked: prefs.subKey === 'off' },
-          { key: 'en', main: 'English (SRT)', sub: 'Sidecar', checked: prefs.subKey === 'en' },
-        ],
-        audio, delay: 0, size: 1,
-      };
+      return { on: false, label: 'Off', sel: 'off', subs: [], audio, delay: 0, size: 1 };
     };
 
     controls = W.VpeControls.create({
@@ -1174,8 +1164,8 @@
               ] : []),
             ],
           },
-          subsLabel: subs ? subs.getState().label : prefs.subKey === 'off' ? 'Off' : 'English (SRT)',
-          audioLabel: prefs.audioId === 'a0' ? 'English (AAC 2.0)' : 'Director Commentary',
+          subsLabel: subs ? subs.getState().label : 'Off',
+          audioLabel: 'Default',
           hasSound: hasAudio(t.soundId),
           tracks: subsPanel(),
           facts: facts(t.tiles[sel]),
@@ -1217,15 +1207,11 @@
         },
         resetPicture: () => { commit(S.setZoom(ws, 1, 0, 0)); controls.refresh(); },
         selectSub: (/** @type {string} */ k) => {
-          if (subs) {
-            subs.select(k === 'off' ? -1 : Number(k));
-            const st = subs.getState();
-            toast(st.track < 0 ? 'Subtitles off' : `Subtitles: ${st.label}`);
-            return;
-          }
-          prefs.subKey = k; drawBar(); controls.refresh(); toast(k === 'off' ? 'Subtitles off' : 'Subtitles: English');
+          if (!subs) return;
+          subs.select(k === 'off' ? -1 : Number(k));
+          const st = subs.getState();
+          toast(st.track < 0 ? 'Subtitles off' : `Subtitles: ${st.label}`);
         },
-        selectAudio: (/** @type {string} */ id) => { prefs.audioId = id; controls.refresh(); toast('Audio track switched'); },
         loadSubs: () => postHost({ type: 'loadSubs' }),
         // The panel steps in seconds and fractions (controls.js renderSubs); null resets.
         subDelay: (/** @type {number | null} */ d) => { if (subs) { if (d === null) subs.resetDelay(); else subs.adjustDelay(d * 1000); } },
@@ -2589,14 +2575,14 @@
       if (picBtn && W.VpePicture) pictureButton(picBtn, W.VpePicture, t.picMode, multi ? 'all videos' : '');
       else if (picBtn) picBtn.dataset.mode = t.picMode;
       // CC: one video only, and (with the subtitle controller) only once the clip has a track; until then C and
-      // ⚙ › Subtitles offer to load a file. Without the controller (the mock-up) its demo list shows.
+      // ⚙ › Subtitles offer to load a file. Without the controller there are no tracks and CC stays off.
       if (tracksBtn) tracksBtn.hidden = multi || !!(subs && !subs.getCcButtonState().visible);
       if (tracksBtn && subs) {
         const cc = subs.getCcButtonState();
         tracksBtn.classList.toggle('on', cc.on);
         tracksBtn.setAttribute('aria-label', cc.label);
         tracksBtn.title = cc.title;
-      } else if (tracksBtn) tracksBtn.classList.toggle('on', prefs.subKey !== 'off');
+      } else if (tracksBtn) tracksBtn.classList.toggle('on', false);
       if (muteBtn) {
         const noAudio = !hasAudio(t.soundId);
         muteBtn.disabled = noAudio;
@@ -2819,7 +2805,7 @@
       }
       return 'end';
     }
-    const tickMs = env.tickMs === undefined ? 42 : env.tickMs;
+    const tickMs = env.tickMs === undefined ? 0 : env.tickMs;
     if (tickMs > 0) {
       const timer = win.setInterval(() => {
         const t = tab();

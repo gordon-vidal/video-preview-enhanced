@@ -217,7 +217,7 @@ for (const n of [3, 4, 9]) {
   assert.match(src, /listen\(cellsEl, 'click', [\s\S]{0,400}e\.stopPropagation\(\);/, 'tile button clicks stop before stage play/pause');
   const css = require('fs').readFileSync(path.join(__dirname, '../../media/compare.css'), 'utf8');
   assert.match(css, /#stage\.sync-mode \.sync-pill/, 'sync steppers reveal in sync-mode');
-  assert.match(css, /#cmpGroup\.cmp-group/, 'grouped Compare capsule styled');
+  assert.doesNotMatch(css, /#cmpGroup/, 'no styles for the removed src/bar.js Compare capsule (player-ui.js adds the buttons)');
 }
 
 // ---- memory: 2-4 tiles exactly as before; 5-16 share fixed budgets ----

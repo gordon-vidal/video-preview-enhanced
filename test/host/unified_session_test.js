@@ -418,5 +418,57 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     assert.deepStrictEqual(s.order, ['a.mp4', 'b2']);
   }
 
+  { // session.batch: a host transaction. Tile changes post nothing one by one, the page is set once at the end, and
+    // its 'ready' sessionState carries them all; a toast made meanwhile waits for that page. Async and nested too.
+    const input = { cspSource: 'c:', uri: (...p) => p.join('/'), base: 'b', loader: 'l.js', nonce: 'N', cfg: {} };
+    const { s, posts, panel } = make({ renderHtml: () => input });
+    await s.onMessage({ type: 'ready' });
+    assert.ok(s.addClip(clip('b.mp4')));
+    posts.length = 0;
+    let htmlSets = 0;
+    let html = panel.webview.html;
+    Object.defineProperty(panel.webview, 'html', { get: () => html, set: (v) => { htmlSets++; html = v; } });
+
+    const out = s.batch(() => {
+      assert.strictEqual(s.batching, true);
+      s.reloadClip('a.mp4', { ...clip('a.mp4'), id: 'a2' });
+      s.batch(() => s.replaceClip('b.mp4', clip('c.mp4'))); // nested: no render of its own
+      assert.strictEqual(htmlSets, 0, 'a nested batch does not render');
+      s.addClip(clip('a2.mp4'));
+      s.removeClip('a2.mp4');
+      s.post({ type: 'toast', text: 'kept', ms: 1 });
+      return 'done';
+    });
+    assert.strictEqual(out, 'done', 'batch returns what fn returns');
+    assert.strictEqual(s.batching, false);
+    assert.deepStrictEqual(posts.map((m) => m.type), [], 'no replaceTile / openVideo / removeVideo / toast to the old page');
+    assert.strictEqual(htmlSets, 1, 'rendered once');
+    assert.strictEqual(s.ready, false, 'a new page: posts wait for its ready');
+    await s.onMessage({ type: 'ready' });
+    assert.deepStrictEqual(posts.map((m) => m.type), ['sessionState', 'toast']);
+    assert.deepStrictEqual(posts[0].order, ['a2', 'c.mp4'], 'the new page gets every change at once');
+
+    // Async: the batch lasts until the promise settles; a failure still renders the changes made until then.
+    posts.length = 0;
+    htmlSets = 0;
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const p = s.batch(async () => { await gate; s.replaceClip('c.mp4', clip('d.mp4')); });
+    assert.strictEqual(s.batching, true);
+    assert.strictEqual(htmlSets, 0);
+    release();
+    await p;
+    assert.deepStrictEqual([s.batching, htmlSets, posts.length], [false, 1, 0]);
+    await assert.rejects(s.batch(async () => { s.replaceClip('d.mp4', clip('e.mp4')); throw new Error('boom'); }), /boom/);
+    assert.deepStrictEqual([s.batching, htmlSets, s.order], [false, 2, ['a2', 'e.mp4']], 'a failed batch still renders');
+    assert.throws(() => s.batch(() => { throw new Error('sync'); }), /sync/);
+    assert.deepStrictEqual([s.batching, htmlSets], [false, 3]);
+    // Outside a batch the incremental posts work as before.
+    await s.onMessage({ type: 'ready' });
+    posts.length = 0;
+    s.replaceClip('e.mp4', clip('f.mp4'));
+    assert.deepStrictEqual(posts.map((m) => m.type), ['replaceTile']);
+  }
+
   console.log('unified_session_test: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

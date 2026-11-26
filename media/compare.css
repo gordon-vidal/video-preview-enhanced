@@ -288,23 +288,6 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   background: rgba(20, 20, 20, 0.86); border: 2px solid rgba(255, 255, 255, 0.85);
 }
 
-/* Grouped Compare Capsule inside the bottom player bar (#bar #row): pure monochrome, outline-only active state. */
-#cmpGroup.cmp-group {
-  display: inline-flex; align-items: center; gap: 2px;
-  padding: 2px 3px; margin: 0 3px; border-radius: 7px;
-  background: var(--vpe-fill-subtle);
-  border: 1px solid var(--vpe-bd-subtle);
-}
-#cmpGroup .ib { height: 24px; min-width: 24px; width: 26px; border-radius: 5px; border: 1px solid transparent; }
-#cmpGroup .ib[aria-pressed="true"],
-#cmpGroup .ib.active {
-  background: var(--vpe-fill-subtle);
-  border-color: var(--vpe-bd-active);
-  color: var(--vscode-foreground);
-}
-#cmpGroup .ib:disabled { opacity: 0.4; cursor: default; }
-#cmpGroup .cmp-sep { width: 1px; height: 14px; background: var(--vpe-bd-subtle); margin: 0 2px; flex: none; }
-
 /* Add popover anchored above the Compare capsule in the player bar (unified 86% frosted surface). */
 .add-pop {
   position: fixed; bottom: 52px; right: 120px; z-index: 15; width: 240px; box-sizing: border-box;
@@ -330,11 +313,9 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 /* Narrow panes shed Compare's bar buttons in this order, after player.css has dropped the range pins, the info button
    and the duration (640 px): the Compare toggle's words, Swap and Sync, Split, then Spotlight and Grid. The layouts, Swap
    and the offsets stay in the Compare panel (#cmpBtn), Swap also on X, so Picture size and Fullscreen at the bar's right
-   edge are never clipped. #addPopBtn ... #layoutSplitBtn are the capsule of src/bar.js's compare variant; #spotlightBtn
-   ... #syncBtn are the buttons the unified page's controller injects (media/player-ui.js barButton). */
+   edge are never clipped. #spotlightBtn ... #syncBtn are the buttons the unified page's controller injects
+   (media/player-ui.js barButton). */
 @media (max-width: 640px) {
-  #cmpGroup.cmp-group { padding: 1px 2px; gap: 1px; margin: 0 1px; }
-  #cmpGroup .cmp-sep { display: none; }
   /* The Compare / capture toggle keeps its icon and its name (title, aria-label) but loses its words. */
   #row #startCompareBtn > span:not(.cap-pulse) { display: none; }
   #row #startCompareBtn { gap: 0; }
@@ -343,14 +324,8 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 @media (max-width: 560px) {
   #row #splitBtn { display: none; }
 }
-@media (max-width: 500px) {
-  #addPopBtn, #syncModeBtn { display: none; }
-}
 @media (max-width: 440px) {
   #row #spotlightBtn, #row #gridBtn { display: none; }
-}
-@media (max-width: 400px) {
-  #layoutSpotlightBtn, #layoutGridBtn, #layoutSplitBtn { display: none; }
 }
 
 /* The bar: the clock video's letter before the time. */
@@ -402,7 +377,6 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 body.vscode-high-contrast .pill,
 body.vscode-high-contrast .tbtn,
 body.vscode-high-contrast .sync-pill,
-body.vscode-high-contrast #cmpGroup.cmp-group,
 body.vscode-high-contrast-light .tbtn {
   outline: 1px solid var(--vscode-contrastBorder, transparent);
 }

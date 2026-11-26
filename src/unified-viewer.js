@@ -971,6 +971,11 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const local = vscode.Uri.file(p);
     return /** @type {UriLike} */ (f ? f.uri.with({ path: local.path, fragment: '', query: '' }) : local);
   };
+  /** showFile requests started: the newest one wins (see showFile). */
+  let showGen = 0;
+  /** @type {Map<string, number>} per tile, the newest Replace request (onReplacePick): an older one's pick is dropped */
+  const replaceGens = new Map();
+  let replaceSeq = 0;
   /**
    * Adds a file to this panel (the page shows it beside the others). False: not added (a duplicate or a full panel
    * says so in the page).
@@ -988,12 +993,16 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
    * @param {string} file @param {{ autoPlay?: boolean }} [opts] autoPlay: Autoplay went on (the page plays it from 0)
    */
   async function showFile(file, opts = {}) {
+    // Latest request wins: a rapid Next / Prev (or rail click) starts another preparation before this one is done;
+    // only the newest is shown, an older one finishing later is dropped instead of flashing past.
+    const gen = ++showGen;
     const uri = uriOf(file);
     const only = session.clips.length === 1 ? session.clips[0] : null;
     if (!only) return addUri(uri);
     if (only.uri && fileKey(uri) === fileKey(/** @type {any} */ (only.uri))) return false;
     const c = await prepareClip(uri, prepDeps(uri, false));
-    return !disposed && session.replaceClip(only.id, c, { autoPlay: !!opts.autoPlay });
+    if (disposed || gen !== showGen) return false;
+    return session.replaceClip(only.id, c, { autoPlay: !!opts.autoPlay });
   }
 
   // ---- the folder rail (a file on disk only) ----
@@ -1080,9 +1089,20 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     onPickVideo: async () => prepareAll(
       deps.pick ? await deps.pick(`Add to ${session.title}`, firstDir(), true) : undefined, true),
     onReplacePick: async (oldId) => {
-      const old = clipOf(oldId);
-      const picked = deps.pick ? await deps.pick(`Replace ${old ? old.label : 'video'}`, firstDir(), false) : undefined;
-      return (await prepareAll(picked && picked.slice(0, 1), session.clips.length >= 2))[0];
+      // Latest request wins per tile: a second Replace on the same tile while the first is still picking or preparing
+      // makes the first one's result stale (undefined: the session replaces nothing for it).
+      const gen = ++replaceSeq;
+      replaceGens.set(oldId, gen);
+      const current = () => replaceGens.get(oldId) === gen;
+      try {
+        const old = clipOf(oldId);
+        const picked = deps.pick ? await deps.pick(`Replace ${old ? old.label : 'video'}`, firstDir(), false) : undefined;
+        if (!current()) return undefined;
+        const c = (await prepareAll(picked && picked.slice(0, 1), session.clips.length >= 2))[0];
+        return current() ? c : undefined;
+      } finally {
+        if (current()) replaceGens.delete(oldId);
+      }
     },
     onReadBlock: (c, m) => readBlock(/** @type {any} */ (c), m),
     onThumb: (c, m) => onThumb(/** @type {any} */ (c), m),
@@ -1240,13 +1260,14 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     async reloadAll(why) {
       if (disposed) return;
       builtIn.clear();
-      // Prepare sequentially (avoids N parallel encoder probes) and refresh the webview once so Compare tiles
-      // start together with balanced bitrate caps and updated ffmpegState instead of N racing replaceTile updates.
-      for (const c of session.clips.slice()) {
-        if (disposed || !isFileClip(c)) continue;
-        await reprepare(c.id, why);
-      }
-      if (!disposed) session.render();
+      // Prepare sequentially (avoids N parallel encoder probes) in one host transaction: no replaceTile per tile, one
+      // webview refresh at the end, so Compare tiles start together with balanced bitrate caps and updated ffmpegState.
+      await session.batch(async () => {
+        for (const c of session.clips.slice()) {
+          if (disposed || !isFileClip(c)) continue;
+          await reprepare(c.id, why);
+        }
+      });
     },
     /** Live transcode tiles to the built-in decoder ("Use original video"); true when one switched. */
     useOriginalVideo: () => session.clips.filter((c) => kinds.get(c.id) === 'stream').map((c) => toBuiltIn(c.id)).some(Boolean),
