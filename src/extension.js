@@ -1102,10 +1102,10 @@ async function nativeFor(file, transport, tile, o = {}) {
   const [pr] = await Promise.all([ff.probe(t, file), rawAllowed ? gpusForMethod(t, c) : null]);
   const stat = await fs.promises.stat(file);
   const failed = decide.failedBefore(globalState.get(decide.FAILED_KEY), file, stat);
-  const maxStreamHeight = c.nativeMaxAuto ? decide.FRAME_SERVER_HEIGHT : c.nativeMaxHeight;
   const name = path.basename(file);
   if (!failed && c.transcode !== 'off' && pr.video) {
     const remoteLink = (!!remote && remote !== 'wsl') || c.remoteStream === 'on';
+    const maxStreamHeight = c.nativeMaxAuto ? (remoteLink ? 1080 : decide.FRAME_SERVER_HEIGHT) : c.nativeMaxHeight;
     const decision = transcodePolicy.shouldTranscodeOnOpen({
       mode: c.transcode, remote, video: pr.video, compare: !!(o && o.compare),
       maxBitrateMbps: c.transcodeMaxBitrate, viewHeight: tile && tile.h, toneMap: transcodeArgs.toneMapSupport(t.gpuFilters),
