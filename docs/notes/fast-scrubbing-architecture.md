@@ -38,9 +38,9 @@ measure how much exact work it can replace before adding a native binary or a di
   spawn gap and 400 ms maximum deferral for misses. Transcode output keyframes describe that
   rendition's seekability. Source random-access points remain a separate index. The current
   thumbnail service excludes Live transcode and URL input.
-- **Gesture and thumbnails.** [player.js](../../media/player.js) coalesces pending slider input
-  in its display loop but still calls `seekFrame` mid-drag while the tooltip independently asks
-  for a thumbnail. [compare.js](../../media/compare.js) uses [stepgoal.js](../../media/stepgoal.js)
+- **Gesture and thumbnails.** The single player's page (`media/player.js`, since replaced by the unified viewer) coalesced pending slider input
+  in its display loop but still called `seekFrame` mid-drag while the tooltip independently asked
+  for a thumbnail. Compare's page (`media/compare.js`, likewise replaced) used [stepgoal.js](../../media/stepgoal.js)
   to dispatch the first goal immediately, coalesce over 90 ms and flush on release. Its goal is
   still an accurate multi-tile seek. [thumbs.js](../../media/thumbs.js) holds a byte-limited bitmap
   cache and a slot-to-keyframe map. [thumbs-worker.js](../../media/thumbs-worker.js) already keeps

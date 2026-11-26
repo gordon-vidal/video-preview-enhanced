@@ -40,7 +40,7 @@ the next presentation timestamp or the last sample's end. Store markers as
 offset to both endpoints, using seconds or frames divided by that tile's fps. Match the
 lockstep frame selection, preserve the mapped time origin and report alignment deviations.
 Flag out-of-bounds tiles and ask before exporting just the eligible ones. Independent
-clamping would shift sync. [Compare timing](../../media/compare.js)
+clamping would shift sync. [Compare timing](../../media/compare-sync.js)
 
 **MP4/MOV.** Input `-ss` retains the preceding random-access point and preroll under stream copy.
 Convert A to the demuxer's seek origin using the format and video start times.

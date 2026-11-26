@@ -1,19 +1,14 @@
 # Shared UI controller (`media/player-ui.js`)
 
-Status: the **single-lane unified viewer** is the signed-off design: one page, one tab that grows from one video
-to N (Compare), over one pure state, one UI controller and two adapters. Everything in "Architecture" is built and
-tested in Node, the contracts between the modules are type-checked across files ("Contracts"), and the viewer is
-wired into the extension host as an **opt-in lane** ("Production wiring"): the setting `unifiedViewer` (off by
-default) opens video files in it. The shipped player and Compare are unchanged and stay the default:
+Status: the **single-lane unified viewer** is the signed-off design and the extension's only viewer: one page, one
+tab that grows from one video to N (Compare), over one pure state, one UI controller and two adapters. Everything in
+"Architecture" is built and tested in Node, the contracts between the modules are type-checked across files
+("Contracts"), and `src/extension.js` opens every video in it ("Production wiring"). The old pages
+(`media/player.js`, `media/compare.js`) and their hosts (`src/player-html.js`, `src/compare.js`) are deleted.
 
-- `media/player.js` and `media/compare.js` call the shared helpers of `media/player-ui.js` for their UI wiring
-  (per interaction: docs/TESTING.md, "What is shared with production"). Those pages load `player-ui.js` only.
-- `VpePlayerUi.create()`, the controller modules, `media/player-state.js` and the production adapters run in the
-  unified page (`src/unified-html.js` + `media/player-unified.js`), in the mockup harness
-  (`tools/mockup/render.js`) and in the Node tests.
-
-What is still page-specific is listed under "What stays in the pages"; what the opt-in lane lacks before it can
-become the default is under "Before the unified viewer is the default".
+`VpePlayerUi.create()`, the controller modules, `media/player-state.js` and the production adapters run in the
+viewer's page (`src/unified-html.js` + `media/player-unified.js`), in the mockup harness (`tools/mockup/render.js`)
+and in the Node tests.
 
 ## Architecture
 
@@ -106,57 +101,33 @@ handler name is an action `keyCommand` produces. `pickVideoMessage(surface)` is 
 `{ type: 'comparePick', t }`, production Compare has no plain-`D` key, and `create()` (proposal) posts
 `{ type: 'pickVideo', exclude }` in any N. The tests keep the two kinds of assertions apart.
 
-## The shared helpers (production and mockup)
+## The shared helpers
 
-Both production pages load `player-ui.js` right before their own script (`src/player-html.js` `SCRIPTS`,
-`src/compare.js` `compareScripts`; `player-state.js` stays out until a page calls it) and call these helpers instead of keeping
-their own copies. `create()` uses the same helpers, so the mockup runs the production wiring:
+`create()` is built from small helpers that take the widget modules as arguments (never a page global) and touch no
+decoder, so `test/host/player_ui_test.js` loads them in Node: `keyCommand` / `runKey` (the one key table),
+`bindButtons`, `stepBy` / `bindStepBadges`, `bindAbPins` / `pinPercent`, `timeReadout` / `nextTimeMode` /
+`TIME_MODE_NAMES`, `pictureButton`, `copyInfoText`, `createContextMenu`, `createFolderRail` / `goNeighbour`,
+`spotlightRatioAt` / `spotlightKeyRatio`, `bindSplitDivider` (`splitRatioAt`, `splitKeyRatio`) and
+`pickVideoMessage`. They were first shared by the two old pages, which is why some still take a surface name.
 
-| Helper | What it replaces | `player.js` | `compare.js` | `create()` |
-|---|---|---|---|---|
-| `keyCommand(e, { altGr })`, `runKey(e, KEY_ACTIONS)` | the two `switch (e.key)` blocks; each page keeps a `KEY_ACTIONS` table of its own handlers | yes | yes | yes |
-| `bindButtons([[el, run, stop]], on?)` | the bar's `onclick =` lines (stop flag per button, as before) | yes | yes | yes (`on` = listener) |
-| `stepBy`, `bindStepBadges` | the step buttons' size logic and the badge popover click | yes | yes | yes |
-| `bindAbPins`, `pinPercent` | the A–B pin drag (pin position, tip text and placement) | yes | yes | yes |
-| `timeReadout`, `nextTimeMode`, `TIME_MODE_NAMES` | the time / timecode / frame readout and its click cycle | yes | yes | yes |
-| `pictureButton` | the Picture size button's mode, title and label | yes | yes (`all videos`) | yes |
-| `copyInfoText` | ⓘ › Copy details | yes | yes | yes |
-| `createContextMenu` | the `VpeCtxMenu.create` + action lookup | yes | (Compare has its own tile menu) | yes |
-| `createFolderRail`, `goNeighbour` | the `#rail` guard and Shift+N / Shift+P fallback | yes | yes (rail) | yes |
-| `spotlightRatioAt`, `spotlightKeyRatio` | the Spotlight splitter math | | yes | yes |
-| `bindSplitDivider` (`splitRatioAt`, `splitKeyRatio`) | the whole Split Wipe divider: drag over the displayed (letterboxed) picture with pointer capture, keys, Home 0 % / End 100 %, no click through | | yes | yes |
-| `pickVideoMessage` | the `D` message per surface | yes | (no `D` key) | yes (proposal) |
+`media/player-ui.js` stays in `tsconfig.check.json` and under the webview boundary rules of
+`.dependency-cruiser.cjs`, which also lock the 3-way split: `player-state.js` imports nothing, `player-ui.js` imports
+no `src/`, Node built-in or decoder module.
 
-The helpers take the widget modules as arguments (never a page global) and touch no decoder, so
-`test/host/player_ui_test.js` loads them in Node. `media/player-ui.js` stays in `tsconfig.check.json` and under the
-webview boundary rules of `.dependency-cruiser.cjs`, which also lock the 3-way split: `player-state.js` imports
-nothing, `player-ui.js` imports no `src/`, Node built-in or decoder module.
+## What the page does itself, and why
 
-## What stays in the pages, and why
-
-- **Decoder lifetimes and clocks**: `player.js` drives one `engine.js` player; `compare.js` drives N players, the
-  compositor (`compare-compositor.js`), offsets and sync. What a key or button *does* (seek, step, rate, volume)
-  is the page's handler; only the dispatch is shared.
-- **Compare's stage**: tiles drawn by the compositor in one canvas, tile drag-to-reorder, the tile menu, sync
-  mode, add mode. `create()` has its own simple stage over `deriveUi` cells for the mockup; moving Compare onto it
-  needs the EngineAdapter below.
-- **Page-only features**: scopes, the pixel inspector, subtitles, X-ray, exports, remote streaming, the Start
-  Compare dialog, the notice banner, Zen Mode's Esc Esc.
-- **Separate webviews**: by default single and Compare are still two pages with their own host messages;
-  `create()` (one unified state for both) is mounted only in the opt-in unified viewer ("Production wiring").
+- **Decoder lifetimes and clocks**: `media/player-unified.js` makes one decoder per clip (`engine.js`'s
+  LibavPlayer, or `frame-player.js` for an image sequence), starts and stops them as the tab's tiles change, and
+  routes the host's decoder messages by clip id. What a key or button *does* is the controller's action.
+- **Host traffic**: the page never learns a path; blocks, native ffmpeg, thumbnails and exact frames go by clip id.
 
 ## Tests
 
 `test/host/player_ui_test.js` (layer 1B, about 2 s, no video decoded) checks:
 
-- production parity, apart from the proposal: each page's `KEY_ACTIONS` handler names equal the test's
-  `EXPECTED_PLAYER_KEYS` / `EXPECTED_COMPARE_KEYS`, `D` posts
-  `comparePick` with the time in the player and is not a Compare key; then, separately, `create()`'s `pickVideo`;
-- the key table, `runKey`, and the parity of the player's and Compare's `KEY_ACTIONS` tables (which page handles which
-  key; every handler name is a `keyCommand` action; no second key switch left in either page);
+- the key table and `runKey`, and `D`'s message (`pickVideo` with `exclude`, in any N);
 - the pure helpers (time readout, Picture size, Copy details, step size, pin position and tip, splitter and
-  divider math by dock and key, `bindButtons` stop policy, context-menu and rail creation) and that both pages
-  call them instead of local copies;
+  divider math by dock and key, `bindButtons` stop policy, context-menu and rail creation);
 - the FakeHost protocol;
 - `bindSplitDivider` alone over a letterboxed picture (stage 800 × 400, picture inset x = 100, w = 600): 0 % and
   100 % by drag and by Home / End, pointer capture, right button ignored, no click through to the stage;
@@ -174,8 +145,8 @@ The controller modules and adapters have their own suites (see "Architecture"): 
 `player_ui_input_test.js`, `player_ui_tools_test.js`, `player_ui_lifecycle_test.js` on the same strict fake DOM,
 and `adapter_contract_test.js` / `production_adapters_test.js` for the adapters.
 
-`test/host/player_html_test.js` checks the script order of both pages. See docs/TESTING.md, "UI and gesture tests
-without video", for what stays in layer 3.
+`test/host/unified_html_test.js` and `player_html_test.js` check the page (CSP, script order, inlined assets, config).
+See docs/TESTING.md, "UI and gesture tests without video", for what stays in layer 3.
 
 ## Contracts (`media/unified-contracts.d.ts`)
 
@@ -206,46 +177,44 @@ A message is added in the declaration file first; the side that posts it then co
 The page-side handlers read a host message loosely after that (each field is checked at run time), so the unions
 are strict where messages are built and posted, not where they are parsed.
 
-## Production wiring (opt-in)
+## Production wiring
 
-`src/unified-viewer.js` is the unified page's host around `src/unified-session.js`, with the vscode API injected
-(`test/host/unified_viewer_test.js` drives it over a fake panel and real temp files):
+`src/unified-viewer.js` is the page's host around `src/unified-session.js`, with the vscode API injected
+(`test/host/unified_viewer_test.js` drives it over a fake panel and real temp files); `src/extension.js` gives it
+its effects (`unifiedDeps`) and routes every video to it:
 
-- **Opening.** With the setting `unifiedViewer` on, the custom editor (`src/extension.js` `resolveCustomEditor`)
-  hands a video file to `openUnified()`: the clip is prepared (`prepareClip`: size, rotation, the native decision
-  Compare's tiles use), then `createUnifiedRegistry().routeOpen(clip)` decides. A viewer whose **Capture** is on
-  takes the video into its panel and the tab VS Code just made closes unused; else that tab becomes a viewer.
-- **1 → N → 1 in place.** The page is rendered once (`unifiedHtml` with `entryScript: 'player-unified.js'`);
-  `openVideo`, `replaceTile` and the page's `tiles` / `leaveCompare` change what it shows without a new page.
-- **Per clip, by id.** File blocks (`readBlock` → `block`), native ffmpeg (`nd`, a `NativeDecoder` per clip,
-  started on its first message) and seek-bar thumbnails are routed by clip id; the page never learns a path
-  (the id is a hash of the file's URI). A native decoder that fails is replaced in place by the same file under
-  a new id, decoded in the page.
-- **Shared with the player and Compare.** The decoder config and native decision (`engineCfg`, `nativeFor`), the
-  frame server, the folder rail (controller, metadata cache, remembered look; a row plays in the single video's
-  place or joins a comparison, its Compare button always joins), `playbackPrefs` across tabs, live `prefs`, Zen
-  Mode (`focusMode`), Copy, Extension settings, the open dialogs for Add and Replace.
-- **Always the shipped player:** video URLs, image sequences, virtual files (`git:` ...), a folder navigation's
-  handoff tab and a frame link's moment (`#t=`, `vscode://` links). Compare's own commands (Start Compare, Add
-  Mode, Open Together, compare links) still open `src/compare.js`.
+- **Opening a file.** The custom editor (`resolveCustomEditor`) prepares the clip (`prepareClip`: size, rotation,
+  the native ffmpeg or Live transcode decision), then `createUnifiedRegistry().routeOpen(clip)` decides: a viewer
+  whose **Capture** is on takes the video into its panel and the tab VS Code just made closes; else that tab
+  becomes a viewer. A frame link's moment (`#t=` / `#frame=`, a pending `vscode://` link) or the resume position
+  rides along as the open target. Videos VS Code opens together (an Explorer multi-selection) become one viewer
+  (Open Together, `src/burst.js`). A tab closed while its file is still being probed gets no viewer.
+- **URLs and image sequences** open in a webview panel of their own as clips without a file
+  (`src/unified-sources.js`): a URL is inspected when the page's player first asks; native ffmpeg plays streams
+  and what the decoder rule gives it, else the page's built-in decoder reads blocks over HTTP by clip id (the
+  `libav` message restarts the page's player for the decoder chosen); an HLS quality pick restarts the clip in the
+  same page. A sequence's frame player asks for pictures (`frames`) and gets them as `frame` messages.
+- **Compare's commands** (Start / Add to Compare, Compare folder, Compare With…, key D's quick pick, compare links,
+  Add from Explorer = Capture, page drops, the folder rail's Compare rows) add videos to the active viewer or open
+  a viewer with them (`videoPreviewEnhanced.compare` panels).
+- **1 → N → 1 in place.** The page is rendered once; `openVideo`, `replaceTile` and the page's `tiles` /
+  `leaveCompare` change what it shows without a new page. A file rewritten on disk reloads in its tile.
+- **Per clip, by id.** File blocks, native ffmpeg (`nd`, a `NativeDecoder` per clip started on its first message,
+  at the tile size the page reported unless `sizeFramesToView` is off), Live transcode (`EncodedStream`, sharing
+  the bitrate cap across the tiles shown), seek-bar thumbnails and exact frames. A native decoder that fails is
+  replaced in place by the same file decoded in the page (a file ffmpeg rejected is remembered); a failed stream
+  likewise.
+- **Host features**: sidecar and loaded subtitles, Save frame, Copy link, A–B frame / clip export and the ffmpeg
+  command, the resume position, the system player, the ffmpeg setup and GPU-test offers, decode-speed samples,
+  slow-playback and reduced-resolution notices, the folder rail (in place: a row plays in the single video's place
+  or joins a comparison), live prefs, playback prefs across tabs, Zen Mode, the `VPE_LOG` test hook
+  (`src/debug-cmd.js`) and `VPE_SIMULATE_LINK`.
 
-### Before the unified viewer is the default
+### Not carried over
 
-The lane has not run in a real VS Code yet (layer 3), and switching the default is a release decision. What it
-lacks today, each a reason the shipped pages stay:
-
-- **Tests drive the shipped pages.** Layer 2 (`test/engine/harness.js`, `journeys.js`, `chaos.js`,
-  `frames_onend.js`) runs `media/player.js` itself, and every layer-3 scenario reads the pages through
-  `VpeDebugProbe` (`media/debug-probe.js`, installed by `player.js`) and `VpeCompareDebug` (`compare.js`). The
-  unified page installs neither, so it has no layer-2 or layer-3 coverage; thirteen Node tests also pin
-  `player.js` / `compare.js` source (key tables, script order, a11y names).
-- **Decoders.** One `LibavPlayer` per clip, as a Compare tile. No `FramePlayer` (image sequences, MJPEG AVI),
-  no video URLs / HLS (`stream`, Quality), no Live transcode (`EncodedStream`), no early probe before the page
-  is ready (the start-up budgets of `test/vscode/budgets.js`), no decode-size follow-up on `tileSize`.
-- **Host features not routed yet:** subtitles (sidecars, Load subtitles), Save frame / Copy link / A–B frame,
-  clip and ffmpeg-command export, exact frames for the pixel tools, resume position, frame links (`goto`),
-  reload when the file changes on disk, the ffmpeg setup / GPU test offers and slow-playback notices, the
-  system player (`external`), the tab-swap rail handoff with Autoplay's next video.
-
-Retiring `media/player.js`, `media/compare.js`, `src/player-html.js` and `src/compare.js` follows that work, with
-their tests moved to the unified lane; nothing was deleted with this wiring.
+- The old player's early start of native ffmpeg before its page was ready, and its remembered picture size for that
+  guess (`src/early-probe.js` is no longer called).
+- MJPEG AVI's own frame path: the built-in decoder plays MJPEG.
+- Live transcode's automatic switch when native frames stall (`evaluateLocalStall`).
+- The layer-3 scenarios (`test/vscode/`) still read the pages through `VpeDebugProbe` / `VpeCompareDebug`, which
+  the viewer's page installs; they have not been run against the viewer yet.

@@ -15,7 +15,7 @@ Design evaluation for playing YouTube URLs through **Video Preview: Open Video U
   subtitles, zero webview network access) with zero npm dependencies and zero site-scraper maintenance.
 - **Not recommended as primary:** Option B (`<iframe>` embed) strips away every frame-accurate tool
   that defines the product ([`docs/PRODUCT.md`](../PRODUCT.md)), breaks the webview's zero-network
-  CSP ([`src/player-html.js`](../../src/player-html.js)), and hits VS Code webview `Referer` /
+  CSP ([`src/unified-html.js`](../../src/unified-html.js)), and hits VS Code webview `Referer` /
   origin walls (YouTube Error 153).
 - **Rejected:** Option C (built-in JS extractor) is a weekly maintenance trap and creates direct
   Marketplace / ToS exposure inside the VSIX.
@@ -119,7 +119,7 @@ pointing at `https://www.youtube-nocookie.com/embed/<id>`.
 | Pros | Cons |
 |---|---|
 | Zero scraping / cipher / ToS risk (official YouTube embed player) | **Loses VPE's entire feature set:** no frame-exact stepping, no Compare, no scopes, no pixel inspector, no codec X-ray, no copy/save frame, no A–B range/export, no zoom/pan/picture-size modes, no shared speed/volume/shortcuts |
-| Works without `yt-dlp` or `ffmpeg` | **CSP regression:** [`src/player-html.js`](../../src/player-html.js) locks the webview to `default-src 'none'` with zero external network access; embedding requires opening `frame-src` (and `script-src` for the IFrame API) to YouTube/Google domains |
+| Works without `yt-dlp` or `ffmpeg` | **CSP regression:** [`src/unified-html.js`](../../src/unified-html.js) locks the webview to `default-src 'none'` with zero external network access; embedding requires opening `frame-src` (and `script-src` for the IFrame API) to YouTube/Google domains |
 | Handles adaptive bitrate, live streams, and embeds natively | **VS Code webview origin / `Referer` wall (Error 153):** VS Code webviews run on an opaque `vscode-webview://` origin. YouTube's embed player enforces a valid `http(s)` `Referer` header and rejects missing/non-HTTP referers with **Error 153 (Video player configuration error)** unless wrapped in a localhost `http://127.0.0.1` proxy page — which adds a local HTTP server purely to host a third-party iframe |
 | | Uploader-disabled embeds still fail (Error 101/150); VS Code's Electron build lacks Widevine CDM so DRM rentals still fail; cross-origin iframe traps keyboard focus away from VS Code |
 
