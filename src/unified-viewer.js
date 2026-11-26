@@ -496,7 +496,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       log: (/** @type {string} */ msg) => clipLog(c, msg),
       onFail: (/** @type {any} */ err) => {
         if (!current()) return;
-        clipLog(c, `live transcode failed (${errText(err)}); using the original decoder`);
+        clipLog(c, `remote stream failed (${errText(err)}); using the built-in decoder`);
         toBuiltIn(c.id, 'Live transcode failed. Using the original video.');
       },
     });
