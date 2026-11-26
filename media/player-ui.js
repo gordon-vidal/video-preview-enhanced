@@ -769,6 +769,17 @@
     const JUMP = { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1 };
     /** The setting stepButtons: what the buttons beside Play step until a step size is picked. */
     let stepButtons = /** @type {'frame' | 'jump'} */ ('frame');
+    const initPrefs = /** @type {any} */ (env.prefs);
+    if (initPrefs && initPrefs.jump) {
+      for (const k of /** @type {const} */ (['arrow', 'shift', 'ctrl', 'wheel', 'wheelShift'])) {
+        const v = initPrefs.jump[k];
+        if (v === 'frame') JUMP[k] = 'frame';
+        else if (Number(v) > 0) JUMP[k] = Number(v);
+      }
+    }
+    if (initPrefs && (initPrefs.stepButtons === 'frame' || initPrefs.stepButtons === 'jump')) {
+      stepButtons = initPrefs.stepButtons;
+    }
     const stepPrefs = () => ({ stepSize: prefs.stepSize, stepButtons, jump: JUMP });
     const clipName = (/** @type {string} */ id) => (engine.getClip(id) || { name: id }).name;
     const letterOf = (/** @type {any} */ t, /** @type {string} */ id) => S.TILE_KEYS[Math.max(0, t.tiles.indexOf(id))];

@@ -541,6 +541,38 @@
       }
     }
 
+    /** Pending resume time (seconds) from cfg.savedPos or sessionState.savedPos, applied once the clock clip's fps & duration arrive. */
+    let pendingResumeSec = typeof cfg.savedPos === 'number' && cfg.savedPos > 0.5 && !cfg.goto ? cfg.savedPos : null;
+    /** Report the clock clip's position to the host so it can persist resume position across reopen. */
+    function reportPos() {
+      if (disposed || !ui) return;
+      const t = S.getTab(ui.getState());
+      const cid = clockIdOf(t);
+      const c = cid ? engine.getClip(cid) : null;
+      const fps = (c && c.fps) || t.fps || 0;
+      const d = (c && c.duration) || (fps > 0 && t.maxFrame > 0 ? t.maxFrame / fps : 0);
+      if (cid && fps > 0 && d > 0) {
+        host.post({ type: 'pos', clipId: cid, t: t.frame / fps, d });
+      }
+    }
+    /** Apply pendingResumeSec once the clock clip has real fps and duration (wins only when no goto link). */
+    function tryApplyResume() {
+      if (pendingResumeSec === null || disposed || !ui) return;
+      const t = S.getTab(ui.getState());
+      const cid = clockIdOf(t);
+      const c = cid ? engine.getClip(cid) : null;
+      const fps = (c && c.fps) || 0;
+      const frames = (c && c.frames) || 0;
+      const dur = (c && c.duration) || (fps > 0 && frames > 0 ? frames / fps : 0);
+      if (!(fps > 0 && frames > 1 && dur > 0)) return;
+      const sec = pendingResumeSec;
+      pendingResumeSec = null;
+      if (sec <= 0.5 || sec >= dur - 1) return;
+      const targetFrame = Math.max(0, Math.min(frames - 1, Math.round(sec * fps)));
+      ui.dispatch('seek', targetFrame);
+      const fmt = W('VpeTime') && typeof W('VpeTime').fmtClock === 'function' ? W('VpeTime').fmtClock(sec) : `${sec.toFixed(2)}s`;
+      ui.onHostMessage({ type: 'toast', text: `Resumed at ${fmt} (Home: start)`, ms: 2500 });
+    }
     /**
      * The decoder learned its numbers (fps, length, size): the adapter's spec takes the ones the host did not give,
      * and the clock's fps and length follow at once, even when the clock tile did not change.
@@ -576,6 +608,7 @@
             if (next !== ui.getState()) ui.setState(next);
           }
         }
+        tryApplyResume();
       }
       ui.render();
       scheduleTick();
@@ -776,6 +809,7 @@
           const f = Math.round(Number(c.value));
           if (fromClock || !Number.isFinite(f)) return;
           applyToDecoders(t, { seek: true, frame: f });
+          reportPos();
           return;
         }
         case 'play': case 'pause': {
@@ -783,6 +817,7 @@
           if (applied.playing === playing) return;
           applied = { ...applied, playing };
           applyToDecoders(t, { play: true, playing });
+          if (!playing) reportPos();
           if (playing && debugProbe) debugProbe.wake();
           return;
         }
@@ -1072,6 +1107,7 @@
      * @param {any} m
      */
     function onSessionState(m) {
+      if (typeof m.savedPos === 'number' && m.savedPos > 0.5 && !m.goto && !cfg.goto) pendingResumeSec = m.savedPos;
       const ids = sessionIds(m);
       for (const c of Array.isArray(m.clips) ? m.clips : []) {
         const id = c && typeof c === 'object' ? c.clipId || c.id : null;
@@ -1458,6 +1494,14 @@
         VpeRangeDrag: typeof VpeRangeDrag !== 'undefined' ? VpeRangeDrag : undefined,
         VpeReducedResNotice: typeof VpeReducedResNotice !== 'undefined' ? VpeReducedResNotice : undefined,
         VpeSlowNotice: typeof VpeSlowNotice !== 'undefined' ? VpeSlowNotice : undefined,
+        VpeScopes: typeof VpeScopes !== 'undefined' ? VpeScopes : undefined,
+        VpeInspect: typeof VpeInspect !== 'undefined' ? VpeInspect : undefined,
+        VpeXray: typeof VpeXray !== 'undefined' ? VpeXray : undefined,
+        VpeHdr: typeof VpeHdr !== 'undefined' ? VpeHdr : undefined,
+        VpeExact: typeof VpeExact !== 'undefined' ? VpeExact : undefined,
+        VpeFramePlayer: typeof VpeFramePlayer !== 'undefined' ? VpeFramePlayer : undefined,
+        VpeDebugProbe: typeof VpeDebugProbe !== 'undefined' ? VpeDebugProbe : undefined,
+        VpeCompareDebug: typeof VpeCompareDebug !== 'undefined' ? VpeCompareDebug : undefined,
         CompareGrid: typeof CompareGrid !== 'undefined' ? CompareGrid : undefined,
         VpePlayerUiTiles: typeof VpePlayerUiTiles !== 'undefined' ? VpePlayerUiTiles : undefined,
         VpePlayerUiInput: typeof VpePlayerUiInput !== 'undefined' ? VpePlayerUiInput : undefined,
