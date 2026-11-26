@@ -153,6 +153,65 @@ Expected step cost with a host RAM hit: RTT + 3-8 ms encode + frame bytes / link
 20-60 KB is ~6-20 ms at 25 Mb/s, 80-240 ms at 2 Mb/s. Levels 1-2 (page caches) stay faster still for revisits (no
 network at all), so the cache and display mode combine: caches for anything seen, display mode for first visits.
 
+### Feasibility in a VS Code extension, and on any GPU vendor (checked 2026-11-26)
+
+Measured with a scratch script (persistent ffmpeg reading raw 1080p NV12 on stdin, endless GOP, frames fed forward,
+backward and in random jumps; RTX 4070, ffmpeg 2024 master; indicative, machine not idle):
+
+| Encoder | Vendor scope | First frame (incl. encoder start) | Per frame after that | Step back vs forward |
+| --- | --- | --- | --- | --- |
+| `h264_nvenc` | NVIDIA | 150 ms | 3-4 ms | same size |
+| `h264_mf` (`-scenario display_remoting`) | any Windows GPU (Media Foundation picks the vendor's encoder) | 335 ms | 4-5 ms | same size |
+| `libx264` ultrafast zerolatency | any CPU | 35 ms | 3-4 ms | same size |
+| `libopenh264` | any CPU | 40-50 ms | 9-20 ms | same size |
+
+Findings:
+
+- **ffmpeg CLI holds one frame back** when reading raw frames from a pipe (6.1, 2024 master and 9.0 alike, every
+  encoder, even with `-fps_mode passthrough`, `-analyzeduration 0`, `-fflags nobuffer`, `-avioflags direct`). Writing
+  each frame twice pushes it out immediately; the duplicate encodes as a small refinement of the same picture. Works with
+  stock ffmpeg; no build change.
+- **NVENC's H.264 has no VUI `bitstream_restriction`** (`max_num_reorder_frames`); libx264 and OpenH264 write it (0
+  reorder, 1 frame buffering). Without it a hardware decoder may assume reordering and hold several frames before output:
+  reported for Chromium's hardware path even with `optimizeForLatency` ([w3c/webcodecs#732](https://github.com/w3c/webcodecs/issues/732),
+  [trycua/cua#8710](https://github.com/trycua/cua/issues/8710), [w3c/webcodecs#900](https://github.com/w3c/webcodecs/issues/900)).
+  `h264_metadata` cannot add it, so the host should rewrite the SPS (a small pure module beside `parseSpsProfileLevel`)
+  for every encoder: vendor-neutral. This may also cost today's Live transcode a few frames of latency after each paused
+  seek (compare the comment at `media/engine.js:1158`); worth checking on its own.
+- **`flush()` is not a way out**: after a flush WebCodecs requires a key chunk ([w3c/webcodecs#698](https://github.com/w3c/webcodecs/issues/698)),
+  which would turn every step into an IDR. Display mode must get its latency from the bitstream (VUI), `optimizeForLatency`,
+  and, if a client's hardware decoder still holds frames, `hardwareAcceleration: 'prefer-software'` for display mode only
+  (one 1080p frame at a time is cheap in software; that VS Code's Electron has a software H.264 path for WebCodecs needs checking).
+- **Transport**: `postMessage` with binary payloads already carries Live transcode over SSH. No UDP is reachable from a
+  webview through the SSH tunnel, and `portMapping` is http(s) only, not WebSocket, so the tunnel's TCP stays. Reliable
+  delivery means no FEC or reference-frame invalidation is needed (vendor-specific features avoided); the cost is
+  head-of-line blocking, handled by keeping bytes in flight small (today's 128 KB batches) and a priority send queue.
+- **Host memory**: a large decoded-frame cache should live in a child process (`child_process.fork`), not in the
+  extension host shared with every other extension, so a crash or GC pause stays contained.
+
+Vendor-neutral by construction:
+
+- **Encode**: display mode encodes only the frames shown, so even `libx264` on the CPU keeps up (3-4 ms/frame at 1080p).
+  The existing encoder ladder (`encoderArgs`: NVENC, QSV, AMF, Media Foundation, VideoToolbox, VA-API, x264, OpenH264)
+  applies, each with its low-latency options (QSV and VA-API `async_depth 1`, AMF `-usage ultralowlatency`, VideoToolbox
+  `-realtime`). A start-up check (two frames in, the first must come out) catches any encoder that still buffers and
+  falls back to libx264.
+- **Decode on the host** (the part a GPU really speeds up: filling caches from long-GOP 4K sources): today's decode
+  methods (CUDA, QSV, VA-API on AMD/Intel Linux, D3D11VA, VideoToolbox, CPU). FFmpeg's Vulkan Video encoders (7.1+) are
+  vendor-neutral on paper but reported unreliable ([Intel/Mesa encode failures](https://ffmpeg.org/pipermail/ffmpeg-user/2024-December/058927.html),
+  [race conditions on NVIDIA](https://ffmpeg.org/pipermail/ffmpeg-trac/2025-January/072511.html)): not a default.
+- **Not testable on this machine**: QSV (iGPU disabled), AMF, VA-API, VideoToolbox. Their per-frame latency and VUI
+  output need a check on real hardware (or the start-up check above at runtime).
+
+Spike to run on an idle machine before any implementation (existing harnesses, no new tooling):
+
+1. In real VS Code (hidden desktop, `wcprobe`-style probe): feed a recorded display-mode stream (NVENC without VUI, NVENC
+   with rewritten VUI, x264) to the webview's `VideoDecoder`; count chunks in before the first frame out, hardware and
+   prefer-software. Decides whether display mode works with hardware decode on the client.
+2. Through `test/vscode/remote_ssh.js` (real Remote-SSH to sshd in WSL): round trip of a small message and of a 50 KB and
+   150 KB binary reply, host to webview. That is the floor of every display-mode step.
+3. Page memory: how many GB of spilled YUV a webview holds before the renderer fails (caps for level 1).
+
 ### Not proposed
 
 - **A persistent seekable decoder on the host** (a libav helper or a Python/PyAV process) would remove the ~250 ms
