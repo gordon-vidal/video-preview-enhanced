@@ -849,7 +849,7 @@
     const clipId = env.getClipId || (() => 0);
     const time = env.getTime || (() => 0);
     const saved = env.saved || {};
-    /** @type {{ name?: string, label?: string, lang?: string }[]} */
+    /** @type {{ name?: string, title?: string, label?: string, lang?: string, stream?: boolean }[]} */
     let tracks = [];
     let track = -1;
     let lastOn = Number.isInteger(saved.track) && /** @type {number} */ (saved.track) >= 0 ? /** @type {number} */ (saved.track) : 0;
@@ -860,11 +860,24 @@
 
     /** @param {number} s */
     function clampSize(s) { return Math.max(SIZE_MIN, Math.min(SIZE_MAX, Math.round(s))); }
+    /** @param {string} code */
+    const langName = (code) => {
+      if (!code) return '';
+      try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; } catch { return code; }
+    };
     /** @param {number} i */
     function nameOf(i) {
       const t = tracks[i];
       if (!t) return 'Off';
-      return t.name || t.label || t.lang || `Track ${i + 1}`;
+      return t.title || t.name || t.label || t.lang || `Track ${i + 1}`;
+    }
+    /** @param {number} i */
+    function subOf(i) {
+      const t = tracks[i];
+      if (!t || !t.stream) return '';
+      const lang = t.lang ? langName(t.lang) : '';
+      const parts = [lang && lang.toLowerCase() !== nameOf(i).toLowerCase() ? lang : '', 'stream'].filter(Boolean);
+      return parts.join(' · ');
     }
     function changed() { render(); onUpdate(getState()); }
     /** @param {number} i @param {boolean} [user] */
@@ -969,7 +982,7 @@
       return { visible: !none, on, label, title: `${label}  C` };
     }
     function getState() {
-      return { track, tracks: tracks.map((_t, i) => nameOf(i)), delayMs, sizePct, label: nameOf(track) };
+      return { track, tracks: tracks.map((_t, i) => nameOf(i)), subs: tracks.map((_t, i) => subOf(i)), delayMs, sizePct, label: nameOf(track) };
     }
 
     return {

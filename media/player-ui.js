@@ -1063,7 +1063,9 @@
         const st = subs.getState();
         return {
           on: st.track >= 0, label: st.label, sel: st.track < 0 ? 'off' : String(st.track),
-          subs: st.tracks.map((/** @type {string} */ name, /** @type {number} */ i) => ({ key: String(i), main: name, checked: st.track === i })),
+          subs: st.tracks.map((/** @type {string} */ name, /** @type {number} */ i) => ({
+            key: String(i), main: name, sub: (st.subs && st.subs[i]) || undefined, checked: st.track === i,
+          })),
           audio, delay: st.delayMs / 1000, size: st.sizePct / 100,
         };
       }
@@ -1188,7 +1190,7 @@
         external: () => postHost({ type: 'external' }),
         extSettings: () => postHost({ type: 'openSettings' }),
         openUrl: () => postHost({ type: 'openUrl' }),
-        setQuality: (/** @type {any} */ pick) => postHost({ type: 'setQuality', clipId: tab().tiles[0], pick }),
+        setQuality: (/** @type {any} */ pick) => postHost({ type: 'quality', clipId: tab().tiles[0], pick }),
       },
     });
 
