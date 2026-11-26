@@ -46,10 +46,23 @@ const withGlobals = (dom, fn) => {
   };
   const saved = Object.fromEntries(Object.keys(GLOBALS).map((k) => [k, Object.getOwnPropertyDescriptor(global, k)]));
   Object.assign(global, GLOBALS);
-  try { return fn(); } finally {
+  const restore = () => {
     for (const [k, d] of Object.entries(saved)) { if (d) Object.defineProperty(global, k, d); else delete global[k]; }
-  }
+  };
+  return settle(fn, restore);
 };
+/** fn(), then `after` once it is done: at once, or when the promise it returned settles (testAsync). */
+function settle(fn, after) {
+  let r;
+  try { r = fn(); } catch (e) { after(); throw e; }
+  if (r && typeof r.then === 'function') return r.finally(after);
+  after();
+  return r;
+}
+/** Async tests run after the others, one at a time (each swaps the browser globals while it runs). */
+const asyncTests = [];
+const testAsync = (name, fn) => asyncTests.push([name, fn]);
+const microtasks = () => new Promise((r) => setImmediate(r));
 
 /** A stub decoder: records what reaches it. `ready`: its file is open already (the overlay need not wait). */
 function stubPlayer(clip, host, hooks) {
@@ -126,7 +139,7 @@ function withPage(fn, {
       widgets: { ...widgets(), ...extraWidgets },
       stateApi: S, engineApi, hostApi: HostAdapter, uiApi,
     });
-    try { return fn({ ...dom, app, posted, send, made, vscode, frames, rafQueue }); } finally { app.dispose(); }
+    return settle(() => fn({ ...dom, app, posted, send, made, vscode, frames, rafQueue }), () => app.dispose());
   });
 }
 
@@ -1052,4 +1065,329 @@ test('debug probe: thumb draws the real decoder canvas, seek moves controller an
   }, { cfg: { debug: true }, createPlayer: realPlayer, extraWidgets: { VpeDebugProbe, VpeScopes } });
 });
 
-console.log(`player_unified_test: ${count} ok (${Date.now() - T0} ms)`);
+// ---- sound and subtitle tracks, picture subtitles, the X-ray, the pixel inspector, frame links ----
+
+const SubtitlesApi = require('../../media/subtitles');
+/** media/engine.js's track API on the stub (tracks_multi.mkv's streams plus a PGS track); onTracks as engine.js. */
+function trackPlayer(clip, host, hooks) {
+  const p = stubPlayer(clip, host, hooks);
+  Object.assign(p, {
+    info: { tracks: true }, audioId: 1, subId: null, gen: 1, startT: 0,
+    audioTracks: [
+      { id: 1, codec: 'aac', lang: 'eng', title: 'English stereo', channels: 2, default: true },
+      { id: 2, codec: 'ac3', lang: 'ger', title: 'Deutsch 5.1', channels: 6 },
+    ],
+    subTracks: [
+      { id: 4, codec: 'subrip', lang: 'eng', default: true, kind: 'text' },
+      { id: 5, codec: 'ass', lang: 'ger', title: 'Signs', forced: true, kind: 'text' },
+      { id: 6, codec: 'hdmv_pgs_subtitle', kind: 'bitmap' },
+    ],
+    cv: { width: 320, height: 180, hidden: false, style: {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 180 }) },
+    tracks() { return { audio: p.audioTracks, sub: p.subTracks, audioId: p.audioId, subId: p.subId }; },
+    selectSub(id) { p.calls.push(['selectSub', id]); p.subId = id; hooks.onTracks(p); return Promise.resolve(p.tracks()); },
+    selectAudio(id) { p.calls.push(['selectAudio', id]); p.audioId = id; hooks.onTracks(p); return Promise.resolve(p.tracks()); },
+    currentTime() { return p.frame / 25; },
+    onWorkerRead() {},
+  });
+  return p;
+}
+const subSelects = (p) => p.calls.filter((c) => c[0] === 'selectSub').map((c) => c[1]);
+/** media/subtitles.js with a BitmapRenderer that records (the real one needs ImageData and a 2D canvas). */
+const bitmapLog = [];
+const SubtitlesStub = {
+  ...SubtitlesApi,
+  BitmapRenderer: class {
+    constructor(box) { this.box = box; }
+    render(cues) { bitmapLog.push(cues.map((c) => c.start)); }
+    clear() { bitmapLog.push('clear'); }
+  },
+};
+
+test('embedded subtitles: listed once with names, the default stream on, text cues on the overlay, CC and a pick switch streams', () => {
+  withPage(({ doc, app, send, made }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    const subs = app.ui.parts.subs;
+    assert.deepStrictEqual(subs.getState().tracks, [], 'nothing before the decoder knows its streams');
+    p.hooks.onTracks(p);
+    p.hooks.onTracks(p);
+    assert.deepStrictEqual(subs.getState().tracks, ['English · subrip', 'Signs · German · ass', 'Track 3 · hdmv_pgs_subtitle'],
+      'each stream once, the codec in the name');
+    assert.strictEqual(subs.getState().track, 0, 'the default stream is chosen');
+    assert.strictEqual(p.subId, 4, 'and demuxed by the decoder');
+    assert.deepStrictEqual(subSelects(p), [4]);
+    // A text cue (engine.js player time) shows on #subs at its time, also when it arrives after the frame.
+    p.onSubCue({ start: 4, end: 5.5, text: 'EN cue 4', track: 4 });
+    app.ui.dispatch('seek', 115); // 4.6 s
+    assert.strictEqual(doc.getElementById('subs').hidden, false);
+    assert.strictEqual(doc.getElementById('subs').textContent, 'EN cue 4');
+    app.ui.dispatch('seek', 150); // 6 s: after its end
+    assert.strictEqual(doc.getElementById('subs').hidden, true);
+    // CC: off and on again; the decoder demuxes nothing while off.
+    subs.toggle();
+    assert.strictEqual(p.subId, null);
+    subs.toggle();
+    assert.strictEqual(p.subId, 4);
+    // The Subtitles page picks Signs.
+    subs.select(1);
+    assert.strictEqual(p.subId, 5);
+    assert.deepStrictEqual(subSelects(p), [4, null, 4, 5]);
+    // A restarted decoder (another decoder kind, the host's new meta) demuxes the chosen stream again, not listed twice.
+    send({ type: 'libav', clipId: 'A', meta: { size: 1, duration: 10 } });
+    const p2 = made[1];
+    assert.notStrictEqual(p2, p);
+    p2.hooks.onTracks(p2);
+    assert.strictEqual(p2.subId, 5);
+    assert.strictEqual(subs.getState().tracks.length, 3);
+  }, { createPlayer: trackPlayer, extraWidgets: { Subtitles: SubtitlesStub } });
+});
+
+test('embedded subtitles: no default stream leaves them off; a sidecar file the host sends shows through cueAt', () => {
+  const noDefault = (clip, host, hooks) => {
+    const p = trackPlayer(clip, host, hooks);
+    p.subTracks = p.subTracks.map((s) => ({ ...s, default: false }));
+    return p;
+  };
+  withPage(({ doc, app, send, made }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    const subs = app.ui.parts.subs;
+    p.hooks.onTracks(p);
+    assert.strictEqual(subs.getState().tracks.length, 3);
+    assert.strictEqual(subs.getState().track, -1, 'no default: off');
+    assert.strictEqual(p.subId, null);
+    const srt = '1\n00:00:01,000 --> 00:00:03,000\nHello from the sidecar\n';
+    send({ type: 'subs', clipId: 'A', tracks: [{ name: 'a.srt', data: new TextEncoder().encode(srt) }], select: true });
+    assert.strictEqual(subs.getState().track, 3, 'the loaded file is chosen');
+    assert.strictEqual(p.subId, null, 'a file: the decoder demuxes no stream');
+    app.ui.dispatch('seek', 50); // 2 s
+    assert.strictEqual(doc.getElementById('subs').textContent, 'Hello from the sidecar');
+  }, { createPlayer: noDefault, extraWidgets: { Subtitles: SubtitlesStub } });
+});
+
+test('picture subtitles: drawn over the picture at their time, cleared after their end and after a seek', () => {
+  bitmapLog.length = 0;
+  withPage(({ doc, app, send, made, setRect }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    p.hooks.onTracks(p);
+    const subs = app.ui.parts.subs;
+    subs.select(2);
+    assert.strictEqual(p.subId, 6);
+    app.ui.render(); // the browser's first layout (a resize) builds the tile cells
+    const cell = doc.getElementById('cells').querySelector('.cell canvas');
+    assert.ok(cell, 'the tile canvas');
+    setRect(cell, { left: 0, top: 0, width: 680, height: 370 });
+    p.onSubCue({ track: 6, span: 1, gen: 1, rects: null });
+    p.onSubCue({ track: 6, span: 1, gen: 1, start: 5, end: 7, frame: [320, 180], rects: [{ x: 10, y: 20, w: 30, h: 40 }] });
+    app.ui.dispatch('seek', 150); // 6 s
+    app.tick(0);
+    const box = doc.querySelector('.subs-pic');
+    assert.ok(box, '.subs-pic is made');
+    assert.strictEqual(box.hidden, false);
+    assert.deepStrictEqual(bitmapLog.filter((x) => x !== 'clear').pop(), [5]);
+    // The frame covers the whole picture (fit: 320×180 in 680×370 → 657.8×370 centred), the box clips it.
+    const f = box.querySelector('.subs-frame').style;
+    assert.ok(Math.abs(parseFloat(f.height) - 370) < 0.01 && Math.abs(parseFloat(f.width) - 657.8) < 0.1, `${f.width} × ${f.height}`);
+    assert.strictEqual(doc.getElementById('subs').hidden, true, 'no text for a picture track');
+    app.ui.dispatch('seek', 200); // 8 s
+    app.tick(0);
+    assert.strictEqual(box.hidden, true, 'after its end');
+    // A seek starts a new read (the decoder's gen): nothing until the worker answers for it.
+    app.ui.dispatch('seek', 150);
+    p.gen = 2;
+    app.tick(0);
+    assert.strictEqual(box.hidden, true, 'an older read is not shown after a seek');
+    subs.select(-1);
+    assert.strictEqual(p.subId, null);
+  }, { createPlayer: trackPlayer, extraWidgets: { Subtitles: SubtitlesStub } });
+});
+
+test('Audio track page: the decoder\'s streams with their labels; a pick switches the decoder\'s sound', () => {
+  withPage(({ doc, app, send, made }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    p.hooks.onTracks(p);
+    app.ui.controls.show('audio');
+    const radios = () => Array.from(doc.getElementById('panel').querySelectorAll('[role=radio]'));
+    // As the layer-3 probe reads them (media/debug-probe.js tracksMenu): '*' when checked, then the label.
+    const labels = radios().map((b) => `${b.getAttribute('aria-checked') === 'true' ? '*' : ''}${(b.querySelector('.grow') || b).textContent.trim()}`);
+    assert.ok(/^\*English stereo/.test(labels[0]) && /^Deutsch 5\.1/.test(labels[1]) && labels.length === 2, labels.join(' | '));
+    radios()[1].click();
+    assert.deepStrictEqual(p.calls.filter((c) => c[0] === 'selectAudio'), [['selectAudio', 2]]);
+    assert.strictEqual(p.audioId, 2);
+    // A restarted decoder plays the chosen stream again.
+    send({ type: 'libav', clipId: 'A', meta: { size: 1, duration: 10 } });
+    const p2 = made[1];
+    p2.hooks.onTracks(p2);
+    assert.strictEqual(p2.audioId, 2);
+  }, { createPlayer: trackPlayer, extraWidgets: { Subtitles: SubtitlesStub } });
+  // One sound stream (or a decoder without streams): nothing to choose, the mockup's demo list never shows.
+  withPage(({ doc, app, send }) => {
+    send({ type: 'open' });
+    app.ui.controls.show('audio');
+    assert.strictEqual(doc.getElementById('panel').querySelectorAll('[role=radio]').length, 0);
+    assert.ok(!/Director Commentary/.test(doc.getElementById('panel').textContent));
+  });
+});
+
+/** media/xray.js's createXray, recorded: its index state is what the test puts there. */
+function xrayStub() {
+  const made = [];
+  const create = (env) => {
+    const x = {
+      env, shown: false, st: { p: null, n: 0, pts: [], key: [], base: 0, chapters: null },
+      toggle(on) { x.shown = on === undefined ? !x.shown : !!on; }, isShown: () => x.shown, chapterTicks() { x.ticks = (x.ticks || 0) + 1; },
+      _state: () => x.st,
+    };
+    made.push(x);
+    return x;
+  };
+  return { made, create };
+}
+
+testAsync('Codec X-ray: Shift+X shows media/xray.js\'s strip; { } step through its index; its own key listener stays out', async () => {
+  const X = xrayStub();
+  await withPage(async ({ doc, app, send, made }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    const listeners0 = doc._listeners ? doc._listeners.keydown : undefined;
+    doc.body.fire('keydown', { key: 'X', shiftKey: true });
+    await microtasks();
+    assert.strictEqual(X.made.length, 1, 'the strip is made on first use');
+    assert.strictEqual(X.made[0].shown, true, 'and shown');
+    assert.strictEqual(X.made[0].env.ui.seek, doc.getElementById('seek'));
+    assert.strictEqual(doc._listeners ? doc._listeners.keydown : undefined, listeners0, 'no keydown listener of its own');
+    // The index grows while the strip is open: the keyframe keys read it each time.
+    Object.assign(X.made[0].st, { p, n: 4, pts: [0, 0.04, 1, 2], key: [1, 0, 1, 1] });
+    app.ui.dispatch('seek', 0);
+    doc.body.fire('keydown', { key: '}' });
+    await microtasks();
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 25, '} goes to the keyframe at 1 s');
+    doc.body.fire('keydown', { key: '}' });
+    await microtasks();
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 50);
+    doc.body.fire('keydown', { key: '{' });
+    await microtasks();
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 25, '{ goes back');
+    doc.body.fire('keydown', { key: 'X', shiftKey: true });
+    await microtasks();
+    assert.strictEqual(X.made[0].shown, false, 'Shift+X again hides it');
+    // Chapters come from the file (engine.js info) relative to its start.
+    p.info.chapters = [{ start: 0, title: 'One' }, { start: 3, title: 'Two' }];
+    doc.body.fire('keydown', { key: 'PageDown' });
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 75, 'PageDown: the next chapter at 3 s');
+  }, { createPlayer: trackPlayer, extraWidgets: { createXray: X.create } });
+});
+
+test('frame link: the controller lands on the link\'s frame once the decoder knows its length, paused', () => {
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    assert.ok(S.getTab(app.ui.getState()).frame < 299, 'the link\'s frame is past the length the page knew');
+    p.fps = 25;
+    p.n = 500;
+    p.meta = { duration: 20 };
+    p.hooks.onMeta();
+    frames(20);
+    assert.strictEqual(p.firstShown, true);
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 299, 'frame 300 of the link (1-based)');
+    assert.strictEqual(seeksOf(p).pop(), 299, 'the decoder is sent there');
+    assert.strictEqual(S.getTab(app.ui.getState()).playing, false);
+    frames(20);
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 299, 'once');
+  }, { cfg: { goto: { frame: 300, t: 11.98 }, clips: [{ id: 'A', name: 'a.mp4' }] }, createPlayer: enginePlayer, raf: true });
+});
+
+test('pixel inspector (X): the read-out reads the clock decoder\'s picture under the pointer; zoomed far, the grid', () => {
+  withPage(({ doc, app, send, made, setRect, frames }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    // A 2D picture (a frame player): read through its context.
+    p.ctx = { getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4).fill(7) }) };
+    app.ui.render();
+    const cell = doc.getElementById('cells').querySelector('.cell canvas');
+    setRect(cell, { left: 0, top: 0, width: 640, height: 360 });
+    doc.body.fire('keydown', { key: 'x' });
+    assert.strictEqual(app.ui.parts.insp.getState().inspector, 'loupe');
+    doc.getElementById('stage').fire('pointermove', { clientX: 100.5, clientY: 50.5, pointerType: 'mouse' });
+    frames(5); // the read waits for an animation frame
+    const read = doc.getElementById('pxread');
+    assert.strictEqual(read.hidden, false);
+    assert.match(read.textContent, /^x 50 {2}y 25\nRGB 7 7 7/);
+    doc.body.fire('keydown', { key: 'Escape' });
+    assert.strictEqual(read.hidden, true, 'Esc turns it off');
+    // Fit shows the 320 px picture at 2 CSS px per pixel: zoom 2 is 400 % (no grid), zoom 4 is 800 % (the grid).
+    const grid = doc.getElementById('pxgrid');
+    app.ui.setState(S.setZoom(app.ui.getState(), 2, 0, 0));
+    assert.strictEqual(grid.hidden, true, '400 %: no grid');
+    app.ui.setState(S.setZoom(app.ui.getState(), 4, 0, 0));
+    assert.strictEqual(grid.hidden, false, '800 %: the grid');
+    app.ui.setState(S.setZoom(app.ui.getState(), 1, 0, 0));
+    assert.strictEqual(grid.hidden, true, 'back to Fit');
+  }, { createPlayer: trackPlayer, raf: true });
+});
+
+test('debug probe: the seek-bar thumbnail (canvas.seek-thumb) is the probe\'s #thumb', () => {
+  const VpeDebugProbe = require('../../media/debug-probe');
+  withPage(({ send, posted }) => {
+    send({ type: 'open' });
+    send({ type: 'debug', action: 'state', id: 31 });
+    const l = logsOf(posted).filter((x) => x.startsWith('state ')).pop();
+    const st = JSON.parse(l.slice(6));
+    assert.ok(st.thumb && st.thumb.rect, `the probe finds #thumb: ${JSON.stringify(st.thumb || st.error)}`);
+    assert.strictEqual(st.thumb.hidden, true, 'hidden until the pointer is on the seek bar');
+  }, { cfg: { debug: true }, createPlayer: trackPlayer, extraWidgets: { VpeDebugProbe } });
+});
+
+test('engine adapter: a seek-bar thumbnail (thumbs.js { bmp, w, h, rot }) fills the hover canvas; zoomed tiles draw nearest-neighbour', () => {
+  /** A canvas whose 2D context records what is drawn and the smoothing it was drawn with. */
+  const canvas = (w = 300, h = 150) => {
+    const ops = [];
+    const ctx = {
+      imageSmoothingEnabled: true,
+      save() {}, restore() {}, clearRect() {}, fillRect() {}, beginPath() {}, rect() {}, clip() {},
+      setTransform: (...a) => ops.push(['setTransform', ...a]), translate: (...a) => ops.push(['translate', ...a]),
+      rotate: (a) => ops.push(['rotate', a]),
+      drawImage: (src, ...a) => ops.push(['drawImage', src, ctx.imageSmoothingEnabled, ...a]),
+    };
+    return { width: w, height: h, style: {}, clientWidth: 0, clientHeight: 0, ops, getContext: () => ctx };
+  };
+  const bmp = { id: 'bitmap' };
+  const cv = canvas();
+  assert.strictEqual(EngineAdapter.drawThumbPicture(cv, { bmp, w: 160, h: 90, rot: 0 }), true);
+  assert.deepStrictEqual([cv.width, cv.height], [160, 90], 'sized to the picture');
+  assert.deepStrictEqual(cv.ops.find((o) => o[0] === 'drawImage').slice(0, 2), ['drawImage', bmp]);
+  const turned = canvas();
+  EngineAdapter.drawThumbPicture(turned, { bmp, w: 160, h: 90, rot: 90 });
+  assert.deepStrictEqual([turned.width, turned.height], [90, 160], 'turned like the video');
+  assert.strictEqual(EngineAdapter.drawThumbPicture(canvas(), null), false);
+  assert.strictEqual(EngineAdapter.drawThumbPicture(canvas(), { bmp }), false, 'no size: nothing drawn');
+  // Through the adapter: the player's thumbnail service answers with such a picture.
+  const player = {
+    thumbnail: (_t, cb) => { cb({ bmp, w: 64, h: 36, rot: 0 }); return true; },
+    snapshotSource: () => ({ width: 320, height: 180 }),
+  };
+  const A = EngineAdapter.create({ clips: [{ id: 'A', fps: 25, frames: 250, width: 320, height: 180 }], getPlayer: () => player });
+  const hover = canvas();
+  A.thumbnail('A', 2, hover, false);
+  assert.deepStrictEqual([hover.width, hover.height], [64, 36], 'the hover canvas shows the thumbnail, not the shown frame');
+  // A tile at 100 % of a 320 px picture is smoothed; zoomed past 200 % it is drawn nearest-neighbour.
+  const tile = canvas(640, 360);
+  A.draw(tile, 'A', 0, { width: 640, height: 360, picMode: 'fit', zoom: 1 });
+  let d = tile.ops.filter((o) => o[0] === 'drawImage').pop();
+  assert.strictEqual(d[2], false, 'fit at 2 CSS px per pixel: nearest');
+  assert.strictEqual(tile.style.imageRendering, 'pixelated');
+  const big = canvas(320, 180);
+  A.draw(big, 'A', 0, { width: 320, height: 180, picMode: 'fit', zoom: 1 });
+  d = big.ops.filter((o) => o[0] === 'drawImage').pop();
+  assert.strictEqual(d[2], true, '100 %: smoothed');
+  assert.strictEqual(big.style.imageRendering, '');
+});
+
+(async () => {
+  for (const [name, fn] of asyncTests) {
+    try { await fn(); count++; } catch (e) { e.message = `${name}: ${e.message}`; console.error(e); process.exit(1); }
+  }
+  console.log(`player_unified_test: ${count} ok (${Date.now() - T0} ms)`);
+})();

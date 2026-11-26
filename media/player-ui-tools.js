@@ -9,6 +9,7 @@
 //   shouldSuppressToast         drops a #toast that repeats the open banner or the bottom bar's Live chip
 //   createInspectionController  Scopes (W), pixel inspector (X), stats overlay (Shift+I), Codec X-ray (Shift+X) with
 //                               keyframe ({ }) and chapter (PageUp / PageDown) steps, Esc order
+//   createPixelInspector        the inspector's #pxread (position, RGB, YUV, loupe) and #pxgrid at high zoom
 //   createSubtitleController    subtitle track, delay (G / H), size, the CC button, cue placement in the picture
 //   createFrameExportController save / copy frame, copy timestamp / link, the A-B export protocol with the host
 //
@@ -632,6 +633,193 @@
     };
   }
 
+  // ---- 2b. the pixel inspector's read-out, loupe and pixel grid (the inspection controller's `inspector`) -----------
+
+  /** Loupe source size (odd: the centre pixel is the cursor) and its scale, as media/inspect.js. */
+  const LOUPE_PX = 15;
+  const LOUPE_SCALE = 8;
+  /** The pixel grid shows from this many CSS px per video pixel (800 %), as media/inspect.js. */
+  const GRID_AT = 8;
+  /** @param {number} r @param {number} g @param {number} b */
+  const hexOf = (r, g, b) => `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+
+  /**
+   * @typedef {{ rect: { left: number, top: number, width: number, height: number }, width: number, height: number }} PixelTarget
+   *   the picture on screen (client px) and its size in pixels
+   * @typedef {{ y: number, u: number, v: number, depth: number }} Yuv
+   * @typedef {{ block?: ArrayLike<number> | null, rgb?: number[] | null, yuv?: Yuv | Promise<Yuv | null> | null,
+   *   rot?: number }} PixelRead a LOUPE_PX² RGBA block around the pixel (or just its rgb), its code values
+   */
+  /**
+   * The pixel inspector as a widget (media/inspect.js's read-out without its zoom and pan, which the shared
+   * controller owns): `#pxread` beside the pointer with the loupe and the pixel's position, RGB and YUV, and `#pxgrid`
+   * over the picture from GRID_AT. The pixels come from `read` (the decoder side), so the DOM part runs on the fake DOM.
+   * @param {object} env
+   * @param {any} env.doc
+   * @param {any} [env.win] requestAnimationFrame (else a pick runs at once), ImageData
+   * @param {any} env.stageEl the pointer is read here; #pxread and #pxgrid are made inside it
+   * @param {() => PixelTarget | null} env.getTarget
+   * @param {(x: number, y: number) => PixelRead | null} env.read
+   * @param {() => boolean} [env.gridAllowed] false hides the grid (Compare)
+   */
+  function createPixelInspector(env) {
+    const { doc, stageEl } = env;
+    const win = env.win || {};
+    const gridAllowed = env.gridAllowed || (() => true);
+    /** @param {string} tag @param {string} id */
+    const own = (tag, id) => {
+      let e = typeof doc.getElementById === 'function' ? doc.getElementById(id) : null;
+      if (!e) {
+        e = doc.createElement(tag);
+        e.id = id;
+        stageEl.appendChild(e);
+      }
+      e.hidden = true;
+      return e;
+    };
+    const grid = own('div', 'pxgrid');
+    const readout = own('div', 'pxread');
+    const loupe = doc.createElement('canvas');
+    loupe.width = LOUPE_PX * LOUPE_SCALE;
+    loupe.height = LOUPE_PX * LOUPE_SCALE;
+    loupe.className = 'loupe';
+    const text = doc.createElement('div');
+    readout.appendChild(loupe);
+    readout.appendChild(text);
+    /** @type {any} */
+    let tile = null;
+
+    /** @type {'loupe' | 'readout' | null} */
+    let mode = null;
+    /** @type {{ x: number, y: number } | null} */
+    let mouse = null;
+    let queued = false;
+    let seq = 0;
+    /** @type {{ x: number, y: number, text: string } | null} */
+    let last = null;
+    let disposed = false;
+
+    const hide = () => { readout.hidden = true; last = null; };
+    /** @param {any} e */
+    const onMove = (e) => {
+      if (e.pointerType === 'touch') return;
+      mouse = { x: e.clientX, y: e.clientY };
+      if (!mode || queued) return;
+      queued = true;
+      if (typeof win.requestAnimationFrame === 'function') win.requestAnimationFrame(() => { queued = false; pick(); });
+      else { queued = false; pick(); }
+    };
+    const onLeave = () => { mouse = null; if (mode) hide(); };
+    stageEl.addEventListener('pointermove', onMove);
+    stageEl.addEventListener('pointerleave', onLeave);
+
+    /** The loupe: the block scaled up without smoothing, the centre pixel framed. @param {ArrayLike<number>} block @param {number} sum */
+    function drawLoupe(block, sum) {
+      const ImageDataCtor = win.ImageData || /** @type {any} */ (globalThis).ImageData;
+      const lctx = typeof loupe.getContext === 'function' ? loupe.getContext('2d') : null;
+      if (!ImageDataCtor || !lctx) { loupe.hidden = true; return; }
+      if (!tile) {
+        tile = doc.createElement('canvas');
+        tile.width = LOUPE_PX;
+        tile.height = LOUPE_PX;
+      }
+      const tctx = typeof tile.getContext === 'function' ? tile.getContext('2d') : null;
+      if (!tctx) { loupe.hidden = true; return; }
+      tctx.putImageData(new ImageDataCtor(new Uint8ClampedArray(block), LOUPE_PX, LOUPE_PX), 0, 0);
+      lctx.imageSmoothingEnabled = false;
+      lctx.clearRect(0, 0, loupe.width, loupe.height);
+      lctx.drawImage(tile, 0, 0, loupe.width, loupe.height);
+      const m = (LOUPE_PX >> 1) * LOUPE_SCALE;
+      lctx.strokeStyle = sum > 382 ? '#000' : '#fff';
+      lctx.strokeRect(m + 0.5, m + 0.5, LOUPE_SCALE - 1, LOUPE_SCALE - 1);
+    }
+
+    /** Read the pixel under the pointer and show it beside the pointer, flipped at the stage's edges. */
+    function pick() {
+      if (disposed || !mode || !mouse) return;
+      const t = attempt(() => env.getTarget());
+      if (!t || !(t.rect.width > 0 && t.rect.height > 0) || !(t.width > 0 && t.height > 0)) { hide(); return; }
+      const x = Math.floor(((mouse.x - t.rect.left) / t.rect.width) * t.width);
+      const y = Math.floor(((mouse.y - t.rect.top) / t.rect.height) * t.height);
+      if (x < 0 || y < 0 || x >= t.width || y >= t.height) { hide(); return; }
+      /** @type {PixelRead | null} */
+      const px = attempt(() => env.read(x, y));
+      const c = ((LOUPE_PX >> 1) * LOUPE_PX + (LOUPE_PX >> 1)) * 4;
+      const block = px && px.block && px.block.length >= LOUPE_PX * LOUPE_PX * 4 ? px.block : null;
+      const rgb = block ? [block[c], block[c + 1], block[c + 2]] : px && px.rgb ? px.rgb : null;
+      if (!rgb) { hide(); return; }
+      const [R, G, B] = rgb;
+      const rot = (px && px.rot) || 0;
+      const lines = [`x ${x}  y ${y}${rot ? `  (turned ${rot}°)` : ''}`, `RGB ${R} ${G} ${B}  ${hexOf(R, G, B)}`];
+      const yuv = px ? px.yuv : null;
+      const mine = ++seq;
+      if (yuv && typeof (/** @type {any} */ (yuv)).then === 'function') {
+        /** @type {Promise<Yuv | null>} */ (yuv).then((v) => {
+          if (!v || disposed || mine !== seq || readout.hidden) return;
+          text.textContent += `\nYUV ${v.y} ${v.u} ${v.v}  ${v.depth}-bit`;
+        }, noop);
+      } else if (yuv) {
+        const v = /** @type {Yuv} */ (yuv);
+        lines.push(`YUV ${v.y} ${v.u} ${v.v}  ${v.depth}-bit`);
+      }
+      text.textContent = lines.join('\n');
+      last = { x, y, text: lines.join(' ') };
+      loupe.hidden = mode !== 'loupe' || !block;
+      if (!loupe.hidden && block) drawLoupe(block, R + G + B);
+      readout.hidden = false;
+      const sr = stageEl.getBoundingClientRect();
+      const bw = readout.offsetWidth || 0;
+      const bh = readout.offsetHeight || 0;
+      let left = mouse.x - sr.left + 18;
+      let top = mouse.y - sr.top + 18;
+      if (left + bw > sr.width - 4) left = mouse.x - sr.left - bw - 18;
+      if (top + bh > sr.height - 4) top = mouse.y - sr.top - bh - 18;
+      readout.style.left = `${Math.max(4, left)}px`;
+      readout.style.top = `${Math.max(4, top)}px`;
+    }
+
+    /** The grid over the visible part of the picture, from GRID_AT CSS px per video pixel. */
+    function layoutGrid() {
+      const t = attempt(() => env.getTarget());
+      const k = t && t.width > 0 ? t.rect.width / t.width : 0;
+      if (!t || !(k >= GRID_AT) || !gridAllowed()) { grid.hidden = true; return; }
+      const sr = stageEl.getBoundingClientRect();
+      const r = { x: t.rect.left - sr.left, y: t.rect.top - sr.top, w: t.rect.width, h: t.rect.height };
+      const x0 = Math.max(0, r.x);
+      const y0 = Math.max(0, r.y);
+      const x1 = Math.min(sr.width, r.x + r.w);
+      const y1 = Math.min(sr.height, r.y + r.h);
+      if (x1 <= x0 || y1 <= y0) { grid.hidden = true; return; }
+      const s = grid.style;
+      s.left = `${x0}px`;
+      s.top = `${y0}px`;
+      s.width = `${x1 - x0}px`;
+      s.height = `${y1 - y0}px`;
+      s.backgroundSize = `${r.w / t.width}px ${r.h / /** @type {number} */ (t.height)}px`;
+      s.backgroundPosition = `${r.x - x0}px ${r.y - y0}px`;
+      grid.hidden = false;
+    }
+
+    return {
+      /** The inspection controller's mode: 'loupe', 'readout' (no loupe) or null (off). @param {string | null} m */
+      setMode(m) {
+        mode = m === 'loupe' || m === 'readout' ? m : null;
+        if (stageEl.classList) stageEl.classList.toggle('inspecting', !!mode);
+        if (!mode) hide(); else if (mouse) pick();
+      },
+      /** The picture changed (a frame, zoom, pan, another video): the grid follows, the read-out reads again. */
+      refresh() { layoutGrid(); if (mode && mouse) pick(); },
+      pick,
+      getState: () => ({ mode, grid: !grid.hidden, shown: !readout.hidden, text: readout.hidden ? '' : text.textContent, last }),
+      dispose() {
+        disposed = true;
+        stageEl.removeEventListener('pointermove', onMove);
+        stageEl.removeEventListener('pointerleave', onLeave);
+        for (const e of [grid, readout]) if (e.parentNode) e.parentNode.removeChild(e);
+      },
+    };
+  }
+
   // ---- 3. subtitles --------------------------------------------------------------------------------------------
 
   const DELAY_STEP_MS = 50;
@@ -1024,9 +1212,9 @@
 
   const api = {
     SCOPE_MODES, SCOPE_NAMES, INSPECTOR_MODES, STATS_MS, DELAY_STEP_MS, EXPORT_FRAME_TIMEOUT_MS,
-    NOTICE_PRIORITY, NOTICE_OPEN_CLASS,
-    createNoticeController, shouldSuppressToast, createInspectionController, createSubtitleController,
-    createFrameExportController, fmtStamp,
+    NOTICE_PRIORITY, NOTICE_OPEN_CLASS, LOUPE_PX, GRID_AT,
+    createNoticeController, shouldSuppressToast, createInspectionController, createPixelInspector,
+    createSubtitleController, createFrameExportController, fmtStamp,
   };
   // checkJs: end
 

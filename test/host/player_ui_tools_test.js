@@ -337,6 +337,95 @@ const fullEngine = () => ({
   pixelAt: (id, x, y) => ({ text: `${id} ${x},${y} rgb(1, 2, 3)` }),
 });
 
+// ---- 2b. the pixel inspector widget (#pxread, loupe, #pxgrid) ----
+
+/** A 320×180 picture shown at `scale` CSS px per pixel from (40, 20) in a 680×370 stage at (0, 0). */
+function pixelSetup({ scale = 1, read = null, gridAllowed = () => true } = {}) {
+  const dom = createDom('<div id="stage"><canvas id="cv"></canvas></div>');
+  dom.setRect(dom.$('stage'), { width: 680, height: 370 });
+  const reads = [];
+  const target = { rect: { left: 40, top: 20, width: 320 * scale, height: 180 * scale }, width: 320, height: 180 };
+  const px = T.createPixelInspector({
+    doc: dom.doc, win: {}, stageEl: dom.$('stage'), getTarget: () => target,
+    read: read || ((x, y) => { reads.push([x, y]); return { rgb: [1, 2, 255], yuv: { y: 30, u: 240, v: 110, depth: 8 } }; }),
+    gridAllowed,
+  });
+  const move = (x, y) => dom.$('stage').fire('pointermove', { clientX: x, clientY: y, pointerType: 'mouse' });
+  return { ...dom, px, reads, target, move };
+}
+
+test('pixel inspector: off until X; the read-out names the pixel under the pointer with RGB and YUV', () => {
+  const { $, px, reads, move } = pixelSetup({ scale: 2 });
+  assert.ok($('pxread') && $('pxgrid'), '#pxread and #pxgrid are made in the stage');
+  assert.strictEqual($('pxread').hidden, true);
+  move(40 + 21, 20 + 11);
+  assert.deepStrictEqual(reads, [], 'nothing is read while the inspector is off');
+  px.setMode('loupe');
+  assert.deepStrictEqual(reads, [[10, 5]], 'turning it on reads under the pointer at once (2 px per pixel)');
+  assert.strictEqual($('pxread').hidden, false);
+  const text = px.getState().text;
+  assert.match(text, /^x 10 {2}y 5\nRGB 1 2 255 {2}#0102FF\nYUV 30 240 110 {2}8-bit$/);
+  // The layer-3 scenario's pattern (test/vscode/cases/inspect.js).
+  assert.match(text, /x (\d+)\s+y (\d+)[\s\S]*?RGB (\d+) (\d+) (\d+)[\s\S]*?YUV (\d+) (\d+) (\d+)/);
+  assert.strictEqual($('stage').classList.contains('inspecting'), true);
+  move(40 + 640 - 1, 20 + 360 - 1);
+  assert.deepStrictEqual(reads.pop(), [319, 179], 'the last pixel');
+  move(39, 30);
+  assert.strictEqual($('pxread').hidden, true, 'outside the picture: no read-out');
+  move(100, 100);
+  $('stage').fire('pointerleave', {});
+  assert.strictEqual($('pxread').hidden, true, 'the pointer left the stage');
+  move(100, 100);
+  px.setMode(null);
+  assert.strictEqual($('pxread').hidden, true);
+  assert.strictEqual($('stage').classList.contains('inspecting'), false);
+  const n = reads.length;
+  move(110, 110);
+  assert.strictEqual(reads.length, n, 'off: no reads');
+});
+
+test('pixel inspector: a block gives the centre pixel; WebCodecs YUV arrives later; no pixel hides', async () => {
+  const block = new Uint8ClampedArray(T.LOUPE_PX * T.LOUPE_PX * 4);
+  const c = ((T.LOUPE_PX >> 1) * T.LOUPE_PX + (T.LOUPE_PX >> 1)) * 4;
+  block.set([200, 100, 50, 255], c);
+  let yuv = null;
+  let answer = () => ({ block, rot: 90, yuv });
+  const { $, px, move } = pixelSetup({ read: () => answer() });
+  px.setMode('readout');
+  yuv = Promise.resolve({ y: 1, u: 2, v: 3, depth: 10 });
+  move(40 + 5, 20 + 6);
+  assert.match(px.getState().text, /^x 5 {2}y 6 {2}\(turned 90°\)\nRGB 200 100 50 {2}#C86432$/);
+  await tick();
+  assert.match(px.getState().text, /\nYUV 1 2 3 {2}10-bit$/, 'the copyTo answer is appended');
+  assert.strictEqual($('pxread').querySelector('canvas').hidden, true, 'readout mode: no loupe');
+  answer = () => null;
+  move(40 + 7, 20 + 6);
+  assert.strictEqual($('pxread').hidden, true, 'nothing to read: no read-out');
+  answer = () => { throw new Error('lost context'); };
+  move(40 + 8, 20 + 6);
+  assert.strictEqual($('pxread').hidden, true, 'a failing read is no read-out');
+});
+
+test('pixel inspector: the pixel grid from 800 % over the visible picture, not in Compare; dispose removes it', () => {
+  let allowed = true;
+  const { $, px, target } = pixelSetup({ scale: 4, gridAllowed: () => allowed });
+  px.refresh();
+  assert.strictEqual($('pxgrid').hidden, true, '400 %: no grid');
+  target.rect = { left: -300, top: -100, width: 320 * 8, height: 180 * 8 };
+  px.refresh();
+  assert.strictEqual($('pxgrid').hidden, false, '800 %: the grid');
+  const s = $('pxgrid').style;
+  assert.deepStrictEqual([s.left, s.top, s.width, s.height], ['0px', '0px', '680px', '370px'], 'clipped to the stage');
+  assert.strictEqual(s.backgroundSize, '8px 8px');
+  assert.strictEqual(s.backgroundPosition, '-300px -100px');
+  allowed = false;
+  px.refresh();
+  assert.strictEqual($('pxgrid').hidden, true, 'Compare: no grid');
+  px.dispose();
+  assert.strictEqual($('pxgrid'), null);
+  assert.strictEqual($('pxread'), null);
+});
+
 test('inspection: W cycles the four scopes, then off', () => {
   const { doc, c, log } = inspectSetup(fullEngine());
   for (let i = 0; i < 5; i++) doc.body.fire('keydown', { key: 'w' });
