@@ -12,7 +12,7 @@
   "bugs": {
     "url": "https://github.com/gordon-vidal/video-preview-enhanced/issues"
   },
-  "homepage": "https://github.com/gordon-vidal/video-preview-enhanced#readme",
+  "homepage": "https://gordonvidal.dev/projects/",
   "engines": {
     "vscode": "^1.82.0"
   },

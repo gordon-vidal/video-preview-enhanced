@@ -70,4 +70,4 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 3. **Compare:** Click **Compare** in the player's bar, or right-click a video, folder or selection and choose **Start Compare**.
 4. **Play heavier footage:** Run **Video Preview: Set Up Optional ffmpeg** from the Command Palette.
 
-Details: [features](docs/features.md) · [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [agents & deep links](docs/agents.md) · [FAQ](docs/faq.md) · [all docs](docs/) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md)
+Details: [features](docs/features.md) · [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [agents & deep links](docs/agents.md) · [FAQ](docs/faq.md) · [all docs](docs/) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md) · [website](https://gordonvidal.dev/)

@@ -47,6 +47,8 @@
     "media/compare-sync.js",
     "media/compare-debug.js",
     "media/frame-player.js",
+    "media/player-state.js",
+    "media/player-ui.js",
     "media/player.js"
   ],
   "exclude": ["media/libav-vpe"]

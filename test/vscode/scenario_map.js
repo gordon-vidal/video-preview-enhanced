@@ -28,6 +28,7 @@ const DEPENDENCIES = [
   { when: ['media/controls.js', 'media/range-drag.js', 'src/bar.js'], why: 'the bar, panels, keys', run: ['ui'] },
   { when: ['media/subtitles.js', 'media/tracks-menu.js'], why: 'subtitles, tracks', run: ['subtitles'] },
   { when: ['src/folder-rail.js', 'media/folder-rail.js', 'media/autoplay.js'], why: 'folder rail, Autoplay, tab swap', run: ['folder-rail', 'ui', 'compare'] },
+  { when: ['media/player-ui.js', 'media/player-state.js'], why: 'the shared UI seam (keys, bar, A-B pins, rail, Compare gestures)', run: ['ui', 'compare', 'folder-rail'] },
 ];
 
 /**

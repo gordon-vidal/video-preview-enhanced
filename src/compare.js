@@ -71,7 +71,9 @@ function compareScripts(large) {
     'timestretch.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js', 'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js',
     'engine.js', 'picture.js', 'modes.js', 'range-drag.js', 'controls.js', 'abloop.js', 'comparerange.js', 'stepgoal.js',
     'timefmt.js', ...(large ? ['membudget.js'] : []),
-    'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js', 'compare-debug.js', 'compare-sync.js', 'folder-rail.js', 'compare.js',
+    'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js', 'compare-debug.js', 'compare-sync.js', 'folder-rail.js',
+    // The shared UI helpers compare.js calls (docs/notes/player-ui-controller.md); player-state.js is not loaded yet.
+    'player-ui.js', 'compare.js',
   ];
 }
 
@@ -1130,9 +1132,18 @@ function registerCompare(context, deps) {
         uri,
         (folder) => vscode.workspace.fs.readDirectory(folder),
         (folder, name) => vscode.Uri.joinPath(folder, name),
-        { dir, symlink },
+        {
+          dir,
+          symlink,
+          stat: (u) => vscode.workspace.fs.stat(u),
+          // Canonical path for loop detection (works for local files and Remote-SSH/container workspace hosts).
+          realPath: (u) => (FS_SCHEMES.has(u.scheme) && u.fsPath ? fs.promises.realpath(u.fsPath) : Promise.resolve(u.toString())),
+          key: fileKey,
+          log: (m) => deps.log?.(`compare folder: ${m}`),
+        },
       );
-    } catch {
+    } catch (e) {
+      deps.log?.(`compare selection ${uri.toString()}: ${e && e.message || e}`);
       return [];
     }
   };

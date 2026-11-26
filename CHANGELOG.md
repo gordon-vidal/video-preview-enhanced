@@ -3,6 +3,9 @@
 ## Unreleased
 
 - **Setup guide:** a short walkthrough that opens once on the first start (again anytime: **Video Preview: Open Setup Guide**) sets up smooth 4K, HDR and phone-video playback and remote servers, one click per step, optionally shows AI coding tools how to link to a video frame, and shows where to change everything later.
+- Start / Add to Compare on a folder now follows symlinked subfolders and Docker / remote-mount directory entries (loops are detected), and searches level by level so one huge empty subfolder no longer hides videos in its siblings.
+- **Compare playback and stepping:** seeking forward while playing no longer freezes every video when one of them lands on a picture just after the others (it could wait forever, most often over Remote-SSH); a video that stalls holds the others for 3 s at most; and stepping back after such a seek no longer leaves a video on its old picture.
+- **Compare:** the per-tile ⓘ clip details card has a × close button in its top-right corner (it closes the card like the ⓘ button does). The host log now says per tile why Live transcode was used or skipped, so a Compare that mixes Live transcode and "your GPU (built into VS Code)" tiles can be explained.
 
 ## 0.12.0 (2026-11-25)
 

@@ -1,4 +1,4 @@
-/* global createEngine, VpeControls, VpeModes, VpeCompareCompositor */
+/* global createEngine, VpeControls, VpeModes, VpeCompareCompositor, VpePlayerUi */
 // @ts-check
 // Compare / multi-view: 2-16 videos (up to compare.maxVideos) on one
 // transport, frame accurate, with the player's own bar and panels (docs/notes/compare-ui.md, the approved
@@ -259,41 +259,28 @@
     updateUi();
     save();
   }
-  ui.setABtn.onclick = () => markAB('a');
-  ui.setBBtn.onclick = () => markAB('b');
+  VpePlayerUi.bindButtons([[ui.setABtn, () => markAB('a')], [ui.setBBtn, () => markAB('b')]]);
   // Dragging a pin moves that end to the nearest frame of the clock video. Its time is that frame's time on the clock
   // (minus the clock's offset, as marks are stored); no per-tile capture exists for it, so the clip export maps
   // the time to every tile through the offsets (the nominal mapping), the same fallback as a mark set while seeking.
-  for (const [which, pin] of [['a', ui.abA], ['b', ui.abB]]) {
-    self.VpeAbLoop.bindPin(pin, which, {
-      rect: () => ui.seek.getBoundingClientRect(),
-      n: () => clock ? clock.n || 0 : 0,
-      fps: () => clock ? fpsOf(clock) : 0,
-      dur: () => clock ? clock.meta.duration || 0 : 0,
-      move(w, snap, clientX) {
-        if (!clock) return;
-        const r = ui.seek.getBoundingClientRect();
-        const dur = clock.meta.duration || 0;
-        const pct = clock.n > 1 ? snap.f / (clock.n - 1) * 100 : dur ? snap.t / dur * 100 : 0;
-        pin.style.left = `${pct}%`;
-        ui.tip.textContent = `${w.toUpperCase()} ${tileLabel(st.clock)} ${fmtTime(snap.t)}${clock.n ? ` · #${snap.f + 1}` : ''}`;
-        ui.tip.style.left = `${Math.max(30, Math.min(r.width - 30, clientX - r.left))}px`;
-        ui.tip.hidden = false;
-      },
-      commit(w, snap) {
-        if (!clock) return;
-        const t = snap.t - offSec(st.clock);
-        const native = !!(clock.shownFrame?.nativeTimestamp || clock.remoteStream);
-        ab.reset(w, t, snap.f, t, native);
-        for (const key of [...marks.keys()]) if (key !== ab.aPts && key !== ab.bPts) marks.delete(key);
-        toast(ab.toast(fmtAB));
-        controls.refresh();
-        updateUi();
-        save();
-      },
-      end() { ui.tip.hidden = true; lastUi = ''; updateUi(); },
-    });
-  }
+  VpePlayerUi.bindAbPins(self.VpeAbLoop, { a: ui.abA, b: ui.abB, seek: ui.seek, tip: ui.tip }, {
+    ready: () => !!clock,
+    n: () => clock.n || 0,
+    fps: () => fpsOf(clock),
+    dur: () => clock.meta.duration || 0,
+    tipLabel: (snap) => `${tileLabel(st.clock)} ${fmtTime(snap.t)}`,
+    commit(w, snap) {
+      const t = snap.t - offSec(st.clock);
+      const native = !!(clock.shownFrame?.nativeTimestamp || clock.remoteStream);
+      ab.reset(w, t, snap.f, t, native);
+      for (const key of [...marks.keys()]) if (key !== ab.aPts && key !== ab.bPts) marks.delete(key);
+      toast(ab.toast(fmtAB));
+      controls.refresh();
+      updateUi();
+      save();
+    },
+    end() { ui.tip.hidden = true; lastUi = ''; updateUi(); },
+  });
   function exportAB() {
     const span = ab.presentationRange();
     const ranges = ab.isRange() && span && clock?.shownT != null
@@ -699,7 +686,8 @@
             if (label === 'Video') return !!stRows.find((r) => r.key === 'Codec')?.diff;
             return !!(refMap && refMap.has(label) && refMap.get(label) !== value && (label === 'Quality'));
           };
-          statsEl.innerHTML = `<div class="itop"><div class="iname">${esc(f.title)}</div>${f.sub ? `<div class="isub">${esc(f.sub)}</div>` : ''}</div>`
+          statsEl.innerHTML = Grid.statsCloseHtml(i, tileLabel(i), ICONS.close)
+            + `<div class="itop"><div class="iname">${esc(f.title)}</div>${f.sub ? `<div class="isub">${esc(f.sub)}</div>` : ''}</div>`
             + `<dl class="igrid">${rows.map(([rk, rv]) => `<dt>${esc(rk)}</dt><dd${diffOf(rk, rv) ? ' class="diff"' : ''}>${esc(rv)}</dd>`).join('')}</dl>`;
         }
       }
@@ -745,35 +733,15 @@
     if (d && cells[0]) placeDivider(d, cells[0]);
     save();
   }
-  let dividerDrag = null;
   function bindDivider() {
-    const dv = cellsEl.querySelector('#divider');
-    if (!dv) return;
-    const at = (e) => { const c = cells[0]; const r = stage.getBoundingClientRect(); setSplit((e.clientX - r.left - c.pic.x) / c.pic.w); };
-    dv.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      dividerDrag = { id: e.pointerId, moved: false };
-      try { dv.setPointerCapture(e.pointerId); } catch { /* synthetic pointer (test hook) */ }
-    });
-    dv.addEventListener('pointermove', (e) => { if (dividerDrag) { dividerDrag.moved = true; at(e); } });
-    // The click that ends a drag must not play or pause.
-    const end = () => { if (dividerDrag) { if (dividerDrag.moved) dragEnded = performance.now(); dividerDrag = null; } };
-    dv.addEventListener('pointerup', end);
-    dv.addEventListener('pointercancel', end);
-    dv.addEventListener('click', (e) => e.stopPropagation());
-    dv.addEventListener('keydown', (e) => {
-      const big = e.shiftKey || e.key === 'PageUp' || e.key === 'PageDown' ? 0.1 : 0.01;
-      let handled = true;
-      switch (e.key) {
-        case 'ArrowLeft': case 'ArrowDown': case 'PageDown': setSplit(st.split - big); break;
-        case 'ArrowRight': case 'ArrowUp': case 'PageUp': setSplit(st.split + big); break;
-        case 'Home': setSplit(0); break;
-        case 'End': setSplit(1); break;
-        default: handled = false;
-      }
-      if (handled) { e.preventDefault(); e.stopPropagation(); }
+    // The shared binding (media/player-ui.js): drag over the displayed picture (letterbox-aware), keys 0–100 %.
+    VpePlayerUi.bindSplitDivider(cellsEl.querySelector('#divider'), {
+      stageRect: () => stage.getBoundingClientRect(),
+      pictureRect: () => (cells[0] ? cells[0].pic : null),
+      get: () => st.split,
+      set: setSplit,
+      // The click that ends a drag must not play or pause.
+      onDragEnd: (moved) => { if (moved) dragEnded = performance.now(); },
     });
   }
   let dragEnded = 0;
@@ -1068,11 +1036,7 @@
     save();
   }
   function updatePicBtn() {
-    const m = st.pic.mode;
-    const nx = Pic.next(m);
-    ui.picBtn.dataset.mode = m;
-    ui.picBtn.title = `Picture size: ${Pic.name(m)} (${Pic.WORDS[m]}), all videos. Click for ${Pic.name(nx)}  Z`;
-    ui.picBtn.setAttribute('aria-label', `Picture size: ${Pic.name(m)}. Next: ${Pic.name(nx)}`);
+    VpePlayerUi.pictureButton(ui.picBtn, Pic, st.pic.mode, 'all videos');
   }
   /** Z and the button: the next size for all tiles; zoomed in, back to Fit. */
   function cyclePic() {
@@ -1486,7 +1450,7 @@
       setTranscodeMaxBitrate: (maxBitrateMbps) => vscode.postMessage({ type: 'transcodePref', maxBitrateMbps }),
       setTranscodeSplitBitrate: (splitBitrate) => vscode.postMessage({ type: 'transcodePref', splitBitrate }),
       useOriginal: () => vscode.postMessage({ type: 'originalTile', index: st.infoSel }),
-      copyInfo: (d) => { vscode.postMessage({ type: 'copyText', text: [d.title, d.sub, ...d.rows.map(([a, b]) => `${a}: ${b}`)].join('\n') }); toast('Details copied'); },
+      copyInfo: (d) => { vscode.postMessage({ type: 'copyText', text: VpePlayerUi.copyInfoText(d) }); toast('Details copied'); },
       extSettings: () => vscode.postMessage({ type: 'openSettings' }),
     },
     views: {
@@ -1750,12 +1714,8 @@
     let splitDrag = null;
     const ratioFromEvent = (ev) => {
       const r = stage.getBoundingClientRect();
-      const px = ev.clientX - r.left, py = ev.clientY - r.top;
       const innerW = Math.max(1, r.width - Grid.GAP), innerH = Math.max(1, r.height - Grid.GAP);
-      if (st.dock === 'top') return py / innerH;
-      if (st.dock === 'bottom') return 1 - py / innerH;
-      if (st.dock === 'left') return px / innerW;
-      return 1 - px / innerW;
+      return VpePlayerUi.spotlightRatioAt(st.dock, ev.clientX - r.left, ev.clientY - r.top, innerW, innerH);
     };
     splitterEl.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || st.mode !== 'spotlight') return;
@@ -1781,15 +1741,7 @@
     splitterEl.addEventListener('click', (e) => e.stopPropagation());
     splitterEl.addEventListener('dblclick', (e) => { e.stopPropagation(); setHeroRatio(Grid.SPOTLIGHT_DEFAULT); requestTileSize(); });
     splitterEl.addEventListener('keydown', (e) => {
-      const delta = e.shiftKey ? 0.10 : 0.05;
-      const horiz = st.dock === 'top' || st.dock === 'bottom';
-      let next = null;
-      if (horiz && e.key === 'ArrowDown') next = st.heroRatio + (st.dock === 'top' ? delta : -delta);
-      else if (horiz && e.key === 'ArrowUp') next = st.heroRatio + (st.dock === 'top' ? -delta : delta);
-      else if (!horiz && e.key === 'ArrowRight') next = st.heroRatio + (st.dock === 'left' ? delta : -delta);
-      else if (!horiz && e.key === 'ArrowLeft') next = st.heroRatio + (st.dock === 'left' ? -delta : delta);
-      else if (e.key === 'Home') next = Grid.SPOTLIGHT_MIN;
-      else if (e.key === 'End') next = Grid.SPOTLIGHT_MAX;
+      const next = VpePlayerUi.spotlightKeyRatio(e, st.dock, st.heroRatio, Grid.SPOTLIGHT_MIN, Grid.SPOTLIGHT_MAX);
       if (next !== null) {
         e.preventDefault();
         e.stopPropagation();
@@ -1934,8 +1886,11 @@
       case 'move': moveWithArrow(el); break;
       case 'spot': promoteToSpotlight(i); break;
       case 'info':
-        if (statsIds.has(i)) statsIds.delete(i); else statsIds.add(i);
+        // The pill's ⓘ and the card's × share this action.
+        const closedByCard = !Grid.toggleStats(statsIds, i) && el.classList.contains('tile-stats-close');
         updateOverlays();
+        // updateOverlays() rebuilds the overlay, so the pill's ⓘ is a new element: focus it after, not before.
+        if (closedByCard) /** @type {HTMLElement|null} */ (cellsEl.querySelector(`[data-act="info"][data-i="${i}"].mute-mini`))?.focus();
         break;
       case 'mute':
         if (st.muted || i !== st.sound) {
@@ -2000,7 +1955,7 @@
   stage.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || tileDrag || panDrag) return;
     const target = /** @type {any} */ (e.target);
-    if (target.closest('#divider, #splitter, #menu, .move, .tbtn, .mute-mini, .sync-pill, .addcell')) return;
+    if (target.closest('#divider, #splitter, #menu, .move, .tbtn, .mute-mini, .tile-stats-close, .sync-pill, .addcell')) return;
     const hit = cellAt(e.clientX, e.clientY);
     const fromZoomHandle = !!target.closest('[data-zoom-drag="1"]');
     const panBase = hit ? hit.c : clockCell();
@@ -2094,9 +2049,9 @@
       const fps = fpsOf(clock);
       const nFrames = clock.n || (fps && dur ? Math.round(dur * fps) : 0);
       who.textContent = tileLabel(st.clock);
-      if (st.timeMode === 1) { ui.now.textContent = fmtTimecode(f, fps); ui.dur.textContent = `/ ${fmtTimecode(nFrames, fps)}`; }
-      else if (st.timeMode === 2) { ui.now.textContent = `frame ${f + 1}`; ui.dur.textContent = `/ ${nFrames || '?'}`; }
-      else { ui.now.textContent = fmtTime(t); ui.dur.textContent = `/ ${fmtTime(dur)}`; }
+      const rd = VpePlayerUi.timeReadout({ f, t, dur, fps, nFrames, mode: st.timeMode, fmtClock: fmtTime, fmtTimecode });
+      ui.now.textContent = rd.now;
+      ui.dur.textContent = rd.dur;
       ui.time.title = `Time of the clock video (${tileLabel(st.clock)}). Click: time / timecode / frames`;
       ui.time.setAttribute('aria-label', `${tileLabel(st.clock)} position ${fmtTime(t)}, frame ${f + 1}. Click to change the format.`);
       ui.play.classList.toggle('playing', playing);
@@ -2108,17 +2063,11 @@
     }
   }
 
-  ui.play.onclick = togglePlay;
   // The buttons beside Play: the size picked with their badge, else one frame (lockstep) or the Ctrl+arrow jump
-  // (setting stepButtons), as in the player.
-  const stepBtn = (d) => {
-    const a = VpeControls.stepAmount(VpeControls.stepSizeOf(prefs));
-    if (a.n) step(d * a.n); else skip(d * a.s);
-  };
-  ui.prev.onclick = () => stepBtn(-1);
-  ui.next.onclick = () => stepBtn(1);
+  // (setting stepButtons), as in the player (media/player-ui.js stepBy).
+  const stepBtn = (d) => VpePlayerUi.stepBy(VpeControls, prefs, d, { step, skip });
   // The badge on a step button opens the size popover above it; the click never reaches the step button or the bar.
-  for (const b of [ui.prevSize, ui.nextSize]) b.addEventListener('click', (e) => { e.stopPropagation(); controls.toggle('step', b); });
+  VpePlayerUi.bindStepBadges([ui.prevSize, ui.nextSize], (b) => controls.toggle('step', b));
   function updateStepTips() {
     const tips = VpeControls.stepTips(prefs);
     const frame = VpeControls.stepSizeOf(prefs) === 'frame';
@@ -2129,23 +2078,26 @@
     VpeControls.drawStepBadges([ui.prevSize, ui.nextSize], VpeControls.stepSizeOf(prefs));
   }
   updateStepTips();
-  ui.mute.onclick = () => setMute(!st.muted);
   VpeRangeDrag.bind(ui.volume);
   VpeControls.holdVolumeOpen(ui.volume);
   ui.volume.addEventListener('input', () => { if (hasAudio()) setVolume(Number(ui.volume.value)); });
   ui.volume.addEventListener('wheel', (e) => { if (!hasAudio()) return; e.preventDefault(); setVolume(st.volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(st.volume * 100)}%`); }, { passive: false });
-  ui.time.onclick = () => { st.timeMode = (st.timeMode + 1) % 3; lastUi = ''; updateUi(); save(); postPlaybackPrefs(); toast(['Time', 'Timecode', 'Frame number'][st.timeMode]); };
-  ui.rate.onclick = () => controls.toggle('speed', ui.rate);
+  ui.time.onclick = () => { st.timeMode = VpePlayerUi.nextTimeMode(st.timeMode); lastUi = ''; updateUi(); save(); postPlaybackPrefs(); toast(VpePlayerUi.TIME_MODE_NAMES[st.timeMode]); };
   ui.rate.addEventListener('wheel', (e) => { e.preventDefault(); bumpRate(e.deltaY < 0 ? 1 : -1); }, { passive: false });
-  ui.cog.onclick = () => controls.toggle('main', ui.cog);
-  if (ui.remoteLiveBtn) ui.remoteLiveBtn.onclick = (e) => { e.stopPropagation(); controls.toggle('transcode', ui.remoteLiveBtn); };
-  ui.infoBtn.onclick = () => controls.toggle('info', ui.infoBtn);
+  // The bar's buttons (media/player-ui.js bindButtons: the same wiring as the player and the mockup).
+  VpePlayerUi.bindButtons([
+    [ui.play, () => togglePlay()], [ui.prev, () => stepBtn(-1)], [ui.next, () => stepBtn(1)],
+    [ui.mute, () => setMute(!st.muted)],
+    [ui.rate, () => controls.toggle('speed', ui.rate)], [ui.cog, () => controls.toggle('main', ui.cog)],
+    [ui.remoteLiveBtn, () => controls.toggle('transcode', ui.remoteLiveBtn), true],
+    [ui.infoBtn, () => controls.toggle('info', ui.infoBtn)],
+    [ui.picBtn, () => cyclePic(), true],
+    [ui.cmpBtn, () => controls.toggle('cmp', ui.cmpBtn)],
+    [ui.full, () => toggleFullscreen()],
+  ]);
   ui.infoBtn.title = 'About these videos  I';
   ui.infoBtn.setAttribute('aria-label', 'About these videos');
-  ui.picBtn.onclick = (e) => { e.stopPropagation(); cyclePic(); };
   updatePicBtn();
-  ui.cmpBtn.onclick = () => controls.toggle('cmp', ui.cmpBtn);
-  ui.full.onclick = toggleFullscreen;
   const thumbBox = document.createElement('div');
   const thumbCv = document.createElement('canvas');
   thumbBox.id = 'thumb';
@@ -2272,54 +2224,45 @@
     if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); controls.toggleSheet(); return; }
     if (!clock || e.metaKey || (!altGr && (e.ctrlKey || e.altKey))) return;
     poke();
-    const pair = N === 2;
-    /** − / +: the video under the pointer, else the one last chosen. */
-    const target = () => (hover !== null && hover < N ? hover : st.sel < N ? st.sel : 1);
-    let handled = true;
-    switch (e.key) {
-      case ' ': case 'k': case 'K': togglePlay(); break;
-      case 'j': case 'J': skip(-10); break;
-      case 'l': case 'L': skip(10); break;
-      case 'ArrowLeft': jump(e.shiftKey ? prefs.jump.shift : prefs.jump.arrow, -1); break;
-      case 'ArrowRight': jump(e.shiftKey ? prefs.jump.shift : prefs.jump.arrow, 1); break;
-      case ',': step(-1); break;
-      case '.': step(1); break;
-      case '<': case '[': bumpRate(-1); break;
-      case '>': case ']': bumpRate(1); break;
-      case 'ArrowUp':
-        if (!hasAudio()) { toast('No audio track'); break; }
-        setVolume(st.volume + 0.05); toast(`Volume ${Math.round(st.volume * 100)}%`); break;
-      case 'ArrowDown':
-        if (!hasAudio()) { toast('No audio track'); break; }
-        setVolume(st.volume - 0.05); toast(`Volume ${Math.round(st.volume * 100)}%`); break;
-      case 'Home': pause(); seekClock(0); break;
-      case 'End': pause(); seekTile(st.clock, clock.n - 1); break;
-      case 'm': case 'M': setMute(!st.muted); break;
-      case 'r': case 'R': setLoop(!st.loop); toast(st.loop ? 'Loop on' : 'Loop off'); break;
-      case 'a': case 'A': markAB('a'); break;
-      case 'b': case 'B': markAB('b'); break;
-      case 'f': case 'F': if (!e.repeat) toggleFullscreen(); break;
-      case 'i': case 'I': controls.toggle('info', ui.infoBtn); break;
-      case 'x': case 'X': if (pair) swapSides(); else handled = false; break;
-      case 'z': case 'Z': if (e.shiftKey) handled = false; else cyclePic(); break;
-      case 'D': if (e.shiftKey && N < MAX_TILES) toggleAddMode(); else handled = false; break;
-      case '-': case '_': nudge(target(), -1); break;
-      case '+': case '=': nudge(target(), 1); break;
-      case 'Escape':
-        if (INTERNAL && scanner.running) scanner.stop('Stopped');
-        else {
-          handled = false;
-          if (!e.repeat && document.body.classList.contains('maxi')) {
-            const now = Date.now();
-            if (now - lastEscAt <= 1000) { lastEscAt = 0; vscode.postMessage({ type: 'focusModeExited' }); }
-            else lastEscAt = now;
-          }
-        }
-        break;
-      default: handled = false;
-    }
-    if (handled) e.preventDefault();
+    if (VpePlayerUi.runKey(e, KEY_ACTIONS, { altGr })) e.preventDefault();
   });
+  /** − / +: the video under the pointer, else the one last chosen. */
+  const keyTarget = () => (hover !== null && hover < N ? hover : st.sel < N ? st.sel : 1);
+  /** Compare's keys (media/player-ui.js keyCommand names the action; a handler returning false leaves the key). */
+  const KEY_ACTIONS = {
+    playPause: () => togglePlay(),
+    skip: (s) => skip(s),
+    jump: (o) => jump(o.shift ? prefs.jump.shift : prefs.jump.arrow, o.dir),
+    prevFrame: () => step(-1),
+    nextFrame: () => step(1),
+    rateStep: (d) => bumpRate(d),
+    volumeStep: (d) => {
+      if (!hasAudio()) { toast('No audio track'); return; }
+      setVolume(st.volume + d); toast(`Volume ${Math.round(st.volume * 100)}%`);
+    },
+    home: () => { pause(); seekClock(0); },
+    end: () => { pause(); seekTile(st.clock, clock.n - 1); },
+    mute: () => setMute(!st.muted),
+    loop: () => { setLoop(!st.loop); toast(st.loop ? 'Loop on' : 'Loop off'); },
+    setA: () => markAB('a'),
+    setB: () => markAB('b'),
+    fullscreen: (_, e) => { if (!e.repeat) toggleFullscreen(); },
+    info: () => controls.toggle('info', ui.infoBtn),
+    swap: () => { if (N !== 2) return false; swapSides(); },
+    cyclePicture: () => cyclePic(),
+    capture: () => { if (N >= MAX_TILES) return false; toggleAddMode(); },
+    minus: () => nudge(keyTarget(), -1),
+    plus: () => nudge(keyTarget(), 1),
+    escape: (_, e) => {
+      if (INTERNAL && scanner.running) { scanner.stop('Stopped'); return; }
+      if (!e.repeat && document.body.classList.contains('maxi')) {
+        const now = Date.now();
+        if (now - lastEscAt <= 1000) { lastEscAt = 0; vscode.postMessage({ type: 'focusModeExited' }); }
+        else lastEscAt = now;
+      }
+      return false;
+    },
+  };
 
 
   // ---- background scan: first frame below a PSNR threshold ------------------------------
@@ -2537,12 +2480,12 @@
 
   // ---- The folder rail (media/folder-rail.js, the player's; docs/notes/folder-rail.md): opened from the edge tab, a
   // video row adds that video to this Compare, a folder row's Compare adds that folder's. No bar capsule, no Autoplay.
-  const rail = cfg.rail && $('rail') && typeof VpeFolderRail !== 'undefined' ? VpeFolderRail.create({
-    doc: document, post: (m) => vscode.postMessage(m), toast, cfg: cfg.rail, compare: true,
+  const rail = VpePlayerUi.createFolderRail(cfg.rail && typeof VpeFolderRail !== 'undefined' ? VpeFolderRail : null, document, {
+    post: (m) => vscode.postMessage(m), toast, cfg: cfg.rail, compare: true,
     getOnEnd: () => 'off', setOnEnd: () => {}, label: () => '',
     // The edge tab stays away while a tile is dragged to a new place or the spotlight split is dragged.
     busy: () => !!tileDrag || splitterEl.classList.contains('dragging'),
-  }) : null;
+  });
 
   window.addEventListener('message', (e) => {
     const m = e.data;

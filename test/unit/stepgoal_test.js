@@ -202,6 +202,10 @@ for (const action of ['play', 'manual scrub', 'clock switch', 'reorder']) {
   tile.shownT = tile.queue.shift().t;
   assert.equal(followerSeekAction(tile, actual, early, 7), 'keep', 'the decoded picture covers the corrected goal');
   assert.equal(followerSeekAction(tile, 0.98, early, 7), 'seek', 'a correction outside that picture still seeks');
+  // A picture from before the tile's last seek does not continue into its queue (frames between were never shown).
+  const stale = { gen: 8, seekTarget: null, pauseT: 5.008, shownT: 0.3, queue: [{ t: 5.033 }], eof: false, current: false };
+  assert.equal(followerSeekAction(stale, 4.975, early), 'seek', 'a step back never keeps a stale picture');
+  assert.equal(followerSeekAction({ ...stale, current: true }, 4.975, early), 'keep');
 }
 
 console.log('step goals: immediate step and scrub, coalescing, release, bounds, cancellation and follower offsets');

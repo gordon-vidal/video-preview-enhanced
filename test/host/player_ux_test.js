@@ -59,9 +59,9 @@ function element(parent) {
 
   const compareSource = fs.readFileSync(path.join(__dirname, '../../media/compare.js'), 'utf8');
   for (const [name, src] of [['player', source], ['compare', compareSource]]) {
-    assert.match(src, /ui\.setABtn\.onclick = \(\) => (setAB|markAB)\('a'\)/, `${name}: [ sets A`);
-    assert.match(src, /ui\.setBBtn\.onclick = \(\) => (setAB|markAB)\('b'\)/, `${name}: ] sets B`);
-    assert.match(src, /VpeAbLoop\.bindPin\(pin, which,/, `${name}: the pins can be dragged`);
+    assert.match(src, /\[ui\.setABtn, \(\) => (setAB|markAB)\('a'\)\]/, `${name}: [ sets A`);
+    assert.match(src, /\[ui\.setBBtn, \(\) => (setAB|markAB)\('b'\)\]/, `${name}: ] sets B`);
+    assert.match(src, /VpePlayerUi\.bindAbPins\(self\.VpeAbLoop, \{ a: ui\.abA, b: ui\.abB,/, `${name}: the pins can be dragged (shared helper)`);
     assert.match(src, /ab\.reset\(w, [^)]*snap\.f,/, `${name}: a drag commits the snapped frame`);
     assert.match(src, /drawRangeButtons\(ui\.setABtn, ui\.setBBtn, ab\)/, `${name}: the buttons follow the range`);
   }
@@ -100,12 +100,12 @@ function element(parent) {
     ui, player, document, performance, timeMode: 0, wakeLoop: noop,
     VpeRangeDrag: { bindSeek: (_input, handlers) => { ctx.seekHandlers = handlers; } },
     showTip: noop, hideTip: noop,
-    fmtClock: String, fmtTime: String, toast: noop, announce: noop, drawAB: noop,
+    fmtClock: String, fmtTime: String, fmtTimecode: String, toast: noop, announce: noop, drawAB: noop,
     vscode: { postMessage: (m) => posted.push(m.type), getState: () => ({}), setState: noop },
     $: (id) => (elements[id] ||= element(notice)), self: { VpeAbLoop: require('../../media/abloop') },
     saved: {}, VpeSlowNotice: require('../../media/slow-notice'),
     controls: { anyOpen: () => false, refresh: noop }, cfg: {},
-    VpeModes: { ownsKey: () => false },
+    VpeModes: { ownsKey: () => false }, VpePlayerUi: require('../../media/player-ui'),
     scopes: { mode: () => scopesOpen, close() { scopesOpen = false; } },
     insp: { onKey(e) { if (e.key !== 'Escape' || !inspectorOpen) return false; inspectorOpen = false; return true; } },
     addHint: { hidden: true },

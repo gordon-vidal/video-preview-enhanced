@@ -31,10 +31,40 @@ module.exports = {
       name: 'pure-logic-dependencies',
       severity: 'error',
       from: {
-        path: '^(src/(decide|comparepick|hwaccel|rangecmd)|media/(abloop|stepgoal|timefmt|picture|membudget))\\.js$',
+        path: '^(src/(decide|comparepick|hwaccel|rangecmd)|media/(abloop|stepgoal|timefmt|picture|membudget|player-state))\\.js$',
       },
       // The only current imports are path manipulation and the pure GPU selection helpers.
       to: { pathNot: '^(?:(?:node:)?path(?:/(?:posix|win32))?|src/hwaccel\\.js)$' },
+    },
+    // The 3-way UI / State / Engine boundary (AGENTS.md "UI changes & testable 3-way separation";
+    // docs/notes/player-ui-controller.md). test/host/player_ui_test.js "boundary contract" checks the globals.
+    {
+      name: 'player-state-imports-nothing',
+      comment: 'media/player-state.js is pure state: no DOM, no VS Code, no decoder, no imports at all.',
+      severity: 'error',
+      from: { path: '^media/player-state\\.js$' },
+      to: { path: '.' },
+    },
+    {
+      name: 'player-state-no-core',
+      severity: 'error',
+      from: { path: '^media/player-state\\.js$' },
+      to: { dependencyTypes: ['core'] },
+    },
+    {
+      name: 'player-ui-not-to-host-or-engine',
+      comment: 'media/player-ui.js reaches the decoders and the host only through its EngineAdapter / HostAdapter.',
+      severity: 'error',
+      from: { path: '^media/player-ui\\.js$' },
+      to: {
+        path: '^(?:src/|media/(?:engine|frame-player|gl-renderer|compare-compositor|decoder-[^/]*)\\.js$|media/libav-vpe/)',
+      },
+    },
+    {
+      name: 'player-ui-no-core',
+      severity: 'error',
+      from: { path: '^media/player-ui\\.js$' },
+      to: { dependencyTypes: ['core'] },
     },
   ],
   options: {

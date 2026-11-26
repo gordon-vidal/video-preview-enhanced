@@ -8,7 +8,7 @@
   /** @typedef {Readonly<{
    *   startT: number | null, shownT: number | null, pauseT: number, seekTarget: number | null,
    *   nextQueuedT: number | null, eof: boolean, gen: number, fps: number, shownCount: number,
-   *   firstFrameReady: boolean, settled: boolean,
+   *   firstFrameReady: boolean, settled: boolean, current?: boolean,
    * }>} SyncState */
   /** @typedef {{
    *   key: string, playing: boolean, meta: {duration: number}, syncState: () => SyncState,
@@ -27,13 +27,19 @@
   /** @param {Tile} tile */
   function settled(tile) { return tile.syncState().settled; }
 
+  // A follower that makes no progress for this long stops holding the group (a seek or stream that never delivers).
+  const STALL_MS = 3000;
+
   /** @param {Tile} tile */
   function atFirstFrame(tile) { return tile.syncState().firstFrameReady; }
 
   class CompareSyncController {
-    /** @param {{tiles: () => Tile[], offset: (i: number) => number, sound: () => number}} deps */
+    /** @param {{tiles: () => Tile[], offset: (i: number) => number, sound: () => number, now?: () => number}} deps */
     constructor(deps) {
       this.deps = deps;
+      this.now = deps.now ?? (() => performance.now());
+      /** @type {Map<Tile, {mark: string, since: number}>} */
+      this.stalls = new Map();
       /** @type {Tile | null} */
       this.clock = null;
       this.clockIndex = 0;
@@ -103,7 +109,18 @@
 
     clearStep() { this.stepSeeks.clear(); }
     resetRequests() { this.reqs = []; }
-    invalidate() { this.resetRequests(); this.clearStep(); }
+    invalidate() { this.resetRequests(); this.clearStep(); this.stalls.clear(); }
+
+    /** True once a lagging follower has shown no progress for STALL_MS. @param {Tile} tile @param {string} mark */
+    stalled(tile, mark) {
+      const now = this.now();
+      const seen = this.stalls.get(tile);
+      if (!seen || seen.mark !== mark) {
+        this.stalls.set(tile, { mark, since: now });
+        return false;
+      }
+      return now - seen.since > STALL_MS;
+    }
 
     /** Redo frame offsets once the real rate replaces the default.
      * @param {string} key @param {boolean} begun @param {boolean} hasFrameOffsets
@@ -132,10 +149,11 @@
     syncPlaying(force = false) {
       const clock = this.clock;
       if (!clock || !clock.playing) return;
-      const { startT, gen, shownT, seekTarget } = clock.syncState();
+      const { startT, gen, shownT, seekTarget, current } = clock.syncState();
       if (startT === null) return;
       const moved = force || gen !== this.lastGen;
       this.lastGen = gen;
+      if (moved) this.stalls.clear();
       const clockRel = moved ? clock.rel(clock.now()) : this.clockPosition(clock);
       let hold = false;
       const tiles = this.deps.tiles();
@@ -152,13 +170,22 @@
           if (moved || !tile.hasQueuedTime(startT + rel, 0.1)) tile.seekTime(Math.max(0, rel));
           tile.play();
         }
-        const { eof, nextQueuedT, seekTarget, shownT } = tile.syncState();
+        const { eof, nextQueuedT, seekTarget, shownT, shownCount, gen: tileGen } = tile.syncState();
         const done = eof && nextQueuedT === null;
-        const lag = seekTarget !== null || shownT === null ? Infinity : startT + rel - shownT;
-        if (!done && lag > Math.max(0.12, 2 / fps)) hold = true;
+        const due = startT + rel;
+        // Its next picture is not due yet (after a seek, a gap or a frame grid that differs from the clock's): it shows
+        // what is due. Holding would freeze its time (the clock's picture) before that picture for good.
+        const waitsForClock = seekTarget === null && nextQueuedT !== null && nextQueuedT > due + 0.25 / fps;
+        const lag = seekTarget !== null || shownT === null ? Infinity : due - shownT;
+        if (done || waitsForClock || !(lag > Math.max(0.12, 2 / fps))) {
+          this.stalls.delete(tile);
+          return;
+        }
+        if (!this.stalled(tile, `${tileGen}|${shownCount}|${nextQueuedT}|${seekTarget}`)) hold = true;
       });
-      // Hold the picture and sound together while a follower catches up.
-      if (hold && shownT !== null && seekTarget === null) {
+      // Hold the picture and sound together while a follower catches up. Not while the clock's own picture is about to
+      // jump (a seek within its decoded frames): holding at the old picture would take its time back there.
+      if (hold && shownT !== null && seekTarget === null && current !== false) {
         clock.holdAt(shownT);
         const sound = tiles[this.deps.sound()];
         if (sound && sound !== clock && sound.playing) sound.holdAt(sound.now());

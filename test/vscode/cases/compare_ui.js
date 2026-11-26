@@ -238,7 +238,15 @@ module.exports = [{
     await click({ sel: '[data-act="info"][data-i="0"]' });
     u = await ui();
     ok(u.cells[0].statsOpen === true, 'per-tile ⓘ should open stats HUD');
-    await click({ sel: '[data-act="info"][data-i="0"]' });
+    await click({ sel: '[data-act="info"][data-i="1"]' });
+    u = await ui();
+    ok(u.cells[0].statsOpen && u.cells[1].statsOpen && u.cells[0].info.pressed === 'true', 'both cards open');
+    // The card's own × closes only that card and leaves keyboard focus on the surviving ⓘ pill button.
+    await click({ sel: '.show-stats .tile-stats-close[data-i="0"]' });
+    u = await ui();
+    ok(u.cells[0].statsOpen === false && u.cells[1].statsOpen === true, `× closes only its card: ${JSON.stringify(u.cells.map((c) => c.statsOpen))}`);
+    ok(u.cells[0].info.pressed === 'false' && u.cells[0].info.focused === true, `ⓘ after ×: ${JSON.stringify(u.cells[0].info)}, active ${u.active}`);
+    await click({ sel: '[data-act="info"][data-i="1"].mute-mini' });
     act({ action: 'hover', tile: 1 });
     act({ action: 'key', key: '-' });
     r = await until((x) => x.offsets === '0f,0f', 5000);

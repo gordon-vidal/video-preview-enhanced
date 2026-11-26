@@ -209,10 +209,9 @@
       const fps = player.fps || (player.meta && player.meta.fps) || 0;
       const nFrames = player.n || (fps && dur ? Math.round(dur * fps) : 0);
       // A live stream (Open Video URL…) has no end: the time since it started playing, and LIVE; no format cycling.
-      if (player.meta.live) { ui.now.textContent = fmtClock(t); ui.dur.textContent = '· LIVE'; }
-      else if (timeMode === 1 && fps) { ui.now.textContent = fmtTimecode(f, fps); ui.dur.textContent = `/ ${fmtTimecode(nFrames, fps)}`; }
-      else if (timeMode === 2) { ui.now.textContent = `frame ${f + 1}`; ui.dur.textContent = `/ ${nFrames || '?'}`; }
-      else { ui.now.textContent = fmtClock(t); ui.dur.textContent = `/ ${fmtClock(dur)}`; }
+      const rd = VpePlayerUi.timeReadout({ f, t, dur, fps, nFrames, mode: timeMode, live: !!player.meta.live, fmtClock, fmtTimecode });
+      ui.now.textContent = rd.now;
+      ui.dur.textContent = rd.dur;
       ui.time.setAttribute('aria-label', `Position ${fmtClock(t)}, frame ${f + 1}. Click to change the format.`);
       ui.play.classList.toggle('playing', playing);
       ui.play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
@@ -484,34 +483,21 @@
       action: { label: transcode ? 'Use original video' : 'Switch to built-in decoder', id: 'fullRes', close: true },
     });
   }
-  ui.setABtn.onclick = () => setAB('a');
-  ui.setBBtn.onclick = () => setAB('b');
+  VpePlayerUi.bindButtons([[ui.setABtn, () => setAB('a')], [ui.setBBtn, () => setAB('b')]]);
   // Dragging a pin on the seek bar moves that end to the nearest frame; the playhead stays where it is. The frame's
   // time (frame / frame rate) is both its A-B time and its presentation time, so the clip export cuts at that frame.
-  for (const [which, pin] of [['a', ui.abA], ['b', ui.abB]]) {
-    self.VpeAbLoop.bindPin(pin, which, {
-      rect: () => ui.seek.getBoundingClientRect(),
-      n: () => player ? player.n : 0,
-      fps: () => player ? (player.frameNumberRate?.() || player.fps || 30) : 0,
-      dur: () => player ? player.meta.duration || 0 : 0,
-      move(w, snap, clientX) {
-        if (!player) return;
-        const dur = player.meta.duration || 0;
-        const r = ui.seek.getBoundingClientRect();
-        const pct = player.n > 1 ? snap.f / (player.n - 1) * 100 : dur ? snap.t / dur * 100 : 0;
-        pin.style.left = `${pct}%`;
-        ui.tip.textContent = `${w.toUpperCase()} ${fmtTime(snap.t)}${player.n ? ` · #${snap.f + 1}` : ''}`;
-        ui.tip.style.left = `${Math.max(30, Math.min(r.width - 30, clientX - r.left))}px`;
-        ui.tip.hidden = false;
-      },
-      commit(w, snap) {
-        if (!player) return;
-        ab.reset(w, snap.t, snap.f, snap.t, synthTimes());
-        abChanged();
-      },
-      end() { hideTip(); drawAB(); },
-    });
-  }
+  VpePlayerUi.bindAbPins(self.VpeAbLoop, { a: ui.abA, b: ui.abB, seek: ui.seek, tip: ui.tip }, {
+    ready: () => !!player,
+    n: () => player.n,
+    fps: () => player.frameNumberRate?.() || player.fps || 30,
+    dur: () => player.meta.duration || 0,
+    tipLabel: (snap) => fmtTime(snap.t),
+    commit(w, snap) {
+      ab.reset(w, snap.t, snap.f, snap.t, synthTimes());
+      abChanged();
+    },
+    end() { hideTip(); drawAB(); },
+  });
   function abLabel() { return ab.label(fmtClock); }
   function drawAB() {
     VpeControls.drawRangeMarks(ui.abMarks, ui.abA, ui.abB, ab.marks(player && player.meta.duration));
@@ -650,11 +636,7 @@
   const cyclePicture = () => { insp.cycleMode(); if (insp.picture().mode === 'actual') exactTool(true); };
   /** The button shows the current size and names the next one. */
   function updatePicBtn() {
-    const m = insp.picture().mode;
-    const nx = VpePicture.next(m);
-    ui.picBtn.dataset.mode = m;
-    ui.picBtn.title = `Picture size: ${VpePicture.name(m)} (${VpePicture.WORDS[m]}). Click for ${VpePicture.name(nx)}  Z`;
-    ui.picBtn.setAttribute('aria-label', `Picture size: ${VpePicture.name(m)}. Next: ${VpePicture.name(nx)}`);
+    VpePlayerUi.pictureButton(ui.picBtn, VpePicture, insp.picture().mode);
   }
   /** The ⓘ panel (About this video): facts, decoder, Copy details, Copy link to this frame. */
   const toggleInfo = () => controls.toggle('info', ui.infoBtn);
@@ -839,12 +821,8 @@
       }
     });
   }
-  ui.play.onclick = togglePlay;
   // The buttons beside Play: the size picked with their badge, else one frame or the Ctrl+arrow jump (setting stepButtons).
-  const stepButton = (dir) => {
-    const a = VpeControls.stepAmount(VpeControls.stepSizeOf(prefs));
-    if (a.n) step(dir * a.n); else skip(dir * a.s);
-  };
+  const stepButton = (dir) => VpePlayerUi.stepBy(VpeControls, prefs, dir, { step, skip });
   function stepTips() {
     const t = VpeControls.stepTips(prefs);
     ui.prev.title = t.back; ui.prev.setAttribute('aria-label', t.backLabel);
@@ -858,10 +836,8 @@
     postPlaybackPrefs();
     toast(`Step buttons: ${VpeControls.stepName(v)}`);
   }
-  ui.prev.onclick = () => stepButton(-1);
-  ui.next.onclick = () => stepButton(1);
   /** Shift+N / Shift+P, the bar's capsule and a right-click on ◀| / |▶: the folder's next / previous video in this tab. */
-  function neighbour(d) { if (rail) rail.go(d); else vscode.postMessage({ type: 'neighbour', d }); }
+  function neighbour(d) { VpePlayerUi.goNeighbour(rail, (m) => vscode.postMessage(m), d); }
   // A right-click on a step button changes the video (a left click still steps frames). It comes before the page's
   // own menu (media/ctxmenu.js listens on the document). URLs and image sequences have no folder: the menu opens.
   for (const [b, d] of [[ui.prev, -1], [ui.next, 1]]) {
@@ -873,9 +849,13 @@
     });
   }
   // The badge on a step button opens the size popover above it; the click never reaches the step button or the bar.
-  for (const b of [ui.prevSize, ui.nextSize]) b.addEventListener('click', (e) => { e.stopPropagation(); if (controls) controls.toggle('step', b); });
+  VpePlayerUi.bindStepBadges([ui.prevSize, ui.nextSize], (b) => { if (controls) controls.toggle('step', b); });
   stepTips();
-  ui.mute.onclick = () => setMute(!muted);
+  // The bar's plain buttons (media/player-ui.js bindButtons: the same wiring as Compare and the mockup).
+  VpePlayerUi.bindButtons([
+    [ui.play, () => togglePlay()], [ui.prev, () => stepButton(-1)], [ui.next, () => stepButton(1)],
+    [ui.mute, () => setMute(!muted)],
+  ]);
   ui.volume.addEventListener('input', () => { if (hasAudio()) setVolume(Number(ui.volume.value)); });
   ui.volume.addEventListener('wheel', (e) => { if (!hasAudio()) return; e.preventDefault(); setVolume(volume + (e.deltaY < 0 ? 0.05 : -0.05)); toast(`Volume ${Math.round(volume * 100)}%`); }, { passive: false });
   const seekDragger = VpeRangeDrag.bindSeek(ui.seek, {
@@ -909,11 +889,11 @@
   });
   const volumeDragger = VpeRangeDrag.bind(ui.volume);
   VpeControls.holdVolumeOpen(ui.volume);
-  ui.full.onclick = toggleFullscreen;
+  VpePlayerUi.bindButtons([[ui.full, () => toggleFullscreen()]]);
   ui.time.onclick = () => {
     // A live stream shows only the time since it started (no timecode or frame count to cycle to).
     if (player && player.meta && player.meta.live) { toast('Live stream'); return; }
-    timeMode = (timeMode + 1) % 3; lastUi = ''; updateUi(); postPlaybackPrefs(); toast(['Time', 'Timecode', 'Frame number'][timeMode]); };
+    timeMode = VpePlayerUi.nextTimeMode(timeMode); lastUi = ''; updateUi(); postPlaybackPrefs(); toast(VpePlayerUi.TIME_MODE_NAMES[timeMode]); };
   // Hover tip: time and frame, with a keyframe thumbnail above it (engine.js thumbnail(), thumbs.js).
   const thumbBox = document.createElement('div');
   thumbBox.id = 'thumb';
@@ -1058,49 +1038,45 @@
     poke();
     // Subtitle and audio-track keys: V, Shift+V, G, H, Shift+A, #.
     if (subs.onKey(e)) { e.preventDefault(); return; }
-    let handled = true;
-    switch (e.key) {
-      case ' ': case 'k': case 'K': togglePlay(); break;
-      case 'j': case 'J': skip(-10); break;
-      case 'l': case 'L': skip(10); break;
-      case 'ArrowLeft': jump(e.shiftKey ? prefs.jump.shift : prefs.jump.arrow, -1); break;
-      case 'ArrowRight': jump(e.shiftKey ? prefs.jump.shift : prefs.jump.arrow, 1); break;
-      case ',': step(-1); break;
-      case '.': step(1); break;
-      case '<': case '[': bumpRate(-1); break;
-      case '>': case ']': bumpRate(1); break;
-      case 'ArrowUp':
-        if (!hasAudio()) { toast('No audio track'); break; }
-        setVolume(volume + 0.05); toast(`Volume ${Math.round(volume * 100)}%`); break;
-      case 'ArrowDown':
-        if (!hasAudio()) { toast('No audio track'); break; }
-        setVolume(volume - 0.05); toast(`Volume ${Math.round(volume * 100)}%`); break;
-      case 'Home': player.seekFrame(0); break;
-      case 'End': player.pause(); player.seekFrame(player.n - 1); break;
-      case 'm': case 'M': setMute(!muted); break;
-      case 'r': case 'R': toggleLoop(); break;
-      case 'f': case 'F': if (!e.repeat) toggleFullscreen(); break;
-      case 'N': if (e.shiftKey) neighbour(1); else handled = false; break;
-      case 'P': if (e.shiftKey) neighbour(-1); else handled = false; break;
-      case 'a': case 'A': setAB('a'); break;
-      case 'b': case 'B': setAB('b'); break;
-      case 'Backspace': clearAB(); toast('A–B range cleared'); break;
-      case 't': case 'T': copyTimestamp(); break;
-      case 'z': case 'Z': if (e.shiftKey) handled = false; else cyclePicture(); break;
-      case '+': case '=': insp.zoomStep(1); break;
-      case '-': case '_': insp.zoomStep(-1); break;
-      case 'i': case 'I': controls.toggle('info', ui.infoBtn); break;
-      case 's': case 'S': saveFrame(); break;
-      case 'c': case 'C': ccClick(); break;
-      case 'w': case 'W': scopes.cycle(); break;
-      case 'd': comparePick(); break;
-      case 'D': if (e.shiftKey) addMode(); else comparePick(); break;
-      default:
-        if (/^[0-9]$/.test(e.key) && player.meta.duration) player.seekTime((Number(e.key) / 10) * player.meta.duration);
-        else handled = false;
-    }
-    if (handled) e.preventDefault();
+    if (VpePlayerUi.runKey(e, KEY_ACTIONS, { altGr })) e.preventDefault();
   });
+  /** The player's keys (media/player-ui.js keyCommand names the action; a handler returning false leaves the key). */
+  const KEY_ACTIONS = {
+    playPause: () => togglePlay(),
+    skip: (s) => skip(s),
+    jump: (o) => jump(o.shift ? prefs.jump.shift : prefs.jump.arrow, o.dir),
+    prevFrame: () => step(-1),
+    nextFrame: () => step(1),
+    rateStep: (d) => bumpRate(d),
+    volumeStep: (d) => {
+      if (!hasAudio()) { toast('No audio track'); return; }
+      setVolume(volume + d); toast(`Volume ${Math.round(volume * 100)}%`);
+    },
+    home: () => player.seekFrame(0),
+    end: () => { player.pause(); player.seekFrame(player.n - 1); },
+    mute: () => setMute(!muted),
+    loop: () => toggleLoop(),
+    fullscreen: (_, e) => { if (!e.repeat) toggleFullscreen(); },
+    nextVideo: () => neighbour(1),
+    prevVideo: () => neighbour(-1),
+    setA: () => setAB('a'),
+    setB: () => setAB('b'),
+    clearAB: () => { clearAB(); toast('A–B range cleared'); },
+    copyTime: () => copyTimestamp(),
+    cyclePicture: () => cyclePicture(),
+    plus: () => insp.zoomStep(1),
+    minus: () => insp.zoomStep(-1),
+    info: () => controls.toggle('info', ui.infoBtn),
+    saveFrame: () => saveFrame(),
+    cc: () => ccClick(),
+    scopes: () => scopes.cycle(),
+    pickVideo: () => comparePick(),
+    capture: () => addMode(),
+    seekTenth: (n) => {
+      if (!player.meta.duration) return false;
+      player.seekTime((n / 10) * player.meta.duration);
+    },
+  };
 
   // ---- Decode engine (engine.js) --------------------------------------------
   const engine = createEngine({
@@ -1151,7 +1127,7 @@
   /** Compare: VS Code's open dialog picks the other videos; compare then takes this tab's place, from here. */
   function compareWith() { vscode.postMessage({ type: 'compareWith', t: player ? player.currentTime() : 0 }); }
   /** Key D: a quick pick of other videos (same folder first); compare then takes this tab's place. */
-  function comparePick() { vscode.postMessage({ type: 'comparePick', t: player ? player.currentTime() : 0 }); }
+  function comparePick() { vscode.postMessage(VpePlayerUi.pickVideoMessage('player', { t: player ? player.currentTime() : 0 })); }
   /** Shift+D: the next video opened in VS Code (an Explorer click) is compared with this one (src/addmode.js). */
   function addMode() { vscode.postMessage({ type: 'addMode', t: player ? player.currentTime() : 0 }); }
   // The add mode's hint, while it is on (the host says so with 'addMode' messages).
@@ -1291,7 +1267,7 @@
       loadSubs: () => subs.loadFile(),
       subDelay: (d) => subs.delayBy(d),
       subSize: (d) => subs.sizeBy(d),
-      copyInfo: (d) => { vscode.postMessage({ type: 'copyText', text: [d.title, d.sub, ...d.rows.map(([k, v]) => `${k}: ${v}`)].join('\n') }); toast('Details copied'); },
+      copyInfo: (d) => { vscode.postMessage({ type: 'copyText', text: VpePlayerUi.copyInfoText(d) }); toast('Details copied'); },
       copyLink: () => insp.copyLink(),
       external: () => vscode.postMessage({ type: 'external' }),
       extSettings: () => vscode.postMessage({ type: 'openSettings' }),
@@ -1300,13 +1276,15 @@
       setQuality: (pick) => setQuality(pick),
     },
   });
-  ui.cog.onclick = (e) => { e.stopPropagation(); controls.toggle('main', ui.cog); };
-  if (ui.remoteLiveBtn) ui.remoteLiveBtn.onclick = (e) => { e.stopPropagation(); controls.toggle('transcode', ui.remoteLiveBtn); };
-  ui.infoBtn.onclick = (e) => { e.stopPropagation(); controls.toggle('info', ui.infoBtn); };
-  ui.rate.onclick = (e) => { e.stopPropagation(); controls.toggle('speed', ui.rate); };
+  VpePlayerUi.bindButtons([
+    [ui.cog, () => controls.toggle('main', ui.cog), true],
+    [ui.remoteLiveBtn, () => controls.toggle('transcode', ui.remoteLiveBtn), true],
+    [ui.infoBtn, () => controls.toggle('info', ui.infoBtn), true],
+    [ui.rate, () => controls.toggle('speed', ui.rate), true],
+    [ui.tracks, () => ccClick(), true],
+    [ui.picBtn, () => cyclePicture(), true],
+  ]);
   ui.rate.addEventListener('wheel', (e) => { e.preventDefault(); bumpRate(e.deltaY < 0 ? 1 : -1); }, { passive: false });
-  ui.tracks.onclick = (e) => { e.stopPropagation(); ccClick(); };
-  ui.picBtn.onclick = (e) => { e.stopPropagation(); cyclePicture(); };
 
   const compareButton = $('startCompareBtn');
   const compareBackdrop = $('startCompareBackdrop');
@@ -1372,13 +1350,11 @@
   updateCc();
 
   // ---- Folder rail and the bar's capsule (media/folder-rail.js, docs/notes/folder-rail.md) ----
-  if ($('rail') && typeof VpeFolderRail !== 'undefined') {
-    rail = VpeFolderRail.create({
-      doc: document, post: (m) => vscode.postMessage(m), toast, cfg: cfg.rail || {},
-      getOnEnd: () => onEnd, setOnEnd: (m) => setOnEnd(m), label: VpeAutoplay.label,
-      time: () => (player ? player.currentTime() : 0),
-    });
-  }
+  rail = VpePlayerUi.createFolderRail(typeof VpeFolderRail !== 'undefined' ? VpeFolderRail : null, document, {
+    post: (m) => vscode.postMessage(m), toast, cfg: cfg.rail || {},
+    getOnEnd: () => onEnd, setOnEnd: (m) => setOnEnd(m), label: VpeAutoplay.label,
+    time: () => (player ? player.currentTime() : 0),
+  });
 
   // ---- Right-click menu (media/ctxmenu.js, docs/notes/context-menu.md) ----
   // An HTML menu in the page: its items run through the same functions as the keys and buttons.
@@ -1390,14 +1366,14 @@
     startCompare: () => compareButton.click(), addToCompare: () => requestComparison(false),
     keys: () => controls.openSheet(ui.cog), cog: () => controls.show('main', ui.cog),
   };
-  const ctxMenu = VpeCtxMenu.create({
+  const ctxMenu = VpePlayerUi.createContextMenu(VpeCtxMenu, {
     menu: $('ctxmenu'),
     getState: () => ({
       ready: !!player, playing: !!player && player.isPlaying(), loop: onEnd === 'loop', abSet: ab.isSet(),
       file: !cfg.url && !(player instanceof FramePlayer), compareOpen,
     }),
     beforeOpen: () => controls.closeAll(false),
-    run: (action) => { if (MENU_ACTIONS[action]) MENU_ACTIONS[action](); },
+    actions: MENU_ACTIONS,
   });
 
   // ---- Messages from the extension ----------------------------------------

@@ -60,6 +60,23 @@ const connect = (html) => csp(html).split('; ').find((d) => d.startsWith('connec
   assert.ok(at('codec-utils.js') < at('engine.js') && at('decoder-boot.js') < at('engine.js'));
   assert.ok(at('engine.js') < at('controls.js') && at('timefmt.js') < at('debug-probe.js'));
   assert.ok(html.indexOf('id="cfg"') < html.indexOf('membudget.js'), 'config before the scripts');
+  // The shared UI seam (media/player-ui.js) loads after the widgets it is handed and right before the page.
+  assert.strictEqual(at('player-ui.js'), at('player.js') - 1, 'player-ui.js right before player.js');
+  // No production page calls media/player-state.js yet: it is not loaded until one does (mockup and Node tests only).
+  assert.strictEqual(at('player-state.js'), -1, 'player-state.js is not loaded by the player page');
+  for (const w of ['controls.js', 'ctxmenu.js', 'abloop.js', 'folder-rail.js', 'picture.js', 'modes.js']) assert.ok(at(w) < at('player-ui.js'), w);
+}
+{ // Compare loads the same seam before compare.js (src/compare.js compareScripts).
+  const { compareScripts } = require('../../src/compare');
+  for (const large of [false, true]) {
+    const list = compareScripts(large);
+    const at = (f) => list.indexOf(f);
+    assert.strictEqual(at('player-state.js'), -1, 'player-state.js is not loaded by the Compare page');
+    assert.strictEqual(at('player-ui.js'), list.length - 2, 'player-ui.js right before compare.js');
+    assert.strictEqual(at('compare.js'), list.length - 1, 'compare.js is last');
+    const cmpHtml = compareHtml({ uri, cspSource: 'vsc-src:', nonce: 'N2', cfg: { names: ['a.mp4', 'b.mp4'] }, frameSource: '' });
+    assert.ok(cmpHtml.includes('<script nonce="N2" src="vsc:/media/player-ui.js"></script>'), 'Compare page tags player-ui.js with the nonce');
+  }
 }
 
 { // The decoder's files download before the scripts load; image sequences have no decoder.
