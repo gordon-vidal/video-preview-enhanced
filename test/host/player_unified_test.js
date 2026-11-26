@@ -51,10 +51,10 @@ const withGlobals = (dom, fn) => {
   }
 };
 
-/** A stub decoder: records what reaches it. */
+/** A stub decoder: records what reaches it. `ready`: its file is open already (the overlay need not wait). */
 function stubPlayer(clip, host, hooks) {
   const p = {
-    clip, hooks, calls: [], disposed: false, playing: false, frame: 0,
+    clip, hooks, calls: [], disposed: false, playing: false, frame: 0, ready: true,
     onBlock: (...a) => p.calls.push(['block', ...a]),
     onWorker: (m) => p.calls.push(['nd', m]),
     onNativeVideo: (m) => p.calls.push(['ndv', m]),
@@ -85,7 +85,7 @@ const CLIPS = [
  * gets every page -> host message (a real host: src/unified-session.js); it exists before boot, so it sees 'ready'.
  * `engineApi` / `uiApi` replace the production adapter / controller modules.
  */
-function withPage(fn, { cfg = {}, createPlayer = stubPlayer, hostSink = null, engineApi = EngineAdapter, uiApi = PUI } = {}) {
+function withPage(fn, { cfg = {}, createPlayer = stubPlayer, hostSink = null, engineApi = EngineAdapter, uiApi = PUI, raf = false } = {}) {
   const page = 7;
   const fullCfg = { page, boot: 1, clips: [CLIPS[0]], ...cfg };
   const html = unifiedHtml({
@@ -97,6 +97,15 @@ function withPage(fn, { cfg = {}, createPlayer = stubPlayer, hostSink = null, en
   dom.setRect(dom.$('stage'), { width: 680, height: 370 });
   dom.setRect(dom.$('seek'), { width: 680, height: 4 });
   dom.win.location = { origin: 'vscode-webview://test', hash: '' };
+  // raf: animation frames run only when the test says (`frames(n, now)`); `rafQueue` shows what is waiting.
+  const rafQueue = [];
+  let clock = 1000;
+  if (raf) dom.win.requestAnimationFrame = (cb) => { rafQueue.push(cb); return rafQueue.length; };
+  const frames = (n = 1, step = 40) => {
+    let ran = 0;
+    for (; ran < n && rafQueue.length; ran++) { clock += step; rafQueue.shift()(clock); }
+    return ran;
+  };
   const posted = [];
   let state;
   /** The host sends one message to the page (window 'message', with this page's envelope). */
@@ -113,7 +122,7 @@ function withPage(fn, { cfg = {}, createPlayer = stubPlayer, hostSink = null, en
       doc: dom.doc, win: dom.win, vscode, createPlayer: factory, widgets: widgets(),
       stateApi: S, engineApi, hostApi: HostAdapter, uiApi,
     });
-    try { return fn({ ...dom, app, posted, send, made, vscode }); } finally { app.dispose(); }
+    try { return fn({ ...dom, app, posted, send, made, vscode, frames, rafQueue }); } finally { app.dispose(); }
   });
 }
 
@@ -512,6 +521,234 @@ test('end to end: src/unified-session.js and the page, from one video to two and
     assert.strictEqual(seeksOf(b).length, n, 'no feedback seek');
   }, { hostSink });
   assert.strictEqual(session.disposed, false, 'the page going away does not end the host session');
+});
+
+// ---- the shared tick loop, mixed-fps targets, replay after the end, the clip descriptor, decoder messages ----
+
+/**
+ * A decoder shaped like media/engine.js LibavPlayer for the frame loop: nothing shows until tick(now) runs; a seek
+ * settles after `settleTicks` ticks (seekTarget / shownStale until then); playing advances one frame per tick and
+ * stops at the end with onEnded({ natural: true }). The first frame shown calls onReady.
+ */
+function enginePlayer(clip, host, hooks) {
+  const p = stubPlayer(clip, host, hooks);
+  const end = (clip.frames || 250) - 1;
+  Object.assign(p, { ready: false, firstShown: false, seekTarget: null, shownStale: true, ticks: [], settleTicks: 1, wait: 0 });
+  p.seekFrame = (f) => { p.calls.push(['seek', f]); p.seekTarget = f; p.shownStale = true; p.wait = p.settleTicks; hooks.wake(); };
+  p.tick = (now) => {
+    p.ticks.push(now);
+    if (p.seekTarget !== null) {
+      if (--p.wait > 0) return;
+      p.frame = p.seekTarget;
+      p.seekTarget = null;
+    } else if (p.playing) {
+      if (p.frame >= end) { p.playing = false; hooks.onEnded({ natural: true }); return; }
+      p.frame++;
+    }
+    p.shownStale = false;
+    if (!p.firstShown) { p.firstShown = true; hooks.onReady(); }
+  };
+  return p;
+}
+
+test('tick loop: decoders tick on animation frames until they settle; wake starts it again', () => {
+  withPage(({ doc, app, send, made, frames, rafQueue }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    assert.deepStrictEqual(seeksOf(p), [0], 'the decoder is sent to the tab\'s frame');
+    assert.strictEqual(doc.getElementById('overlay').hidden, false, 'Opening… stays until the decoder is ready');
+    assert.strictEqual(rafQueue.length, 1, 'the seek woke the loop');
+    // First frame: the tick presents it, the decoder is ready, nothing is left to do: the loop rests.
+    assert.strictEqual(frames(10), 1);
+    assert.strictEqual(p.ticks.length, 1);
+    assert.strictEqual(p.firstShown, true);
+    assert.strictEqual(doc.getElementById('overlay').hidden, true, 'the first ready decoder takes Opening… away');
+    assert.strictEqual(rafQueue.length, 0, 'paused and settled: no animation frame asked for');
+    // Playing: every frame ticks the decoder first, then its frame drives the bar.
+    app.ui.dispatch('playPause');
+    assert.strictEqual(p.playing, true);
+    assert.strictEqual(frames(5), 5);
+    assert.strictEqual(p.frame, 5);
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 5, 'the bar follows the ticked decoder');
+    assert.strictEqual(rafQueue.length, 1, 'still playing: the next frame is asked for');
+    assert.deepStrictEqual(seeksOf(p), [0], 'no seek back to the clock');
+    // Pause: one more frame, then the loop rests.
+    app.ui.dispatch('playPause');
+    assert.strictEqual(p.playing, false);
+    assert.strictEqual(frames(10), 1);
+    assert.strictEqual(rafQueue.length, 0);
+    // A paused seek keeps the loop running until the decoder has shown it (seekTarget back to null).
+    p.settleTicks = 3;
+    app.ui.dispatch('seek', 100);
+    assert.deepStrictEqual(seeksOf(p).slice(-1), [100]);
+    assert.strictEqual(p.seekTarget, 100);
+    assert.strictEqual(frames(10), 3, 'three ticks to settle, then rest');
+    assert.strictEqual(p.seekTarget, null);
+    assert.strictEqual(p.frame, 100);
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 100);
+    assert.strictEqual(rafQueue.length, 0);
+    // The decoder's own wake (a worker message) asks for one frame, once.
+    p.hooks.wake();
+    p.hooks.wake();
+    assert.strictEqual(rafQueue.length, 1);
+    assert.strictEqual(frames(10), 1);
+  }, { createPlayer: enginePlayer, raf: true });
+});
+
+test('tick loop: the visible decoders all tick, and a disposed page asks for no frame', () => {
+  withPage(({ app, send, made, frames, rafQueue }) => {
+    send({ type: 'open' });
+    send({ type: 'openVideo', clipId: 'B', compare: true, clip: CLIPS[1] });
+    frames(5);
+    const [a, b] = made;
+    assert.ok(a.ticks.length > 0 && b.ticks.length > 0, 'both visible tiles tick');
+    app.ui.dispatch('playPause');
+    frames(2);
+    app.dispose();
+    const n = rafQueue.length;
+    a.hooks.wake();
+    assert.strictEqual(rafQueue.length, n, 'no frame after dispose');
+  }, { createPlayer: enginePlayer, raf: true });
+});
+
+const MIXED = [
+  { id: 'A', name: 'a24.mp4', fps: 24, frames: 240, width: 1280, height: 720 },
+  { id: 'B', name: 'b30.mp4', fps: 30, frames: 300, width: 1280, height: 720 },
+];
+
+test('mixed fps: a 24 fps clock seeks a 30 fps follower by time; a paused offset edit seeks the follower at once', () => {
+  withPage(({ app, send, made }) => {
+    send({ type: 'open' });
+    send({ type: 'openVideo', clipId: 'B', compare: true, clip: MIXED[1] });
+    const [a, b] = made;
+    const t0 = S.getTab(app.ui.getState());
+    assert.strictEqual(t0.fps, 24, 'A (24 fps) is the clock');
+    app.ui.dispatch('seek', 24);
+    assert.deepStrictEqual(seeksOf(a).slice(-1), [24]);
+    assert.deepStrictEqual(seeksOf(b).slice(-1), [30], 'one second in: frame 30 of the 30 fps follower');
+    const na = seeksOf(a).length;
+    // The follower's offset while paused: only the follower moves, at once.
+    app.ui.setState(S.setOffset(app.ui.getState(), 'B', 5));
+    assert.deepStrictEqual(seeksOf(b).slice(-1), [35]);
+    assert.strictEqual(seeksOf(a).length, na, 'the clock tile is not sought again');
+    const nb = seeksOf(b).length;
+    // The same state again (a render): nothing is sent.
+    app.ui.render();
+    app.ui.setState(app.ui.getState());
+    assert.strictEqual(seeksOf(b).length, nb);
+    // An offset that takes the follower out of its clip: no seek; back in: sought again.
+    app.ui.setState(S.setOffset(app.ui.getState(), 'B', -100));
+    assert.strictEqual(seeksOf(b).length, nb);
+    app.ui.setState(S.setOffset(app.ui.getState(), 'B', 0));
+    assert.deepStrictEqual(seeksOf(b).slice(-1), [30]);
+  }, { cfg: { clips: [MIXED[0]] } });
+});
+
+test('decoder metadata: the clip learns fps and length, and the clock follows without a clock change', () => {
+  withPage(({ app, send, made }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    assert.strictEqual(S.getTab(app.ui.getState()).maxFrame, 239, 'no numbers yet: the adapter\'s fallback');
+    Object.assign(p, { fps: 30, n: 300, meta: { duration: 10, size: 5000 } });
+    p.hooks.onMeta();
+    const t = S.getTab(app.ui.getState());
+    assert.strictEqual(t.fps, 30);
+    assert.strictEqual(t.maxFrame, 299);
+    assert.strictEqual(app.engine.getClip('A').frames, 300);
+  }, { cfg: { clips: [{ id: 'A', name: 'a.mp4' }] }, engineApi: liveEngineApi() });
+});
+
+test('natural end: Loop and an A-B range restart the decoder (seek and play), the cached play state does not hide it', () => {
+  withPage(({ app, send, made }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    app.ui.dispatch('loop');
+    assert.strictEqual(app.ui.getPrefs().onEnd, 'loop');
+    app.ui.dispatch('playPause');
+    assert.strictEqual(p.playing, true);
+    p.hooks.onFrame(249);
+    // The decoder stops itself at its end, then says so.
+    p.playing = false;
+    const plays = () => p.calls.filter((c) => c[0] === 'play').length;
+    const before = plays();
+    p.hooks.onEnded({ natural: true });
+    assert.deepStrictEqual(seeksOf(p).slice(-1), [0], 'Loop: back to the start');
+    assert.strictEqual(plays(), before + 1, 'and playing again');
+    assert.strictEqual(p.playing, true);
+    assert.strictEqual(S.getTab(app.ui.getState()).playing, true);
+    // A-B: the end wraps to A.
+    app.ui.dispatch('loop');
+    assert.notStrictEqual(app.ui.getPrefs().onEnd, 'loop');
+    app.ui.ab.set('a', 2, 50);
+    app.ui.ab.set('b', 4, 100);
+    p.hooks.onFrame(100);
+    p.playing = false;
+    p.hooks.onEnded({ natural: true });
+    assert.deepStrictEqual(seeksOf(p).slice(-1), [50], 'A-B: back to A');
+    assert.strictEqual(plays(), before + 2);
+    assert.strictEqual(p.playing, true);
+  });
+});
+
+test('the full clip descriptor (size, native ...) reaches the decoder and the adapter from every host message', () => {
+  withPage(({ app, send, made }) => {
+    send({
+      type: 'sessionState', order: ['A', 'B'], capture: true,
+      clips: [
+        { clipId: 'A', label: 'a.mkv', clip: { id: 'A', size: 1234, native: true, fps: 50, frames: 500, codec: 'hevc', kind: 'file' } },
+        { clipId: 'B', label: 'b.mp4', size: 777, native: false, duration: 3, hasAudio: true },
+      ],
+    });
+    const byId = (id) => made.find((p) => p.clip.id === id);
+    assert.strictEqual(byId('A').clip.size, 1234);
+    assert.strictEqual(byId('A').clip.native, true);
+    assert.strictEqual(byId('A').clip.codec, 'hevc');
+    assert.strictEqual(byId('A').clip.kind, 'file');
+    assert.strictEqual(byId('B').clip.size, 777, 'descriptor fields on the session entry itself');
+    assert.strictEqual(byId('B').clip.hasAudio, true);
+    assert.strictEqual(app.engine.getClip('A').fps, 50);
+    assert.strictEqual(app.engine.getClip('A').size, 1234);
+    send({ type: 'openVideo', clipId: 'C', label: 'c.mov', compare: true, clip: { id: 'C', size: 4242, native: true, fps: 30, frames: 90 } });
+    assert.strictEqual(byId('C').clip.size, 4242);
+    assert.strictEqual(byId('C').clip.native, true);
+    assert.strictEqual(app.engine.getClip('C').frames, 90);
+    send({ type: 'replaceTile', oldId: 'C', newId: 'D', label: 'd.avi', clip: { id: 'D', size: 99, native: true, kind: 'file' } });
+    assert.deepStrictEqual(S.getTab(app.ui.getState()).tiles, ['A', 'B', 'D']);
+    assert.strictEqual(byId('D').clip.size, 99);
+    assert.strictEqual(byId('D').clip.native, true);
+    assert.strictEqual(byId('D').clip.name, 'd.avi');
+    assert.strictEqual(app.engine.getClip('D').size, 99);
+  }, { engineApi: liveEngineApi() });
+});
+
+test('decoder showMessage / toast: on the overlay and the toast; a startup error shows on the overlay', () => {
+  withPage(({ doc, send, made }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    const overlay = doc.getElementById('overlay');
+    assert.strictEqual(overlay.hidden, true);
+    p.hooks.toast('No sound: eac3 is not in the built-in decoder', 1500);
+    assert.strictEqual(doc.getElementById('toast').textContent, 'No sound: eac3 is not in the built-in decoder');
+    p.hooks.showMessage('This file could not be opened.', 'It may be damaged.');
+    assert.strictEqual(overlay.hidden, false);
+    assert.ok(overlay.textContent.includes('This file could not be opened.'));
+    assert.ok(overlay.textContent.includes('It may be damaged.'));
+    // With two videos the message names its clip; another clip's '' does not clear it, its own does.
+    send({ type: 'openVideo', clipId: 'B', compare: true, clip: CLIPS[1] });
+    p.hooks.showMessage('Picture codec missing.');
+    assert.ok(overlay.textContent.includes('a.mp4: Picture codec missing.'));
+    made[1].hooks.showMessage('');
+    assert.strictEqual(overlay.hidden, false);
+    p.hooks.showMessage('');
+    assert.strictEqual(overlay.hidden, true);
+  });
+  withPage(({ doc, send }) => {
+    send({ type: 'open' });
+    const overlay = doc.getElementById('overlay');
+    assert.strictEqual(overlay.hidden, false);
+    assert.ok(overlay.textContent.includes('The decoder failed to start.'));
+    assert.ok(overlay.textContent.includes('no wasm here'));
+  }, { createPlayer: () => { throw new Error('no wasm here'); } });
 });
 
 console.log(`player_unified_test: ${count} ok (${Date.now() - T0} ms)`);
