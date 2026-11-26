@@ -1695,6 +1695,12 @@ async function showViewer(context, panel, clip, openTarget = null, more = []) {
   viewer.session.onChange((e) => {
     if (e === 'active' && viewer.session.active) lastViewer = viewer;
     if (e === 'clips' || e === 'capture') updateContexts();
+    // A VS Code preview tab (italic) is replaced by the next single-click in the Explorer before routeOpen() runs:
+    // keep the tab permanently as soon as Capture turns on or it grows into a comparison.
+    if (((e === 'capture' && viewer.session.capture) || (e === 'clips' && viewer.session.clips.length >= 2))
+      && viewer.panel && viewer.panel.active && vscode.commands && typeof vscode.commands.executeCommand === 'function') {
+      Promise.resolve(vscode.commands.executeCommand('workbench.action.keepEditor')).catch(() => {});
+    }
     if (e === 'capture' && logFile) {
       log(`[${viewer.session.title}] compare: add from the Explorer ${viewer.session.capture ? 'on' : 'off'}${captureWhy ? ` (${captureWhy})` : ''}`);
       captureWhy = '';
