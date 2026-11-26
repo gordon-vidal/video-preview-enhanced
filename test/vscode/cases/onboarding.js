@@ -74,7 +74,7 @@ module.exports = [
         const from = await show(vs, h, 'hevc_10_2160p.mp4');
         const line = await vs.waitLog(/\[hevc_10_2160p\.mp4\] built-in decoding at .*suggesting ffmpeg: /, { from, timeout: 30000, what: 'the reminder' });
         hint = line.replace(/^.*suggesting ffmpeg: /, '');
-        if (!/^HEVC 10-bit 4K decodes at [\d.]+× here .*Set up ffmpeg \(≈\d+ MB, no admin needed\): .*faster/.test(hint)) p.push(`wording: ${hint}`);
+        if (!/^HEVC 10-bit 4K plays at about [\d.]+ of \d+ frames per second here\. Set up ffmpeg \(≈\d+ MB, no admin needed\): .*faster/.test(hint)) p.push(`wording: ${hint}`);
       } catch (e) { p.push(e.message); }
       await h.closeClip(vs).catch(() => {});
       out.push(res('reminder-4k-hevc10', p, { hint }));

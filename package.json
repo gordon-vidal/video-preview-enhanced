@@ -177,8 +177,28 @@
         "category": "Video Preview"
       },
       {
+        "command": "videoPreviewEnhanced.setupNext",
+        "title": "Setup Guide: Next Step",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.setupFfmpegFromGuide",
+        "title": "Setup Guide: Set Up ffmpeg",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.chooseTranscode",
+        "title": "Choose Live Transcode Mode",
+        "category": "Video Preview"
+      },
+      {
         "command": "videoPreviewEnhanced.copyAgentSnippet",
-        "title": "Copy AI Agent Deep-Link Instructions",
+        "title": "Copy AI Tool Video-Link Instructions",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.installAgentSkill",
+        "title": "Install AI Tool Video-Link Skill (npx skills)",
         "category": "Video Preview"
       },
       {
@@ -287,6 +307,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "videoPreviewEnhanced.setupNext",
+          "when": "false"
+        },
+        {
+          "command": "videoPreviewEnhanced.setupFfmpegFromGuide",
+          "when": "false"
+        },
         {
           "command": "videoPreviewEnhanced.openWith",
           "when": "false"
@@ -612,18 +640,18 @@
           "default": "auto",
           "scope": "machine",
           "enumDescriptions": [
-            "Automatically use Live transcode when needed (over remote links, or locally when raw frame transfer falls behind).",
-            "Always start with Live transcode for non-HDR files that qualify (avoids startup stutter on 4K60 or fluctuating SSH links).",
-            "Never use Live transcode."
+            "Stream a lighter copy only when the video would not play smoothly otherwise (recommended).",
+            "Stream a lighter copy from the start for every video it can (not HDR). Avoids a short stutter when 4K 60 fps or a slow connection starts.",
+            "Never; always play the original file."
           ],
-          "markdownDescription": "Live transcode (ADR 0002): let ffmpeg on this host (local or remote) transcode video on the fly to a low-latency H.264 stream for WebCodecs. Prefers GPU decode and GPU encode when available, with software encoding as the last resort. **Copy Frame**, **Save Frame**, **Pixel Inspector** and **Scopes** automatically fetch full-resolution source frames when available. Pixel Inspector and Scopes fetch them while paused. 100% live zoom uses the playback picture. Changes in ⚙ › Live transcode set the default for all videos on this machine and can reload the current tab."
+          "markdownDescription": "**Live transcode** keeps playback smooth when the original video is too heavy to play as it is: over Remote-SSH, or a very large video on your own computer. ffmpeg makes a lighter copy while you watch. **Copy Frame**, **Save Frame**, **Pixel Inspector** and **Scopes** still use the original, full-quality picture. Needs ffmpeg on the machine that has the video. Also in ⚙ › Live transcode."
         },
         "videoPreviewEnhanced.transcodeMaxBitrate": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "scope": "machine",
-          "markdownDescription": "Maximum bitrate in Mb/s for Live transcode (`0` = Auto; non-zero values are clamped to at least `0.25` Mb/s / 250 kb/s). Uses best quality capped strictly at this ceiling (capped VBR) so the stream never exceeds your link budget while staying compact on easy or low-fps scenes. Also set in ⚙ › Live transcode."
+          "markdownDescription": "Upper limit for Live transcode, in Mb/s. `0` = Auto: follows your connection. Set a limit when you share a slow connection. Also in ⚙ › Live transcode."
         },
         "videoPreviewEnhanced.transcodeResolution": {
           "type": "number",
@@ -647,13 +675,13 @@
           ],
           "default": 0,
           "scope": "machine",
-          "markdownDescription": "Resolution for Live transcode in new video tabs (`0` = Auto: sized to the picture on screen, and over a remote link lowered and raised again with the connection). A height fixes the picture at that height (never above the video's own) and keeps it there whatever the connection does. Pick it for one video in ⚙ › Live transcode › Resolution, where **Save as default** sets this. Compare sizes its tiles itself."
+          "markdownDescription": "Picture size for Live transcode in new tabs. **Auto** matches the size on screen and, over a remote connection, goes down and up with the connection. A fixed size stays put whatever the connection does (never above the video's own size). Also in ⚙ › Live transcode › Resolution."
         },
         "videoPreviewEnhanced.transcodeSplitBitrate": {
           "type": "boolean",
           "default": true,
           "scope": "machine",
-          "description": "Share an explicit Live transcode max video bitrate across Compare tiles using Live transcode. Each tile has a 250 kb/s minimum. Auto budgets each tile by its size and frame rate."
+          "description": "In Compare, split the Live transcode bitrate limit between the videos instead of giving each video the full limit."
         },
         "videoPreviewEnhanced.remoteStream": {
           "type": "string",
@@ -701,61 +729,81 @@
       {
         "id": "videoPreviewEnhanced.setup",
         "title": "Set up Video Preview Enhanced",
-        "description": "Play any video smoothly in VS Code — locally, over Remote-SSH, or with AI coding agents.",
+        "description": "Play any video smoothly in VS Code, on your own computer or on a remote server.",
         "steps": [
           {
-            "id": "ready",
-            "title": "Ready to play (no setup required)",
-            "description": "Video Preview Enhanced is already set as your default viewer for MP4, MKV, MOV, WebM, AVI, and 15+ other formats. Just click any video in the Explorer to play it.\n[Open a Video…](command:videoPreviewEnhanced.openVideoFile)\nPrefer VS Code's built-in preview for MP4/WebM? [Restore default](command:videoPreviewEnhanced.undoDefault).",
+            "id": "start",
+            "title": "Get the smoothest playback",
+            "description": "Videos already play. A few one-click steps make big and phone videos (4K, HDR, iPhone) play smoothly and keep videos on remote servers fast. About 2 minutes.\n[Start setup](command:videoPreviewEnhanced.setupNext?%5B%22start%22%5D)",
             "media": {
-              "markdown": "media/walkthrough/ready.md"
+              "markdown": "media/walkthrough/start.md"
             },
             "completionEvents": [
-              "onCommand:videoPreviewEnhanced.openVideoFile",
-              "onView:videoPreviewEnhanced.player"
+              "onContext:videoPreviewEnhanced.setupDone.start"
             ]
           },
           {
             "id": "ffmpeg",
-            "title": "Smooth 4K, HDR, HEVC, AV1 & ProRes (optional)",
-            "description": "Common videos (H.264 and VP8) already play on your graphics card with nothing installed. For heavy 4K or HDR formats, one click downloads portable ffmpeg (~80 MB, no admin rights) or links one you already have.\n[Set up ffmpeg](command:videoPreviewEnhanced.setupFfmpeg)\nAlready have ffmpeg and playback feels slow? [Test GPU speed](command:videoPreviewEnhanced.retestFfmpeg).",
+            "title": "Smooth 4K, HDR & phone videos",
+            "description": "Everyday videos already play on your graphics card. For 4K, HDR and phone videos, one click downloads a portable ffmpeg (about 80 MB, no admin rights) or uses one you already have. When it is ready, the guide moves on.\n[Set up ffmpeg](command:videoPreviewEnhanced.setupFfmpegFromGuide?%5B%22ffmpeg%22%5D)\n[Skip](command:videoPreviewEnhanced.setupNext?%5B%22ffmpeg%22%5D)",
             "when": "!remoteName || remoteName == 'wsl'",
             "media": {
               "markdown": "media/walkthrough/ffmpeg.md"
             },
             "completionEvents": [
+              "onContext:videoPreviewEnhanced.setupDone.ffmpeg",
               "onCommand:videoPreviewEnhanced.setupFfmpeg"
             ]
           },
           {
             "id": "remote",
-            "title": "Remote servers (Remote-SSH, WSL & containers)",
-            "description": "Over Remote-SSH or containers, Live transcode is on automatically (Auto) so videos stream smoothly and adapt to your connection speed. Set up ffmpeg on the remote machine to enable it.\n[Set up ffmpeg on this machine](command:videoPreviewEnhanced.setupFfmpeg)\nYou can adjust mode, max bitrate, or resolution anytime in [Live transcode settings](command:workbench.action.openSettings?%22%40id%3AvideoPreviewEnhanced.transcode%22).",
+            "title": "Remote servers (SSH, containers)",
+            "description": "This window is connected to another machine, so the videos play there and it needs its own ffmpeg. Set it up once; after that, a lighter copy of each video is streamed to you so it plays smoothly over the connection.\n[Set up ffmpeg on this machine](command:videoPreviewEnhanced.setupFfmpegFromGuide?%5B%22remote%22%5D)\n[Skip](command:videoPreviewEnhanced.setupNext?%5B%22remote%22%5D)",
             "media": {
               "markdown": "media/walkthrough/remote.md"
             },
             "completionEvents": [
+              "onContext:videoPreviewEnhanced.setupDone.remote",
               "onCommand:videoPreviewEnhanced.setupFfmpeg"
+            ],
+            "when": "remoteName && remoteName != 'wsl'"
+          },
+          {
+            "id": "remoteLater",
+            "title": "Good to know: remote servers",
+            "when": "!remoteName || remoteName == 'wsl'",
+            "description": "Nothing to do now. When you first open a video over Remote-SSH, in WSL or in a container, you may need to set up ffmpeg on that machine too; a message offers it in one click. Over Remote-SSH or in a container the video is then streamed as a lighter copy, because a network connection is slower than your own disk; that keeps it smooth.\n[Got it](command:videoPreviewEnhanced.setupNext?%5B%22remoteLater%22%5D)",
+            "media": {
+              "markdown": "media/walkthrough/remote.md"
+            },
+            "completionEvents": [
+              "onContext:videoPreviewEnhanced.setupDone.remoteLater"
             ]
           },
           {
             "id": "agents",
-            "title": "Clickable video links for AI coding agents (optional)",
-            "description": "Using Claude Code, Codex, Cursor, or Copilot? Teach your agent to output clickable links that jump straight to a specific frame or open a synchronized side-by-side comparison.\n[Copy AI Agent Instructions](command:videoPreviewEnhanced.copyAgentSnippet)",
+            "title": "Optional: links from AI tools",
+            "description": "If you use an AI coding tool such as Claude Code, Codex, Cursor or Copilot, you can tell it how to give you links that open a video here, at an exact frame or side by side with another. Copy the instructions into your AGENTS.md or CLAUDE.md, or install them as a skill if you use npx skills.\n[Copy instructions](command:videoPreviewEnhanced.copyAgentSnippet)\n[Install with npx skills](command:videoPreviewEnhanced.installAgentSkill)\n[Skip](command:videoPreviewEnhanced.setupNext?%5B%22agents%22%5D)",
             "media": {
               "markdown": "media/walkthrough/agents.md"
             },
             "completionEvents": [
-              "onCommand:videoPreviewEnhanced.copyAgentSnippet"
+              "onContext:videoPreviewEnhanced.setupDone.agents",
+              "onCommand:videoPreviewEnhanced.copyAgentSnippet",
+              "onCommand:videoPreviewEnhanced.installAgentSkill"
             ]
           },
           {
             "id": "later",
-            "title": "How to change anything later",
-            "description": "Click ⚙ on any video's player bar for per-video controls and inspection tools, search Video Preview Enhanced in Settings for defaults, or run **Video Preview: Open Setup Guide** from the Command Palette anytime.\n[Open Extension Settings](command:workbench.action.openSettings?%22%40ext%3Agordon-vidal.video-preview-enhanced%22)",
+            "title": "Try it out",
+            "description": "Click any video in the Explorer to play it. To change anything later, click ⚙ on the player bar, search Video Preview Enhanced in Settings, or run **Video Preview: Open Setup Guide** to come back here.\n[Done](command:videoPreviewEnhanced.setupNext?%5B%22later%22%5D)",
             "media": {
               "markdown": "media/walkthrough/later.md"
-            }
+            },
+            "completionEvents": [
+              "onContext:videoPreviewEnhanced.setupDone.later",
+              "onView:videoPreviewEnhanced.player"
+            ]
           }
         ]
       }

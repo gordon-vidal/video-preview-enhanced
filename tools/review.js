@@ -41,6 +41,7 @@ Usage: node tools/review.js [target] [flags]      (no arguments in a terminal: i
   --link <preset>       simulate a Remote-SSH link: ${Object.keys(LINKS).join(' | ')}
   --transcode <mode>    seed the Live transcode setting: ${TRANSCODES.join(' | ')}
   --no-ffmpeg-on-path   hide ffmpeg on PATH only
+  --first-run           open the setup guide on start, as after a fresh install (needs a fresh profile: always here)
   --no-ffmpeg           no ffmpeg at all (PATH hidden and the lookup in the usual places off)
   --dry-run             print every command and path; create and launch nothing
   --no-wait             return once VS Code started; nothing is cleaned up
@@ -53,7 +54,7 @@ const fail = (message) => { throw new ReviewError(message); };
 
 const SWITCHES = {
   dirty: 'dirty', dev: 'dev', installed: 'installed', dryrun: 'dryRun', nowait: 'noWait', keep: 'keep',
-  noffmpeg: 'noFfmpeg', noffmpegonpath: 'noFfmpegOnPath', ui: 'ui', help: 'help', h: 'help',
+  noffmpeg: 'noFfmpeg', noffmpegonpath: 'noFfmpegOnPath', firstrun: 'firstRun', ui: 'ui', help: 'help', h: 'help',
 };
 const VALUES = { code: 'code', media: 'media', checklist: 'checklist', link: 'link', transcode: 'transcode' };
 
@@ -61,7 +62,7 @@ const VALUES = { code: 'code', media: 'media', checklist: 'checklist', link: 'li
 function parseArgs(argv) {
   const o = {
     target: 'main', dirty: false, dev: false, installed: false, code: '', media: '', checklist: '',
-    link: 'off', transcode: '', dryRun: false, noWait: false, keep: false, noFfmpeg: false, noFfmpegOnPath: false,
+    link: 'off', transcode: '', dryRun: false, noWait: false, keep: false, noFfmpeg: false, noFfmpegOnPath: false, firstRun: false,
     ui: false, help: false,
   };
   let haveTarget = false;
@@ -108,6 +109,7 @@ const UI_ROWS = [
   { id: 'link', label: 'SSH / Link sim', options: Object.values(LINKS) },
   { id: 'transcode', label: 'Live transcode', options: ['Auto (default)', 'Always', 'Off'] },
   { id: 'ffmpeg', label: 'FFmpeg', options: ['Normal', 'Hide on PATH', 'No ffmpeg at all'] },
+  { id: 'firstRun', label: 'Setup guide', options: ['Closed', 'Open on start (first run)'] },
   { id: 'keep', label: 'Keep temp profile', options: ['No', 'Yes'] },
 ];
 const LAUNCH_ROW = UI_ROWS.length;
@@ -128,6 +130,7 @@ function createUiState({ branches = [], platform = process.platform, args = null
       link: a ? LINK_IDS.indexOf(a.link) : 0,
       transcode: a && a.transcode ? TRANSCODES.indexOf(a.transcode) : 0,
       ffmpeg: a && a.noFfmpeg ? 2 : a && a.noFfmpegOnPath ? 1 : 0,
+      firstRun: a && a.firstRun ? 1 : 0,
       keep: a && a.keep ? 1 : 0,
     },
   };
@@ -185,6 +188,7 @@ function stateToArgs(state) {
   if (state.v.transcode > 0) args.push('--transcode', TRANSCODES[state.v.transcode]);
   if (state.v.ffmpeg === 1) args.push('--no-ffmpeg-on-path');
   if (state.v.ffmpeg === 2) args.push('--no-ffmpeg');
+  if (state.v.firstRun === 1) args.push('--first-run');
   if (state.v.keep === 1) args.push('--keep');
   return args;
 }
@@ -579,6 +583,7 @@ async function launch(o) {
   say(`  folder       : ${openFolder}${o.media ? '  (your own folder)' : ''}`);
   if (o.link !== 'off') say(`  ssh link     : ${LINKS[o.link]}  [${o.link}]`);
   if (o.transcode) say(`  transcode    : ${o.transcode}  (seeded in settings.json)`);
+  if (o.firstRun) say('  first run    : the setup guide opens on start, as after a fresh install');
   if (missing.length) {
     say(`  missing media: ${missing.join(', ')}  (made by test/media/make_media.js, test/tracks/make_media.js)`);
   }
@@ -586,6 +591,8 @@ async function launch(o) {
 
   const settings = { ...BASE_SETTINGS };
   if (o.transcode) settings['videoPreviewEnhanced.transcode'] = o.transcode;
+  // VS Code's default; the extension then opens its setup guide on the first start (src/walkthrough.js shouldOpenGuide)
+  if (o.firstRun) settings['workbench.welcomePage.walkthroughs.openOnInstall'] = true;
   const settingsFile = path.join(userData, 'User', 'settings.json');
   const buildArgs = ['--yes', '--prefer-offline', '@vscode/vsce', 'package', '-o', vsix];
   const buildCmd = `(cd ${q(buildDir)}) npx --yes --prefer-offline @vscode/vsce package -o ${q(vsix)}`;

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Setup guide:** a short walkthrough that opens once on the first start (again anytime: **Video Preview: Open Setup Guide**) sets up smooth 4K, HDR and phone-video playback and remote servers, one click per step, optionally shows AI coding tools how to link to a video frame, and shows where to change everything later.
+
 ## 0.12.0 (2026-11-25)
 
 Compact Folder Rail in both single-video and Compare views, new Autoplay modes (Off / Play next in folder / Loop), Compare deep links (`vscode://.../compare`), per-video Live transcode resolution picker, seek-bar keyframe previews and cached seeks during Live transcode, major slow-SSH responsiveness upgrades (128 KB bounded pipe, ~3 KB JPEG host thumbnails, session link memory, deeper remote buffer, GOP step-back caching), plus recovery fixes for damaged H.264 streams, open-GOP Direct Stream seeks, long-recording timestamps, exact-frame timeouts, and Windows folder-watch cleanup.

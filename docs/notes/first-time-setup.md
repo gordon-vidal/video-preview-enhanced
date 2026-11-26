@@ -130,7 +130,6 @@ Before the user touches anything, the defaults already give the smoothest experi
   > Everything is tuned for smooth playback out of the box — you only need the optional steps below for heavy 4K/HDR files, remote servers, or AI agents.
 - **Buttons:**
   - **[Open a Video…]** (`command:videoPreviewEnhanced.openVideoFile`)
-  - **[Restore VS Code's Default MP4/WebM Viewer]** (`command:videoPreviewEnhanced.undoDefault`) — reassures users they can undo anytime.
 
 #### Step 2 — Smooth 4K, HDR, HEVC, AV1 & ProRes (optional ffmpeg)
 - **Copy:**
@@ -172,35 +171,20 @@ Before the user touches anything, the defaults already give the smoothest experi
 
 ---
 
-## 4. What Gets Removed or Demoted
+## 4. Maintainer Decisions & Follow-Up Plan (2026-11-26)
 
-| Current Popup | Before | After |
-|---|---|---|
-| `offers.js:66` (`maybeOnboard`) | Fires on the first video of *every* session without ffmpeg until "Don't Show Again" | **Removed** as a recurring popup; replaced by Walkthrough Step 2. |
-| `offers.js:92` (`maybeHint`) | Corner popup with speed ratios when built-in decoder is slow | **Removed** as a corner popup; merged into the single in-player `#notice` (`ffmpegOffer`). |
-| `media/engine.js:1705` slow toast | 1.5 s toast advertising ffmpeg (even when hidden/remote/installed in Compare) | **Removed** (covered by `#notice`). |
-| `offers.js:154` (`maybeOfferRemoteFfmpeg`) | Long corner popup on every remote session | **Demoted** to Walkthrough Step 3 + short reactive `#notice` only when a non-WebCodecs video opens on a remote without ffmpeg. |
-| `offers.js:173` (`maybeInformTranscode`) | Corner popup on first Live transcode | **Moved** to in-player `#notice` (once ever, clear scope labels) + explained in Walkthrough Step 3. |
-| `offers.js:119` (`maybeOfferProbe`) | Corner popup when slow with ffmpeg | **Kept** (reworded, reactive only) + accessible anytime in Walkthrough Step 2. |
+1. **Walkthrough ships now on this branch (`docs/first-time-setup-audit`):**
+   - **Keep `maybeOnboard`** (`offers.js:56`) on the first video of a session when no ffmpeg is found, because many users will close or skip the tour. Suppress it only when the user explicitly clicks **Skip** on the ffmpeg walkthrough step (or clicks **Don't Show Again** on the popup).
+   - **Keep `maybeHint`** (`offers.js:78`) when playback falls behind without ffmpeg, until explicitly declined.
+   - **Never offer VS Code's built-in preview** anywhere in the guide or popups (enforced by `test/host/walkthrough_test.js`).
+2. **In-player notice cleanup & visual unification — deferred until after the unified viewer (`feat/compare-ux-iteration`) merges:**
+   - **Remove redundant in-player notices/toasts:** `setupFfmpeg` `#notice` variant (`media/slow-notice.js:50`, covered by `maybeHint`), slow-ffmpeg toast (`media/engine.js:1705`), duplicate clip-export toast (`src/clipexport.js:309`), and quality-lowered toast (`src/stream.js:851`).
+   - **Unify all remaining in-player surfaces** (`#notice`, `#toast`, `#addHint`, `#startCompareDialog`, `#goto`, `#overlay`) onto one frosted surface (`--vpe-surface-float` + `blur(12px)` + `8px` radius + distinct primary button), one consistent top-center slot with a priority queue, shared across single-video and Compare views.
+   - **Fix remaining copy/scope gaps:** `(this tab)` on exact A–B clip refusal (`media/player.js:480`), plain English in `media/exactframe.js:25` and `media/xray.js:612,716`, and consistent `Settings` / `Set up ffmpeg` button labels.
 
 ---
 
-## 5. Open Questions for the Maintainer
+## 5. Open Questions for the Follow-Up (Post-Unification)
 
-1. **Retiring the per-session onboarding popup (`PRODUCT.md` change):** `docs/PRODUCT.md` currently specifies
-   showing the "Set up ffmpeg" popup on the first video of each session until "Don't Show Again". Do you want
-   to replace it completely with the Walkthrough + reactive slow-playback `#notice`, or keep a one-time-only
-   fallback for users who dismiss Get Started?
-2. **Walkthrough auto-open behavior:** VS Code opens a walkthrough automatically on first install when
-   contributed, or we can keep it quiet and link to it from the player's `⚙` menu and Command Palette. Which do
-   you prefer?
-3. **Remote-SSH ffmpeg setup command:** Today `videoPreviewEnhanced.setupFfmpeg` runs the local setup wizard,
-   while remote download lives inside `offers.js` (`downloadRemoteFfmpeg`). Should `setupFfmpeg` automatically
-   dispatch to the remote Linux BtbN download when `vscode.env.remoteName` is set (non-WSL) so Walkthrough
-   Step 3 has one unified button?
-4. **AI Agent Skill packaging (`skills/video-preview-links/SKILL.md`):** `skills/video-preview-links/SKILL.md`
-   does not exist in the repository yet (only `docs/agents.md` has the copy-paste snippet). Should we add
-   `skills/video-preview-links/SKILL.md` so `npx skills add` works out of the box, and add a
-   `videoPreviewEnhanced.copyAgentSnippet` command for the Walkthrough button?
-5. **Hidden notices reset command:** From `docs/notes/notifications.md` — should we add **Video Preview: Show
-   Hidden Notices Again** to clear dismissed notices, or keep "Don't show again" permanent?
+1. **Slow-playback `#notice` (`every` / `skip` / `fast`):** Keep these in-player banners once unified, or trim them too so only high-signal notices (reduced-res 1:1 zoom, exact A–B clip refusal, live-transcode failures) appear over the video?
+2. **Hidden notices reset command:** From `docs/notes/notifications.md` — add **Video Preview: Show Hidden Notices Again** to clear dismissed notices, or keep "Don't show again" permanent?

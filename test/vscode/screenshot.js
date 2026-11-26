@@ -30,7 +30,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-shot-'));
 const prof = path.join(dir, 'prof'), ext = path.join(dir, 'ext'), desk = 'vpeshot' + process.pid;
 fs.mkdirSync(path.join(prof, 'User'), { recursive: true }); fs.mkdirSync(ext);
 fs.writeFileSync(path.join(prof, 'User', 'settings.json'), JSON.stringify({
-  'telemetry.telemetryLevel': 'off', 'workbench.startupEditor': 'none', 'security.workspace.trust.enabled': false,
+  'telemetry.telemetryLevel': 'off', 'workbench.startupEditor': 'none', 'workbench.welcomePage.walkthroughs.openOnInstall': false, 'security.workspace.trust.enabled': false,
   'extensions.autoUpdate': false, 'update.mode': 'none', 'workbench.enableExperiments': false, ...(theme ? { 'workbench.colorTheme': theme } : {}),
   'chat.disableAIFeatures': true, 'window.restoreWindows': 'none', 'files.hotExit': 'off',
   'workbench.activityBar.location': 'hidden', 'workbench.secondarySideBar.defaultVisibility': 'hidden',

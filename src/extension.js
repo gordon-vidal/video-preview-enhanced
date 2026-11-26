@@ -843,6 +843,52 @@ async function openLocalVideo(where, clicked) {
   }
 }
 
+/** First start after install: open the setup guide once (walkthrough.shouldOpenGuide says when). */
+function maybeOpenSetupGuide() {
+  const ctx = {
+    opened: globalState.get(walkthrough.GUIDE_KEY),
+    onboarding: globalState.get(decide.ONBOARD_KEY),
+    openOnInstall: vscode.workspace.getConfiguration('workbench.welcomePage').get('walkthroughs.openOnInstall'),
+  };
+  if (!walkthrough.shouldOpenGuide(ctx)) return;
+  globalState.update(walkthrough.GUIDE_KEY, Date.now()).then(undefined, () => {});
+  log('first start: opening the setup guide');
+  vscode.commands.executeCommand('videoPreviewEnhanced.openSetupGuide').then(undefined, (e) => log(`setup guide failed: ${e && e.message || e}`));
+}
+
+/**
+ * A setup guide step's Next / Got it / Skip / Done button: mark the step done and show the next step this window has,
+ * or close the guide after the last one. `id` comes from the button's command link.
+ * Skipping the ffmpeg step explicitly declines the first-video ffmpeg popup too (people who close the tour still get it).
+ */
+async function setupNext(context, id, { skipped = true } = {}) {
+  if (typeof id !== 'string' || !/^[\w-]{1,40}$/.test(id)) return;
+  if (id === 'ffmpeg' && skipped) {
+    await globalState.update(decide.ONBOARD_KEY, decide.afterOnboard(decide.ONBOARD_BUILTIN));
+  }
+  await vscode.commands.executeCommand('setContext', walkthrough.doneKey(id), true);
+  const steps = context.extension.packageJSON.contributes.walkthroughs[0].steps;
+  const next = walkthrough.nextStep(steps, id, vscode.env.remoteName);
+  if (!next) { await vscode.commands.executeCommand('workbench.action.closeActiveEditor'); return; }
+  await vscode.commands.executeCommand('workbench.action.openWalkthrough',
+    { category: `${EXT_ID}#${walkthrough.WALKTHROUGH_ID}`, step: next }, false);
+}
+
+/** Pick the Live transcode mode (Auto / Always / Off) in a list, with the setting's own one-line explanations. */
+async function chooseTranscode(context) {
+  // contributes.configuration may be one object or a list of them
+  const props = [].concat(context.extension.packageJSON.contributes.configuration)
+    .reduce((all, g) => ({ ...all, ...g.properties }), {});
+  const spec = props['videoPreviewEnhanced.transcode'];
+  const now = vscode.workspace.getConfiguration('videoPreviewEnhanced').get('transcode', spec.default);
+  const names = { auto: 'Auto (recommended)', always: 'Always', off: 'Off' };
+  const pick = await vscode.window.showQuickPick(spec.enum.map((v, i) => ({
+    value: v, label: names[v] || v, description: v === now ? 'current' : '', detail: spec.enumDescriptions[i],
+  })), { title: 'Live transcode: when should a lighter copy be streamed?', placeHolder: `Now: ${names[now] || now}` });
+  if (!pick || pick.value === now) return;
+  await vscode.workspace.getConfiguration('videoPreviewEnhanced').update('transcode', pick.value, vscode.ConfigurationTarget.Global);
+}
+
 function activate(context) {
   T_ACTIVATE = Date.now();
   out = vscode.window.createOutputChannel('Video Preview Enhanced');
@@ -937,6 +983,20 @@ function activate(context) {
     vscode.commands.registerCommand('videoPreviewEnhanced.makeDefault', () => makeDefault(true)),
     vscode.commands.registerCommand('videoPreviewEnhanced.undoDefault', () => undoDefault()),
     vscode.commands.registerCommand('videoPreviewEnhanced.openSetupGuide', () => vscode.commands.executeCommand('workbench.action.openWalkthrough', `${EXT_ID}#${walkthrough.WALKTHROUGH_ID}`, false)),
+    // Setup guide buttons (package.json walkthrough): Next / Got it / Done on every step, and ffmpeg setup that moves on.
+    vscode.commands.registerCommand('videoPreviewEnhanced.setupNext', (id) => setupNext(context, id)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.setupFfmpegFromGuide', async (id) => {
+      await setupFfmpeg();
+      toolsPromise = null;
+      if (await tools()) await setupNext(context, id, { skipped: false }); // set up (or already there): on to the next step
+    }),
+    vscode.commands.registerCommand('videoPreviewEnhanced.chooseTranscode', () => chooseTranscode(context)),
+    // Types the skills.sh install command into a terminal without running it: the user sees what runs and presses Enter.
+    vscode.commands.registerCommand('videoPreviewEnhanced.installAgentSkill', () => {
+      const term = vscode.window.createTerminal('Install AI agent skill');
+      term.show();
+      term.sendText(walkthrough.SKILL_COMMAND, false);
+    }),
     vscode.commands.registerCommand('videoPreviewEnhanced.copyAgentSnippet', async () => {
       await vscode.env.clipboard.writeText(walkthrough.AGENT_SNIPPET);
       vscode.window.showInformationMessage('AI agent video-link instructions copied. Paste them into AGENTS.md, CLAUDE.md, or .cursorrules.');
@@ -1079,6 +1139,7 @@ function activate(context) {
     resetTools: () => { toolsPromise = null; }, // PATH may have gained or lost ffmpeg
     setCompareFiles: (files) => { testCompareFiles = files; },
   }).install(context);
+  maybeOpenSetupGuide(); // after the commands above are registered
   T_ACTIVATED = Date.now();
   if (logFile) log(`activated: module load ${T_ACTIVATE - T_LOAD} ms, activate() ${T_ACTIVATED - T_ACTIVATE} ms, pid ${process.pid}`);
 }
