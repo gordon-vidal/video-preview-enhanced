@@ -127,6 +127,10 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 }
 /* Drop below a top-centre banner (Add Mode hint, playback notice, Go to) so neither hides the other. */
 body:has(#addHint:not([hidden]), #notice:not([hidden]), #goto:not([hidden])) #toast { --toast-top: 44px; }
+/* The notice controller (media/player-ui-tools.js) sets .notice-open and the banner's measured bottom edge, so a toast
+   sits 8px under the banner even when its text wraps (44px until measured). Specificity ties the rule above; source
+   order wins. */
+body #stage.notice-open #toast { --toast-top: calc(var(--notice-bottom, 36px) + 8px); }
 /* The pixel readout and loupe are what the user is reading while inspecting; keep them above a passing toast. */
 #pxread { z-index: 4; }
 :is(.vscode-high-contrast, .vscode-high-contrast-light) #toast {
@@ -189,7 +193,8 @@ body.idle { cursor: none; }
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--vpe-panel-border);
-  z-index: 3;
+  /* Above a passing #toast (3) should they ever meet: the banner has buttons, the toast is pointer-events: none. */
+  z-index: 4;
 }
 #notice button {
   font: inherit;

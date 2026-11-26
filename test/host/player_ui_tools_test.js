@@ -176,6 +176,133 @@ test('notice: hide(kind), handleEscape, dispose; missing children are created', 
   assert.strictEqual(dom.$('noticeClose').getAttribute('aria-label'), 'Dismiss');
 });
 
+test('notice priority: lower waits behind higher, higher preempts and restores the lower on close', () => {
+  const { $, n, log } = noticeSetup();
+  assert.deepStrictEqual(T.NOTICE_PRIORITY, { error: 3, clipRefusal: 3, reducedRes: 2, slowPlayback: 1, info: 0 });
+  assert.strictEqual(n.maybeShowReducedRes({ nativeLossy: true }), true);
+  const reducedText = $('noticeText').textContent;
+  // Lower (slowPlayback) while reducedRes shows: queued, the banner text never changes.
+  assert.strictEqual(n.maybeShowSlowPlayback('every'), true, 'offered');
+  assert.strictEqual(n.kind(), 'reducedRes');
+  assert.strictEqual($('noticeText').textContent, reducedText, 'no flash over the higher notice');
+  assert.deepStrictEqual(log.announced, [reducedText], 'the queued one is not announced yet');
+  assert.deepStrictEqual(n.pendingKinds(), ['slowPlayback']);
+  // Higher (clipRefusal) preempts: reducedRes waits, its dismissal is NOT persisted.
+  assert.strictEqual(n.showClipRefusal({ transcoded: true }), true);
+  assert.strictEqual(n.kind(), 'clipRefusal');
+  assert.deepStrictEqual(n.pendingKinds(), ['slowPlayback', 'reducedRes']);
+  assert.deepStrictEqual(log.dismissed, [], 'preemption is not a dismissal');
+  // A duplicate of a waiting kind replaces it in place of piling up.
+  assert.strictEqual(n.show({ kind: 'slowPlayback', text: 'newer slow text' }), false);
+  assert.deepStrictEqual(n.pendingKinds(), ['reducedRes', 'slowPlayback']);
+  // The same kind as the banner updates it (no queue entry).
+  n.showClipRefusal({});
+  assert.match($('noticeText').textContent, /^This ffmpeg/);
+  assert.deepStrictEqual(n.pendingKinds(), ['reducedRes', 'slowPlayback']);
+  // Close: highest waiting first (reducedRes), then the slow one.
+  $('noticeClose').click();
+  assert.strictEqual(n.kind(), 'reducedRes');
+  assert.strictEqual($('noticeText').textContent, reducedText);
+  $('noticeClose').click();
+  assert.deepStrictEqual(log.dismissed.map((d) => d[0]), ['reducedRes']);
+  assert.strictEqual(n.kind(), 'slowPlayback');
+  assert.strictEqual($('noticeText').textContent, 'newer slow text');
+  $('noticeClose').click();
+  assert.strictEqual(n.isOpen(), false);
+  assert.deepStrictEqual(n.pendingKinds(), []);
+});
+
+test('notice priority: equal priority replaces (old waits); a waiting notice dismissed meanwhile is dropped', () => {
+  const { n } = noticeSetup();
+  n.show({ kind: 'info', text: 'a' });
+  n.show({ kind: 'info', key: 'b', text: 'b' });
+  assert.strictEqual(n.kind(), 'info');
+  assert.deepStrictEqual(n.pendingKinds(), ['info']);
+  n.show({ kind: 'error', text: 'boom' });
+  n.maybeShowReducedRes({ nativeLossy: true });
+  assert.deepStrictEqual(n.pendingKinds(), ['info', 'info', 'reducedRes']);
+  n.setDismissals({ reducedRes: true });
+  n.handleEscape();
+  assert.strictEqual(n.kind(), 'info', 'dismissed reducedRes skipped');
+  // hide(kind) withdraws it from the banner and the queue; hide() clears everything.
+  assert.strictEqual(n.show({ kind: 'slowPlayback', text: 's' }), true, 'outranks info');
+  assert.deepStrictEqual(n.pendingKinds(), ['info', 'info']);
+  n.hide('slowPlayback');
+  assert.strictEqual(n.kind(), 'info');
+  assert.deepStrictEqual(n.pendingKinds(), ['info']);
+  n.hide();
+  assert.strictEqual(n.isOpen(), false);
+  assert.deepStrictEqual(n.pendingKinds(), []);
+});
+
+test('notice: slow playback never during Live transcode or streaming', () => {
+  const { n } = noticeSetup();
+  assert.strictEqual(n.maybeShowSlowPlayback({ variant: 'every', transcoded: true }), false);
+  assert.strictEqual(n.maybeShowSlowPlayback({ variant: 'setupFfmpeg', streaming: true }), false);
+  assert.strictEqual(n.isOpen(), false);
+  // Suppressed calls do not use up the once-per-kind budget.
+  assert.strictEqual(n.maybeShowSlowPlayback('every'), true);
+  // Switching to Live transcode drops a shown or waiting slow notice.
+  n.setContext({ transcoded: true });
+  assert.strictEqual(n.isOpen(), false);
+  assert.strictEqual(n.maybeShowSlowPlayback('setupFfmpeg'), false, 'context blocks it');
+  const w = noticeSetup();
+  w.n.maybeShowReducedRes({ nativeLossy: true });
+  w.n.maybeShowSlowPlayback('every');
+  w.n.setContext({ streaming: true });
+  assert.deepStrictEqual(w.n.pendingKinds(), []);
+  assert.strictEqual(w.n.kind(), 'reducedRes', 'other kinds stay');
+  w.n.setContext({});
+  assert.strictEqual(w.n.maybeShowSlowPlayback('setupFfmpeg'), true, 'back to the local decoder');
+});
+
+test('notice: notice-open on the stage while the banner shows, with its measured bottom edge', () => {
+  const { $, n } = noticeSetup();
+  const stage = $('stage');
+  assert.strictEqual(T.NOTICE_OPEN_CLASS, 'notice-open');
+  assert.strictEqual(stage.classList.contains('notice-open'), false);
+  Object.defineProperty($('notice'), 'offsetHeight', { value: 50, configurable: true });
+  Object.defineProperty($('notice'), 'offsetTop', { value: 8, configurable: true });
+  n.showClipRefusal({});
+  assert.strictEqual(stage.classList.contains('notice-open'), true);
+  assert.strictEqual(stage.style.getPropertyValue('--notice-bottom'), '58px');
+  n.maybeShowReducedRes({ nativeLossy: true });
+  $('noticeClose').click();
+  assert.strictEqual(stage.classList.contains('notice-open'), true, 'the waiting notice took over');
+  n.hide('reducedRes');
+  assert.strictEqual(stage.classList.contains('notice-open'), false);
+  assert.strictEqual(stage.style.getPropertyValue('--notice-bottom'), '');
+  // An explicit stageEl wins over the parent.
+  const dom = createDom('<div id="a"><div id="notice" hidden></div></div><div id="b"></div>');
+  const c = T.createNoticeController({ doc: dom.doc, noticeEl: dom.$('notice'), stageEl: dom.$('b') });
+  c.show({ kind: 'info', text: 'x' });
+  assert.strictEqual(dom.$('b').classList.contains('notice-open'), true);
+  assert.strictEqual(dom.$('a').classList.contains('notice-open'), false);
+});
+
+test('shouldSuppressToast: duplicates of the banner or the Live chip, never user confirmations', () => {
+  const s = T.shouldSuppressToast;
+  assert.strictEqual(s(''), true, 'empty');
+  assert.strictEqual(s('   '), true);
+  assert.strictEqual(s('Frame copied'), false);
+  assert.strictEqual(s('Playing a Live transcode (960×540)', { liveChipVisible: true }), true);
+  assert.strictEqual(s('Transcoding…', { liveChipVisible: true }), true);
+  assert.strictEqual(s('Transcoding…', { liveChipVisible: false }), false, 'no chip: the toast is the only signal');
+  assert.strictEqual(s('Live transcode: auto', { liveChipVisible: true }), false, 'confirms a user choice');
+  const noticeText = 'Skipping frames to keep real-time speed with audio. You can show every frame instead.';
+  assert.strictEqual(s('Skipping frames to keep real-time speed with audio.', { noticeOpen: true, noticeText }), true);
+  assert.strictEqual(s('skipping  frames to keep real-time speed WITH audio', { noticeOpen: true, noticeText }), true);
+  assert.strictEqual(s('Skipping frames to keep real-time speed with audio.', { noticeOpen: false, noticeText }), false);
+  assert.strictEqual(s('frames', { noticeOpen: true, noticeText }), false, 'a short word is not a duplicate');
+  assert.strictEqual(s('Volume 80%', { noticeOpen: true, noticeText }), false);
+  // The controller's bound form fills in its own state.
+  const { n } = noticeSetup();
+  assert.strictEqual(n.shouldSuppressToast('Use original video and set A and B again'), false, 'closed');
+  n.show({ kind: 'info', text: 'Pixel values are not available for this video' });
+  assert.strictEqual(n.shouldSuppressToast('Pixel values are not available for this video'), true);
+  assert.strictEqual(n.shouldSuppressToast('Transcoding', { liveChipVisible: true }), true);
+});
+
 // ---- 2. inspection ----
 
 function inspectSetup(engine, opts = {}) {

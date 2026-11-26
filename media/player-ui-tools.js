@@ -4,7 +4,9 @@
 // drives them on the strict fake DOM (test/host/fake-dom.js):
 //
 //   createNoticeController      the #notice banner (action / Settings / Don't show again / ×), reduced-resolution,
-//                               slow-playback and A-B clip refusal variants, persisted dismissals, Esc
+//                               slow-playback and A-B clip refusal variants, persisted dismissals, Esc, one banner at
+//                               a time by priority with a pending queue (docs/notes/notifications.md)
+//   shouldSuppressToast         drops a #toast that repeats the open banner or the bottom bar's Live chip
 //   createInspectionController  Scopes (W), pixel inspector (X), stats overlay (Shift+I), Codec X-ray (Shift+X) with
 //                               keyframe ({ }) and chapter (PageUp / PageDown) steps, Esc order
 //   createSubtitleController    subtitle track, delay (G / H), size, the CC button, cue placement in the picture
@@ -31,7 +33,8 @@
   /**
    * @typedef {object} Notice
    * @property {string} text
-   * @property {string} [kind]
+   * @property {string} [kind] also picks the priority (NOTICE_PRIORITY); unknown kinds rank as 'info'
+   * @property {string} [key] dedupe key in the pending queue (default: kind)
    * @property {NoticeButton | null} [action]
    * @property {NoticeButton | null} [settings]
    * @property {NoticeButton | null} [hide]
@@ -52,6 +55,19 @@
     ['settings', 'noticeSettings', 'button'], ['hide', 'noticeHide', 'button'], ['close', 'noticeClose', 'button']];
   /** Pointer events on the banner must not reach the stage (a click there toggles play). */
   const NOTICE_SWALLOW = ['click', 'dblclick', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'wheel'];
+  /**
+   * One banner at a time: a notice the user must act on (an error, a refused A-B clip) beats the pixel-accuracy offer,
+   * which beats the decoder's speed advice, which beats plain information. Higher preempts lower (the lower one waits
+   * in the queue); lower waits behind higher; equal replaces (the replaced one waits).
+   * @type {Readonly<Record<string, number>>}
+   */
+  const NOTICE_PRIORITY = Object.freeze({ error: 3, clipRefusal: 3, reducedRes: 2, slowPlayback: 1, info: 0 });
+  /** @param {Notice | null | undefined} n */
+  const priorityOf = (n) => (n && n.kind && NOTICE_PRIORITY[n.kind] !== undefined ? NOTICE_PRIORITY[n.kind] : 0);
+  /** @param {Notice} n */
+  const keyOf = (n) => n.key || n.kind || '';
+  /** The state class on the banner's container while it shows: player.css moves #toast clear of it. */
+  const NOTICE_OPEN_CLASS = 'notice-open';
 
   /**
    * @param {object} env
@@ -59,6 +75,7 @@
    * @param {any} [env.win]
    * @param {any} env.noticeEl
    * @param {any} [env.playBtnEl] gets the focus back when the banner closes with the focus in it
+   * @param {any} [env.stageEl] gets the notice-open class while the banner shows (default: the banner's parent)
    * @param {(video: any, stream: any, display: any) => Notice} [env.reducedResHelper] media/reduced-res-notice.js
    * @param {(variant: any, offerSetup?: boolean, mb?: number) => any} [env.slowHelper] media/slow-notice.js
    * @param {(id: string, detail?: any) => void} [env.onAction] host actions ({ type: 'action', id } in production)
@@ -68,6 +85,7 @@
    */
   function createNoticeController(env) {
     const { doc, noticeEl, playBtnEl } = env;
+    const stageEl = env.stageEl || noticeEl.parentElement || null;
     const onAction = env.onAction || noop;
     const onDismiss = env.onDismiss || noop;
     const onAnnounce = env.onAnnounce || noop;
@@ -90,9 +108,56 @@
     let reducedOffered = false;
     /** Slow-playback notice kinds shown on this page ('slow' or 'setupFfmpeg'): each once. */
     const slowWarned = new Set();
+    /** @type {Notice[]} notices waiting behind `current`, deduped by key */
+    let pending = [];
+    /** What plays now: Live transcode / remote streaming make the local decoder's speed advice irrelevant. */
+    let context = { transcoded: false, streaming: false };
+    /** @type {any} */
+    let resizeObs = null;
 
     const swallow = (/** @type {any} */ e) => e.stopPropagation();
     for (const t of NOTICE_SWALLOW) noticeEl.addEventListener(t, swallow);
+
+    /** The banner's bottom edge for player.css (#toast sits under it, even when the text wraps to two lines). */
+    function measure() {
+      if (!stageEl || !stageEl.style || noticeEl.hidden) return;
+      const h = noticeEl.offsetHeight;
+      if (typeof h === 'number' && h > 0) {
+        stageEl.style.setProperty('--notice-bottom', `${(noticeEl.offsetTop || 0) + h}px`);
+      }
+    }
+    /** @param {boolean} open */
+    function setOpen(open) {
+      noticeEl.hidden = !open;
+      if (stageEl && stageEl.classList) stageEl.classList.toggle(NOTICE_OPEN_CLASS, open);
+      if (open) {
+        measure();
+        const RO = env.win && env.win.ResizeObserver;
+        if (RO && !resizeObs) { resizeObs = new RO(measure); resizeObs.observe(noticeEl); }
+      } else {
+        if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
+        if (stageEl && stageEl.style) stageEl.style.removeProperty('--notice-bottom');
+      }
+    }
+
+    /** @param {Notice} n */
+    function enqueue(n) {
+      pending = pending.filter((p) => keyOf(p) !== keyOf(n));
+      pending.push(n);
+    }
+    /** A waiting notice that may no longer show: dismissed meanwhile, or slow advice during Live transcode. */
+    function stale(/** @type {Notice} */ n) {
+      if (n.kind && dismissals[n.kind]) return true;
+      return n.kind === 'slowPlayback' && (context.transcoded || context.streaming);
+    }
+    /** The highest-priority waiting notice (first come first among equals), or null. */
+    function takeNext() {
+      pending = pending.filter((p) => !stale(p));
+      if (!pending.length) return null;
+      let best = 0;
+      for (let i = 1; i < pending.length; i++) if (priorityOf(pending[i]) > priorityOf(pending[best])) best = i;
+      return pending.splice(best, 1)[0];
+    }
 
     /** @param {boolean} [refocus] always return the focus to Play (Esc) */
     function close(refocus = false) {
@@ -100,9 +165,11 @@
       const n = current;
       const back = refocus || noticeEl.contains(doc.activeElement);
       current = null;
-      noticeEl.hidden = true;
+      setOpen(false);
       if (n.dismiss) n.dismiss();
       if (back && playBtnEl) playBtnEl.focus();
+      const next = takeNext();
+      if (next) display(next);
     }
     /** @param {boolean} [refocus] */
     function closeByUser(refocus = false) {
@@ -113,8 +180,24 @@
     }
     parts.close.onclick = () => closeByUser();
 
-    /** @param {Notice} n */
+    /**
+     * Offer a notice. A lower-priority one waits behind the open banner (never flashes over it); an equal or higher
+     * one takes the banner and the replaced one waits (unless it has the same key: then it is simply updated).
+     * @param {Notice} n
+     * @returns {boolean} true when it shows now, false when it waits in the queue
+     */
     function show(n) {
+      if (current && keyOf(current) !== keyOf(n)) {
+        if (priorityOf(n) < priorityOf(current)) { enqueue(n); return false; }
+        enqueue(current);
+      }
+      pending = pending.filter((p) => keyOf(p) !== keyOf(n));
+      display(n);
+      return true;
+    }
+
+    /** @param {Notice} n */
+    function display(n) {
       current = n;
       parts.text.textContent = n.text;
       onAnnounce(n.text);
@@ -134,7 +217,7 @@
         };
       }
       noticeEl.dataset.kind = n.kind || '';
-      noticeEl.hidden = false;
+      setOpen(true);
     }
 
     /** @param {string} kind */
@@ -149,7 +232,7 @@
      * offer the exact pixels, once per page; any close of this banner is remembered.
      * @param {{ reason?: string, nativeLossy?: boolean, transcoded?: boolean, video?: any, stream?: any,
      *   display?: any }} o
-     * @returns {boolean} shown
+     * @returns {boolean} offered (shown now, or waiting behind a higher-priority banner)
      */
     function maybeShowReducedRes(o) {
       if (dismissals.reducedRes || reducedOffered || !(o.nativeLossy || o.transcoded)) return false;
@@ -167,13 +250,17 @@
     }
 
     /**
-     * The decoder's slow-playback hint: each kind once per page; × remembers it for the page's state.
-     * @param {string | { variant: string, offerSetup?: boolean, mb?: number }} slowNotice
-     * @returns {boolean} shown
+     * The decoder's slow-playback hint: each kind once per page; × remembers it for the page's state. Never during
+     * Live transcode or remote streaming (per call or setContext): the bar's Live chip owns that state, and the
+     * local decoder's advice (skip frames, set up ffmpeg) does not apply to it.
+     * @param {string | { variant: string, offerSetup?: boolean, mb?: number, transcoded?: boolean,
+     *   streaming?: boolean }} slowNotice
+     * @returns {boolean} offered (shown now, or waiting behind a higher-priority banner)
      */
     function maybeShowSlowPlayback(slowNotice) {
       const o = typeof slowNotice === 'string' ? { variant: slowNotice } : slowNotice || /** @type {any} */ ({});
       if (!o.variant || dismissals.slowPlayback || !env.slowHelper) return false;
+      if (o.transcoded || o.streaming || context.transcoded || context.streaming) return false;
       const kind = o.variant === 'setupFfmpeg' ? 'setupFfmpeg' : 'slow';
       if (slowWarned.has(kind)) return false;
       slowWarned.add(kind);
@@ -190,12 +277,23 @@
     }
 
     /**
+     * What plays now. Switching to Live transcode or streaming drops a shown or waiting slow-playback notice.
+     * @param {{ transcoded?: boolean, streaming?: boolean }} c
+     */
+    function setContext(c) {
+      context = { transcoded: !!(c && c.transcoded), streaming: !!(c && c.streaming) };
+      if (!context.transcoded && !context.streaming) return;
+      pending = pending.filter((p) => p.kind !== 'slowPlayback');
+      if (current && current.kind === 'slowPlayback') close();
+    }
+
+    /**
      * An exact A-B clip needs the file's own picture times: Live transcode and some native ffmpeg do not have them.
      * @param {{ syntheticTimes?: boolean, transcoded?: boolean }} [o]
      */
     function showClipRefusal(o = {}) {
       const transcode = !!o.transcoded;
-      show({
+      return show({
         kind: 'clipRefusal',
         text: transcode
           ? 'Live transcode re-times the picture, so A and B cannot be used for an exact clip. ' +
@@ -204,7 +302,6 @@
             'Switch to the built-in decoder and set A and B again.',
         action: { label: transcode ? 'Use original video' : 'Switch to built-in decoder', id: 'fullRes', close: true },
       });
-      return true;
     }
 
     /** @param {any} e */
@@ -217,21 +314,63 @@
     doc.addEventListener('keydown', onKeyDown);
 
     return {
-      show, maybeShowReducedRes, maybeShowSlowPlayback, showClipRefusal,
-      /** Close the banner (only when it shows `kind`, if given). @param {string} [kind] */
-      hide(kind) { if (current && (!kind || current.kind === kind)) close(); },
+      show, maybeShowReducedRes, maybeShowSlowPlayback, showClipRefusal, setContext,
+      /**
+       * Withdraw `kind` (shown or waiting; the next waiting notice then shows), or with no kind clear everything.
+       * @param {string} [kind]
+       */
+      hide(kind) {
+        pending = kind ? pending.filter((p) => p.kind !== kind) : [];
+        if (current && (!kind || current.kind === kind)) close();
+      },
       /** Esc from the page's own key handler; true when it closed the banner. */
       handleEscape() { if (!current) return false; closeByUser(true); return true; },
       isOpen: () => !!current,
       kind: () => (current ? current.kind || '' : null),
+      /** Kinds waiting behind the banner, in queue order. */
+      pendingKinds: () => pending.map((p) => p.kind || ''),
+      /**
+       * shouldSuppressToast with this banner's state filled in.
+       * @param {string} text
+       * @param {{ liveChipVisible?: boolean }} [o]
+       */
+      shouldSuppressToast: (text, o = {}) => shouldSuppressToast(text, {
+        ...o, noticeOpen: !!current, noticeText: current ? current.text : '',
+      }),
       getDismissals: () => ({ ...dismissals }),
       /** @param {Record<string, boolean>} d */
       setDismissals(d) { dismissals = { ...(d || {}) }; },
       dispose() {
         doc.removeEventListener('keydown', onKeyDown);
         for (const t of NOTICE_SWALLOW) noticeEl.removeEventListener(t, swallow);
+        if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
+        pending = [];
       },
     };
+  }
+
+  /** Status toasts that only restate what the bottom bar's Live chip already shows. User confirmations stay. */
+  const LIVE_STATUS_TOAST =
+    /^(playing (a |as )?live transcode|live transcode (started|running|active|is on)|transcoding\b|streaming\b)/;
+  /** @param {string} s */
+  const squash = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').replace(/[.…!]+$/, '').trim();
+
+  /**
+   * True when a #toast would only repeat what is already on screen: the open #notice banner (the same words, or a
+   * fragment of them) or the bar's Live chip (a Live transcode status line). Confirmations of a user action
+   * ("Live transcode: auto", "Frame copied") never match. Empty text is always suppressed.
+   * @param {string} text
+   * @param {{ noticeOpen?: boolean, noticeText?: string, liveChipVisible?: boolean }} [o]
+   */
+  function shouldSuppressToast(text, o = {}) {
+    const t = squash(text);
+    if (!t) return true;
+    if (o.liveChipVisible && LIVE_STATUS_TOAST.test(t)) return true;
+    if (o.noticeOpen && o.noticeText) {
+      const n = squash(o.noticeText);
+      if (t === n || (t.length >= 12 && n.includes(t))) return true;
+    }
+    return false;
   }
 
   // ---- 2. inspection: scopes, pixel inspector, stats, Codec X-ray ---------------------------------------------------
@@ -884,8 +1023,9 @@
 
   const api = {
     SCOPE_MODES, SCOPE_NAMES, INSPECTOR_MODES, STATS_MS, DELAY_STEP_MS, EXPORT_FRAME_TIMEOUT_MS,
-    createNoticeController, createInspectionController, createSubtitleController, createFrameExportController,
-    fmtStamp,
+    NOTICE_PRIORITY, NOTICE_OPEN_CLASS,
+    createNoticeController, shouldSuppressToast, createInspectionController, createSubtitleController,
+    createFrameExportController, fmtStamp,
   };
   // checkJs: end
 
