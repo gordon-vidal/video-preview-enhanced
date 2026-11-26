@@ -280,8 +280,13 @@
     let xrayOn = false;
     /** @type {any[] | null} */
     let packets = null;
-    /** @type {Promise<any[] | null> | null} */
+    /** @type {Promise<any[] | null | undefined> | null} */
     let packetsLoading = null;
+    /** The clip `packets` / `packetsLoading` belong to. */
+    let packetsClip = /** @type {any} */ (null);
+    /** Bumped on a clip change and on dispose: an index request that started before answers nobody. */
+    let packetsReq = 0;
+    let disposed = false;
 
     let statsEl = widgets.stats;
     if (!statsEl) {
@@ -343,14 +348,48 @@
       if (statsOn) { drawStats(); statsTimer = win.setInterval(drawStats, STATS_MS); }
     }
 
-    /** The packet index, read once per clip (the engine may answer with a promise). @returns {Promise<any[] | null>} */
+    /** Forget the packet index and let no request in flight store or act on its answer. */
+    function dropPackets() {
+      packetsReq++;
+      packets = null;
+      packetsLoading = null;
+      packetsClip = null;
+    }
+    /**
+     * The packet index, read once per clip (the engine may answer with a promise). Resolves with `undefined` when the
+     * answer came too late (the clip changed or the page went meanwhile): callers then do nothing.
+     * @returns {Promise<any[] | null | undefined>}
+     */
     function loadPackets() {
+      const clipId = clip();
+      // Compare can change the active tile without a refresh: another clip's index is not this one's.
+      if (packetsClip !== clipId && (packets || packetsLoading)) dropPackets();
       if (packets) return Promise.resolve(packets);
       if (!has('packetIndex')) return Promise.resolve(null);
       if (!packetsLoading) {
-        packetsLoading = Promise.resolve().then(() => engine.packetIndex(clip())).then(
-          (list) => { packets = Array.isArray(list) ? list : null; packetsLoading = null; return packets; },
-          () => { packetsLoading = null; return null; });
+        const req = packetsReq;
+        /** True when this answer is still wanted; a request of the current generation for a clip no longer shown
+         * also lets go of the slot, so a return to that clip asks again. */
+        const current = () => {
+          if (disposed || req !== packetsReq) return false;
+          if (clip() === clipId) return true;
+          packetsLoading = null;
+          packetsClip = null;
+          return false;
+        };
+        packetsClip = clipId;
+        packetsLoading = Promise.resolve().then(() => engine.packetIndex(clipId)).then(
+          (list) => {
+            if (!current()) return undefined;
+            packets = Array.isArray(list) ? list : null;
+            packetsLoading = null;
+            return packets;
+          },
+          () => {
+            if (!current()) return undefined;
+            packetsLoading = null;
+            return null;
+          });
       }
       return packetsLoading;
     }
@@ -365,6 +404,7 @@
       toast(xrayOn ? 'Codec X-ray on (Shift+X)' : 'Codec X-ray off');
       if (!xrayOn) { if (widgets.xray && widgets.xray.hide) widgets.xray.hide(); return Promise.resolve(); }
       return loadPackets().then((list) => {
+        if (list === undefined) return; // a late answer for another clip
         if (xrayOn && widgets.xray && widgets.xray.show) widgets.xray.show(list || []);
       });
     }
@@ -372,6 +412,7 @@
     function stepKey(dir) {
       if (!has('packetIndex')) { toast('Keyframe steps need the built-in decoder engine'); return Promise.resolve(); }
       return loadPackets().then((list) => {
+        if (list === undefined) return; // a late answer for another clip: never seek this one
         const keys = (list || []).filter((p) => p && p.key).map((p) => Number(p.t)).filter(Number.isFinite)
           .sort((a, b) => a - b);
         if (!keys.length) { toast('No keyframe index for this file'); return; }
@@ -432,7 +473,7 @@
       handleKey, handleEscape, cycleScopes, cycleInspector, toggleStats, toggleXray, stepKey, stepChapter, pickAt,
       /** A new clip or frame: the stats text now, the packet index again for another clip. @param {{ clipChanged?: boolean }} [o] */
       refresh(o = {}) {
-        if (o.clipChanged) { packets = null; packetsLoading = null; if (xrayOn) toggleXray(true); }
+        if (o.clipChanged) { dropPackets(); if (xrayOn) toggleXray(true); }
         drawStats();
         if (scope >= 0) setScope(scope);
       },
@@ -443,6 +484,8 @@
         stats: statsOn, xray: xrayOn,
       }),
       dispose() {
+        disposed = true;
+        dropPackets();
         stopStats();
         if (listen) doc.removeEventListener('keydown', onKeyDown);
       },

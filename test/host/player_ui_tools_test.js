@@ -381,6 +381,75 @@ test('inspection: refresh with a new clip reads the packet index again', async (
   assert.deepStrictEqual(log.xray, [['show', 1], ['show', 1]]);
 });
 
+test('inspection: a late packet index for the previous clip neither replaces nor seeks the new one', async () => {
+  /** One deferred packetIndex answer per call, resolved by the test in any order. */
+  const pending = [];
+  const engine = { packetIndex: (id) => new Promise((resolve, reject) => pending.push({ id, resolve, reject })) };
+  let active = 'clipA';
+  const { c, log } = inspectSetup(engine, { getActiveClip: () => active });
+  const stepA = c.stepKey(1); // t = 5: asks clip A for its index
+  await tick();
+  active = 'clipB';
+  c.refresh({ clipChanged: true });
+  const stepB = c.stepKey(1);
+  await tick();
+  assert.deepStrictEqual(pending.map((p) => p.id), ['clipA', 'clipB'], 'each clip asks for its own index');
+  // B answers first, then A, late.
+  pending[1].resolve([{ t: 7, key: true }]);
+  await stepB;
+  assert.deepStrictEqual(log.seeks, [7], 'B steps to its next keyframe');
+  pending[0].resolve([{ t: 6, key: true }, { t: 9, key: true }]);
+  await stepA;
+  assert.deepStrictEqual(log.seeks, [7], 'A\'s late answer does not seek B');
+  assert.deepStrictEqual(log.toasts.filter((x) => /keyframe/i.test(x)), [], 'nor toasts about it');
+  // B's index stays cached: the next step uses it without asking again.
+  await c.stepKey(-1);
+  assert.deepStrictEqual([pending.length, log.seeks], [2, [7]], 'B\'s index is kept (no earlier keyframe than 7: no seek)');
+  assert.ok(log.toasts.includes('No earlier keyframe'));
+
+  // A late failure after a clip change is dropped too; a request still out when the page goes answers nobody.
+  active = 'clipC';
+  c.refresh({ clipChanged: true });
+  const stepC = c.stepKey(1);
+  await tick();
+  c.dispose();
+  pending[2].resolve([{ t: 8, key: true }]);
+  await stepC;
+  assert.deepStrictEqual(log.seeks, [7], 'disposed: no seek');
+
+  // Compare can switch the active tile without a refresh: the cached index of another clip is not used.
+  const pend2 = [];
+  const eng2 = { packetIndex: (id) => new Promise((resolve) => pend2.push({ id, resolve })) };
+  let act2 = 'clipA';
+  const s2 = inspectSetup(eng2, { getActiveClip: () => act2 });
+  const a1 = s2.c.stepKey(1);
+  await tick();
+  pend2[0].resolve([{ t: 6, key: true }]);
+  await a1;
+  act2 = 'clipB';
+  const b1 = s2.c.stepKey(1);
+  await tick();
+  assert.deepStrictEqual(pend2.map((p) => p.id), ['clipA', 'clipB'], 'another tile: its own index');
+  pend2[1].resolve([{ t: 9, key: true }]);
+  await b1;
+  assert.deepStrictEqual(s2.log.seeks, [6, 9]);
+  // A request that went stale by a tile switch (same generation) lets go: back on that tile, it asks again.
+  act2 = 'clipC';
+  const c1 = s2.c.stepKey(1);
+  await tick();
+  act2 = 'clipB';
+  pend2[2].resolve([{ t: 30, key: true }]);
+  assert.strictEqual(await c1, undefined);
+  act2 = 'clipC';
+  const c2 = s2.c.stepKey(1);
+  await tick();
+  assert.strictEqual(pend2.length, 4, 'clip C asks again');
+  pend2[3].resolve([{ t: 30, key: true }]);
+  await c2;
+  assert.deepStrictEqual(s2.log.seeks.slice(-1), [30]);
+  s2.c.dispose();
+});
+
 // ---- 3. subtitles ----
 
 function subsSetup(opts = {}) {

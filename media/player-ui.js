@@ -64,7 +64,10 @@
    * @property {(canvas: HTMLCanvasElement, clipId: string, frame: number, opts?: { width?: number, height?: number, splitClipRatio?: number | null, picMode?: string, zoom?: number, panX?: number, panY?: number }) => void} draw
    * @property {(clipId: string) => { title: string, sub: string, rows: string[][] }} [facts]
    * @property {(clipId: string) => boolean} [hasAudio]
-   * @property {(clipId: string, clockFrame: number, offset?: { unit: string, v: number } | number | null) => { frame: number | null, outOfRange: boolean }} [shownFrame]
+   * @property {(clipId: string, clockFrame: number, offset?: { unit: string, v: number } | number | null, clockFps?: number) => { frame: number | null, outOfRange: boolean }} [shownFrame]
+   *   `clockFrame` counts frames of the clock tile, at `clockFps` (Compare may mix frame rates)
+   * @property {(clipId: string, frame: number, opts?: { signal?: AbortSignal }) => any} [showFrame] shows a frame of the
+   *   clip paused; resolves with the frame really presented (a number), else null
    * @property {(clipId: string, cellW: number, cellH: number, picMode?: string, zoom?: number, panX?: number, panY?: number) => { x: number, y: number, w: number, h: number }} [pictureRect]
    * @property {(clipId: string, seconds: number, cb: any, scrubbing?: boolean) => void} [thumbnail]
    * @property {(immediate?: boolean) => void} [thumbnailLeave]
@@ -579,7 +582,11 @@
    *   keyTarget?: EventTarget,
    *   tickMs?: number,
    *   onChange?: (ws: any, ui: any) => void,
+   *   onTransport?: (ev: { type: 'play' | 'pause' | 'seek' | 'rate' | 'loop', frame?: number, playing?: boolean,
+   *     rate?: number, loop?: boolean }) => void,
    * }} env
+   * `tickMs: 0` hands the clock to a decoder: the page then reports what the user does through `onTransport` and
+   * follows the decoder through the controller's `onDecoderFrame` / `onDecoderEnded`.
    */
   function create(env) {
     if (!env || !env.doc) throw new Error('player-ui: env.doc is required');
@@ -721,9 +728,55 @@
       else if (glide) glide.cancel();
     };
 
-    /** One state transition: replace the state, say the toast, redraw. */
+    // ---- transport: what a decoder clock (tickMs: 0) must hear, and the frames it reports back ----
+    /** The transport as last seen (null before the first look): a change from it is a user's play, seek, rate or loop. */
+    /** @type {{ tabId: number, frame: number, playing: boolean, rate: number, loop: boolean } | null} */
+    let seen = null;
+    /** True while the decoder's own frames, its end or a confirmed presentation land: those are not told back. */
+    let quiet = false;
+    const tell = (/** @type {any} */ ev) => { if (env.onTransport && !disposed) env.onTransport(ev); };
+    /** Compare the transport with the last look and tell `env.onTransport` what changed (seek first, then play / pause). */
+    const emitTransport = () => {
+      const t = tab();
+      const now = { tabId: t.id, frame: t.frame, playing: t.playing, rate: prefs.rate, loop: prefs.onEnd === 'loop' };
+      const was = seen;
+      seen = now;
+      // Another tab is another clock: it was not sought, it was switched to.
+      if (!was || quiet || was.tabId !== now.tabId) return;
+      if (now.frame !== was.frame) tell({ type: 'seek', frame: now.frame, playing: now.playing });
+      if (now.playing !== was.playing) tell({ type: now.playing ? 'play' : 'pause', frame: now.frame, playing: now.playing });
+      if (now.rate !== was.rate) tell({ type: 'rate', rate: now.rate });
+      if (now.loop !== was.loop) tell({ type: 'loop', loop: now.loop });
+    };
+    /** Run a state change the decoder made itself (its frames, its end, a frame it confirmed): not told back. */
+    const quietly = (/** @type {() => void} */ fn) => {
+      const q = quiet;
+      quiet = true;
+      try { fn(); } finally { quiet = q; }
+    };
+
+    /**
+     * The clock moved to another video (or another tab): the seek bar, readout and stepping follow that video's frame
+     * rate and length, at the same moment (S.syncClockMeta). Not a seek: the transport keeps its time.
+     */
+    const syncClock = (/** @type {any} */ prev) => {
+      const t = tab();
+      if (!t.clockId || (prev.id === t.id && prev.clockId === t.clockId)) return;
+      const c = /** @type {any} */ (engine.getClip(t.clockId) || {});
+      /** @type {{ fps?: number, maxFrame?: number }} */
+      const meta = {};
+      if (Number(c.fps) > 0) meta.fps = Number(c.fps);
+      if (Number(c.frames) > 1) meta.maxFrame = Math.floor(Number(c.frames)) - 1;
+      const before = t.frame;
+      ws = S.syncClockMeta(ws, meta);
+      if (seen && seen.tabId === t.id && seen.frame === before) seen.frame = tab().frame;
+    };
+
+    /** One state transition: replace the state, follow a new clock, say the toast, redraw. */
     const commit = (/** @type {any} */ next, toastText = '') => {
+      const prev = tab();
       ws = next;
+      syncClock(prev);
       if (toastText) toast(toastText);
       render();
     };
@@ -738,9 +791,10 @@
     let tileMenu = null;
     const setOnEnd = (/** @type {string} */ m) => {
       prefs.onEnd = m;
-      rail.refreshOnEnd();
+      if (rail) rail.refreshOnEnd();
       if (controls) controls.refresh();
       toast(`Autoplay: ${W.VpeAutoplay.label(m)}`);
+      emitTransport();
     };
     const rail = createFolderRail(W.VpeFolderRail, doc, {
       toast,
@@ -751,7 +805,7 @@
       label: W.VpeAutoplay.label,
       time: () => tab().frame / fps(),
     });
-    if (!rail) throw new Error('player-ui: #rail is missing');
+    // URLs and image sequences have no folder (unifiedHtml({ folder: false }) leaves #rail out): no rail then.
 
     // ---- the real VpeControls: every sub-page, plus the Compare pages over the unified state ----
     const abLabel = () => {
@@ -942,7 +996,7 @@
             isMulti
               ? { id: 'compare', label: 'Compare', note: `${t.tiles.length} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', cmpBtn) }
               : { id: 'compare', label: t.capture ? 'Pause Compare capture' : 'Start Compare', key: 'Shift+D', on: t.capture, run: () => act.capture() },
-            { id: 'rail', label: rail.isOpen() ? 'Close Folder Rail' : 'Open Folder Rail', on: rail.isOpen(), run: () => { rail.toggle(); render(); } },
+            ...(rail ? [{ id: 'rail', label: rail.isOpen() ? 'Close Folder Rail' : 'Open Folder Rail', on: rail.isOpen(), run: () => { rail.toggle(); render(); } }] : []),
             // ⚙ › Inspection (media/player.js TOOLS): each tool with its key; the inspector is X only with one video.
             ...(insp ? inspectTools(isMulti) : []),
           ],
@@ -1088,6 +1142,7 @@
       prefs.rate = W.VpeControls.clampRate(r);
       drawBar();
       controls.refresh();
+      emitTransport();
     }
     function setPicture(/** @type {string} */ m) {
       prefs.picMode = m;
@@ -1175,7 +1230,13 @@
         render();
       },
       volume: (/** @type {number} */ v) => { prefs.volume = Math.max(0, Math.min(1, v)); prefs.muted = prefs.volume === 0; render(); },
-      loop: () => { prefs.onEnd = W.VpeAutoplay.toggleLoop ? W.VpeAutoplay.toggleLoop(prefs.onEnd) : (prefs.onEnd === 'loop' ? 'off' : 'loop'); rail.refreshOnEnd(); controls.refresh(); toast(prefs.onEnd === 'loop' ? 'Loop on' : 'Loop off'); },
+      loop: () => {
+        prefs.onEnd = W.VpeAutoplay.toggleLoop ? W.VpeAutoplay.toggleLoop(prefs.onEnd) : (prefs.onEnd === 'loop' ? 'off' : 'loop');
+        if (rail) rail.refreshOnEnd();
+        controls.refresh();
+        toast(prefs.onEnd === 'loop' ? 'Loop on' : 'Loop off');
+        emitTransport();
+      },
       setA: () => markAB('a'),
       setB: () => markAB('b'),
       clearAB: () => { ab.clear(); controls.refresh(); render(); toast('A–B range cleared'); },
@@ -1300,6 +1361,8 @@
       nextVideo: () => goNeighbour(rail, postHost, 1),
       prevVideo: () => goNeighbour(rail, postHost, -1),
     };
+    /** The capture banner's and the add slot's "pick a video": the Folder Rail, else the host's picker. */
+    const openPicker = () => { if (rail) rail.open(); else act.pickVideo(); };
     /** @type {Record<string, (...a: any[]) => any>} */
     const dispatchTable = act;
     /** The shared key table (keyCommand) over this page's actions; a key's argument, if any, is the first one. */
@@ -1329,7 +1392,7 @@
     if (capBanner) {
       const stopBtn = capBanner.querySelector('[data-act="pause"]') || $('capStopBtn');
       const pickBtn = capBanner.querySelector('[data-act="pick"]') || $('capPickBtn');
-      bindButtons([[stopBtn, act.capture, true], [pickBtn, () => rail.open(), true]], onClick);
+      bindButtons([[stopBtn, act.capture, true], [pickBtn, () => openPicker(), true]], onClick);
     }
     // Dragging an A–B pin moves that end to the nearest frame: the same helper as media/player.js and media/compare.js.
     if (W.VpeAbLoop.bindPin) {
@@ -1597,9 +1660,25 @@
         const s = /** @type {any} */ (engine).snapshot(id, shownOf(tab(), id).frame);
         return s && s.data !== undefined ? s.data : s;
       } : undefined,
-      showFrame: (/** @type {string} */ id, /** @type {number} */ k) => {
-        commit(S.seekFrame(tab().playing ? S.togglePlay(ws) : ws, k));
-        return shownOf(tab(), id).frame;
+      /**
+       * Frame k of clip `id`, paused. With a decoder (engine.showFrame) the answer waits for the frame it really
+       * presented (VFR or gapped video can land on a neighbour), and the bar then shows that one.
+       */
+      showFrame: (/** @type {string} */ id, /** @type {number} */ k, /** @type {any} */ opts) => {
+        if (typeof engine.showFrame !== 'function') {
+          commit(S.seekFrame(tab().playing ? S.togglePlay(ws) : ws, k));
+          return shownOf(tab(), id).frame;
+        }
+        if (tab().playing) commit(S.togglePlay(ws));
+        const signal = opts && opts.signal;
+        return Promise.resolve(/** @type {any} */ (engine).showFrame(id, k, { signal })).then((/** @type {any} */ f) => {
+          if (typeof f !== 'number' || !Number.isFinite(f)) return null;
+          const t = tab();
+          if (!disposed && !(signal && signal.aborted) && t.tiles.includes(id)) {
+            quietly(() => commit(S.seekFrame(ws, clockFrameOf(t, id, f))));
+          }
+          return f;
+        });
       },
     };
     /** Before an exact pixel tool or a still: offer the full-resolution picture once (media/player.js exactTool). */
@@ -1872,11 +1951,20 @@
     cleanups.push(() => { if (clickTimer) win.clearTimeout(clickTimer); });
     const NOT_A_TILE_CLICK = 'button, .tile-stats, #menu';
 
+    /** The clock frame at which tile `id` shows its frame `f` (shownOf the other way round). */
+    function clockFrameOf(/** @type {any} */ t, /** @type {string} */ id, /** @type {number} */ f) {
+      const off = S.getOffset(t, id);
+      const r = clipFps(id);
+      const offFrames = off.unit === 'ms' ? (off.v / 1000) * r : off.v;
+      return Math.round(((f - offFrames) / r) * (t.fps || fps()));
+    }
+
     /** The frame a tile shows at the clock frame (offset in frames or ms), and whether it is past either end. */
     function shownOf(/** @type {any} */ t, /** @type {string} */ id) {
       const off = S.getOffset(t, id);
       if (typeof engine.shownFrame === 'function') {
-        const r = engine.shownFrame(id, t.frame, off);
+        // The clock frame counts frames of the clock tile: its rate goes along (Compare may mix 24 and 60 fps).
+        const r = engine.shownFrame(id, t.frame, off, t.fps || fps());
         if (r && r.frame !== null) return { frame: r.frame, out: !!r.outOfRange };
         const f = t.frame + (off.unit === 'ms' ? Math.round((off.v / 1000) * clipFps(id)) : off.v);
         return { frame: Math.max(0, f), out: true };
@@ -2032,7 +2120,7 @@
           act.playPause();
         });
         const b = slot.querySelector('button');
-        if (b) b.addEventListener('click', (e) => { e.stopPropagation(); rail.open(); });
+        if (b) b.addEventListener('click', (e) => { e.stopPropagation(); openPicker(); });
         cellsEl.appendChild(slot);
         addSlotNode = slot;
       }
@@ -2269,24 +2357,49 @@
       persist();
       if (controls && controls.view && (controls.view() === 'cmp' || controls.view() === 'cmpVid') && !ui.isMulti) controls.close(false);
       if (tileMenu && !ui.isMulti && tileMenu.isOpen()) tileMenu.close();
+      emitTransport();
       if (env.onChange) env.onChange(ws, ui);
     }
 
-    // ---- playback clock: the fake engine has no decoder clock, so the page advances the frame ----
+    // ---- playback clock: a decoder reports its frames and its end; without one (tickMs > 0) the page ticks ----
+    /** The decoder presented `frame` (clock frames): the bar and the stage follow, nothing is told back. */
+    function decoderFrame(/** @type {number} */ frame) {
+      if (disposed || !Number.isFinite(frame)) return;
+      quietly(() => commit(S.seekFrame(ws, frame)));
+    }
+    /** Play again from clock frame `f`: the decoder stopped at its end, so it hears the seek and the play. */
+    function restartAt(/** @type {number} */ f) {
+      quietly(() => commit(S.seekFrame(tab().playing ? ws : S.togglePlay(ws), f)));
+      const t = tab();
+      tell({ type: 'seek', frame: t.frame, playing: true });
+      tell({ type: 'play', frame: t.frame, playing: true });
+    }
+    /**
+     * The decoder reached its end (natural: it played there; false when it stopped short, e.g. an error). An A-B range
+     * wraps to A, Loop starts again, else the page pauses on the last frame and Autoplay "Play next in folder" goes on
+     * (one video, a visible tab, playing forward). Returns what it did: 'ab' | 'loop' | 'end' | 'none'.
+     * @param {{ natural?: boolean }} [o]
+     */
+    function decoderEnded({ natural = true } = {}) {
+      if (disposed) return 'none';
+      const t = tab();
+      const wrap = ab.wrapTarget(Infinity, true);
+      if (wrap !== null) { restartAt(Math.round(wrap * fps())); return 'ab'; }
+      if (prefs.onEnd === 'loop') { restartAt(0); return 'loop'; }
+      quietly(() => commit(S.seekFrame(t.playing ? S.togglePlay(ws) : ws, t.maxFrame)));
+      if (natural && t.tiles.length === 1) {
+        if (railCtl) railCtl.onNaturalEnd({ visible: !doc.hidden, rate: prefs.rate, isFile: true, autoplayMode: prefs.onEnd });
+        else if (rail && prefs.onEnd === 'next' && !doc.hidden && prefs.rate > 0) rail.go(1, true);
+      }
+      return 'end';
+    }
     const tickMs = env.tickMs === undefined ? 42 : env.tickMs;
     if (tickMs > 0) {
       const timer = win.setInterval(() => {
         const t = tab();
         if (!t.playing) return;
-        if (t.frame >= t.maxFrame && prefs.onEnd !== 'loop') {
-          commit(S.togglePlay(S.seekFrame(ws, t.maxFrame)));
-          // Autoplay "Play next in folder": one video, a visible tab, playing forward.
-          if (railCtl && t.tiles.length === 1) {
-            railCtl.onNaturalEnd({ visible: !doc.hidden, rate: prefs.rate, isFile: true, autoplayMode: prefs.onEnd });
-          }
-          return;
-        }
-        commit(S.seekFrame(ws, t.frame >= t.maxFrame ? 0 : t.frame + 1));
+        if (t.frame >= t.maxFrame || ab.wrapTarget(t.frame / fps(), true) !== null) { decoderEnded(); return; }
+        decoderFrame(t.frame + 1);
       }, tickMs);
       cleanups.push(() => win.clearInterval(timer));
     }
@@ -2300,8 +2413,14 @@
     // ---- host -> page ----
     function onHostMessage(/** @type {any} */ msg) {
       if (!msg || disposed) return;
-      if (msg.type === 'rail') { rail.onMessage(msg); syncCapsule(tab().tiles.length >= 2); return; }
-      if (msg.type === 'toast') { toast(String(msg.text || '')); return; }
+      if (msg.type === 'rail') { if (rail) rail.onMessage(msg); syncCapsule(tab().tiles.length >= 2); return; }
+      if (msg.type === 'toast') {
+        // The host may say how long (ms); else the toast's own default.
+        const ms = Number(msg.ms);
+        const text = String(msg.text || '');
+        if (Number.isFinite(ms) && ms > 0) toast(text, Math.min(10000, Math.max(1, ms))); else toast(text);
+        return;
+      }
       if (msg.type === 'focusMode') { if (zen) zen.setActive(!!msg.active); return; }
       if (msg.type === 'setVisible') { if (vis) vis.setVisible(msg.visible !== false, msg.active !== false); return; }
       // A notice turned off in Settings: remembered, and closed if it shows (media/player.js).
@@ -2354,6 +2473,10 @@
       getState: () => ws,
       setState: (/** @type {any} */ next) => { ws = next; ab.clear(); render(); },
       getPrefs: () => ({ ...prefs, picMode: tab().picMode }),
+      /** A decoder clock (tickMs: 0) presented this clock frame: the UI follows without telling onTransport. */
+      onDecoderFrame: (/** @type {number} */ frame) => decoderFrame(frame),
+      /** A decoder clock reached its end: A-B wrap, Loop, or pause and Autoplay next. */
+      onDecoderEnded: (/** @type {{ natural?: boolean }} */ o) => decoderEnded(o),
       rail,
       controls,
       ctxMenu,

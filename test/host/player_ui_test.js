@@ -499,13 +499,32 @@ const withGlobals = (dom, fn) => {
   dom.$('play').querySelector('svg.i-pause path, svg.i-pause rect').fire('click', { stop: true });
   assert.deepStrictEqual(seen, ['play', 'bar', 'play'], 'events bubble up the parent chain; stopPropagation stops them');
   // A missing required control is an error, not a silent stand-in.
-  for (const gone of ['seek', 'startCompareBtn', 'rail']) {
+  for (const gone of ['seek', 'startCompareBtn']) {
     const d = fixtureDom(FIXTURE.replace(new RegExp(` id="${gone}"`), ' data-was="gone"'));
     assert.strictEqual(d.$(gone), null);
     withGlobals(d, () => assert.throws(() => PUI.create({
       doc: d.doc, win: d.win, stateApi: S, engine: createFakeEngine(), host: createFakeHost({ clips: createFakeEngine().clips }),
       widgets: realWidgets(), tickMs: 0,
     }), new RegExp(`#${gone} is missing`), `create() refuses a page without #${gone}`));
+  }
+  // URLs and image sequences have no folder (unifiedHtml({ folder: false })): no #rail, no Folder Rail, still a player.
+  {
+    const d = fixtureDom(FIXTURE.replace(/ id="rail"/, ' data-was="gone"'));
+    assert.strictEqual(d.$('rail'), null);
+    withGlobals(d, () => {
+      const host = createFakeHost({ clips: createFakeEngine().clips });
+      const ui = PUI.create({ doc: d.doc, win: d.win, stateApi: S, engine: { ...createFakeEngine(), draw() {} }, host, widgets: realWidgets(), tickMs: 0 });
+      host.connect(ui.onHostMessage);
+      ui.render();
+      assert.strictEqual(ui.rail, null, 'create() mounts without #rail: no rail');
+      ui.onHostMessage({ type: 'rail', op: 'list', items: [] });
+      ui.dispatch('loop');
+      ui.dispatch('nextVideo');
+      assert.deepStrictEqual(host.log.filter((m) => m.type === 'neighbour').pop(), { type: 'neighbour', d: 1 }, 'Shift+N asks the host instead');
+      ui.controls.show('main', d.$('cog'));
+      assert.ok(![...d.$('panel').querySelectorAll('[data-tool]')].some((b) => /Folder Rail/.test(b.textContent)), 'no Folder Rail row in ⚙');
+      ui.dispose();
+    });
   }
 }
 
@@ -1618,6 +1637,166 @@ async function phase34() {
     ui.onHostMessage({ type: 'abQuery' });
     assert.strictEqual(host.log.length, n, 'pagehide disposes the page');
   });
+
+  // Mixed frame rates (Astra #3): the bar follows the clock tile's fps and length, at the same moment, and
+  // engine.shownFrame hears the clock's fps.
+  {
+    const clips = [{ id: 'a', name: 'a.mp4', fps: 24, frames: 48 }, { id: 'b', name: 'b.mp4', fps: 60, frames: 600 }];
+    const base = toolEngine(createFakeEngine(clips));
+    const calls = [];
+    const engine = { ...base, shownFrame: (id, f, off, clockFps) => { calls.push([id, f, clockFps]); return base.shownFrame(id, f, off); } };
+    const initial = S.syncClockMeta(S.createWorkspaceState({ tiles: ['a', 'b'], frame: 24 }), { fps: 24, maxFrame: 47 });
+    await mountTools(initial, async ({ ui, tab, $ }) => {
+      assert.ok(calls.length && calls.every((c) => c[2] === 24), 'shownFrame gets the clock fps (A: 24)');
+      ui.dispatch('setClock', 'b');
+      assert.deepStrictEqual([tab().clockId, tab().fps, tab().maxFrame, tab().frame], ['b', 60, 599, 60], 'B sets the clock: 1 s = frame 60');
+      assert.deepStrictEqual([$('seek').max, $('seek').value], ['599', '60'], 'the seek bar follows B');
+      assert.strictEqual($('now').textContent, '0:01.00', 'the readout keeps the moment');
+      assert.strictEqual(calls[calls.length - 1][2], 60, 'shownFrame gets the clock fps (B: 60)');
+      ui.dispatch('seek', 300); // 5 s, past A's 2 s
+      ui.dispatch('removeTile', 'b');
+      assert.deepStrictEqual([tab().tiles, tab().clockId, tab().fps, tab().maxFrame, tab().frame], [['a'], 'a', 24, 47, 47],
+        'back to one tile (A): its rate and length, clamped to its last frame');
+      assert.strictEqual($('seek').max, '47');
+      assert.strictEqual(calls[calls.length - 1][2], 24);
+      // The host adds B again and replaces it with itself as the clock via leaveCompare: same rule.
+      ui.dispatch('capture');
+      ui.onHostMessage({ type: 'openVideo', clipId: 'b' });
+      ui.dispatch('seek', 12); // 0.5 s on A
+      ui.dispatch('setClock', 'b');
+      ui.dispatch('leaveCompare');
+      assert.deepStrictEqual([tab().tiles, tab().fps, tab().maxFrame, tab().frame], [['b'], 60, 599, 30], 'leave Compare on B: 0.5 s = frame 30');
+    }, { engine });
+  }
+
+  // Frame export through a decoder (Astra #1): engine.showFrame(id, k, { signal }) is awaited, and the bar shows the
+  // frame it really presented.
+  {
+    const asked = [];
+    let present = null;
+    const engine = toolEngine();
+    engine.showFrame = (id, k, opts) => {
+      asked.push({ id, k, signal: opts && opts.signal });
+      return new Promise((r) => { present = r; });
+    };
+    await mountTools({ tiles: ['clip-0'] }, async ({ ui, tab, last }) => {
+      ui.parts.notices.setDismissals({ reducedRes: true });
+      ui.dispatch('playPause');
+      ui.onHostMessage({ type: 'exportGrab', id: 9, frame: 30 });
+      await tick(); await tick();
+      assert.strictEqual(asked.length, 1, 'the decoder is asked to show the frame');
+      assert.deepStrictEqual([asked[0].id, asked[0].k, typeof asked[0].signal.aborted], ['clip-0', 30, 'boolean'], 'with an abort signal');
+      assert.deepStrictEqual([tab().playing, tab().frame], [false, 48], 'paused; the bar waits for the presented frame');
+      present(31); // a VFR neighbour
+      await ui.parts.frameExport.idle();
+      const f = last('exportFrame');
+      assert.deepStrictEqual([f.id, f.frame, f.data instanceof Uint8Array], [9, 31, true], 'the host gets the frame really shown');
+      assert.strictEqual(tab().frame, 31, 'and the bar shows it');
+      ui.onHostMessage({ type: 'exportEnd' });
+    }, { engine });
+  }
+
+  // Pixel inspector through the mounted controller (Astra #6): engine.pixelAt reaches the click, the value is copied.
+  {
+    const seen = [];
+    const engine = toolEngine();
+    engine.pixelAt = (id, x, y) => { seen.push([id, x, y]); return { text: 'rgb(12,34,56)' }; };
+    await mountTools({ tiles: ['clip-0'] }, async ({ ui, key, last, $, dom }) => {
+      ui.parts.notices.setDismissals({ reducedRes: true });
+      key('x');
+      dom.$('cells').querySelector('canvas').fire('click', { clientX: 340, clientY: 185 });
+      assert.strictEqual(seen.length, 1, 'engine.pixelAt runs once');
+      assert.strictEqual(seen[0][0], 'clip-0');
+      assert.ok(Number.isInteger(seen[0][1]) && Number.isInteger(seen[0][2]), 'with picture coordinates');
+      assert.strictEqual(last('copyText').text, 'rgb(12,34,56)', 'its value is copied');
+      assert.strictEqual($('toast').textContent, 'Pixel value copied');
+    }, { engine });
+    const bare = toolEngine();
+    delete bare.pixelAt;
+    await mountTools({ tiles: ['clip-0'] }, async ({ ui, key, $, dom, count }) => {
+      ui.parts.notices.setDismissals({ reducedRes: true });
+      key('x');
+      dom.$('cells').querySelector('canvas').fire('click', { clientX: 340, clientY: 185 });
+      assert.strictEqual($('toast').textContent, 'Pixel values are not available for this video', 'no pixelAt: it says so');
+      assert.strictEqual(count('copyText'), 0);
+    }, { engine: bare });
+  }
+
+  // The host's toast duration (Astra low): { ms } reaches the toast's timer, clamped to 1..10000; else the default.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, $ }) => {
+    const realSetTimeout = global.setTimeout;
+    const durations = [];
+    global.setTimeout = (fn, ms) => { durations.push(ms); return 0; };
+    try {
+      ui.onHostMessage({ type: 'toast', text: 'Four seconds', ms: 4000 });
+      ui.onHostMessage({ type: 'toast', text: 'Too long', ms: 60000 });
+      ui.onHostMessage({ type: 'toast', text: 'Negative', ms: -5 });
+      ui.onHostMessage({ type: 'toast', text: 'Default' });
+    } finally { global.setTimeout = realSetTimeout; }
+    assert.deepStrictEqual(durations, [4000, 10000, 1500, 1500], 'the toast timer runs for the host\'s ms');
+    assert.strictEqual($('toast').textContent, 'Default');
+  });
+
+  // A decoder clock (tickMs: 0): user transport goes out through onTransport, decoder frames and ends come in.
+  {
+    const evs = [];
+    const take = () => evs.splice(0);
+    await mountTools({ tiles: ['clip-0'] }, async ({ ui, tab, key, host, dom, $ }) => {
+      assert.ok(!dom.timers.some((x) => x && x.ms === 42), 'no page clock with tickMs: 0');
+      ui.parts.notices.setDismissals({ reducedRes: true });
+      take();
+      ui.dispatch('playPause');
+      assert.deepStrictEqual(take(), [{ type: 'play', frame: 48, playing: true }], 'Play is told');
+      ui.onDecoderFrame(60);
+      ui.onDecoderFrame(61);
+      assert.deepStrictEqual([tab().frame, $('seek').value, take()], [61, '61', []], 'decoder frames move the bar, and are not told back');
+      ui.dispatch('seek', 100);
+      assert.deepStrictEqual(take(), [{ type: 'seek', frame: 100, playing: true }], 'a seek is told');
+      key(']');
+      assert.deepStrictEqual(take(), [{ type: 'rate', rate: ui.getPrefs().rate }], 'a speed change is told');
+      ui.dispatch('playPause');
+      assert.deepStrictEqual(take(), [{ type: 'pause', frame: 100, playing: false }], 'Pause is told');
+      ui.dispatch('playPause');
+      take();
+
+      // A natural end without Loop: pause on the last frame, nothing told back.
+      assert.strictEqual(ui.onDecoderEnded(), 'end');
+      assert.deepStrictEqual([tab().playing, tab().frame, take()], [false, tab().maxFrame, []], 'paused on the last frame');
+
+      // Loop: the decoder hears the restart.
+      ui.dispatch('loop');
+      assert.deepStrictEqual(take(), [{ type: 'loop', loop: true }], 'Loop is told');
+      ui.dispatch('playPause');
+      take();
+      assert.strictEqual(ui.onDecoderEnded(), 'loop');
+      assert.deepStrictEqual([tab().playing, tab().frame], [true, 0], 'Loop plays again from the start');
+      assert.deepStrictEqual(take(), [{ type: 'seek', frame: 0, playing: true }, { type: 'play', frame: 0, playing: true }]);
+
+      // A–B: the end wraps to A (before Loop).
+      ui.dispatch('seek', 24); key('a');
+      ui.dispatch('seek', 48); key('b');
+      take();
+      assert.strictEqual(ui.onDecoderEnded(), 'ab');
+      assert.deepStrictEqual([tab().frame, tab().playing], [24, true], 'the A–B range wraps to A');
+      assert.deepStrictEqual(take(), [{ type: 'seek', frame: 24, playing: true }, { type: 'play', frame: 24, playing: true }]);
+      ui.dispatch('clearAB');
+      ui.dispatch('loop');
+      take();
+
+      // Autoplay "Play next in folder" with no page clock: a natural end plays the next video, a stop short does not.
+      ui.onHostMessage({ type: 'railHandoff', id: 'h1', onEnd: 'next', fromAutoNext: true, rail: { open: false } });
+      assert.strictEqual(ui.getPrefs().onEnd, 'next');
+      const neighbours = () => host.log.filter((m) => m.type === 'neighbour' && m.d === 1 && m.auto === true).length;
+      ui.dispatch('seek', tab().maxFrame);
+      if (!tab().playing) ui.dispatch('playPause');
+      assert.strictEqual(ui.onDecoderEnded({ natural: false }), 'end');
+      assert.strictEqual(neighbours(), 0, 'stopped short (natural: false): no next video');
+      ui.dispatch('playPause');
+      assert.strictEqual(ui.onDecoderEnded(), 'end');
+      assert.strictEqual(neighbours(), 1, 'the natural end plays the next video in the folder');
+      assert.deepStrictEqual(tab().tiles, ['clip-1']);
+    }, { env: { tickMs: 0, onTransport: (e) => evs.push(e) } });
+  }
 
   // The rendered harness inlines the tool and lifecycle modules and hands them to create().
   const html = buildMockupHtml({ scenario: 'single' });
