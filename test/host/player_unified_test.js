@@ -1410,6 +1410,36 @@ test('pause then play on a fully-decoded clip (p.eof true mid-clip) resumes in p
   }, { cfg: { clips: [{ id: 'A', name: 'a.mp4', fps: 30, frames: 90 }] }, createPlayer: enginePlayer, raf: true });
 });
 
+test('compare: when a shorter clock ends, longer followers pause too and stay paused on seek', () => {
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    const [pA, pB] = made;
+    app.ui.dispatch('playPause'); // start both playing
+    assert.deepStrictEqual([pA.isPlaying(), pB.isPlaying()], [true, true], 'both playing');
+    // Clock A (shorter) reaches its end naturally while B (longer) is still mid-clip.
+    pA.playing = false;
+    pA.frame = 59;
+    pA.hooks.onEnded({ natural: true });
+    assert.strictEqual(S.getTab(app.ui.getState()).playing, false, 'tab paused at clock end');
+    assert.deepStrictEqual([pA.isPlaying(), pB.isPlaying()], [false, false], 'longer follower B paused with clock A');
+    // Seeking backwards while paused must keep both paused (even if a follower drifted into playing).
+    pB.playing = true;
+    app.ui.dispatch('seek', 20);
+    frames(2);
+    assert.deepStrictEqual([pA.isPlaying(), pB.isPlaying()], [false, false], 'both remain paused after seek');
+  }, {
+    cfg: {
+      clips: [
+        { id: 'A', name: 'short.mp4', fps: 30, frames: 60 },
+        { id: 'B', name: 'long.mp4', fps: 30, frames: 300 },
+      ],
+      tiles: ['A', 'B'],
+    },
+    createPlayer: enginePlayer,
+    raf: true,
+  });
+});
+
 (async () => {
   for (const [name, fn] of asyncTests) {
     try { await fn(); count++; } catch (e) { e.message = `${name}: ${e.message}`; console.error(e); process.exit(1); }

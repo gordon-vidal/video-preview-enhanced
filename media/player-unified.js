@@ -711,7 +711,15 @@
       const natural = !!(info && info.natural);
       const onEnd = (typeof ui.getPrefs === 'function' && ui.getPrefs().onEnd) || 'off';
       if (natural) log(`end of file: ${onEnd}`);
-      // The decoder paused itself at its end: a Loop or A-B restart's play must reach it, not pass for a repeat.
+      // Only the clock decoder paused itself at its end; pause every longer follower immediately so none keeps playing.
+      for (const cid of t.tiles) {
+        if (cid === id) continue;
+        const fp = players.get(cid);
+        if (fp && typeof fp.pause === 'function') {
+          try { fp.pause(); } catch { /* closing */ }
+        }
+      }
+      // All decoders are now paused: a Loop or A-B restart's play must reach them, not pass for a repeat.
       if (applied) applied = { ...applied, playing: false };
       if (typeof ui.onDecoderEnded === 'function') { ui.onDecoderEnded({ natural }); return; }
       // A controller without onDecoderEnded: the bar stops playing (its decoders are paused already).
@@ -856,6 +864,9 @@
               if (atEnd && typeof p.seekTime === 'function') p.seekTime(0);
               p.play();
             } else if (!playing && isPlaying !== false && typeof p.pause === 'function') p.pause();
+          } else if (!playing && typeof p.isPlaying === 'function' && p.isPlaying() && typeof p.pause === 'function') {
+            // Invariant: while the tab is paused (e.g. seeking backwards after end), no tile decoder may stay playing.
+            p.pause();
           }
         } catch (err) { log(`decoder ${id}: ${err && /** @type {any} */ (err).message || err}`); }
       }
