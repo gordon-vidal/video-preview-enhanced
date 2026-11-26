@@ -442,7 +442,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       tools: d.tools, file: c.fsPath, maxHeight, messageMaxHeight: Math.min(maxHeight, d.messageMaxHeight),
       method: d.method, methodGuessed: !!d.methodGuessed, probed: d.probed, transport, origin,
       fitView: singleReal && fitTiles(),
-      view: singleReal && size ? { w: size.actual ? 99999 : size.w, h: size.actual ? 99999 : size.h } : undefined,
+      view: singleReal && size ? { w: size.actual ? 16384 : size.w, h: size.actual ? 16384 : size.h } : undefined,
       maxQueued: Grid.nativeQueuePerTile(deps.nativeQueue ? deps.nativeQueue() : 8, n), largeGrid: Grid.isLarge(n),
       post: (/** @type {any} */ msg) => { if (natives.get(c.id) === decoder) session.postNativeReply(c.id, msg); },
       postRaw: (/** @type {any} */ msg) => { if (natives.get(c.id) === decoder) postAny({ ...msg, key: c.id, clipId: c.id }); },
@@ -592,7 +592,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       const size = /** @type {any} */ (own || session.lastTileSize);
       if (!size) continue;
       if (kind === 'native' && fit && session.clips.length < 2 && typeof dec.setView === 'function') {
-        dec.setView({ w: size.actual ? 99999 : size.w, h: size.actual ? 99999 : size.h });
+        dec.setView({ w: size.actual ? 16384 : size.w, h: size.actual ? 16384 : size.h });
       } else if (kind === 'native' && fit && typeof dec.resize === 'function') {
         const h = nativeHeightFor(c, size, !!own);
         const mmh = c.decision.messageMaxHeight > 0 ? c.decision.messageMaxHeight : h;
