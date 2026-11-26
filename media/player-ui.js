@@ -1086,7 +1086,7 @@
       sheet: need('sheet'),
       bar: barEl,
       onShow: () => { if (ctxMenu) ctxMenu.close(false); if (tileMenu) tileMenu.close(); },
-      buttons: { cog: cogBtn, info: infoBtn, rate: rateBtn, tracks: tracksBtn, cmp: cmpPanelBtn, stepPrev: prevSize, stepNext: nextSize },
+      buttons: { cog: cogBtn, info: infoBtn, rate: rateBtn, tracks: tracksBtn, cmp: cmpPanelBtn, stepPrev: prevSize, stepNext: nextSize, remoteLive: liveChipEl },
       views: cmpViews,
       get: () => {
         const t = tab();
@@ -1138,10 +1138,16 @@
           infoTabs: isMulti ? { keys: t.tiles.map((/** @type {string} */ _id, /** @type {number} */ i) => S.TILE_KEYS[i]), sel, pick: (/** @type {number} */ i) => { infoSel = i; } } : null,
           canExternal: false,
           canUseOriginal: !!(typeof engine.pictureInfo === 'function' && (engine.pictureInfo(t.tiles[sel]) || {}).remoteStream),
-          transcode: {
-            mode: prefs.transcodeMode, maxBitrateMbps: prefs.transcodeMaxBitrate, active: false,
-            resolution: prefs.transcodeRes, defaultResolution: 0, sourceHeight: 2160,
-          },
+          transcode: (() => {
+            const tc = typeof /** @type {any} */ (engine).transcodeInfo === 'function'
+              ? /** @type {any} */ (engine).transcodeInfo(t.clockId || t.tiles[0]) : null;
+            return {
+              mode: prefs.transcodeMode, maxBitrateMbps: prefs.transcodeMaxBitrate, active: !!tc,
+              resolution: (tc && tc.transcode && Number(tc.transcode.locked)) || prefs.transcodeRes || 0,
+              defaultResolution: prefs.transcodeRes || 0,
+              sourceHeight: (tc && tc.stream && Number(tc.stream.sourceHeight)) || (c0 && Number(c0.height)) || 2160,
+            };
+          })(),
         };
       },
       act: {
@@ -1154,10 +1160,10 @@
         setRate: (/** @type {number} */ r) => setRate(r, false),
         pickRate: (/** @type {number} */ r) => setRate(r),
         stepRate: (/** @type {number} */ d) => setRate(prefs.rate + d * W.VpeControls.SPEED_STEP),
-        setTranscode: (/** @type {string} */ m) => { prefs.transcodeMode = m; controls.refresh(); toast(`Live transcode: ${m}`); },
-        setTranscodeMaxBitrate: (/** @type {number} */ r) => { prefs.transcodeMaxBitrate = r; controls.refresh(); },
-        setTranscodeResolution: (/** @type {number} */ h) => { prefs.transcodeRes = h; controls.refresh(); },
-        saveTranscodeResolution: (/** @type {number} */ h) => { prefs.transcodeRes = h; controls.refresh(); toast('Saved default resolution'); },
+        setTranscode: (/** @type {string} */ m) => { prefs.transcodeMode = m; postHost({ type: 'transcodePref', mode: m }); controls.refresh(); toast(`Live transcode: ${m}`); },
+        setTranscodeMaxBitrate: (/** @type {number} */ r) => { prefs.transcodeMaxBitrate = r; postHost({ type: 'transcodePref', maxBitrateMbps: r }); controls.refresh(); },
+        setTranscodeResolution: (/** @type {number} */ h) => { prefs.transcodeRes = h; postHost({ type: 'transcodeResolution', clipId: tab().clockId || tab().tiles[0], height: h }); controls.refresh(); },
+        saveTranscodeResolution: (/** @type {number} */ h) => { prefs.transcodeRes = h; postHost({ type: 'transcodePref', resolution: h }); controls.refresh(); toast('Saved default resolution'); },
         setPicture: (/** @type {string} */ m) => setPicture(m),
         zoomPicture: (/** @type {number} */ d) => {
           const t = tab();
@@ -1555,6 +1561,7 @@
       [cogBtn, () => controls.toggle('main', cogBtn), true], [infoBtn, act.info, true],
       [rateBtn, () => controls.toggle('speed', rateBtn), true], [tracksBtn, () => ccClick(), true],
       [picBtn, act.cyclePicture, true], [fullBtn, act.fullscreen, true],
+      [liveChipEl, () => controls.toggle('transcode', liveChipEl), true],
     ], onClick);
     bindStepBadges([prevSize, nextSize], (b) => controls.toggle('step', b), (el, type, fn) => listen(el, type, fn));
     listen(prevBtn, 'contextmenu', (/** @type {MouseEvent} */ e) => {
@@ -2556,6 +2563,22 @@
       if (prevSize && nextSize) W.VpeControls.drawStepBadges([prevSize, nextSize], W.VpeControls.stepSizeOf(stepPrefs()));
       if (setABtn && setBBtn) W.VpeControls.drawRangeButtons(setABtn, setBBtn, ab);
       if (abMarks && abA && abB) W.VpeControls.drawRangeMarks(abMarks, abA, abB, ab.marks(t.maxFrame / fps()));
+      // Remote Live transcode status chip (#remoteLiveBtn): shows height, bitrate cap & ABR direction in remote windows.
+      if (liveChipEl && typeof W.VpeControls.remoteChipState === 'function') {
+        const tc = typeof /** @type {any} */ (engine).transcodeInfo === 'function'
+          ? /** @type {any} */ (engine).transcodeInfo(t.clockId || t.tiles[0]) : null;
+        const remote = !!(tc && tc.stream && tc.stream.linkAdaptive);
+        const st = W.VpeControls.remoteChipState({
+          remote, active: !!tc, height: tc && tc.transcode && tc.transcode.h, transcode: tc && tc.transcode,
+        });
+        liveChipEl.hidden = !st.visible;
+        if (st.visible) {
+          liveChipEl.textContent = st.text;
+          liveChipEl.title = st.title;
+          liveChipEl.setAttribute('aria-label', st.ariaLabel);
+          liveChipEl.classList.toggle('adapting', !!st.adapting);
+        }
+      }
       // The other tabs follow a changed volume, speed, time format or step size (unchanged values post nothing).
       if (prefsSync) prefsSync.publishPlaybackPrefs(playbackPrefsNow());
       checkTileSize();
