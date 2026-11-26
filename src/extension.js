@@ -1737,7 +1737,8 @@ async function resolveVideo(context, rawUri, panel) {
     ...(savedPos ? { savedPos } : {}),
     ...(handoff ? { railCarry: handoff.rail, railBrowse: handoff.browse, fromAutoNext: !!handoff.fromAutoNext } : {}),
   } : null;
-  await showViewer(context, panel, clip, openTarget);
+  const viewer = await showViewer(context, panel, clip, openTarget);
+  if (viewer && logFile) log(`[${clip.label}] session resolved`);
   return undefined;
 }
 
@@ -1836,7 +1837,7 @@ async function openBurst(context, { items, extra }) {
   else viewer = await showViewer(context, panels[0], clips[0], null, clips.slice(1));
   if (!viewer) return false;
   for (const p of panels) if (p !== viewer.panel) { try { p.dispose(); } catch { /* gone already */ } }
-  log(`${viewer.session.clips.length} videos opened together -> one viewer${extra.length ? `, ${extra.length} more stay as tabs` : ''}`);
+  log(`${viewer.session.clips.length} videos opened together -> one compare${extra.length ? `, ${extra.length} more stay as tabs` : ''}`);
   noticeTogether(viewer.session.clips.length);
   if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
   return true;

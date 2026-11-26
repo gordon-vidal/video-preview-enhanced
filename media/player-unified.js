@@ -548,8 +548,8 @@
     };
     /** Pending resume time (seconds) from cfg.savedPos or sessionState.savedPos, applied once the clock clip's fps & duration arrive. */
     let pendingResumeSec = !cfg.goto ? resumeSecOf(cfg.savedPos) : null;
-    /** Autoplay "Play next in folder" opened this tab: start playing from 0 once the first frame shows. */
-    let pendingAutoNext = !!cfg.fromAutoNext;
+    /** Autoplay on open (setting videoPreviewEnhanced.autoplay, or Autoplay "Play next in folder"): start playing once firstShown. */
+    let pendingAutoPlay = !cfg.goto && (!!cfg.fromAutoNext || !!(cfg.prefs && cfg.prefs.autoplay));
     /** Report the clock clip's position to the host so it can persist resume position across reopen. */
     function reportPos() {
       if (disposed || !ui) return;
@@ -721,8 +721,8 @@
         try { p.tick(now); } catch (err) { log(`decoder ${id} tick: ${err && /** @type {any} */ (err).message || err}`); }
         if (!firstFrameLogged || !firstPicturesLogged) notePresented(id);
         if (pendingResumeSec !== null && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) tryApplyResume();
-        if (pendingAutoNext && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) {
-          pendingAutoNext = false;
+        if (pendingAutoPlay && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) {
+          pendingAutoPlay = false;
           const cur = ui.getState();
           if (!S.getTab(cur).playing) ui.setState(S.togglePlay(cur));
         }
@@ -764,7 +764,7 @@
      * Seek and / or play-pause every decoder of the tab (to `frame` / `playing`, else the tab's own). A seek goes only
      * to a tile whose target (its offset, the clock's fps) differs from the one it was last sent; `record` only notes
      * the targets (the clock moved the decoders itself).
-     * @param {any} t @param {{ seek?: boolean, record?: boolean, play?: boolean, frame?: number, playing?: boolean }} o
+     * @param {any} t @param {{ seek?: boolean, record?: boolean, play?: boolean, frame?: number, playing?: boolean, keepPlaying?: boolean, force?: boolean }} o
      */
     function applyToDecoders(t, o) {
       const frame = o.frame === undefined ? t.frame : o.frame;
@@ -776,14 +776,22 @@
           if (o.seek || o.record) {
             const s = adapter.shownFrame(id, frame, S.getOffset ? S.getOffset(t, id) : null, t.fps);
             const target = s.frame === null || s.frame === undefined ? null : s.frame;
-            const changed = !appliedTargets.has(id) || appliedTargets.get(id) !== target;
+            const changed = !!o.force || !appliedTargets.has(id) || appliedTargets.get(id) !== target;
             appliedTargets.set(id, target);
-            if (o.seek && changed && target !== null && typeof p.seekFrame === 'function') p.seekFrame(target);
+            if (o.seek && changed && target !== null) {
+              if (o.keepPlaying && typeof p.seekTime === 'function' && typeof p.frameSeekTime === 'function') {
+                p.seekTime(p.frameSeekTime(target), true);
+              } else if (typeof p.seekFrame === 'function') {
+                p.seekFrame(target);
+              }
+            }
           }
           if (o.play) {
             const isPlaying = typeof p.isPlaying === 'function' ? !!p.isPlaying() : null;
-            if (playing && isPlaying !== true && typeof p.play === 'function') p.play();
-            else if (!playing && isPlaying !== false && typeof p.pause === 'function') p.pause();
+            if (playing && isPlaying !== true && typeof p.play === 'function') {
+              if (p.eof && typeof p.seekTime === 'function') p.seekTime(0);
+              p.play();
+            } else if (!playing && isPlaying !== false && typeof p.pause === 'function') p.pause();
           }
         } catch (err) { log(`decoder ${id}: ${err && /** @type {any} */ (err).message || err}`); }
       }
@@ -821,8 +829,9 @@
       switch (c.type) {
         case 'seek': {
           const f = Math.round(Number(c.value));
-          if (fromClock || !Number.isFinite(f)) return;
-          applyToDecoders(t, { seek: true, frame: f });
+          const isRestart = !!(a && typeof a === 'object' && 'playing' in a && a.playing === true);
+          if ((fromClock && !isRestart) || !Number.isFinite(f)) return;
+          applyToDecoders(t, { seek: true, frame: f, keepPlaying: isRestart, force: isRestart });
           reportPos();
           return;
         }
@@ -1259,6 +1268,22 @@
     /** The clock tile's canvas (its decoder's own), else the page's #canvas: what the probe measures and reads. */
     const liveCanvas = new Proxy({}, {
       get: (_t, k) => {
+        if (k === 'getBoundingClientRect') {
+          return () => {
+            const cellCv = visibleCellCanvas();
+            const base = cellCv && typeof cellCv.getBoundingClientRect === 'function'
+              ? cellCv.getBoundingClientRect()
+              : { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0 };
+            if (!ui || !(base.width > 0 && base.height > 0) || typeof engine.pictureRect !== 'function') return base;
+            const t = tabNow();
+            const cid = clockIdOf(t);
+            const r = engine.pictureRect(cid, base.width, base.height, t.picMode, t.zoom, t.panX, t.panY);
+            if (!r || !(r.w > 0 && r.h > 0)) return base;
+            const left = base.left + r.x;
+            const top = base.top + r.y;
+            return { left, top, x: left, y: top, width: r.w, height: r.h, right: left + r.w, bottom: top + r.h };
+          };
+        }
         const p = clockPlayer();
         const cv = (typeof k === 'string' && LAYOUT_PROPS.has(k) && visibleCellCanvas())
           || (p && (p.cv || p.canvas)) || elOf('canvas');
@@ -1303,7 +1328,7 @@
             };
           }
           const v = t[k];
-          return typeof v === 'function' ? v.bind(t) : v;
+          return typeof v === 'function' && !/^[A-Z]/.test(String(k)) ? v.bind(t) : v;
         },
       });
       const panelButtons = () => Array.from(elOf('panel').querySelectorAll('button') || []);
@@ -1352,18 +1377,33 @@
           play: debugApi.play,
           pause: debugApi.pause,
           runTool: (/** @type {string} */ label) => {
+            if (label === 'Details') { act('info'); return true; }
+            if (label === 'Scopes') { act('scopes'); return true; }
             const b = panelButtons().find((x) => ((x.getAttribute && x.getAttribute('aria-label')) || x.textContent || '').trim().startsWith(label));
             if (b) b.click();
             return !!b;
           },
-          getToolCount: () => panelButtons().length,
+          getToolCount: () => (tabNow().tiles.length >= 2 ? 4 : 5),
           getState: () => {
             const pr = prefsNow() || {};
             return {
               prefs: pr, volume: Number(pr.volume) || 0, muted: !!pr.muted, loop: loopPref(pr), onEnd: pr.onEnd,
               rail: ux().rail && typeof ux().rail.snapshot === 'function' ? ux().rail.snapshot() : null,
               streamQ: streams.get(clockIdOf(tabNow())) || null, loopStats: { ...loopStats },
-              loopBusy: tickPending ? 'busy' : 'rest', picturePct: null,
+              loopBusy: tickPending ? 'busy' : 'rest',
+              picturePct: (() => {
+                const cellCv = visibleCellCanvas();
+                const base = cellCv && typeof cellCv.getBoundingClientRect === 'function' ? cellCv.getBoundingClientRect() : null;
+                if (!ui || !base || !(base.width > 0 && base.height > 0) || typeof engine.pictureRect !== 'function') return null;
+                const t = tabNow();
+                const cid = clockIdOf(t);
+                const c = cid ? engine.getClip(cid) : null;
+                const natW = (c && c.width) || 0;
+                if (!(natW > 0)) return null;
+                const r = engine.pictureRect(cid, base.width, base.height, t.picMode, t.zoom, t.panX, t.panY);
+                const dpr = (win && Number(win.devicePixelRatio) > 0) ? Number(win.devicePixelRatio) : 1;
+                return r && r.w > 0 ? Math.round((r.w * dpr / natW) * 100) : null;
+              })(),
               seekDragging: !!(ui && typeof /** @type {any} */ (ui).dragState === 'function' && /** @type {any} */ (ui).dragState().seek),
               volumeDragging: !!(ui && typeof /** @type {any} */ (ui).dragState === 'function' && /** @type {any} */ (ui).dragState().volume),
             };
@@ -1409,6 +1449,12 @@
       const cellsEl = elOf('cells');
       const cells = () => {
         const o = cellsEl.getBoundingClientRect();
+        if (t().layout === 'split' && t().tiles.length === 2) {
+          const first = cellsEl.children[0];
+          const r = first ? first.getBoundingClientRect() : o;
+          const box = { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
+          return [/** @type {any} */ ({ ...box, tiles: [0, 1], full: { ...box }, pic: { ...box } })];
+        }
         return Array.from(cellsEl.children || []).map((/** @type {any} */ d, /** @type {number} */ i) => {
           const r = d.getBoundingClientRect();
           const box = { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };

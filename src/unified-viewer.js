@@ -1191,7 +1191,8 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     /** Sets the page (the caller awaits what the page config needs first). */
     show() {
       if (!disposed) session.render();
-      log(`opened, ${clip.size} bytes${clip.transcode ? ', live transcode' : clip.native ? ', native ffmpeg' : ''}`);
+      const n = session.clips.length;
+      log(`opened, ${clip.size} bytes${clip.transcode ? ', live transcode' : clip.native ? ', native ffmpeg' : ''}${n >= 2 ? `, ${n} tiles` : ''}`);
     },
   };
   return viewer;

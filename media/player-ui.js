@@ -1144,8 +1144,13 @@
         setTranscodeResolution: (/** @type {number} */ h) => { prefs.transcodeRes = h; controls.refresh(); },
         saveTranscodeResolution: (/** @type {number} */ h) => { prefs.transcodeRes = h; controls.refresh(); toast('Saved default resolution'); },
         setPicture: (/** @type {string} */ m) => setPicture(m),
-        zoomPicture: (/** @type {number} */ d) => { commit(S.setZoom(ws, Math.max(0.5, Math.min(4, +(tab().zoom + d * 0.25).toFixed(2))))); controls.refresh(); },
-        resetPicture: () => { commit(S.resetView(ws)); setPicture('fit'); },
+        zoomPicture: (/** @type {number} */ d) => {
+          const t = tab();
+          const minZ = t.picMode === 'actual' ? S.ZOOM_MIN : 1;
+          commit(S.setZoom(ws, Math.max(minZ, Math.min(S.ZOOM_MAX, +(t.zoom + d * 0.25).toFixed(2)))));
+          controls.refresh();
+        },
+        resetPicture: () => { commit(S.setZoom(ws, 1, 0, 0)); controls.refresh(); },
         selectSub: (/** @type {string} */ k) => {
           if (subs) {
             subs.select(k === 'off' ? -1 : Number(k));
@@ -1252,7 +1257,7 @@
       prefs.picMode = m;
       commit(S.setPicMode(ws, m));
       controls.refresh();
-      toast(`Picture size: ${m}`);
+      toast(`Picture size: ${W.VpePicture && typeof W.VpePicture.name === 'function' ? W.VpePicture.name(m) : m}`);
     }
     /** A / B (and the panel's rows) toggle that end; `reset` (the right-click menu's "Set") always sets it here. */
     function markAB(/** @type {'a' | 'b' | null} */ which, reset = false) {
@@ -1261,14 +1266,15 @@
       if (which && reset) ab.reset(which, sec, t.frame, sec, false);
       else if (which) ab.set(which, sec, t.frame, sec, false);
       else ab.cycle(sec, t.frame, sec, false);
-      toast(ab.toast((/** @type {number} */ s) => fmt(Math.round(s * fps()))));
+      toast(ab.toast((/** @type {number} */ s) => (W.VpeTime && typeof W.VpeTime.fmtClock === 'function' ? W.VpeTime.fmtClock(s) : fmt(Math.round(s * fps())))));
       controls.refresh();
       render();
     }
     /** Zoom every tile by `factor` about a stage point (client coordinates); the picture under it stays put. */
     function zoomAt(/** @type {number} */ factor, /** @type {number | null} */ cx, /** @type {number | null} */ cy) {
       const t = tab();
-      const z = Math.max(S.ZOOM_MIN, Math.min(S.ZOOM_MAX, t.zoom * factor));
+      const minZ = t.picMode === 'actual' ? S.ZOOM_MIN : 1;
+      const z = Math.max(minZ, Math.min(S.ZOOM_MAX, t.zoom * factor));
       if (z === t.zoom) return;
       const r = stageEl.getBoundingClientRect();
       const ox = cx === null ? 0 : cx - (r.left + r.width / 2);
@@ -1347,7 +1353,11 @@
       setB: () => markAB('b'),
       clearAB: () => { ab.clear(); controls.refresh(); render(); toast('A–B range cleared'); },
       cycleTime: () => { prefs.timeMode = nextTimeMode(prefs.timeMode); render(); toast(TIME_MODE_NAMES[prefs.timeMode]); },
-      cyclePicture: () => setPicture(PICTURE_MODES[(PICTURE_MODES.indexOf(/** @type {any} */ (tab().picMode)) + 1) % PICTURE_MODES.length]),
+      cyclePicture: () => {
+        const t = tab();
+        if (t.zoom !== 1 || t.panX !== 0 || t.panY !== 0) { setPicture('fit'); return; }
+        setPicture(PICTURE_MODES[(PICTURE_MODES.indexOf(/** @type {any} */ (t.picMode)) + 1) % PICTURE_MODES.length]);
+      },
       copyFrame: () => {
         // The page copies the PNG itself where the clipboard API is there; else the host copies it.
         if (frameExport && hasSnapshot && single() && canClip()) { void frameExport.copyFrame(); return; }
@@ -1684,7 +1694,14 @@
       getOrder: dragOrder,
       getCells: (/** @type {number[]} */ order, /** @type {string} */ dock) => S.deriveUi(tabFor(order, dock), stageSize()).cells
         .map((/** @type {any} */ c) => ({ x: c.x, y: c.y, w: c.w, h: c.h, tiles: [vid(c.clipId)] })),
-      isZoomed: () => tab().zoom !== 1,
+      isZoomed: () => {
+        const t = tab();
+        if (t.zoom !== 1 || t.panX !== 0 || t.panY !== 0) return true;
+        if (t.picMode === 'fit' || t.picMode === 'stretch' || typeof engine.pictureRect !== 'function') return false;
+        const { width, height } = stageSize();
+        const r = engine.pictureRect(t.tiles[0], width, height, t.picMode, t.zoom, t.panX, t.panY);
+        return !!r && (r.w > width + 0.5 || r.h > height + 0.5);
+      },
       onBusyChange: (/** @type {boolean} */ busy) => {
         if (!busy) return;
         controls.closeAll(false);
@@ -1728,7 +1745,14 @@
     const wheelPan = Input ? Input.bindStageWheelAndPan({
       stage: stageEl, win,
       isPlaying: () => tab().playing,
-      isZoomed: () => tab().zoom !== 1,
+      isZoomed: () => {
+        const t = tab();
+        if (t.zoom !== 1 || t.panX !== 0 || t.panY !== 0) return true;
+        if (t.picMode === 'fit' || t.picMode === 'stretch' || typeof engine.pictureRect !== 'function') return false;
+        const { width, height } = stageSize();
+        const r = engine.pictureRect(t.tiles[0], width, height, t.picMode, t.zoom, t.panX, t.panY);
+        return !!r && (r.w > width + 0.5 || r.h > height + 0.5);
+      },
       isBlocked: () => !!(tileDrag && tileDrag.isDragging()),
       getZoom: () => tab().zoom,
       // The wheel's own jump sizes (jump.wheel, jump.wheelShift): a frame by default, Shift+wheel a second.
@@ -2551,6 +2575,11 @@
     /** The decoder presented `frame` (clock frames): the bar and the stage follow, nothing is told back. */
     function decoderFrame(/** @type {number} */ frame) {
       if (disposed || !Number.isFinite(frame)) return;
+      const t = tab();
+      if (t.playing) {
+        const wrap = ab.wrapTarget(frame / fps(), true);
+        if (wrap !== null) { restartAt(Math.round(wrap * fps())); return; }
+      }
       quietly(() => commit(S.seekFrame(ws, frame)));
     }
     /** Play again from clock frame `f`: the decoder stopped at its end, so it hears the seek and the play. */

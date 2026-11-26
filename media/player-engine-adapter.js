@@ -247,13 +247,14 @@
     function pictureRect(clipId, cellW, cellH, picMode = 'fit', zoom = 1, panX = 0, panY = 0) {
       const nat = naturalSize(clipId);
       const mode = ['fit', 'fill', 'stretch', 'actual'].includes(picMode) ? picMode : 'fit';
+      const dpr = (typeof window !== 'undefined' && Number(window.devicePixelRatio) > 0) ? Number(window.devicePixelRatio) : 1;
       if (pictureApi && typeof pictureApi.rectOf === 'function') {
         try {
           const view = { w: Math.max(0, Number(cellW) || 0), h: Math.max(0, Number(cellH) || 0) };
           const size = { w: nat.width, h: nat.height };
           const z = Number(zoom) > 0 ? Number(zoom) : 1;
           // rectOf clamps the pan to keep the picture covering the area; the adapter's pan is a free shift in px.
-          const r = pictureApi.rectOf({ mode, zoom: z, cx: 0.5, cy: 0.5 }, size, size, view, { dpr: 1 });
+          const r = pictureApi.rectOf({ mode, zoom: z, cx: 0.5, cy: 0.5 }, size, size, view, { dpr });
           if (r && [r.x, r.y, r.w, r.h].every(Number.isFinite)) {
             return { x: r.x + (Number(panX) || 0), y: r.y + (Number(panY) || 0), w: r.w, h: r.h };
           }
@@ -266,7 +267,7 @@
      * Present a tile's frame into a canvas: the compositor if the page has one, else the player's own draw, else
      * the player's current picture (snapshotSource) fitted with the split clip. Never throws.
      * @param {any} canvas @param {string} clipId @param {number} frame
-     * @param {{ splitClipRatio?: number | null, width?: number, height?: number, picMode?: string }} [o]
+     * @param {{ splitClipRatio?: number | null, width?: number, height?: number, picMode?: string, zoom?: number, panX?: number, panY?: number }} [o]
      */
     function draw(canvas, clipId, frame, o = {}) {
       if (!canvas) return;
@@ -294,12 +295,11 @@
           ctx.clip();
         } else ctx.clearRect(0, 0, w, h);
         const src = p && typeof p.snapshotSource === 'function' ? p.snapshotSource() : null;
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, w, h);
         if (src && src.width > 0 && src.height > 0) {
-          const r = pictureRect(clipId, w, h, o.picMode || 'fit');
-          ctx.drawImage(src, r.x, r.y, r.w, r.h);
-        } else {
-          ctx.fillStyle = '#000';
-          ctx.fillRect(0, 0, w, h);
+          const r = pictureRect(clipId, cssW, cssH, o.picMode || 'fit', o.zoom, o.panX, o.panY);
+          ctx.drawImage(src, r.x * dpr, r.y * dpr, r.w * dpr, r.h * dpr);
         }
         ctx.restore();
       } catch { /* a tile that cannot paint stays as it was */ }

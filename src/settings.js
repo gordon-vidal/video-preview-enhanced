@@ -84,6 +84,8 @@ function createSettings({ vscode, getState, log, transcodePolicy, pages }) {
   function prefsOf(/** @type {any} */ c) {
     const v = (/** @type {string} */ k) => (PREFS[k].values.includes(c.jumps[k]) ? c.jumps[k] : PREFS[k].dflt);
     return {
+      autoplay: c.autoplay !== false,
+      onEnd: c.onEnd || 'off',
       jump: { arrow: v('jump.arrow'), shift: v('jump.shift'), ctrl: v('jump.ctrl'), wheel: v('jump.wheel'), wheelShift: v('jump.wheelShift') },
       stepButtons: v('stepButtons'),
       pictureSize: c.pictureSize,
