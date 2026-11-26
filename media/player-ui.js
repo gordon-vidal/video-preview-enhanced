@@ -2588,6 +2588,13 @@
 
       lastSplitPic = null;
       renderCells(t, ui);
+      const c0 = ui.cells[0];
+      const pic0 = c0 && typeof engine.pictureRect === 'function'
+        ? engine.pictureRect(c0.clipId, c0.w, c0.h, t.picMode, t.zoom, t.panX, t.panY)
+        : null;
+      const pannable = t.zoom > 1 || t.panX !== 0 || t.panY !== 0
+        || !!(c0 && pic0 && t.picMode !== 'fit' && t.picMode !== 'stretch' && (pic0.w > c0.w + 0.5 || pic0.h > c0.h + 0.5));
+      stageEl.classList.toggle('pannable', pannable);
       drawSplitter(t, ui);
       if (dividerEl) {
         dividerEl.hidden = !ui.showDivider;
