@@ -90,7 +90,7 @@ async function activate(vs, h, file) {
   await h.closeClip(vs);
 }
 
-const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] opened, .* ${n} tiles`);
+const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] (?:opened, .*, |tiles: )${n}(?: tiles)?\\b`);
 
 module.exports = [{
   name: 'multiview-transcode',

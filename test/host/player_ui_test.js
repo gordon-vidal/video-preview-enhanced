@@ -279,11 +279,11 @@ const ROOT = path.join(__dirname, '..', '..');
   assert.deepStrictEqual(S.getTab(r.state).tiles, ['clip-1'], 'replace swaps the single video in place');
 
   r = PUI.applyHostMessage(S, ws, { type: 'openVideo', clipId: 'clip-2', compare: true }, getClip);
-  assert.deepStrictEqual(S.getTab(r.state).tiles, ['clip-0', 'clip-2'], 'compare turns capture on and joins');
-  assert.strictEqual(S.getTab(r.state).capture, true);
+  assert.deepStrictEqual(S.getTab(r.state).tiles, ['clip-0', 'clip-2'], 'compare joins without turning capture on');
+  assert.strictEqual(S.getTab(r.state).capture, false);
   assert.ok(r.toast.includes('clip-2.mp4'));
 
-  ws = r.state;
+  ws = S.toggleCapture(r.state).state;
   r = PUI.applyHostMessage(S, ws, { type: 'openVideo', clipId: 'clip-3', replace: true }, getClip);
   assert.deepStrictEqual(S.getTab(r.state).tiles, ['clip-0', 'clip-2', 'clip-3'], 'replace in Compare falls back to open (capture joins)');
 }
@@ -1857,10 +1857,12 @@ async function phase34() {
     assert.strictEqual(caps().length, 1, 'a redraw without a change posts nothing');
     ui.dispatch('capture');
     assert.deepStrictEqual(caps().map((c) => c.on), [true, false], 'capture off is posted');
-    // A video the host opens into Compare turns capture on in the page (applyHostMessage): the host hears that too.
+    // A video the host opens into Compare (Compare With…, multi-select) joins without turning Explorer capture on.
     ui.onHostMessage({ type: 'openVideo', clipId: 'clip-1', compare: true });
-    assert.strictEqual(tab().capture, true, 'openVideo with compare turns capture on');
-    assert.deepStrictEqual(caps().map((c) => c.on), [true, false, true], 'and it is posted');
+    assert.strictEqual(tab().capture, false, 'openVideo with compare keeps capture off');
+    assert.deepStrictEqual(caps().map((c) => c.on), [true, false], 'no extra capture message posted');
+    ui.dispatch('capture');
+    assert.deepStrictEqual(caps().map((c) => c.on), [true, false, true], 'capture on is posted in Compare');
     ui.dispatch('leaveCompare');
     assert.strictEqual(caps().pop().on, tab().capture, 'after leaving Compare the host has the same capture flag as the page');
   });

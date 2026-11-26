@@ -2052,7 +2052,7 @@ async function comparePick(context, uri) {
 async function pickVideos(label, defaultUri, many) {
   const hook = getPickHook();
   if (hook) {
-    const chosen = await hook(await pickItems(null, defaultUri));
+    const chosen = await hook(await pickItems(activeVideo(), defaultUri));
     if (chosen && chosen.uri) return [vscode.Uri.parse(chosen.uri)];
     if (!chosen || !chosen.browse) return undefined;
   }

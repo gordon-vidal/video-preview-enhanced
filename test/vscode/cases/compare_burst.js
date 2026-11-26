@@ -6,7 +6,8 @@
 const path = require('path');
 
 const CLIPS = ['h264_aac_anim_1080p.mp4', 'vp9_opus_anim_1080p.webm', 'h264_8_1080p.mp4'];
-const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] opened, .* ${n} tiles`);
+const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] (?:opened, .*, |tiles: )${n}(?: tiles)?\\b`);
+const isCompare = (tab) => /compare/i.test(tab.viewType) || /↔| · /.test(tab.label);
 const esc = (s) => s.replace(/\./g, '\\.');
 
 module.exports = [{
@@ -53,11 +54,11 @@ module.exports = [{
       vs.send({ openWithBurst: files });
       await vs.waitLog(/3 videos opened together -> one compare/, { from, timeout: 30000, what: 'the burst taken' });
       await vs.waitLog(opened(3), { from, timeout: 30000, what: 'compare opened with 3 tiles' });
-      let tb = await tabsWhen((tb) => tb.length === 1 && /compare/i.test(tb[0].viewType));
-      ok(tb.length === 1 && /compare/i.test(tb[0].viewType), `tabs after the burst: ${JSON.stringify(tb)}`);
+      let tb = await tabsWhen((tb) => tb.length === 1 && isCompare(tb[0]));
+      ok(tb.length === 1 && isCompare(tb[0]), `tabs after the burst: ${JSON.stringify(tb)}`);
       // A burst is the whole set the user asked for: Add Mode stays off, so the next
       // video opens as a player of its own instead of joining the compare.
-      await vs.waitLog(/webview: begin:/, { from, timeout: 30000, what: 'compare ready' });
+      await vs.waitLog(/webview: (?:begin:|first pictures shown)/, { from, timeout: 30000, what: 'compare ready' });
       ok(!vs.lines.slice(from).some((l) => /compare: add from the Explorer on|webview: addMode on/.test(l)), 'a burst must open Compare with Add Mode off');
       const after = vs.mark();
       vs.send({ openWithBurst: [files[2]] });
@@ -65,7 +66,7 @@ module.exports = [{
       await vs.waitLog(new RegExp(`\\[${esc(CLIPS[2])}\\] session resolved`), { from: after, timeout: 15000, what: 'a player after the burst' });
       await h.sleep(NO_COMPARE_MS);
       tb = await tabs();
-      ok(tb.length === 2 && tb.some((x) => /compare/i.test(x.viewType)) && tb.some((x) => !/compare/i.test(x.viewType)),
+      ok(tb.length === 2 && tb.some(isCompare) && tb.some((x) => !isCompare(x)),
         `a video opened after the burst is a player beside the compare: ${JSON.stringify(tb)}`);
 
       ok = t('one-video-alone');

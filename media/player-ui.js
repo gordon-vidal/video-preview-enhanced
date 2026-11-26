@@ -495,9 +495,13 @@
       if (tab.tiles.length === 1 && !tab.capture) return { state: S.replaceVideo(ws, msg.clipId), toast: '', handled: true };
     }
     let state = ws;
-    if (msg.compare && !S.getTab(state).capture) state = S.toggleCapture(state).state;
+    const wasCapture = S.getTab(state).capture;
+    if (msg.compare && !wasCapture) state = S.toggleCapture(state).state;
     const res = S.openVideo(state, msg.clipId, { label, forceNewTab: !!msg.forceNewTab });
-    return { state: res.state, toast: res.toast, handled: true };
+    let next = res.state;
+    // Explicit Compare opens (Compare With…, multi-select, Add to Compare) join without turning Explorer Capture on.
+    if (msg.compare && !wasCapture && S.getTab(next).capture) next = S.toggleCapture(next).state;
+    return { state: next, toast: res.toast, handled: true };
   }
 
   /**
@@ -1085,21 +1089,26 @@
       get: () => {
         const t = tab();
         const isMulti = t.tiles.length >= 2;
+        const c0 = /** @type {any} */ (engine.getClip(t.tiles[0]) || {});
+        const isUrl = !isMulti && (c0.sourceKind === 'url' || c0.kind === 'url');
         const sel = Math.min(infoSel, t.tiles.length - 1);
         return {
           compare: isMulti ? { soundLabel: `from ${letterOf(t, t.soundId || t.tiles[0])}` } : null,
           rate: prefs.rate,
           loop: prefs.onEnd === 'loop',
-          autoplay: { mode: prefs.onEnd, label: W.VpeAutoplay.label(prefs.onEnd), next: !isMulti },
+          autoplay: { mode: prefs.onEnd, label: W.VpeAutoplay.label(prefs.onEnd), next: !isMulti && !isUrl },
           jump: JUMP,
           stepButtons,
           stepSize: prefs.stepSize,
           abLabel: abLabel(),
           picture: { mode: t.picMode, pct: Math.round(t.zoom * 100), zoomed: t.zoom !== 1 },
+          quality: !isMulti && typeof /** @type {any} */ (engine).quality === 'function' ? /** @type {any} */ (engine).quality(t.tiles[0]) : null,
           tools: [
-            isMulti
-              ? { id: 'compare', label: 'Compare', note: `${t.tiles.length} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', cmpPanelBtn) }
-              : { id: 'compare', label: t.capture ? 'Pause Compare capture' : 'Start Compare', key: 'Shift+D', on: t.capture, run: () => act.capture() },
+            ...(isUrl ? [] : [
+              isMulti
+                ? { id: 'compare', label: 'Compare', note: `${t.tiles.length} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', cmpPanelBtn) }
+                : { id: 'compare', label: t.capture ? 'Pause Compare capture' : 'Start Compare', key: 'Shift+D', on: t.capture, run: () => act.capture() },
+            ]),
             ...(rail ? [{ id: 'rail', label: rail.isOpen() ? 'Close Folder Rail' : 'Open Folder Rail', on: rail.isOpen(), run: () => { rail.toggle(); render(); } }] : []),
             // ⚙ › Inspection (media/player.js TOOLS): each tool with its key; the inspector is X only with one video.
             ...(insp ? inspectTools(isMulti) : []),
@@ -1112,8 +1121,10 @@
               // The exports ask the host with the range (media/player.js sendRange): frames, an exact clip, an ffmpeg line.
               ...(frameExport ? [
                 { label: 'Export frames A–B…', run: () => frameExport.exportAb('exportRange') },
-                { label: 'Export A–B Clip…', run: () => frameExport.exportAb('clipRange') },
-                { label: 'Copy ffmpeg command for A–B', run: () => frameExport.exportAb('ffmpegRange') },
+                ...(isUrl ? [] : [
+                  { label: 'Export A–B Clip…', ariaLabel: isMulti ? 'Export A–B video for all Compare tiles' : undefined, run: () => frameExport.exportAb('clipRange') },
+                  { label: 'Copy ffmpeg command for A–B', run: () => frameExport.exportAb('ffmpegRange') },
+                ]),
               ] : []),
             ],
           },
@@ -1172,6 +1183,7 @@
         external: () => postHost({ type: 'external' }),
         extSettings: () => postHost({ type: 'openSettings' }),
         openUrl: () => postHost({ type: 'openUrl' }),
+        setQuality: (/** @type {any} */ pick) => postHost({ type: 'setQuality', clipId: tab().tiles[0], pick }),
       },
     });
 
@@ -1376,7 +1388,11 @@
       setA: () => markAB('a'),
       setB: () => markAB('b'),
       clearAB: () => { ab.clear(); controls.refresh(); render(); toast('A–B range cleared'); },
-      cycleTime: () => { prefs.timeMode = nextTimeMode(prefs.timeMode); render(); toast(TIME_MODE_NAMES[prefs.timeMode]); },
+      cycleTime: () => {
+        const t = tab();
+        if (t.tiles.length === 1 && /** @type {any} */ (engine.getClip(t.tiles[0]) || {}).live) return;
+        prefs.timeMode = nextTimeMode(prefs.timeMode); render(); toast(TIME_MODE_NAMES[prefs.timeMode]);
+      },
       cyclePicture: () => {
         const t = tab();
         if (t.zoom !== 1 || t.panX !== 0 || t.panY !== 0) { setPicture('fit'); return; }
@@ -2458,8 +2474,9 @@
         } else {
           muteBtn.classList.toggle('muted', prefs.muted);
           muteBtn.setAttribute('aria-pressed', String(prefs.muted));
-          muteBtn.setAttribute('aria-label', prefs.muted ? 'Unmute' : 'Mute');
-          muteBtn.title = prefs.muted ? 'Unmute  M' : 'Mute  M';
+          const from = multi ? ` (sound from ${letterOf(t, t.soundId)})` : '';
+          muteBtn.setAttribute('aria-label', `${prefs.muted ? 'Unmute' : 'Mute'}${from}`);
+          muteBtn.title = `${prefs.muted ? 'Unmute' : 'Mute'}${from}  M`;
         }
       }
       if (volEl) volEl.value = String(prefs.muted ? 0 : prefs.volume);
@@ -2545,11 +2562,14 @@
         ? `<span class="cap-pulse"></span><span>${esc(ui.captureLabel)}</span>`
         : `${ICONS.compare}<span>${esc(ui.captureLabel)}</span>`;
 
+      const isLive = !ui.isMulti && !!(/** @type {any} */ (engine.getClip(t.tiles[0]) || {}).live);
+      seekEl.disabled = isLive;
       seekEl.max = String(t.maxFrame);
       // While the seek bar is dragged it shows where the pointer is, not the decoder's last frame.
       if (!(seekDrag && seekDrag.dragging())) seekEl.value = String(t.frame);
       const rd = timeReadout({
         f: t.frame, t: t.frame / fps(), dur: t.maxFrame / fps(), fps: fps(), nFrames: t.maxFrame + 1, mode: prefs.timeMode,
+        live: isLive,
         fmtClock: clockText, fmtTimecode: W.VpeTime ? W.VpeTime.fmtTimecode : (/** @type {number} */ f) => String(f),
       });
       if (nowEl) nowEl.textContent = rd.now;
