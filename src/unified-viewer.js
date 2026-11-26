@@ -306,7 +306,13 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
    * others the clip's name leads, so the lines of a comparison's tiles stay apart.
    * @param {ViewerClip} c @param {string} m
    */
-  const clipLog = (c, m) => log(session && session.clips.length >= 2 ? `${c.label}: ${m}` : m);
+  const clipLog = (c, m) => {
+    if (session && session.clips.length >= 2) {
+      const i = session.order.indexOf(c.id);
+      const key = i >= 0 && Grid.TILE_KEYS[i] ? `tile ${Grid.TILE_KEYS[i]}` : c.label;
+      log(`${key}: ${m}`);
+    } else log(m);
+  };
   /** @param {UriLike} [uri] @param {boolean} [compare] the clip will show beside others (Compare's transcode policy) */
   const prepDeps = (uri, compare = false) => ({
     rotationOf: deps.rotationOf, nativeFor: deps.nativeFor || null, transport: deps.nativeTransport, log,

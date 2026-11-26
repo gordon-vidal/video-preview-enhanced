@@ -1135,7 +1135,7 @@
           facts: facts(t.tiles[sel]),
           infoTabs: isMulti ? { keys: t.tiles.map((/** @type {string} */ _id, /** @type {number} */ i) => S.TILE_KEYS[i]), sel, pick: (/** @type {number} */ i) => { infoSel = i; } } : null,
           canExternal: false,
-          canUseOriginal: false,
+          canUseOriginal: !!(typeof engine.pictureInfo === 'function' && (engine.pictureInfo(t.tiles[sel]) || {}).remoteStream),
           transcode: {
             mode: prefs.transcodeMode, maxBitrateMbps: prefs.transcodeMaxBitrate, active: false,
             resolution: prefs.transcodeRes, defaultResolution: 0, sourceHeight: 2160,
@@ -1179,6 +1179,11 @@
         subDelay: (/** @type {number | null} */ d) => { if (subs) { if (d === null) subs.resetDelay(); else subs.adjustDelay(d * 1000); } },
         subSize: (/** @type {number | null} */ d) => { if (subs) { if (d === null) subs.resetSize(); else subs.adjustSize(Math.round(d * 100)); } },
         copyInfo: (/** @type {any} */ d) => { postHost({ type: 'copyText', text: copyInfoText(d) }); toast('Details copied'); },
+        useOriginal: () => {
+          const t = tab();
+          const id = t.tiles[Math.min(infoSel, t.tiles.length - 1)];
+          if (id) postHost({ type: 'originalTile', clipId: id });
+        },
         copyLink: () => act.copyLink(),
         external: () => postHost({ type: 'external' }),
         extSettings: () => postHost({ type: 'openSettings' }),
