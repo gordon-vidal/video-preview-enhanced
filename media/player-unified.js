@@ -541,8 +541,13 @@
       }
     }
 
+    /** Extract resume seconds from SavedPos `{ t, d }` or a plain number. @param {any} v */
+    const resumeSecOf = (v) => {
+      const n = typeof v === 'number' ? v : v && typeof v === 'object' && typeof v.t === 'number' ? v.t : NaN;
+      return Number.isFinite(n) && n > 0.5 ? n : null;
+    };
     /** Pending resume time (seconds) from cfg.savedPos or sessionState.savedPos, applied once the clock clip's fps & duration arrive. */
-    let pendingResumeSec = typeof cfg.savedPos === 'number' && cfg.savedPos > 0.5 && !cfg.goto ? cfg.savedPos : null;
+    let pendingResumeSec = !cfg.goto ? resumeSecOf(cfg.savedPos) : null;
     /** Report the clock clip's position to the host so it can persist resume position across reopen. */
     function reportPos() {
       if (disposed || !ui) return;
@@ -1107,7 +1112,8 @@
      * @param {any} m
      */
     function onSessionState(m) {
-      if (typeof m.savedPos === 'number' && m.savedPos > 0.5 && !m.goto && !cfg.goto) pendingResumeSec = m.savedPos;
+      const rSec = !m.goto && !cfg.goto ? resumeSecOf(m.savedPos) : null;
+      if (rSec !== null) pendingResumeSec = rSec;
       const ids = sessionIds(m);
       for (const c of Array.isArray(m.clips) ? m.clips : []) {
         const id = c && typeof c === 'object' ? c.clipId || c.id : null;
