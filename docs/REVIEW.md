@@ -65,6 +65,7 @@ Both spellings work, in any case: `--dry-run` and `-DryRun`, `--no-ffmpeg-on-pat
 | `--dry-run` | print every command and path; create and launch nothing |
 | `--no-wait` | return once VS Code started; nothing is cleaned up |
 | `--keep` | keep the temp profile, worktree and folder |
+| `--first-run` | open the setup guide on start, as a new user sees it after installing (the extension opens it once per profile, and every review profile is new) |
 | `--no-ffmpeg-on-path` | hide ffmpeg on PATH only: the first-video popup appears, and "Set up ffmpeg" finds an installed copy in the usual places (winget, Chocolatey, Scoop, `C:\ffmpeg` ...) |
 | `--no-ffmpeg` | no ffmpeg at all, as on a fresh PC: PATH hidden and the lookup in the usual places off, so "Set up ffmpeg" offers to download portable ffmpeg (it lands in the throwaway profile and is deleted afterwards) |
 | `-h`, `--help` | usage |

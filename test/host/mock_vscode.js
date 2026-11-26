@@ -88,6 +88,10 @@ function makeVscode(settings = {}) {
 const DECODER_MESSAGES = new Set(['readBlock', 'thumb', 'nd', 'frames', 'grabExactFrame', 'exportFrame', 'decodeSpeed', 'wcFailed', 'softVideo']);
 
 function load({ settings, env, setup, state: sharedState } = {}) {
+  // As in the real-VS-Code test profiles: the setup guide does not open by itself unless a test asks for it.
+  // Set on the caller's object (tests change their settings object later and expect the mock to see it).
+  settings = settings || {};
+  if (!('workbench.welcomePage.walkthroughs.openOnInstall' in settings)) settings['workbench.welcomePage.walkthroughs.openOnInstall'] = false;
   const vscode = makeVscode(settings);
   if (setup) setup(vscode);
   const origLoad = Module._load;
@@ -106,7 +110,7 @@ function load({ settings, env, setup, state: sharedState } = {}) {
   const context = {
     subscriptions: subs,
     extensionUri: vscode.Uri.file(path.join(__dirname, '..', '..')),
-    extension: { id: 'gordon-vidal.video-preview-enhanced' },
+    extension: { id: 'gordon-vidal.video-preview-enhanced', packageJSON: require('../../package.json') },
     globalStorageUri: vscode.Uri.file(path.join(require('os').tmpdir(), 'vpe_host_test_storage')),
     extensionMode: vscode.ExtensionMode.Production,
     globalState: {

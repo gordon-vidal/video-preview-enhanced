@@ -102,6 +102,13 @@ re-encoded with x264, x265, SVT-AV1, libvpx and FFmpeg's ProRes encoder by
 `test/media/make_media.js --probe`. The licensor does not endorse this extension. The
 excerpts keep their CC BY 4.0 licence; this extension's MIT licence does not apply to them.
 
+## Setup guide pictures (shipped)
+
+`media/walkthrough/player.jpg` and `settings-panel.jpg` are screenshots of the player showing a frame of
+**Big Buck Bunny** (2008), (c) copyright 2008, Blender Foundation / www.bigbuckbunny.org, licensed under the
+Creative Commons Attribution 3.0 licence (https://creativecommons.org/licenses/by/3.0/). Changes: one frame,
+shown inside the player's controls and scaled down.
+
 The test and benchmark clips in `test/media/` (not shipped) are excerpts of Tears of Steel,
 Meridian, Sparks and Big Buck Bunny; sources, licences and changes are in
 [`test/media/LICENSES.md`](test/media/LICENSES.md).

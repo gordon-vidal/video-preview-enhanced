@@ -25,6 +25,7 @@ const { effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VP
  * @param {() => void} deps.setupFfmpeg
  * @param {() => Promise<void>} deps.turnOffTranscode  sets videoPreviewEnhanced.transcode to "off"
  * @param {() => Promise<void>} deps.downloadRemoteFfmpeg
+ * @param {(settingId: string) => void} [deps.openSettings]
  * @param {() => string} deps.hostPlatform
  * @param {() => string} deps.hostArch
  * @param {() => string} deps.hostname
@@ -32,7 +33,7 @@ const { effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VP
  */
 function createOffers(deps) {
   const { vscode, globalState, log, decide, probe, remoteff, setup, tools, config, probeRecordFor, probeRunning, machine, runProbeUi,
-    setupFfmpeg, turnOffTranscode, downloadRemoteFfmpeg, hostPlatform, hostArch, hostname, sessions } = deps;
+    setupFfmpeg, turnOffTranscode, downloadRemoteFfmpeg, openSettings, hostPlatform, hostArch, hostname, sessions } = deps;
   let hintShown = false; // the "set up ffmpeg" hint, at most once per session
   let onboardPending = false; // the first-open popup is showing (no other popup meanwhile)
   let onboardShown = false; // the first-open popup was shown in this session
@@ -43,9 +44,9 @@ function createOffers(deps) {
   let remoteOfferPending = false; // that question is showing
   let informing = false; // the Live transcode notice is being stored or showing
 
-  /** Another popup of ours is showing (onboarding, the setup hint, the remote download offer, the GPU test offer). */
+  /** Another popup of ours is showing (onboarding, the setup hint, the remote download offer, the GPU test offer, or Live transcode). */
   function popupPending() {
-    return onboardPending || hintPending || remoteOfferPending || probeOfferPending;
+    return onboardPending || hintPending || remoteOfferPending || probeOfferPending || informing;
   }
 
   /**
@@ -53,7 +54,7 @@ function createOffers(deps) {
    * "Not now" / "Don't Show Again". Once per session until "Don't Show Again"; never in SSH/container or untrusted windows.
    */
   async function maybeOnboard() {
-    const base = { state: globalState.get(decide.ONBOARD_KEY), remote: effectiveRemoteName(vscode), trusted: vscode.workspace.isTrusted, pending: onboardPending, shownThisSession: onboardShown };
+    const base = { state: globalState.get(decide.ONBOARD_KEY), remote: effectiveRemoteName(vscode), trusted: vscode.workspace.isTrusted, pending: popupPending(), shownThisSession: onboardShown };
     if (!decide.shouldOnboard({ ...base, toolsInstalled: false })) return;
     onboardPending = true;
     try {
@@ -75,7 +76,7 @@ function createOffers(deps) {
 
   /** The built-in decoder stays below real time and there's no ffmpeg: suggest it, without nagging. */
   async function maybeHint(/** @type {{ name: string, slowRun: number }} */ sess, /** @type {{ ratio: number }} */ sample) {
-    if (onboardPending || hintPending || probeOfferPending) return; // one question at a time
+    if (popupPending()) return; // one question at a time
     if (!vscode.workspace.isTrusted) return; // shouldHint says no anyway; don't run ffmpeg -version to learn it
     const t = await tools();
     const ok = decide.shouldHint({
@@ -116,10 +117,11 @@ function createOffers(deps) {
     log(`[${sess.name}] ${sample.native ? 'native ffmpeg' : 'built-in decoder'} at ${sample.ratio.toFixed(2)}x (sample ${sess.slowRun}), no GPU test yet: offering it`);
     let answer;
     try {
-      answer = await vscode.window.showInformationMessage(decide.PROBE_OFFER_TEXT, decide.PROBE_OFFER_RUN, decide.PROBE_OFFER_LATER, decide.PROBE_OFFER_NEVER);
+      answer = await vscode.window.showInformationMessage(decide.PROBE_OFFER_TEXT, decide.PROBE_OFFER_RUN, decide.PROBE_OFFER_LATER, decide.PROBE_OFFER_NEVER, 'Settings');
     } finally { probeOfferPending = false; }
     await globalState.update(decide.PROBE_OFFER_KEY, decide.afterProbeOffer(globalState.get(decide.PROBE_OFFER_KEY), answer));
     log(`GPU test offer: ${answer || 'dismissed'}`);
+    if (answer === 'Settings') { if (openSettings) openSettings('videoPreviewEnhanced.gpuDecoding'); return null; }
     if (answer !== decide.PROBE_OFFER_RUN) return null;
     for (const x of sessions) if (x.native && !x.disposed) x.post({ type: 'pauseForTest' });
     return runProbeUi(t, await machine(), { userAsked: true, reload: sess });
@@ -139,7 +141,7 @@ function createOffers(deps) {
     const ctx = () => ({
       remote, platform: hostPlatform(), arch: hostArch(), trusted: vscode.workspace.isTrusted,
       streamOn: c.transcode !== 'off', builtinOnly: c.decoder === 'builtin',
-      askedThisSession: remoteOfferAsked, state: globalState.get(remoteff.OFFER_KEY), key, pending: remoteOfferPending || onboardPending,
+      askedThisSession: remoteOfferAsked, state: globalState.get(remoteff.OFFER_KEY), key, pending: popupPending(),
     });
     if (!remoteff.shouldOffer(ctx())) return;
     if (await tools()) return;
@@ -161,19 +163,26 @@ function createOffers(deps) {
   /**
    * The first time Live transcode starts (2026-11-23, ADR 0002: Live transcode is automatic, nothing asks first):
    * one non-blocking notice says it is on and how to leave it. Remembered in globalState, never shown again.
-   * `sess.useOriginalVideo()` is this tab's "Use original video".
+   * `sess.useOriginalVideo()` is this tab's "Use original (this tab)".
    */
   async function maybeInformTranscode(/** @type {{ name?: string, disposed?: boolean, useOriginalVideo?: () => void }} */ sess) {
-    if (informing || globalState.get(transcodePolicy.INFORM_KEY)) return;
+    if (popupPending() || globalState.get(transcodePolicy.INFORM_KEY)) return;
     informing = true;
     let answer;
     try {
       await globalState.update(transcodePolicy.INFORM_KEY, Date.now());
       log(`[${sess.name || 'video'}] live transcode started for the first time: showing the one-time notice`);
-      answer = await vscode.window.showInformationMessage(transcodePolicy.informText(), transcodePolicy.INFORM_ORIGINAL, transcodePolicy.INFORM_OFF);
+      answer = await vscode.window.showInformationMessage(
+        transcodePolicy.informText(),
+        transcodePolicy.INFORM_GOT_IT,
+        transcodePolicy.INFORM_ORIGINAL,
+        transcodePolicy.INFORM_OFF,
+        transcodePolicy.INFORM_SETTINGS,
+      );
     } finally { informing = false; }
     if (answer === transcodePolicy.INFORM_ORIGINAL) { if (!sess.disposed && sess.useOriginalVideo) sess.useOriginalVideo(); }
     else if (answer === transcodePolicy.INFORM_OFF) await turnOffTranscode();
+    else if (answer === transcodePolicy.INFORM_SETTINGS) { if (openSettings) openSettings('videoPreviewEnhanced.transcode'); }
   }
 
   return { maybeInformTranscode, maybeOnboard, maybeHint, maybeOfferProbe, maybeOfferRemoteFfmpeg, popupPending };

@@ -8,6 +8,10 @@ Most palette commands are under **Video Preview**. The Compare actions below use
 |---|---|
 | Set Up Optional ffmpeg (GPU decoding for 4K, AV1, ProRes) | Downloads ffmpeg, or uses one you have, and tests it ([Optional ffmpeg](ffmpeg.md)) |
 | Re-test ffmpeg | Tests ffmpeg's GPU decoding on this machine (never runs on its own; also offered once when playback is slower than real time and no test has run); results in Show Log |
+| Open Setup Guide | Opens the setup guide (it also opens by itself once, on the first start after install): ffmpeg, remote servers, optional video links for AI coding tools |
+| Choose Live Transcode Mode | Auto / Always / Off from a list, each with one line saying what it does; sets the default for all videos on this machine |
+| Copy AI Tool Video-Link Instructions | Copies instructions for AGENTS.md / CLAUDE.md so an AI coding tool can link to a video frame ([AI agents](agents.md)) |
+| Install AI Tool Video-Link Skill (npx skills) | Types `npx skills add gordon-vidal/video-preview-enhanced -g` into a new terminal; you press Enter |
 | Use Video Preview Enhanced for MP4/WebM | Opens MP4 and WebM in this player by default |
 | Use VS Code's Preview for MP4/WebM | Undoes that |
 | Open with Video Preview Enhanced | Explorer context menu on an MP4 or WebM file (not in the Command Palette) |

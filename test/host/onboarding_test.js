@@ -89,6 +89,24 @@ async function start({ answer, remote, trusted = true, settings = none, state } 
     s.panel.dispose(); x.h.dispose();
   }
 
+  // Fresh install (VS Code's default openOnInstall): the setup guide opens by itself once. People who close or
+  // ignore it still get the first-video ffmpeg offer; only clicking Skip on the ffmpeg step declines it.
+  x = await start({ answer: d.ONBOARD_LATER, settings: { ...none, 'workbench.welcomePage.walkthroughs.openOnInstall': true } });
+  const guide = (h) => (h.vscode.executed || []).filter((c) => c[0] === 'videoPreviewEnhanced.openSetupGuide').length;
+  assert.strictEqual(guide(x.h), 1, 'setup guide opened on the first start');
+  assert.ok(x.h.context.globalState.get('videoPreviewEnhanced.setupGuideOpened'), 'remembered');
+  s = await x.openOne();
+  assert.strictEqual(x.shown.filter(isOnboard).length, 1, 'first-video popup still fires if the user ignored the guide');
+  s.panel.dispose(); x.h.dispose();
+
+  // Explicitly skipping ffmpeg in the walkthrough declines the first-video offer too.
+  x = await start({ answer: d.ONBOARD_LATER, settings: { ...none, 'workbench.welcomePage.walkthroughs.openOnInstall': true } });
+  await x.h.vscode._commands['videoPreviewEnhanced.setupNext']('ffmpeg');
+  assert.strictEqual(x.h.context.globalState.get(d.ONBOARD_KEY).choice, 'builtin');
+  s = await x.openOne();
+  assert.strictEqual(x.shown.filter(isOnboard).length, 0, 'no first-video popup after skipping ffmpeg in the guide');
+  s.panel.dispose(); x.h.dispose();
+
   // ffmpeg found: not asked.
   const tools = await ff.locateTools(process.env.VPE_FFMPEG || '', '');
   if (tools) {

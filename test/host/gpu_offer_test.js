@@ -60,7 +60,7 @@ const isOffer = (a) => a[0] === decide.PROBE_OFFER_TEXT;
   await x.s.send(slow);
   await until(() => x.offers().length);
   assert.strictEqual(x.offers().length, 1, 'offered after two slow samples');
-  assert.deepStrictEqual(x.offers()[0].slice(1), ['Run test', 'Not now', "Don't Show Again"]);
+  assert.deepStrictEqual(x.offers()[0].slice(1), ['Run test', 'Not now', "Don't Show Again", 'Settings']);
   await wait(50);
   assert.strictEqual(x.probes.length, 0, 'Not now: no test');
   assert.strictEqual(x.shown.length, 1, 'no setup hint beside it (ffmpeg is installed)');

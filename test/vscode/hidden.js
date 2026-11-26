@@ -72,7 +72,7 @@ class HiddenCode {
     this.log = fwd(path.join(this.dir, 'vpe.log'));
     for (const d of [path.join(this.user, 'User'), this.ext, this.work]) fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(this.user, 'User', 'settings.json'), JSON.stringify({
-      'telemetry.telemetryLevel': 'off', 'workbench.startupEditor': 'none', 'security.workspace.trust.enabled': false,
+      'telemetry.telemetryLevel': 'off', 'workbench.startupEditor': 'none', 'workbench.welcomePage.walkthroughs.openOnInstall': false, 'security.workspace.trust.enabled': false,
       'extensions.autoUpdate': false, 'extensions.autoCheckUpdates': false, 'update.mode': 'none', 'workbench.enableExperiments': false,
       'chat.disableAIFeatures': true, 'window.restoreWindows': 'none', 'files.hotExit': 'off',
       // `code file.mp4` opens the extension's (optional) editor; also makes VS Code wait for the

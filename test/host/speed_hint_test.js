@@ -34,7 +34,7 @@ async function session({ answer, remote, before } = {}) {
   await s.send(slow);
   for (let i = 0; i < 100 && !shown.length; i++) await wait(10);
   assert.strictEqual(shown.length, 1);
-  assert.match(shown[0][0], /^HEVC 10-bit 4K decodes at 0\.7× here \(21 of 30 fps\)\. Set up ffmpeg \(≈\d+ MB, no admin needed\): on an 8-core test PC it decoded this kind of video about \d+× faster with the GPU, [\d.]+× on the CPU alone, likely real time here\.$/);
+  assert.match(shown[0][0], /^HEVC 10-bit 4K plays at about 21 of 30 frames per second here\. Set up ffmpeg \(≈\d+ MB, no admin needed\): about \d+× faster with a GPU \([\d.]+× on CPU\) on our test PC, likely smooth here\.$/);
   assert.deepStrictEqual(shown[0].slice(1), ['Set up', 'Not now', "Don't Show Again"]);
   await wait(30);
   const hint = h.context.globalState.get('videoPreviewEnhanced.setupHint');
@@ -52,7 +52,7 @@ async function session({ answer, remote, before } = {}) {
   await s.send(hopeless);
   for (let i = 0; i < 100 && !shown.length; i++) await wait(10);
   assert.strictEqual(shown.length, 1, 'hopeless: hint after one sample');
-  assert.match(shown[0][0], /^HEVC 10-bit 4K decodes at 0\.1× here \(3\.0 of 30 fps\)\. Set up ffmpeg .*faster with the GPU, [\d.]+× on the CPU alone\.$/);
+  assert.match(shown[0][0], /^HEVC 10-bit 4K plays at about 3\.0 of 30 frames per second here\. Set up ffmpeg .*faster with a GPU \([\d.]+× on CPU\) on our test PC\.$/);
   await wait(30);
   s.panel.dispose(); h.dispose();
   ({ h, s, shown } = await session({ before: (x) => x.context.globalState.update('videoPreviewEnhanced.setupHint', { snoozedUntil: Date.now() + 1e6 }) }));
