@@ -514,6 +514,9 @@ const withGlobals = (dom, fn) => {
     assert.strictEqual(drawn[drawn.length - 1].id, 'clip-0', 'the engine adapter draws the tile');
     assert.strictEqual($('splitBtn').parentNode, $('startCompareBtn').parentNode, 'Split sits in the real bar row, beside Compare');
     assert.strictEqual($('splitBtn').hidden, true, 'Split only at N = 2');
+    assert.ok($('cmpBtn').innerHTML.includes('<circle') && !$('cmpBtn').innerHTML.includes('M12 4.5v15'),
+      'the Compare panel button is the list icon, not the Split Wipe rectangle with a divider');
+    assert.notStrictEqual($('cmpBtn').innerHTML, $('splitBtn').innerHTML, 'its icon differs from the Split button icon');
     assert.strictEqual($('syncBtn').hidden, true, 'Sync only at N >= 2');
     assert.strictEqual($('tracks').hidden, false, 'CC at N = 1');
 
@@ -539,6 +542,7 @@ const withGlobals = (dom, fn) => {
     assert.strictEqual(ui.getPrefs().picMode, 'fill', 'Picture size cycles');
     assert.strictEqual($('picBtn').dataset.mode, 'fill', 'the button follows (shared pictureButton)');
     assert.match($('picBtn').title, /^Picture size: Fill .*Click for Stretch {2}Z$/);
+    assert.match($('toast').textContent, /^Fill \(\d+%\)$/, 'the toast names the size and its percent, as the single player does');
     $('time').fire('click');
     assert.deepStrictEqual([$('now').textContent, $('dur').textContent], ['frame 121', '/ 241'], 'frame numbers, as in the player');
     $('time').fire('click');

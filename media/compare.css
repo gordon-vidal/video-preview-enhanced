@@ -12,6 +12,8 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   position: absolute; left: 0; top: 0; width: 100%; height: 100%;
   max-width: none; max-height: none; transform: none; object-fit: fill;
 }
+/* Split Wipe: B's canvas overlays A's, so it must not paint player.css's black (it would hide A left of the divider). */
+.cell.split[data-role="split-b"] > canvas { background: transparent; }
 /* A 1 px inner edge so neighbouring tiles read apart (media/player-ui.js adds it to Compare tiles only). */
 .cell-border { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
 .cell:not(.add):not(.split) { touch-action: none; }
@@ -32,7 +34,12 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   border-radius: 6px;
 }
 
-.ov { position: absolute; pointer-events: none; opacity: 0; transition: opacity 140ms ease; z-index: 4; }
+/* The overlay covers the tile's picture (--pic-* are the letterbox insets media/player-ui.js sets on the cell; 0 when
+   unset). Without an inset or a size it would collapse to 0 x 0 and clip the pills it positions. */
+.ov {
+  position: absolute; inset: var(--pic-t, 0px) var(--pic-r, 0px) var(--pic-b, 0px) var(--pic-l, 0px);
+  pointer-events: none; opacity: 0; transition: opacity 140ms ease; z-index: 4;
+}
 .cell:hover .ov,
 .cell.confirming .ov,
 #stage.sync-mode .ov,
@@ -253,7 +260,8 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
               width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
 }
 
-/* The first unused slot in Equal Grid has a centered Add video button (shows on hover); the empty area keeps normal stage gestures. */
+/* The first unused slot in Equal Grid has a centered Add video button (quiet at rest, full on hover or focus, so an empty
+   slot reads as one); the empty area keeps normal stage gestures. */
 .cell.add { border: 0; background: none; padding: 0; cursor: default; display: flex; align-items: center; justify-content: center; }
 #stage.pannable .cell.add { cursor: move; }
 #stage.pannable.panning .cell.add { cursor: grabbing; }
@@ -263,9 +271,9 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: color-mix(in srgb, var(--vscode-editorWidget-background, #14161c) 82%, transparent);
   color: var(--vscode-foreground, #d4d4d8); font: inherit; font-size: 12px; cursor: pointer;
-  opacity: 0; transition: opacity 120ms, background 120ms, border-color 120ms, color 120ms;
+  opacity: 0.6; transition: opacity 120ms, background 120ms, border-color 120ms, color 120ms;
 }
-.cell.add:hover .addcell, .addcell:focus-visible { opacity: 1; }
+.cell.add:hover .addcell, .addcell:hover, .addcell:focus-visible { opacity: 1; }
 .addcell:hover { background: rgba(255, 255, 255, 0.14); color: #fff; border-color: rgba(255, 255, 255, 0.28); }
 #cells.dense .addcell {
   box-sizing: border-box; max-width: 100%; gap: 3px; padding: 4px 8px; border-radius: 6px; font-size: 11px;
@@ -319,13 +327,27 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   border-top: 1px solid var(--vpe-sep, rgba(255, 255, 255, 0.08)); margin-top: 4px; line-height: 1.35;
 }
 
-/* Responsive narrow-width fallbacks for the Compare capsule (all controls remain in #cmpBtn panel). */
+/* Narrow panes shed Compare's bar buttons in this order, after player.css has dropped the range pins, the info button
+   and the duration (640 px): the Compare toggle's words, Swap and Sync, Split, then Spotlight and Grid. The layouts, Swap
+   and the offsets stay in the Compare panel (#cmpBtn), Swap also on X, so Picture size and Fullscreen at the bar's right
+   edge are never clipped. #addPopBtn ... #layoutSplitBtn are the capsule of src/bar.js's compare variant; #spotlightBtn
+   ... #syncBtn are the buttons the unified page's controller injects (media/player-ui.js barButton). */
 @media (max-width: 640px) {
   #cmpGroup.cmp-group { padding: 1px 2px; gap: 1px; margin: 0 1px; }
   #cmpGroup .cmp-sep { display: none; }
+  /* The Compare / capture toggle keeps its icon and its name (title, aria-label) but loses its words. */
+  #row #startCompareBtn > span:not(.cap-pulse) { display: none; }
+  #row #startCompareBtn { gap: 0; }
+  #row #swapBtn, #row #syncBtn { display: none; }
+}
+@media (max-width: 560px) {
+  #row #splitBtn { display: none; }
 }
 @media (max-width: 500px) {
   #addPopBtn, #syncModeBtn { display: none; }
+}
+@media (max-width: 440px) {
+  #row #spotlightBtn, #row #gridBtn { display: none; }
 }
 @media (max-width: 400px) {
   #layoutSpotlightBtn, #layoutGridBtn, #layoutSplitBtn { display: none; }

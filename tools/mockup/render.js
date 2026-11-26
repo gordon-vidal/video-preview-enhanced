@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { barHtml, playFlashHtml } = require('../../src/bar');
 const { folderRailHtml } = require('../../src/folder-rail-html');
+const { capBannerHtml } = require('../../src/unified-html');
 
 const ROOT = path.join(__dirname, '..', '..');
 
@@ -53,11 +54,7 @@ function stageMarkupHtml() {
       <div id="subs" hidden></div>
       <div id="overlay" hidden><div id="message"></div><div id="hint"></div><button id="action" type="button" hidden></button></div>
       ${playFlashHtml}
-      <div class="cap-banner" id="capBanner" hidden>
-        <span class="cap-pulse"></span>
-        <span>Open videos to add to comparison</span>
-        <button id="capStopBtn" type="button">Stop</button>
-      </div>
+      ${capBannerHtml}
       <div class="splitter h" id="splitter" hidden><div class="splitter-bar"></div></div>
       <div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" hidden><div class="h">⇄</div></div>
       <div id="toast" hidden aria-hidden="true"></div>
@@ -240,32 +237,8 @@ html, body {
 /* The tile canvases (#stage .cell > canvas) and .cell-border are styled by the real media/compare.css. */
 .cell.add { cursor: pointer !important; }
 .cell.add .addcell {
-  flex-direction: row; padding: 6px 12px; border-radius: 999px; font-size: 11.5px;
-  opacity: 0.65; border-style: dashed;
+  flex-direction: row; padding: 6px 12px; border-radius: 999px; font-size: 11.5px; border-style: dashed;
 }
-.cell.add:hover .addcell { opacity: 1; }
-
-.cap-banner {
-  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 12;
-  display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px 4px 10px; border-radius: 999px;
-  background: var(--vpe-surface-float); backdrop-filter: blur(10px);
-  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder) 55%, transparent);
-  color: var(--vpe-panel-fg); font-size: 11px; white-space: nowrap;
-}
-.cap-banner button {
-  border: 1px solid var(--vpe-bd-subtle); background: var(--vpe-fill-subtle); color: inherit;
-  border-radius: 999px; padding: 2px 8px; font: inherit; font-size: 10.5px; cursor: pointer;
-}
-.cap-banner button:hover { background: var(--vpe-hover); }
-.cap-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-focusBorder); }
-
-#startCompareBtn { width: auto; padding: 0 6px; gap: 5px; font-size: 11px; }
-#startCompareBtn.cap-on {
-  background: color-mix(in srgb, var(--vscode-focusBorder) 16%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder) 55%, transparent);
-  color: var(--vscode-foreground); padding: 0 7px;
-}
-#bar .ib.active { background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-active); }
 
 /* Keep real popups (#panel, #sheet, #ctxmenu, rail menus) bounded cleanly inside the 728 px inline frame */
 .panel { max-height: ${wbHeight - 86}px !important; overflow-y: auto; z-index: 25; }

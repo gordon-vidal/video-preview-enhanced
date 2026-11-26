@@ -140,7 +140,7 @@ const srcsOf = (html, nonce = 'NONCE123') => [...html.matchAll(new RegExp(`<scri
     'main', 'stage', 'canvas', 'cells', 'splitter', 'divider', 'subs', 'overlay', 'message', 'hint', 'action',
     'playFlash', 'toast', 'notice', 'noticeText', 'noticeAction', 'noticeSettings', 'noticeHide', 'noticeClose',
     'bar', 'seek', 'play', 'prev', 'next', 'cog', 'infoBtn', 'startCompareBtn', 'tracks',
-    'panel', 'sheet', 'ctxmenu', 'menu', 'live',
+    'panel', 'sheet', 'ctxmenu', 'menu', 'live', 'capBanner', 'capStopBtn',
   ];
   for (const folder of [false, true]) {
     const html = unifiedHtml(input({ folder }));
@@ -154,6 +154,9 @@ const srcsOf = (html, nonce = 'NONCE123') => [...html.matchAll(new RegExp(`<scri
     // The layout chrome waits hidden until a Spotlight / Split Wipe layout shows it.
     assert.strictEqual($('splitter').hidden, true);
     assert.strictEqual($('divider').hidden, true);
+    // The capture banner (media/player-ui.js capBanner) is in the page, hidden, with the Stop button it binds.
+    assert.strictEqual($('capBanner').hidden, true);
+    assert.ok($('capBanner').querySelector('#capStopBtn'), 'capBanner holds #capStopBtn');
   }
   assert.strictEqual(createDom(/<body[^>]*>([^]*)<\/body>/.exec(unifiedHtml(input({ canCompare: false })))[1])
     .$('startCompareBtn').hidden, true, 'canCompare: false hides Compare');

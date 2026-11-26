@@ -52,6 +52,16 @@ const UNIFIED_SCRIPTS = [
   'player-engine-adapter.js', 'player-host-adapter.js',
 ];
 
+/**
+ * The banner media/player-ui.js shows while the Compare capture is on with one video open (#capBanner, shown by
+ * deriveUi's showCaptureBanner); Stop is #capStopBtn (the Capture toggle). Also what tools/mockup/render.js mounts.
+ */
+const capBannerHtml = `<div class="cap-banner" id="capBanner" role="status" hidden>
+    <span class="cap-pulse" aria-hidden="true"></span>
+    <span>Open videos to add to comparison</span>
+    <button id="capStopBtn" type="button" title="Stop adding videos to Compare">Stop</button>
+  </div>`;
+
 /** `<` never closes a `<script>` element early (JSON in #cfg, the early-fetch URL list). @param {unknown} v */
 const jsonForScript = (v) => String(JSON.stringify(v)).replace(/</g, '\\u003c');
 
@@ -100,6 +110,7 @@ ${earlyJs}${styles}
   <div id="subs" hidden></div>
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div><button id="action" hidden></button></div>
   ${playFlashHtml}
+  ${capBannerHtml}
   <div id="toast" hidden aria-hidden="true"></div>
   <div id="notice" hidden>
     <span id="noticeText"></span>
@@ -122,4 +133,4 @@ ${scripts}
 }
 // checkJs: end
 
-module.exports = { unifiedHtml, UNIFIED_CSS, UNIFIED_SCRIPTS };
+module.exports = { unifiedHtml, capBannerHtml, UNIFIED_CSS, UNIFIED_SCRIPTS };

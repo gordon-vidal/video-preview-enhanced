@@ -224,4 +224,46 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   }
 }
 
+{ // The tile overlay (.ov) has a box: inset to the picture (the --pic-* letterbox insets, 0 when unset), never 0 x 0.
+  const ov = declsOf(COMPARE, '.ov');
+  assert.strictEqual(ov.position, 'absolute');
+  assert.strictEqual(ov.inset, 'var(--pic-t, 0px) var(--pic-r, 0px) var(--pic-b, 0px) var(--pic-l, 0px)');
+}
+
+{ // Split Wipe: B's canvas is transparent (player.css paints every canvas black), or A would vanish left of the divider.
+  const b = declsOf(COMPARE, '.cell.split[data-role="split-b"] > canvas');
+  assert.strictEqual(b.background, 'transparent');
+}
+
+{ // An empty spare slot's "+ Add video" rests quiet but visible (0.6), full on hover and on keyboard focus.
+  assert.strictEqual(declsOf(COMPARE, '.addcell').opacity, '0.6');
+  assert.strictEqual(declsOf(COMPARE, '.cell.add:hover .addcell').opacity, '1');
+  assert.strictEqual(declsOf(COMPARE, '.addcell:focus-visible').opacity, '1');
+}
+
+{ // What the mock-up harness used to carry on its own (tools/mockup/render.js) is the real CSS now: the capture
+  // banner and toggle, and the toggled-on bar button. The Compare button keeps a gap between its icon and its label.
+  for (const sel of ['.cap-banner', '.cap-pulse', '#startCompareBtn', '#startCompareBtn.cap-on', '#bar .ib.active']) {
+    assert.ok(anySelector(PLAYER, (s) => s === sel), `${sel} is in player.css`);
+  }
+  assert.ok(/^\d/.test(declsOf(PLAYER, '#startCompareBtn').gap), 'a gap between the icon and the label');
+  const render = fs.readFileSync(path.join(__dirname, '..', '..', 'tools', 'mockup', 'render.js'), 'utf8');
+  for (const dup of ['.cap-banner {', '.cap-pulse {', '#startCompareBtn {', '#bar .ib.active {']) {
+    assert.ok(!render.includes(dup), `render.js no longer restyles ${dup}`);
+  }
+}
+
+{ // The narrow-pane collapse names the buttons the controller injects (media/player-ui.js barButton), in order, and
+  // the Compare toggle loses its words first. Every id it names is one barButton / src/bar.js really creates.
+  const ui = fs.readFileSync(path.join(MEDIA, 'player-ui.js'), 'utf8');
+  const hidden = (maxW) => rules(COMPARE).filter((r) => r.at.includes(`max-width: ${maxW}px`) && /display:\s*none/.test(r.body))
+    .flatMap((r) => r.selectors.map(norm));
+  const all = [...hidden(640), ...hidden(560), ...hidden(440)].join(' ');
+  for (const id of ['swapBtn', 'syncBtn', 'splitBtn', 'spotlightBtn', 'gridBtn']) {
+    assert.ok(all.includes(`#row #${id}`), `#${id} collapses`);
+    assert.ok(ui.includes(`barButton('${id}'`), `media/player-ui.js creates #${id}`);
+  }
+  assert.ok(hidden(640).some((s) => /#startCompareBtn > span/.test(s)), 'the Compare toggle drops its label first');
+}
+
 console.log('unified_css: ok');

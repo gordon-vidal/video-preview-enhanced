@@ -524,6 +524,8 @@
     grid: SVG('<rect x="3.5" y="4" width="7.5" height="7" rx="1.2"/><rect x="13" y="4" width="7.5" height="7" rx="1.2"/><rect x="3.5" y="13" width="7.5" height="7" rx="1.2"/><rect x="13" y="13" width="7.5" height="7" rx="1.2"/>'),
     swap: SVG('<path d="M7 7h12l-3-3M17 17H5l3 3"/>'),
     compare: SVG('<rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/><path d="M12 4.5v15"/>', 16),
+    // The Compare panel's button (src/bar.js icons.cmpPanel): a list, so it is not taken for Split Wipe's rectangle.
+    cmpPanel: SVG('<path d="M9.5 6.5h10M9.5 12h10M9.5 17.5h10"/><circle cx="5.2" cy="6.5" r="0.9" fill="currentColor" stroke="none"/><circle cx="5.2" cy="12" r="0.9" fill="currentColor" stroke="none"/><circle cx="5.2" cy="17.5" r="0.9" fill="currentColor" stroke="none"/>'),
     expand: SVG('<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>', 13, 2),
     collapse: SVG('<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7"/>', 13, 2),
     close: SVG('<path d="M6 6l12 12M18 6L6 18"/>', 12, 2.1),
@@ -640,7 +642,7 @@
     const cmpPanelBtn = (() => {
       let b = $('cmpBtn');
       if (!b) {
-        b = barButton('cmpBtn', 'Compare: videos, offsets, clock, sound', ICONS.compare);
+        b = barButton('cmpBtn', 'Compare: videos, offsets, clock, sound', ICONS.cmpPanel);
         b.setAttribute('aria-label', 'Compare');
         b.setAttribute('aria-expanded', 'false');
         b.setAttribute('aria-controls', 'panel');
@@ -1257,7 +1259,29 @@
       prefs.picMode = m;
       commit(S.setPicMode(ws, m));
       controls.refresh();
-      toast(`Picture size: ${W.VpePicture && typeof W.VpePicture.name === 'function' ? W.VpePicture.name(m) : m}`);
+      toast(pictureToastText(m));
+    }
+    /**
+     * "Fill (126%)" like the single player (VpePicture.pictureToast): the mode and the percent of the video's pixels the
+     * first tile's picture shows, as inspect.js says it. Just the mode's name when the engine cannot tell the size.
+     */
+    function pictureToastText(/** @type {string} */ m) {
+      const P = W.VpePicture;
+      if (!P || typeof P.name !== 'function') return m;
+      const t = tab();
+      const id = t.tiles[0];
+      let pct = null;
+      try {
+        const c = /** @type {any} */ (engine.getClip(id) || {});
+        const nat = typeof engine.naturalSize === 'function' ? engine.naturalSize(id) : { width: c.width, height: c.height };
+        if (typeof engine.pictureRect === 'function' && nat && nat.width > 0) {
+          const { width, height } = stageSize();
+          const cell = S.deriveUi(t, { width, height }).cells[0] || { w: width, h: height };
+          const r = engine.pictureRect(id, cell.w, cell.h, t.picMode, t.zoom, t.panX, t.panY);
+          if (r && r.w > 0) pct = P.percent(r, { w: nat.width, h: nat.height }, Number(win.devicePixelRatio) || 1);
+        }
+      } catch { /* no size yet: the name alone */ }
+      return typeof P.pictureToast === 'function' ? P.pictureToast(m, pct, false) : P.name(m);
     }
     /** A / B (and the panel's rows) toggle that end; `reset` (the right-click menu's "Set") always sets it here. */
     function markAB(/** @type {'a' | 'b' | null} */ which, reset = false) {
