@@ -311,9 +311,11 @@ function createUnifiedSession(deps) {
    * Shows another video in a tile's place (same position in the order).
    * @param {string} oldId
    * @param {Partial<UnifiedClip> & { uri?: UriLike | string }} newClip
+   * @param {{ autoPlay?: boolean }} [opts]  autoPlay: Autoplay "Play next in folder" went on at the end of the one
+   *   before, so the page plays the new video from its start (a manual Next leaves play/pause as it is)
    * @returns {boolean} replaced
    */
-  function replaceClip(oldId, newClip) {
+  function replaceClip(oldId, newClip, opts = {}) {
     if (disposed || !newClip || !clipOf(oldId)) return false;
     const dup = duplicateOf(newClip, oldId);
     if (dup) { toast(`${dup.label} is in compare already`, 2000); return false; }
@@ -324,7 +326,8 @@ function createUnifiedSession(deps) {
     pendingAdds.add(c.id);
     tileSizes.delete(oldId);
     changed();
-    post({ type: 'replaceTile', oldId, newId: c.id, label: c.label, clip: clipDescriptor(c) });
+    const auto = opts.autoPlay ? { autoPlay: true } : {};
+    post({ type: 'replaceTile', oldId, newId: c.id, label: c.label, clip: clipDescriptor(c), ...auto });
     return true;
   }
 

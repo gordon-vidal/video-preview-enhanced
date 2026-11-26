@@ -55,7 +55,7 @@ module.exports = [{
       await vs.waitLog(opened(3), { from, timeout: 30000, what: 'compare opened with 3 tiles' });
       let tb = await tabsWhen((tb) => tb.length === 1 && /compare/i.test(tb[0].viewType));
       ok(tb.length === 1 && /compare/i.test(tb[0].viewType), `tabs after the burst: ${JSON.stringify(tb)}`);
-      // A burst is the whole set the user asked for: Add Mode stays off (src/addmode.js startsInAddMode), so the next
+      // A burst is the whole set the user asked for: Add Mode stays off, so the next
       // video opens as a player of its own instead of joining the compare.
       await vs.waitLog(/webview: begin:/, { from, timeout: 30000, what: 'compare ready' });
       ok(!vs.lines.slice(from).some((l) => /compare: add from the Explorer on|webview: addMode on/.test(l)), 'a burst must open Compare with Add Mode off');

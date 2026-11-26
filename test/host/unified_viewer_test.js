@@ -601,6 +601,82 @@ const context = { extensionUri: Uri.file(ROOT) };
       assert.strictEqual(watched[1].closed, true);
     }
 
+    { // Transcode policy per viewing mode: one video in its own tab is no Compare; a video added beside others is.
+      const seen = [];
+      const nativeFor = async (file, transport, tile, o) => { seen.push([path.basename(file), o && o.compare]); return null; };
+      const clipA = await prepareClip(a, { nativeFor });
+      const single = fakePanel();
+      const viewer = createUnifiedViewer({ vscode, context, panel: single.panel, clip: clipA, registry: null, deps: deps({ nativeFor }) });
+      viewer.show();
+      await viewer.addUri(b);
+      const other = fakePanel();
+      const clipB = await prepareClip(b, { nativeFor });
+      const second = createUnifiedViewer({ vscode, context, panel: other.panel, clip: clipB, registry: null, deps: deps({ nativeFor }) });
+      second.show();
+      await second.addUri(a);
+      assert.deepStrictEqual(seen, [['a.mp4', false], ['b.mp4', true], ['b.mp4', false], ['a.mp4', true]],
+        'the same file: compare false when opened alone, true when it joins a Compare');
+      single.handlers.dispose();
+      other.handlers.dispose();
+    }
+
+    { // Folder ‹ / ›: Autoplay "Play next in folder" (auto) plays the next video; a manual Next does not force play.
+      const { panel, posts, handlers } = fakePanel();
+      const clipA = await prepareClip(a, {});
+      createUnifiedViewer({ vscode, context, panel, clip: clipA, registry: null, deps: deps({
+        rail: { cache: null, probe: null, prefs: { get: () => ({}), set: () => {} }, layout: () => 'side', caseless: false },
+      }) }).show();
+      await open(handlers);
+      await settle();
+      posts.length = 0;
+      await handlers.message({ type: 'neighbour', page: 1, d: 1, auto: true, rail: {} });
+      const next = posts.find((m) => m.type === 'replaceTile');
+      assert.deepStrictEqual([next.oldId, next.clip.label, next.autoPlay], [clipA.id, 'b.mp4', true], 'natural end: plays');
+      assert.ok(posts.some((m) => m.type === 'rail' && m.op === 'pos' && m.index === 1), 'its place in the folder');
+      posts.length = 0;
+      await handlers.message({ type: 'neighbour', page: 1, d: -1 });
+      const back = posts.find((m) => m.type === 'replaceTile');
+      assert.deepStrictEqual([back.clip.label, 'autoPlay' in back], ['a.mp4', false], 'manual: play/pause as it was');
+      handlers.dispose();
+    }
+
+    { // A reload (file changed on disk) keeps the Live transcode resolution picked for the clip.
+      const { panel, posts, handlers } = fakePanel();
+      const e = write('e.mp4', [1, 2, 3]);
+      const decision = { ...nativeDecision, stream: { encoder: 'libx264' } };
+      const nativeFor = async () => decision;
+      const clipE = await prepareClip(e, { nativeFor, streams: true });
+      const created = [];
+      const watched = [];
+      const viewer = createUnifiedViewer({ vscode, context, panel, clip: clipE, registry: null, deps: deps({
+        nativeFor, createStream: (c, opts) => { const s = fakeDecoder(); created.push({ c, opts, s }); return s; },
+        watchDelayMs: 0,
+        watchFile: (file, onChange) => { const w = { file, onChange, close() {} }; watched.push(w); return w; },
+      }) });
+      viewer.show();
+      await open(handlers);
+      await handlers.message({ type: 'nd', page: 1, clipId: clipE.id, m: { type: 'open' } });
+      await handlers.message({ type: 'transcodeResolution', page: 1, clipId: clipE.id, height: 720 });
+      assert.deepStrictEqual(created[0].s.resolution, [720]);
+      fs.writeFileSync(e.fsPath, Buffer.from([1, 2, 3, 4]));
+      const later = new Date(Date.now() + 60000);
+      fs.utimesSync(e.fsPath, later, later);
+      posts.length = 0;
+      watched[0].onChange();
+      await settle();
+      const r = posts.find((m) => m.type === 'replaceTile');
+      assert.ok(r && r.reload, 'reloaded under a new id');
+      await handlers.message({ type: 'nd', page: 1, clipId: r.newId, m: { type: 'open' } });
+      assert.deepStrictEqual([created.length, created[1].c.id, created[1].opts.resolution], [2, r.newId, 720],
+        'the recreated stream starts at the resolution the user picked');
+      // A replaced tile does not inherit it.
+      await viewer.session.replaceClip(r.newId, await prepareClip(b, { nativeFor, streams: true }));
+      const swapped = viewer.session.clips[0];
+      await handlers.message({ type: 'nd', page: 1, clipId: swapped.id, m: { type: 'open' } });
+      assert.strictEqual(created[2].opts.resolution, undefined, 'another video: its own default');
+      handlers.dispose();
+    }
+
     { // Offers and settings: actions, whenSlow, notices, ffmpeg state, external player, Open URL, rail handoff.
       const rv = recVscode();
       const { panel, posts, handlers } = fakePanel();

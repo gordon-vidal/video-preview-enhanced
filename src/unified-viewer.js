@@ -111,8 +111,9 @@ const isFileClip = (c) => !!c && sourceKindOf(c) === 'file' && !!c.fsPath && !!c
  * lane's only when the caller can start streams (deps.streams); else such a file plays through the built-in decoder.
  * @param {UriLike} uri
  * @param {{ fs?: { stat(p: string): Promise<{ size: number }> }, rotationOf?: (file: string) => Promise<number>,
- *   nativeFor?: ((file: string, transport: string, tile: any) => Promise<any>) | null, transport?: () => string,
- *   log?: (m: string) => void, streams?: boolean, skipNative?: boolean }} deps
+ *   nativeFor?: ((file: string, transport: string, tile: any, o?: { compare: boolean }) => Promise<any>) | null,
+ *   transport?: () => string, log?: (m: string) => void, streams?: boolean, skipNative?: boolean, compare?: boolean }} deps
+ *   compare: the clip shows in a Compare (several videos), whose transcode policy differs from a single video's
  * @returns {Promise<ViewerClip>}
  */
 async function prepareClip(uri, deps) {
@@ -124,8 +125,10 @@ async function prepareClip(uri, deps) {
   ]);
   let decision = null;
   if (deps.nativeFor && !deps.skipNative) {
-    try { decision = await deps.nativeFor(file, deps.transport ? deps.transport() : 'message', null); }
-    catch (e) { if (deps.log) deps.log(`native check failed for ${path.basename(file)}: ${errText(e)}`); }
+    try {
+      const transport = deps.transport ? deps.transport() : 'message';
+      decision = await deps.nativeFor(file, transport, null, { compare: !!deps.compare });
+    } catch (e) { if (deps.log) deps.log(`native check failed for ${path.basename(file)}: ${errText(e)}`); }
   }
   const native = !!(decision && decision.tools && !decision.stream);
   const transcode = !!(decision && decision.tools && decision.stream && deps.streams);
@@ -185,7 +188,7 @@ function nativeHeightFor(c, size, perTile) {
  * @param {() => { dir: any, loader: string }} o.deps.libavBuild
  * @param {() => any} o.deps.prefs
  * @param {() => number} [o.deps.maxVideos]
- * @param {((file: string, transport: string, tile: any) => Promise<any>) | null} [o.deps.nativeFor]
+ * @param {((file: string, transport: string, tile: any, o?: { compare: boolean }) => Promise<any>) | null} [o.deps.nativeFor]
  * @param {() => string} [o.deps.nativeTransport]
  * @param {() => number} [o.deps.nativeQueue]
  * @param {() => boolean} [o.deps.fitTiles]  native ffmpeg frames sized to the tile (sizeFramesToView with the automatic
@@ -291,10 +294,10 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   let session = /** @type {any} */ (null);
   /** @param {string} m */
   const log = (m) => deps.log(`[unified ${session ? session.title : clip.label}] ${m}`);
-  /** @param {UriLike} [uri] */
-  const prepDeps = (uri) => ({
+  /** @param {UriLike} [uri] @param {boolean} [compare] the clip will show beside others (Compare's transcode policy) */
+  const prepDeps = (uri, compare = false) => ({
     rotationOf: deps.rotationOf, nativeFor: deps.nativeFor || null, transport: deps.nativeTransport, log,
-    streams: !!deps.createStream, skipNative: !!uri && builtIn.has(fileKey(uri)),
+    streams: !!deps.createStream, skipNative: !!uri && builtIn.has(fileKey(uri)), compare,
   });
   const fitTiles = () => (deps.fitTiles ? deps.fitTiles() !== false : true);
   /** @param {string} id @returns {ViewerClip | null} */
@@ -763,12 +766,19 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const c = clipOf(id);
     if (disposed || !c || !isFileClip(c)) return null;
     let fresh;
-    try { fresh = await prepareClip(c.uri, prepDeps(c.uri)); }
+    try { fresh = await prepareClip(c.uri, prepDeps(c.uri, session.clips.length >= 2)); }
     catch (e) { log(`${c.label}: cannot reload (${why}): ${errText(e)}`); return null; }
     if (disposed || !session.clipOf(id) || (onlyIf && !onlyIf(fresh, c))) return null;
     log(`${c.label}: reload (${why})`);
+    // The same file under a new id keeps the Live transcode resolution the user picked for it: moved before the old
+    // id leaves (onChange below drops the entries of ids no longer shown; a replaced or removed tile's goes with it).
+    const newId = clipIdOf(c.uri, `r${++reloads}`);
+    const res = resolutions.get(id);
+    if (res !== undefined) resolutions.set(newId, res);
     // The old tile's file handle and decoder close when it leaves the session (see onChange below).
-    return session.reloadClip(id, { ...fresh, id: clipIdOf(c.uri, `r${++reloads}`) });
+    const done = session.reloadClip(id, { ...fresh, id: newId });
+    if (done !== newId) resolutions.delete(newId);
+    return done;
   }
 
   // ---- offers, settings, Live transcode ----
@@ -858,15 +868,18 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   }
 
   // ---- adding and replacing videos ----
-  /** @param {any[] | undefined} picked @returns {Promise<ViewerClip[]>} */
-  async function prepareAll(picked) {
+  /**
+   * @param {any[] | undefined} picked @param {boolean} compare they show beside others (prepDeps)
+   * @returns {Promise<ViewerClip[]>}
+   */
+  async function prepareAll(picked, compare) {
     const uris = (picked || []).filter(isViewable);
     /** @type {ViewerClip[]} */
     const out = [];
     /** @type {string[]} */
     const failed = [];
     for (const u of uris) {
-      try { out.push(await prepareClip(u, prepDeps(u))); }
+      try { out.push(await prepareClip(u, prepDeps(u, compare))); }
       catch (e) {
         // The full error (an ENOENT names the path) stays in the host log; the page hears only the file's name.
         log(`cannot open ${path.basename(u.fsPath)}: ${errText(e)}`);
@@ -895,17 +908,20 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
    */
   async function addUri(uri) {
     if (disposed || !isViewable(uri)) return false;
-    const c = await prepareClip(uri, prepDeps(uri));
+    const c = await prepareClip(uri, prepDeps(uri, true));
     return !disposed && session.addClip(c);
   }
-  /** One video shown: `file` plays in its place. Several: it joins them. @param {string} file */
-  async function showFile(file) {
+  /**
+   * One video shown: `file` plays in its place. Several: it joins them.
+   * @param {string} file @param {{ autoPlay?: boolean }} [opts] autoPlay: Autoplay went on (the page plays it from 0)
+   */
+  async function showFile(file, opts = {}) {
     const uri = uriOf(file);
     const only = session.clips.length === 1 ? session.clips[0] : null;
     if (!only) return addUri(uri);
     if (only.uri && fileKey(uri) === fileKey(/** @type {any} */ (only.uri))) return false;
-    const c = await prepareClip(uri, prepDeps(uri));
-    return !disposed && session.replaceClip(only.id, c);
+    const c = await prepareClip(uri, prepDeps(uri, false));
+    return !disposed && session.replaceClip(only.id, c, { autoPlay: !!opts.autoPlay });
   }
 
   // ---- the folder rail (a file on disk only) ----
@@ -925,8 +941,12 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   async function sendRailPos() {
     const c = session.clips;
     if (!deps.rail || c.length !== 1 || !c[0].fsPath || !isFileClip(c[0])) return;
+    const id = c[0].id;
     const at = await folderRail.neighbourOf(nodeFs.promises, c[0].fsPath, 0);
-    if (!disposed) session.post({ type: 'rail', op: 'pos', index: at.index, count: at.count });
+    // The folder was read meanwhile: another video (or a second one) may show by now, and this answer is not its.
+    const now = session.clips;
+    if (disposed || now.length !== 1 || now[0].id !== id) return;
+    session.post({ type: 'rail', op: 'pos', index: at.index, count: at.count });
   }
   /** @param {any} m */
   async function onRailMessage(m) {
@@ -936,7 +956,8 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       const at = await folderRail.neighbourOf(nodeFs.promises, c[0].fsPath, m.d);
       if (disposed) return undefined;
       if (!at.target) { toast(m.d > 0 ? 'Last video in this folder' : 'First video in this folder'); return undefined; }
-      await showFile(at.target);
+      // `auto`: Autoplay "Play next in folder" at the end of the video (media/folder-rail.js go): the next one plays.
+      await showFile(at.target, { autoPlay: m.auto === true });
       return sendRailPos();
     }
     const ctl = railCtl();
@@ -968,11 +989,12 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       }
       webview.postMessage(msg);
     },
-    onPickVideo: async () => prepareAll(deps.pick ? await deps.pick(`Add to ${session.title}`, firstDir(), true) : undefined),
+    onPickVideo: async () => prepareAll(
+      deps.pick ? await deps.pick(`Add to ${session.title}`, firstDir(), true) : undefined, true),
     onReplacePick: async (oldId) => {
       const old = clipOf(oldId);
       const picked = deps.pick ? await deps.pick(`Replace ${old ? old.label : 'video'}`, firstDir(), false) : undefined;
-      return (await prepareAll(picked && picked.slice(0, 1)))[0];
+      return (await prepareAll(picked && picked.slice(0, 1), session.clips.length >= 2))[0];
     },
     onReadBlock: (c, m) => readBlock(/** @type {any} */ (c), m),
     onThumb: (c, m) => onThumb(/** @type {any} */ (c), m),

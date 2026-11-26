@@ -291,6 +291,16 @@ export interface PageEnvelope {
   boot?: string;
 }
 
+/**
+ * Host -> page: a video in a tile's place. `reload`: the same file again with another decoder (the page restarts the
+ * tile in place). `autoPlay`: Autoplay "Play next in folder" went on at the end of the one before, so the page plays
+ * the new video from frame 0; absent (a manual Next), play/pause stays as it was.
+ */
+export interface ReplaceTileMsg {
+  type: 'replaceTile'; oldId: string; newId: string; label?: string; clip?: ClipDescriptor; reload?: boolean;
+  autoPlay?: boolean;
+}
+
 /** Host -> page. */
 export type HostToPageMessage = PageEnvelope & (
   | {
@@ -307,8 +317,7 @@ export type HostToPageMessage = PageEnvelope & (
     type: 'openVideo'; clipId: string; label?: string; clip?: ClipDescriptor;
     compare?: boolean; replace?: boolean; forceNewTab?: boolean;
   }
-  // `reload`: the same file again with another decoder (the page restarts the tile in place).
-  | { type: 'replaceTile'; oldId: string; newId: string; label?: string; clip?: ClipDescriptor; reload?: boolean }
+  | ReplaceTileMsg
   | { type: 'removeVideo'; clipId: string }
   | { type: 'toast'; text: string; ms?: number }
   | { type: 'focusMode'; active: boolean }

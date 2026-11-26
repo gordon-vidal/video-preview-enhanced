@@ -308,9 +308,13 @@ function createUrlDecoder(c, io, deps) {
     let hint = '';
     let action = null;
     const why = deps.why ? deps.why() : '';
-    if (probeError) hint = `ffmpeg could not open it either: ${probeError.slice(0, 300)}`;
-    else if (noNative) hint = `Native ffmpeg failed on it: ${noNative.slice(0, 300)}`;
-    else if (why) hint = why;
+    // ffprobe's and native ffmpeg's own words may quote the URL (its path, a token in its query): they are in the
+    // host log already (open, startNative); the page gets a fixed sentence.
+    if (probeError) {
+      hint = 'ffmpeg could not open it either. Details are in the Video Preview Enhanced output.';
+    } else if (noNative) {
+      hint = 'Native ffmpeg failed on it. Details are in the Video Preview Enhanced output.';
+    } else if (why) hint = why;
     else if (!t) {
       hint = 'The built-in decoder plays direct video links (MP4, WebM, MKV…) and HLS VOD playlists (also AES-128 encrypted). Live HLS and DASH play with ffmpeg (one click, no admin rights).';
       action = 'setupFfmpeg';

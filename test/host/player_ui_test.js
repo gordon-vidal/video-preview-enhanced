@@ -313,6 +313,19 @@ const ROOT = path.join(__dirname, '..', '..');
   assert.deepStrictEqual([S.getTab(rt.state).tiles, rt.toast, rt.handled], [['clip-4', 'clip-3'], 'Replaced with clip-3.mp4', true]);
   const rtBad = PUI.applyHostMessage(S, multi, { type: 'replaceTile', oldId: 'nope', newId: 'clip-3' }, getClip);
   assert.deepStrictEqual([rtBad.state, rtBad.toast], [multi, ''], 'an unknown tile is left alone');
+
+  // Autoplay "Play next in folder": the one before paused on its last frame (decoderEnded); the host's replaceTile
+  // with autoPlay plays the next one from frame 0. A manual Next (no autoPlay) keeps it paused where it was.
+  const ended = S.createWorkspaceState({ tiles: ['clip-0'], frame: 90 });
+  assert.strictEqual(S.getTab(ended).playing, false, 'paused on the last frame');
+  const auto = PUI.applyHostMessage(S, ended, { type: 'replaceTile', oldId: 'clip-0', newId: 'clip-1', autoPlay: true }, getClip);
+  assert.deepStrictEqual([S.getTab(auto.state).tiles, S.getTab(auto.state).frame, S.getTab(auto.state).playing],
+    [['clip-1'], 0, true], 'natural end: the next video plays from its start');
+  const manual = PUI.applyHostMessage(S, ended, { type: 'replaceTile', oldId: 'clip-0', newId: 'clip-1' }, getClip);
+  assert.deepStrictEqual([S.getTab(manual.state).tiles, S.getTab(manual.state).playing], [['clip-1'], false],
+    'manual Next: no forced play');
+  const unknown = PUI.applyHostMessage(S, ended, { type: 'replaceTile', oldId: 'nope', newId: 'clip-1', autoPlay: true }, getClip);
+  assert.strictEqual(unknown.state, ended, 'autoPlay for a tile not shown changes nothing');
 }
 
 // ---- 5. FakeHost: the folder rail protocol of src/folder-rail.js, in Node ----
@@ -1388,6 +1401,26 @@ async function phase34() {
     ui.onHostMessage({ type: 'toast', text: 'Transcoding at 720p' });
     assert.strictEqual($('toast').textContent, 'Transcoding started', 'the visible Live chip already says it');
   });
+  // "Use full resolution" switched the decoder in place: the reduced-picture offer goes at once (it no longer
+  // applies) and the lower-priority notice waiting behind it shows.
+  const switchEngine = toolEngine();
+  let lossy = true;
+  switchEngine.pictureInfo = (id) => ({ clipId: id, nativeLossy: lossy, transcoded: false, streaming: false,
+    video: { width: 1280, height: 720, sourceWidth: 3840, sourceHeight: 2160 } });
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, key }) => {
+    const n = ui.parts.notices;
+    n.setDismissals({});
+    key('w');
+    assert.strictEqual(n.kind(), 'reducedRes');
+    ui.onHostMessage({ type: 'slowPlayback', variant: 'every' });
+    assert.deepStrictEqual([n.kind(), n.pendingKinds()], ['reducedRes', ['slowPlayback']], 'slow advice waits behind it');
+    ui.render();
+    assert.strictEqual(n.kind(), 'reducedRes', 'still a reduced picture: the offer stays');
+    lossy = false;
+    ui.render();
+    assert.deepStrictEqual([n.kind(), n.pendingKinds()], ['slowPlayback', []],
+      'full resolution: the offer is gone and the queued notice shows');
+  }, { engine: switchEngine });
   const liveEngine = toolEngine();
   liveEngine.pictureInfo = (id) => ({ clipId: id, nativeLossy: false, transcoded: true, streaming: false, video: null });
   await mountTools({ tiles: ['clip-0'] }, async ({ ui, $ }) => {

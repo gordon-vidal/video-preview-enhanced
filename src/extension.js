@@ -1043,7 +1043,7 @@ function activate(context) {
     replaceClip: async (viewer, index, uri) => {
       const old = viewer.session.clips[index];
       if (!old) return false;
-      const clip = await unifiedViewer.prepareClip(uri, prepDeps());
+      const clip = await unifiedViewer.prepareClip(uri, prepDeps(viewer.session.clips.length >= 2));
       return viewer.session.replaceClip(old.id, clip);
     },
   }).install(context);
@@ -1077,8 +1077,9 @@ function engineCfg(context, w) {
 /**
  * Native ffmpeg or Live transcode for a file (src/unified-viewer.js prepareClip): the probe, the transcode policy and
  * the decoder rule. Null: the built-in decoder. `tile`: the tile's picture size when known (Live transcode's height).
+ * `o.compare`: the file shows beside others (Compare's transcode policy); a single video in its tab does not.
  */
-async function nativeFor(file, transport, tile) {
+async function nativeFor(file, transport, tile, o = {}) {
   const c = config();
   const remote = remoteName();
   const rawAllowed = nativeAllowedHere();
@@ -1093,7 +1094,7 @@ async function nativeFor(file, transport, tile) {
   if (!failed && c.transcode !== 'off' && pr.video) {
     const remoteLink = (!!remote && remote !== 'wsl') || c.remoteStream === 'on';
     const decision = transcodePolicy.shouldTranscodeOnOpen({
-      mode: c.transcode, remote, video: pr.video, compare: true,
+      mode: c.transcode, remote, video: pr.video, compare: !!(o && o.compare),
       maxBitrateMbps: c.transcodeMaxBitrate, viewHeight: tile && tile.h, toneMap: transcodeArgs.toneMapSupport(t.gpuFilters),
     });
     // Each clip decides on its own (codec, bit rate): say why, so a mixed grid can be explained from the log.
@@ -1613,9 +1614,12 @@ function onSpeed(m, viewer) {
 
 // ---- opening videos: a file, a URL (openUrl above), a sequence, a frame link, Open Together ----
 
-/** What prepareClip needs (src/unified-viewer.js). */
-function prepDeps() {
-  return { rotationOf, nativeFor, transport: nativeTransport, log, streams: true };
+/**
+ * What prepareClip needs (src/unified-viewer.js). `compare`: the clip shows beside others (Compare's transcode
+ * policy); false for a single video opened in its own tab.
+ */
+function prepDeps(compare = false) {
+  return { rotationOf, nativeFor, transport: nativeTransport, log, streams: true, compare };
 }
 
 /** The setting compare.maxVideos: how many videos one viewer shows at most. */
@@ -1705,7 +1709,7 @@ async function resolveVideo(context, rawUri, panel) {
   if (panelViewers.has(panel) || closed()) return undefined; // the burst made this tab a viewer, or it closed
   let clip;
   try {
-    clip = await unifiedViewer.prepareClip(uri, prepDeps());
+    clip = await unifiedViewer.prepareClip(uri, prepDeps(false)); // one video in its own tab
   } catch (e) {
     log(`cannot open ${path.basename(uri.fsPath)}: ${e && e.stack || e}`);
     vscode.window.showErrorMessage(`Video Preview: cannot open ${path.basename(uri.fsPath)}: ${e && e.code === 'ENOENT' ? 'the file does not exist' : e && e.message || e}`);
@@ -1774,7 +1778,7 @@ async function openBurst(context, { items, extra }) {
   const clips = [];
   for (const it of items) {
     if (host && host.session.clips.some((c) => c.uri && c.uri.toString() === it.key)) continue;
-    try { clips.push(await unifiedViewer.prepareClip(it.uri, prepDeps())); }
+    try { clips.push(await unifiedViewer.prepareClip(it.uri, prepDeps(true))); }
     catch (e) { log(`open together: cannot open ${path.basename(it.uri.fsPath)}: ${e && e.message || e}`); }
   }
   if (!host && clips.length < 2) return false;
@@ -1825,7 +1829,7 @@ async function prepareUris(uris) {
   const out = [];
   for (const u of uris) {
     if (!unifiedViewer.isViewable(u)) continue;
-    try { out.push(await unifiedViewer.prepareClip(u, prepDeps())); }
+    try { out.push(await unifiedViewer.prepareClip(u, prepDeps(true))); }
     catch (e) { log(`compare: cannot open ${path.basename(u.fsPath)}: ${e && e.message || e}`); }
   }
   return out;

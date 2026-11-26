@@ -60,7 +60,7 @@ function pickRows({ current, folder, workspace, recent = [] }) {
   const rows = [];
   if (inFolder.length) rows.push({ kind: 'sep', label: 'Same folder' }, ...inFolder.map((uri) => ({ kind: 'file', label: nameOf(uri), uri })));
   if (rest.length) rows.push({ kind: 'sep', label: 'Workspace' }, ...rest.map((uri) => ({ kind: 'file', label: nameOf(uri), uri })));
-  // "Click videos in the Explorer…" turns on add mode (src/addmode.js); Browse… opens the file dialog.
+  // "Click videos in the Explorer…" turns on add mode; Browse… opens the file dialog.
   rows.push({ kind: 'sep', label: '' }, { kind: 'explorer', label: 'Click videos in the Explorer…' }, { kind: 'browse', label: 'Browse…' });
   return rows;
 }

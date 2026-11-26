@@ -468,7 +468,13 @@
     }
     // The host's answer to 'replaceVideo' (tile menu / panel "Replace…"): the new video takes the old one's slot.
     if (msg && msg.type === 'replaceTile' && typeof msg.oldId === 'string' && typeof msg.newId === 'string') {
-      const next = S.replaceTile(ws, msg.oldId, msg.newId);
+      let next = S.replaceTile(ws, msg.oldId, msg.newId);
+      // Autoplay "Play next in folder": the one before paused on its last frame; the next one plays from its start
+      // (its decoder starts there once ready). A manual Next (no autoPlay) keeps play/pause as it was.
+      if (msg.autoPlay === true && next !== ws) {
+        next = S.seekFrame(next, 0);
+        if (!S.getTab(next).playing) next = S.togglePlay(next);
+      }
       const label = msg.label || (getClip(msg.newId) || { name: msg.newId }).name;
       return { state: next, toast: next === ws ? '' : `Replaced with ${label}`, handled: true };
     }
@@ -668,12 +674,24 @@
     /** The last context the notices were told ('' before the first), so render() calls setContext only on a change. */
     let noticeContextKey = '';
     /**
+     * "Use full resolution" (or "Use original video") switched the decoder in place: once no tile reports a reduced
+     * picture any more, the offer is moot, so it goes (shown or waiting) and a notice queued behind it shows.
+     * An unknown picture (no info yet) keeps it.
+     * @param {any} t TabState
+     */
+    const dropReducedRes = (t) => {
+      if (!notices || (notices.kind() !== 'reducedRes' && !notices.pendingKinds().includes('reducedRes'))) return;
+      const infos = t.tiles.map((/** @type {string} */ id) => engine.pictureInfo(id));
+      if (infos.length && infos.every((/** @type {any} */ i) => i && !i.nativeLossy && !i.transcoded)) notices.hide('reducedRes');
+    };
+    /**
      * Live transcode / streaming of the active clip (engine.pictureInfo) goes to the notices, which then keep the
      * local decoder's slow-playback advice away: the Live chip owns that state.
      */
     const syncNoticeContext = () => {
       if (!notices || typeof engine.pictureInfo !== 'function') return;
       const t = tab();
+      dropReducedRes(t);
       const id = t.clockId || t.tiles[0];
       const info = id ? engine.pictureInfo(id) : null;
       const c = { transcoded: !!(info && info.transcoded), streaming: !!(info && info.streaming) };
