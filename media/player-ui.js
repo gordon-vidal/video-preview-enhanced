@@ -2145,6 +2145,60 @@
       if (zen && e.key === 'Escape') zen.onKey(e);
     });
 
+    // ---- drag & drop a video file onto the player to compare ----
+    const dropHintEl = $('dropHint');
+    let dragDepth = 0;
+    const hasDropUri = (/** @type {any} */ dt) => {
+      if (!dt || !dt.types) return false;
+      const types = Array.from(dt.types);
+      return types.includes('text/uri-list') || types.includes('application/vnd.code.uri-list') || types.includes('resourceurls');
+    };
+    const dropUris = (/** @type {any} */ dt) => {
+      if (!dt || typeof dt.getData !== 'function') return [];
+      const out = /** @type {string[]} */ ([]);
+      for (const k of ['application/vnd.code.uri-list', 'text/uri-list']) {
+        const raw = dt.getData(k);
+        if (!raw) continue;
+        for (const line of String(raw).split(/\r?\n/)) {
+          const s = line.trim();
+          if (s && !s.startsWith('#') && !out.includes(s)) out.push(s);
+        }
+      }
+      if (!out.length) {
+        const raw = dt.getData('resourceurls');
+        if (raw) {
+          try {
+            const arr = JSON.parse(raw);
+            if (Array.isArray(arr)) for (const u of arr) if (typeof u === 'string' && u && !out.includes(u)) out.push(u);
+          } catch { /* ignore */ }
+        }
+      }
+      return out;
+    };
+    listen(doc, 'dragenter', (/** @type {any} */ e) => {
+      if (!hasDropUri(e.dataTransfer)) return;
+      dragDepth++;
+      if (dropHintEl) dropHintEl.hidden = false;
+      e.preventDefault();
+    });
+    listen(doc, 'dragover', (/** @type {any} */ e) => {
+      if (!hasDropUri(e.dataTransfer)) return;
+      if (dropHintEl) dropHintEl.hidden = false;
+      e.preventDefault();
+    });
+    listen(doc, 'dragleave', () => {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (!dragDepth && dropHintEl) dropHintEl.hidden = true;
+    });
+    listen(doc, 'drop', (/** @type {any} */ e) => {
+      dragDepth = 0;
+      if (dropHintEl) dropHintEl.hidden = true;
+      const uris = dropUris(e.dataTransfer);
+      if (!uris.length) return;
+      e.preventDefault();
+      postHost({ type: 'compareDrop', uris });
+    });
+
     // ---- the stage: one cell per tile, from deriveUi ----
     // Cells are kept per clip while the structure (single / multi, Split or not) holds, so a click lands mid-playback
     // and reorder, swap, dock and layout changes glide the same elements (FLIP) instead of rebuilding them.
