@@ -543,7 +543,7 @@ const withGlobals = (dom, fn) => {
     assert.deepStrictEqual([$('now').textContent, $('dur').textContent], ['frame 121', '/ 241'], 'frame numbers, as in the player');
     $('time').fire('click');
     assert.strictEqual(ui.getPrefs().timeMode, 0, 'back to the clock');
-    assert.strictEqual($('now').textContent, '0:05.00');
+    assert.strictEqual($('now').textContent, '0:05.000');
 
     // Keyboard shortcuts: keydown on the focused body bubbles to the document listener.
     const key = (k, mods = {}) => dom.doc.body.fire('keydown', { key: k, ...mods });
@@ -603,7 +603,7 @@ const withGlobals = (dom, fn) => {
     // A–B pins: the real abloop.js drag over the shared bindAbPins (the same path as both pages).
     $('abA').fire('pointerdown', { clientX: 340, pointerId: 1, button: 0 });
     assert.strictEqual($('abA').style.left, '50%', 'the pin follows the pointer to the nearest frame');
-    assert.match($('tip').textContent, /^A 0:05\.00 · #121$/, 'the tip names the end, the time and the frame');
+    assert.match($('tip').textContent, /^A 0:05\.000 · #121$/, 'the tip names the end, the time and the frame');
     $('abA').fire('pointerup', { clientX: 340, pointerId: 1 });
     assert.strictEqual(ui.ab.a, 5, 'dropping the pin sets A at that frame');
     assert.strictEqual($('tip').hidden, true, 'the tip goes away');
@@ -863,6 +863,161 @@ const withGlobals = (dom, fn) => {
     assert.strictEqual(ui.tileMenu.isOpen(), false, 'one video: no tile menu');
   });
 
+  // What the real VS Code checks of the bar and the picture (test/vscode/cases/ui.js, ctxmenu.js), over the real
+  // media/range-drag.js: names and states, a click on the picture, Loop, the menu's "Set", wheel and drags off the edge.
+  {
+    const dom = fixtureDom();
+    dom.win.Event = dom.FakeEvent;
+    const RangeDrag = require('../../media/range-drag');
+    withGlobals(dom, () => {
+      global.VpeRangeDrag = RangeDrag; // controls.js's speed slider uses the page global
+      const widgets = { ...realWidgets(), VpeRangeDrag: RangeDrag };
+      let menuEnv = null;
+      const realMenu = widgets.VpeCtxMenu;
+      widgets.VpeCtxMenu = { ...realMenu, create: (env) => { menuEnv = env; return realMenu.create(env); } };
+      const engine = { ...createFakeEngine(), draw() {} };
+      const host = createFakeHost({ clips: engine.clips });
+      const told = [];
+      const ui = PUI.create({
+        doc: dom.doc, win: dom.win, stateApi: S, engine, host, widgets, initial: { tiles: ['clip-0'] }, tickMs: 0,
+        onTransport: (ev) => told.push(ev),
+      });
+      const $ = dom.$;
+      const tab = () => S.getTab(ui.getState());
+      const runShortTimers = () => dom.timers.forEach((t, i) => { if (t && t.ms <= 100) { dom.timers[i] = null; t.fn(); } });
+      try {
+        ui.render();
+        // Names: the time button and the seek slider speak m:ss.mmm and the frame; Play says what it does.
+        assert.match($('time').getAttribute('aria-label'), /^Position \d+:\d\d\.\d{3}, frame \d+\. /);
+        assert.match($('seek').getAttribute('aria-valuetext'), /^\d+:\d\d\.\d{3} of \d+:\d\d\.\d{3}, frame \d+$/);
+        assert.match(`${$('now').textContent} ${$('dur').textContent}`, /^\d+:\d\d\.\d{3} \/ \d+:\d\d\.\d{3}$/);
+        assert.strictEqual($('cmpBtn').hidden, true, 'one video: no Compare panel button');
+        const unnamed = [...dom.doc.querySelectorAll('button')]
+          .filter((b) => !(b.getAttribute('aria-label') || '').trim() && !/[A-Za-z]/.test(b.textContent || '')).map((b) => b.id);
+        assert.deepStrictEqual(unnamed, [], 'every button has a name in words, the empty placeholders too');
+        ui.dispatch('playPause');
+        assert.strictEqual($('play').getAttribute('aria-label'), 'Pause', 'playing: Pause');
+        ui.dispatch('playPause');
+        assert.strictEqual($('play').getAttribute('aria-label'), 'Play', 'paused: Play');
+
+        // R: Loop in the prefs the page reports, told to the decoders, said in the live region.
+        dom.doc.body.fire('keydown', { key: 'r' });
+        runShortTimers();
+        assert.strictEqual(ui.getPrefs().loop, true, 'R: loop on in the prefs');
+        assert.deepStrictEqual(told.filter((e) => e.type === 'loop').pop(), { type: 'loop', loop: true }, 'the decoders hear it');
+        assert.strictEqual($('live').textContent, 'Loop on', 'the live region says so');
+        dom.doc.body.fire('keydown', { key: 'r' });
+        assert.strictEqual(ui.getPrefs().loop, false);
+
+        // A click on the picture plays / pauses at once (no double-click wait with one video), on the tile's canvas
+        // or the stage around it; with a panel or the menu open it only closes them, also when the press closed them.
+        const canvas = $('cells').querySelector('canvas');
+        canvas.fire('click', { button: 0 });
+        assert.strictEqual(tab().playing, true, 'a click on the picture plays');
+        $('stage').fire('click', { button: 0 });
+        assert.strictEqual(tab().playing, false, 'a click beside a letterboxed picture pauses');
+        ui.controls.show('main', $('cog'));
+        canvas.fire('click', { button: 0 });
+        assert.deepStrictEqual([ui.controls.view(), tab().playing], [null, false], 'with a panel open: only closes it');
+        ui.controls.show('main', $('cog'));
+        canvas.fire('pointerdown', { button: 0, pointerId: 1 });
+        assert.strictEqual(ui.controls.view(), null, 'the press closed the panel');
+        canvas.fire('click', { button: 0 });
+        assert.strictEqual(tab().playing, false, 'and the click that follows does not play');
+        ui.ctxMenu.open(40, 40);
+        canvas.fire('pointerdown', { button: 0, pointerId: 1 });
+        canvas.fire('click', { button: 0 });
+        assert.deepStrictEqual([ui.ctxMenu.isOpen(), tab().playing], [false, false], 'a click that closes the menu does not play');
+        canvas.fire('click', { button: 0 });
+        assert.strictEqual(tab().playing, true, 'the next click plays again');
+        ui.dispatch('playPause');
+
+        // The menu's Set Range Start / End always set; the A key toggles.
+        ui.dispatch('seek', 12);
+        menuEnv.run('setA');
+        menuEnv.run('setA');
+        assert.strictEqual(ui.ab.a, 0.5, 'Set Range Start twice keeps it set');
+        ui.dispatch('seek', 36);
+        menuEnv.run('setB');
+        menuEnv.run('setB');
+        assert.deepStrictEqual([ui.ab.a, ui.ab.b], [0.5, 1.5], 'Set Range End twice keeps it set');
+        ui.dispatch('clearAB');
+        ui.dispatch('setA');
+        ui.dispatch('setA');
+        assert.strictEqual(ui.ab.a, null, 'A twice clears it again');
+
+        // The wheel over the speed button: ±0.05; over the volume: ±5 %.
+        ui.dispatch('volume', 0.5);
+        $('rate').fire('wheel', { deltaY: -100 });
+        assert.ok(Math.abs(ui.getPrefs().rate - 1.05) < 1e-9, 'wheel up over the speed button');
+        assert.strictEqual($('rate').fire('wheel', { deltaY: 100 }).defaultPrevented, true, 'the page does not scroll');
+        assert.ok(Math.abs(ui.getPrefs().rate - 1) < 1e-9, 'wheel down');
+        $('volume').fire('wheel', { deltaY: -100 });
+        assert.ok(Math.abs(ui.getPrefs().volume - 0.55) < 1e-9, 'wheel up over the volume');
+
+        // Volume: a drag goes on past either end and above the bar; a move after the release changes nothing.
+        const vol = $('volume');
+        Object.assign(vol, { min: '0', max: '1', step: '0.05' });
+        dom.setRect(vol, { left: 100, top: 700, width: 100, height: 4 });
+        vol.fire('pointerdown', { button: 0, pointerId: 1, clientX: 150, clientY: 702 });
+        assert.deepStrictEqual([ui.dragState().volume, ui.getPrefs().volume], [true, 0.5], 'the press sets the volume');
+        assert.ok(vol.closest('.vol-wrap').classList.contains('dragging'), 'the slider stays open while dragged');
+        dom.win.fire('pointermove', { pointerId: 1, clientX: 500, clientY: 500 });
+        assert.strictEqual(ui.getPrefs().volume, 1, 'off the right edge');
+        dom.win.fire('pointermove', { pointerId: 1, clientX: -50, clientY: 500 });
+        assert.deepStrictEqual([ui.getPrefs().volume, ui.getPrefs().muted], [0, true], 'off the left edge: silent');
+        dom.win.fire('pointerup', { pointerId: 1, clientX: 160, clientY: 500 });
+        // (a real range input rounds its value to the step; the fake one keeps the float)
+        const v1 = ui.getPrefs().volume;
+        assert.ok(!ui.dragState().volume && Math.abs(v1 - 0.6) < 1e-9, `released at 60 %: ${v1}`);
+        dom.win.fire('pointermove', { pointerId: 1, clientX: 200, clientY: 500 });
+        assert.strictEqual(ui.getPrefs().volume, v1, 'a move after the release does nothing');
+
+        // Seek bar: a drag far above the bar keeps seeking; the release lands on that frame.
+        const seek = $('seek');
+        Object.assign(seek, { min: '0', step: '1' });
+        const want = Math.round(0.75 * Number(seek.max));
+        seek.fire('pointerdown', { button: 0, pointerId: 2, clientX: 680 * 0.2, clientY: 2 });
+        assert.deepStrictEqual([ui.dragState().seek, tab().frame], [true, 48], 'the press seeks');
+        dom.win.fire('pointermove', { pointerId: 2, clientX: 680 * 0.75, clientY: -250 });
+        assert.deepStrictEqual([seek.value, tab().frame], [String(want), want], 'above the bar it still follows');
+        ui.onDecoderFrame(150); // a late decoder frame does not pull the bar back under the pointer
+        assert.strictEqual(seek.value, String(want));
+        dom.win.fire('pointerup', { pointerId: 2, clientX: 680 * 0.75, clientY: -250 });
+        assert.deepStrictEqual([ui.dragState().seek, tab().frame, seek.value], [false, want, String(want)], 'lands where let go');
+        assert.deepStrictEqual(told.filter((e) => e.type === 'seek').pop(), { type: 'seek', frame: want, playing: false });
+
+        // Speed slider: the panel is not redrawn under the drag, so it goes on off the edges until the release.
+        ui.controls.show('speed', $('rate'));
+        const slider = $('speedSlider');
+        dom.setRect(slider, { left: 0, top: 400, width: 375, height: 4 });
+        slider.fire('pointerdown', { button: 0, pointerId: 3, clientX: 100, clientY: 402 });
+        dom.win.fire('pointermove', { pointerId: 3, clientX: 900, clientY: -20 });
+        assert.deepStrictEqual([ui.getPrefs().rate, $('rate').textContent, $('speedSlider')], [4, '4×', slider], 'off the top edge: 4×');
+        dom.win.fire('pointermove', { pointerId: 3, clientX: -20, clientY: -20 });
+        assert.strictEqual(ui.getPrefs().rate, 0.25, 'off the left edge: 0.25×');
+        dom.win.fire('pointerup', { pointerId: 3, clientX: 75, clientY: -20 });
+        dom.win.fire('pointermove', { pointerId: 3, clientX: 375, clientY: -20 });
+        assert.ok(Math.abs(ui.getPrefs().rate - 1) < 1e-9 && $('rate').textContent === '1×', `released at 1×: ${ui.getPrefs().rate}`);
+        ui.controls.close(false);
+      } finally {
+        ui.dispose();
+        delete global.VpeRangeDrag;
+      }
+    });
+  }
+
+  // Compare: its own panel button (#cmpBtn) opens Compare's page; Esc gives it the focus back.
+  mount({ tiles: ['clip-0', 'clip-1'] }, ({ $, ui, key }) => {
+    const b = $('cmpBtn');
+    assert.deepStrictEqual([b.hidden, b.getAttribute('aria-label'), b.getAttribute('aria-expanded')], [false, 'Compare', 'false']);
+    b.fire('click');
+    assert.deepStrictEqual([ui.controls.view(), b.getAttribute('aria-expanded')], ['cmp', 'true'], '#cmpBtn opens the Compare page');
+    key('Escape');
+    assert.deepStrictEqual([ui.controls.view(), b.getAttribute('aria-expanded')], [null, 'false']);
+    assert.strictEqual($('startCompareBtn').hasAttribute('aria-expanded'), false, 'the capture toggle is no menu button');
+  });
+
   // Add to Compare never switches a running capture off.
   mount({ tiles: ['clip-0', 'clip-1'], capture: true }, ({ ui, tab, host, menuEnv }) => {
     const picks = host.log.filter((m) => m.type === 'pickVideo').length;
@@ -878,7 +1033,7 @@ const withGlobals = (dom, fn) => {
   // Clock and sound: tile buttons, the tile menu, the bar, the engine.
   mount({ tiles: ['clip-0', 'clip-1', 'clip-2'] }, ({ $, ui, tab, cellOf, engine, dom, host, key }) => {
     assert.strictEqual($('play').getAttribute('aria-label'), 'Play all', 'Compare plays all');
-    assert.match($('seek').getAttribute('aria-valuetext'), /^A 0:02\.00 of 0:10\.00, frame 49$/, 'the seek slider speaks the clock tile, letter first');
+    assert.match($('seek').getAttribute('aria-valuetext'), /^A 0:02\.000 of 0:10\.000, frame 49$/, 'the seek slider speaks the clock tile, letter first');
     const snd = (id) => cellOf(id).querySelector('[data-act="sound"]');
     assert.strictEqual(snd('clip-0').getAttribute('aria-pressed'), 'false', 'muted by default');
     snd('clip-1').fire('click');
@@ -1075,7 +1230,7 @@ const withGlobals = (dom, fn) => {
   mount({ tiles: ['clip-0'] }, ({ $, engine }) => {
     const seek = $('seek');
     seek.fire('pointermove', { clientX: 340 });
-    assert.strictEqual($('tip').textContent, '0:05.00 · #121', 'time · frame (middle dot, 1-based frame)');
+    assert.strictEqual($('tip').textContent, '0:05.000 · #121', 'time · frame (middle dot, 1-based frame)');
     assert.strictEqual($('tip').hidden, false);
     assert.strictEqual(engine.fake.thumbnails, 1, 'the engine draws the thumbnail');
     const thumb = $('bar').querySelector('canvas.seek-thumb');
@@ -1085,7 +1240,7 @@ const withGlobals = (dom, fn) => {
   });
   mount({ tiles: ['clip-0', 'clip-1'] }, ({ $ }) => {
     $('seek').fire('pointermove', { clientX: 0 });
-    assert.strictEqual($('tip').textContent, 'A 0:00.00 · #1', 'Compare: the clock tile\'s letter first');
+    assert.strictEqual($('tip').textContent, 'A 0:00.000 · #1', 'Compare: the clock tile\'s letter first');
   });
 
   // Wheel, zoom, pan, − / +, Ctrl keys, the go-to box.
@@ -1483,12 +1638,17 @@ async function phase34() {
 
   // Subtitles: C / V / Shift+V / G / H, the CC button, the host's tracks, the cue over the picture, the panel.
   await mountTools({ tiles: ['clip-0'] }, async ({ ui, tab, key, $ }) => {
+    assert.strictEqual($('tracks').hidden, true, 'no CC button while the clip has no subtitle track');
     key('c');
-    assert.match($('toast').textContent, /^No subtitles/, 'C without tracks says how to get some');
+    assert.strictEqual(ui.controls.view(), 'subs', 'C without tracks opens Settings › Subtitles (to load a file)');
+    assert.match($('panel').textContent, /no subtitle tracks/, 'the page says there are none');
+    key('c');
+    assert.strictEqual(ui.controls.view(), null, 'C again closes it');
     $('tracks').fire('click');
     assert.strictEqual(ui.controls.view(), 'subs', 'the CC button without tracks opens Settings › Subtitles');
     key('Escape');
     ui.onHostMessage({ type: 'subs', tracks: [{ name: 'English' }, { lang: 'de' }] });
+    assert.strictEqual($('tracks').hidden, false, 'the CC button shows once there is a track');
     assert.strictEqual($('toast').textContent, 'Subtitles: English', 'the first track comes on');
     assert.deepStrictEqual([$('tracks').classList.contains('on'), $('tracks').getAttribute('aria-label')], [true, 'Subtitles on: English']);
     ui.dispatch('seek', 48);
@@ -1639,7 +1799,7 @@ async function phase34() {
       ui.dispatch('setClock', 'b');
       assert.deepStrictEqual([tab().clockId, tab().fps, tab().maxFrame, tab().frame], ['b', 60, 599, 60], 'B sets the clock: 1 s = frame 60');
       assert.deepStrictEqual([$('seek').max, $('seek').value], ['599', '60'], 'the seek bar follows B');
-      assert.strictEqual($('now').textContent, '0:01.00', 'the readout keeps the moment');
+      assert.strictEqual($('now').textContent, '0:01.000', 'the readout keeps the moment');
       assert.strictEqual(calls[calls.length - 1][2], 60, 'shownFrame gets the clock fps (B: 60)');
       ui.dispatch('seek', 300); // 5 s, past A's 2 s
       ui.dispatch('removeTile', 'b');
