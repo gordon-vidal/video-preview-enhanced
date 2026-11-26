@@ -74,7 +74,8 @@ const NOTICES = new Set(['hideSlowPlaybackNotice', 'hideReducedResNotice']);
  *
  * A host-side decoder for one clip: NativeDecoder, EncodedStream, or what openUrlStream / openSequence return.
  * @typedef {{ handle(m: any): any, dispose(): void, resize?: Function, lossy?: () => boolean, setHidden?: (on: boolean) => void,
- *   setCompareOutput?: Function, setMaxBitrateMbps?: (mbps: number) => void, setResolution?: (h: number) => void,
+ *   setCompareOutput?: Function, setView?: (v: { w: number, h: number }, playing?: boolean) => void,
+ *   setMaxBitrateMbps?: (mbps: number) => void, setResolution?: (h: number) => void,
  *   setQuality?: (pick: 'auto' | number) => any, readBlock?: (pos: number, len: number) => Promise<Uint8Array | null>,
  *   busy?: () => boolean, w?: number, h?: number, videoSize?: () => { width: number, height: number } }} HostDecoder
  * @typedef {{ post(m: any): void, postRaw(m: any): void, log(m: string): void, onFail(err: any): void, hidden: boolean,
@@ -479,6 +480,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   /** @param {ViewerClip} c */
   function startStream(c) {
     const d = c.decision;
+    const multi = session.clips.length >= 2;
     const out = streamOutput(c);
     clipLog(c, `live transcode (${d.stream && d.stream.encoder || 'stream'})`);
     /** @type {HostDecoder} */
@@ -486,7 +488,10 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const current = () => !disposed && natives.get(c.id) === stream;
     const create = /** @type {(c: ViewerClip, opts: any) => HostDecoder} */ (deps.createStream);
     stream = create(c, {
-      decision: d, maxHeight: out ? out.height : d.maxHeight, maxKbps: out ? out.kbps : undefined,
+      decision: d,
+      maxHeight: multi ? (out ? out.height : d.maxHeight) : (d.stream && d.stream.maxHeight > 0 ? d.stream.maxHeight : (out ? out.height : d.maxHeight)),
+      maxKbps: out ? out.kbps : undefined,
+      fitView: !multi && fitTiles(),
       resolution: resolutions.get(c.id), rotation: c.rotation || 0, hidden: panel.visible === false,
       post: (/** @type {any} */ msg) => {
         if (!current()) return;
@@ -607,10 +612,14 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
         lazyShrink.delete(c.id);
         if (had && now && had.height !== now.height) clipLog(c, `${view}: frames ${had.width}x${had.height} -> ${now.width}x${now.height}`);
         resized.push(c.id);
-      } else if (kind === 'stream' && typeof dec.setCompareOutput === 'function') {
-        const out = streamOutput(c);
-        // A grown picture (zoomed in) is not restarted at once: the page seeks it once ('resize').
-        if (out && dec.setCompareOutput(out.height, out.kbps, { deferGrow: true })) resized.push(c.id);
+      } else if (kind === 'stream') {
+        if (session.clips.length < 2 && fit && typeof dec.setView === 'function') {
+          dec.setView({ w: size.w, h: size.h });
+        } else if (typeof dec.setCompareOutput === 'function') {
+          const out = streamOutput(c);
+          // A grown picture (zoomed in) is not restarted at once: the page seeks it once ('resize').
+          if (out && dec.setCompareOutput(out.height, out.kbps, { deferGrow: true })) resized.push(c.id);
+        }
       }
     }
     for (const id of resized) postAny({ type: 'resize', clipId: id, key: id, tiles: [id] });
