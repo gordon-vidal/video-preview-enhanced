@@ -1,6 +1,6 @@
 // @ts-check
 // Picture size (docs/notes/ui-simple.md "Picture size"): how the picture sits in its area, as pure maths the
-// player (media/inspect.js) and compare (media/compare.js) share and test/host/picture_test.js tests.
+// player (media/inspect.js) and the viewer's tiles (media/player-ui.js) share and test/host/picture_test.js tests.
 //
 // A view is { mode, zoom, cx, cy }:
 //   mode  fit | fill | stretch | actual (the base size of the picture, below)

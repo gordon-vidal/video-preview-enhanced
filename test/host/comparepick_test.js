@@ -1,10 +1,11 @@
 'use strict';
-// "Compare with…" quick pick (key D) and dropped videos: row order, recent list, drop parsing, and the commands.
+// "Compare with…" quick pick (key D) and dropped videos: row order, recent list, drop parsing, and the commands
+// that put videos side by side in a viewer (src/extension.js).
 const assert = require('assert');
 const path = require('path');
 const { pickRows, pushRecent, droppedVideos, folderVideos, collectFolderVideos, planAddToCompare, compareTargets, RECENT_MAX } = require('../../src/comparepick');
 const { load } = require('./mock_vscode');
-const { setPickHook } = require('../../src/compare');
+const { setPickHook } = require('../../src/comparepick');
 const { make } = require('../media/make_cases_media');
 
 // ---- order: same folder first, recent first, natural names, no duplicates, the Explorer row, Browse… last ----
@@ -52,219 +53,187 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
   assert.deepStrictEqual(compareTargets('a.mp4', ['p.mp4', 'q.mp4'], [group], isVideo), ['p.mp4', 'q.mp4'], 'Explorer array wins');
 }
 
-// ---- the commands ----
+// ---- the folder walk of Compare folder / Add to Compare (src/comparepick.js collectFolderVideos) ----
+const walks = (async () => {
+  // Recursive subfolder walk: recording/cam1/video.mp4, recording/cam2/video.mp4, recording/cam10/video.mp4.
+  {
+    const tree = {
+      '/rec': [['intro.mp4', 1], ['cam10', 2], ['cam2', 2], ['cam1', 2], ['link-loop', 2 | 64], ['unreadable', 2]],
+      '/rec/cam1': [['video.mp4', 1], ['sub', 2]],
+      '/rec/cam1/sub': [['deep.mkv', 1]],
+      '/rec/cam2': [['video.mp4', 1 | 64], ['notes.txt', 1]],
+      '/rec/cam10': [['video.mp4', 1]],
+      '/rec/link-loop': [['bad.mp4', 1]],
+    };
+    const readDir = async (p) => {
+      if (p === '/rec/unreadable') throw new Error('EACCES');
+      return tree[p] || [];
+    };
+    const join = (p, name) => `${p}/${name}`;
+    assert.deepStrictEqual(
+      await collectFolderVideos('/rec', readDir, join),
+      ['/rec/intro.mp4', '/rec/cam1/video.mp4', '/rec/cam2/video.mp4', '/rec/cam10/video.mp4',
+        '/rec/link-loop/bad.mp4', '/rec/cam1/sub/deep.mkv'],
+      'collectFolderVideos walks level by level in natural order, follows symlinked dirs, skips unreadable ones',
+    );
+    assert.deepStrictEqual(
+      await collectFolderVideos('/rec', readDir, join, { maxDepth: 1 }),
+      ['/rec/intro.mp4', '/rec/cam1/video.mp4', '/rec/cam2/video.mp4', '/rec/cam10/video.mp4', '/rec/link-loop/bad.mp4'],
+      'maxDepth stops deeper recursion',
+    );
+    assert.deepStrictEqual(
+      await collectFolderVideos('/rec', readDir, join, { maxDirs: 2 }),
+      ['/rec/intro.mp4', '/rec/cam1/video.mp4'],
+      'maxDirs bounds total directories visited',
+    );
+    // Symlinked subfolder with videos; bare symlink / unknown entries resolved by stat (Docker, FUSE, remote).
+    {
+      const t = {
+        '/r': [['lnk', 2 | 64], ['mnt', 64], ['unk', 0], ['f', 0], ['a.mp4', 1]],
+        '/r/lnk': [['x.mp4', 1]], '/r/mnt': [['y.mkv', 1]], '/r/unk': [['z.mov', 1]],
+      };
+      const rd = async (p) => t[p] || [];
+      const st = async (p) => ({ type: p === '/r/f' ? 1 : 2 });
+      assert.deepStrictEqual(await collectFolderVideos('/r', rd, join, { stat: st }),
+        ['/r/a.mp4', '/r/lnk/x.mp4', '/r/mnt/y.mkv', '/r/unk/z.mov'], 'symlink and unknown dirs are followed');
+      assert.deepStrictEqual(await collectFolderVideos('/r', rd, join), ['/r/a.mp4', '/r/lnk/x.mp4'],
+        'without stat only flagged directories are followed');
+      const logs = [];
+      await collectFolderVideos('/r', rd, join, { stat: async () => { throw new Error('boom'); }, log: (m) => logs.push(m) });
+      assert.ok(logs.some((m) => /boom/.test(m)), 'stat errors are logged');
+    }
+    // Cycles: root/loop -> root, a/b -> a, via a realPath that resolves links.
+    {
+      const real = { '/c/loop': '/c', '/c/a/b': '/c/a', '/c/a/b/b': '/c/a' };
+      const t = {
+        '/c': [['loop', 2 | 64], ['a', 2], ['top.mp4', 1]],
+        '/c/a': [['b', 2 | 64], ['in.mp4', 1]],
+      };
+      const rd = async (p) => t[real[p] || p] || [];
+      const rp = async (p) => real[p] || p;
+      assert.deepStrictEqual(await collectFolderVideos('/c', rd, join, { realPath: rp }),
+        ['/c/top.mp4', '/c/a/in.mp4'], 'circular symlinks end, no duplicates');
+      // No realPath: maxDepth still ends the loop, and no URI is listed twice.
+      const seen = await collectFolderVideos('/c', rd, join, { maxDepth: 3 });
+      assert.strictEqual(new Set(seen).size, seen.length, 'no duplicate URIs');
+    }
+    // A deep empty subtree must not starve siblings.
+    {
+      const rd = async (p) => {
+        if (p === '/d') return [['aaa', 2], ['zzz', 2]];
+        if (p === '/d/zzz') return [['v.mp4', 1]];
+        return p.split('/').length < 14 ? [['n', 2], ['m', 2]] : [];
+      };
+      assert.deepStrictEqual(await collectFolderVideos('/d', rd, join, { maxDirs: 50 }), ['/d/zzz/v.mp4'],
+        'breadth-first: sibling video found before the budget runs out');
+    }
+  }
+})();
+
+// ---- the commands (src/extension.js over the viewer) ----
 (async () => {
+  await walks;
   const a = make('s_h264.mp4');
   const b = make('rotated.mp4');
   assert.ok(a && b, 'ffmpeg test clips');
   const folder = path.dirname(a);
-  const h = load({ settings: { 'videoPreviewEnhanced.decoder': 'ffmpeg' } });
+  const h = load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin', 'videoPreviewEnhanced.compare.maxVideos': 4 } });
   try {
     const V = h.vscode;
-    const panels = [];
-    V.window.createWebviewPanel = (_type, _title, viewColumn) => {
-      const p = {
-        viewColumn,
-        webview: { cspSource: 'x:', asWebviewUri: (u) => u, postMessage() {}, onDidReceiveMessage() {} },
-        onDidDispose(fn) { (this.closeListeners ||= []).push(fn); },
-        onDidChangeViewState(fn) { (this.viewListeners ||= []).push(fn); },
-        activate() { for (const fn of this.viewListeners) fn(); },
-        dispose() { for (const fn of this.closeListeners) fn(); },
-      };
-      panels.push(p);
-      return p;
-    };
+    const panels = h.autoPanels();
+    const names = (p) => p.cfg().clips.map((c) => c.name);
+    const joined = (p) => p.posted.filter((m) => m.type === 'openVideo').map((m) => m.label);
+    const shown = (p) => [...names(p), ...joined(p)];
     V.window.showWarningMessage = async () => undefined;
-    V.workspace.fs = {
-      readDirectory: async (u) => (u.toString() === V.Uri.file(folder).toString()
-        ? [[path.basename(a), 1], [path.basename(b), 1], ['sub', 2], ['x.txt', 1]]
-        : []),
-      writeFile: async () => {},
-    };
+    V.workspace.fs.readDirectory = async (u) => (u.toString() === V.Uri.file(folder).toString()
+      ? [[path.basename(a), 1], [path.basename(b), 1], ['sub', 2], ['x.txt', 1]]
+      : []);
     V.workspace.findFiles = async () => [V.Uri.file(path.join(folder, 'other', 'w.mp4'))];
-    V.QuickPickItemKind = { Separator: -1 };
+    V.workspace.asRelativePath = (u) => path.basename(u.fsPath);
     const pick = V._commands['videoPreviewEnhanced.comparePick'];
-    assert.ok(pick && V._commands['videoPreviewEnhanced.compareDrop'], 'commands are registered');
     const uriA = V.Uri.file(a);
-    // Add Mode as the page-context key last had it (src/addmode.js startsInAddMode decides at creation).
-    const ctxOn = () => ((V.executed || []).filter((c) => c[0] === 'setContext' && c[1] === 'videoPreviewEnhanced.addMode').pop() || [])[2] === true;
+    const ctx = (key) => ((V.executed || []).filter((c) => c[0] === 'setContext' && c[1] === key).pop() || [])[2] === true;
 
+    // Key D's quick pick from the command: its rows; a picked video opens a comparison of the two.
     let items = null;
     setPickHook(async (it) => { items = it; return it.find((i) => i.uri && i.label === path.basename(b)); });
-    await pick(uriA, { t: 1 });
-    assert.deepStrictEqual(items.map((i) => i.label), ['Same folder', path.basename(b), 'Workspace', 'w.mp4', '', '$(list-tree) Click videos in the Explorer…', '$(folder-opened) Browse…'].map((l) => l), 'rows');
+    await pick(uriA);
+    assert.deepStrictEqual(items.map((i) => i.label), ['Same folder', path.basename(b), 'Workspace', 'w.mp4', '', '$(list-tree) Click videos in the Explorer…', '$(folder-opened) Browse…'], 'rows');
     assert.strictEqual(items[0].kind, -1, 'sections are separators');
-    assert.strictEqual(panels.length, 1, 'picking a video opens compare');
-    assert.deepStrictEqual(V.executed, [
-      ['setContext', 'videoPreviewEnhanced.compareOpen', false],
-      ['setContext', 'videoPreviewEnhanced.compareOpen', true],
-    ], 'opening Compare enables the open context; a picked pair opens with Add Mode off (no explicit add-more intent)');
+    assert.strictEqual(panels.length, 1, 'picking a video opens a comparison');
+    assert.deepStrictEqual(names(panels[0]), [path.basename(a), path.basename(b)]);
+    assert.ok(ctx('videoPreviewEnhanced.compareOpen'), 'the compare-open context key is on');
+    assert.ok(!ctx('videoPreviewEnhanced.addMode'), 'a picked pair opens with Capture off');
     const recent = h.context.globalState.get('videoPreviewEnhanced.compareRecent');
-    assert.ok(recent[0] === uriA.toString() && recent[1].includes(path.basename(b)) || recent.length === 2, `recent: ${recent}`);
+    assert.ok(recent.includes(uriA.toString()) && recent.some((u) => u.includes(path.basename(b))), `recent: ${recent}`);
 
-    // Browse… hands over to Compare With… (the open dialog, several files).
+    // Browse… goes to the open dialog (several files); cancelled there: nothing. Escape: nothing either.
+    let dialogs = 0;
+    V.window.showOpenDialog = async () => { dialogs++; return undefined; };
     setPickHook(async (it) => it.find((i) => i.browse));
-    await pick(uriA, { t: 2 });
-    assert.deepStrictEqual(V.executed.pop().slice(0, 2), ['videoPreviewEnhanced.compareWith', uriA]);
-    // Escape: nothing happens.
+    await pick(uriA);
+    assert.strictEqual(dialogs, 1, 'Browse… opens the dialog');
     setPickHook(async () => undefined);
     await pick(uriA);
     assert.strictEqual(panels.length, 1);
+    setPickHook(null);
+
+    // The page's "Add video" in a viewer asks the same hook (tests) instead of the dialog.
+    await panels[0].send({ type: 'ready' });
+    panels[0].panel.dispose();
 
     // Folder, file and mixed Explorer selections all route through the same command.
     const infos = [];
     V.window.showInformationMessage = async (m) => { infos.push(m); return undefined; };
-    V.window.tabGroups = { all: [], close: async () => {}, onDidChangeTabs: () => ({ dispose() {} }) };
     const folderUri = V.Uri.file(folder);
-    V.FileType = { Directory: 2 };
     V.workspace.fs.stat = async (uri) => ({ type: uri.toString() === folderUri.toString() ? 2 : 1 });
     const add = V._commands['videoPreviewEnhanced.addToCompare'];
-    const [old] = panels;
-    old.dispose();
     await V._commands['videoPreviewEnhanced.compareFolder'](folderUri);
     let current = panels.at(-1);
-    assert.strictEqual(panels.length, 2, 'the folder opens in one compare');
-    assert.ok(!ctxOn(), 'a folder (several files at once) opens with Add Mode off');
+    assert.strictEqual(panels.length, 2, 'the folder opens in one viewer');
+    assert.deepStrictEqual(names(current), [path.basename(b), path.basename(a)], 'in natural order');
     assert.deepStrictEqual(infos, [], 'no message for two videos');
-    await V._commands['videoPreviewEnhanced.stopAddFromExplorer']();
+    await current.send({ type: 'ready' });
+    current.panel.active = true;
+    current.setVisible(true); // the viewer becomes the active one
     V.workspace.fs.readDirectory = async (u) => (u.toString() === folderUri.toString()
       ? [[path.basename(a), 1], ['nested.mp4', 2], ['one.mp4', 1], ['x.txt', 1]]
       : []);
     const one = V.Uri.file(path.join(folder, 'one.mp4'));
+    require('fs').copyFileSync(a, one.fsPath);
     await add(one, [one, folderUri]);
-    assert.strictEqual(panels.length, 2, 'the mixed selection appends to the existing compare');
-    assert.ok(/"names":\["rotated\.mp4","s_h264\.mp4","one\.mp4"\]/.test(current.webview.html), 'folder overlap is skipped');
-    assert.ok(!ctxOn(), 'append keeps Add Mode off');
+    assert.strictEqual(panels.length, 2, 'the mixed selection joins the active viewer');
+    assert.deepStrictEqual(shown(current), [path.basename(b), path.basename(a), 'one.mp4'], 'folder overlap is skipped');
 
-    // Recursive subfolder walk: recording/cam1/video.mp4, recording/cam2/video.mp4, recording/cam10/video.mp4.
-    {
-      const tree = {
-        '/rec': [['intro.mp4', 1], ['cam10', 2], ['cam2', 2], ['cam1', 2], ['link-loop', 2 | 64], ['unreadable', 2]],
-        '/rec/cam1': [['video.mp4', 1], ['sub', 2]],
-        '/rec/cam1/sub': [['deep.mkv', 1]],
-        '/rec/cam2': [['video.mp4', 1 | 64], ['notes.txt', 1]],
-        '/rec/cam10': [['video.mp4', 1]],
-        '/rec/link-loop': [['bad.mp4', 1]],
-      };
-      const readDir = async (p) => {
-        if (p === '/rec/unreadable') throw new Error('EACCES');
-        return tree[p] || [];
-      };
-      const join = (p, name) => `${p}/${name}`;
-      assert.deepStrictEqual(
-        await collectFolderVideos('/rec', readDir, join),
-        ['/rec/intro.mp4', '/rec/cam1/video.mp4', '/rec/cam2/video.mp4', '/rec/cam10/video.mp4',
-          '/rec/link-loop/bad.mp4', '/rec/cam1/sub/deep.mkv'],
-        'collectFolderVideos walks level by level in natural order, follows symlinked dirs, skips unreadable ones',
-      );
-      assert.deepStrictEqual(
-        await collectFolderVideos('/rec', readDir, join, { maxDepth: 1 }),
-        ['/rec/intro.mp4', '/rec/cam1/video.mp4', '/rec/cam2/video.mp4', '/rec/cam10/video.mp4', '/rec/link-loop/bad.mp4'],
-        'maxDepth stops deeper recursion',
-      );
-      assert.deepStrictEqual(
-        await collectFolderVideos('/rec', readDir, join, { maxDirs: 2 }),
-        ['/rec/intro.mp4', '/rec/cam1/video.mp4'],
-        'maxDirs bounds total directories visited',
-      );
-      // Symlinked subfolder with videos; bare symlink / unknown entries resolved by stat (Docker, FUSE, remote).
-      {
-        const t = {
-          '/r': [['lnk', 2 | 64], ['mnt', 64], ['unk', 0], ['f', 0], ['a.mp4', 1]],
-          '/r/lnk': [['x.mp4', 1]], '/r/mnt': [['y.mkv', 1]], '/r/unk': [['z.mov', 1]],
-        };
-        const rd = async (p) => t[p] || [];
-        const st = async (p) => ({ type: p === '/r/f' ? 1 : 2 });
-        assert.deepStrictEqual(await collectFolderVideos('/r', rd, join, { stat: st }),
-          ['/r/a.mp4', '/r/lnk/x.mp4', '/r/mnt/y.mkv', '/r/unk/z.mov'], 'symlink and unknown dirs are followed');
-        assert.deepStrictEqual(await collectFolderVideos('/r', rd, join), ['/r/a.mp4', '/r/lnk/x.mp4'],
-          'without stat only flagged directories are followed');
-        const logs = [];
-        await collectFolderVideos('/r', rd, join, { stat: async () => { throw new Error('boom'); }, log: (m) => logs.push(m) });
-        assert.ok(logs.some((m) => /boom/.test(m)), 'stat errors are logged');
-      }
-      // Cycles: root/loop -> root, a/b -> a, via a realPath that resolves links.
-      {
-        const real = { '/c/loop': '/c', '/c/a/b': '/c/a', '/c/a/b/b': '/c/a' };
-        const t = {
-          '/c': [['loop', 2 | 64], ['a', 2], ['top.mp4', 1]],
-          '/c/a': [['b', 2 | 64], ['in.mp4', 1]],
-        };
-        const rd = async (p) => t[real[p] || p] || [];
-        const rp = async (p) => real[p] || p;
-        assert.deepStrictEqual(await collectFolderVideos('/c', rd, join, { realPath: rp }),
-          ['/c/top.mp4', '/c/a/in.mp4'], 'circular symlinks end, no duplicates');
-        // No realPath: maxDepth still ends the loop, and no URI is listed twice.
-        const seen = await collectFolderVideos('/c', rd, join, { maxDepth: 3 });
-        assert.strictEqual(new Set(seen).size, seen.length, 'no duplicate URIs');
-      }
-      // A deep empty subtree must not starve siblings.
-      {
-        const rd = async (p) => {
-          if (p === '/d') return [['aaa', 2], ['zzz', 2]];
-          if (p === '/d/zzz') return [['v.mp4', 1]];
-          return p.split('/').length < 14 ? [['n', 2], ['m', 2]] : [];
-        };
-        assert.deepStrictEqual(await collectFolderVideos('/d', rd, join, { maxDirs: 50 }), ['/d/zzz/v.mp4'],
-          'breadth-first: sibling video found before the budget runs out');
-      }
-    }
-    const other = await V._commands['videoPreviewEnhanced.compare'](uriA, [uriA, V.Uri.file(b)]);
-    current.active = true;
-    current.activate();
-    current.active = false;
-    await add(V.Uri.file(path.join(folder, 'recent.mp4')));
-    assert.ok(current.webview.html.includes('recent.mp4') && !other.webview.html.includes('recent.mp4'),
-      'the most recently active compare receives the selection');
-    other.panel.dispose();
+    // None: said so. Beyond the space: says how many were skipped and adds what fits.
     V.workspace.fs.readDirectory = async () => [];
     await add(folderUri);
     assert.ok(/no videos/.test(infos.pop()), 'none: said so');
     V.workspace.fs.readDirectory = async () => Array.from({ length: 10 }, (_, i) => [`clip${i + 1}.mp4`, 1]);
+    for (let i = 1; i <= 10; i++) require('fs').copyFileSync(a, path.join(folder, `clip${i}.mp4`));
     await add(folderUri);
-    assert.ok(/skipped 6 videos/.test(infos.pop()), 'reports unique videos beyond the available space');
-    assert.ok(current.webview.html.includes('clip4.mp4') && !current.webview.html.includes('clip5.mp4'), 'adds what fits');
-    current.dispose();
-    await add(uriA);
-    current = panels.at(-1);
-    assert.ok(/"names":\["s_h264\.mp4"\]/.test(current.webview.html), 'one file starts a one-tile compare');
-    assert.ok(ctxOn(), 'a single video started from the context menu turns Add Mode on');
-    await V._commands['videoPreviewEnhanced.stopAddFromExplorer']();
-    assert.ok(!ctxOn(), 'Esc: off');
-    const multi = await add(V.Uri.file(a), [V.Uri.file(a), V.Uri.file(b)]);
-    assert.ok(multi && !ctxOn(), 'several files chosen at once open with Add Mode off');
-    multi.panel.dispose();
+    assert.ok(/skipped 9 videos/.test(infos.pop()), 'reports unique videos beyond the available space');
+    assert.ok(shown(current).includes('clip1.mp4') && !shown(current).includes('clip2.mp4'), 'adds what fits');
+    current.panel.dispose();
 
-    // A drop: videos only, not the file itself, files only.
-    const before = panels.length;
-    await V._commands['videoPreviewEnhanced.compareDrop'](uriA, ['file:///tmp/readme.md', uriA.toString(), 'http://h/a.mp4',
-      'file://share.invalid/videos/a.mp4', 'file:////share.invalid/videos/a.mp4', 'vscode-remote://ssh-remote+other/a.mp4'], { t: 0 });
-    assert.strictEqual(panels.length, before, 'nothing usable dropped');
-    const dropped = await V._commands['videoPreviewEnhanced.compareDrop'](uriA, [V.Uri.file(b).toString()], { t: 0 });
-    assert.strictEqual(panels.length, before + 1, 'a dropped video opens compare');
-    dropped.panel.dispose();
-    current.dispose();
-    const player = h.open(a);
-    player.panel.active = true;
-    const promoted = await add(uriA);
-    assert.deepStrictEqual(promoted.uris.map(String), [uriA.toString()], 'selecting the active player file promotes it once');
-    assert.strictEqual(promoted.panel.viewColumn, player.panel.viewColumn, 'Compare takes the player tab’s group');
-    assert.ok(ctxOn(), 'a one-video compare started from a player file starts Add Mode');
-    await V._commands['videoPreviewEnhanced.stopAddFromExplorer']();
-    promoted.panel.dispose();
-    // One file chosen while a player of another video is open makes a two-video compare: no one asked for more.
-    const player2 = h.open(b);
-    player2.panel.active = true;
-    const pair = await add(uriA);
-    assert.strictEqual(pair.uris.length, 2, 'the player and the chosen video');
-    assert.ok(!ctxOn(), 'a two-video compare from a single right-click opens with Add Mode off');
-    pair.panel.dispose();
+    // A drop on a viewer's page: videos only, files only, not the file itself.
+    const dropTo = h.open(a);
+    await dropTo.send({ type: 'ready' });
+    await dropTo.send({ type: 'compareDrop', uris: ['file:///tmp/readme.md', uriA.toString(), 'http://h/a.mp4',
+      'file://share.invalid/videos/a.mp4', 'vscode-remote://ssh-remote+other/a.mp4'] });
+    assert.deepStrictEqual(joined(dropTo), [], 'nothing usable dropped');
+    await dropTo.send({ type: 'compareDrop', uris: [V.Uri.file(b).toString()] });
+    assert.deepStrictEqual(joined(dropTo), [path.basename(b)], 'a dropped video joins the viewer');
+    dropTo.panel.dispose();
 
     // End-to-end compareFolder on a folder whose videos live only in subfolders.
     const recUri = V.Uri.file(path.join(folder, 'recording'));
     const cam1Uri = V.Uri.joinPath(recUri, 'cam1');
     const cam2Uri = V.Uri.joinPath(recUri, 'cam2');
-    V.FileType = { File: 1, Directory: 2, SymbolicLink: 64 };
+    for (const [dirUri, file] of [[cam1Uri, a], [cam2Uri, b]]) {
+      require('fs').mkdirSync(dirUri.fsPath, { recursive: true });
+      require('fs').copyFileSync(file, path.join(dirUri.fsPath, path.basename(file)));
+    }
     V.workspace.fs.stat = async (u) => ({ type: u.toString() === recUri.toString() ? 2 : 1 });
     V.workspace.fs.readDirectory = async (u) => {
       if (u.toString() === recUri.toString()) return [['cam2', 2], ['cam1', 2]];
@@ -273,14 +242,15 @@ assert.deepStrictEqual(choose(['c'], { compare: { uris: ['a', 'a', 'b'] } }).fil
       return [];
     };
     const nested = await V._commands['videoPreviewEnhanced.compareFolder'](recUri);
-    assert.deepStrictEqual(
-      nested.uris.map((u) => u.toString()),
+    assert.deepStrictEqual(nested.session.clips.map((c) => c.uri.toString()),
       [V.Uri.joinPath(cam1Uri, path.basename(a)).toString(), V.Uri.joinPath(cam2Uri, path.basename(b)).toString()],
-      'compareFolder opens subfolder videos in natural subfolder order',
-    );
+      'compareFolder opens subfolder videos in natural subfolder order');
     nested.panel.dispose();
   } finally {
     setPickHook(null);
     h.dispose();
+    const fs = require('fs');
+    fs.rmSync(path.join(folder, 'recording'), { recursive: true, force: true });
+    for (const n of ['one.mp4', ...Array.from({ length: 10 }, (_, i) => `clip${i + 1}.mp4`)]) fs.rmSync(path.join(folder, n), { force: true });
   }
-})().then(() => console.log('comparepick: ok'), (e) => { console.error(e); process.exitCode = 1; });
+})().then(() => { console.log('comparepick: ok'); process.exit(0); }, (e) => { console.error(e); process.exit(1); });

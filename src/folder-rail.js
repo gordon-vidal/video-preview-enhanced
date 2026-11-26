@@ -586,8 +586,8 @@ function createFolderRail(deps) {
   };
 }
 /**
- * A page's rail message (media/folder-rail.js), for any host: the single player (src/extension.js Session) and
- * Compare (src/compare.js CompareSession). Listing, metadata and remembered look are the same; what a row does is
+ * A page's rail message (media/folder-rail.js), for any host: the viewer (src/unified-viewer.js) with one video or
+ * several. Listing, metadata and remembered look are the same; what a row does is
  * the host's (play it in this tab, add it to this Compare, ...). Ids are checked against the current listing: the
  * page never sends a path.
  *

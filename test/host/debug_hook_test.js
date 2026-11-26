@@ -1,6 +1,6 @@
 'use strict';
-// node test/host/debug_hook_test.js: the VPE_LOG command hook runs only allowlisted
-// commands, and its player messages always arrive as type 'debug' (review 2 #12).
+// node test/run.js unit --grep debug_hook: the VPE_LOG command hook (src/debug-cmd.js) runs only allowlisted
+// commands, and its messages to the viewers always arrive as type 'debug' (review 2 #12).
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -14,6 +14,7 @@ const { load } = require('./mock_vscode');
   const h = load({ env: { VPE_LOG: logFile } });
   try {
     const s = h.open(file);
+    await s.send({ type: 'ready' }); // the viewer's page takes messages once it is ready
     const lines = [
       { command: 'videoPreviewEnhanced.makeDefault' },
       { command: 'videoPreviewEnhanced.setupFfmpeg' },

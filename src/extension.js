@@ -1,29 +1,25 @@
 'use strict';
-/** @import { ReadBlockRequest } from '../tools/read-block-contract.js' */
-/** @import { ExportGrab, ThumbReply, ThumbRequest } from '../tools/page-work-contract.js' */
 const T_LOAD = Date.now(); // start-up timeline (tests): when the extension's module started loading
 // Video Preview Enhanced: a decode-only video player for VS Code.
 // The extension host only reads files; all decoding happens in the webview
 // (WebCodecs for what the GPU decoder handles, libav.js WebAssembly for the rest).
+// Every video opens in the unified viewer (src/unified-viewer.js over src/unified-session.js, the page
+// media/player-unified.js): one panel that shows one video and grows to a comparison of several and back.
 const vscode = require('vscode');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
-const { serveBlock, readFileBlock } = require('./read-block');
 const {
   VIDEO_EXT, MOVE_TO_NEW_WINDOW, videoPickerOptions, isLocalFile, videoColumn, localVideoTarget, playerViewType,
 } = require('./open-video');
 // Modules a feature needs (URLs, ffmpeg setup and download, A-B export, AVI, the remote stream) load on first use:
 // a window start pays only for what it runs. The proxy forwards property reads to the real module.
 const lazy = (load) => { let m; return new Proxy({}, { get: (_, k) => (m || (m = load()))[k] }); };
-const avi = lazy(() => require('./avi'));
 const { findSequence } = require('./sequence');
 const ff = require('./ffmpeg');
 const setup = lazy(() => require('./setup'));
 const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
-const { nativeThumb } = require('./thumbhost');
 const { ExactFrameGrabber } = require('./exact_frame');
 const { toggleFocusMode, noteFocusModeExited, resetFocusMode, setFocusModeListener } = require('./focus-mode');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
@@ -36,13 +32,15 @@ const decide = require('./decide'); // native ffmpeg or built-in, per file
 const localff = lazy(() => require('./localff')); // "Use an ffmpeg I already have…"
 const remoteff = lazy(() => require('./remoteff')); // ffmpeg downloaded on the remote host, for the remote stream
 const proxy = lazy(() => require('./proxy'));
-const { rotationOf, sniffNativeMp4 } = require('./rotation');
-const { sniffNativeMatroska } = require('./sniff-matroska');
-const { EarlyProbeController } = require('./early-probe');
-const { registerCompare, setPickHook, maxVideos: compareMaxVideos } = require('./compare'); // compare mode (src/compare.js)
-const { createUnifiedRegistry } = require('./unified-session'); // which unified viewer takes a newly opened video
-const unifiedViewer = require('./unified-viewer'); // the opt-in unified viewer's host (one panel, 1 to N videos)
-const { playerHtml, inlineAssetsFor, SCRIPTS: PLAYER_SCRIPTS, CSS: PLAYER_CSS } = require('./player-html'); // the player page's HTML, CSP and script order
+const { rotationOf } = require('./rotation');
+const { createUnifiedRegistry } = require('./unified-session'); // which viewer takes a newly opened video (capture)
+const unifiedViewer = require('./unified-viewer'); // the viewer's host (one panel, 1 to N videos)
+const { createSequenceDecoder, createUrlDecoder, sequenceFacts } = require('./unified-sources'); // URL and sequence clips
+const {
+  pickRows, pushRecent, droppedVideos, collectFolderVideos, compareTargets, VIDEO_EXT: COMPARE_VIDEO_EXT, setPickHook, getPickHook,
+} = require('./comparepick'); // Compare's quick pick, selections and the test hook
+const { BURST_WINDOW_MS, createBurst, togetherNotice } = require('./burst'); // Open Together
+const Grid = require('../media/compare-grid');
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy(() => require('./rangecmd')); // A-B frame export and ffmpeg command
@@ -54,7 +52,7 @@ const urlsource = lazy(() => require('./urlsource')); // Open Video URL… (docs
 const { createSettings, PREFS } = require('./settings'); // settings, player prefs, globalState fallback
 const { createOffers } = require('./offers'); // onboarding, hint, GPU test and remote ffmpeg offers
 const { createAssociations } = require('./associations'); // default viewer for MP4/WebM, file icons
-const { createFrameLink, isLocalVideo, sameFile, hlsPlanText } = require('./framelink'); // frame links, native frame sizes, log texts
+const { createFrameLink, isLocalVideo } = require('./framelink'); // frame links, native frame sizes
 const { createDebugCommands } = require('./debug-cmd'); // the VPE_LOG test hook (<log>.cmd)
 const { linkSimulatorFromEnv, effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VPE_SIMULATE_REMOTE
 const { LinkSessionMemory } = require('./stream-adapt');
@@ -63,10 +61,13 @@ const folderRail = require('./folder-rail'); // the folder rail, neighbours, Aut
 
 const HIDE_SLOW_PLAYBACK_NOTICE = 'videoPreviewEnhanced.hideSlowPlaybackNotice';
 const HIDE_REDUCED_RES_NOTICE = 'videoPreviewEnhanced.hideReducedResNotice';
+/** The notices "Don't show again" hides for good, by the page's action id. */
+const NOTICE_KEYS = { hideSlowPlaybackNotice: HIDE_SLOW_PLAYBACK_NOTICE, hideReducedResNotice: HIDE_REDUCED_RES_NOTICE };
 const VIEW_TYPES = ['videoPreviewEnhanced.player', 'videoPreviewEnhanced.playerOptional'];
-const MAX_WAV_BYTES = 512 * 1024 * 1024;
-const WAV_PART_BYTES = 8 * 1024 * 1024;
-const MAX_BLOCK = 8 * 1024 * 1024;
+/** The webview panel type of a viewer a Compare command opens (not a custom editor: it has several files). */
+const COMPARE_VIEW_TYPE = 'videoPreviewEnhanced.compare';
+const SEQUENCE_VIEW_TYPE = 'videoPreviewEnhanced.sequence';
+const RECENT_KEY = 'videoPreviewEnhanced.compareRecent';
 
 let out;
 let globalState;
@@ -97,21 +98,19 @@ const remoteName = () => effectiveRemoteName(vscode);
 /** VPE_SIMULATE_LINK: one slow / flaky link shared by every player and Compare panel (null when unset, the normal case). */
 let linkSim = null;
 const sessionLink = new LinkSessionMemory();
-const sessions = new Set();
-const compareSessions = new Set(); // open compare panels (src/compare.js)
-// The unified viewer (src/unified-viewer.js; the setting unifiedViewer, off by default): its open panels, the registry
-// that says which one captures a newly opened video, and what it shares with the player and Compare (set in activate).
+// The open viewers (src/unified-viewer.js), the registry that says which one captures a newly opened video, and what
+// they get from this host (set in activate).
 const unifiedViewers = new Set();
 const unifiedRegistry = createUnifiedRegistry();
 let unifiedDeps = null;
+/** The viewer the user used last (export and subtitle commands act on it when no viewer is active). */
+let lastViewer = null;
 const clipExports = new WeakSet();
 /** Sound codecs whose WebCodecs decoder lagged in this VS Code session ('audio-aac', ...): the built-in decoder plays them from then on. */
 const wcFailed = new Set();
-// Frame links (vscode://<id>/open?…) waiting for their player: file URI string -> {t, frame}.
+// Frame links (vscode://<id>/open?…) waiting for their viewer: file URI string -> {t, frame}.
 const pendingGoto = new Map();
-// Folder navigation (src/folder-rail.js): the intent a new tab takes over (rail state, Autoplay), registered before
-// vscode.openWith, and the file metadata (ffprobe) the rails of every tab share.
-const railHandoffs = folderRail.createHandoffs();
+// The file metadata (ffprobe) the folder rails of every viewer share.
 const railMeta = folderRail.createMetaCache();
 /** ffprobe (cached by size and date) for the rail's Duration column and hover card; none in Restricted Mode. */
 async function railProbe(file, signal) {
@@ -121,19 +120,14 @@ async function railProbe(file, signal) {
   const pr = await ff.probe(t, file, signal);
   return { duration: pr.duration, width: pr.video && pr.video.width, height: pr.video && pr.video.height, codec: pr.video && pr.video.codec };
 }
-/** The rail's remembered look (width, column, Playable formats), shared by every player and Compare. */
+/** The rail's remembered look (width, column, Playable formats), shared by every viewer. */
 const railPrefs = {
   get: () => globalState.get(folderRail.RAIL_PREFS_KEY),
   set: (v) => globalState.update(folderRail.RAIL_PREFS_KEY, v),
 };
-let adoptSeq = 0;
-// How long an open target may take to apply a folder navigation (its player may still be opening). Without its
-// answer the source tab stays open: nothing is closed on a guess.
+// How long a page may take to adopt a folder rail handed over to it (src/unified-viewer.js railHandoff).
 const ADOPT_MS = Number(process.env.VPE_ADOPT_MS) > 0 && logFile ? Number(process.env.VPE_ADOPT_MS) : 20000;
-const PENDING_GOTO_MS = 30e3; // a link's player normally opens within a second
-let lastActive = null;
-/** Compare's add mode (src/compare.js registerCompare): claimOpen(uri) takes a video VS Code is opening. */
-let compareApi = null;
+const PENDING_GOTO_MS = 30e3; // a link's viewer normally opens within a second
 
 function log(msg) {
   out.appendLine(msg);
@@ -141,17 +135,17 @@ function log(msg) {
 }
 
 const { prefTarget, rememberPlaybackPrefs, prefsOf, config, setSetting } = createSettings({
-  vscode, getState: () => globalState, log, transcodePolicy, sessions, compareSessions, unifiedViewers,
+  vscode, getState: () => globalState, log, transcodePolicy, pages: unifiedViewers,
 });
 const { makeDefault, undoDefault, autoDefault, fileIcons } = createAssociations({ vscode, getState: () => globalState, log });
 const {
-  gotoFrom, parseLink, parseCompareLink, remoteAuthority, localTarget, frameLink, nativeHeights, fitsView, nativeKey, nativeHeight, probeSummary, urlBase,
+  gotoFrom, parseLink, parseCompareLink, remoteAuthority, localTarget, frameLink, nativeHeights, fitsView, nativeHeight, probeSummary, urlBase,
 } = createFrameLink({ vscode, config, decide, nativeTransport, probe, urlsource, parseFragment });
 
 const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
 
 function broadcastFocusMode(active) {
-  for (const sess of [...sessions, ...compareSessions, ...unifiedViewers]) sess.post({ type: 'focusMode', active: !!active });
+  for (const v of unifiedViewers) v.post({ type: 'focusMode', active: !!active });
 }
 setFocusModeListener(broadcastFocusMode);
 
@@ -254,7 +248,7 @@ function runProbeUi(t, hw, { userAsked = false, reload = null } = {}) {
       // Not while native ffmpeg plays: both would slow down (4K HEVC played at 6 instead of 15 fps
       // under a running probe on the Core Ultra laptop), and the probe's timings would be too low.
       idle: async () => {
-        for (let said = false; !abort.signal.aborted && [...sessions].some((x) => x.native && x.native.busy()); said = true) {
+        for (let said = false; !abort.signal.aborted && [...unifiedViewers].some((v) => v.busy()); said = true) {
           if (!said) { log('ffmpeg probe: waiting while native playback runs'); progress.report({ message: 'waiting while a video plays' }); }
           await new Promise((r) => setTimeout(r, 1000));
         }
@@ -334,29 +328,6 @@ function nativeTransport() {
   if (remoteName()) return 'message';
   const t = logFile ? process.env.VPE_NATIVE_TRANSPORT : '';
   return /^(message|http|ws|fail)$/.test(t || '') ? t : 'http';
-}
-
-// The last player's picture area in device pixels (NativeDecoder fitView): the size an ffmpeg started before its page guesses.
-// Kept in globalState (LAST_VIEW_KEY) too, so the first video of the next session starts at the right size.
-let lastView = null;
-const LAST_VIEW_KEY = 'videoPreviewEnhanced.lastView';
-let lastViewTimer = null;
-function storedView() {
-  const v = globalState && globalState.get(LAST_VIEW_KEY);
-  return v && v.w >= 16 && v.h >= 16 && v.w <= 32768 && v.h <= 32768 ? { w: Math.round(v.w), h: Math.round(v.h) } : null;
-}
-/** Remembers a non-zoomed picture size; the globalState write waits until resizing has settled. */
-function rememberView(w, h) {
-  if (lastView && lastView.w === w && lastView.h === h) return;
-  lastView = { w, h };
-  if (lastViewTimer) clearTimeout(lastViewTimer);
-  lastViewTimer = setTimeout(flushView, 1000);
-  if (lastViewTimer.unref) lastViewTimer.unref();
-}
-function flushView() {
-  if (lastViewTimer) { clearTimeout(lastViewTimer); lastViewTimer = null; }
-  const s = storedView();
-  if (lastView && globalState && !(s && s.w === lastView.w && s.h === lastView.h)) globalState.update(LAST_VIEW_KEY, lastView);
 }
 
 /** Proxy for downloads: http.proxy / HTTPS_PROXY tunnelled here; otherwise VS Code's own routing applies. */
@@ -457,7 +428,7 @@ async function downloadRemoteFfmpeg() {
   toolsPromise = null;
   const nt = await tools();
   vscode.window.showInformationMessage(nt ? `Video Preview: ffmpeg ready on ${host} (${nt.version.replace(/ Copyright.*/, '')}). Live transcode uses it from now on.` : `Video Preview: ffmpeg was downloaded on ${host} but does not run there; see the output log.`);
-  for (const s of sessions) s.reload('ffmpeg changed');
+  reloadViewers('ffmpeg changed');
 }
 
 const DRIVER_NOTICE_KEY = 'videoPreviewEnhanced.nvencDriverNotice';
@@ -624,7 +595,7 @@ async function finishSetup() {
   toolsPromise = null;
   const nt = await tools();
   vscode.window.showInformationMessage(nt ? `Video Preview: ffmpeg is set up (${nt.version.replace(/ Copyright.*/, '')}).` : 'Video Preview: ffmpeg not found yet');
-  for (const sess of sessions) sess.reload('ffmpeg changed');
+  reloadViewers('ffmpeg changed');
   // No automatic GPU test after setup either; "Video Preview: Re-test ffmpeg" runs it on request.
 }
 
@@ -635,26 +606,42 @@ function libavBuild(extUri) {
   return { dir, loader, variant: 'vpe' };
 }
 
-/** Export commands: ask the active player for its A-B range (it replies with 'exportRange' or 'ffmpegRange'). */
+/** The viewer the export and subtitle commands act on: the active one, else the one used last. */
+function activeViewer() {
+  return [...unifiedViewers].find((v) => v.panel.active) || (lastViewer && !lastViewer.disposed ? lastViewer : null);
+}
+
+/** Export commands: ask the active viewer for its A-B range (it replies with 'exportRange', 'ffmpegRange' or 'clipRange'). */
 function askRange(then) {
-  const s = [...sessions].find((x) => x.panel.active) || (lastActive && !lastActive.disposed ? lastActive : null);
-  if (!s || s.sequence) {
-    vscode.window.showInformationMessage(s ? 'Video Preview: frame export works for video files.' : 'Video Preview: open a video and set an A-B loop (A and B keys) first.');
+  const v = activeViewer();
+  const first = v && v.session.clips[0];
+  if (!v || (first && first.kind === 'sequence')) {
+    vscode.window.showInformationMessage(v ? 'Video Preview: frame export works for video files.' : 'Video Preview: open a video and set an A-B loop (A and B keys) first.');
     return undefined;
   }
-  s.post({ type: 'abQuery', then });
+  v.queryAb(then);
   return undefined;
 }
 
 function askClipRange(compare) {
-  const target = [...(compare ? compareSessions : sessions)].find((s) => s.panel.active);
-  if (target) target.post({ type: 'abQuery', then: 'clip' });
+  const target = [...unifiedViewers].find((v) => v.panel.active && (!compare || v.session.clips.length >= 2));
+  if (target) target.queryAb('clip');
   else vscode.window.showInformationMessage('Video Preview: open a video or Compare and mark an A-B range first.');
 }
 
-async function exportClips(session, jobs, source, compare = false) {
-  if (clipExports.has(session)) return;
-  if (!source || session.url || session.sequence || !FS_SCHEMES.has(source.scheme)) {
+/** A viewer's file clips, all reloaded (ffmpeg was set up, downloaded or changed). @param {string} why */
+function reloadViewers(why) {
+  for (const v of unifiedViewers) v.reloadAll(why).catch((e) => log(`reload (${why}) failed: ${e && e.message || e}`));
+}
+
+/**
+ * A-B clip export (src/clipexport.js) of a viewer's clip: native ffmpeg cuts the file. `clip` is the clip the page's
+ * range is for. One export per viewer at a time.
+ */
+async function exportClips(viewer, clip, jobs) {
+  if (clipExports.has(viewer)) return;
+  const source = clip && clip.uri;
+  if (!source || clip.kind === 'url' || clip.kind === 'sequence' || !FS_SCHEMES.has(source.scheme)) {
     vscode.window.showInformationMessage('Video Preview: clip export requires a video file on this host.');
     return;
   }
@@ -662,18 +649,22 @@ async function exportClips(session, jobs, source, compare = false) {
     vscode.window.showInformationMessage('Video Preview: set an A-B loop first with A and B.');
     return;
   }
-  const refusal = syntheticRefusal(jobs, session.liveTranscodeTiles ? session.liveTranscodeTiles() : [], compare);
+  const live = viewer.session.clips.flatMap((c, i) => (viewer.decoderKind(c.id) === 'stream' ? [i] : []));
+  const refusal = syntheticRefusal(jobs, live, false);
   if (refusal) {
     // Marks without source timestamps: refuse before any ffmpeg work, and offer the switch in one click.
     const answer = await vscode.window.showWarningMessage(refusal.message, ...(refusal.label ? [refusal.label] : []));
-    if (answer && answer === refusal.label && !session.disposed) session.useOriginalForClips(refusal.tiles);
+    if (answer && answer === refusal.label && !viewer.disposed) {
+      if (refusal.tiles.length) viewer.useOriginalVideo();
+      else viewer.useFullRes();
+    }
     return;
   }
   if (!vscode.workspace.isTrusted) {
     vscode.window.showWarningMessage('Video Preview: clip export requires native ffmpeg in a trusted workspace.');
     return;
   }
-  clipExports.add(session);
+  clipExports.add(viewer);
   try {
     const native = await tools();
     if (!native) {
@@ -686,8 +677,8 @@ async function exportClips(session, jobs, source, compare = false) {
     }
     const testDir = logFile && process.env.VPE_CLIP_EXPORT_DIR;
     await clipExport.exportClips({
-      vscode, tools: native, jobs, compare, defaultUri: vscode.Uri.joinPath(source, '..'), log,
-      announce: (message) => session.post({ type: 'toast', text: message, ms: 5000 }),
+      vscode, tools: native, jobs, compare: false, defaultUri: vscode.Uri.joinPath(source, '..'), log,
+      announce: (message) => viewer.post({ type: 'toast', text: message, ms: 5000 }),
       testFolder: testDir ? vscode.Uri.file(testDir) : undefined,
       testConfirm: !!testDir && process.env.VPE_CLIP_EXPORT_CONFIRM === '1',
     });
@@ -695,7 +686,7 @@ async function exportClips(session, jobs, source, compare = false) {
     log(`A–B export failed: ${e.message}`);
     vscode.window.showErrorMessage(`Video Preview: A–B export failed. ${e.message}`);
   } finally {
-    clipExports.delete(session);
+    clipExports.delete(viewer);
   }
 }
 
@@ -784,7 +775,7 @@ async function firstBytes(plan, opts) {
 }
 
 /**
- * Opens a player panel for a URL the user entered (checked again here). where: 'active' (this editor group),
+ * Opens a viewer panel for a URL the user entered (checked again here). where: 'active' (this editor group),
  * 'side' (the group beside it, as VS Code's "Open to the Side") or 'window' (a new window: the panel opens
  * here, then VS Code moves it with workbench.action.moveEditorToNewWindow).
  */
@@ -793,17 +784,18 @@ async function openUrl(context, url, where = 'active') {
   if (c.error) { vscode.window.showWarningMessage(`Video Preview: ${c.error}`); return undefined; }
   await urlsource.rememberUrl(globalState, c.url);
   const column = videoColumn(where, vscode.ViewColumn);
-  const panel = vscode.window.createWebviewPanel(URL_VIEW_TYPE, urlsource.displayName(c.url), { viewColumn: column, preserveFocus: false }, { retainContextWhenHidden: true, enableFindWidget: false });
+  const name = urlsource.displayName(c.url);
+  const panel = vscode.window.createWebviewPanel(URL_VIEW_TYPE, name, { viewColumn: column, preserveFocus: false }, { retainContextWhenHidden: true, enableFindWidget: false });
   panel.iconPath = new vscode.ThemeIcon('globe');
-  const sess = new Session(context, { url: c.url }, panel);
   if (where === 'window') {
     // The new panel is the active editor: move it (the webview moves with its context kept).
     try { await vscode.commands.executeCommand(MOVE_TO_NEW_WINDOW); }
     catch (e) { log(`open URL in a new window: ${e && e.message || e}`); }
   }
-  log(`[${sess.name}] URL tab opened (${where})`);
-  await sess.show();
-  return sess;
+  const clip = unifiedViewer.sourceClip('url', c.url, { label: name, source: { url: c.url } });
+  const viewer = await showViewer(context, panel, clip);
+  log(`[${name}] URL tab opened (${where})`);
+  return viewer;
 }
 
 /** @param {import('./open-video').OpenTarget} where @param {unknown} [clicked] */
@@ -845,6 +837,13 @@ async function openLocalVideo(where, clicked) {
   }
 }
 
+/** Open Together (src/burst.js): videos VS Code opens within a moment of each other become one viewer. */
+let burst = null;
+/** The viewer a panel hosts (a burst can catch a video whose tab already became a viewer). */
+const panelViewers = new WeakMap();
+/** Tests (VPE_LOG only): the next Start Compare's open dialog result. */
+let testCompareFiles;
+
 function activate(context) {
   T_ACTIVATE = Date.now();
   out = vscode.window.createOutputChannel('Video Preview Enhanced');
@@ -857,38 +856,28 @@ function activate(context) {
     setupFfmpeg,
     turnOffTranscode: async () => {
       await setSetting('transcode', 'off', vscode.ConfigurationTarget.Global);
-      for (const s of sessions) {
-        if (!s.disposed && s.native instanceof remotestream.EncodedStream) s.useOriginalVideo();
-      }
+      for (const v of unifiedViewers) if (!v.disposed) v.useOriginalVideo();
     },
     downloadRemoteFfmpeg,
-    hostPlatform, hostArch, hostname: () => os.hostname(), sessions,
+    hostPlatform, hostArch, hostname: () => os.hostname(),
+    // The GPU test pauses what plays through native ffmpeg ('pauseForTest').
+    sessions: { [Symbol.iterator]: () => [...unifiedViewers].map((v) => ({
+      native: v.session.clips.some((c) => v.decoderKind(c.id) === 'native'), disposed: v.disposed, post: (m) => v.post(m),
+    }))[Symbol.iterator]() },
   });
   // A method guessed from the stored GPUs produced no picture: maybe another GPU or driver now; detect again.
   onGuessFailed(() => { hwStale = true; hwPromise = null; });
   storageDir = context.globalStorageUri.fsPath;
   extensionDir = context.extensionUri.fsPath;
+  burst = createBurst({
+    // Tests (VPE_BURST_MS): a shorter window.
+    windowMs: Number(process.env.VPE_BURST_MS) > 0 ? Number(process.env.VPE_BURST_MS) : BURST_WINDOW_MS,
+    max: maxVideos, onBurst: (b) => openBurst(context, b),
+  });
 
   const provider = {
     openCustomDocument: (uri) => ({ uri, dispose() {} }),
-    resolveCustomEditor: (doc, panel) => {
-      if (logFile) log(`[${path.basename(doc.uri.path)}] player resolve started`);
-      // A folder navigation of the player (Shift+N, the rail, Autoplay) opens this tab in its place: it is a player,
-      // never taken by Compare's Add Mode or Open Together.
-      const handoff = railHandoffs.take(doc.uri.with({ fragment: '' }).toString(), panel.viewColumn);
-      // Add mode (docs/notes/compare-ui.md): the video goes into compare, and this new tab closes unused.
-      if (!handoff && compareApi && compareApi.claimOpen(doc.uri)) { setTimeout(() => panel.dispose(), 0); return undefined; }
-      // The unified viewer (opt-in): one panel for 1 to N videos; a viewer that captures takes this video instead.
-      if (!handoff && unifiedWanted(doc.uri)) return openUnified(context, doc.uri, panel);
-      // Several videos opened at once (an Explorer multi-selection) become one compare (src/burst.js).
-      const noted = !handoff && !!compareApi && compareApi.noteOpen(doc.uri, { panel });
-      const session = new Session(context, { uri: doc.uri, handoff }, panel);
-      // Opened with others within a moment: compare takes these videos, so the heavy start-up (page, decoder, ffprobe) waits
-      // for its verdict and never happens for them. A video opened alone starts at once (one macrotask later).
-      const hold = noted ? compareApi.holdOpen(doc.uri) : null;
-      if (!hold) return session.show();
-      return hold.then((taken) => (taken ? undefined : session.show()));
-    },
+    resolveCustomEditor: (doc, panel) => resolveVideo(context, doc.uri, panel),
   };
   for (const viewType of VIEW_TYPES) {
     context.subscriptions.push(vscode.window.registerCustomEditorProvider(viewType, provider, {
@@ -911,14 +900,7 @@ function activate(context) {
         if (!pick) return;
         target = pick[0];
       }
-      const seq = await findSequence(target.fsPath);
-      if (!seq) {
-        vscode.window.showWarningMessage('Video Preview: no numbered image sequence found there (needs at least two files like frame_0001.png).');
-        return;
-      }
-      const panel = vscode.window.createWebviewPanel('videoPreviewEnhanced.sequence', seq.name, vscode.ViewColumn.Active, { retainContextWhenHidden: true });
-      panel.iconPath = new vscode.ThemeIcon('device-camera-video');
-      await new Session(context, { uri: target, sequence: seq }, panel).show();
+      await openSequence(context, target);
     }),
     vscode.commands.registerCommand('videoPreviewEnhanced.showLog', () => out.show()),
     // Arguments are ignored: the URL comes from the input box only (never from a command link or a page).
@@ -934,14 +916,14 @@ function activate(context) {
       const url = await promptUrl();
       if (url) await openUrl(context, url, 'window');
     }),
-    vscode.window.registerUriHandler({ handleUri: (uri) => openLink(uri).catch((e) => log(`link failed: ${e && e.stack || e}`)) }),
+    vscode.window.registerUriHandler({ handleUri: (uri) => openLink(context, uri).catch((e) => log(`link failed: ${e && e.stack || e}`)) }),
     vscode.commands.registerCommand('videoPreviewEnhanced.setupFfmpeg', () => setupFfmpeg()),
     vscode.commands.registerCommand('videoPreviewEnhanced.retestFfmpeg', () => retestFfmpeg()),
     vscode.commands.registerCommand('videoPreviewEnhanced.makeDefault', () => makeDefault(true)),
     vscode.commands.registerCommand('videoPreviewEnhanced.undoDefault', () => undoDefault()),
     vscode.commands.registerCommand('videoPreviewEnhanced.loadSubtitles', () => {
-      const s = [...sessions].find((x) => x.panel.active) || (lastActive && !lastActive.disposed ? lastActive : null);
-      if (s) return s.loadSubtitles();
+      const v = activeViewer();
+      if (v) return v.session.onMessage({ type: 'loadSubs' });
       vscode.window.showInformationMessage('Video Preview: open a video first, then load subtitles for it.');
       return undefined;
     }),
@@ -950,18 +932,29 @@ function activate(context) {
     vscode.commands.registerCommand('videoPreviewEnhanced.copyFfmpegRange', () => askRange('ffmpeg')),
     vscode.commands.registerCommand('videoPreviewEnhanced.exportVideoRange', () => askClipRange(false)),
     vscode.commands.registerCommand('videoPreviewEnhanced.exportCompareVideoRange', () => askClipRange(true)),
-    // ---- end A-B export ----
+    // ---- Compare: more videos into a viewer (docs/notes/compare-ui.md) ----
+    vscode.commands.registerCommand('videoPreviewEnhanced.startCompare', (uri, uris) => compareSelection(context, uri, uris)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.addToCompare', (uri, uris) => compareSelection(context, uri, uris)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.compareFolder', (uri, uris) => compareSelection(context, uri, uris)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.compare', (uri, uris) => compareList(context, uri, uris)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.compareWith', (uri, opts) => compareWith(context, uri, opts)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.comparePick', (uri) => comparePick(context, uri)),
+    vscode.commands.registerCommand('videoPreviewEnhanced.addToCompareFromPlayer', (uri) => addToCompareFromPlayer(uri)),
+    // Add from Explorer is the viewer's Capture: the next videos opened join it instead of opening their own tab.
+    vscode.commands.registerCommand('videoPreviewEnhanced.addFromExplorer', () => {
+      const v = activeViewer();
+      if (v) v.session.setCapture(!v.session.capture);
+    }),
+    vscode.commands.registerCommand('videoPreviewEnhanced.stopAddFromExplorer', () => {
+      for (const v of unifiedViewers) v.session.setCapture(false);
+    }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('videoPreviewEnhanced.ffmpegPath')) toolsPromise = null;
       if (e.affectsConfiguration('videoPreviewEnhanced.gpuDecoding')) probeChecked = false;
-      // Cheap to apply at once: larger frames with a seek to the same moment, smaller ones at the next seek.
-      if (e.affectsConfiguration('videoPreviewEnhanced.sizeFramesToView')) for (const s of sessions) if (s.native && s.native.setFit) s.native.setFit(fitsView());
       if (e.affectsConfiguration('videoPreviewEnhanced.overrideFileIcons')) fileIcons({ force: true });
-      // Docked or overlaid: the same rail, another class; every open player follows at once.
+      // Docked or overlaid: the same rail, another class; every open viewer follows at once.
       if (e.affectsConfiguration('videoPreviewEnhanced.folderRail.layout')) {
         const layout = config().railLayout;
-        for (const s of sessions) if (s.railAllowed()) s.post({ type: 'rail', op: 'layout', layout });
-        for (const c of compareSessions) if (c.railDir && c.railDir()) c.post({ type: 'rail', op: 'layout', layout });
         for (const v of unifiedViewers) v.post({ type: 'rail', op: 'layout', layout });
       }
       if (Object.keys(PREFS).some((k) => e.affectsConfiguration(`videoPreviewEnhanced.${k}`))
@@ -972,21 +965,20 @@ function activate(context) {
         || e.affectsConfiguration('videoPreviewEnhanced.remoteStream')) {
         const c = config();
         if (e.affectsConfiguration('videoPreviewEnhanced.transcodeMaxBitrate')) {
-          for (const s of sessions) {
-            if (s.native instanceof remotestream.EncodedStream) {
-              s.native.setMaxBitrateMbps(c.transcodeMaxBitrate);
-            }
+          // One stream in a panel takes the cap itself; several share it (src/unified-viewer.js resizeDecoders).
+          for (const v of unifiedViewers) {
+            const streams = v.session.clips.filter((x) => v.decoderKind(x.id) === 'stream');
+            const s = streams.length === 1 ? v.decoderOf(streams[0].id) : null;
+            if (s && s.setMaxBitrateMbps) s.setMaxBitrateMbps(c.transcodeMaxBitrate);
           }
         }
         const msg = { type: 'prefs', prefs: prefsOf(c) };
-        for (const sess of [...sessions, ...compareSessions, ...unifiedViewers]) sess.post(msg);
-        for (const sess of compareSessions) sess.updateTranscode(msg.prefs);
+        for (const v of unifiedViewers) v.post(msg);
       }
     }),
     { dispose: flushSpeeds },
-    { dispose: flushView },
     { dispose: () => {
-      for (const s of [...compareSessions]) s.dispose();
+      for (const v of [...unifiedViewers]) v.dispose();
       frameserver.stop();
     } },
     out,
@@ -994,162 +986,1064 @@ function activate(context) {
   autoDefault();
   fileIcons();
 
-  // ---- Compare and Add to Compare (src/compare.js) ----
-  let testCompareFiles;
-  const compareDeps = {
-    vscode, log, sessions, compareSessions, nativeTransport, nativeQueue, exportClips, linkSim, remoteAuthority,
-    compareOpenChanged: () => { for (const session of sessions) session.sendCompareOpen(); },
-    showOpenDialog: logFile ? (options) => {
-      const files = testCompareFiles;
-      testCompareFiles = undefined;
-      return files || vscode.window.showOpenDialog(options);
-    } : undefined,
-    lastActivePlayer: () => lastActive,
-    // Videos compared lately (uri strings): the quick pick on key D lists them first.
-    recent: { get: () => (globalState && globalState.get('videoPreviewEnhanced.compareRecent')) || [], set: (v) => globalState && globalState.update('videoPreviewEnhanced.compareRecent', v) },
-    // The folder rail in Compare: the same controller, metadata cache, probe and remembered look as the player's.
+  // ---- what every viewer gets from this host (src/unified-viewer.js o.deps) ----
+  unifiedDeps = {
+    log, engineCfg: (w) => engineCfg(context, w), nativeFor, nativeTransport, nativeQueue, rotationOf,
+    fitTiles: () => fitsView(config()),
+    nativeFailed,
+    libavBuild: () => libavBuild(context.extensionUri), prefs: () => prefsOf(config()), maxVideos,
+    pick: (label, defaultUri, many) => pickVideos(label, defaultUri, many),
+    setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
+    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : noteFocusModeExited()),
     rail: {
       cache: railMeta, probe: railProbe, prefs: railPrefs, layout: () => config().railLayout,
       caseless: process.platform === 'win32' || process.platform === 'darwin',
     },
-    // Compare's bar and panels are the player's: the same jump sizes, written the same way.
-    prefs: () => prefsOf(config()),
-    setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
-    setTranscodePref: (key, value) => setSetting(key, value, vscode.ConfigurationTarget.Global),
-    informTranscode: (sess) => offers.maybeInformTranscode(sess),
-    setPref: (key, value) => (PREFS[key] && PREFS[key].values.includes(value) ? setSetting(key, value, prefTarget(key)) : undefined),
-    // Leave compare: the player takes compare's place, at the kept video's moment.
-    openPlayer: async (uri, t, viewColumn) => {
-      const key = uri.with({ fragment: '' }).toString();
-      if (t > 0) pendingGoto.set(key, { g: { t }, until: Date.now() + PENDING_GOTO_MS });
-      const viewType = playerViewType(uri);
-      await vscode.commands.executeCommand('vscode.openWith', uri, viewType, { viewColumn, preview: false });
-    },
-    engineCfg: (w) => {
-      const build = libavBuild(context.extensionUri);
-      const base = w.asWebviewUri(build.dir).toString();
-      return {
-        workerUrl: w.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', 'decoder-worker.js')).toString(),
-        libavBase: base, loader: `${base}/${build.loader}`, variant: build.variant,
-        remote: !!remoteName(), whenSlow: 'every', debug: !!logFile,
-        wcFailed: [...wcFailed],
-        mem: memBudgets(), // the whole machine's; media/compare.js shares it among the tiles (review 2026-11-19-3 M3)
-      };
-    },
-    // Compare shares probe and decoder policy with the player, then sizes the tile in the panel.
-    nativeFor: async (file, transport, tile) => {
+    createStream, transcodePrefs: () => {
       const c = config();
-      const remote = remoteName();
-      const rawAllowed = nativeAllowedHere();
-      if (c.decoder === 'builtin' || !vscode.workspace.isTrusted || (!rawAllowed && c.transcode === 'off')) return null;
-      const t = await tools();
-      if (!t) return null;
-      const [pr] = await Promise.all([ff.probe(t, file), rawAllowed ? gpusForMethod(t, c) : null]);
-      const stat = await fs.promises.stat(file);
-      const failed = decide.failedBefore(globalState.get(decide.FAILED_KEY), file, stat);
-      const maxStreamHeight = c.nativeMaxAuto ? decide.FRAME_SERVER_HEIGHT : c.nativeMaxHeight;
-      if (!failed && c.transcode !== 'off' && pr.video) {
-        const remoteLink = !!remote && remote !== 'wsl';
-        const decision = transcodePolicy.shouldTranscodeOnOpen({
-          mode: c.transcode, remote, video: pr.video, compare: true,
-          maxBitrateMbps: c.transcodeMaxBitrate, viewHeight: tile && tile.h, toneMap: transcodeArgs.toneMapSupport(t.gpuFilters),
-        });
-        // Each tile decides on its own clip (codec, bit rate): say why, so a mixed grid can be explained from the log.
-        const name = path.basename(file);
-        if (decision.action !== 'stream') log(`compare ${name}: live transcode skipped: ${decision.reason}`);
-        else {
-          const stream = await transcodeOptions(t, pr, c, remoteLink, false);
-          // Policy chose it; whether it runs depends on an encoder being available.
-          log(stream ? `compare ${name}: live transcode on: ${decision.reason}`
-            : `compare ${name}: live transcode chosen (${decision.reason}) but no encoder is available: falling back`);
-          if (stream) return { tools: t, probed: pr, maxHeight: maxStreamHeight, stream, informTranscode: c.transcode !== 'always' };
-        }
-      }
-      if (!rawAllowed) return null;
-      const messageMaxHeight = nativeHeights(c).message;
-      const maxHeight = transport === 'message' ? messageMaxHeight : c.nativeMaxAuto ? decide.FRAME_SERVER_HEIGHT : c.nativeMaxHeight;
-      const d = decide.decide({
-        setting: c.decoder, remote, trusted: true, tools: t, video: pr.video, probe: probeRecordFor(t), hw: hwKnown,
-        failed, gpu: c.gpuDecoding, maxHeight,
-        transport: transport === 'message' ? 'message' : 'stream',
-      });
-      return { tools: d.use === 'native' ? t : null, probed: pr, method: d.method, methodGuessed: !!d.guessed, maxHeight, messageMaxHeight, reason: d.reason };
+      return { transcodeMaxBitrate: c.transcodeMaxBitrate, transcodeSplitBitrate: c.transcodeSplitBitrate };
     },
-  };
-  compareApi = registerCompare(context, compareDeps);
-  // ---- end compare mode ----
-
-  // ---- the unified viewer (opt-in): the decoder config and native decision Compare's tiles use, per clip ----
-  unifiedDeps = {
-    log, engineCfg: compareDeps.engineCfg, nativeFor: compareDeps.nativeFor, nativeTransport, nativeQueue, rotationOf,
-    libavBuild: () => libavBuild(context.extensionUri), prefs: () => prefsOf(config()), maxVideos: compareMaxVideos,
-    pick: (label, defaultUri, many) => (compareDeps.showOpenDialog || vscode.window.showOpenDialog)({
-      canSelectMany: !!many, openLabel: label, defaultUri, filters: videoPickerOptions().filters,
-    }),
-    setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
-    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : noteFocusModeExited()),
-    rail: { ...compareDeps.rail },
+    openUrlStream: (c, io) => createUrlDecoder(c, io, urlDeps(c, io)),
+    openSequence: (c, io) => createSequenceDecoder(c, io),
+    findSidecars: (uri, logTo) => findSidecars(vscode, uri, logTo),
+    loadSubtitles: (c, viewer) => loadSubtitles(c, viewer),
+    saveFrame: (c, m, viewer) => saveFrame(c, m, viewer),
+    copyLink: (c, at, viewer) => frameLink(context, c.uri, at.frame, at.t, viewer.panel.webview),
+    exportAb: (kind, c, m, viewer) => exportAb(kind, c, m, viewer),
+    grabExactFrame: (a) => grabExactFrame(a),
+    savePos: (c, pos) => savePos(c.fsPath, pos),
+    watchFile: (file, onChange, onError) => watchFile(file, onChange, onError),
+    external: (c, viewer) => openExternal(c, viewer),
+    openUrl: async () => { const url = await promptUrl(); if (url) await openUrl(context, url); },
+    setupFfmpeg: () => setupFfmpeg(),
+    setSetting: (key, value) => setSetting(key, value, vscode.ConfigurationTarget.Global),
+    hideNotice: async (id) => {
+      if (!NOTICE_KEYS[id]) return;
+      await globalState.update(NOTICE_KEYS[id], true);
+      for (const v of unifiedViewers) v.post({ type: id });
+    },
+    hiddenNotices: () => Object.keys(NOTICE_KEYS).filter((id) => globalState.get(NOTICE_KEYS[id])),
+    ffmpegState,
+    setTranscodePref: (m) => setTranscodePref(m),
+    onPageMessage: (m, viewer) => onPageMessage(m, viewer),
+    compareFolder: (folder, viewer) => compareFolderRow(viewer, folder),
+    // The first-open popup (no ffmpeg yet) once a video's page shows, as the player did.
+    onReady: () => { offers.maybeOnboard().catch((e) => log(`onboarding failed: ${e && e.message || e}`)); },
+    adoptMs: ADOPT_MS,
+    // VPE_SIMULATE_LINK (tests): every panel's native traffic shares one slow link.
+    link: (name) => (linkSim ? linkSim.wrapChannel(name) : null),
     debug: !!logFile, remote: !!vscode.env.remoteName,
   };
 
-  // Test hook: with VPE_LOG set, JSON lines appended to <log>.cmd are sent to open players or run as commands.
+  // Test hook: with VPE_LOG set, JSON lines appended to <log>.cmd are sent to open viewers or run as commands.
   createDebugCommands({
-    vscode, fs, log, logFile, sessions, compareSessions, frameserver, remotestream, setPickHook, openUrl, openLink,
+    vscode, fs, log, logFile, viewers: unifiedViewers, frameserver, remotestream, setPickHook, openUrl, openLink: (uri) => openLink(context, uri),
     resetTools: () => { toolsPromise = null; }, // PATH may have gained or lost ffmpeg
     setCompareFiles: (files) => { testCompareFiles = files; },
+    replaceClip: async (viewer, index, uri) => {
+      const old = viewer.session.clips[index];
+      if (!old) return false;
+      const clip = await unifiedViewer.prepareClip(uri, prepDeps());
+      return viewer.session.replaceClip(old.id, clip);
+    },
   }).install(context);
   T_ACTIVATED = Date.now();
   if (logFile) log(`activated: module load ${T_ACTIVATE - T_LOAD} ms, activate() ${T_ACTIVATED - T_ACTIVATE} ms, pid ${process.pid}`);
 }
 
-/**
- * Whether this video opens in the unified viewer: the setting is on and the lane can show it. A frame link's moment
- * (a #t= fragment, a pending vscode:// link) and anything that is not a file on disk stay with the shipped player.
- */
-function unifiedWanted(uri) {
-  if (!unifiedDeps || !unifiedViewer.isViewable(uri) || uri.fragment) return false;
-  if (vscode.workspace.getConfiguration('videoPreviewEnhanced').get('unifiedViewer') !== true) return false;
-  return !pendingGoto.has(uri.toString());
+// ---- the decoder config and the native decision, per clip ----
+
+/** The page's decoder config (media/engine.js cfg), shared by every clip of a viewer. */
+function engineCfg(context, w) {
+  const c = config();
+  const build = libavBuild(context.extensionUri);
+  const base = w.asWebviewUri(build.dir).toString();
+  const media = (f) => w.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', f)).toString();
+  return {
+    workerUrl: media('decoder-worker.js'), xrayWorkerUrl: media('xray-worker.js'),
+    libavBase: base, loader: `${base}/${build.loader}`, variant: build.variant,
+    remote: !!remoteName(), whenSlow: c.whenSlow, fastWhenBehind: c.fastWhenBehind, debug: !!logFile,
+    wcFailed: [...wcFailed],
+    pool: debugPool,
+    mem: memBudgets(), // the whole machine's; the page shares it among the clips it shows
+    hdrOutput: c.hdrOutput,
+    // Tests (VPE_LOG only): VPE_HDR_FORCE=1 takes the HDR output path on an SDR display.
+    hdrForce: !!logFile && process.env.VPE_HDR_FORCE === '1',
+    // Tests (VPE_LOG only): VPE_NO_WEBGL=1 makes the decoder fail as on a machine without WebGL2 (the error screen).
+    noWebgl: !!logFile && process.env.VPE_NO_WEBGL === '1',
+  };
 }
 
 /**
- * Opens a video file in the unified viewer (src/unified-viewer.js). A viewer whose capture is on takes it into its
- * own panel, and the tab VS Code just made closes unused; else that tab becomes a viewer. A file the lane cannot
- * prepare (it vanished, no access) goes to the player, which shows the error.
+ * Native ffmpeg or Live transcode for a file (src/unified-viewer.js prepareClip): the probe, the transcode policy and
+ * the decoder rule. Null: the built-in decoder. `tile`: the tile's picture size when known (Live transcode's height).
  */
-async function openUnified(context, uri, panel) {
-  let gone = false;
-  panel.onDidDispose(() => { gone = true; });
-  const prep = { rotationOf, nativeFor: unifiedDeps.nativeFor, transport: nativeTransport, log };
-  let clip;
-  try {
-    clip = await unifiedViewer.prepareClip(uri, prep);
-  } catch (e) {
-    log(`unified viewer: cannot prepare ${path.basename(uri.fsPath)} (${e && e.message || e}); using the player`);
-    return gone ? undefined : new Session(context, { uri }, panel).show();
+async function nativeFor(file, transport, tile) {
+  const c = config();
+  const remote = remoteName();
+  const rawAllowed = nativeAllowedHere();
+  if (c.decoder === 'builtin' || !vscode.workspace.isTrusted || (!rawAllowed && c.transcode === 'off')) return null;
+  const t = await tools();
+  if (!t) return null;
+  const [pr] = await Promise.all([ff.probe(t, file), rawAllowed ? gpusForMethod(t, c) : null]);
+  const stat = await fs.promises.stat(file);
+  const failed = decide.failedBefore(globalState.get(decide.FAILED_KEY), file, stat);
+  const maxStreamHeight = c.nativeMaxAuto ? decide.FRAME_SERVER_HEIGHT : c.nativeMaxHeight;
+  const name = path.basename(file);
+  if (!failed && c.transcode !== 'off' && pr.video) {
+    const remoteLink = (!!remote && remote !== 'wsl') || c.remoteStream === 'on';
+    const decision = transcodePolicy.shouldTranscodeOnOpen({
+      mode: c.transcode, remote, video: pr.video, compare: true,
+      maxBitrateMbps: c.transcodeMaxBitrate, viewHeight: tile && tile.h, toneMap: transcodeArgs.toneMapSupport(t.gpuFilters),
+    });
+    // Each clip decides on its own (codec, bit rate): say why, so a mixed grid can be explained from the log.
+    if (decision.action !== 'stream') log(`${name}: live transcode skipped: ${decision.reason}`);
+    else {
+      const stream = await transcodeOptions(t, pr, c, remoteLink, false);
+      // Policy chose it; whether it runs depends on an encoder being available.
+      log(stream ? `${name}: live transcode on: ${decision.reason}`
+        : `${name}: live transcode chosen (${decision.reason}) but no encoder is available: falling back`);
+      if (stream) return { tools: t, probed: pr, maxHeight: maxStreamHeight, stream, informTranscode: c.transcode !== 'always' };
+    }
   }
-  if (gone) return undefined;
-  const routed = unifiedRegistry.routeOpen(clip);
-  if (routed.captured) {
-    log(`unified viewer: ${clip.label} ${routed.added ? 'joined' : 'not added to'} ${routed.session.title}`);
+  if (!rawAllowed) return null;
+  const messageMaxHeight = nativeHeights(c).message;
+  const maxHeight = transport === 'message' ? messageMaxHeight : c.nativeMaxAuto ? decide.FRAME_SERVER_HEIGHT : c.nativeMaxHeight;
+  const d = decide.decide({
+    setting: c.decoder, remote, trusted: true, tools: t, video: pr.video, probe: probeRecordFor(t), hw: hwKnown,
+    failed, gpu: c.gpuDecoding, maxHeight,
+    transport: transport === 'message' ? 'message' : 'stream',
+  });
+  // Tests (VPE_LOG only): VPE_NATIVE_METHOD holds ffmpeg's method (cuda, d3d11va, auto, none…), as a stored probe would.
+  const forced = logFile ? process.env.VPE_NATIVE_METHOD : '';
+  const method = forced && d.use === 'native' ? forced : d.method;
+  log(`${name}: decoder: ${d.use === 'native' ? `native ffmpeg (${method})` : 'built-in'}: ${d.reason}`);
+  return { tools: d.use === 'native' ? t : null, probed: pr, method, methodGuessed: !!d.guessed, maxHeight, messageMaxHeight, reason: d.reason };
+}
+
+/**
+ * Native ffmpeg failed on a file (the viewer plays it in the page from now on). Remembered only when ffmpeg ran and
+ * rejected the media; otherwise the tools are looked up again (the next window checks them instead of trusting the
+ * stored check).
+ */
+async function nativeFailed(c, error, rejectedMedia) {
+  log(`[${c.label}] native ffmpeg can't play this file (${error && error.message || error}); using the built-in decoder`);
+  globalState.update(TOOLS_KEY, undefined).then(undefined, () => {});
+  if (rejectedMedia && c.fsPath) {
+    try {
+      const st = fs.statSync(c.fsPath);
+      await globalState.update(decide.FAILED_KEY, decide.addFailed(globalState.get(decide.FAILED_KEY), c.fsPath, st, String(error || '')));
+      return;
+    } catch { /* gone: nothing to remember */ }
+  }
+  toolsPromise = null;
+}
+
+/** A Live transcode stream for a clip whose decision has one (src/unified-viewer.js startStream). */
+function createStream(c, o) {
+  const d = o.decision;
+  const stream = new remotestream.EncodedStream({
+    ...d.stream, tools: d.tools, file: c.fsPath, probed: d.probed, hidden: o.hidden, rotation: o.rotation || 0,
+    allowOverlap: false, maxHeight: o.maxHeight, maxKbps: o.maxKbps, fitView: false, allowLinkAdapt: !!d.stream.remote,
+    resolution: o.resolution !== undefined ? o.resolution : config().transcodeResolution, stats: !!logFile,
+    initialLink: d.stream.remote ? sessionLink.read() : undefined,
+    onLinkUpdate: (snapshot) => sessionLink.update(snapshot),
+    post: o.post, log: o.log, onFail: o.onFail,
+  });
+  // The one-time "Live transcode is on" notice; not when the user chose Always, nor for a lossless Direct Stream.
+  if (d.informTranscode && stream.lossy()) {
+    const viewer = () => [...unifiedViewers].find((v) => v.session.clipOf(c.id));
+    offers.maybeInformTranscode({
+      name: c.label, get disposed() { return !viewer(); }, useOriginalVideo: () => { const v = viewer(); if (v) v.useOriginalVideo(); },
+    }).catch((e) => log(`live transcode notice failed: ${e && e.message || e}`));
+  }
+  return stream;
+}
+
+/** Live transcode mode, max bitrate or default resolution from the ⚙ panel (machine-scoped settings). */
+async function setTranscodePref(m) {
+  if (m.mode !== undefined && transcodePolicy.MODES.includes(m.mode)) await setSetting('transcode', m.mode, vscode.ConfigurationTarget.Global);
+  if (m.maxBitrateMbps !== undefined) {
+    await setSetting('transcodeMaxBitrate', Math.max(0, Number(m.maxBitrateMbps) || 0), vscode.ConfigurationTarget.Global);
+  }
+  // Save as default: new clips start at it; open ones keep their own resolution.
+  if (m.resolution !== undefined) {
+    await setSetting('transcodeResolution', transcodePolicy.resolutionOf(m.resolution), vscode.ConfigurationTarget.Global);
+  }
+}
+
+/**
+ * Whether the page may offer the ffmpeg setup (status pill) and mention ffmpeg (toast): offered when it isn't
+ * installed, in a local trusted window, unless "Don't Show Again". Restricted Mode runs no ffmpeg at all.
+ */
+async function ffmpegState() {
+  const t = vscode.workspace.isTrusted ? await tools() : null;
+  const h = globalState.get(decide.HINT_KEY) || {};
+  return { installed: !!t, offer: !t && !vscode.env.remoteName && vscode.workspace.isTrusted && !h.never, mb: setup.downloadSizeMB() };
+}
+
+// ---- URL clips (src/unified-sources.js createUrlDecoder) ----
+
+/** What a URL clip's decoder needs from this host. @param {any} c @param {any} io */
+function urlDeps(c, io) {
+  const url = c.source && c.source.url;
+  return {
+    urlsource, netOpts,
+    // Native ffmpeg where it may run: not with the builtin setting, in Restricted Mode or where frames cross a link.
+    tools: async () => {
+      const cfg = config();
+      return cfg.decoder !== 'builtin' && vscode.workspace.isTrusted && nativeAllowedHere() ? tools() : null;
+    },
+    probe: async (t, input, signal) => (await Promise.all([ff.probe(t, input, signal), gpusForMethod(t, config())]))[0],
+    ffInput: (info, plan) => {
+      const target = info && info.url ? info.url : url;
+      const h = vscode.workspace.getConfiguration('http');
+      const p = proxy.proxyFor(target, { proxy: h.get('proxy') || '', env: process.env });
+      // HLS master playlist: ffprobe picks the streams of the chosen variant (src/ffmpeg.js probe).
+      const variant = plan && plan.master && plan.variant ? { bandwidth: plan.variant.bandwidth } : undefined;
+      return { url: target, proxy: p || undefined, strictSSL: h.get('proxyStrictSSL', true) !== false, variant };
+    },
+    decide: ({ t, pr, stream, forced }) => {
+      const cfg = config();
+      if (forced) return decide.decide({ setting: 'ffmpeg', trusted: true, tools: t, video: pr.video, probe: probeRecordFor(t), hw: hwKnown, gpu: cfg.gpuDecoding });
+      return decide.decide({
+        setting: stream && cfg.decoder === 'auto' ? 'ffmpeg' : cfg.decoder, remote: remoteName(), trusted: true, tools: t, video: pr.video,
+        probe: probeRecordFor(t), hw: hwKnown, failed: false, gpu: cfg.gpuDecoding, maxHeight: nativeHeight(cfg, pr.video),
+        transport: io.transport && io.transport !== 'message' ? 'stream' : 'message',
+      });
+    },
+    openNative: ({ t, pr, d, input, io: sink, onFail }) => {
+      const h = nativeHeights(config(), pr.video);
+      return new NativeDecoder({
+        tools: t, file: null, input, maxHeight: h.stream, messageMaxHeight: h.message, method: d.method, methodGuessed: !!d.guessed,
+        probed: pr, stats: !!logFile, maxQueued: nativeQueue(), transport: sink.transport || 'message', origin: sink.origin || null,
+        post: sink.post, postRaw: sink.postRaw, log: sink.log, onFail,
+      });
+    },
+    firstBytes,
+    builtinOnly: () => config().decoder === 'builtin',
+    why: () => {
+      const remote = remoteName();
+      if (!vscode.workspace.isTrusted) return 'Native ffmpeg does not run in Restricted Mode (untrusted workspaces).';
+      if (remote && remote !== 'wsl') return `Native ffmpeg is not used in ${remote} windows (frames would cross the connection). Open the URL in a local window.`;
+      if (config().decoder === 'builtin') return 'The decoder setting is "builtin": set videoPreviewEnhanced.decoder to "auto" to use ffmpeg.';
+      return '';
+    },
+  };
+}
+
+// ---- subtitles, frames, positions, the system player ----
+
+/** "Load subtitles…": pick files (in remote windows, on the remote side); the viewer shows the first. */
+async function loadSubtitles(c, viewer) {
+  const kind = c ? c.kind || 'file' : 'file';
+  const folder = !c ? workspaceFolder() : kind === 'sequence' ? vscode.Uri.file(c.source.dir) : kind === 'url' ? workspaceFolder() : vscode.Uri.joinPath(c.uri, '..');
+  const testPicked = viewer.testPickSubtitles;
+  viewer.testPickSubtitles = undefined;
+  const picked = testPicked || await vscode.window.showOpenDialog({
+    defaultUri: folder, canSelectMany: true, openLabel: 'Load subtitles',
+    filters: { Subtitles: ['srt', 'vtt', 'ass', 'ssa'], 'All files': ['*'] },
+  });
+  if (!picked || viewer.disposed) return undefined;
+  const files = [];
+  for (const uri of picked) {
+    const name = uri.path.split('/').pop();
+    try {
+      const st = await vscode.workspace.fs.stat(uri);
+      if (st.size > MAX_SUB_BYTES) throw new Error('file is larger than 20 MB');
+      files.push({ id: uri.toString(), name, data: new Uint8Array(await vscode.workspace.fs.readFile(uri)) });
+    } catch (e) {
+      vscode.window.showWarningMessage(`Video Preview: cannot load ${name}: ${e.message}`);
+    }
+  }
+  return files;
+}
+
+/** A clip's name for files written from it (frames, exports). */
+function baseNameOf(c) {
+  if (c.kind === 'sequence') return c.source.name.replace(/#+/, '').replace(/\.[^.]+$/, '');
+  if (c.kind === 'url') return urlBase(c.source.url);
+  return path.parse(c.fsPath).name;
+}
+
+/** The folder files written from a clip go to by default. */
+function folderOf(c) {
+  if (c.kind === 'sequence') return vscode.Uri.file(c.source.dir);
+  if (c.kind === 'url') return workspaceFolder() || vscode.Uri.file(os.homedir());
+  return vscode.Uri.joinPath(c.uri, '..');
+}
+
+/** "Save frame": the page's PNG of the frame shown, to a file the user picks. */
+async function saveFrame(c, m, viewer) {
+  // From the page: PNG bytes and a frame index that names the default file (security review 2026-11-19 #7).
+  const data = m.data;
+  const frame = m.frame;
+  if (!(data instanceof Uint8Array) || !Number.isInteger(frame) || frame < 0) return;
+  const defaultUri = vscode.Uri.joinPath(folderOf(c), `${baseNameOf(c)}_frame${String(frame + 1).padStart(5, '0')}.png`);
+  // Tests (VPE_LOG with VPE_SAVE_DIR): no native dialog, the file goes to that folder.
+  const target = logFile && process.env.VPE_SAVE_DIR ? vscode.Uri.file(path.join(process.env.VPE_SAVE_DIR, path.basename(defaultUri.fsPath)))
+    : await vscode.window.showSaveDialog({ defaultUri, filters: { 'PNG image': ['png'] } });
+  if (!target || viewer.disposed) return;
+  await vscode.workspace.fs.writeFile(target, data);
+  if (viewer.disposed) return;
+  const pick = await vscode.window.showInformationMessage(`Saved ${path.basename(target.fsPath)}`, 'Open');
+  if (pick === 'Open' && !viewer.disposed) vscode.commands.executeCommand('vscode.open', target);
+}
+
+// checkJs: start
+/** Where a file was left last time (same size and date), unless it was near the start or end. @param {string} file */
+function resumeAt(file) {
+  if (!globalState || !file) return null;
+  const e = (globalState.get(POSITIONS_KEY) || {})[file];
+  try {
+    const st = fs.statSync(file);
+    if (!e || e.size !== st.size || e.mtime !== st.mtimeMs) return null;
+  } catch { return null; }
+  return e.t > 5 && e.d - e.t > 5 ? { t: e.t, d: e.d } : null;
+}
+
+/**
+ * A file's resume position (the viewer decides when: stopped, jumped, every 30 s, closed); the 200 most recent.
+ * @param {string} file @param {{ t: number, d: number }} pos
+ */
+function savePos(file, pos) {
+  if (!globalState || !file || !(pos.t >= 0)) return;
+  let st;
+  try { st = fs.statSync(file); } catch { return; }
+  const all = { ...(globalState.get(POSITIONS_KEY) || {}) };
+  all[file] = { t: pos.t, d: pos.d, size: st.size, mtime: st.mtimeMs, at: Date.now() };
+  const keys = Object.keys(all).sort((x, y) => all[y].at - all[x].at);
+  for (const k of keys.slice(200)) delete all[k];
+  globalState.update(POSITIONS_KEY, all);
+}
+// checkJs: end
+
+/** The system player: only for a file (or a sequence's first picture) on this machine. */
+function openExternal(c, viewer) {
+  if (!c || vscode.env.remoteName || c.kind === 'url') {
+    viewer.post({ type: 'toast', text: 'The system player opens files on this computer only', ms: 3000 });
+    return undefined;
+  }
+  if (c.kind === 'sequence') return vscode.env.openExternal(vscode.Uri.file(c.source.files[0]));
+  return c.uri && c.uri.scheme === 'file' ? vscode.env.openExternal(c.uri) : undefined;
+}
+
+/** Single full-resolution frames for the pixel tools (src/exact_frame.js), one grabber per host decoder. */
+const exactGrabbers = new WeakMap();
+async function grabExactFrame({ clip, decoder, t, isCurrent }) {
+  const video = decoder && decoder.pr && decoder.pr.video;
+  if (!video || !decoder.file || !decoder.tools) return { error: 'exact frames are for Live transcode or downscaled native ffmpeg of a video file' };
+  let grabber = exactGrabbers.get(decoder);
+  if (!grabber) {
+    grabber = new ExactFrameGrabber({ log: (m) => log(`[${clip.label}] ${m}`) });
+    exactGrabbers.set(decoder, grabber);
+  }
+  return grabber.grab({ tools: decoder.tools, file: decoder.file, t, video, rotation: clip.rotation || 0, page: 0, isCurrent: () => isCurrent() });
+}
+
+// ---- A-B export (src/rangecmd.js) ----
+
+/** The page's A-B range for an export, or a grabbed frame nobody waits for any more. */
+function exportAb(kind, c, m, viewer) {
+  if (!c) return undefined;
+  if (kind === 'exportRange') return exportRange(viewer, c, m.range);
+  if (kind === 'ffmpegRange') return copyFfmpegRange(viewer, c, m.range);
+  if (kind === 'clipRange') {
+    const tile = viewer.session.clips.findIndex((x) => x.id === c.id);
+    return exportClips(viewer, c, m.range ? [{ uri: c.uri, range: m.range, tile: Math.max(0, tile) }] : []);
+  }
+  return undefined;
+}
+
+/** Every frame (or every Nth frame) of A-B as `<video>_f000123.png` in a folder the user picks (written through workspace.fs: remote too). */
+async function exportRange(viewer, c, range) {
+  if (viewer.exporting) { vscode.window.showInformationMessage('Video Preview: an export is already running.'); return; }
+  const problem = rangecmd.rangeProblem(range);
+  if (problem) { vscode.window.showInformationMessage(`Video Preview: ${problem}`); return; }
+  let stride = 1;
+  if (range.stride !== undefined) {
+    stride = rangecmd.parseStride(range.stride);
+  } else if (!(logFile && process.env.VPE_EXPORT_DIR && process.env.VPE_EXPORT_STRIDE === undefined)) {
+    const raw = logFile && process.env.VPE_EXPORT_DIR
+      ? process.env.VPE_EXPORT_STRIDE
+      : await vscode.window.showInputBox(rangecmd.strideInputOptions(range));
+    if (viewer.disposed || raw === undefined) return;
+    const strideErr = rangecmd.strideProblem(raw);
+    if (strideErr) { vscode.window.showWarningMessage(`Video Preview: ${strideErr}`); return; }
+    stride = rangecmd.parseStride(raw);
+  }
+  const count = rangecmd.rangeFrameCount(range, stride);
+  if (count > rangecmd.MAX_FRAMES) {
+    vscode.window.showWarningMessage(`Video Preview: A-B holds ${count} frames${stride > 1 ? ` at stride ${stride}` : ''}; export takes at most ${rangecmd.MAX_FRAMES}. Shorten the loop, or use "Copy ffmpeg Command for A–B".`);
+    return;
+  }
+  if (count > rangecmd.CONFIRM_FRAMES) {
+    const ok = await vscode.window.showWarningMessage(`Export ${count} frames as PNG? This can take a while and use a lot of disk space.`, { modal: true }, 'Export');
+    if (viewer.disposed || ok !== 'Export') return;
+  }
+  const n = viewer.decoderOf(c.id);
+  if (n && typeof n.lossy === 'function' && n.lossy()) {
+    const fullResolution = 'Switch to Full Resolution (This Tab)';
+    const ok = await vscode.window.showWarningMessage(
+      `Native ffmpeg decodes this video at ${n.w}×${n.h} (${n.deep ? 10 : 8}-bit) for smooth playback. Exported PNGs will use this playback picture.`,
+      { modal: true }, fullResolution, 'Export Anyway');
+    if (viewer.disposed) return;
+    if (ok === fullResolution) {
+      viewer.useFullRes();
+      vscode.window.showInformationMessage('Video Preview: now on the built-in decoder at full resolution. Run the export again once the video shows.');
+      return;
+    }
+    if (ok !== 'Export Anyway') return;
+  }
+  const base = baseNameOf(c);
+  // Tests (VPE_LOG with VPE_EXPORT_DIR): no native dialog, the frames go to that folder.
+  const pick = logFile && process.env.VPE_EXPORT_DIR ? [vscode.Uri.file(process.env.VPE_EXPORT_DIR)] : await vscode.window.showOpenDialog({
+    canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
+    openLabel: `Export ${count} frames here`, defaultUri: folderOf(c),
+  });
+  if (viewer.disposed || !pick || !pick.length) return;
+  const folder = pick[0];
+  const where = folder.scheme === 'file' ? folder.fsPath : folder.toString();
+  // Ask before writing over frames exported before.
+  const caseInsensitive = folder.scheme === 'file' && (process.platform === 'win32' || process.platform === 'darwin');
+  const nameKey = (x) => (caseInsensitive ? x.toLowerCase() : x);
+  const hasStat = typeof vscode.workspace.fs.stat === 'function';
+  const fileExists = async (uri) => {
+    try {
+      await vscode.workspace.fs.stat(uri);
+      return true;
+    } catch (e) {
+      if (e && (e.code === 'FileNotFound' || e.code === 'ENOENT')) return false;
+      throw e;
+    }
+  };
+  let existingNames = null;
+  const plannedCollisions = [];
+  try {
+    existingNames = new Set((await vscode.workspace.fs.readDirectory(folder)).map(([x]) => nameKey(x)));
+    for (const k of rangecmd.rangeFrames(range, stride)) {
+      const name = rangecmd.frameFileName(base, k + 1);
+      if (existingNames.has(nameKey(name))) plannedCollisions.push(name);
+    }
+  } catch (e) {
+    if (viewer.disposed) return;
+    if (!hasStat) {
+      vscode.window.showErrorMessage(`Video Preview: could not read ${where}: ${e && e.message ? e.message : String(e)}`);
+      return;
+    }
+    // Directory listing failed; each destination is checked with stat before writing.
+  }
+  if (viewer.disposed) return;
+  const approvedOverwrites = new Set();
+  if (plannedCollisions.length) {
+    const existing = plannedCollisions.length;
+    const ok = await vscode.window.showWarningMessage(`Overwrite ${existing} existing file${existing === 1 ? '' : 's'}?`, { modal: true, detail: `${where} already holds ${existing === 1 ? 'a frame' : 'frames'} of this range.` }, 'Overwrite');
+    if (ok !== 'Overwrite') return;
+    for (const x of plannedCollisions) approvedOverwrites.add(nameKey(x));
+  }
+  if (viewer.disposed || viewer.exporting) return; // another export started while the dialogs were open
+  const job = new AbortController();
+  viewer.exporting = job;
+  // The page decodes and draws only while shown: bring it to the front.
+  viewer.panel.reveal(undefined, true);
+  let done = 0;
+  let failed = null;
+  const overwrite = async (name) => {
+    const ok = await vscode.window.showWarningMessage(`Overwrite existing file ${name}?`, { modal: true, detail: `${where} already holds ${name}.` }, 'Overwrite');
+    return ok === 'Overwrite';
+  };
+  try {
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Exporting frames ${range.fa + 1}–${range.fb + 1}`, cancellable: true }, async (progress, token) => {
+      const work = job.signal;
+      const sub = token && token.onCancellationRequested(() => job.abort());
+      const closed = setInterval(() => { if (viewer.disposed) job.abort(); }, 500);
+      try {
+        const end = range.fa + count * stride;
+        let last = -1; // the last frame written
+        for (let k = range.fa; k <= range.fb && !work.aborted;) {
+          if (!viewer.panel.visible) {
+            // The page draws nothing while hidden: wait until it is shown again.
+            progress.report({ message: `${done} / ${count}, paused while the player is hidden` });
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            continue;
+          }
+          const r = await viewer.grabFrame(k, work, c.id);
+          if (work.aborted) break;
+          if (!r || r.error || !r.data) { failed = r && r.error ? r.error : 'no picture'; break; }
+          // VFR or gapped video: the seek can settle on a neighbour. Name the file from the frame shown; skip repeats.
+          const shown = Number.isInteger(r.frame) ? r.frame : k;
+          if (shown > last && shown >= range.fa && shown <= range.fb) {
+            const name = rangecmd.frameFileName(base, shown + 1);
+            const dest = vscode.Uri.joinPath(folder, name);
+            const key = nameKey(name);
+            if (!approvedOverwrites.has(key)) {
+              const collides = (existingNames && existingNames.has(key)) || (hasStat && await fileExists(dest));
+              if (work.aborted) break;
+              if (collides) {
+                if (!(await overwrite(name)) || work.aborted) { job.abort(); break; }
+                approvedOverwrites.add(key);
+              }
+            }
+            const bytes = new Uint8Array(r.data);
+            let res = await exclusiveWrite.writeNew(vscode.workspace.fs, dest, bytes, { overwrite: approvedOverwrites.has(key) });
+            if (res === 'exists') {
+              // Appeared after the checks above (another export or program): never replace it unasked.
+              if (!(await overwrite(name)) || work.aborted) { job.abort(); break; }
+              approvedOverwrites.add(key);
+              res = await exclusiveWrite.writeNew(vscode.workspace.fs, dest, bytes, { overwrite: true });
+            }
+            done++;
+            last = shown;
+          }
+          const next = rangecmd.nextRangeFrame(k, shown, stride);
+          progress.report({ increment: (100 * ((Math.min(next, end) - k) / stride)) / count, message: `${done} / ${count}` });
+          k = next;
+        }
+      } finally {
+        clearInterval(closed);
+        if (sub) sub.dispose();
+      }
+    });
+  } catch (e) {
+    failed = e && e.message ? e.message : String(e);
+  } finally {
+    if (viewer.exporting === job) viewer.exporting = null;
+    if (!viewer.disposed) viewer.post({ type: 'exportEnd' });
+  }
+  if (viewer.disposed) return;
+  log(`[${c.label}] exported ${done}/${count} frames to ${folder.toString()}${failed ? ` (stopped: ${failed})` : ''}`);
+  if (failed) vscode.window.showErrorMessage(`Video Preview: exported ${done} of ${count} frames, then stopped: ${failed}`);
+  else vscode.window.showInformationMessage(`Video Preview: exported ${done} of ${count} frames to ${where}`);
+}
+
+/** Copies an ffmpeg command that cuts A-B: exact (re-encode) or fast (-c copy, keyframe-aligned). */
+async function copyFfmpegRange(viewer, c, range) {
+  if (c.kind === 'url' || c.kind === 'sequence') { vscode.window.showInformationMessage('Video Preview: the ffmpeg command for A–B is for video files.'); return; }
+  const problem = rangecmd.rangeProblem(range);
+  if (problem) { vscode.window.showInformationMessage(`Video Preview: ${problem}`); return; }
+  let cmd;
+  try { cmd = rangecmd.ffmpegRange(c.fsPath, range, process.platform, vscode.env.shell); } catch (e) { vscode.window.showWarningMessage(`Video Preview: ${e.message}`); return; }
+  const pick = await vscode.window.showQuickPick([
+    { label: 'Exact cut (re-encode)', detail: cmd.exact, cmd: cmd.exact },
+    { label: 'Fast cut (-c copy)', description: 'keyframe-aligned: starts at the keyframe at or before A', detail: cmd.copy, cmd: cmd.copy },
+  ], { placeHolder: `ffmpeg command for frames ${range.fa + 1}–${range.fb + 1} (${cmd.ss} s to ${cmd.to} s)` });
+  if (!pick || viewer.disposed) return;
+  await vscode.env.clipboard.writeText(pick.cmd);
+  if (!viewer.disposed) viewer.post({ type: 'toast', text: 'ffmpeg command copied' });
+}
+
+// ---- page messages the viewer passes on: decode speed, WebCodecs failures, drops ----
+
+/** Per viewer: the slow-playback run the offers look at (src/offers.js). */
+const speedStates = new WeakMap();
+function speedStateOf(viewer) {
+  let st = speedStates.get(viewer);
+  if (!st) {
+    st = {
+      slowRun: 0,
+      get name() { return viewer.session.title; },
+      get disposed() { return viewer.disposed; },
+      reload: (why) => viewer.reloadAll(why),
+      useOriginalVideo: () => viewer.useOriginalVideo(),
+    };
+    speedStates.set(viewer, st);
+  }
+  return st;
+}
+
+function onPageMessage(m, viewer) {
+  switch (m.type) {
+    case 'wcFailed':
+      // WebCodecs lagged on this sound codec: the built-in decoder plays it in every later page this session.
+      if (typeof m.codec === 'string' && /^[\w-]{1,16}$/.test(m.codec)) { wcFailed.add(m.codec); log(`[${viewer.session.title}] WebCodecs failed for ${m.codec}: ${String(m.reason || '').slice(0, 200)}`); }
+      return undefined;
+    case 'decodeSpeed': return onSpeed(m, viewer);
+    case 'softVideo': {
+      const id = typeof m.clipId === 'string' ? m.clipId : null;
+      if (vscode.env.remoteName && !(id && viewer.decoderOf(id))) offers.maybeOfferRemoteFfmpeg(speedStateOf(viewer), m).catch((e) => log(`remote ffmpeg offer: ${e && e.stack || e}`));
+      return undefined;
+    }
+    // Jump sizes and speed step from the panels: only declared values.
+    case 'pref': return PREFS[m.key] && PREFS[m.key].values.includes(m.value) ? setSetting(m.key, m.value, prefTarget(m.key)) : undefined;
+    // Videos dropped on the page (docs/notes/compare-ui.md "Starting a compare"): they join this viewer.
+    case 'compareDrop': return Array.isArray(m.uris) ? addDropped(viewer, m.uris) : undefined;
+    case 'addMode': return viewer.session.setCapture(!viewer.session.capture);
+    case 'stopAddMode': return viewer.session.setCapture(false);
+    default: return undefined;
+  }
+}
+
+/**
+ * A decode speed sample from the page (media/engine.js sampleSpeed): built-in samples are stored per class and may
+ * bring the setup hint; slow ones, and native ones whose host keeps up, may bring the GPU test offer.
+ */
+function onSpeed(m, viewer) {
+  if (m.remoteStream) return;
+  const clip = typeof m.clipId === 'string' ? viewer.session.clipOf(m.clipId) : viewer.session.clips[0];
+  if (!clip || clip.transcode || viewer.decoderKind(clip.id) === 'stream') return;
+  // Native ffmpeg: the clip's decoder once it runs, else what the clip was prepared for (a file's native decision).
+  const nd = viewer.decoderKind(clip.id) === 'native' ? viewer.decoderOf(clip.id) : null;
+  const native = !!nd || !!(clip.native && clip.decision && clip.decision.tools);
+  const method = nd ? nd.method : native ? clip.decision.method : '';
+  if (!!m.native !== native) return; // a sample from before the page switched decoders
+  const sample = {
+    codec: String(m.codec || ''), depth: Number(m.depth) || 8, width: Number(m.width) || 0, height: Number(m.height) || 0,
+    fps: Number(m.fps) || 0, ratio: Number(m.ratio) || 0, realtime: !!m.realtime, native,
+  };
+  if (!sample.codec || !sample.width || !sample.height || !(sample.ratio > 0)) return;
+  const st = speedStateOf(viewer);
+  const was = st.slowRun;
+  st.slowRun = sample.realtime ? 0 : was + 1;
+  const name = viewer.session.title;
+  if (native) {
+    if (!sample.realtime && was === 0) log(`[${name}] native ffmpeg below real time: ${sample.ratio.toFixed(2)}x (${decide.describe(sample)}, ${method})`);
+    // A transfer bottleneck (the host keeps up, the page does not) is no reason for a GPU decode test.
+    const hostKeepsUp = nd && typeof nd.hostKeepsUp === 'function' ? nd.hostKeepsUp() : false;
+    if (!sample.realtime && !hostKeepsUp) offers.maybeOfferProbe(st, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));
+    return;
+  }
+  recordSpeed(sample);
+  if (!sample.realtime && was === 0) log(`[${name}] built-in decoder below real time: ${sample.ratio.toFixed(2)}x (${decide.describe(sample)})`);
+  if (sample.realtime && was > 0) log(`[${name}] built-in decoder back to real time`);
+  if (!sample.realtime) {
+    offers.maybeHint(st, sample).catch((e) => log(`hint failed: ${e && e.message || e}`));
+    offers.maybeOfferProbe(st, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));
+  }
+}
+
+// ---- opening videos: a file, a URL (openUrl above), a sequence, a frame link, Open Together ----
+
+/** What prepareClip needs (src/unified-viewer.js). */
+function prepDeps() {
+  return { rotationOf, nativeFor, transport: nativeTransport, log, streams: true };
+}
+
+/** The setting compare.maxVideos: how many videos one viewer shows at most. */
+function maxVideos() {
+  return Grid.clampMax(vscode.workspace.getConfiguration('videoPreviewEnhanced').get('compare.maxVideos'));
+}
+
+/** The frame server's port for a new page (local windows; the CSP names it), or undefined. */
+async function framePortForPage() {
+  if (remoteName() || nativeTransport() === 'message') return undefined;
+  try { await frameserver.start(); return frameserver.port; }
+  catch (e) { log(`frame server could not start: ${e.message}`); return undefined; }
+}
+
+/** Whether `panel` has closed since this call (a tab closed while its video was being probed gets no viewer). */
+function closeWatch(panel) {
+  let gone = !!panelClosed.get(panel);
+  if (!panelClosed.has(panel)) {
+    panelClosed.set(panel, false);
+    panel.onDidDispose(() => { panelClosed.set(panel, true); });
+  }
+  return () => gone || !!panelClosed.get(panel);
+}
+const panelClosed = new WeakMap();
+
+/** The context keys of the editor menus: a comparison is open (2+ videos), a viewer captures (Add from Explorer). */
+function updateContexts() {
+  const all = [...unifiedViewers];
+  const set = (key, on) => Promise.resolve(vscode.commands.executeCommand('setContext', key, on)).catch(() => {});
+  set('videoPreviewEnhanced.compareOpen', all.some((v) => v.session.clips.length >= 2));
+  set('videoPreviewEnhanced.addMode', all.some((v) => v.session.capture));
+}
+
+/**
+ * A viewer in `panel` showing `clip` first (and `more` beside it). `openTarget`: a frame link's moment or the saved
+ * position. Resolves the viewer, or null when the panel closed meanwhile.
+ */
+async function showViewer(context, panel, clip, openTarget = null, more = []) {
+  const closed = closeWatch(panel);
+  const framePort = await framePortForPage();
+  if (closed()) return null;
+  remoteAuthority(panel.webview); // learn the host for frame links arriving later
+  const viewer = unifiedViewer.createUnifiedViewer({
+    vscode, context, panel, clip, registry: unifiedRegistry, openTarget, deps: { ...unifiedDeps, framePort },
+  });
+  for (const c of more) viewer.session.addClip(c, { compare: true });
+  unifiedViewers.add(viewer);
+  panelViewers.set(panel, viewer);
+  lastViewer = viewer;
+  viewer.session.onChange((e) => {
+    if (e === 'active' && viewer.session.active) lastViewer = viewer;
+    if (e === 'clips' || e === 'capture') updateContexts();
+  });
+  viewer.onDispose = () => {
+    unifiedViewers.delete(viewer);
+    if (lastViewer === viewer) lastViewer = null;
+    updateContexts();
+  };
+  viewer.show();
+  updateContexts();
+  if (logFile) log(`[${viewer.session.title}] viewer opened (${viewer.session.clips.length} video${viewer.session.clips.length === 1 ? '' : 's'})`);
+  return viewer;
+}
+
+/**
+ * A video file VS Code opens in our editor (resolveCustomEditor): a frame link's moment (#t= / #frame=, a pending
+ * vscode:// link) or the saved position applies; a viewer whose Capture is on takes it and this tab closes unused;
+ * several opened together become one viewer (Open Together); else this tab becomes a viewer.
+ */
+async function resolveVideo(context, rawUri, panel) {
+  if (logFile) log(`[${path.basename(rawUri.path)}] player resolve started`);
+  const closed = closeWatch(panel);
+  const frag = rawUri.fragment ? gotoFrom(rawUri.fragment) : null;
+  const uri = rawUri.fragment ? rawUri.with({ fragment: '' }) : rawUri;
+  const key = uri.toString();
+  const pending = pendingGoto.get(key);
+  pendingGoto.delete(key);
+  const goto = (pending && pending.until >= Date.now() ? pending.g : null) || frag;
+  // git:, vscode-vfs: and other virtual files: fsPath would name a different file (git: the working tree).
+  if (!unifiedViewer.isViewable(uri)) {
+    vscode.window.showWarningMessage(`Video Preview: can't play ${uri.scheme}: files. Open the file from the Explorer instead.`);
     setTimeout(() => panel.dispose(), 0);
     return undefined;
   }
-  let framePort;
-  if (!remoteName() && nativeTransport() !== 'message') {
-    // The CSP needs the selected port before the page is created.
-    try { await frameserver.start(); framePort = frameserver.port; }
-    catch (e) { log(`frame server could not start: ${e.message}`); }
-    if (gone) return undefined;
+  // Opened with others within a moment: the burst takes them into one viewer and this tab waits for its verdict.
+  if (!goto && noteOpen(uri, panel) && await holdOpen(uri)) return undefined;
+  if (panelViewers.has(panel) || closed()) return undefined; // the burst made this tab a viewer, or it closed
+  let clip;
+  try {
+    clip = await unifiedViewer.prepareClip(uri, prepDeps());
+  } catch (e) {
+    log(`cannot open ${path.basename(uri.fsPath)}: ${e && e.stack || e}`);
+    vscode.window.showErrorMessage(`Video Preview: cannot open ${path.basename(uri.fsPath)}: ${e && e.code === 'ENOENT' ? 'the file does not exist' : e && e.message || e}`);
+    setTimeout(() => panel.dispose(), 0);
+    return undefined;
   }
-  const viewer = unifiedViewer.createUnifiedViewer({
-    vscode, context, panel, clip, registry: unifiedRegistry, deps: { ...unifiedDeps, framePort },
-  });
-  unifiedViewers.add(viewer);
-  viewer.onDispose = () => unifiedViewers.delete(viewer);
-  viewer.show();
+  if (closed()) return undefined;
+  if (!goto) {
+    const routed = unifiedRegistry.routeOpen(clip);
+    if (routed.captured) {
+      log(`${clip.label} ${routed.added ? 'joined' : 'not added to'} ${routed.session.title}`);
+      setTimeout(() => panel.dispose(), 0);
+      return undefined;
+    }
+  }
+  const savedPos = goto ? null : resumeAt(uri.fsPath);
+  await showViewer(context, panel, clip, goto ? { goto } : savedPos ? { savedPos } : null);
   return undefined;
 }
+
+/** "Play sequence": numbered pictures in a folder, played by the page's frame player. */
+async function openSequence(context, target) {
+  const seq = await findSequence(target.fsPath);
+  if (!seq) {
+    vscode.window.showWarningMessage('Video Preview: no numbered image sequence found there (needs at least two files like frame_0001.png).');
+    return null;
+  }
+  const facts = await sequenceFacts(seq, config().sequenceFps || 30);
+  log(`[${seq.name}] image sequence: ${seq.files.length} frames`);
+  const panel = vscode.window.createWebviewPanel(SEQUENCE_VIEW_TYPE, seq.name, vscode.ViewColumn.Active, { retainContextWhenHidden: true });
+  panel.iconPath = new vscode.ThemeIcon('device-camera-video');
+  const clip = unifiedViewer.sourceClip('sequence', path.join(seq.dir, seq.name), { label: seq.name, ...facts, hasAudio: false, source: seq });
+  return showViewer(context, panel, clip);
+}
+
+/** The setting compare.openTogether: several videos opened at once (an Explorer multi-selection) become one viewer. */
+function openTogether() {
+  return vscode.workspace.getConfiguration('videoPreviewEnhanced').get('compare.openTogether', true) !== false;
+}
+
+/** A video our editor is opening: part of a burst? (not while a viewer captures: that one takes them) */
+function noteOpen(uri, panel) {
+  if (!burst || !COMPARE_VIDEO_EXT.test(uri.path) || !openTogether() || unifiedRegistry.capturing()) return false;
+  burst.add(uri.toString(), uri, { panel });
+  return true;
+}
+
+/**
+ * After noteOpen: one macrotask is waited first, so that opens VS Code delivered together are all noted. Resolves
+ * true once a burst took the video, false when it is alone or after 10 s (open it as usual).
+ */
+async function holdOpen(uri) {
+  if (!burst.waiting) return false;
+  await new Promise((done) => setImmediate(done));
+  const held = burst.wait(uri.toString());
+  if (!held) return false;
+  let timer;
+  const cap = new Promise((r) => { timer = setTimeout(() => r(false), 10000); });
+  return Promise.race([held, cap]).finally(() => clearTimeout(timer));
+}
+
+/** Open Together: the burst's videos in one viewer (in a tab that already is one, else the first tab). */
+async function openBurst(context, { items, extra }) {
+  const panels = items.flatMap((it) => it.panels);
+  const host = panels.map((p) => panelViewers.get(p)).find((v) => v && !v.disposed) || null;
+  const clips = [];
+  for (const it of items) {
+    if (host && host.session.clips.some((c) => c.uri && c.uri.toString() === it.key)) continue;
+    try { clips.push(await unifiedViewer.prepareClip(it.uri, prepDeps())); }
+    catch (e) { log(`open together: cannot open ${path.basename(it.uri.fsPath)}: ${e && e.message || e}`); }
+  }
+  if (!host && clips.length < 2) return false;
+  // A tab that already became a viewer (it opened alone a moment before) takes the others only while there is room;
+  // else they open as usual.
+  if (host && (!clips.length || host.session.clips.length + clips.length > host.session.maxVideos)) return false;
+  let viewer = host;
+  if (viewer) for (const c of clips) viewer.session.addClip(c, { compare: true });
+  else viewer = await showViewer(context, panels[0], clips[0], null, clips.slice(1));
+  if (!viewer) return false;
+  for (const p of panels) if (p !== viewer.panel) { try { p.dispose(); } catch { /* gone already */ } }
+  log(`${viewer.session.clips.length} videos opened together -> one viewer${extra.length ? `, ${extra.length} more stay as tabs` : ''}`);
+  noticeTogether(viewer.session.clips.length);
+  if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
+  return true;
+}
+
+/** The one-time notice after the first Open Together, with the way to turn it off. */
+function noticeTogether(n) {
+  const key = 'videoPreviewEnhanced.openTogetherNoticed';
+  if (globalState.get(key)) return;
+  Promise.resolve(globalState.update(key, true)).catch(() => {});
+  Promise.resolve(vscode.window.showInformationMessage(togetherNotice(n), 'Got it', 'Open Settings')).then((c) => (
+    c === 'Open Settings' ? vscode.commands.executeCommand('workbench.action.openSettings', 'videoPreviewEnhanced.compare.openTogether') : undefined
+  )).catch(() => {});
+}
+
+// ---- Compare: more videos into a viewer ----
+
+const fileKey = (uri) => uri.with({ query: '', fragment: '' }).toString();
+
+/** The viewer showing `uri` (the active one first), or null. */
+function viewerOf(uri) {
+  const key = fileKey(uri);
+  const all = [...unifiedViewers].filter((v) => !v.disposed && v.session.clips.some((c) => c.uri && fileKey(c.uri) === key));
+  return all.find((v) => v.panel.active) || all.find((v) => v.panel.visible) || all[0] || null;
+}
+
+/** The first file the active viewer shows (the "current video" of the Compare commands), or null. */
+function activeVideo() {
+  const v = [...unifiedViewers].find((x) => x.panel.active);
+  const c = v && v.session.clips.find((x) => x.uri && (!x.kind || x.kind === 'file'));
+  return c ? c.uri : null;
+}
+
+/** Prepared clips for uris; one that cannot be opened is logged and left out. */
+async function prepareUris(uris) {
+  const out = [];
+  for (const u of uris) {
+    if (!unifiedViewer.isViewable(u)) continue;
+    try { out.push(await unifiedViewer.prepareClip(u, prepDeps())); }
+    catch (e) { log(`compare: cannot open ${path.basename(u.fsPath)}: ${e && e.message || e}`); }
+  }
+  return out;
+}
+
+/** Remembers videos compared lately (the quick pick lists them first). */
+function rememberRecent(uris) {
+  let recent = globalState.get(RECENT_KEY) || [];
+  for (const u of uris) recent = pushRecent(recent, u.toString());
+  globalState.update(RECENT_KEY, recent);
+}
+
+/** A new viewer tab with `uris` side by side (up to compare.maxVideos). `goto`: a compare link's moment. */
+async function openCompare(context, uris, { goto = null } = {}) {
+  const max = maxVideos();
+  if (uris.length > max) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
+  const clips = await prepareUris(uris.slice(0, max));
+  if (!clips.length) { vscode.window.showWarningMessage('Video Preview: none of these videos can be opened.'); return null; }
+  rememberRecent(uris.slice(0, max));
+  const panel = vscode.window.createWebviewPanel(COMPARE_VIEW_TYPE, clips.map((c) => c.label).join(' · '), vscode.ViewColumn.Active, { retainContextWhenHidden: true });
+  panel.iconPath = new vscode.ThemeIcon('split-horizontal');
+  return showViewer(context, panel, clips[0], goto ? { goto } : null, clips.slice(1));
+}
+
+/** `uris` join `viewer` (no duplicates, up to compare.maxVideos); the page says what happened. */
+async function addToViewer(viewer, uris) {
+  const have = new Set(viewer.session.clips.filter((c) => c.uri).map((c) => fileKey(c.uri)));
+  const fresh = uris.filter((u, i) => !have.has(fileKey(u)) && uris.findIndex((x) => fileKey(x) === fileKey(u)) === i);
+  if (!fresh.length) { viewer.post({ type: 'toast', text: 'Already in Compare', ms: 2500 }); return viewer; }
+  const room = Math.max(0, viewer.session.maxVideos - viewer.session.clips.length);
+  if (fresh.length > room) {
+    const skipped = fresh.length - room;
+    vscode.window.showInformationMessage(`Video Preview: skipped ${skipped} video${skipped === 1 ? '' : 's'} because Compare is full.`);
+    fresh.length = room;
+  }
+  for (const u of fresh) {
+    try { await viewer.addUri(u); } catch (e) { log(`compare: cannot add ${path.basename(u.fsPath)}: ${e && e.message || e}`); }
+  }
+  rememberRecent(fresh);
+  viewer.panel.reveal(undefined, false);
+  return viewer;
+}
+
+/** A file or folder of a selection: its videos (a folder's in natural order, subfolders too). */
+async function selectionVideos(uri) {
+  if (!(uri instanceof vscode.Uri) || !FS_SCHEMES.has(uri.scheme)) return [];
+  try {
+    const dir = vscode.FileType.Directory;
+    const symlink = vscode.FileType.SymbolicLink ?? 64;
+    const stat = await vscode.workspace.fs.stat(uri);
+    if (!(stat.type & dir)) return COMPARE_VIDEO_EXT.test(uri.path) ? [uri] : [];
+    return await collectFolderVideos(
+      uri,
+      (folder) => vscode.workspace.fs.readDirectory(folder),
+      (folder, name) => vscode.Uri.joinPath(folder, name),
+      {
+        dir, symlink,
+        stat: (u) => vscode.workspace.fs.stat(u),
+        // Canonical path for loop detection (local files and Remote-SSH / container workspace hosts).
+        realPath: (u) => (FS_SCHEMES.has(u.scheme) && u.fsPath ? fs.promises.realpath(u.fsPath) : Promise.resolve(u.toString())),
+        key: fileKey,
+        log: (m) => log(`compare folder: ${m}`),
+      },
+    );
+  } catch (e) {
+    log(`compare selection ${uri.toString()}: ${e && e.message || e}`);
+    return [];
+  }
+}
+
+/**
+ * Start Compare / Add to Compare / Compare folder on an Explorer selection: the videos join the active viewer (or the
+ * one used last), else a new viewer shows them.
+ */
+async function compareSelection(context, uri, uris) {
+  const selection = compareTargets(uri, uris, vscode.window.tabGroups && vscode.window.tabGroups.all, (u) => COMPARE_VIDEO_EXT.test(u.path), fileKey);
+  const videos = (await Promise.all(selection.map(selectionVideos))).flat();
+  if (!videos.length) { vscode.window.showInformationMessage('Video Preview: no videos in the selection.'); return null; }
+  const target = activeViewer();
+  if (target && target.session.clips.some((c) => c.uri)) return addToViewer(target, videos);
+  return openCompare(context, videos);
+}
+
+/** The internal 'compare' command (tests): a new viewer with the list, or two picked files. */
+async function compareList(context, uri, uris) {
+  const list = (Array.isArray(uris) && uris.length ? uris : uri ? [uri] : []).filter((u) => COMPARE_VIDEO_EXT.test(u.path));
+  if (list.length >= 2) return openCompare(context, list);
+  const a = list[0] || activeVideo() || (await pickVideos('Compare: video A', undefined, false) || [])[0];
+  if (!a) return null;
+  const b = (await pickVideos(`Compare with ${path.basename(a.fsPath)} (B)`, vscode.Uri.joinPath(a, '..'), false) || [])[0];
+  return b ? openCompare(context, [a, b]) : null;
+}
+
+/** Compare With…: pick files to show beside `uri` (the viewer showing it takes them). */
+async function compareWith(context, uri) {
+  const a = (uri instanceof vscode.Uri ? uri : null) || activeVideo() || (await pickVideos('Compare: video A', undefined, false) || [])[0];
+  if (!a) return null;
+  const more = await pickVideos(`Compare with ${path.basename(a.fsPath)}`, vscode.Uri.joinPath(a, '..'), true);
+  const files = (more || []).filter((u) => FS_SCHEMES.has(u.scheme) && fileKey(u) !== fileKey(a));
+  if (!files.length) return null;
+  const v = viewerOf(a);
+  return v ? addToViewer(v, files) : openCompare(context, [a, ...files]);
+}
+
+/** The quick pick's rows for video `a` (or a folder): its folder, the workspace, Browse… (src/comparepick.js). */
+async function pickItems(a, folderUri) {
+  const dir = folderUri || (a ? vscode.Uri.joinPath(a, '..') : null);
+  let folder = [];
+  if (dir) {
+    try { folder = (await vscode.workspace.fs.readDirectory(dir)).filter(([, ty]) => ty !== 2).map(([n]) => vscode.Uri.joinPath(dir, n).toString()); } catch { /* unreadable: workspace only */ }
+  }
+  let workspace = [];
+  try {
+    const found = await vscode.workspace.findFiles('**/*.{avi,mkv,mov,wmv,flv,mpg,mpeg,m2ts,mts,3gp,ogv,m4v,vob,divx,asf,mxf,y4m,mp4,webm}', '**/node_modules/**', 300);
+    workspace = found.map((u) => u.toString());
+  } catch { /* no workspace */ }
+  return pickRows({ current: a ? a.toString() : '', folder, workspace, recent: globalState.get(RECENT_KEY) || [] }).map((r) => (
+    r.kind === 'sep' ? { kind: vscode.QuickPickItemKind.Separator, label: r.label }
+      : {
+        label: r.kind === 'browse' ? '$(folder-opened) Browse…' : r.kind === 'explorer' ? '$(list-tree) Click videos in the Explorer…' : r.label,
+        browse: r.kind === 'browse', explorer: r.kind === 'explorer', uri: r.uri,
+        description: r.uri && !folder.includes(r.uri) ? vscode.workspace.asRelativePath(vscode.Uri.parse(r.uri), false) : '',
+      }));
+}
+
+/** Key D's quick pick from a command: other videos (same folder first) beside `uri`. */
+async function comparePick(context, uri) {
+  const a = (uri instanceof vscode.Uri ? uri : null) || activeVideo();
+  if (!a) return null;
+  const items = await pickItems(a);
+  const hook = getPickHook();
+  const chosen = await (hook ? hook(items) : vscode.window.showQuickPick(items, { placeHolder: `Compare ${path.basename(a.fsPath)} with…`, matchOnDescription: true }));
+  if (!chosen) return null;
+  const v = viewerOf(a);
+  if (chosen.explorer) { if (v) v.session.setCapture(true); return v; }
+  if (chosen.browse) return compareWith(context, a);
+  const b = vscode.Uri.parse(chosen.uri);
+  return v ? addToViewer(v, [b]) : openCompare(context, [a, b]);
+}
+
+/**
+ * The page's "Add video" / "Replace" dialog (src/unified-viewer.js deps.pick). A test's pick hook
+ * (src/comparepick.js setPickHook) answers from the quick pick's rows instead; a test's Start Compare files come next.
+ */
+async function pickVideos(label, defaultUri, many) {
+  const hook = getPickHook();
+  if (hook) {
+    const chosen = await hook(await pickItems(null, defaultUri));
+    if (chosen && chosen.uri) return [vscode.Uri.parse(chosen.uri)];
+    if (!chosen || !chosen.browse) return undefined;
+  }
+  const files = testCompareFiles;
+  testCompareFiles = undefined;
+  if (files) return files;
+  return vscode.window.showOpenDialog({ canSelectMany: !!many, openLabel: label, defaultUri, filters: videoPickerOptions().filters });
+}
+
+/** "Add to Compare" from a player tab: the video joins the comparison used last. */
+async function addToCompareFromPlayer(uri) {
+  const video = (uri instanceof vscode.Uri ? uri : null) || activeVideo();
+  if (!video || !FS_SCHEMES.has(video.scheme) || !COMPARE_VIDEO_EXT.test(video.path)) return null;
+  const compare = [lastViewer, ...unifiedViewers].find((v) => v && !v.disposed && v.session.clips.length >= 2);
+  return compare ? addToViewer(compare, [video]) : null;
+}
+
+/**
+ * The folder rail's "Compare all videos in folder" on a folder row: the folder's videos (the same walk as Compare
+ * folder in the Explorer) take a single video's place as a comparison, or join a comparison (no duplicates, up to
+ * compare.maxVideos). A toast says when there is nothing to do.
+ */
+async function compareFolderRow(viewer, folderUri) {
+  if (!folderUri || !FS_SCHEMES.has(folderUri.scheme)) return;
+  const videos = await selectionVideos(folderUri);
+  if (viewer.disposed) return;
+  const max = maxVideos();
+  const comparing = viewer.session.clips.length >= 2;
+  const plan = folderRail.planFolderCompare({
+    videoKeys: videos.map(fileKey), compareKeys: comparing ? viewer.session.clips.filter((c) => c.uri).map((c) => fileKey(c.uri)) : null, max,
+  });
+  const name = path.basename(folderUri.fsPath);
+  const say = (text) => viewer.post({ type: 'toast', text, ms: 3000 });
+  const byKey = new Map(videos.map((u) => [fileKey(u), u]));
+  const uris = plan.keys.map((k) => byKey.get(k));
+  log(`compare: folder rail: ${name} (${videos.length} videos) -> ${plan.action}`);
+  if (plan.action === 'open') {
+    // The folder's videos replace the single video: the first takes its tile, the others join.
+    const only = viewer.session.clips[0];
+    const [first, ...rest] = await prepareUris(uris);
+    if (!first || viewer.disposed) return;
+    if (!only || !viewer.session.replaceClip(only.id, first)) viewer.session.addClip(first, { compare: true });
+    for (const c of rest) viewer.session.addClip(c, { compare: true });
+    if (plan.skipped) say(`Compare shows up to ${max} videos: the first ${max} of ${name}`);
+    return;
+  }
+  if (plan.action === 'add') {
+    await addToViewer(viewer, uris);
+    say(`Added ${uris.length} from ${name} to Compare${plan.skipped ? `; Compare is full (${max} videos)` : ''}`);
+    return;
+  }
+  say(plan.action === 'few' ? (comparing ? `No videos in ${name}` : `${name} has fewer than 2 videos to compare`)
+    : plan.action === 'full' ? `Compare is full (${max} videos)` : `The videos of ${name} are in Compare already`);
+}
+
+/** Videos dropped on a page (uri strings): they join its viewer. */
+async function addDropped(viewer, dropped) {
+  const authority = remoteAuthority(viewer.panel.webview);
+  const files = droppedVideos(dropped.filter((x) => typeof x === 'string').slice(0, 20)).map((s) => {
+    try {
+      const u = vscode.Uri.parse(s);
+      if (u.scheme !== 'vscode-remote') return u;
+      if (authority && u.authority === authority) return u.with({ scheme: 'file', authority: '' });
+    } catch { /* not a URI */ }
+    return null;
+  }).filter((u) => u && isLocalVideo(u, VIDEO_EXT));
+  return files.length ? addToViewer(viewer, files) : undefined;
+}
+
+// ---- frame links (vscode://…/open, …/compare) ----
 
 function resolveLinkTarget(rawTarget) {
   const target = localTarget(rawTarget);
@@ -1165,7 +2059,7 @@ function resolveLinkTarget(rawTarget) {
   return { target };
 }
 
-async function openLink(link) {
+async function openLink(context, link) {
   log(`link: ${link.toString(true)}`);
   if (link.path === '/compare') {
     const parsed = parseCompareLink(link.query);
@@ -1179,7 +2073,17 @@ async function openLink(link) {
       if (r.error) { vscode.window.showWarningMessage(r.error); return; }
       targets.push(r.target);
     }
-    if (compareApi) await compareApi.openCompareLink(targets, { goto: parsed.goto, mode: parsed.mode });
+    const goto = parsed.goto || parsed.mode ? { ...(parsed.goto || {}), ...(parsed.mode ? { mode: parsed.mode } : {}) } : null;
+    // The same videos open already: that viewer shows the moment.
+    const keys = targets.slice(0, maxVideos()).map(fileKey);
+    const open = [...unifiedViewers].find((v) => !v.disposed && v.session.clips.length === keys.length
+      && v.session.clips.every((c, i) => c.uri && fileKey(c.uri) === keys[i]));
+    if (open) {
+      open.panel.reveal();
+      if (goto) open.goto(goto);
+      return;
+    }
+    await openCompare(context, targets, { goto });
     return;
   }
   if (link.path !== '/open') return;
@@ -1190,1724 +2094,22 @@ async function openLink(link) {
   if (r.error) { vscode.window.showWarningMessage(r.error); return; }
   const { target } = r;
   const key = target.with({ fragment: '' }).toString();
-  for (const sess of sessions) {
-    if (sess.uri.toString() !== key) continue;
-    sess.panel.reveal();
-    if (g) sess.post({ type: 'goto', ...g });
+  const open = viewerOf(target);
+  if (open) {
+    open.panel.reveal();
+    const c = open.session.clips.find((x) => x.uri && fileKey(x.uri) === fileKey(target));
+    if (g) open.goto(g, c ? c.id : undefined);
     return;
   }
   const now = Date.now();
   for (const [k, p] of pendingGoto) if (p.until < now) pendingGoto.delete(k);
-  // Only for the player this link opens: a file opened by hand later starts normally.
+  // Only for the viewer this link opens: a file opened by hand later starts normally.
   if (g) pendingGoto.set(key, { g, until: now + PENDING_GOTO_MS });
-  const viewType = /\.(mp4|webm)$/i.test(target.path) ? 'videoPreviewEnhanced.playerOptional' : 'videoPreviewEnhanced.player';
-  await vscode.commands.executeCommand('vscode.openWith', target, viewType);
-}
-
-class Session {
-  constructor(context, { uri, sequence, url, handoff }, panel) {
-    this.t = { load: T_LOAD, activate: T_ACTIVATE, activated: T_ACTIVATED, session: Date.now() }; // start-up timeline (logged for tests)
-    this.context = context;
-    // A URL the user entered (Open Video URL…): no file; file-only features are off or adapted.
-    this.url = url || null;
-    if (url) uri = vscode.Uri.parse(url);
-    // Markdown links can carry #t=12.3 or #frame=42 (VS Code keeps the fragment on vscode.open).
-    const frag = uri.fragment && !url ? gotoFrom(uri.fragment) : null;
-    if (uri.fragment) uri = uri.with({ fragment: '' });
-    const pending = pendingGoto.get(uri.toString());
-    pendingGoto.delete(uri.toString());
-    this.goto = (pending && pending.until >= Date.now() ? pending.g : null) || frag;
-    this.uri = uri;
-    this.file = url ? null : uri.fsPath;
-    this.sequence = sequence || null;
-    this.panel = panel;
-    this.hiddenCount = 0;
-    this.webview = panel.webview;
-    remoteAuthority(this.webview); // learn the host for frame links arriving later
-    this.disposed = false;
-    this.page = 0;
-    this.boots = new Set();
-    this.pageAbort = new AbortController();
-    this.exact = new ExactFrameGrabber({ log: (m) => log(`[${this.name}] ${m}`) }); // single exact frames (src/exact_frame.js)
-    this.benchChannels = new Set();
-    this.fh = null;
-    this.frames = null;
-    this.name = sequence ? sequence.name : url ? urlsource.displayName(url) : path.basename(this.file);
-    if (logFile) log(`[${this.name}] session resolved: visible=${panel.visible}`);
-    this.build = libavBuild(context.extensionUri);
-
-    const media = vscode.Uri.joinPath(context.extensionUri, 'media');
-    // Only the extension's own media: video data, frames and images reach the page as messages.
-    this.webview.options = { enableScripts: true, localResourceRoots: [media] };
-    this.media = media;
-    // VPE_SIMULATE_LINK: this player's own slice of the shared link; its undelivered messages go with the session.
-    this.link = linkSim ? linkSim.wrapChannel(this.name) : null;
-    this.webview.onDidReceiveMessage((m) => {
-      if (this.link && m && m.type === 'nd') {
-        const gen = this.loadGen;
-        this.link.sendUp(m, () => { if (!this.disposed && this.loadGen === gen) this.receive(m); });
-        return undefined;
-      }
-      return this.receive(m);
-    });
-    panel.onDidDispose(() => this.dispose());
-    // VS Code does not fire visibilitychange in webviews; tell the player directly.
-    panel.onDidChangeViewState(() => {
-      if (this.disposed) return;
-      if (panel.active) lastActive = this;
-      if (!panel.visible) { this.hiddenCount++; this.thumbJob?.controller.abort(); if (this.rail) this.rail.cancel(); }
-      else if (this.rail && this.railOpen) this.rail.resume();
-      if (panel.visible && this.shown) this.startEarly();
-      this.post({ type: 'visible', visible: panel.visible });
-      if (panel.visible) this.sendCompareOpen();
-      if (panel.visible && this.onShown) { const f = this.onShown; this.onShown = null; f(); }
-    });
-    this.extraSubs = []; // subtitle files the user loaded; sent again after a reload
-    // A folder navigation's hand-over (src/folder-rail.js createHandoffs): rail state, Autoplay, the browsed folder.
-    this.handoff = handoff || null;
-    this.railBrowse = null;
-    this.rail = null; // the folder rail controller, made on the first rail request (railCtl)
-    this.railOpen = false;
-    this.navChain = Promise.resolve();
-    if (handoff) this.adoptRail(handoff); // the same take-over as an open tab's (adoptHandoff)
-    sessions.add(this);
-    lastActive = this;
-  }
-
-  async show() {
-    if (!remoteName() && (logFile || (!this.sequence && nativeTransport() !== 'message'))) {
-      // The CSP needs the selected port before the page is created.
-      try { await frameserver.start(); this.framePort = frameserver.port; }
-      catch (e) { log(`frame server could not start: ${e.message}`); }
-    }
-    await this.renderPage();
-    if (this.disposed) return;
-    this.watch();
-    this.shown = true;
-    this.startEarly();
-  }
-
-  startEarly() {
-    if (!this.panel.visible || this.earlyStarted || this.opened || this.disposed || this.loadGen) return;
-    this.earlyStarted = true;
-    // ffmpeg's lookup and ffprobe run while the webview loads; open() claims the result (first page
-    // only). When they choose native ffmpeg, it starts too (src/early-probe.js).
-    const c = config();
-    this.early = null;
-    if (this.sequence || !FS_SCHEMES.has(this.uri.scheme) || !this.nativePossible(c) || c.transcode === 'always' || this.forceTranscode) return;
-    this.early = new EarlyProbeController(this.earlyDeps()).start(this.file);
-  }
-
-  /** What the early probe needs from this session (the race itself is src/early-probe.js). */
-  earlyDeps() {
-    return {
-      name: this.name, log, verbose: !!logFile,
-      stat: (file) => fs.promises.stat(file),
-      isAvi: (file) => /\.avi$/i.test(file),
-      scanAvi: (signal) => this.scanAvi(signal),
-      tools,
-      gpus: (t) => gpusForMethod(t, config()),
-      prefetchGpus: () => prefetchGpus(config()),
-      failedBefore: (st) => decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, st),
-      // Settings can change while it runs: asked again before each step.
-      eligible: () => { const c = config(); return this.nativePossible(c) && c.transcode !== 'always' && !this.forceTranscode; },
-      sniff: (file, st, signal) => (/\.(mkv|webm)$/i.test(file) ? sniffNativeMatroska : sniffNativeMp4)(file, st, signal),
-      probe: (t, file, signal) => ff.probe(t, file, signal),
-      decide: (t, pr, stat) => {
-        const c = config();
-        const d = this.decideNative(c, t, pr, stat);
-        const allowed = c.transcode !== 'always' && !this.forceTranscode && this.nativePossible(c);
-        if (d.use !== 'native') return { native: false, allowed };
-        return { native: true, allowed, method: d.method, key: nativeKey(t, pr, d, c, this.framePort), make: () => this.newNative(t, pr, d, c) };
-      },
-      mark: (what) => { this.t[what] = Date.now(); },
-      onAbort: (ctl) => { if (this.early === ctl) this.early = null; },
-    };
-  }
-
-  /** Reload when the file is rewritten (render or capture loops), keeping the position. */
-  watch() {
-    if (this.sequence || !FS_SCHEMES.has(this.uri.scheme)) return;
-    let lastStamp = 0;
-    const onError = (e) => log(`[${this.name}] cannot watch for changes: ${e.message}`);
-    try {
-      this.watcher = watchFile(this.file, () => {
-        if (this.disposed) return;
-        clearTimeout(this.watchTimer);
-        this.watchTimer = setTimeout(() => {
-          this.watchTimer = null;
-          fs.stat(this.file, (err, st) => {
-            if (this.disposed || err || st.mtimeMs === lastStamp) return;
-            lastStamp = st.mtimeMs;
-            if (this.opened) this.reload();
-            else this.dropEarly('file changed'); // the page's open() probes the new file
-          });
-        }, 800);
-      }, onError);
-      fs.stat(this.file, (err, st) => { if (!err) lastStamp = st.mtimeMs; });
-    } catch (e) {
-      onError(e);
-    }
-  }
-
-  // ---- the folder: next / previous video, the folder rail (src/folder-rail.js, docs/notes/folder-rail.md) ----
-
-  /** A file of a folder on disk (local, WSL, Remote-SSH): not a URL, an image sequence or a virtual file. */
-  railAllowed() {
-    return !this.sequence && !this.url && FS_SCHEMES.has(this.uri.scheme);
-  }
-
-  /** A path of this file's file system as a uri with this file's scheme and authority (remote windows too). */
-  uriOf(p) {
-    return this.uri.with({ path: vscode.Uri.file(p).path, fragment: '', query: '' });
-  }
-
-  /** The rail controller of this tab (made on first use). */
-  railCtl() {
-    if (this.rail || this.disposed || !this.railAllowed()) return this.rail;
-    this.rail = folderRail.createFolderRail({
-      fs: fs.promises, post: (m) => this.post(m), cache: railMeta, authority: this.uri.authority || '',
-      current: () => this.file, caseless: process.platform === 'win32' || process.platform === 'darwin',
-      log: (m) => log(`[${this.name}] ${m}`), probe: railProbe,
-    });
-    return this.rail;
-  }
-
-  /** The playing file's place in its folder, for the bar's capsule and the rail's footer. */
-  async sendRailPos() {
-    if (!this.railAllowed()) return;
-    const at = await folderRail.neighbourOf(fs.promises, this.file, 0);
-    this.post({ type: 'rail', op: 'pos', index: at.index, count: at.count });
-  }
-
-  /** A message of the page's rail (media/folder-rail.js). Ids are checked against the current listing. */
-  async onRail(m) {
-    const ctl = this.railCtl();
-    if (!ctl) return undefined;
-    return folderRail.routeRailMessage({
-      ctl, prefs: railPrefs,
-      startDir: () => this.railBrowse || ctl.dir() || path.dirname(this.file),
-      setOpen: (open) => { this.railOpen = open; },
-      setBrowse: (d) => { this.railBrowse = d; },
-      seed: (msg) => ctl.seed(this.file, msg),
-      // A video plays in this tab's place; its Compare button compares it with this one; a folder's, all of its videos.
-      onVideo: (e, msg) => this.navigate(e.path, { rail: msg.rail }),
-      onCompareVideo: (e, msg) => (compareApi ? compareApi.compareRow(this, this.uriOf(e.path), Number(msg.t) || 0) : undefined),
-      onCompareFolder: (e) => (compareApi ? compareApi.compareFolderRow(this, this.uriOf(e.path)) : undefined),
-    }, m);
-  }
-
-  /** Opens the next (d = 1) or previous (d = -1) video of the playing file's folder, in this tab's place. */
-  async openNeighbour(d, { auto = false, rail } = {}) {
-    if (!this.railAllowed() || (d !== 1 && d !== -1)) return undefined;
-    const at = await folderRail.neighbourOf(fs.promises, this.file, d);
-    if (this.disposed) return undefined;
-    if (!at.target) {
-      // Autoplay at the last video: it stays paused on the last frame (no wrap).
-      this.post({ type: 'toast', text: d > 0 ? 'Last video in this folder' : 'First video in this folder' });
-      return undefined;
-    }
-    return this.navigate(at.target, { rail, fromAutoNext: auto && d > 0 });
-  }
-
-  /**
-   * Shows the video at `target` (a path of this folder or one the rail browsed) in this tab's place: the tab-swap
-   * model (vscode.openWith, then this tab closes). The new tab takes a handoff intent registered first (rail state,
-   * Autoplay; `fromAutoNext`: start at 0:00 and play). One navigation at a time per tab: a second waits, and once this
-   * tab is gone it does nothing (Autoplay never advances twice).
-   */
-  navigate(target, o = {}) {
-    const run = () => this.swapTo(target, o);
-    this.navChain = this.navChain.then(run, run);
-    return this.navChain;
-  }
-
-  async swapTo(target, { rail, fromAutoNext = false } = {}) {
-    if (this.disposed) return;
-    const uri = this.uriOf(target);
-    const key = uri.toString();
-    const column = this.panel.viewColumn;
-    const carry = folderRail.sanitizeRailCarry(rail);
-    const intent = { rail: carry, fromAutoNext, browse: carry.open && this.rail ? this.rail.dir() : null };
-    if (logFile) log(`[${this.name}] folder: open ${path.basename(target)}${fromAutoNext ? ' (autoplay next)' : ''}`);
-    // Open already in this editor group: VS Code would only focus it. It is shown and takes the handoff; this tab
-    // closes only once that tab says it applied it (its player ready, Autoplay's play started).
-    const open = [...sessions].find((s) => s !== this && !s.disposed && s.uri.toString() === key && s.panel.viewColumn === column);
-    if (open) {
-      open.panel.reveal(column, false);
-      const ok = await open.adoptHandoff(intent);
-      if (!ok) { log(`[${this.name}] folder: ${path.basename(target)} did not take over; this tab stays`); return; }
-      if (!this.disposed) this.panel.dispose();
-      return;
-    }
-    const token = railHandoffs.register(key, column, intent);
-    try {
-      await vscode.commands.executeCommand('vscode.openWith', uri, playerViewType(uri), { viewColumn: column, preview: false });
-    } catch (e) {
-      railHandoffs.drop(token);
-      throw e;
-    }
-    if (!this.disposed) this.panel.dispose();
-  }
-
-  /**
-   * The host's part of taking over a folder navigation's rail state (a new tab and an open one alike): the folder the
-   * rail shows next is the one the source showed, else this file's own. The page's part is media/folder-rail.js adopt.
-   * @param {import('./folder-rail').HandoffIntent} intent
-   */
-  adoptRail(intent) {
-    if (!this.railAllowed()) return undefined;
-    this.railBrowse = intent.browse || path.dirname(this.file);
-    // Open here and staying open: show that folder now (a closed rail lists it when the page opens it).
-    if (this.rail && this.railOpen && intent.rail.open) return this.rail.browse(this.railBrowse);
-    return undefined;
-  }
-
-  /**
-   * A folder navigation landed on this open tab: the page applies the rail state and Autoplay once its player is
-   * ready and answers 'railAdopted'. Resolves true only on that answer; false when it does not come within ADOPT_MS,
-   * the tab closes, or a newer handoff replaces it.
-   * @param {import('./folder-rail').HandoffIntent} intent
-   * @returns {Promise<boolean>}
-   */
-  adoptHandoff(intent) {
-    const id = ++adoptSeq;
-    if (this.adoptWait) this.adoptWait.done(false);
-    this.adoptRail(intent);
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => { this.post({ type: 'railHandoffCancel', id }); done(false); }, ADOPT_MS);
-      const done = (/** @type {boolean} */ ok) => {
-        clearTimeout(timer);
-        if (this.adoptWait && this.adoptWait.id === id) this.adoptWait = null;
-        resolve(ok);
-      };
-      this.adoptWait = { id, done };
-      /** @type {import('./folder-rail').RailHandoffMessage} */
-      const msg = { type: 'railHandoff', id, rail: intent.rail, onEnd: intent.rail.onEnd, fromAutoNext: !!intent.fromAutoNext };
-      this.post(msg);
-    });
-  }
-
-  /** Where this file was left last time (same size and date), unless it was near the start or end. */
-  resumeAt() {
-    if (this.sequence || this.url || !globalState) return 0;
-    const all = globalState.get(POSITIONS_KEY) || {};
-    const e = all[this.file];
-    try {
-      const st = fs.statSync(this.file);
-      if (!e || e.size !== st.size || e.mtime !== st.mtimeMs) return 0;
-    } catch { return 0; }
-    return e.t > 5 && e.d - e.t > 5 ? e.t : 0;
-  }
-
-  /**
-   * The webview reports the position every second. Stored when it stops moving (pause,
-   * end), jumps (seek), every 30 s while playing, and on close; not on every report.
-   */
-  rememberPos(t, d) {
-    if (this.sequence || this.url || !globalState || !(t >= 0)) return;
-    const prev = this.pos;
-    this.pos = { t, d };
-    if (this.savedPos && this.savedPos.t === t) return;
-    const playing = prev && t > prev.t && t - prev.t < 5;
-    if (playing && Date.now() - (this.savedAt || 0) < 30000) return;
-    this.savePos();
-  }
-
-  savePos() {
-    const { t, d } = this.pos;
-    this.savedPos = this.pos;
-    this.savedAt = Date.now();
-    let st;
-    try { st = fs.statSync(this.file); } catch { return; }
-    const all = { ...(globalState.get(POSITIONS_KEY) || {}) };
-    all[this.file] = { t, d, size: st.size, mtime: st.mtimeMs, at: Date.now() };
-    // Keep the 200 most recent files.
-    const keys = Object.keys(all).sort((x, y) => all[y].at - all[x].at);
-    for (const k of keys.slice(200)) delete all[k];
-    globalState.update(POSITIONS_KEY, all);
-  }
-
-  reload(why = 'file changed on disk') {
-    if (this.disposed) return;
-    log(`[${this.name}] ${why}, reloading`);
-    this.resetPage();
-    this.boot = undefined;
-    this.boots.clear();
-    return this.renderPage(true);
-  }
-
-  async renderPage(reload = false) {
-    if (this.disposed) return;
-    const gen = this.loadGen;
-    this.renderingPage = true;
-    const rotation = this.sequence || this.url ? 0 : await rotationOf(this.file);
-    if (this.disposed || gen !== this.loadGen) return;
-    this.rotation = rotation;
-    this.renderingPage = false;
-    this.webview.html = this.html() + (reload ? `<!-- ${Date.now()} -->` : '');
-  }
-
-  resetPage() {
-    this.closePage('reload');
-    this.pageAbort = new AbortController();
-  }
-
-  closePage(why) {
-    this.loadGen = (this.loadGen || 0) + 1;
-    this.pageAbort.abort();
-    this.thumbJob?.controller.abort();
-    this.thumbJob = null;
-    this.exporting = null;
-    this.onShown = null;
-    if (this.exportWait) for (const finish of this.exportWait.values()) finish({ error: 'export cancelled' });
-    this.hlsPlan = null;
-    if (this.disposed) this.exact.dispose();
-    else this.exact.cancel();
-    this.closeBenchChannels();
-    this.webviewOrigin = null;
-    this.closeFile();
-    this.dropEarly(why);
-    if (this.native) { this.native.dispose(); this.native = null; }
-    this.frames = null;
-  }
-
-  closeBenchChannels() {
-    for (const ch of this.benchChannels) ch.close();
-  }
-
-  post(msg) {
-    if (this.disposed) return;
-    if (this.link && msg && msg.type === 'nd') {
-      // Over the simulated link; a page that was replaced or closed meanwhile never gets it.
-      const gen = this.loadGen;
-      this.link.sendDown(msg, () => { if (!this.disposed && this.loadGen === gen) this.webview.postMessage(msg); });
-      return;
-    }
-    this.webview.postMessage(msg);
-  }
-
-  /** A message from the page (after the simulated link, if any). */
-  receive(m) {
-    const pending = this.onMessage(m);
-    const gen = this.loadGen;
-    return pending.catch((e) => {
-      if (this.stale(gen)) return;
-      if (['ready', 'frames', 'readBlock', 'nd', 'wcFailed', 'quality'].includes(m.type)) this.fail(e);
-      else {
-        log(`[${this.name}] ${m.type} failed: ${e?.stack || e}`);
-        this.post({ type: 'toast', text: `Video Preview action failed. ${e?.message || e}` });
-      }
-    });
-  }
-
-  canCompare() {
-    return !this.sequence && !this.url && FS_SCHEMES.has(this.uri.scheme);
-  }
-
-  /** Whether a Compare is open: the player's Compare button then adds to it (media/player.js setCompareOpen). */
-  compareOpen() {
-    return [...compareSessions].some((c) => !c.disposed);
-  }
-
-  sendCompareOpen() {
-    if (this.canCompare()) this.post({ type: 'compareOpen', open: this.compareOpen() });
-  }
-
-  fail(err, hint) {
-    log(`[${this.name}] error: ${err && err.stack ? err.stack : err}`);
-    this.post({ type: 'error', message: String(err && err.message ? err.message : err), hint: hint || '' });
-  }
-
-  html() {
-    const w = this.webview;
-    const media = this.media;
-    const nonce = crypto.randomBytes(16).toString('base64');
-    const c = config();
-    const uri = (...p) => w.asWebviewUri(vscode.Uri.joinPath(media, ...p)).toString();
-    const base = w.asWebviewUri(this.build.dir).toString();
-    // A link's frame applies to the first page only: a reload (file changed on disk) resumes instead.
-    const goto = this.goto || null;
-    this.goto = null;
-    // A folder navigation's hand-over applies to the first page only, like a link's frame.
-    const handoff = this.handoff;
-    this.handoff = null;
-    const carry = handoff ? handoff.rail : null;
-    const autoNext = !!(handoff && handoff.fromAutoNext);
-    const cfgObject = {
-      page: ++this.page,
-      autoplay: c.autoplay, onEnd: (carry && carry.onEnd) || c.onEnd, autoNext, prefs: prefsOf(c), canOpenExternal: this.canOpenExternal(), name: this.name, debug: !!logFile,
-      // Autoplay's next video starts at 0:00, not where it was left last time.
-      resume: autoNext ? 0 : this.resumeAt(), goto,
-      rail: this.railAllowed() ? { ...folderRail.sanitizeRailPrefs(globalState.get(folderRail.RAIL_PREFS_KEY)), layout: c.railLayout } : null,
-      // The source tab's rail state: the page applies it with the same adopt() as an open tab's handoff.
-      railCarry: this.railAllowed() && carry ? carry : null,
-      // A URL tab (Open Video URL…): file-only tools are off; the info panel names the host instead of a size.
-      url: this.url ? { host: new URL(this.url).host } : null,
-      sequence: !!this.sequence,
-      hideSlowPlaybackNotice: !!globalState.get(HIDE_SLOW_PLAYBACK_NOTICE),
-      hideReducedResNotice: !!globalState.get(HIDE_REDUCED_RES_NOTICE),
-      engine: {
-        workerUrl: uri('decoder-worker.js'), xrayWorkerUrl: uri('xray-worker.js'), libavBase: base, loader: `${base}/${this.build.loader}`, variant: this.build.variant,
-        remote: !!remoteName(), whenSlow: c.whenSlow, fastWhenBehind: c.fastWhenBehind,
-        net: !!this.url, // blocks come over the network: larger blocks, more read-ahead, no seek-bar thumbnails
-        wcFailed: [...wcFailed],
-        rotation: this.rotation,
-        pool: debugPool,
-        mem: memBudgets(),
-        hdrOutput: c.hdrOutput,
-        // Tests (VPE_LOG only): VPE_HDR_FORCE=1 takes the HDR output path on an SDR display.
-        hdrForce: !!logFile && process.env.VPE_HDR_FORCE === '1',
-        // Tests (VPE_LOG only): VPE_NO_WEBGL=1 makes the decoder fail as on a machine without WebGL2 (the error screen).
-        noWebgl: !!logFile && process.env.VPE_NO_WEBGL === '1',
-        // Tests (VPE_LOG only): VPE_THUMB_STRIP=0 leaves out the background seek-bar strip (CPU measurements).
-      },
-    };
-    // The page's CSS is inlined; on remote hosts (every webview resource is an SSH round trip) so are the small scripts.
-    const { inlineCss, inlineScripts } = inlineAssetsFor(media.fsPath, {
-      cssFiles: PLAYER_CSS, scriptFiles: PLAYER_SCRIPTS, inlineScripts: !!vscode.env.remoteName,
-    });
-    return playerHtml({
-      cspSource: w.cspSource, uri, base, loader: this.build.loader, nonce, cfg: cfgObject, sequence: !!this.sequence,
-      framePort: this.framePort, transport: nativeTransport(), debug: !!logFile,
-      canCompare: this.canCompare(), compareOpen: this.compareOpen(), folder: this.railAllowed(),
-      inlineCss, inlineScripts,
-    });
-  }
-
-  /** Native ffmpeg / Live transcode seek-bar thumbnail (src/thumbhost.js); one at a time, answered with {type: 'thumb', id, ...}.
-   * @param {ThumbRequest} m
-   */
-  sendThumb(m) {
-    const { signal } = this.pageAbort;
-    const boot = this.boot;
-    const nd = this.native;
-    if (signal.aborted || m.cancel) {
-      if (this.thumbJob?.id === m.id) this.thumbJob.controller.abort();
-      return;
-    }
-    this.thumbJob?.controller.abort();
-    const job = { id: m.id, controller: new AbortController() };
-    this.thumbJob = job;
-    // Native ffmpeg and Live transcode (EncodedStream) both decode keyframes of the source file on this host;
-    // a URL tab has no local file for ffmpeg to seek in, so it gets none.
-    const eligible = nd instanceof NativeDecoder || nd instanceof remotestream.EncodedStream;
-    const work = eligible && !this.url && !this.sequence && this.panel.visible
-      ? nativeThumb(nd, m, (x) => log(`[${this.name}] ${x}`), job.controller.signal) : null;
-    return Promise.resolve(work).catch(() => null).then((r) => {
-      if (this.thumbJob !== job) return;
-      this.thumbJob = null;
-      if (signal.aborted || job.controller.signal.aborted) return;
-      // checkJs: start
-      const message = /** @satisfies {ThumbReply} */ ({
-        type: 'thumb', boot, page: m.page, id: m.id, ...r,
-      });
-      // checkJs: end
-      this.post(message);
-    });
-  }
-
-  /**
-   * One full-resolution PNG of the source at m.t for the pixel tools (src/exact_frame.js).
-   * Answers {type: 'exactFrame', page, reqId, t, png | error}; a newer request, a reload or a closed tab ends this one,
-   * and an answer for a replaced page is dropped.
-   */
-  async sendExactFrame(m) {
-    const page = this.page;
-    const gen = this.loadGen;
-    const boot = this.boot;
-    const reqId = Number(m.reqId);
-    const t = Number(m.t);
-    if (m.page !== page || !Number.isSafeInteger(reqId)) return undefined; // a message of another page
-    const reply = (r) => { if (!this.stale(gen)) this.post({ type: 'exactFrame', boot, page, reqId, t, ...r }); };
-    const nd = this.native;
-    const eligible = nd instanceof remotestream.EncodedStream || (nd instanceof NativeDecoder && nd.lossy());
-    const video = eligible && nd.pr && nd.pr.video;
-    if (!video || this.url || this.sequence || !nd.file || !nd.tools) {
-      reply({ error: 'exact frames are for Live transcode or downscaled native ffmpeg of a video file' });
-      return undefined;
-    }
-    const r = await this.exact.grab({ tools: nd.tools, file: nd.file, t, video, rotation: this.rotation, page, isCurrent: (p) => !this.stale(gen) && p === this.page });
-    if (r.cancelled || r.stale) return undefined; // superseded or replaced: the newer request answers
-    reply(r.png ? { png: new Uint8Array(r.png.buffer, r.png.byteOffset, r.png.length), w: r.w, h: r.h, matrix: r.matrix } : { error: r.error || 'failed' });
-    return undefined;
-  }
-
-  async onMessage(m) {
-    // A page can only send objects; null or a primitive is not one of ours.
-    if (!m || typeof m !== 'object') return undefined;
-    if (this.disposed || this.renderingPage || (m.type !== 'ready' && m.boot !== undefined && m.boot !== this.boot)) return undefined;
-    switch (m.type) {
-      case 'ready':
-        if (m.page !== this.page || typeof m.boot !== 'string' || !m.boot || this.boots.has(m.boot)) return undefined;
-        // VS Code can recreate the document from the same HTML without asking the extension to reload.
-        if (this.boot !== undefined) this.resetPage();
-        this.boot = m.boot;
-        this.boots.add(m.boot);
-        // VS Code delivers this through the owning webview, whose origin isn't exposed by its host API.
-        this.webviewOrigin = typeof m.origin === 'string' && /^vscode-webview:\/\/[a-z0-9-]+$/.test(m.origin) ? m.origin : null;
-        // The picture area (device pixels) for the HLS "Auto" quality.
-        this.pageView = m.view && Number.isInteger(m.view.w) && Number.isInteger(m.view.h) && m.view.w > 0 && m.view.h > 0 && m.view.w <= 32768 && m.view.h <= 32768 ? { w: m.view.w, h: m.view.h } : null;
-        this.t.ready = this.t.ready || Date.now();
-        this.sendSubtitles().catch((e) => log(`[${this.name}] subtitles: ${e && e.stack || e}`));
-        this.sendFfmpegState();
-        this.sendRailPos().catch((e) => log(`[${this.name}] folder: ${e && e.code || e}`));
-        if (globalState.get(HIDE_SLOW_PLAYBACK_NOTICE)) this.post({ type: 'hideSlowPlaybackNotice' });
-        if (globalState.get(HIDE_REDUCED_RES_NOTICE)) this.post({ type: 'hideReducedResNotice' });
-        // The bar was rendered with the Compare state. A Compare that opened or closed while the page loaded is sent
-        // after the video opened, so nothing comes before the first sound and frames (test/host/wav_parts_test.js).
-        return Promise.resolve(this.sequence ? this.openSequence() : this.open())
-          .finally(() => { if (!this.disposed && this.page === m.page && this.boot === m.boot) this.sendCompareOpen(); });
-      case 'loadSubs': return this.loadSubtitles();
-      // The settings panel's "Extension settings" row: VS Code's Settings, filtered to this extension.
-      case 'openSettings': return vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXT_ID}`);
-      case 'frames':
-        // The frame player's largest request is 121 frames ahead (including the target) and 4 behind.
-        if (!Array.isArray(m.indices) || m.indices.length > 125) return undefined;
-        for (const index of m.indices) if (!Number.isSafeInteger(index) || index < 0) return undefined;
-        return this.sendFrames(m.indices);
-      // checkJs: start
-      case /** @satisfies {ReadBlockRequest['type']} */ ('readBlock'): {
-        const request = /** @type {ReadBlockRequest} */ (m);
-        const gen = this.loadGen;
-        const boot = this.boot;
-        const isCurrent = (/** @type {number} */ page) => !this.stale(gen) && page === this.page;
-        return serveBlock(request, isCurrent,
-          (pos, len) => this.readBlock(pos, len, () => isCurrent(request.page)),
-          (reply) => this.post(m.boot === undefined ? reply : { ...reply, boot }));
-      }
-      // checkJs: end
-      case 'nd':
-        if (!m.m || (m.m.type === 'seek' && (!Number.isFinite(m.m.t) || m.m.t < 0))) return undefined;
-        // The page's picture area, with open and after a resize: the next prestart's guess (fitView).
-        // A zoomed picture is no guess for the next video's player.
-        if (m.m.type === 'view' && !m.m.zoomed && m.m.w > 0 && m.m.h > 0) rememberView(m.m.w, m.m.h);
-        else if (m.m.type === 'open' && m.m.view && m.m.view.w > 0 && m.m.view.h > 0) rememberView(m.m.view.w, m.m.view.h);
-        return this.native ? this.native.handle(m.m) : undefined;
-      case 'thumb': return m.page === this.page ? this.sendThumb(m) : undefined;
-      case 'grabExactFrame': return this.sendExactFrame(m);
-      // Jump sizes and speed step from the player's panels: only declared values.
-      case 'pref': return PREFS[m.key] && PREFS[m.key].values.includes(m.value) ? setSetting(m.key, m.value, prefTarget(m.key)) : undefined;
-      case 'playbackPrefs': return rememberPlaybackPrefs(m, this);
-      // Live transcode mode and max bitrate from the ⚙ panel (machine-scoped).
-      case 'transcodePref': {
-        if (m.mode !== undefined && transcodePolicy.MODES.includes(m.mode)) {
-          await setSetting('transcode', m.mode, vscode.ConfigurationTarget.Global);
-          const isStreaming = this.native instanceof remotestream.EncodedStream;
-          if (m.mode === 'off' && isStreaming) this.useFullRes();
-          else if (m.mode === 'always' && !isStreaming) {
-            this.forceTranscode = true;
-            this.fullRes = false;
-            this.noRemoteStream = false;
-            this.reload('live transcode enabled');
-          }
-        }
-        if (m.maxBitrateMbps !== undefined) {
-          const mbps = Math.max(0, Number(m.maxBitrateMbps) || 0);
-          await setSetting('transcodeMaxBitrate', mbps, vscode.ConfigurationTarget.Global);
-          if (this.native instanceof remotestream.EncodedStream) {
-            this.native.setMaxBitrateMbps(mbps);
-          }
-        }
-        // Save as default: new tabs start at it; open tabs keep their own resolution.
-        if (m.resolution !== undefined) {
-          await setSetting('transcodeResolution', transcodePolicy.resolutionOf(m.resolution), vscode.ConfigurationTarget.Global);
-        }
-        return undefined;
-      }
-      // This tab's Live transcode resolution (⚙ › Live transcode › Resolution): kept across its reloads.
-      case 'transcodeResolution':
-        this.transcodeHeight = transcodePolicy.resolutionOf(m.height);
-        if (this.native instanceof remotestream.EncodedStream) this.native.setResolution(this.transcodeHeight);
-        return undefined;
-      case 'compareWith':
-        if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
-        // Compare takes this tab's place and starts where the player is (src/compare.js).
-        return vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', this.uri, { t: Number(m.t) || 0 });
-      case 'toolbarCompare':
-        if (!this.canCompare()) return;
-        return compareApi.addFromPlayer(this, Number(m.t) || 0, m.confirmStart === true);
-      case 'comparePick': // key D: a quick pick of other videos
-        if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
-        return vscode.commands.executeCommand('videoPreviewEnhanced.comparePick', this.uri, { t: Number(m.t) || 0 });
-      case 'addMode': // Shift+D: the next video opened (an Explorer click) is compared with this one
-        if (this.url || this.sequence) { this.post({ type: 'toast', text: this.url ? 'Compare works with video files, not URLs' : 'Compare works with video files, not image sequences', ms: 3000 }); return undefined; }
-        if (Number(m.t) >= 0) this.pos = { ...(this.pos || {}), t: Number(m.t) };
-        return compareApi ? compareApi.toggleAddMode(this) : undefined;
-      case 'stopAddMode': return compareApi ? compareApi.stopAddMode() : undefined; // Esc in the page
-      case 'compareDrop': // videos dropped on the player (docs/notes/compare-ui.md "Starting a compare")
-        if (this.url || this.sequence || !Array.isArray(m.uris)) return undefined;
-        return vscode.commands.executeCommand('videoPreviewEnhanced.compareDrop', this.uri, m.uris.filter((x) => typeof x === 'string').slice(0, 20), { t: Number(m.t) || 0 });
-      // The ⚙ panel's Quality page (HLS): 'auto' or a variant index of this stream (checked in setQuality).
-      case 'quality': return this.url ? this.setQuality(m.pick === 'auto' ? 'auto' : Number(m.pick)) : undefined;
-      case 'openUrl': { // the ⚙ panel's "Open video URL…": only opens the input box; the URL comes from there
-        const url = await promptUrl();
-        if (url) await openUrl(this.context, url);
-        return undefined;
-      }
-      // The page writes a user (global) setting: only the values the setting declares (security review 2026-11-19 #7).
-      case 'whenSlow': return m.value === 'every' || m.value === 'skip' ? setSetting('whenSlow', m.value, vscode.ConfigurationTarget.Global) : undefined;
-      case 'action':
-        if (m.id === 'setupFfmpeg') {
-          // A URL that needed ffmpeg opens again once it is set up.
-          setupFfmpeg().then(() => (this.url && !this.disposed ? tools() : null)).then((t) => { if (t && !this.disposed) this.reload('ffmpeg set up'); }, () => {});
-        }
-        if (m.id === 'fullRes') this.useFullRes();
-        if (m.id === 'nativeResolutionSettings') {
-          return vscode.commands.executeCommand('workbench.action.openSettings', '@id:videoPreviewEnhanced.nativeMaxHeight');
-        }
-        if (m.id === 'transcodeSettings') {
-          return vscode.commands.executeCommand('workbench.action.openSettings', '@id:videoPreviewEnhanced.transcode');
-        }
-        if (m.id === 'whenSlowSettings' || m.id === 'fastPreviewSettings') {
-          const setting = m.id === 'whenSlowSettings' ? 'whenSlow' : 'fastPreviewWhenBehind';
-          return vscode.commands.executeCommand('workbench.action.openSettings', `@id:videoPreviewEnhanced.${setting}`);
-        }
-        if (m.id === 'hideSlowPlaybackNotice') {
-          await globalState.update(HIDE_SLOW_PLAYBACK_NOTICE, true);
-          for (const session of sessions) session.post({ type: 'hideSlowPlaybackNotice' });
-        }
-        if (m.id === 'hideReducedResNotice') {
-          await globalState.update(HIDE_REDUCED_RES_NOTICE, true);
-          for (const session of sessions) session.post({ type: 'hideReducedResNotice' });
-        }
-        return undefined;
-      case 'decodeSpeed': return this.onSpeed(m);
-      case 'softVideo': if (vscode.env.remoteName && !this.native && !this.fullRes) offers.maybeOfferRemoteFfmpeg(this, m).catch((e) => log(`remote ffmpeg offer: ${e && e.stack || e}`)); return undefined;
-      case 'saveFrame': return m.page === this.page ? this.saveFrame(m.data, m.frame) : undefined;
-      case 'exportRange': return m.page === this.page ? this.exportRange(m.range) : undefined;
-      case 'ffmpegRange': return m.page === this.page ? this.copyFfmpegRange(m.range) : undefined;
-      case 'clipRange': return m.page === this.page ? exportClips(this, m.range ? [{ uri: this.uri, range: m.range }] : [], this.uri) : undefined;
-      case 'exportFrame':
-        if (m.page === this.page && this.exportWait) this.exportWait.get(m.id)?.(m);
-        return undefined;
-      case 'external': if (!this.canOpenExternal()) return undefined; return vscode.env.openExternal(this.sequence ? vscode.Uri.file(this.sequence.files[0]) : this.uri);
-      case 'log': log(`[${this.name}] webview: ${m.msg}`); return undefined;
-      case 'wcFailed':
-        // WebCodecs lagged on this sound codec: the built-in decoder plays it in every later player this session.
-        if (typeof m.codec === 'string' && /^[\w-]{1,16}$/.test(m.codec)) { wcFailed.add(m.codec); log(`[${this.name}] WebCodecs failed for ${m.codec}: ${String(m.reason || '').slice(0, 200)}`); }
-        return undefined;
-      case 'playing': return undefined;
-      case 'pos': return this.rememberPos(m.t, m.d);
-      case 'neighbour': return this.openNeighbour(m.d, { auto: m.auto === true, rail: m.rail });
-      case 'rail': return this.onRail(m);
-      case 'railAdopted': { // checkJs-typed in src/folder-rail.js (RailAdoptedMessage)
-        if (this.adoptWait && this.adoptWait.id === m.id) this.adoptWait.done(m.ok === true);
-        return undefined;
-      }
-      case 'focusMode': return toggleFocusMode(vscode);
-      case 'focusModeExited': noteFocusModeExited(); return undefined;
-      case 'copyText': return vscode.env.clipboard.writeText(String(m.text || ''));
-      case 'copyLink': {
-        if (!Number.isSafeInteger(m.frame) || m.frame < 0) return undefined;
-        if (this.url) { this.post({ type: 'toast', text: 'Frame links work for video files only, not URLs', ms: 3000 }); return undefined; }
-        if (this.sequence) { this.post({ type: 'toast', text: 'Links work for video files only' }); return undefined; }
-        await vscode.env.clipboard.writeText(frameLink(this.context, this.uri, m.frame, m.t, this.webview));
-        this.post({ type: 'toast', text: `Link to frame ${m.frame} copied` });
-        return undefined;
-      }
-      default: return undefined;
-    }
-  }
-
-  // ---- opening -----------------------------------------------------------
-
-  /** The system player can only open a file on this machine. */
-  canOpenExternal() {
-    return !vscode.env.remoteName && (this.sequence || this.uri.scheme === 'file');
-  }
-
-  /** True once the page that asked has been replaced (reload) or closed: its answer must not reach the new page. */
-  stale(gen) {
-    return gen !== this.loadGen || this.disposed;
-  }
-
-  async open() {
-    const ctl = this.opened ? null : this.early;
-    this.opened = true;
-    // A reload while this runs (probe, AVI scan) starts a second open() for the new page.
-    const gen = this.loadGen;
-    const { signal } = this.pageAbort;
-    // The page owns the claimed decoder while it waits for the probe.
-    const early = ctl ? ctl.claim(signal) : null;
-    try {
-      return await this.openPage(gen, early, signal);
-    } finally {
-      if (early) early.release();
-      if (this.early === ctl) this.early = null;
-    }
-  }
-
-  /** open() for page gen. early: the claimed early probe of the session (or null; src/early-probe.js). */
-  async openPage(gen, early, signal) {
-    // git:, vscode-vfs: and other virtual files: fsPath would name a different file (git: the working tree).
-    if (this.url) return this.openUrlPage(gen, signal);
-    if (!FS_SCHEMES.has(this.uri.scheme)) return this.fail(new Error(`Can't play ${this.uri.scheme}: files`), 'Open the file from the Explorer instead.');
-    offers.maybeOnboard().catch((e) => log(`onboarding failed: ${e && e.message || e}`));
-    const stat = await fs.promises.stat(this.file);
-    if (this.stale(gen)) return undefined;
-    if (early && !sameFile(await early.stat, stat)) early.cancelProbe();
-    if (this.stale(gen)) return undefined;
-    if (/\.avi$/i.test(this.file)) {
-      const info = await (early && !early.aborted ? early.aviInfo : this.scanAvi(signal));
-      if (this.stale(gen)) return undefined;
-      // MJPEG (with PCM sound) plays straight from the file: each frame is a JPEG.
-      if (this.playsMjpeg(info)) return this.startMjpeg(info, stat, signal);
-    }
-    // Native ffmpeg when installed, except 8-bit H.264/VP8 and when there's a reason not to
-    // (src/decide.js): an SSH/container window, a file it failed on, pixel tools.
-    const c = config();
-    const remote = remoteName();
-    // Live transcode "always" (or forced for this session): stream before raw native ffmpeg, in any window.
-    if (c.transcode === 'always' || this.forceTranscode) {
-      if (early) early.cancelProbe();
-      if (await this.tryRemoteStream(gen, stat, null, { forced: !!this.forceTranscode })) return undefined;
-    }
-    let probed = null; // ffmpeg and its probe of the file, for the stream below
-    const nativePossible = this.nativePossible(c);
-    if (!nativePossible && early) early.cancelProbe();
-    if (this.stale(gen)) return undefined;
-    if (nativePossible) {
-      // The probe started with the session (probeEarly), for the first page only and only for the
-      // same file (size and date): a reload or a rewritten file is probed again.
-      let e = null;
-      if (early && !early.aborted) {
-        log(`[${this.name}] waiting for early ffprobe`);
-        e = await early.probed.catch(() => null);
-      }
-      if (this.stale(gen)) return undefined;
-      const t = e ? e.t : await tools();
-      if (this.stale(gen)) return undefined;
-      this.t.tools = Date.now();
-      const gpus = gpusForMethod(t, c); // usually known already (stored, or detected alongside the early ffprobe)
-      if (t) {
-        // No automatic GPU test (2026-11-20: background decoding right after install looks like malware):
-        // until the user runs it, the GPU's vendor picks the method (decide.vendorMethod; a failing one falls back).
-        let pr = null;
-        if (e && e.t === t && !e.err) pr = e.pr;
-        else {
-          try { pr = await ff.probe(t, this.file, signal); } catch (err) { log(`[${this.name}] ffprobe failed: ${err.message}`); }
-        }
-        await gpus;
-        if (this.stale(gen)) return undefined;
-        this.t.probed = Date.now();
-        if (pr) probed = { t, pr };
-        const d = !pr ? { use: 'builtin', reason: 'ffprobe could not read the file' } : this.decideNative(c, t, pr, stat);
-        log(`[${this.name}] decoder: ${d.use === 'native' ? `native ffmpeg (${d.method})` : 'built-in'}: ${d.reason}`);
-        if (pr && d.use === 'native') {
-          // The ffmpeg started before the page when it was started for this same decision; else one
-          // starts now (still before the page's transport is known: NativeDecoder.open() restarts it
-          // if the frame size changes).
-          let nd = early && early.claimNative(nativeKey(t, pr, d, c, this.framePort), { pr, method: d.method, stat });
-          if (nd) log(`[${this.name}] native: using the ffmpeg started before the page`);
-          else nd = this.newNative(t, pr, d, c);
-          nd.attach({
-            post: (msg) => { if (!signal.aborted) this.post({ type: 'nd', m: msg }); },
-            postRaw: (msg) => { if (!signal.aborted) this.post(msg); },
-            onFail: (err, rejectedMedia) => this.nativeFailed(err, gen, rejectedMedia), origin: this.webviewOrigin,
-          });
-          this.native = nd;
-          this.post({ type: 'libav', meta: { size: stat.size, duration: 0, label: '', native: true } });
-          this.logStartup('native');
-          return undefined;
-        }
-      }
-    }
-    if (this.stale(gen)) return undefined;
-    // Remote windows where raw native ffmpeg didn't take the file (SSH, containers, tunnels):
-    // consult the unified Live transcode policy (auto -> stream, ask -> prompt once on first remote use).
-    if (c.transcode !== 'always' && !this.forceTranscode && remote && remote !== 'wsl') {
-      if (await this.tryRemoteStream(gen, stat, probed)) return undefined;
-    }
-    if (this.stale(gen)) return undefined;
-    log(`[${this.name}] decoding with libav.js (${this.build.variant})`);
-    this.post({ type: 'libav', meta: { size: stat.size, duration: 0, label: '' } });
-    this.logStartup('libav');
-    return undefined;
-  }
-
-  /**
-   * A URL player's page (Open Video URL…, docs/notes/url-stream.md). Native ffmpeg plays HLS/DASH and
-   * anything the decoder rule gives it (the URL goes to ffmpeg with the network protocol whitelist);
-   * otherwise the built-in decoder reads blocks over HTTP (urlsource.HttpFile / HlsFile).
-   */
-  async openUrlPage(gen, signal) {
-    const c = config();
-    const opts = { ...netOpts(), signal };
-    const red = urlsource.redact(this.url);
-    this.netFailed = false;
-    let host = '';
-    try { host = new URL(this.url).host; } catch { /* checked before */ }
-    this.post({ type: 'status', text: `Connecting to ${host}…` });
-    let info;
-    try { info = await urlsource.inspect(this.url, opts); } catch (e) {
-      if (this.stale(gen)) return undefined;
-      return this.fail(e, `Could not open ${red}.${remoteName() ? ` URLs are fetched from the ${remoteName()} host this window is connected to.` : ''}`);
-    }
-    if (this.stale(gen)) return undefined;
-    if (info.kind === 'html') {
-      return this.fail(new Error('This URL is a web page, not a video'), 'Use a direct link to a video file (.mp4, .webm, .mkv…) or an HLS (.m3u8) / DASH (.mpd) stream. Video sites such as YouTube are not supported.');
-    }
-    const stream = info.kind !== 'media';
-    // Native ffmpeg: streams always (the built-in decoder plays HLS VOD only), files by the decoder rule.
-    let t = null;
-    if (this.nativePossible(c)) {
-      t = await tools();
-      if (this.stale(gen)) return undefined;
-    }
-    // HLS: the master playlist, the variant to play (the quality menu, else "Auto": picture size and measured rate)
-    // and its media playlist; DRM is refused here for both decoders.
-    let plan = null;
-    try {
-      if (info.kind === 'hls') {
-        if (this.hlsPick !== 'auto' && !Number.isInteger(this.hlsPick)) this.hlsPick = 'auto';
-        plan = await urlsource.hlsOpen(info, opts, { pick: this.hlsPick, view: this.pageView || lastView, maxHeight: t ? 4320 : 1080 });
-        if (this.stale(gen)) return undefined;
-        this.live = plan.live;
-      } else this.live = info.kind === 'dash' ? urlsource.dashLive(info.text) : false;
-    } catch (e) {
-      if (this.stale(gen)) return undefined;
-      log(`[${this.name}] playlist: ${e.message}`);
-      return this.fail(e, `Could not read the HLS playlist of ${red}.`);
-    }
-    if (this.stale(gen)) return undefined;
-    this.hlsPlan = plan;
-    log(`[${this.name}] url ${red}: ${info.kind}${this.live ? ' (live)' : ''}${info.kind === 'media' ? `, ${Number.isFinite(info.size) ? `${info.size} bytes` : 'size unknown'}, ranges ${info.rangeOk ? 'yes' : 'no'}` : ''}${plan ? hlsPlanText(plan) : ''}`);
-    if (plan && plan.drm) {
-      return this.fail(new urlsource.Protected(plan.drm), 'DRM-protected video (SAMPLE-AES, FairPlay, Widevine, PlayReady) needs a licence and a content decryption module, which VS Code does not have; ffmpeg can\'t play it either. Streams encrypted with plain AES-128 play.');
-    }
-    let pr = null;
-    let probeError = '';
-    if (t) {
-      this.post({ type: 'status', text: `Reading ${stream ? 'the stream' : 'the video'} with ffmpeg…` });
-      try { [pr] = await Promise.all([ff.probe(t, this.ffInput(info), signal), gpusForMethod(t, c)]); } catch (e) { probeError = e.message; log(`[${this.name}] ffprobe failed: ${e.message}`); }
-      if (this.stale(gen)) return undefined;
-      if (pr && !pr.video && !pr.audio) pr = null;
-    }
-    const startNative = (d) => {
-      if (this.live) pr.duration = 0;
-      const nd = this.newNative(t, pr, d, c, this.ffInput(info));
-      nd.attach({
-        post: (msg) => { if (!signal.aborted) this.post({ type: 'nd', m: msg }); },
-        postRaw: (msg) => { if (!signal.aborted) this.post(msg); },
-        onFail: (err, rejectedMedia) => this.nativeFailed(err, gen, rejectedMedia), origin: this.webviewOrigin,
-      });
-      this.native = nd;
-      this.postStream();
-      this.post({ type: 'libav', meta: { size: 0, duration: 0, label: '', native: true, live: !!this.live, url: true } });
-      this.logStartup('native');
-      this.sendHlsSubs(gen, null, signal);
-      return undefined;
-    };
-    const forced = () => decide.decide({ setting: 'ffmpeg', trusted: true, tools: t, video: pr.video, probe: probeRecordFor(t), hw: hwKnown, gpu: c.gpuDecoding });
-    let d = null;
-    if (pr) {
-      d = decide.decide({
-        setting: stream && c.decoder === 'auto' ? 'ffmpeg' : c.decoder, remote: remoteName(), trusted: true, tools: t, video: pr.video,
-        probe: probeRecordFor(t), hw: hwKnown, failed: false, gpu: c.gpuDecoding, maxHeight: nativeHeight(c, pr.video), transport: nativeTransport() === 'message' ? 'message' : 'stream',
-      });
-      log(`[${this.name}] decoder: ${d.use === 'native' ? `native ffmpeg (${d.method})` : 'built-in'}: ${stream ? `${info.kind} stream` : d.reason}`);
-      if (d.use === 'native') return startNative(d);
-    }
-    // The built-in decoder, reading over HTTP.
-    try {
-      if (info.kind === 'dash') throw new urlsource.NeedsFfmpeg(this.live ? 'A live DASH stream' : 'A DASH stream');
-      if (info.kind === 'hls') {
-        // Chosen for native ffmpeg (no height cap) but played here: "Auto" again with the built-in decoder's cap.
-        if (plan.auto && plan.variant && plan.variant.height > 1080) {
-          plan = await urlsource.hlsOpen(info, opts, { pick: 'auto', view: this.pageView || lastView, maxHeight: 1080 });
-          if (this.stale(gen)) return undefined;
-          this.hlsPlan = plan;
-        }
-        this.post({ type: 'status', text: 'Reading the HLS playlist…' });
-        const hls = new urlsource.HlsFile(plan, opts);
-        // The file follows the load's signal itself (urlsource linkSignal): an abort stops its requests.
-        try {
-          await hls.open((n, all) => { if (!signal.aborted) this.post({ type: 'status', text: `Reading the HLS playlist… ${n} / ${all} segments` }); });
-          if (signal.aborted) return undefined;
-          this.net = hls;
-        } finally {
-          if (this.net !== hls) hls.close();
-        }
-        log(`[${this.name}] HLS for the built-in decoder: ${hls.segments} ${hls.fmp4 ? 'fMP4' : 'MPEG-TS'} segments${hls.encrypted ? ' (AES-128, decrypted here)' : ''}, ${hls.size} bytes, ${hls.duration.toFixed(1)} s${hls.variant ? `, variant ${hls.variant.width}x${hls.variant.height} ${hls.variant.bandwidth} b/s` : ''}`);
-      } else {
-        this.net = new urlsource.HttpFile(info, opts);
-      }
-    } catch (e) {
-      if (this.stale(gen)) return undefined;
-      if (e.protected) return this.fail(e, 'DRM-protected video needs a licence and a content decryption module, which VS Code does not have.');
-      // A file the built-in decoder can't read this way (no ranges, too large) still plays with ffmpeg.
-      if (pr && t && !e.needsFfmpeg && c.decoder !== 'builtin') {
-        log(`[${this.name}] the built-in decoder can't read it (${e.message}); native ffmpeg instead`);
-        return startNative(forced());
-      }
-      return this.failUrl(e, { t, probeError });
-    }
-    if (this.stale(gen)) return undefined;
-    log(`[${this.name}] decoding with libav.js (${this.build.variant}) over HTTP`);
-    this.postStream();
-    this.post({ type: 'libav', meta: { size: this.net.size, duration: this.net.duration || 0, label: '', url: true } });
-    this.logStartup('libav');
-    this.sendHlsSubs(gen, this.net instanceof urlsource.HlsFile ? this.net : null, signal);
-    return undefined;
-  }
-
-  /** The HLS quality menu for the page ('stream'): the variants, the pick ('auto' or an index) and what plays. */
-  postStream() {
-    const plan = this.hlsPlan;
-    if (!plan || !plan.master || plan.variants.length < 2 || this.live) return;
-    this.post({
-      type: 'stream',
-      quality: {
-        pick: plan.auto ? 'auto' : plan.index, current: plan.index,
-        variants: plan.variants.map((v, id) => ({ id, width: v.width, height: v.height, bandwidth: v.bandwidth, codecs: v.codecs.slice(0, 80) })),
-      },
-    });
-  }
-
-  /** The page's quality menu: play variant pick ('auto' or an index) from the same moment (the page saved its time). */
-  setQuality(pick) {
-    const plan = this.hlsPlan;
-    if (!plan || !plan.master) return;
-    if (pick !== 'auto' && !(Number.isInteger(pick) && pick >= 0 && pick < plan.variants.length)) return;
-    if (pick === (plan.auto ? 'auto' : plan.index)) return;
-    this.hlsPick = pick;
-    const v = pick === 'auto' ? null : plan.variants[pick];
-    this.reload(`quality: ${v ? `${v.width}x${v.height} ${v.bandwidth} b/s` : 'auto'}`);
-  }
-
-  /**
-   * The HLS stream's WebVTT subtitle renditions (urlsource.hlsSubtitles), fetched here and given to the page
-   * as loaded subtitle files (the CC menu names them by NAME and LANGUAGE). Kept for reloads (quality changes).
-   * file: the opened HlsFile (its first bytes give the timeline's start), else the start is read from the first segment.
-   */
-  async sendHlsSubs(gen, file, signal) {
-    const opts = { ...netOpts(), signal };
-    const plan = this.hlsPlan;
-    if (!plan || !plan.master || this.live || !plan.master.media.some((m) => m.type === 'SUBTITLES' && m.url)) return;
-    try {
-      const group = (plan.variant && plan.variant.subtitles) || '*';
-      let subs = this.hlsSubs && this.hlsSubs.group === group ? this.hlsSubs.list : null;
-      if (!subs) {
-        let start = null;
-        try {
-          const head = file ? await file.read(0, 256 * 1024) : await firstBytes(plan, opts);
-          start = urlsource.streamStart(head);
-        } catch (e) { log(`[${this.name}] HLS subtitles: no start time (${e.message})`); }
-        if (this.stale(gen)) return;
-        subs = await urlsource.hlsSubtitles(plan, opts, { start });
-        if (this.stale(gen)) return;
-        this.hlsSubs = { group, list: subs };
-        for (const x of subs) log(`[${this.name}] HLS subtitles ${x.lang || '-'} "${x.name}": ${x.error ? `failed: ${x.error}` : `${x.text.length} bytes`}`);
-      }
-      if (this.stale(gen)) return;
-      const files = subs.filter((x) => !x.error).map((x) => ({
-        id: x.id, name: `${x.name}.vtt`, title: x.name, lang: x.lang, stream: true, auto: !!x.default,
-        flags: x.forced ? ['forced'] : [], data: new Uint8Array(Buffer.from(x.text, 'utf8')),
-      }));
-      if (files.length) this.post({ type: 'subs', files });
-    } catch (e) {
-      if (signal.aborted) return; // the page was closed or reloaded: nothing to report
-      log(`[${this.name}] HLS subtitles: ${e && e.stack || e}`);
-    }
-  }
-
-  /** What ffmpeg reads for this URL player: the URL (after redirects) and the proxy (src/ffmpeg.js inputArgs). */
-  ffInput(info) {
-    const url = info && info.url ? info.url : this.url;
-    const h = vscode.workspace.getConfiguration('http');
-    const p = proxy.proxyFor(url, { proxy: h.get('proxy') || '', env: process.env });
-    // HLS master playlist: ffprobe picks the streams of the chosen variant (src/ffmpeg.js probe).
-    const plan = this.hlsPlan;
-    const variant = plan && plan.master && plan.variant ? { bandwidth: plan.variant.bandwidth } : undefined;
-    return { url, proxy: p || undefined, strictSSL: h.get('proxyStrictSSL', true) !== false, variant };
-  }
-
-  /** The built-in decoder can't play this URL: say why, and offer ffmpeg where it would run. */
-  failUrl(e, { t, probeError }) {
-    if (!e.needsFfmpeg) return this.fail(e);
-    const remote = remoteName();
-    let hint = '';
-    let action = null;
-    if (probeError) hint = `ffmpeg could not open it either: ${probeError.slice(0, 300)}`;
-    else if (this.noNative) hint = `Native ffmpeg failed on it: ${this.noNative.slice(0, 300)}`;
-    else if (!vscode.workspace.isTrusted) hint = 'Native ffmpeg does not run in Restricted Mode (untrusted workspaces).';
-    else if (remote && remote !== 'wsl') hint = `Native ffmpeg is not used in ${remote} windows (frames would cross the connection). Open the URL in a local window.`;
-    else if (config().decoder === 'builtin') hint = 'The decoder setting is "builtin": set videoPreviewEnhanced.decoder to "auto" to use ffmpeg.';
-    else if (!t) {
-      hint = 'The built-in decoder plays direct video links (MP4, WebM, MKV…) and HLS VOD playlists (also AES-128 encrypted). Live HLS and DASH play with ffmpeg (one click, no admin rights).';
-      action = 'setupFfmpeg';
-    }
-    log(`[${this.name}] ${e.message}`);
-    this.post({ type: 'error', message: `${e.why} needs native ffmpeg`, hint, action });
-    return undefined;
-  }
-
-  scanAvi(signal) {
-    return avi.parseAvi(this.file, signal).catch((e) => {
-      if (signal.aborted) return null;
-      log(`[${this.name}] AVI parse failed: ${e.message}`);
-      return null;
-    });
-  }
-
-  playsMjpeg(info) {
-    return info && info.isMjpeg && info.frames.length && (!info.audio || info.audio.pcm);
-  }
-
-  nativePossible(c) {
-    return c.decoder !== 'builtin' && !this.fullRes && !this.noNative && !this.noRemoteStream && vscode.workspace.isTrusted && nativeAllowedHere();
-  }
-
-  /** decide.decide() for native ffmpeg on this file (open() and the early start ask the same). */
-  decideNative(c, t, pr, stat) {
-    const d = decide.decide({
-      setting: c.decoder, remote: remoteName(), trusted: true, tools: t, video: pr.video, probe: probeRecordFor(t), hw: hwKnown,
-      failed: decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, stat), gpu: c.gpuDecoding,
-      maxHeight: nativeHeight(c, pr.video), transport: nativeTransport() === 'message' ? 'message' : 'stream',
-    });
-    // Tests (VPE_LOG only): VPE_NATIVE_METHOD holds ffmpeg's method (cuda, d3d11va, auto, none…), as a stored probe would.
-    const forced = logFile ? process.env.VPE_NATIVE_METHOD : '';
-    if (forced && d.use === 'native') return { ...d, method: forced, reason: `${d.reason}; method ${forced} (VPE_NATIVE_METHOD)` };
-    return d;
-  }
-
-  /** A native decoder for decision d with ffmpeg started at once (NativeDecoder.prestart); attach() connects it to the page. */
-  newNative(t, pr, d, c, input) {
-    const h = nativeHeights(c, pr.video);
-    const nd = new NativeDecoder({
-      // Frame server locally (full size); postMessage in WSL (~90 MB/s measured: 720p there) and as the fallback.
-      tools: t, file: this.file, input, maxHeight: h.stream, messageMaxHeight: h.message, method: d.method, methodGuessed: !!d.guessed, probed: pr, stats: !!logFile, maxQueued: nativeQueue(),
-      // Automatic size: frames no larger than the picture shows (the last player's area until this page says).
-      fitView: fitsView(c), view: lastView || storedView(),
-      post: () => {}, postRaw: () => {}, log: (msg) => log(`[${this.name}] ${msg}`),
-      transport: this.framePort ? nativeTransport() : 'message',
-    });
-    nd.decided = nativeKey(t, pr, d, c, this.framePort);
-    nd.prestart();
-    this.t.nativeStart = this.t.nativeStart || Date.now();
-    return nd;
-  }
-
-  /** Forgets the session's early probe and stops the early ffmpeg (why: logged). */
-  dropEarly(why) {
-    const early = this.early;
-    this.early = null;
-    if (early) early.abort(why);
-  }
-
-  /** Tests: the host's part of the start-up timeline (epoch ms), once per page. */
-  logStartup(path_) {
-    if (!logFile || this.t.posted) return;
-    this.t.posted = Date.now();
-    log(`[${this.name}] startup host ${JSON.stringify({ path: path_, ...this.t })}`);
-  }
-
-  /**
-   * Unified Live transcode (ADR 0002, src/stream.js): ffmpeg on this host (local or remote)
-   * decodes (GPU when available), scales and re-encodes a low-latency H.264 stream for WebCodecs.
-   * True when it took over playback.
-   */
-  async tryRemoteStream(gen, stat, probed, opts = {}) {
-    const { signal } = this.pageAbort;
-    const c = config();
-    const remote = remoteName();
-    if (this.fullRes || this.noNative || this.noRemoteStream || !vscode.workspace.isTrusted) return false;
-    if (c.decoder === 'builtin' || decide.failedBefore(globalState.get(decide.FAILED_KEY), this.file, stat)) return false;
-    const t = probed ? probed.t : await tools();
-    if (!t || this.stale(gen)) return false;
-    let pr = probed ? probed.pr : null;
-    if (!pr) {
-      try { pr = await ff.probe(t, this.file, signal); } catch (e) { log(`[${this.name}] ffprobe failed: ${e.message}`); }
-    }
-    if (this.stale(gen) || !pr || !pr.video) return false;
-    const lastView = globalState && globalState.get(LAST_VIEW_KEY);
-    const decision = transcodePolicy.shouldTranscodeOnOpen({
-      mode: c.transcode,
-      remote,
-      video: pr.video,
-      maxBitrateMbps: c.transcodeMaxBitrate,
-      viewHeight: lastView && lastView.h > 0 ? lastView.h : 0,
-      forced: !!opts.forced,
-      toneMap: transcodeArgs.toneMapSupport(t.gpuFilters),
-    });
-    if (decision.action !== 'stream') return false;
-    const isRemoteLink = (!!remote && remote !== 'wsl') || c.remoteStream === 'on';
-    const stream = await transcodeOptions(t, pr, c, isRemoteLink);
-    if (this.stale(gen)) return false;
-    if (!stream) {
-      log(`[${this.name}] live transcode: no usable H.264 encoder available on this host; keeping original decoder`);
-      return false;
-    }
-    log(`[${this.name}] decoder: remote stream / live transcode (${stream.encoder}, decode=${stream.decodeMethod}, ${remote || 'local'} window): ${pr.video.codec} ${pr.video.pixFmt} ${pr.video.width}x${pr.video.height}`);
-    if (this.transcodeHeight === undefined) this.transcodeHeight = c.transcodeResolution;
-    this.native = new remotestream.EncodedStream({
-      ...stream, tools: t, file: this.file, maxHeight: c.nativeMaxHeight, fitView: fitsView(c), probed: pr,
-      stats: !!logFile, maxBitrateMbps: c.transcodeMaxBitrate, allowLinkAdapt: isRemoteLink,
-      resolution: this.transcodeHeight,
-      initialLink: isRemoteLink ? sessionLink.read() : undefined,
-      onLinkUpdate: (snapshot) => { if (!signal.aborted) sessionLink.update(snapshot); },
-      rotation: this.rotation,
-      post: (msg) => {
-        if (!signal.aborted) this.post(msg.type === 'remoteNotice' ? { type: 'toast', text: msg.text, ms: 6000 } : { type: 'nd', m: msg });
-      },
-      log: (msg) => log(`[${this.name}] ${msg}`),
-      onFail: (err) => {
-        if (signal.aborted) return;
-        log(`[${this.name}] remote stream failed (${err}); using the built-in decoder`);
-        this.noRemoteStream = true;
-        this.forceTranscode = false;
-        vscode.window.showWarningMessage(`${path.basename(this.file)}: live transcode failed (${err}). Using the original decoder.`);
-        this.reload('live transcode failed');
-      },
-    });
-    this.post({ type: 'libav', meta: { size: stat.size, duration: 0, label: '', native: true } });
-    // The one-time lossy notice, unless the user chose Always themselves or video is Direct Stream (lossless copy).
-    if (c.transcode !== 'always' && this.native.lossy()) offers.maybeInformTranscode(this).catch((e) => log(`live transcode notice failed: ${e && e.message || e}`));
-    return true;
-  }
-
-  /** The file opened once for block reads, even when several reads race; size taken at open (a change reloads). */
-  blockFile() {
-    if (!this.blockFh) {
-      const p = fs.promises.open(this.file, 'r').then(async (fh) => {
-        try { return { fh, size: (await fh.stat()).size }; } catch (e) { fh.close().catch(() => {}); throw e; }
-      });
-      p.catch(() => { if (this.blockFh === p) this.blockFh = null; });
-      this.blockFh = p;
-    }
-    return this.blockFh;
-  }
-
-  /** @param {number} pos @param {number} len @param {() => boolean} isCurrent */
-  async readBlock(pos, len, isCurrent) {
-    let data = new Uint8Array(0);
-    if (this.url) {
-      // Over the network (src/urlsource.js): an empty answer is a read error for the decoder.
-      const net = this.net;
-      if (net && Number.isInteger(pos) && pos >= 0 && len > 0) {
-        try {
-          const buf = await net.read(pos, Math.min(len, MAX_BLOCK));
-          data = new Uint8Array(buf.buffer, buf.byteOffset, buf.length);
-        } catch (e) {
-          log(`[${this.name}] read ${pos}+${len}: ${e.message}`);
-          if (isCurrent() && !this.netFailed) { this.netFailed = true; this.fail(e, 'Check the connection and open the URL again.'); }
-        }
-      }
-      return net === this.net ? data : undefined;
-    }
-    try {
-      const { fh, size } = await this.blockFile();
-      if (!isCurrent()) return undefined;
-      data = await readFileBlock(fh, size, pos, len, MAX_BLOCK);
-    } catch (e) {
-      if (isCurrent()) this.fail(e);
-    }
-    // Always answer (empty on error), or the webview keeps the block in flight forever.
-    return data;
-  }
-
-  async openSequence() {
-    const gen = this.loadGen;
-    const seq = this.sequence;
-    this.frames = seq.files;
-    const fps = config().sequenceFps || 30;
-    const sample = seq.files.slice(0, 50);
-    const sizes = await Promise.all(sample.map((f) => fs.promises.stat(f).then((s) => s.size, () => 0)));
-    const total = (sizes.reduce((a, b) => a + b, 0) / sample.length) * seq.files.length;
-    const meta = {
-      mode: 'frames', width: 0, height: 0, fps, frames: seq.files.length, duration: seq.files.length / fps,
-      size: total, label: `image sequence · ${seq.files.length} files in ${seq.dir} · ${fps} fps (videoPreviewEnhanced.sequenceFps)`,
-    };
-    if (this.stale(gen)) return;
-    log(`[${this.name}] image sequence: ${seq.files.length} frames`);
-    this.post({ type: 'frames', meta, wav: null });
-  }
-
-  async startMjpeg(info, stat, signal) {
-    const gen = this.loadGen;
-    const fh = await fs.promises.open(this.file, 'r');
-    if (this.stale(gen)) { await fh.close(); return; }
-    this.frames = info.frames;
-    this.fh = fh;
-    let audioNote = 'no audio';
-    if (info.audio && info.audio.pcm) {
-      const bytes = info.audio.chunks.reduce((n, c) => n + c.size, 0);
-      if (bytes > 0 && bytes <= MAX_WAV_BYTES) {
-        // The sound goes ahead in parts of up to 8 MB ('wavPart'), not one message of up to 512 MB.
-        const parts = avi.pcmWavParts(this.file, info.audio, WAV_PART_BYTES, signal);
-        // The iterator can be suspended at a yield while the webview acknowledges the previous part.
-        const close = () => { parts.return().catch(() => {}); };
-        signal.addEventListener('abort', close, { once: true });
-        try {
-          for await (const part of parts) {
-            if (signal.aborted) return;
-            await this.webview.postMessage({ type: 'wavPart', data: new Uint8Array(part.buffer, part.byteOffset, part.length) });
-          }
-        } finally {
-          signal.removeEventListener('abort', close);
-        }
-        audioNote = `PCM ${info.audio.sampleRate / 1000} kHz`;
-      } else if (bytes > 0) {
-        audioNote = 'audio skipped (too long)';
-      }
-    }
-    const meta = {
-      mode: 'frames', width: info.width, height: info.height, fps: info.fps || 30,
-      frames: info.frames.length, duration: info.frames.length / (info.fps || 30),
-      label: `MJPEG · frames shown directly · ${audioNote}`, size: stat.size,
-    };
-    if (this.stale(gen)) return;
-    log(`[${this.name}] MJPEG direct: ${meta.width}x${meta.height} ${meta.fps}fps ${meta.frames} frames, ${audioNote}`);
-    this.post({ type: 'frames', meta, wav: null });
-  }
-
-  async sendFrames(indices) {
-    if (!this.frames) return;
-    const gen = this.loadGen;
-    for (const i of indices) {
-      if (this.disposed || gen !== this.loadGen) return;
-      const f = this.frames[i];
-      let data = Buffer.alloc(0);
-      try {
-        if (typeof f === 'string') {
-          data = await fs.promises.readFile(f);
-        } else if (f) {
-          const buf = Buffer.alloc(f.size);
-          const { bytesRead } = await this.fh.read(buf, 0, f.size, f.offset);
-          data = avi.fixJpeg(buf.subarray(0, bytesRead));
-        }
-      } catch (e) {
-        log(`[${this.name}] frame ${i}: ${e.message}`);
-      }
-      // Always answer (empty when unreadable), or the player keeps the frame in flight forever.
-      if (gen === this.loadGen) this.post({ type: 'frame', index: i, data: new Uint8Array(data.buffer, data.byteOffset, data.length) });
-    }
-  }
-
-  // ---- subtitles ---------------------------------------------------------
-
-  /** Sidecar subtitles next to the video, plus files loaded earlier in this tab. */
-  async sendSubtitles() {
-    const gen = this.loadGen;
-    const files = this.sequence || this.url ? [] : await findSidecars(vscode, this.uri, (msg) => log(`[${this.name}] ${msg}`));
-    if (files.length) log(`[${this.name}] subtitles found: ${files.map((f) => f.name).join(', ')}`);
-    const extra = [];
-    for (const uri of this.extraSubs) {
-      try { extra.push({ id: uri.toString(), name: uri.path.split('/').pop(), data:new Uint8Array(await vscode.workspace.fs.readFile(uri)) }); } catch { /* moved or deleted */ }
-    }
-    if (this.stale(gen)) return;
-    if (files.length) this.post({ type: 'subs', files });
-    if (extra.length) this.post({ type: 'subs', files: extra, restore: true });
-  }
-
-  /** "Load subtitles…": pick files (in remote windows, on the remote side) and show the first. */
-  async loadSubtitles() {
-    const folder = this.sequence ? vscode.Uri.file(this.sequence.dir) : this.url ? workspaceFolder() : vscode.Uri.joinPath(this.uri, '..');
-    const testPicked = this.testPickSubtitles;
-    this.testPickSubtitles = undefined;
-    const picked = testPicked || await vscode.window.showOpenDialog({
-      defaultUri: folder, canSelectMany: true, openLabel: 'Load subtitles',
-      filters: { Subtitles: ['srt', 'vtt', 'ass', 'ssa'], 'All files': ['*'] },
-    });
-    if (!picked || this.disposed) return;
-    const files = [];
-    for (const uri of picked) {
-      const name = uri.path.split('/').pop();
-      try {
-        const st = await vscode.workspace.fs.stat(uri);
-        if (st.size > MAX_SUB_BYTES) throw new Error('file is larger than 20 MB');
-        files.push({ id: uri.toString(), name, data: new Uint8Array(await vscode.workspace.fs.readFile(uri)) });
-        if (!this.extraSubs.some((u) => u.toString() === uri.toString())) this.extraSubs.push(uri);
-      } catch (e) {
-        vscode.window.showWarningMessage(`Video Preview: cannot load ${name}: ${e.message}`);
-      }
-    }
-    if (files.length) this.post({ type: 'subs', files, select: true });
-  }
-
-  // ---- frame export ------------------------------------------------------
-
-  async saveFrame(data, frame) {
-    const { signal } = this.pageAbort;
-    // From the page: PNG bytes and a frame index that names the default file (security review 2026-11-19 #7).
-    if (!(data instanceof Uint8Array) || !Number.isInteger(frame) || frame < 0) return;
-    const base = this.sequence ? this.sequence.name.replace(/#+/, '').replace(/\.[^.]+$/, '') : this.url ? urlBase(this.url) : path.parse(this.file).name;
-    const dir = this.sequence ? this.sequence.dir : this.url ? (workspaceFolder() || vscode.Uri.file(os.homedir())).fsPath : path.dirname(this.file);
-    const defaultUri = vscode.Uri.file(path.join(dir, `${base}_frame${String(frame + 1).padStart(5, '0')}.png`));
-    // Tests (VPE_LOG with VPE_SAVE_DIR): no native dialog, the file goes to that folder.
-    const target = logFile && process.env.VPE_SAVE_DIR ? vscode.Uri.file(path.join(process.env.VPE_SAVE_DIR, path.basename(defaultUri.fsPath)))
-      : await vscode.window.showSaveDialog({ defaultUri, filters: { 'PNG image': ['png'] } });
-    if (!target || signal.aborted) return;
-    await vscode.workspace.fs.writeFile(target, data);
-    if (signal.aborted) return;
-    const pick = await vscode.window.showInformationMessage(`Saved ${path.basename(target.fsPath)}`, 'Open');
-    if (pick === 'Open' && !signal.aborted) vscode.commands.executeCommand('vscode.open', target);
-  }
-
-  // ---- A-B export (rangecmd.js) -------------------------------------------
-
-  /** Asks the page for frame k (0-based) as PNG bytes; resolves with {data} or {error}. */
-  grabFrame(frame, signal) {
-    if (this.pageAbort.signal.aborted || signal.aborted) return Promise.resolve({ error: 'export cancelled' });
-    if (!this.exportWait) { this.exportWait = new Map(); this.exportSeq = 0; }
-    const id = ++this.exportSeq;
-    return new Promise((resolve) => {
-      let timer;
-      const finish = (reply) => {
-        if (!this.exportWait.delete(id)) return;
-        clearTimeout(timer);
-        signal.removeEventListener('abort', cancel);
-        resolve(reply);
-      };
-      const cancel = () => finish({ error: 'export cancelled' });
-      // The page draws nothing while hidden: only time it is shown counts.
-      const arm = () => {
-        timer = setTimeout(() => {
-          if (!this.panel.visible) { arm(); return; }
-          finish({ error: 'the player did not answer within 30 s' });
-        }, 30000);
-      };
-      this.exportWait.set(id, finish);
-      signal.addEventListener('abort', cancel, { once: true });
-      arm();
-      // checkJs: start
-      this.post(/** @satisfies {ExportGrab} */ ({ type: 'exportGrab', boot: this.boot, page: this.page, id, frame }));
-      // checkJs: end
-    });
-  }
-
-  /** Every frame (or every Nth frame) of A-B as `<video>_f000123.png` in a folder the user picks (written through workspace.fs: remote too). */
-  async exportRange(range) {
-    const { signal } = this.pageAbort;
-    if (this.exporting) { vscode.window.showInformationMessage('Video Preview: an export is already running.'); return; }
-    const problem = rangecmd.rangeProblem(range);
-    if (problem) { vscode.window.showInformationMessage(`Video Preview: ${problem}`); return; }
-    let stride = 1;
-    if (range.stride !== undefined) {
-      stride = rangecmd.parseStride(range.stride);
-    } else if (logFile && process.env.VPE_EXPORT_DIR && process.env.VPE_EXPORT_STRIDE === undefined) {
-      stride = 1;
-    } else {
-      const raw = logFile && process.env.VPE_EXPORT_DIR
-        ? process.env.VPE_EXPORT_STRIDE
-        : vscode.window.showInputBox ? await vscode.window.showInputBox(rangecmd.strideInputOptions(range)) : '1';
-      if (signal.aborted || raw === undefined) return;
-      const strideErr = rangecmd.strideProblem(raw);
-      if (strideErr) { vscode.window.showWarningMessage(`Video Preview: ${strideErr}`); return; }
-      stride = rangecmd.parseStride(raw);
-    }
-    const count = rangecmd.rangeFrameCount(range, stride);
-    if (count > rangecmd.MAX_FRAMES) {
-      vscode.window.showWarningMessage(`Video Preview: A-B holds ${count} frames${stride > 1 ? ` at stride ${stride}` : ''}; export takes at most ${rangecmd.MAX_FRAMES}. Shorten the loop, or use "Copy ffmpeg Command for A–B".`);
-      return;
-    }
-    if (count > rangecmd.CONFIRM_FRAMES) {
-      const ok = await vscode.window.showWarningMessage(`Export ${count} frames as PNG? This can take a while and use a lot of disk space.`, { modal: true }, 'Export');
-      if (signal.aborted || ok !== 'Export') return;
-    }
-    if (this.native && this.native.lossy()) {
-      const n = this.native;
-      const fullResolution = 'Switch to Full Resolution (This Tab)';
-      const ok = await vscode.window.showWarningMessage(
-        `Native ffmpeg decodes this video at ${n.w}×${n.h} (${n.deep ? 10 : 8}-bit) for smooth playback. Exported PNGs will use this playback picture.`,
-        { modal: true }, fullResolution, 'Export Anyway');
-      if (signal.aborted) return;
-      if (ok === fullResolution) {
-        this.useFullRes();
-        vscode.window.showInformationMessage('Video Preview: now on the built-in decoder at full resolution. Run the export again once the video shows.');
-        return;
-      }
-      if (ok !== 'Export Anyway') return;
-    }
-    const base = this.url ? urlBase(this.url) : path.parse(this.file).name;
-    // Tests (VPE_LOG with VPE_EXPORT_DIR): no native dialog, the frames go to that folder.
-    const pick = logFile && process.env.VPE_EXPORT_DIR ? [vscode.Uri.file(process.env.VPE_EXPORT_DIR)] : await vscode.window.showOpenDialog({
-      canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
-      openLabel: `Export ${count} frames here`, defaultUri: this.url ? workspaceFolder() : vscode.Uri.joinPath(this.uri, '..'),
-    });
-    if (signal.aborted || !pick || !pick.length) return;
-    const folder = pick[0];
-    // Ask before writing over frames exported before.
-    const caseInsensitive = folder.scheme === 'file' && (process.platform === 'win32' || process.platform === 'darwin');
-    const nameKey = (n) => (caseInsensitive ? n.toLowerCase() : n);
-    const hasStat = typeof vscode.workspace.fs.stat === 'function';
-    const fileExists = async (uri) => {
-      try {
-        await vscode.workspace.fs.stat(uri);
-        return true;
-      } catch (e) {
-        if (e && (e.code === 'FileNotFound' || e.code === 'ENOENT')) return false;
-        throw e;
-      }
-    };
-    let existingNames = null;
-    const plannedCollisions = [];
-    try {
-      existingNames = new Set((await vscode.workspace.fs.readDirectory(folder)).map(([n]) => nameKey(n)));
-      for (const k of rangecmd.rangeFrames(range, stride)) {
-        const n = rangecmd.frameFileName(base, k + 1);
-        if (existingNames.has(nameKey(n))) plannedCollisions.push(n);
-      }
-    } catch (e) {
-      if (signal.aborted) return;
-      if (!hasStat) {
-        vscode.window.showErrorMessage(`Video Preview: could not read ${folder.scheme === 'file' ? folder.fsPath : folder.toString()}: ${e && e.message ? e.message : String(e)}`);
-        return;
-      }
-      // Directory listing failed; each destination URI is checked individually via stat before writing.
-    }
-    if (signal.aborted) return;
-    const approvedOverwrites = new Set();
-    if (plannedCollisions.length) {
-      const existing = plannedCollisions.length;
-      const ok = await vscode.window.showWarningMessage(`Overwrite ${existing} existing file${existing === 1 ? '' : 's'}?`, { modal: true, detail: `${folder.scheme === 'file' ? folder.fsPath : folder.toString()} already holds ${existing === 1 ? 'a frame' : 'frames'} of this range.` }, 'Overwrite');
-      if (ok !== 'Overwrite') return;
-      for (const n of plannedCollisions) approvedOverwrites.add(nameKey(n));
-    }
-    if (signal.aborted || this.exporting) return; // another export started while the dialogs were open
-    this.exporting = signal;
-    // The page decodes and draws only while shown: bring it to the front.
-    if (this.panel) this.panel.reveal(undefined, true);
-    let done = 0;
-    let failed = null;
-    try {
-      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Exporting frames ${range.fa + 1}–${range.fb + 1}`, cancellable: true }, async (progress, token) => {
-        const controller = new AbortController();
-        const work = controller.signal;
-        const cancel = () => controller.abort();
-        const sub = token?.onCancellationRequested(cancel);
-        signal.addEventListener('abort', cancel, { once: true });
-        if (signal.aborted || token?.isCancellationRequested) cancel();
-        try {
-          const end = range.fa + count * stride;
-          let last = -1; // the last frame written
-          for (let k = range.fa; k <= range.fb && !work.aborted;) {
-            if (!this.panel.visible) {
-              progress.report({ message: `${done} / ${count}, paused while the player is hidden` });
-              if (!work.aborted) await new Promise((resolve) => {
-                const go = () => {
-                  work.removeEventListener('abort', go);
-                  this.onShown = null;
-                  resolve();
-                };
-                this.onShown = go;
-                work.addEventListener('abort', go, { once: true });
-              });
-              continue;
-            }
-            const hiddenCount = this.hiddenCount;
-            const r = await this.grabFrame(k, work);
-            if (work.aborted) break;
-            // Showing the player again can re-seek to the last picture and supersede this grab's seek.
-            if (hiddenCount !== this.hiddenCount) continue;
-            if (!r || r.error || !r.data) { failed = r && r.error ? r.error : 'no picture'; break; }
-            // VFR or gapped video: the seek can settle on a neighbour. Name the file from the frame shown; skip repeats.
-            const shown = Number.isInteger(r.frame) ? r.frame : k;
-            if (shown > last && shown >= range.fa && shown <= range.fb) {
-              const name = rangecmd.frameFileName(base, shown + 1);
-              const dest = vscode.Uri.joinPath(folder, name);
-              const key = nameKey(name);
-              if (!approvedOverwrites.has(key)) {
-                const collides = (existingNames && existingNames.has(key)) || (hasStat && await fileExists(dest));
-                if (work.aborted) break;
-                if (collides) {
-                  const ok = await vscode.window.showWarningMessage(`Overwrite existing file ${name}?`, { modal: true, detail: `${folder.scheme === 'file' ? folder.fsPath : folder.toString()} already holds ${name}.` }, 'Overwrite');
-                  if (work.aborted || ok !== 'Overwrite') { controller.abort(); break; }
-                  approvedOverwrites.add(key);
-                }
-              }
-              const bytes = new Uint8Array(r.data);
-              let res = await exclusiveWrite.writeNew(vscode.workspace.fs, dest, bytes, { overwrite: approvedOverwrites.has(key) });
-              if (res === 'exists') {
-                // Appeared after the checks above (another export or program): never replace it unasked.
-                const ok = await vscode.window.showWarningMessage(`Overwrite existing file ${name}?`, { modal: true, detail: `${folder.scheme === 'file' ? folder.fsPath : folder.toString()} already holds ${name}.` }, 'Overwrite');
-                if (work.aborted || ok !== 'Overwrite') { controller.abort(); break; }
-                approvedOverwrites.add(key);
-                res = await exclusiveWrite.writeNew(vscode.workspace.fs, dest, bytes, { overwrite: true });
-              }
-              done++;
-              if (work.aborted) break;
-              last = shown;
-            }
-            const next = rangecmd.nextRangeFrame(k, shown, stride);
-            progress.report({ increment: (100 * ((Math.min(next, end) - k) / stride)) / count, message: `${done} / ${count}` });
-            k = next;
-          }
-        } finally {
-          signal.removeEventListener('abort', cancel);
-          sub?.dispose();
-        }
-      });
-    } catch (e) {
-      failed = e && e.message ? e.message : String(e);
-    } finally {
-      if (this.exporting === signal) this.exporting = null;
-      if (!signal.aborted) this.post({ type: 'exportEnd' });
-    }
-    if (signal.aborted) return;
-    log(`[${this.name}] exported ${done}/${count} frames to ${folder.toString()}${failed ? ` (stopped: ${failed})` : ''}`);
-    if (failed) vscode.window.showErrorMessage(`Video Preview: exported ${done} of ${count} frames, then stopped: ${failed}`);
-    else vscode.window.showInformationMessage(`Video Preview: exported ${done} of ${count} frames to ${folder.scheme === 'file' ? folder.fsPath : folder.toString()}`);
-  }
-
-  /** Copies an ffmpeg command that cuts A-B: exact (re-encode) or fast (-c copy, keyframe-aligned). */
-  async copyFfmpegRange(range) {
-    const { signal } = this.pageAbort;
-    if (this.url) { vscode.window.showInformationMessage('Video Preview: the ffmpeg command for A–B is for video files, not URLs.'); return; }
-    const problem = rangecmd.rangeProblem(range);
-    if (problem) { vscode.window.showInformationMessage(`Video Preview: ${problem}`); return; }
-    let cmd;
-    try { cmd = rangecmd.ffmpegRange(this.file, range, process.platform, vscode.env.shell); } catch (e) { vscode.window.showWarningMessage(`Video Preview: ${e.message}`); return; }
-    const pick = await vscode.window.showQuickPick([
-      { label: 'Exact cut (re-encode)', detail: cmd.exact, cmd: cmd.exact },
-      { label: 'Fast cut (-c copy)', description: 'keyframe-aligned: starts at the keyframe at or before A', detail: cmd.copy, cmd: cmd.copy },
-    ], { placeHolder: `ffmpeg command for frames ${range.fa + 1}–${range.fb + 1} (${cmd.ss} s to ${cmd.to} s)` });
-    if (!pick || signal.aborted) return;
-    await vscode.env.clipboard.writeText(pick.cmd);
-    if (signal.aborted) return;
-    this.post({ type: 'toast', text: 'ffmpeg command copied' });
-  }
-
-  /** Tile numbers playing through Live transcode (0 for this single player), for the clip export's early refusal. */
-  liveTranscodeTiles() { return this.native instanceof remotestream.EncodedStream ? [0] : []; }
-
-  /** "Use original video" from the Live transcode notice: this tab only. */
-  useOriginalVideo() { this.useFullRes(); }
-
-  /** The user took the early refusal's switch: the built-in decoder for this tab, so A and B are set again on exact times. */
-  useOriginalForClips() { this.useFullRes(); }
-
-  /** Pixel tools asked for the file's own pixels: the built-in decoder for this tab (kept across reloads). */
-  useFullRes() {
-    if (this.fullRes || !this.native) return;
-    this.fullRes = true;
-    this.forceTranscode = false;
-    this.reload('full resolution asked for: built-in decoder');
-  }
-
-  /** Fall back to the built-in decoder. Remember failures only when ffmpeg ran and rejected the media. */
-  async nativeFailed(error, gen, rejectedMedia) {
-    if (this.stale(gen)) return;
-    if (this.url) { // not remembered (no file): this tab tries the built-in decoder
-      log(`[${this.name}] native ffmpeg can't play this URL (${error}); trying the built-in decoder`);
-      this.noNative = String(error || '');
-      this.reload('native ffmpeg failed');
-      return;
-    }
-    log(`[${this.name}] native ffmpeg can't play this file (${error}); using the built-in decoder`);
-    // The next window checks the tools again instead of trusting the stored check.
-    globalState.update(TOOLS_KEY, undefined).then(undefined, () => {});
-    if (rejectedMedia) {
-      try {
-        const st = fs.statSync(this.file);
-        await globalState.update(decide.FAILED_KEY, decide.addFailed(globalState.get(decide.FAILED_KEY), this.file, st, error));
-      } catch { this.noNative = String(error || 'ffmpeg failed'); }
-    } else {
-      // Stop retrying in this tab. A new tab can check the tools again.
-      this.noNative = String(error || 'ffmpeg failed');
-      toolsPromise = null;
-    }
-    if (!this.stale(gen)) this.reload('native ffmpeg failed');
-  }
-
-  /**
-   * Whether the page may offer the ffmpeg setup (status pill) and mention ffmpeg (toast):
-   * offered when it isn't installed, in a local trusted window, unless "Don't Show Again".
-   */
-  sendFfmpegState() {
-    const gen = this.loadGen;
-    // Restricted Mode runs no ffmpeg at all, not even `-version` (security review 2026-11-19 #6).
-    (vscode.workspace.isTrusted ? tools() : Promise.resolve(null)).then((t) => {
-      if (this.stale(gen)) return;
-      const h = globalState.get(decide.HINT_KEY) || {};
-      const offer = !t && !vscode.env.remoteName && vscode.workspace.isTrusted && !h.never;
-      this.post({ type: 'ffmpegState', installed: !!t, offer, mb: setup.downloadSizeMB() });
-    }, () => {});
-  }
-
-  /**
-   * A decode speed sample from the page (media/engine.js sampleSpeed): built-in samples are stored per
-   * class and may bring the setup hint; slow ones, and native ones, may bring the GPU test offer.
-   */
-  onSpeed(m) {
-    if (m.remoteStream || this.native instanceof remotestream.EncodedStream) return;
-    const native = !!this.native;
-    if (!!m.native !== native) return; // a sample from before the page switched decoders
-    const sample = {
-      codec: String(m.codec || ''), depth: Number(m.depth) || 8, width: Number(m.width) || 0, height: Number(m.height) || 0,
-      fps: Number(m.fps) || 0, ratio: Number(m.ratio) || 0, realtime: !!m.realtime, native,
-    };
-    if (!sample.codec || !sample.width || !sample.height || !(sample.ratio > 0)) return;
-    if (native) {
-      const was = this.slowRun || 0;
-      this.slowRun = sample.realtime ? 0 : was + 1;
-      if (!sample.realtime && was === 0) log(`[${this.name}] native ffmpeg below real time: ${sample.ratio.toFixed(2)}x (${decide.describe(sample)}, ${this.native.method})`);
-      if (!sample.realtime) {
-        const c = config();
-        const v = this.native.pr && this.native.pr.video;
-        // Distinguish raw transfer bottleneck from decode bottleneck using measured producer backpressure
-        // rather than nominal source dimensions, so decode-bound files still trigger the GPU decode test.
-        const hostKeepsUp = typeof this.native.hostKeepsUp === 'function' ? this.native.hostKeepsUp() : false;
-        const outputVideo = v ? { ...v, width: this.native.w || v.width, height: this.native.h || v.height, fps: this.native.fps || v.fps } : null;
-        const stallAction = transcodePolicy.evaluateLocalStall({
-          mode: c.transcode,
-          slowWindows: this.slowRun,
-          hostKeepsUp,
-          playing: m.playing !== undefined ? !!m.playing : true,
-          rate: m.rate !== undefined ? Number(m.rate) : 1,
-          hidden: !!m.hidden,
-          sinceEventMs: m.sinceEventMs !== undefined ? Number(m.sinceEventMs) : transcodePolicy.STALL_SETTLE_MS,
-          video: outputVideo,
-          alreadyTranscoding: false,
-        });
-        if (stallAction === 'switch') {
-          log(`[${this.name}] live transcode: auto-switching after transfer stall`);
-          this.forceTranscode = true;
-          this.reload('live transcode auto');
-          return;
-        }
-        if (!hostKeepsUp) offers.maybeOfferProbe(this, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));
-      }
-      return;
-    }
-    recordSpeed(sample);
-    const was = this.slowRun || 0;
-    this.slowRun = sample.realtime ? 0 : was + 1;
-    if (!sample.realtime && was === 0) log(`[${this.name}] built-in decoder below real time: ${sample.ratio.toFixed(2)}x (${decide.describe(sample)})`);
-    if (sample.realtime && was > 0) log(`[${this.name}] built-in decoder back to real time`);
-    if (!sample.realtime) {
-      offers.maybeHint(this, sample).catch((e) => log(`hint failed: ${e && e.message || e}`));
-      offers.maybeOfferProbe(this, sample).catch((e) => log(`GPU test offer failed: ${e && e.message || e}`));
-    }
-  }
-
-  closeFile() {
-    if (this.net) { this.net.close(); this.net = null; }
-    if (this.fh) { this.fh.close().catch(() => {}); this.fh = null; }
-    if (this.blockFh) { this.blockFh.then((h) => h.fh.close(), () => {}).catch(() => {}); this.blockFh = null; }
-  }
-
-  dispose() {
-    if (this.disposed) return;
-    this.disposed = true;
-    sessions.delete(this);
-    if (lastActive === this) lastActive = null;
-    if (logFile) log(`[${this.name}] session closed`);
-    clearTimeout(this.watchTimer);
-    this.watchTimer = null;
-    if (this.watcher) { this.watcher.close(); this.watcher = null; }
-    if (this.rail) { this.rail.dispose(); this.rail = null; }
-    if (this.adoptWait) this.adoptWait.done(false);
-    this.closePage('closed');
-    if (this.link) { this.link.dispose(); this.link = null; }
-    this.boots.clear();
-    if (this.pos && this.pos !== this.savedPos) this.savePos();
-  }
+  await vscode.commands.executeCommand('vscode.openWith', target, playerViewType(target));
 }
 
 function deactivate() {
-  for (const s of sessions) s.dispose();
+  for (const v of [...unifiedViewers]) v.dispose();
   resetFocusMode();
 }
 

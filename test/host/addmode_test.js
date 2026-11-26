@@ -1,8 +1,10 @@
 'use strict';
 // Add from the Explorer (src/addmode.js, docs/notes/compare-ui.md "Add mode"): the rules, then the host with a
-// fake VS Code: Shift+D in a player, a video opened meanwhile becomes compare in the player's place; in compare
-// every opened video is added until full; tabs of other editors close; Esc.
+// fake VS Code, where it is the viewer's Capture: Shift+D in a viewer, every video opened meanwhile joins it until it
+// is full; duplicates toast; the palette command and Esc toggle it; closing the viewer ends it.
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { createAddMode, startsInAddMode, addToCompareOrigin } = require('../../src/addmode');
 const { load } = require('./mock_vscode');
@@ -63,102 +65,71 @@ const { make } = require('../media/make_cases_media');
   assert.strictEqual(addToCompareOrigin({ selected: 1, videos: 6, isFile: false, count: 6 }), 'selection', 'a folder');
 }
 
-// ---- the host ----
+// ---- the host: Add from the Explorer is the viewer's Capture (src/unified-session.js, src/extension.js) ----
 (async () => {
   const a = make('s_h264.mp4');
   const b = make('rotated.mp4');
   assert.ok(a && b, 'ffmpeg test clips');
-  const dir = path.dirname(a);
-  const panels = [];
-  const fakePanel = () => {
-      const p = {
-        active: true, visible: true, viewColumn: 1, title: '', disposed: false, fns: [], posted: [],
-        webview: { cspSource: 'x:', html: '', asWebviewUri: (u) => u, postMessage(m) { p.posted.push(m); }, onDidReceiveMessage(fn) { p.msg = fn; } },
-        onDidDispose(fn) { p.fns.push(fn); }, onDidChangeViewState() {},
-        dispose() { p.disposed = true; for (const fn of p.fns) fn(); },
-      };
-      panels.push(p);
-      return p;
-    };
-  let tabListener = null;
-  const closedTabs = [];
-  const tabGroups = { onDidChangeTabs: (fn) => { tabListener = fn; return { dispose() {} }; }, close: async (t) => { closedTabs.push(t); }, all: [] };
-  const h2 = load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin' }, setup: (v) => { v.window.createWebviewPanel = fakePanel; v.window.tabGroups = tabGroups; } });
-    const W = h2.vscode;
-    const ctx = () => (W.executed || [])
-      .filter(([id, key]) => id === 'setContext' && key === 'videoPreviewEnhanced.addMode').map((c) => c[2]);
-    const until = async (ready, label) => {
-      const deadline = Date.now() + 5000;
-      while (!ready()) {
-        assert.ok(Date.now() < deadline, label);
-        await new Promise((r) => setTimeout(r, 5));
-      }
-    };
-    const resolve = (file) => {
-      const p = { webview: { html: '', options: null, onDidReceiveMessage() {}, postMessage: async () => true, cspSource: 'x:', asWebviewUri: (u) => u }, fns: [], onDidDispose(fn) { p.fns.push(fn); }, onDidChangeViewState() {}, dispose() { p.disposed = true; for (const fn of p.fns) fn(); } };
-      const r = W._providers['videoPreviewEnhanced.player'].resolveCustomEditor({ uri: W.Uri.file(file) }, p);
-      return { p, r };
-    };
-    try {
-      // Shift+D in a player, then an Explorer click on another video.
-      const pl = h2.open(a);
-      pl.panel.active = true;
-      await pl.send({ type: 'addMode', t: 1.5 });
-      assert.ok(pl.posted.some((m) => m.type === 'addMode' && m.on && !m.multi), 'the player shows the hint');
-      assert.deepStrictEqual(ctx(), [true], 'context key on');
-      assert.ok(W.executed.some((c) => c[0] === 'workbench.action.keepEditor'), 'the player tab is kept (not a preview)');
-      const opened = resolve(b);
-      assert.strictEqual(opened.r, undefined, 'no player for the claimed video');
-      await until(() => opened.p.disposed && panels[0]?.posted.some((m) => m.type === 'addMode' && m.multi), 'Compare promoted');
-      assert.ok(opened.p.disposed, 'its tab closes');
-      assert.strictEqual(panels.length, 1, 'compare opened');
-      assert.ok(pl.panel.webview && pl.posted && W.executed, 'sanity');
-      const cmp = panels[0];
-      assert.ok(/"names":\["s_h264\.mp4","rotated\.mp4"\]/.test(cmp.webview.html), 'A is the player, B the clicked video');
-      assert.ok(/"start":1\.5/.test(cmp.webview.html), 'compare starts at the player position');
-      assert.deepStrictEqual(ctx(), [true, true], 'Compare opens with Add Mode still on');
-      // Compare adds until full.
-      const hint = cmp.posted.filter((m) => m.type === 'addMode').pop();
-      assert.ok(hint && hint.on && hint.multi && hint.n === 2 && hint.max === 8, `compare hint: ${JSON.stringify(hint)}`);
-      const c = path.join(dir, 'c.mkv');
-      const d = path.join(dir, 'd.webm');
-      assert.strictEqual(resolve(c).r, undefined, 'c claimed');
-      await until(() => cmp.webview.html.includes('"c.mkv"'), 'c rendered');
-      assert.ok(/"names":\["s_h264\.mp4","rotated\.mp4","c\.mkv"\]/.test(cmp.webview.html), 'c added');
-      resolve(b);
-      await until(() => cmp.posted.some((m) => m.type === 'toast' && /in compare already/.test(m.text)), 'duplicate shown');
-      assert.ok(cmp.posted.some((m) => m.type === 'toast' && /in compare already/.test(m.text)), 'a duplicate toasts');
-      // Another editor's tab (VS Code's own preview, say) for a video: closed and added.
-      tabListener({ opened: [{ input: { uri: W.Uri.file(d), viewType: 'vscode.videoPreview' } }], closed: [], changed: [] });
-      await until(() => closedTabs.length && cmp.webview.html.includes('"d.webm"'), 'd rendered');
-      assert.strictEqual(closedTabs.length, 1, 'the other editor tab closes');
-      assert.ok(/"names":\[[^\]]*"d\.webm"\]/.test(cmp.webview.html), 'd added');
-      for (const i of [5, 6, 7, 8]) {
-        assert.strictEqual(resolve(path.join(dir, `video-${i}.mp4`)).r, undefined, `video ${i} claimed`);
-        await until(() => cmp.webview.html.includes(`"video-${i}.mp4"`), `video ${i} rendered`);
-        assert.ok(cmp.webview.html.includes(`"video-${i}.mp4"`), `video ${i} added`);
-      }
-      assert.strictEqual(ctx().pop(), false, 'full: off');
-      assert.ok(cmp.posted.some((m) => m.type === 'toast' && /full/.test(m.text)), 'full toast');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-addmode-'));
+  // More videos to open (any bytes: the built-in decoder reads them only once a page plays them).
+  for (const name of ['c.mkv', 'd.webm', 'video-5.mp4']) fs.copyFileSync(a, path.join(dir, name));
+  const h2 = load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin', 'videoPreviewEnhanced.compare.maxVideos': 4 } });
+  const W = h2.vscode;
+  const ctx = () => (W.executed || [])
+    .filter(([id, key]) => id === 'setContext' && key === 'videoPreviewEnhanced.addMode').map((c) => c[2]);
+  const until = async (ready, label) => {
+    const deadline = Date.now() + 5000;
+    while (!ready()) {
+      assert.ok(Date.now() < deadline, label);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  const opened = (v) => v.posted.filter((m) => m.type === 'openVideo').map((m) => m.label);
+  try {
+    // Shift+D in a viewer (its page posts 'capture'), then an Explorer click on another video: it joins that viewer.
+    const pl = h2.open(a);
+    await pl.send({ type: 'ready' });
+    await pl.send({ type: 'capture', on: true });
+    assert.strictEqual(ctx().pop(), true, 'context key on');
+    const other = h2.open(b);
+    await other.shown;
+    await until(() => opened(pl).includes('rotated.mp4'), 'b joined');
+    assert.strictEqual(other.panel.webview.html, '', 'no viewer for the captured video');
+    await new Promise((r) => setTimeout(r, 10));
+    // Captured: the new tab closes (its panel's dispose ran).
+    assert.ok(!other.panel.webview.html);
+    // A duplicate only toasts in the capturing viewer.
+    const dup = h2.open(b);
+    await dup.shown;
+    await until(() => pl.posted.some((m) => m.type === 'toast' && /in compare already/.test(m.text)), 'duplicate shown');
+    // Until full (compare.maxVideos): then videos open as usual and capture stops taking them.
+    for (const name of ['c.mkv', 'd.webm']) {
+      const v = h2.open(path.join(dir, name));
+      await v.shown;
+      await until(() => opened(pl).includes(name), `${name} joined`);
+    }
+    const fifth = h2.open(path.join(dir, 'video-5.mp4'));
+    await fifth.shown;
+    const logText = () => h2.context.subscriptions.find((x) => x && Array.isArray(x.lines)).lines.join('\n');
+    assert.ok(fifth.panel.webview.html, `a full viewer captures no more: the video gets its own tab\n${logText()}`);
+    fifth.panel.dispose();
 
-      // Esc (the keybinding's command) and the compare closing.
-      const two = panels.length;
-      await W._commands['videoPreviewEnhanced.compare'](W.Uri.file(a), [W.Uri.file(a), W.Uri.file(b)]);
-      const cmp2 = panels[two];
-      assert.strictEqual(ctx().pop(), false, 'a compare started from several files at once has Add Mode off');
-      assert.ok(!cmp2.posted.some((m) => m.type === 'addMode' && m.on), 'and its page shows no hint');
-      // The palette command / Shift+D / Add video… turn it on later.
-      cmp.dispose();
-      await W._commands['videoPreviewEnhanced.addFromExplorer']();
-      assert.strictEqual(ctx().pop(), true, 'the command turns it on');
-      await W._commands['videoPreviewEnhanced.stopAddFromExplorer']();
-      assert.strictEqual(ctx().pop(), false, 'Esc: off');
-      assert.ok(cmp2.posted.filter((m) => m.type === 'addMode').pop().on === false, 'Esc hides the hint');
-      await cmp2.msg({ type: 'addMode', page: Number(/"page":(\d+)/.exec(cmp2.webview.html)[1]) });
-      cmp2.dispose();
-      assert.strictEqual(ctx().pop(), false, 'closing compare: off');
-      assert.notStrictEqual(resolve(c).r, undefined, 'then videos open as usual');
-      assert.strictEqual(W._commands['videoPreviewEnhanced.compareSelected'], undefined, 'Alt+D command is gone');
-    } finally { h2.dispose(); }
-// The players opened here keep file watchers: end the process.
+    // A comparison started from several files at once has Capture off; the palette command and Esc toggle it.
+    const cmp = h2.nextPanel();
+    await W._commands['videoPreviewEnhanced.compare'](W.Uri.file(a), [W.Uri.file(a), W.Uri.file(b)]);
+    assert.deepStrictEqual(cmp.cfg().clips.map((c) => c.name), ['s_h264.mp4', 'rotated.mp4']);
+    pl.panel.active = false;
+    pl.panel.dispose();
+    assert.strictEqual(ctx().pop(), false, 'closing the capturing viewer: off');
+    await W._commands['videoPreviewEnhanced.addFromExplorer']();
+    assert.strictEqual(ctx().pop(), true, 'the command turns it on in the active viewer');
+    await W._commands['videoPreviewEnhanced.stopAddFromExplorer']();
+    assert.strictEqual(ctx().pop(), false, 'Esc: off');
+    cmp.panel.dispose();
+    const later = h2.open(path.join(dir, 'c.mkv'));
+    await later.shown;
+    assert.ok(later.panel.webview.html, 'then videos open as usual');
+    assert.strictEqual(W._commands['videoPreviewEnhanced.compareSelected'], undefined, 'Alt+D command is gone');
+  } finally { h2.dispose(); fs.rmSync(dir, { recursive: true, force: true }); }
+// The viewers opened here keep file watchers: end the process.
 })().then(() => { console.log('addmode: ok'); process.exit(0); }, (e) => { console.error(e); process.exit(1); });

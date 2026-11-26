@@ -1,5 +1,5 @@
 'use strict';
-// The folder rail's static markup (src/player-html.js puts it beside #stage): the right-edge fold-out tab, the
+// The folder rail's static markup (src/unified-html.js puts it beside #stage): the right-edge fold-out tab, the
 // rail with its header, filter, column header, list and footer, its two menus and the hover card. No file or
 // folder name is in it: the list comes from the host as data (src/folder-rail.js) and media/folder-rail.js
 // builds the rows with textContent. The look is media/folder-rail.css; docs/notes/folder-rail.md has the design.

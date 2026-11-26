@@ -426,6 +426,22 @@ const context = { extensionUri: Uri.file(ROOT) };
       assert.deepStrictEqual(saved.pop(), [a.fsPath, 51], 'and on close');
     }
 
+    { // sizeFramesToView off (deps.fitTiles false): native ffmpeg keeps the decision's size, whatever the tile.
+      const { panel, handlers } = fakePanel();
+      const clipA = { ...(await prepareClip(a, {})), native: true, decision: nativeDecision };
+      const decoders = [];
+      const viewer = createUnifiedViewer({ vscode, context, panel, clip: clipA, registry: null,
+        deps: deps({ fitTiles: () => false, createNative: (opts) => { const d = fakeDecoder(); d.opts = opts; decoders.push(d); return d; } }) });
+      viewer.show();
+      await open(handlers);
+      await handlers.message({ type: 'tileSize', page: 1, tile: { w: 1920, h: 1080, cols: 2, rows: 1 } });
+      await handlers.message({ type: 'nd', page: 1, clipId: clipA.id, m: { type: 'open' } });
+      assert.strictEqual(decoders[0].opts.maxHeight, nativeDecision.maxHeight);
+      await handlers.message({ type: 'tileSize', page: 1, tile: { w: 800, h: 450 } });
+      assert.deepStrictEqual(decoders[0].resizes, [], 'never resized to the tile');
+      handlers.dispose();
+    }
+
     { // tileSize: native tiles get their new output size; a tile that must seek to apply it gets 'resize'.
       const { panel, posts, handlers } = fakePanel();
       const clipA = { ...(await prepareClip(a, {})), native: true, decision: nativeDecision };
@@ -437,7 +453,8 @@ const context = { extensionUri: Uri.file(ROOT) };
       await handlers.message({ type: 'tileSize', page: 1, tile: { w: 1920, h: 1080, cols: 2, rows: 1 } });
       assert.strictEqual(decoders.length, 0, 'no decoder yet: nothing to resize');
       await handlers.message({ type: 'nd', page: 1, clipId: clipA.id, m: { type: 'open' } });
-      assert.strictEqual(decoders[0].opts.messageMaxHeight, 720);
+      assert.deepStrictEqual([decoders[0].opts.maxHeight, decoders[0].opts.messageMaxHeight], [540, 540],
+        'ffmpeg starts at the tile size the page already reported');
       posts.length = 0;
       await handlers.message({ type: 'tileSize', page: 1, tile: { w: 1920, h: 1080, cols: 2, rows: 1 } });
       assert.deepStrictEqual(decoders[0].resizes, [[540, 540]]);

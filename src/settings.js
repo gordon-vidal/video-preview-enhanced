@@ -23,7 +23,7 @@ const STEP_SIZES = ['frame', 'frames5', 1, 5, 10];
 /**
  * @typedef {{ volume: number, rate: number, timeMode: number, stepSize: string | number | null }} PlaybackPrefs
  * @typedef {{ get(key: string): any, update(key: string, value: any): PromiseLike<void> }} Memento
- * @typedef {{ post(msg: any): void, updateTranscode?(prefs: any): void }} PageTarget
+ * @typedef {{ post(msg: any): void }} PageTarget
  */
 
 /**
@@ -50,12 +50,10 @@ function sanitizePlaybackPrefs(raw, base = DEFAULT_PLAYBACK_PREFS) {
  * @param {() => Memento | undefined} deps.getState  globalState (set when the extension activates)
  * @param {(msg: string) => void} deps.log
  * @param {{ resolveSetting(o: any): any, resolutionOf(v: any): number }} deps.transcodePolicy
- * @param {Iterable<PageTarget>} deps.sessions         open players
- * @param {Iterable<PageTarget>} deps.compareSessions  open compare panels
- * @param {Iterable<PageTarget>} [deps.unifiedViewers]  open unified viewers (src/unified-viewer.js)
+ * @param {Iterable<PageTarget>} [deps.pages]  the open viewers (src/unified-viewer.js)
  */
-function createSettings({ vscode, getState, log, transcodePolicy, sessions, compareSessions, unifiedViewers }) {
-  const allPages = () => [...sessions, ...compareSessions, ...(unifiedViewers || [])];
+function createSettings({ vscode, getState, log, transcodePolicy, pages }) {
+  const allPages = () => [...(pages || [])];
 
   /** Where to write a player preference: the scope that sets it now, so a workspace value doesn't shadow the change. */
   function prefTarget(/** @type {string} */ key) {
@@ -76,7 +74,7 @@ function createSettings({ vscode, getState, log, transcodePolicy, sessions, comp
     const prev = storedPlaybackPrefs();
     const next = sanitizePlaybackPrefs(m, prev);
     if (['volume', 'rate', 'timeMode', 'stepSize'].every((k) => next[k] === prev[k])) return undefined;
-    // Every other player and Compare follows at once (their pages stay alive in the background), not only new tabs.
+    // Every other viewer follows at once (their pages stay alive in the background), not only new tabs.
     // Not the sender: an echo would snap its slider back mid-drag and redraw its open panel.
     for (const sess of allPages()) if (sess !== from) sess.post({ type: 'playbackPrefs', prefs: next });
     return gs.update(PLAYBACK_PREFS_KEY, next);
@@ -176,7 +174,6 @@ function createSettings({ vscode, getState, log, transcodePolicy, sessions, comp
       const prefs = prefsOf(config());
       const msg = { type: 'prefs', prefs };
       for (const sess of allPages()) sess.post(msg);
-      if (key.startsWith('transcode')) for (const sess of compareSessions) if (sess.updateTranscode) sess.updateTranscode(prefs);
     }
     return ok;
   }

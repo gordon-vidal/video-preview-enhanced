@@ -1,7 +1,7 @@
 // @ts-check
 // Autoplay (setting videoPreviewEnhanced.onEnd): what the player does when a video plays to its end. Off stops on the
 // last frame, Loop starts over, Play next in folder opens the next video of the playing file's folder once. An A–B
-// range always wins. Pure, so the page (media/player.js), the engine tests (test/engine/frames_onend.js) and the
+// range always wins. Pure, so the page (media/player-ui.js), the engine tests (test/engine/frames_onend.js) and the
 // unit tests share one decision.
 'use strict';
 

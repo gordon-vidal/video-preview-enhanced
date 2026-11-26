@@ -6,7 +6,14 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { unifiedHtml, UNIFIED_CSS, UNIFIED_SCRIPTS } = require('../../src/unified-html');
-const { SCRIPTS: PLAYER_SCRIPTS } = require('../../src/player-html');
+// The decoder and media utilities in the order their globals need (the single player's page had this order before
+// the unified page replaced it; engine.js reads the four modules before it, controls.js the panels' helpers).
+const BASE_ORDER = [
+  'membudget.js', 'timestretch.js', 'pool.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js',
+  'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js', 'engine.js', 'picture.js', 'inspect.js', 'scopes.js', 'exactframe.js',
+  'reduced-res-notice.js', 'slow-notice.js', 'subtitles.js', 'tracks-menu.js', 'xray.js', 'modes.js', 'range-drag.js', 'controls.js',
+  'ctxmenu.js', 'timefmt.js', 'abloop.js', 'autoplay.js', 'folder-rail.js', 'debug-probe.js', 'frame-player.js',
+];
 const { createDom } = require('./fake-dom');
 
 const MEDIA = path.join(__dirname, '..', '..', 'media');
@@ -68,9 +75,8 @@ const srcsOf = (html, nonce = 'NONCE123') => [...html.matchAll(new RegExp(`<scri
 { // Load order: each module after the globals it reads.
   const at = (f) => { const i = UNIFIED_SCRIPTS.indexOf(f); assert.ok(i >= 0, `${f} is loaded`); return i; };
   const before = (a, b) => assert.ok(at(a) < at(b), `${a} before ${b}`);
-  // The single player's base keeps its own order.
-  const base = PLAYER_SCRIPTS.filter((f) => f !== 'player-ui.js' && f !== 'player.js');
-  assert.deepStrictEqual(UNIFIED_SCRIPTS.filter((f) => base.includes(f)), base, 'the player base order is kept');
+  // The decoder and media base keeps its order, first.
+  assert.deepStrictEqual(UNIFIED_SCRIPTS.slice(0, BASE_ORDER.length), BASE_ORDER, 'the base order is kept, first');
   for (const dep of ['block-cache.js', 'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js']) before(dep, 'engine.js');
   before('stepgoal.js', 'compare-sync.js');
   for (const dep of ['player-state.js', 'compare-grid.js']) before(dep, 'player-ui-tiles.js');

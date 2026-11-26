@@ -1,20 +1,14 @@
 'use strict';
-
+// node test/run.js unit --grep player_ux: the bar's A / B buttons and pins (media/controls.js, the viewer's wiring in
+// media/player-ui.js), the scopes overlay's close button, and the ⚙ / ⓘ panels of media/controls.js. The viewer's
+// gestures over the real markup (seek drag, A–B marks, notices, Escape order, click outside) are
+// test/host/player_ui_test.js and its player_ui_*_test.js modules.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const vm = require('vm');
 const Controls = require('../../media/controls');
 const Scopes = require('../../media/scopes');
 
-const source = fs.readFileSync(path.join(__dirname, '../../media/player.js'), 'utf8');
-// Run the real handlers with a delayed decoder and just the elements they update.
-function script(from, to) {
-  const start = source.indexOf(from);
-  const end = source.indexOf(to, start);
-  assert.ok(start >= 0 && end > start, from);
-  return source.slice(start, end);
-}
 const noop = () => {};
 function element(parent) {
   const listeners = {};
@@ -43,7 +37,7 @@ function element(parent) {
   };
 }
 
-// The [ ] buttons and pin drags: wired in both pages, and the pressed state follows the range.
+// The [ ] buttons and pin drags: wired in the viewer, and the pressed state follows the range.
 {
   const attrs = () => { const a = {}; return { a, setAttribute: (k, v) => { a[k] = v; } }; };
   const btnA = attrs(), btnB = attrs();
@@ -57,14 +51,11 @@ function element(parent) {
   ab.set('a', 5, 50); // the same end again clears it
   assert.deepStrictEqual(pressedNow(), ['false', 'true']);
 
-  const compareSource = fs.readFileSync(path.join(__dirname, '../../media/compare.js'), 'utf8');
-  for (const [name, src] of [['player', source], ['compare', compareSource]]) {
-    assert.match(src, /\[ui\.setABtn, \(\) => (setAB|markAB)\('a'\)\]/, `${name}: [ sets A`);
-    assert.match(src, /\[ui\.setBBtn, \(\) => (setAB|markAB)\('b'\)\]/, `${name}: ] sets B`);
-    assert.match(src, /VpePlayerUi\.bindAbPins\(self\.VpeAbLoop, \{ a: ui\.abA, b: ui\.abB,/, `${name}: the pins can be dragged (shared helper)`);
-    assert.match(src, /ab\.reset\(w, [^)]*snap\.f,/, `${name}: a drag commits the snapped frame`);
-    assert.match(src, /drawRangeButtons\(ui\.setABtn, ui\.setBBtn, ab\)/, `${name}: the buttons follow the range`);
-  }
+  const src = fs.readFileSync(path.join(__dirname, '../../media/player-ui.js'), 'utf8');
+  assert.ok(src.includes('[setABtn, act.setA, true]'), '[ sets A');
+  assert.ok(src.includes('[setBBtn, act.setB, true]'), '] sets B');
+  assert.ok(src.includes('bindAbPins(W.VpeAbLoop, { a: abA, b: abB'), 'the pins can be dragged (shared helper)');
+  assert.ok(src.includes('W.VpeControls.drawRangeButtons(setABtn, setBBtn, ab)'), 'the buttons follow the range');
   const css = fs.readFileSync(path.join(__dirname, '../../media/player.css'), 'utf8');
   assert.match(css, /\.ab-pin \{[^}]*pointer-events: auto;[^}]*cursor: ew-resize;/, 'pins take the mouse');
   assert.match(css, /@media \(max-width: 640px\) \{\s*#row button\.rng, #row #infoBtn, #row #time #dur \{ display: none; \}/, 'range buttons hide on narrow panes');
@@ -72,104 +63,6 @@ function element(parent) {
   const bar = fs.readFileSync(path.join(__dirname, '../../src/bar.js'), 'utf8');
   assert.match(bar, /aria-keyshortcuts="A">\$\{rangeLabel\('A'\)\}<\/button>/);
   assert.match(bar, /aria-keyshortcuts="B">\$\{rangeLabel\('B'\)\}<\/button>/);
-}
-
-{
-  let stageClicks = 0;
-  const posted = [];
-  const stage = element();
-  stage.addEventListener('click', () => { stageClicks++; });
-  const notice = element(stage);
-  const noticeClose = element(notice);
-  const elements = { notice, noticeClose };
-  const ui = Object.fromEntries(['now', 'dur', 'play', 'time', 'buffered', 'setABtn',
-    'setBBtn', 'abA', 'abB', 'tip'].map((id) => [id, element()]));
-  ui.seek = element(element());
-  ui.play.focus = noop;
-  notice.contains = () => false;
-  const player = {
-    meta: { duration: 20 }, fps: 10, shownT: 9, remoteStream: true,
-    rel: (t) => t, isPlaying: () => false, currentFrame: () => 90, currentTime: () => 9,
-    seekFrame(frame) { this.seekTarget = frame / this.fps; },
-    bufferedRanges: () => [],
-  };
-  let scopesOpen = true;
-  let inspectorOpen = true;
-  const document = element();
-  const ctx = vm.createContext({
-    ui, player, document, performance, timeMode: 0, wakeLoop: noop,
-    VpeRangeDrag: { bindSeek: (_input, handlers) => { ctx.seekHandlers = handlers; } },
-    showTip: noop, hideTip: noop,
-    fmtClock: String, fmtTime: String, fmtTimecode: String, toast: noop, announce: noop, drawAB: noop,
-    vscode: { postMessage: (m) => posted.push(m.type), getState: () => ({}), setState: noop },
-    $: (id) => (elements[id] ||= element(notice)), self: { VpeAbLoop: require('../../media/abloop') },
-    saved: {}, VpeSlowNotice: require('../../media/slow-notice'),
-    controls: { anyOpen: () => false, refresh: noop }, cfg: {},
-    VpeModes: { ownsKey: () => false }, VpePlayerUi: require('../../media/player-ui'),
-    scopes: { mode: () => scopesOpen, close() { scopesOpen = false; } },
-    insp: { onKey(e) { if (e.key !== 'Escape' || !inspectorOpen) return false; inspectorOpen = false; return true; } },
-    addHint: { hidden: true },
-    syncEngineLoop: noop,
-  });
-  vm.runInContext([
-    script('  function showNotice(n)', '  /**\n   * Pixel tools'),
-    script('  let scrubbing = false;', '  // Decoder status'),
-    script('  // Decoder status', '  let wake ='),
-    script('  const seekDragger =', '  const volumeDragger ='),
-    script('  const ab = ', '  function abLabel()'),
-    script('  function sendRange(', '  /**\n   * Shows frame'),
-    script("  document.addEventListener('keydown'", "    if (e.key === '?'") + '\n  });',
-  ].join('\n'), ctx);
-  ui.seek.value = '20';
-  ctx.seekHandlers.preview(20);
-  assert.strictEqual(ui.seek.value, '20');
-  assert.strictEqual(ui.now.textContent, '2');
-  assert.strictEqual(player.seekTarget, undefined, 'the drag leaves the decoder alone');
-  ctx.seekHandlers.finish();
-  ctx.seekHandlers.commit(20);
-  assert.strictEqual(ui.seek.value, '20');
-  assert.strictEqual(ui.now.textContent, '2');
-  player.seekTarget = null;
-  vm.runInContext('updateUi()', ctx);
-  assert.strictEqual(player.seekGoalFrame, null);
-  assert.strictEqual(ui.seek.value, '90', 'the readout returns to the decoded frame when the seek settles');
-  ctx.seekHandlers.commit(10);
-  vm.runInContext("setAB('a')", ctx);
-  player.shownT = 11;
-  vm.runInContext("setAB('b')", ctx);
-  assert.strictEqual(notice.hidden, true, 'marking a transcoded range is quiet');
-  assert.strictEqual(vm.runInContext('ab.presentationRange().a', ctx), 9, 'marks use the shown frame during a seek');
-  vm.runInContext("sendRange('clipRange')", ctx);
-  assert.strictEqual(notice.hidden, false, 'the refusal appears on export');
-  elements.noticeAction.click();
-  assert.deepStrictEqual(posted, ['action']);
-  assert.strictEqual(notice.hidden, true);
-  assert.strictEqual(stageClicks, 0);
-  vm.runInContext("sendRange('clipRange')", ctx);
-  document.dispatch('keydown', { key: 'Escape' });
-  assert.strictEqual(notice.hidden, true);
-  assert.strictEqual(stageClicks, 0);
-  document.dispatch('keydown', { key: 'Escape' });
-  assert.strictEqual(inspectorOpen, false);
-  document.dispatch('keydown', { key: 'Escape' });
-  assert.strictEqual(scopesOpen, false);
-
-  player.status = () => ({ slowNotice: 'every' });
-  const updateStatus = () => vm.runInContext('updateStatus()', ctx);
-  ctx.cfg.hideSlowPlaybackNotice = true;
-  updateStatus();
-  assert.strictEqual(notice.hidden, true);
-  ctx.cfg.hideSlowPlaybackNotice = false;
-  updateStatus();
-  assert.strictEqual(elements.noticeAction.textContent, 'Skip frames (all videos)');
-  assert.strictEqual(elements.noticeSettings.textContent, 'Settings');
-  assert.strictEqual(elements.noticeHide.textContent, "Don't show again");
-  document.dispatch('keydown', { key: 'Escape' });
-  assert.strictEqual(notice.hidden, true);
-  player.status = () => ({ slowNotice: 'setupFfmpeg' });
-  updateStatus();
-  assert.strictEqual(notice.hidden, true, 'Escape dismisses slow-playback notices for the tab');
-  assert.strictEqual(stageClicks, 0);
 }
 
 {
@@ -208,31 +101,6 @@ function element(parent) {
       controls.toggle('main', buttons.cog);
       assert.strictEqual(controls.view(), 'main', `Settings opens directly from ${view}`);
       assert.strictEqual(buttons.cog.attributes['aria-expanded'], 'true');
-    }
-    // Click outside (media/controls.js) with the player's own stage click handler (media/player.js): pressing the
-    // picture only dismisses the open panel (no play / pause); pressing a bar control closes it and the control still works.
-    {
-      const barControl = element(), pic = element();
-      bar.contains = (n) => n === barControl;
-      let toggles = 0;
-      const pstage = element();
-      vm.runInContext(script("stage.addEventListener('click', () => { if (controls", '\n'), vm.createContext({
-        stage: pstage, controls, ctxMenu: { consumeDismiss: () => false }, togglePlay: () => { toggles++; },
-      }));
-      const press = (target) => docListeners.pointerdown({ target });
-      for (const view of ['info', 'main']) {
-        controls.show(view, buttons.info);
-        press(barControl);
-        assert.strictEqual(controls.anyOpen(), false, `a press on #mute / #bar closes the ${view} panel`);
-        assert.strictEqual(toggles, 0);
-        controls.show(view, buttons.info);
-        press(pic);
-        pstage.dispatch('click');
-        assert.strictEqual(controls.anyOpen(), false, `a press on the picture closes the ${view} panel`);
-        assert.strictEqual(toggles, 0, 'that click does not play / pause');
-      }
-      press(pic); pstage.dispatch('click');
-      assert.strictEqual(toggles, 1, 'with nothing open a click on the picture plays / pauses');
     }
     controls.show('transcode');
     const notes = panel.children.at(-1).children.filter((child) => child.className === 'pnote');

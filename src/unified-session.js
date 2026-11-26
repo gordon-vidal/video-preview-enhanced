@@ -1,9 +1,8 @@
 // @ts-check
 'use strict';
 // The unified page's host side (docs/notes/player-ui-controller.md, "Production wiring"): one webview
-// panel that grows from 1 video to N and back to 1 in place, without a new webview. CompareSession
-// (src/compare.js) replaces its page when a video is added or removed; this coordinator only tells the page
-// what changed (openVideo, replaceTile) and keeps the host's view of it: the clips, their display order, the
+// panel that grows from 1 video to N and back to 1 in place, without a new webview: this coordinator only tells the
+// page what changed (openVideo, replaceTile) and keeps the host's view of it: the clips, their display order, the
 // tab title, the folder rail's "in Compare" marks and whether newly opened videos join this panel (capture).
 //
 // Pure: no vscode, no fs. Every effect is an injected callback, so a Node test drives it
@@ -64,6 +63,8 @@ const { unifiedHtml } = require('./unified-html');
  * @property {(clip: UnifiedClip, m: PageMessage, s: UnifiedSession) => any} [onOriginalTile]  Live transcode -> built-in
  * @property {(clip: UnifiedClip, m: PageMessage, s: UnifiedSession) => any} [onQuality]  a URL clip's HLS quality pick
  * @property {(m: PageMessage, s: UnifiedSession) => any} [onRailAdopted]  the page's answer to a 'railHandoff'
+ * @property {(m: PageMessage, s: UnifiedSession) => any} [onOther]  any other page message (decode speed samples,
+ *   WebCodecs failures, Compare's quick pick on key D ...): src/extension.js decides what it means
  * @property {OpenTarget | null} [openTarget]  what the first page shows first: a frame link, the saved position, the rail
  * @property {(s: UnifiedSession) => void} [onDispose]
  *
@@ -548,7 +549,13 @@ function createUnifiedSession(deps) {
         const c = id === undefined || id === null ? (clips.length === 1 ? clips[0] : null) : isId(id) ? clipOf(id) : null;
         return c && deps.onNative ? deps.onNative(c, m) : undefined;
       }
-      default: return undefined;
+      // An image sequence's frame player asks for pictures (media/frame-player.js): its host decoder answers.
+      case 'frames': {
+        const c = clipFor(m);
+        if (!c || !deps.onNative || !Array.isArray(m.indices)) return undefined;
+        return deps.onNative(c, { ...m, m: { type: 'frames', indices: m.indices } });
+      }
+      default: return deps.onOther ? deps.onOther(m, session) : undefined;
     }
   }
 

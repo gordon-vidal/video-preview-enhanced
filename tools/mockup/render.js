@@ -41,7 +41,7 @@ function sanitizeCssForInlineFrame(css) {
 /**
  * Shared stage + rail + bar + popup markup used by both the rendered mockup harness and the strict Node DOM
  * fixture (test/host/player_ui_test.js), so the test fixture can never drift from the rendered harness. The stage
- * carries src/player-html.js's #subs cue layer, #overlay (status / error; hidden here, the fake engine opens at once)
+ * carries src/unified-html.js's #subs cue layer, #overlay (status / error; hidden here, the fake engine opens at once)
  * and #notice banner, so the tool and lifecycle controllers run against the same elements as production.
  */
 function stageMarkupHtml() {

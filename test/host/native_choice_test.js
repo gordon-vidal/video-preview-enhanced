@@ -1,9 +1,8 @@
 'use strict';
-// node test/host/native_choice_test.js: Session.open's decoder choice end to end with the
-// mock vscode and a real ffmpeg (on PATH, or VPE_FFMPEG): with stored probe results the
-// file goes to native ffmpeg with the probed method; WSL plays native, SSH and containers stream
-// (remoteStream auto) or stay built-in (off); "Use
-// full resolution" (pixel tools) switches the tab to the built-in decoder. Skipped without ffmpeg.
+// node test/run.js unit --grep native_choice: the viewer's decoder choice per file (src/extension.js nativeFor) end
+// to end with the mock vscode and a real ffmpeg (on PATH, or VPE_FFMPEG): with stored probe results the file goes to
+// native ffmpeg with the probed method; WSL plays native, SSH and containers stream (remoteStream auto) or stay
+// built-in (off); "Use full resolution" (pixel tools) switches the clip to the built-in decoder. Skipped without ffmpeg.
 const assert = require('assert');
 const path = require('path');
 const ff = require('../../src/ffmpeg');
@@ -27,23 +26,22 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     await h.context.globalState.update('videoPreviewEnhanced.probe', record);
     const s = h.open(clip);
     await s.send({ type: 'ready' });
-    await s.until((p) => p.some((m) => m.type === 'libav'), 15000);
+    await s.until((p) => p.some((m) => m.type === 'sessionState'), 15000);
     return { h, s };
   };
   const logOf = (h) => h.context.subscriptions.find((x) => x && Array.isArray(x.lines)).lines.join('\n');
 
   let { h, s } = await start(undefined);
-  let meta = s.posted.find((m) => m.type === 'libav').meta;
+  let meta = s.cfg().clips[0];
   assert.strictEqual(meta.native, true, 'local: native ffmpeg');
   assert.match(logOf(h), /decoder: native ffmpeg \(dxva2\): hevc\/10\/2160: ffmpeg dxva2 ~32 fps .*capped by sending 2160p frames/, "local: full size over the frame server");
   // Pixel tools: switch to the built-in decoder, kept for this tab.
   s.posted.length = 0;
   await s.send({ type: 'action', id: 'fullRes' });
-  await s.send({ type: 'ready' });
-  await s.until((p) => p.some((m) => m.type === 'libav'), 15000);
-  meta = s.posted.find((m) => m.type === 'libav').meta;
+  await s.until((p) => p.some((m) => m.type === 'replaceTile'), 15000);
+  meta = s.posted.find((m) => m.type === 'replaceTile').clip;
   assert.ok(!meta.native, 'full resolution: built-in');
-  assert.match(logOf(h), /full resolution asked for: built-in decoder, reloading/);
+  assert.match(logOf(h), /full resolution: built-in decoder/);
   s.panel.dispose(); h.dispose();
 
   // Live transcode (ADR 0002): WSL plays native ffmpeg (no stream); with transcode: auto,
@@ -57,9 +55,9 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     if (tc) settings['videoPreviewEnhanced.transcode'] = tc; else delete settings['videoPreviewEnhanced.transcode'];
     if (rs) settings['videoPreviewEnhanced.remoteStream'] = rs; else delete settings['videoPreviewEnhanced.remoteStream'];
     ({ h, s } = await start(remote));
-    meta = s.posted.find((m) => m.type === 'libav').meta;
+    meta = s.cfg().clips[0];
     const log = logOf(h);
-    const got = !meta.native ? 'builtin' : /decoder: remote stream/.test(log) ? 'stream' : 'native';
+    const got = !meta.native ? 'builtin' : /live transcode on/.test(log) ? 'stream' : 'native';
     assert.strictEqual(got, want, `${remote}${rs ? ` (remoteStream ${rs})` : ''}: ${want}
 ${log}`);
     s.panel.dispose(); h.dispose();

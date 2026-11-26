@@ -1,13 +1,12 @@
 'use strict';
-// node test/host/a11y_test.js: keyboard ownership (media/modes.js ownsKey: which keys the focused
-// control keeps from the player's shortcuts) and the accessible names, states and live region in
-// the player's and compare's HTML (src/extension.js html(), src/compare.js compareHtml).
+// node test/run.js unit --grep a11y: keyboard ownership (media/modes.js ownsKey: which keys the focused
+// control keeps from the player's shortcuts) and the accessible names, states and live region in the viewer's page
+// (src/unified-html.js, rendered by the extension with the mock vscode) and its Compare tiles (media/player-ui.js).
 // The pages themselves are checked in a real VS Code: test/vscode/cases/ui.js.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const VpeModes = require('../../media/modes');
-const { compareHtml } = require('../../src/compare');
 const { load } = require('./mock_vscode');
 
 // ---- ownsKey ----------------------------------------------------------------------------
@@ -105,33 +104,14 @@ assert.match(ladder[4][1], /\.vol-wrap \{ display: none; \}/, 'below 320 px Mute
 }
 assert.match(playerStyles, /#notice \{[^}]*background: var\(--vpe-surface-float\)/);
 
-const cmp = compareHtml({ uri: (...p) => `https://webview/${p.join('/')}`, cspSource: 'vscode-resource:', nonce: 'n', cfg: {}, frameSource: '' });
-checkButtons(cmp, 'compare');
-assert.match(cmp, liveRegion, 'compare: live region');
-assert.match(cmp, playFlash, 'compare: decorative play/pause flash');
-assert.ok(pressed(cmp, 'mute'), 'compare: #mute has aria-pressed');
-assertRangeButtons(cmp, 'compare');
-// The player's bar (src/bar.js) without CC, plus the grouped Compare capsule.
-assert.match(cmp, /<div id="cmpGroup" class="cmp-group" role="group" aria-label="Compare controls">/);
-assert.match(cmp, /<button id="cmpBtn"[^>]*aria-controls="panel"/);
-assert.match(cmp, /<button id="stopAddBtn"[^>]*>Stop<\/button>/);
-assert.match(cmp, /<div id="splitter" class="splitter" role="separator" tabindex="0" aria-label="Spotlight split"/);
-assert.match(cmp, /<div id="addPop" class="add-pop" role="menu" aria-label="Add video" hidden>/);
-assert.ok(!/id="tracks"|id="syncBtn"|id="mode"|id="reorderBtn"/.test(cmp), 'compare: no CC, old compare toolbar, or Reorder toggle');
-for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'layoutSpotlightBtn', 'layoutGridBtn', 'layoutSplitBtn', 'addPopBtn', 'syncModeBtn', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full', 'panel', 'sheet', 'menu']) assert.match(cmp, new RegExp(`id="${id}"`), `compare: #${id}`);
-assert.ok(cmp.indexOf('controls.js') > 0 && cmp.indexOf('controls.js') < cmp.indexOf('compare.js"'), 'compare: controls.js (the panels) loads before compare.js');
-assert.match(cmp, /<button id="picBtn"[^>]*aria-label="Picture size: Fit. Next: Fill"/, 'compare: the picture size button');
-assert.ok(cmp.indexOf('picture.js') > 0 && cmp.indexOf('picture.js') < cmp.indexOf('compare.js"'), 'compare: picture.js loads before compare.js');
-assert.ok(cmp.indexOf('modes.js') > 0 && cmp.indexOf('modes.js') < cmp.indexOf('compare.js"'), 'compare: modes.js (ownsKey) loads before compare.js');
-
 // Dense styling uses the same buttons and focus reveal as the regular tiles.
-const cmpScript = fs.readFileSync(path.join(__dirname, '../../media/compare.js'), 'utf8');
+const cmpScript = fs.readFileSync(path.join(__dirname, '../../media/player-ui.js'), 'utf8');
+const tileScript = fs.readFileSync(path.join(__dirname, '../../media/player-ui-tiles.js'), 'utf8');
 const cmpStyles = fs.readFileSync(path.join(__dirname, '../../media/compare.css'), 'utf8');
 assert.match(cmpScript, /aria-label="\$\{k\} earlier"/);
 assert.match(cmpScript, /aria-label="\$\{k\} later"/);
-assert.match(cmpScript, /aria-label="Offset of \$\{k\}: \$\{offText\(i, true\)\}"/);
-assert.match(cmpScript, /setAttribute\('aria-label', 'Add video'\)/);
-assert.match(cmpScript, /largeGrid \? `Copy tile as shown /, 'the large grid labels copies of rendered tiles');
+assert.match(cmpScript, /aria-label="Offset of \$\{k\}: \$\{off\.long\}"/);
+assert.match(tileScript, /c\.dense \? `Copy tile as shown \(\$\{k\}\)`/, 'the large grid labels copies of rendered tiles');
 assert.match(cmpStyles, /\.cell:focus-within \.ov \{ opacity: 1; \}/);
 assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: var\(--vscode-focusBorder\); \}/);
 
@@ -152,10 +132,13 @@ assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: va
   for (const id of ['modeBtn', 'toolsBtn', 'toolsMenu', 'tracksMenu', 'pill']) assert.ok(!html.includes(`id="${id}"`), `player: #${id} is gone`);
   for (const id of ['tracks', 'infoBtn', 'rate', 'cog']) assert.match(html, new RegExp(`<button id="${id}"[^>]*aria-expanded="false" aria-controls="panel"`));
   assert.match(html, /<button id="tracks"[^>]* hidden/);
-  assert.match(html, /<button id="startCompareBtn"[^>]*aria-label="Compare"[^>]*aria-haspopup="dialog"[^>]*aria-controls="startCompareDialog"/);
+  // The Compare button: named, an icon; in the viewer it is the Capture toggle (media/player-ui.js drops the bar's
+  // dialog attributes and sets aria-pressed), so the page needs no start dialog.
+  assert.match(html, /<button id="startCompareBtn"[^>]*aria-label="Compare"/);
   assert.match(html, /<button id="startCompareBtn" class="ib" title="Compare"[^>]*><svg[^>]*aria-hidden="true">.*<\/svg><\/button>/);
   assert.doesNotMatch(html, /id="startCompareLabel"/);
-  assert.match(html, /id="startCompareDialog"[^>]*role="dialog" aria-modal="true" aria-label="Start comparison"/);
+  assert.ok(fs.readFileSync(path.join(__dirname, '../../media/player-ui.js'), 'utf8').includes("for (const a of ['aria-haspopup', 'aria-controls', 'aria-expanded']) cmpBtn.removeAttribute(a);"),
+    'the Capture toggle points at no dialog');
   assert.doesNotMatch(html, /id="keysBtn"/);
   // The picture size button sits between the keyboard shortcuts and fullscreen; it names the mode and the next one.
   assert.match(html, /<button id="cog"[\s\S]*?<button id="picBtn" class="ib" data-mode="fit"[^>]*aria-label="Picture size: Fit\. Next: Fill"[^>]*aria-keyshortcuts="Z"[\s\S]*?<button id="full"/);
@@ -164,7 +147,8 @@ assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: va
   assert.match(html, /<input id="seek" type="range"[^>]*aria-label="Position"/);
   assert.match(html, /<input id="volume" type="range"[^>]*aria-label="Volume"/);
   assert.match(html, /<button id="time"[^>]*aria-label="Position"/);
-  assert.ok(html.indexOf('controls.js') > 0 && html.indexOf('controls.js') < html.indexOf('player.js"'), 'controls.js loads before player.js');
+  assert.ok(html.indexOf('controls.js') > 0 && html.indexOf('controls.js') < html.indexOf('player-ui.js"'), 'controls.js loads before player-ui.js');
+  assert.ok(html.indexOf('modes.js') > 0 && html.indexOf('modes.js') < html.indexOf('player-ui.js"'), 'modes.js (ownsKey) loads before player-ui.js');
   assert.match(html, /<canvas id="canvas"[^>]*role="img" aria-label="Video"/);
   h.dispose();
   console.log('a11y_test: ok');

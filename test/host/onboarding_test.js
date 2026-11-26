@@ -25,7 +25,7 @@ async function start({ answer, remote, trusted = true, settings = none, state } 
   const openOne = async () => {
     const s = h.open(clip);
     await s.send({ type: 'ready' });
-    await s.until((p) => p.some((m) => m.type === 'libav'), 15000);
+    await s.until((p) => p.some((m) => m.type === 'sessionState'), 15000);
     await wait(50);
     return s;
   };

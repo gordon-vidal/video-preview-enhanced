@@ -116,7 +116,7 @@
         folder = e.kind === 'dir' ? 'sub' : 'root';
         list(was === 'sub' && folder === 'root' ? 'dir:renders' : undefined);
       } else if ((m.op === 'activate' || m.op === 'compare') && e.kind === 'video' && tiles.length >= 2) {
-        // In Compare a video row toggles membership (src/compare.js railAdd): in → out, out → in.
+        // In Compare a video row toggles membership (as the old Compare did): in → out, out → in.
         deliver(tiles.includes(e.id) ? { type: 'removeVideo', clipId: e.id } : { type: 'openVideo', clipId: e.id, label: e.name, compare: true });
       } else if (m.op === 'activate' && e.kind === 'video') {
         deliver({ type: 'openVideo', clipId: e.id, label: e.name, replace: true });

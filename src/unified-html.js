@@ -2,7 +2,7 @@
 'use strict';
 // The unified webview page (docs/notes/player-ui-controller.md, "Production wiring"): one page for one
 // video and for a comparison of N, mounted by media/player-ui.js (VpePlayerUi.create) over the production engine
-// and host adapters. Pure, like src/player-html.js and src/compare.js compareHtml: strings in, string out, so a Node
+// and host adapters. Pure (src/page-assets.js for the tags): strings in, string out, so a Node
 // test (test/host/unified_html_test.js) checks the CSP, the script order and the DOM the controller needs. Its
 // host is src/unified-viewer.js (through src/unified-session.js render), which passes the boot script as `entryScript`.
 const { assetTags, frameSourcesOf } = require('./page-assets');
@@ -36,13 +36,13 @@ const UNIFIED_CSS = ['player.css', 'compare.css', 'folder-rail.css'];
 
 /** The page's scripts in load order (each reads globals the ones before it define). */
 const UNIFIED_SCRIPTS = [
-  // Decoders and media utilities: the single player's base order (src/player-html.js SCRIPTS) ...
+  // Decoders and media utilities, each after the globals it reads ...
   'membudget.js', 'timestretch.js', 'pool.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js',
   'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js', 'engine.js', 'picture.js', 'inspect.js', 'scopes.js',
   'exactframe.js', 'reduced-res-notice.js', 'slow-notice.js', 'subtitles.js', 'tracks-menu.js', 'xray.js', 'modes.js',
   'range-drag.js', 'controls.js', 'ctxmenu.js', 'timefmt.js', 'abloop.js', 'autoplay.js', 'folder-rail.js',
   'debug-probe.js', 'frame-player.js',
-  // ... plus Compare's (src/compare.js compareScripts): stepgoal.js before compare-sync.js (VpeStepGoal).
+  // ... plus Compare's tiles: stepgoal.js before compare-sync.js (VpeStepGoal).
   'stepgoal.js', 'comparerange.js', 'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js',
   'compare-sync.js', 'compare-debug.js',
   // Pure state and the shared UI controller: the player-ui-*.js modules before player-ui.js, which reads them.
@@ -75,7 +75,7 @@ function unifiedHtml(p) {
       ...frameSourcesOf({ framePort: p.framePort, transport: p.transport || 'message', debug: !!p.debug })].join(' '),
   ].join('; ');
   // The decoder's files start downloading before the page's scripts load (engine.js takes self.vpeEarly), as in
-  // src/player-html.js. Not for image sequences (no decoder).
+  // Not for image sequences (no decoder).
   const stem = `${base}/${p.loader}`.replace(/\.js$/, '');
   const early = p.sequence ? [] : [uri('decoder-worker.js'), `${base}/${p.loader}`, `${stem}.wasm.js`, `${stem}.wasm.wasm`];
   const earlyJs = early.length ? `<script nonce="${nonce}">{const controller=new AbortController(), responses={};self.vpeEarly={controller,responses};for(const u of ${jsonForScript(early)})responses[u]=fetch(u,{signal:controller.signal}).catch(()=>null);}</script>\n` : '';

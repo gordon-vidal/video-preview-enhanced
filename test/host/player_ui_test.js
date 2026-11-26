@@ -1,12 +1,11 @@
 'use strict';
-// Millisecond tests for the shared webview UI seam (media/player-ui.js): the helpers media/player.js and
-// media/compare.js call in production (keys, bar buttons, step buttons, A–B pins, time readout, Picture size,
-// context menu, Folder Rail, Spotlight splitter / Split Wipe divider), the FakeHost protocol
-// (tools/mockup/fake-host.js), and create() end to end over the REAL widgets (controls.js, folder-rail.js,
-// ctxmenu.js, abloop.js, autoplay.js, picture.js, modes.js) on a strict fake DOM parsed from the real markup
-// (test/host/fake-dom.js: unknown ids are null, closest() and parent-chain bubbling are real; no layout). Production
-// parity and the unified create() proposal are asserted apart, and the last section checks the UI / state / engine
-// boundary. Nothing decodes video. docs/TESTING.md "UI and gesture tests without video" explains the split.
+// Millisecond tests for the webview UI controller (media/player-ui.js): its pure helpers (keys, bar buttons, step
+// buttons, A–B pins, time readout, Picture size, context menu, Folder Rail, Spotlight splitter / Split Wipe divider),
+// the FakeHost protocol (tools/mockup/fake-host.js), and create() end to end over the REAL widgets (controls.js,
+// folder-rail.js, ctxmenu.js, abloop.js, autoplay.js, picture.js, modes.js) on a strict fake DOM parsed from the real
+// markup (test/host/fake-dom.js: unknown ids are null, closest() and parent-chain bubbling are real; no layout). The
+// last section checks the UI / state / engine boundary. Nothing decodes video. docs/TESTING.md "UI and gesture tests
+// without video" explains the split.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -18,17 +17,6 @@ const { buildMockupHtml, SCENARIOS } = require('../../tools/mockup/render');
 
 const T0 = Date.now();
 const ROOT = path.join(__dirname, '..', '..');
-const playerSrc = fs.readFileSync(path.join(ROOT, 'media', 'player.js'), 'utf8');
-const compareSrc = fs.readFileSync(path.join(ROOT, 'media', 'compare.js'), 'utf8');
-// The page scripts must still parse: the source checks below read them as text, so a clash with a page's own
-// names (Compare already had a `KEYS` of tile letters) would otherwise only show in a real webview.
-for (const [name, src] of [['player.js', playerSrc], ['compare.js', compareSrc]]) {
-  assert.doesNotThrow(() => new (require('vm').Script)(src, { filename: name }), `${name} parses`);
-}
-/** A page's key handler table (`const KEY_ACTIONS = { ... };`) as source text. */
-const keysOf = (src) => { const i = src.indexOf('const KEY_ACTIONS = {'); assert.ok(i > 0, 'the page has a KEY_ACTIONS table'); return src.slice(i, src.indexOf('\n  };', i)); };
-const hasHandler = (src, action) => new RegExp(`\\n    ${action}: `).test(keysOf(src));
-
 // ---- 1. keyCommand: one key table for the player, Compare and create() ----
 {
   const k = (key, mods = {}) => PUI.keyAction({ key, ...mods });
@@ -72,51 +60,11 @@ const hasHandler = (src, action) => new RegExp(`\\n    ${action}: `).test(keysOf
   assert.strictEqual(PUI.runKey({ key: 'm' }, table), false, 'no handler: not handled');
   assert.deepStrictEqual(calls, ['pp', 5, true]);
 
-  // PRODUCTION PARITY: expected handler sets for each shipped page (kept in the test rather than shipped in player-ui.js).
-  const EXPECTED_PLAYER_KEYS = ['playPause', 'skip', 'jump', 'prevFrame', 'nextFrame', 'rateStep', 'volumeStep', 'home', 'end', 'mute',
-    'loop', 'fullscreen', 'nextVideo', 'prevVideo', 'setA', 'setB', 'clearAB', 'copyTime', 'cyclePicture', 'plus',
-    'minus', 'info', 'saveFrame', 'cc', 'scopes', 'pickVideo', 'capture', 'seekTenth'];
-  const EXPECTED_COMPARE_KEYS = ['playPause', 'skip', 'jump', 'prevFrame', 'nextFrame', 'rateStep', 'volumeStep', 'home', 'end', 'mute',
-    'loop', 'setA', 'setB', 'fullscreen', 'info', 'swap', 'cyclePicture', 'capture', 'minus', 'plus', 'escape'];
-  const keyNames = (src) => [...keysOf(src).matchAll(/\n {4}(\w+): /g)].map((m) => m[1]).sort();
-  assert.deepStrictEqual(keyNames(playerSrc), [...EXPECTED_PLAYER_KEYS].sort(), 'player.js KEY_ACTIONS matches expected production keys');
-  assert.deepStrictEqual(keyNames(compareSrc), [...EXPECTED_COMPARE_KEYS].sort(), 'compare.js KEY_ACTIONS matches expected production keys');
-  // D in production: the single player asks for a quick pick at the current time; Compare has no plain-D handler.
+  // D: the viewer picks another video in any N, through the host; the old pages' shapes are kept by the mapping.
   assert.deepStrictEqual(PUI.pickVideoMessage('player', { t: 2.5 }), { type: 'comparePick', t: 2.5 });
   assert.deepStrictEqual(PUI.pickVideoMessage('player'), { type: 'comparePick', t: 0 }, 'no video yet: from 0');
   assert.strictEqual(PUI.pickVideoMessage('compare', { t: 2.5 }), null, 'Compare: plain D is not a Compare key');
-  assert.ok(playerSrc.includes("VpePlayerUi.pickVideoMessage('player', {"), 'player.js posts D through the shared mapping');
-  assert.ok(!playerSrc.includes("type: 'comparePick'"), 'player.js has no second copy of the D message');
-  assert.ok(!EXPECTED_COMPARE_KEYS.includes('pickVideo'), 'Compare: D goes on to VS Code');
-  // UNIFIED PROPOSAL (create(), the mockup): not production. D picks another video in any N, through the host.
   assert.deepStrictEqual(PUI.pickVideoMessage('unified', { exclude: ['clip-0', 'clip-1'] }), { type: 'pickVideo', exclude: ['clip-0', 'clip-1'] });
-
-  // The production pages run the same table: what each page handles (and deliberately does not).
-  const PARITY = [
-    // [key, mods, player handles, Compare handles]
-    [' ', {}, true, true], ['j', {}, true, true], ['ArrowRight', {}, true, true], [',', {}, true, true],
-    ['[', {}, true, true], ['ArrowUp', {}, true, true], ['Home', {}, true, true], ['End', {}, true, true],
-    ['m', {}, true, true], ['r', {}, true, true], ['f', {}, true, true], ['a', {}, true, true], ['b', {}, true, true],
-    ['z', {}, true, true], ['i', {}, true, true], ['+', {}, true, true], ['-', {}, true, true],
-    ['N', { shiftKey: true }, true, false], ['Backspace', {}, true, false], ['t', {}, true, false],
-    ['s', {}, true, false], ['c', {}, true, false], ['w', {}, true, false], ['d', {}, true, false],
-    ['D', { shiftKey: true }, true, true], ['5', {}, true, false], ['x', {}, false, true], ['Escape', {}, false, true],
-  ];
-  for (const [key, mods, inPlayer, inCompare] of PARITY) {
-    const c = PUI.keyCommand({ key, ...mods });
-    assert.ok(c, `${key} is a key`);
-    assert.strictEqual(hasHandler(playerSrc, c.action), inPlayer, `player ${key} -> ${c.action}`);
-    assert.strictEqual(hasHandler(compareSrc, c.action), inCompare, `Compare ${key} -> ${c.action}`);
-  }
-  for (const src of [playerSrc, compareSrc]) {
-    assert.ok(src.includes('VpePlayerUi.runKey(e, KEY_ACTIONS, { altGr })'), 'the page dispatches its keys through the shared table');
-    assert.ok(!/switch \(e\.key\) \{\s*case ' ': case 'k'/.test(src), 'no second copy of the key switch');
-    // Every handler name a page defines is one keyCommand produces (a typo would silently never run).
-    const known = new Set(['playPause', 'skip', 'jump', 'prevFrame', 'nextFrame', 'rateStep', 'volumeStep', 'home', 'end',
-      'mute', 'loop', 'fullscreen', 'nextVideo', 'prevVideo', 'setA', 'setB', 'clearAB', 'copyTime', 'cyclePicture', 'plus',
-      'minus', 'info', 'saveFrame', 'cc', 'scopes', 'swap', 'pickVideo', 'capture', 'keys', 'escape', 'seekTenth']);
-    for (const [, name] of keysOf(src).matchAll(/\n {4}(\w+): /g)) assert.ok(known.has(name), `KEY_ACTIONS.${name} is a keyCommand action`);
-  }
 }
 
 // ---- 2. Time readout, time formats, picture button, copy details ----
@@ -134,10 +82,6 @@ const hasHandler = (src, action) => new RegExp(`\\n    ${action}: `).test(keysOf
   assert.deepStrictEqual(PUI.timeReadout({ ...base, mode: 1, live: true }), { now: 'c2', dur: '· LIVE' }, 'a live stream has no end');
   assert.deepStrictEqual([0, 1, 2].map(PUI.nextTimeMode), [1, 2, 0]);
   assert.deepStrictEqual(PUI.TIME_MODE_NAMES, ['Time', 'Timecode', 'Frame number']);
-  for (const src of [playerSrc, compareSrc]) {
-    assert.ok(src.includes('VpePlayerUi.timeReadout({'), 'the page draws the time through the shared readout');
-    assert.ok(src.includes('VpePlayerUi.TIME_MODE_NAMES['), 'the time click toasts the shared names');
-  }
 
   const VpePicture = require('../../media/picture');
   const btn = { dataset: {}, title: '', attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } };
@@ -179,7 +123,6 @@ const hasHandler = (src, action) => new RegExp(`\\n    ${action}: `).test(keysOf
   PUI.stepBy(VpeControls, { stepSize: 5, stepButtons: 'frame', jump: { ctrl: 10 } }, 1, go);
   PUI.stepBy(VpeControls, { stepSize: null, stepButtons: 'jump', jump: { ctrl: 10 } }, -1, go);
   assert.deepStrictEqual(moves, [['f', 1], ['f', -5], ['s', 5], ['s', -10]]);
-  for (const src of [playerSrc, compareSrc]) assert.ok(src.includes('VpePlayerUi.stepBy(VpeControls, prefs,'), 'the page steps through stepBy');
 
   // bindStepBadges: the badge opens the size popover and never reaches the step button.
   const badge = { l: {}, addEventListener(t, fn) { this.l[t] = fn; } };
@@ -321,19 +264,7 @@ const hasHandler = (src, action) => new RegExp(`\\n    ${action}: `).test(keysOf
     assert.deepStrictEqual([S.getTab(S.setSplitRatio(ws2, 0)).split, S.getTab(S.setSplitRatio(ws2, 1)).split], [0, 1]);
   }
 
-  // The production pages call these helpers rather than carrying their own copies.
-  const uses = {
-    player: [playerSrc, ['bindButtons([', 'bindStepBadges(', 'bindAbPins(self.VpeAbLoop', 'pictureButton(ui.picBtn',
-      'copyInfoText(d)', 'createContextMenu(VpeCtxMenu', 'createFolderRail(', 'goNeighbour(rail']],
-    compare: [compareSrc, ['bindButtons([', 'bindStepBadges(', 'bindAbPins(self.VpeAbLoop', 'pictureButton(ui.picBtn',
-      'copyInfoText(d)', 'createFolderRail(', 'spotlightRatioAt(st.dock', 'spotlightKeyRatio(e, st.dock', "bindSplitDivider(cellsEl.querySelector('#divider')"]],
-  };
-  for (const [name, [src, calls]] of Object.entries(uses)) {
-    for (const c of calls) assert.ok(src.includes(`VpePlayerUi.${c}`), `${name}: calls VpePlayerUi.${c}`);
-    for (const old of ['self.VpeAbLoop.bindPin(', 'VpeCtxMenu.create(', 'VpeFolderRail.create(', 'ui.play.onclick =', 'ui.picBtn.onclick =']) {
-      assert.ok(!src.includes(old), `${name}: no local copy of ${old}`);
-    }
-  }
+
 }
 
 // ---- 3. applyHostMessage: the pure half of host -> page ----
@@ -1346,8 +1277,6 @@ for (const key of Object.keys(SCENARIOS)) {
     el.fire('pointerup', { pointerId: 1 });
     assert.strictEqual(ended, 1, 'initiating pointer ends drag');
   }
-  // Production Compare has no private divider code left: the one binding is media/player-ui.js bindSplitDivider.
-  assert.ok(!compareSrc.includes('VpePlayerUi.splitKeyRatio('), 'compare.js: the divider keys come with bindSplitDivider');
 }
 
 // ---- 10. Phase 3 and 4 wired into create(): VpePlayerUiTools (notices, inspection, subtitles, frame export) and

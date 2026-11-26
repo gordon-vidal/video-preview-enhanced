@@ -83,6 +83,7 @@ async function start({ assoc = {}, pick, state, failKeys = [] } = {}) {
   // Settings write rejected (stale manifest): no toast, choice kept in globalState and read back.
   x = await start({ failKeys: ['jump.arrow', 'whenSlow', 'jump.shift'] });
   const s = x.h.open(path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mkv'));
+  await s.send({ type: 'ready' });
   await s.send({ type: 'pref', key: 'jump.arrow', value: 'frame' });
   await s.send({ type: 'pref', key: 'jump.shift', value: 3 }); // not a declared value: ignored
   await s.send({ type: 'pref', key: 'loop', value: false }); // not a page preference: ignored

@@ -33,7 +33,7 @@ native.onGuessFailed = (fn) => { guessFailed = fn; realOn(fn); };
     const before = detects;
     const s = h.open(clip);
     await s.send({ type: 'ready' });
-    await s.until((p) => p.some((m) => m.type === 'libav'), 15000);
+    await s.until((p) => p.some((m) => m.type === 'sessionState'), 15000);
     await new Promise((r) => setTimeout(r, 50)); // a background detection would have started by now
     const n = detects - before;
     let again = 0;
@@ -42,7 +42,7 @@ native.onGuessFailed = (fn) => { guessFailed = fn; realOn(fn); };
       const s2 = h.open(clip);
       const b2 = detects;
       await s2.send({ type: 'ready' });
-      await s2.until((p) => p.some((m) => m.type === 'libav'), 15000);
+      await s2.until((p) => p.some((m) => m.type === 'sessionState'), 15000);
       await new Promise((r) => setTimeout(r, 50));
       again = detects - b2;
       s2.panel.dispose();

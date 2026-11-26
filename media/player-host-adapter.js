@@ -9,8 +9,8 @@
 //   const host = VpeHostAdapter.create({ vscode: acquireVsCodeApi(), win: window, page: cfg.page, boot, surface: 'compare' });
 //   host.connect(ui.onHostMessage);
 //
-// surface: 'player' (src/extension.js single player), 'compare' (src/compare.js) or 'unified' (no translation; the
-// unified page, whose host src/unified-session.js speaks the controller's protocol).
+// surface: 'player' and 'compare' (the old pages' message names, kept for the tests and the mockup) or 'unified'
+// (no translation; the viewer's page, whose host src/unified-session.js speaks the controller's protocol).
 (function (root) {
   // checkJs: start
   /**

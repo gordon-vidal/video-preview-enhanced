@@ -21,10 +21,9 @@ function make({ values = {}, inspected = {}, failWrites = false } = {}) {
     workspace: { getConfiguration: () => cfg },
   };
   const page = () => { const p = { posts: [], transcodes: [], post: (m) => p.posts.push(m), updateTranscode: (x) => p.transcodes.push(x) }; return p; };
-  const sessions = new Set();
-  const compareSessions = new Set();
-  const s = createSettings({ vscode, getState: () => globalState, log: (m) => logs.push(m), transcodePolicy, sessions, compareSessions });
-  return { s, store, globalState, written, logs, page, sessions, compareSessions };
+  const pages = new Set();
+  const s = createSettings({ vscode, getState: () => globalState, log: (m) => logs.push(m), transcodePolicy, pages });
+  return { s, store, globalState, written, logs, page, pages };
 }
 
 const FB = 'videoPreviewEnhanced.settingFallback';
@@ -59,22 +58,22 @@ const PB = 'videoPreviewEnhanced.playbackPrefs';
   // setSetting: a refused write is kept in globalState, logged, and the pages get the prefs (no error to the user).
   t = make({ failWrites: true });
   const player = t.page(); const cmp = t.page(); const other = t.page();
-  t.sessions.add(player); t.sessions.add(other); t.compareSessions.add(cmp);
+  t.pages.add(player); t.pages.add(other); t.pages.add(cmp);
   assert.strictEqual(await t.s.setSetting('transcode', 'off', 1), false);
   assert.deepStrictEqual(t.store.get(FB), { transcode: 'off' });
   assert.match(t.logs[0], /setting transcode: write failed, kept in globalState: not a registered configuration/);
   for (const p of [player, other, cmp]) assert.strictEqual(p.posts[0].type, 'prefs');
   assert.strictEqual(player.posts[0].prefs.transcode, 'off', 'the fallback already applies in the broadcast prefs');
-  assert.strictEqual(cmp.transcodes.length, 1, 'compare panels re-read transcode');
-  assert.strictEqual(player.transcodes.length, 0);
+  // Every viewer reads Live transcode from the prefs it just got: no separate re-read.
+  for (const p of [player, other, cmp]) assert.strictEqual(p.transcodes.length, 0);
   // A key that is neither a pref nor a transcode setting: stored, no broadcast.
   await t.s.setSetting('ffmpegPath', 'x', 1);
   assert.strictEqual(player.posts.length, 1);
   assert.strictEqual(t.store.get(FB).ffmpegPath, 'x');
-  // A jump pref refused: broadcast to pages, but compare panels get no transcode update.
+  // A jump pref refused: broadcast to every page too.
   await t.s.setSetting('jump.arrow', 10, 1);
   assert.strictEqual(player.posts.length, 2);
-  assert.strictEqual(cmp.transcodes.length, 1);
+  assert.strictEqual(cmp.posts.length, 2);
   assert.strictEqual(player.posts[1].prefs.jump.arrow, 10, 'the fallback value shows in prefs');
   // The fallback bookkeeping itself failing is logged, not thrown.
   const bad = make();
@@ -134,7 +133,7 @@ const PB = 'videoPreviewEnhanced.playbackPrefs';
   // rememberPlaybackPrefs: broadcast to every page but the sender, then store; no change = no post, no write.
   t = make();
   const a = t.page(); const b = t.page(); const cp = t.page();
-  t.sessions.add(a); t.sessions.add(b); t.compareSessions.add(cp);
+  t.pages.add(a); t.pages.add(b); t.pages.add(cp);
   const want = { volume: 0.5, rate: 1.25, timeMode: 2, stepSize: 'frame' };
   await t.s.rememberPlaybackPrefs(want, a);
   assert.strictEqual(a.posts.length, 0, 'the sender gets no echo');
@@ -148,7 +147,7 @@ const PB = 'videoPreviewEnhanced.playbackPrefs';
   assert.strictEqual(t.s.rememberPlaybackPrefs(null, a), undefined);
   assert.strictEqual(t.s.rememberPlaybackPrefs('x', a), undefined);
   // Without globalState (before activate) nothing happens.
-  const nogs = createSettings({ vscode: {}, getState: () => undefined, log() {}, transcodePolicy, sessions: [], compareSessions: [] });
+  const nogs = createSettings({ vscode: {}, getState: () => undefined, log() {}, transcodePolicy, pages: [] });
   assert.strictEqual(nogs.rememberPlaybackPrefs({ volume: 0.2 }, null), undefined);
 
   console.log('settings tests passed');

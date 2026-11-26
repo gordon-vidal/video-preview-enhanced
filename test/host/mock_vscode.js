@@ -1,6 +1,7 @@
 'use strict';
 // A minimal `vscode` module for loading src/extension.js in plain Node.
-// load() returns { ext, vscode, open(file) -> session handle with posted messages }.
+// load() returns { ext, vscode, open(file) -> viewer handle with posted messages }. A handle's send() waits until
+// the viewer's page exists and stamps each message with that page's number (src/unified-viewer.js drops others).
 const Module = require('module');
 const path = require('path');
 const { configuration } = require('../../package.json').contributes;
@@ -21,7 +22,10 @@ function makeVscode(settings = {}) {
       const m = /^([a-z][\w+.-]*):(?:\/\/([^/?#]*))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i.exec(s);
       if (!m) throw new Error(`bad uri ${s}`);
       const p = decodeURIComponent(m[3]);
-      return Object.assign(new Uri(m[1], p), { authority: m[2] || '', path: p, query: m[4] || '', fragment: m[5] || '' });
+      const u = Object.assign(new Uri(m[1], p), { authority: m[2] || '', path: p, query: m[4] || '', fragment: m[5] || '' });
+      // A file URI's fsPath is the local path ('/C:/x' -> 'C:\x' on Windows), as in VS Code.
+      if (m[1] === 'file' && !m[2]) u.fsPath = path.normalize(process.platform === 'win32' ? p.replace(/^\/(?=[a-zA-Z]:)/, '') : p);
+      return u;
     }
     toString() {
       const enc = (x) => x.split('/').map(encodeURIComponent).join('/');
@@ -44,6 +48,8 @@ function makeVscode(settings = {}) {
     ProgressLocation: { Notification: 15 },
     ViewColumn: { Active: -1, Beside: -2 },
     ThemeIcon: class {},
+    QuickPickItemKind: { Separator: -1 },
+    FileType: { File: 1, Directory: 2, SymbolicLink: 64 },
     env: { remoteName: undefined, uriScheme: 'vscode', clipboard: { text: '', async writeText(t) { this.text = t; }, async readText() { return this.text; } }, openExternal: async () => true },
     window: {
       createOutputChannel: () => ({ lines: [], appendLine(l) { this.lines.push(l); }, show() {}, dispose() {} }),
@@ -78,6 +84,9 @@ function makeVscode(settings = {}) {
   return vscode;
 }
 
+/** What a page's decoder sends for its own clip. */
+const DECODER_MESSAGES = new Set(['readBlock', 'thumb', 'nd', 'frames', 'grabExactFrame', 'exportFrame', 'decodeSpeed', 'wcFailed', 'softVideo']);
+
 function load({ settings, env, setup, state: sharedState } = {}) {
   const vscode = makeVscode(settings);
   if (setup) setup(vscode);
@@ -108,11 +117,12 @@ function load({ settings, env, setup, state: sharedState } = {}) {
   };
   ext.activate(context);
 
-  function open(file, { visible = true } = {}) {
+  /** A mock WebviewPanel and its handle; `resolve(panel)` makes the viewer in it (the custom editor, or a command). */
+  function handle(resolve, { visible = true } = {}) {
     const posted = [];
     const listeners = {};
     const panel = {
-      visible, viewColumn: 1,
+      visible, active: true, viewColumn: 1,
       webview: {
         options: null, html: '', cspSource: 'vscode-resource:',
         asWebviewUri: (u) => ({ authority: vscode._webviewHost || 'file+.vscode-resource.vscode-cdn.net', toString: () => `https://webview/${u.path}` }),
@@ -122,20 +132,26 @@ function load({ settings, env, setup, state: sharedState } = {}) {
       onDidDispose: (fn) => { (listeners.dispose = listeners.dispose || []).push(fn); },
       onDidChangeViewState: (fn) => { listeners.viewState = fn; },
       reveal() {},
-      dispose() { for (const fn of listeners.dispose || []) fn(); },
+      dispose() { const fns = listeners.dispose || []; listeners.dispose = []; for (const fn of fns) fn(); },
     };
-    const uri = typeof file === 'string' ? vscode.Uri.file(file) : file;
-    const shown = vscode._providers['videoPreviewEnhanced.player'].resolveCustomEditor({ uri }, panel);
-    return {
-      panel, posted, shown,
+    const h = {
+      panel, posted, shown: Promise.resolve(),
       setVisible: (v) => { panel.visible = v; if (listeners.viewState) listeners.viewState(); },
       send: async (m) => {
-        if (m && m.type === 'ready') {
-          if (!panel.webview.html) await shown;
-          m = { page: webviewConfig(panel.webview).page, boot: 'mock-document', ...m };
+        await h.shown;
+        if (!listeners.msg) return undefined; // no viewer (the tab closed, or another viewer took the video)
+        if (m && typeof m === 'object' && m.page === undefined && panel.webview.html) {
+          m = { page: webviewConfig(panel.webview).page, ...(m.type === 'ready' ? { boot: 'mock-document' } : {}), ...m };
+        }
+        // The page's decoders tag what they send with their clip (media/player-unified.js defaultCreatePlayer).
+        const clips = panel.webview.html ? webviewConfig(panel.webview).clips || [] : [];
+        if (m && typeof m === 'object' && DECODER_MESSAGES.has(m.type) && m.clipId === undefined && clips.length === 1) {
+          m = { ...m, clipId: clips[0].id, key: clips[0].id };
         }
         return listeners.msg(m);
       },
+      /** The page's config (#cfg). */
+      cfg: () => webviewConfig(panel.webview),
       /** Waits until pred(posted) is true. */
       until: async (pred, ms = 5000) => {
         const t0 = Date.now();
@@ -145,8 +161,34 @@ function load({ settings, env, setup, state: sharedState } = {}) {
         }
       },
     };
+    h.shown = Promise.resolve(resolve ? resolve(panel) : undefined);
+    return h;
   }
-  return { ext, vscode, context, open, dispose: () => { for (const s of subs) if (s && s.dispose) s.dispose(); } };
+
+  /** A video file opened in our custom editor. */
+  function open(file, opts) {
+    const uri = typeof file === 'string' ? vscode.Uri.file(file) : file;
+    return handle((panel) => vscode._providers['videoPreviewEnhanced.player'].resolveCustomEditor({ uri }, panel), opts);
+  }
+
+  /** The handle of the next panel a command creates (vscode.window.createWebviewPanel), e.g. a sequence or a URL. */
+  function nextPanel(opts) {
+    const h = handle(null, opts);
+    vscode.window.createWebviewPanel = (viewType, title) => { h.viewType = viewType; h.title = title; return h.panel; };
+    return h;
+  }
+  /** Every panel a command creates from now on, as handles (Compare commands, URLs, sequences). */
+  function autoPanels(opts) {
+    const list = [];
+    vscode.window.createWebviewPanel = (viewType, title, show) => {
+      const h = handle(null, opts);
+      Object.assign(h, { viewType, title, show });
+      list.push(h);
+      return h.panel;
+    };
+    return list;
+  }
+  return { ext, vscode, context, open, nextPanel, autoPanels, dispose: () => { for (const s of subs) if (s && s.dispose) s.dispose(); } };
 }
 
 function webviewConfig(webview) {

@@ -5,9 +5,8 @@
 // transcode stream and seek-bar thumbnails by clip id, subtitles, frame export and links, the resume position, the
 // file watcher, the open dialogs, the folder rail and the shared playback preferences.
 //
-// Opt-in (the setting unifiedViewer, off by default): src/extension.js routes a video here only when it is on. The
-// shipped player (src/extension.js Session, media/player.js) and Compare (src/compare.js) stay the default until
-// this lane replaces them.
+// It is the extension's only viewer: src/extension.js opens every video here (a file, a URL, an image sequence, a
+// frame link, Compare's commands), one panel per tab.
 //
 // The vscode API and everything it reads from extension.js are injected (o.deps), so a Node test drives it with a
 // fake panel (test/host/unified_viewer_test.js). Every dep beyond the first few is optional: without it the feature
@@ -20,7 +19,7 @@ const { UNIFIED_CSS, UNIFIED_SCRIPTS } = require('./unified-html');
 const { inlineAssetsFor } = require('./page-assets');
 const { serveBlock, readFileBlock } = require('./read-block');
 const { NativeDecoder } = require('./native');
-const { nativeThumb } = require('./thumbhost');
+const thumbhost = require('./thumbhost'); // through the module: a test can stand in for nativeThumb
 const { compareCapsKbps, compareTileSize, resolutionOf } = require('./transcode_policy');
 const Grid = require('../media/compare-grid');
 const folderRail = require('./folder-rail');
@@ -76,8 +75,10 @@ const NOTICES = new Set(['hideSlowPlaybackNotice', 'hideReducedResNotice']);
  * A host-side decoder for one clip: NativeDecoder, EncodedStream, or what openUrlStream / openSequence return.
  * @typedef {{ handle(m: any): any, dispose(): void, resize?: Function, lossy?: () => boolean, setHidden?: (on: boolean) => void,
  *   setCompareOutput?: Function, setMaxBitrateMbps?: (mbps: number) => void, setResolution?: (h: number) => void,
- *   setQuality?: (pick: 'auto' | number) => any }} HostDecoder
- * @typedef {{ post(m: any): void, postRaw(m: any): void, log(m: string): void, onFail(err: any): void, hidden: boolean }} DecoderIo
+ *   setQuality?: (pick: 'auto' | number) => any, readBlock?: (pos: number, len: number) => Promise<Uint8Array | null>,
+ *   busy?: () => boolean }} HostDecoder
+ * @typedef {{ post(m: any): void, postRaw(m: any): void, log(m: string): void, onFail(err: any): void, hidden: boolean,
+ *   origin?: string | null, transport?: string }} DecoderIo
  */
 
 /** A video the unified viewer can open from disk: a file on a real file system (not a URL or a virtual file). @param {any} uri */
@@ -152,7 +153,7 @@ function sourceClip(kind, key, more = {}) {
 
 /**
  * The output height for a native ffmpeg tile: the tile's picture (per tile, or the page's stage split by its grid,
- * times its fit factor), never above the source or the decision's cap (src/compare.js tileHeights for one tile).
+ * times its fit factor), never above the source or the decision's cap.
  * @param {ViewerClip} c @param {any} size TileSizePayload @param {boolean} perTile
  */
 function nativeHeightFor(c, size, perTile) {
@@ -187,7 +188,11 @@ function nativeHeightFor(c, size, perTile) {
  * @param {((file: string, transport: string, tile: any) => Promise<any>) | null} [o.deps.nativeFor]
  * @param {() => string} [o.deps.nativeTransport]
  * @param {() => number} [o.deps.nativeQueue]
+ * @param {() => boolean} [o.deps.fitTiles]  native ffmpeg frames sized to the tile (sizeFramesToView with the automatic
+ *   nativeMaxHeight); false: the decision's full size. Default true.
  * @param {(opts: any) => HostDecoder} [o.deps.createNative]  default: new NativeDecoder(opts)
+ * @param {(c: ViewerClip, err: any, rejectedMedia: boolean) => any} [o.deps.nativeFailed]  native ffmpeg failed on a
+ *   clip (it plays in the page from now on): `rejectedMedia` when ffmpeg ran and refused the file
  * @param {(c: ViewerClip, opts: any) => HostDecoder} [o.deps.createStream]  a Live transcode EncodedStream for a clip
  *   whose decision has a stream (opts: decision, maxHeight, maxKbps, resolution, rotation, hidden, post, log, onFail)
  * @param {() => { transcodeMaxBitrate?: number, transcodeSplitBitrate?: boolean }} [o.deps.transcodePrefs]
@@ -221,8 +226,15 @@ function nativeHeightFor(c, size, perTile) {
  * @param {() => Promise<any> | any} [o.deps.ffmpegState]  { installed, offer, mb } for the page's ffmpeg pill
  * @param {(m: any, viewer: any) => any} [o.deps.setTranscodePref]  writes the Live transcode settings
  * @param {(id: string, m: any, viewer: any) => any} [o.deps.onAction]  any other 'action' id
+ * @param {(viewer: any) => any} [o.deps.onReady]  the page is ready (each new page; the first-run offers wait for it)
+ * @param {(m: any, viewer: any) => any} [o.deps.onPageMessage]  a page message neither the session nor the viewer
+ *   handles (decode speed samples, WebCodecs failures, Compare's quick pick ...)
  * @param {{ cache: any, probe: any, prefs: { get(): any, set(v: any): any }, layout: () => string, caseless: boolean } | null} [o.deps.rail]
+ * @param {(folder: UriLike, viewer: any) => any} [o.deps.compareFolder]  the rail's "Compare all videos in folder"
  * @param {number} [o.deps.adoptMs]
+ * @param {(name: string) => ({ sendDown(m: any, deliver: () => void): any, sendUp(m: any, deliver: () => void): any,
+ *   dispose(): void } | null)} [o.deps.link]  tests (VPE_SIMULATE_LINK): this panel's slice of a simulated slow link,
+ *   which the native decoders' 'nd' messages take both ways (src/link-sim.js wrapChannel)
  * @param {boolean} [o.deps.debug]
  * @param {boolean} [o.deps.remote]  a remote window: the page's small scripts are inlined
  */
@@ -266,11 +278,15 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   let reloads = 0;
   /** @type {{ id: any, clipId: string, controller: AbortController } | null} */
   let thumbJob = null;
+  /** @type {Set<{ close(): void }>} tests (VPE_LOG benchFs): frame server benchmark channels of this page */
+  const benchChannels = new Set();
+  const closeBenches = () => { for (const ch of [...benchChannels]) ch.close(); };
   /** @type {ReturnType<typeof folderRail.createFolderRail> | null} */
   let rail = null;
   let railOpen = false;
   /** @type {string | null} */
   let railBrowse = null;
+  const link = deps.link ? deps.link(clip.label) : null;
   /** @type {UnifiedSession} set below; the helpers before it run only once it exists */
   let session = /** @type {any} */ (null);
   /** @param {string} m */
@@ -280,6 +296,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     rotationOf: deps.rotationOf, nativeFor: deps.nativeFor || null, transport: deps.nativeTransport, log,
     streams: !!deps.createStream, skipNative: !!uri && builtIn.has(fileKey(uri)),
   });
+  const fitTiles = () => (deps.fitTiles ? deps.fitTiles() !== false : true);
   /** @param {string} id @returns {ViewerClip | null} */
   const clipOf = (id) => /** @type {any} */ (session.clipOf(id));
   /** Host -> page with fields the shared contract does not list yet. @param {Record<string, any>} m */
@@ -343,8 +360,8 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   }
   /** @param {ViewerClip} c @param {any} m */
   function readBlock(c, m) {
-    // A URL or a sequence is decoded on the host; only a file has blocks.
-    if (!isFileClip(c)) return undefined;
+    // A URL read by the page's built-in decoder: its host decoder fetches the blocks; a sequence has none.
+    if (!isFileClip(c)) return readSourceBlock(c, m);
     const at = page;
     // A reply for a clip the panel dropped, or for the page before a reload, is not sent.
     const isCurrent = () => !disposed && at === page && !!session.clipOf(c.id);
@@ -359,6 +376,18 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
         return new Uint8Array(0);
       }
     }, (reply) => postAny({ ...reply, key: c.id, clipId: c.id }));
+  }
+
+  /** @param {ViewerClip} c @param {any} m */
+  function readSourceBlock(c, m) {
+    const d = natives.get(c.id);
+    if (!d || typeof d.readBlock !== 'function') return undefined;
+    const at = page;
+    const isCurrent = () => !disposed && at === page && natives.get(c.id) === d;
+    const read = /** @type {(pos: number, len: number) => Promise<Uint8Array | null>} */ (d.readBlock);
+    return serveBlock({ type: 'readBlock', page: m.page, pos: m.pos, len: m.len }, isCurrent,
+      async (pos, len) => (await read(pos, len)) || new Uint8Array(0),
+      (reply) => postAny({ ...reply, key: c.id, clipId: c.id }));
   }
 
   // ---- host decoders (native ffmpeg, Live transcode, URL / sequence), by clip id ----
@@ -383,19 +412,27 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const d = c.decision;
     const transport = origin && deps.nativeTransport ? deps.nativeTransport() : 'message';
     const n = Math.max(1, session.clips.length);
-    log(`${c.label}: native ffmpeg (${d.method}) at up to ${d.maxHeight}p: ${d.reason}`);
+    // A tile size the page already reported: ffmpeg starts at it (no restart once the first frames show).
+    const own = session.tileSize(c.id);
+    const size = fitTiles() ? own || session.lastTileSize : null;
+    const fit = size ? nativeHeightFor(c, size, !!own) : 0;
+    const maxHeight = fit > 0 ? Math.min(d.maxHeight, fit) : d.maxHeight;
+    log(`${c.label}: native ffmpeg (${d.method}) at up to ${maxHeight}p: ${d.reason}`);
     /** @type {HostDecoder} */
     let decoder;
     const opts = {
-      tools: d.tools, file: c.fsPath, maxHeight: d.maxHeight, messageMaxHeight: Math.min(d.maxHeight, d.messageMaxHeight),
+      tools: d.tools, file: c.fsPath, maxHeight, messageMaxHeight: Math.min(maxHeight, d.messageMaxHeight),
       method: d.method, methodGuessed: !!d.methodGuessed, probed: d.probed, transport, origin,
       maxQueued: Grid.nativeQueuePerTile(deps.nativeQueue ? deps.nativeQueue() : 8, n), largeGrid: Grid.isLarge(n),
       post: (/** @type {any} */ msg) => { if (natives.get(c.id) === decoder) session.postNativeReply(c.id, msg); },
       postRaw: (/** @type {any} */ msg) => { if (natives.get(c.id) === decoder) postAny({ ...msg, key: c.id, clipId: c.id }); },
       log: (/** @type {string} */ msg) => log(`${c.label}: ${msg}`),
-      onFail: (/** @type {any} */ err) => {
+      onFail: (/** @type {any} */ err, /** @type {boolean} */ rejectedMedia) => {
         if (disposed || natives.get(c.id) !== decoder) return;
         log(`${c.label}: native ffmpeg failed (${errText(err)}); built-in decoder from now on`);
+        if (deps.nativeFailed) {
+          try { deps.nativeFailed(c, err, !!rejectedMedia); } catch (e) { log(`${c.label}: ${errText(e)}`); }
+        }
         toBuiltIn(c.id);
       },
     };
@@ -406,7 +443,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   }
   /**
    * A Live transcode clip's output (height, bitrate cap) for its tile, with the bitrate shared by the streams shown
-   * (src/compare.js transcodeOutputs). Null: not known yet (the page has not sent its size).
+   * (src/transcode_policy.js compareCapsKbps). Null: not known yet (the page has not sent its size).
    * @param {ViewerClip} c
    */
   function streamOutput(c) {
@@ -459,7 +496,8 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     let decoder = null;
     const current = () => !disposed && !!decoder && natives.get(c.id) === decoder;
     decoder = open(c, {
-      hidden: panel.visible === false,
+      hidden: panel.visible === false, origin,
+      transport: origin && deps.nativeTransport ? deps.nativeTransport() : 'message',
       post: (msg) => { if (current()) session.postNativeReply(c.id, msg); },
       postRaw: (msg) => { if (current()) postAny({ ...msg, key: c.id, clipId: c.id }); },
       log: (msg) => log(`${c.label}: ${msg}`),
@@ -505,6 +543,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
    */
   function resizeDecoders() {
     if (disposed) return;
+    const fit = fitTiles();
     /** @type {string[]} */
     const resized = [];
     for (const x of session.clips) {
@@ -515,7 +554,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       const own = session.tileSize(c.id);
       const size = own || session.lastTileSize;
       if (!size) continue;
-      if (kind === 'native' && typeof dec.resize === 'function') {
+      if (kind === 'native' && fit && typeof dec.resize === 'function') {
         const h = nativeHeightFor(c, size, !!own);
         const mmh = c.decision.messageMaxHeight > 0 ? c.decision.messageMaxHeight : h;
         if (h && dec.resize(h, Math.min(h, mmh))) resized.push(c.id);
@@ -527,7 +566,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     }
     for (const id of resized) postAny({ type: 'resize', clipId: id, key: id, tiles: [id] });
   }
-  /** A native clip's seek-bar thumbnail; one at a time. @param {ViewerClip} c @param {any} m */
+  /** A host-decoded file clip's seek-bar thumbnail; one at a time. @param {ViewerClip} c @param {any} m */
   async function onThumb(c, m) {
     if (m.cancel) {
       if (thumbJob && thumbJob.clipId === c.id && thumbJob.id === m.id) thumbJob.controller.abort();
@@ -536,10 +575,12 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     if (thumbJob) thumbJob.controller.abort();
     const job = { id: m.id, clipId: c.id, controller: new AbortController() };
     thumbJob = job;
-    const decoder = kinds.get(c.id) === 'native' ? natives.get(c.id) : null;
+    // Native ffmpeg and Live transcode both decode keyframes of the source file on this host; a URL has no file.
+    const kind = kinds.get(c.id);
+    const decoder = isFileClip(c) && (kind === 'native' || kind === 'stream') ? natives.get(c.id) : null;
     let result = null;
     try {
-      if (decoder && panel.visible !== false) result = await nativeThumb(/** @type {any} */ (decoder), m, log, job.controller.signal);
+      if (decoder && panel.visible !== false) result = await thumbhost.nativeThumb(/** @type {any} */ (decoder), m, log, job.controller.signal);
     } catch (e) {
       log(`thumbnail: ${errText(e)}`);
     } finally {
@@ -909,13 +950,24 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       // A row plays in the single video's place (or joins a comparison); its Compare button always joins.
       onVideo: async (e) => { await showFile(e.path); return sendRailPos(); },
       onCompareVideo: (e) => addUri(uriOf(e.path)),
+      onCompareFolder: (e) => (deps.compareFolder ? deps.compareFolder(uriOf(e.path), viewer) : undefined),
     }, m);
   }
 
   session = createUnifiedSession({
     panel, initialClip: clip, maxVideos: deps.maxVideos ? deps.maxVideos() : undefined, renderHtml,
     openTarget: openTarget || null,
-    onPost: (m) => { if (!disposed) webview.postMessage({ ...m, page }); },
+    onPost: (m) => {
+      if (disposed) return;
+      const msg = { ...m, page };
+      if (link && m.type === 'nd') {
+        // Over the simulated link; a page that was replaced or a panel that closed meanwhile never gets it.
+        const at = page;
+        link.sendDown(msg, () => { if (!disposed && at === page) webview.postMessage(msg); });
+        return;
+      }
+      webview.postMessage(msg);
+    },
     onPickVideo: async () => prepareAll(deps.pick ? await deps.pick(`Add to ${session.title}`, firstDir(), true) : undefined),
     onReplacePick: async (oldId) => {
       const old = clipOf(oldId);
@@ -951,6 +1003,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       return deps.external(/** @type {any} */ (session.clipFor(m)), viewer);
     },
     onOpenUrl: () => (deps.openUrl ? deps.openUrl() : undefined),
+    onOther: (m) => (deps.onPageMessage ? deps.onPageMessage(m, viewer) : undefined),
   });
   // A clip the panel no longer shows: its file, decoder, watcher and saved position close; a new one is watched
   // and (on a ready page) gets its subtitles.
@@ -988,6 +1041,9 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       }, () => {});
     }
     sendRailPos().catch((e) => log(`folder: ${e && e.code || e}`));
+    if (deps.onReady) {
+      try { deps.onReady(viewer); } catch (e) { log(`ready: ${errText(e)}`); }
+    }
   }
 
   /** A message from the page. @param {any} m */
@@ -998,6 +1054,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       origin = typeof m.origin === 'string' && ORIGIN.test(m.origin) ? m.origin : null;
       for (const id of [...natives.keys()]) closeNative(id);
       cancelExports();
+      closeBenches();
     }
     if (m.type === 'log') { log(`webview: ${m.msg}`); return undefined; }
     const done = Promise.resolve(session.onMessage(m)).catch((e) => {
@@ -1008,7 +1065,10 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     if (m.type === 'ready') onPageReady();
     return done;
   }
-  webview.onDidReceiveMessage(receive);
+  webview.onDidReceiveMessage((/** @type {any} */ m) => {
+    if (link && m && m.type === 'nd') { link.sendUp(m, () => { receive(m); }); return undefined; }
+    return receive(m);
+  });
 
   function dispose() {
     if (disposed) return;
@@ -1021,11 +1081,13 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     if (thumbJob) thumbJob.controller.abort();
     if (adoptWait) adoptWait.done(false);
     cancelExports();
+    closeBenches();
     if (rail) { rail.dispose(); rail = null; }
     for (const id of [...watchers.keys()]) unwatch(id);
     for (const id of [...natives.keys()]) closeNative(id);
     for (const id of [...files.keys()]) closeFile(id);
     unregister();
+    if (link) link.dispose();
     session.dispose();
     if (viewer.onDispose) viewer.onDispose();
     log('closed');
@@ -1056,8 +1118,22 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     reloadClip: (clipId) => reprepare(clipId, 'reload'),
     /** The host decoder a clip plays through, or null (tests, the exact-frame grabber). @param {string} clipId */
     decoderOf: (clipId) => natives.get(clipId) || null,
+    /** What a clip's host decoder is ('native', 'stream', 'source'), or null (decoded in the page). @param {string} clipId */
+    decoderKind: (clipId) => kinds.get(clipId) || null,
+    /** Native ffmpeg is decoding for this panel right now (the GPU test waits for it). */
+    busy: () => [...natives.values()].some((d) => typeof d.busy === 'function' && d.busy()),
+    /** Every file clip prepared again (ffmpeg was set up or changed): each reloads in its tile. @param {string} why */
+    reloadAll: (why) => Promise.all(session.clips.map((c) => reprepare(c.id, why))),
+    /** Live transcode tiles to the built-in decoder ("Use original video"); true when one switched. */
+    useOriginalVideo: () => session.clips.filter((c) => kinds.get(c.id) === 'stream').map((c) => toBuiltIn(c.id)).some(Boolean),
+    /** Native ffmpeg tiles of this panel play at a reduced size (the frame export warns). */
+    lossyTiles: () => session.clips.filter((c) => { const d = natives.get(c.id); return !!d && typeof d.lossy === 'function' && d.lossy(); }),
     /** @type {(() => void) | null} */
     onDispose: null,
+    /** Tests (src/debug-cmd.js benchFs): the frame server's port, the page's origin and the open benchmark channels. */
+    framePort: deps.framePort,
+    get webviewOrigin() { return origin; },
+    benchChannels,
     get disposed() { return disposed; },
     /** Sets the page (the caller awaits what the page config needs first). */
     show() {

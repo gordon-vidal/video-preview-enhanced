@@ -175,7 +175,7 @@ async function nativeSession(file, height) {
   const s = h.open(file);
   try {
     await s.send({ type: 'ready' });
-    assert.ok(s.posted.some((m) => m.type === 'libav' && m.meta.native && !m.meta.remoteStream));
+    assert.ok(s.cfg().clips[0].native, 'native ffmpeg plays it');
     await s.send({ type: 'nd', m: { type: 'open' } });
     const streams = s.posted.find((m) => m.type === 'nd' && m.m.type === 'streams').m.info.video;
     assert.equal(streams.height, height);

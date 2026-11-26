@@ -2,7 +2,7 @@
 // "Add from the Explorer" (docs/notes/compare-ui.md "Add mode"): while it is on, the next video VS Code opens
 // (an Explorer click, a drop on the editor, Quick Open ...) goes into compare instead of its own tab.
 // A player explicitly armed with Shift+D becomes compare on the first open, and the mode carries on until Esc,
-// Shift+D, capacity, or switching editor. Whether a new Compare starts in the mode: startsInAddMode. Pure state; src/compare.js handles the editors.
+// Shift+D, capacity, or switching editor. Whether a new Compare starts in the mode: startsInAddMode. Pure state; the viewer's Capture (src/unified-session.js) now plays this part.
 
 const { VIDEO_EXT } = require('./comparepick');
 

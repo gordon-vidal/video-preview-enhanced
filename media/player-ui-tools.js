@@ -50,7 +50,7 @@
 
   // ---- 1. the notice banner -------------------------------------------------------------------------------------
 
-  /** The ids inside #notice (src/player-html.js); missing ones are created so a bare container also works. */
+  /** The ids inside #notice (src/unified-html.js); missing ones are created so a bare container also works. */
   const NOTICE_PARTS = [['text', 'noticeText', 'span'], ['action', 'noticeAction', 'button'],
     ['settings', 'noticeSettings', 'button'], ['hide', 'noticeHide', 'button'], ['close', 'noticeClose', 'button']];
   /** Pointer events on the banner must not reach the stage (a click there toggles play). */

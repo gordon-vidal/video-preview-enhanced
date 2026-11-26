@@ -1,8 +1,8 @@
 'use strict';
 // Open together (src/burst.js, docs/notes/compare-ui.md "Open together"): videos VS Code opens in one burst
 // (an Explorer multi-selection) become one compare. First the rules with fake timers, then the host with a fake
-// VS Code: a burst becomes compare in the first player's place and the other tabs close; one video, or videos
-// a moment apart, are untouched; the maximum follows compare.maxVideos; the setting turns it off.
+// VS Code: a burst becomes one viewer in the first video's tab and the other tabs close; one video, or videos
+// a moment apart, are untouched; a capturing viewer takes them instead; the setting turns it off.
 const assert = require('assert');
 const path = require('path');
 const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('../../src/burst');
@@ -156,7 +156,7 @@ const holds = async () => {
   assert.strictEqual(await w, false, 'rejected: not taken');
 };
 
-// ---- the host ----
+// ---- the host: a burst becomes one viewer in the first video's tab (src/extension.js openBurst) ----
 process.env.VPE_BURST_MS = '60';
 const { load } = require('./mock_vscode');
 const { make } = require('../media/make_cases_media');
@@ -166,146 +166,62 @@ const { make } = require('../media/make_cases_media');
   const a = make('s_h264.mp4');
   const b = make('rotated.mp4');
   assert.ok(a && b, 'ffmpeg test clips');
-  const panels = [];
-  const fakePanel = (_viewType, _title, viewColumn) => {
-    const p = {
-      active: true, visible: true, viewColumn: viewColumn > 0 ? viewColumn : 1, title: '', disposed: false, fns: [], posted: [],
-      webview: { cspSource: 'x:', html: '', asWebviewUri: (u) => u, postMessage(m) { p.posted.push(m); }, onDidReceiveMessage(fn) { p.msg = fn; } },
-      onDidDispose(fn) { p.fns.push(fn); }, onDidChangeViewState() {},
-      dispose() { p.disposed = true; for (const fn of p.fns) fn(); },
-    };
-    panels.push(p);
-    return p;
-  };
-  let tabListener = null;
-  const closedTabs = [];
-  const tabGroups = { onDidChangeTabs: (fn) => { tabListener = fn; return { dispose() {} }; }, close: async (t) => { closedTabs.push(t); }, all: [] };
   const settings = { 'videoPreviewEnhanced.decoder': 'builtin' };
   const infos = [];
-  const videoTab = (v, file, viewColumn, isPreview = false) => ({
-    input: { uri: v.Uri.file(file), viewType: 'videoPreviewEnhanced.player' },
-    group: { viewColumn }, isPreview,
-  });
-  let seeded;
   const h2 = load({ settings, setup: (v) => {
-    seeded = videoTab(v, a, 2, true);
-    tabGroups.all = [{ viewColumn: 2, tabs: [seeded] }];
-    v.window.createWebviewPanel = fakePanel;
-    v.window.tabGroups = tabGroups;
     v.window.showInformationMessage = async (m, ...buttons) => { infos.push([m, ...buttons]); return undefined; };
   } });
   const W = h2.vscode;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const resolve = (file) => {
-    const p = { webview: { html: '', options: null, onDidReceiveMessage() {}, postMessage: async () => true, cspSource: 'x:', asWebviewUri: (u) => u }, fns: [], onDidDispose(fn) { p.fns.push(fn); }, onDidChangeViewState() {}, viewColumn: 1, dispose() { p.disposed = true; for (const fn of p.fns) fn(); } };
-    W._providers['videoPreviewEnhanced.player'].resolveCustomEditor({ uri: W.Uri.file(file) }, p);
-    return p;
-  };
+  const names = (v) => (v.panel.webview.html ? v.cfg().clips.map((c) => c.name) : []);
+  const opened = (v, name) => v.posted.some((m) => m.type === 'openVideo' && m.label === name);
+  const closed = (v) => { let gone = false; v.panel.onDidDispose(() => { gone = true; }); return () => gone; };
   try {
-    // One video: a player of its own, no compare.
-    const one = resolve(a);
-    await sleep(250);
-    assert.ok(!one.disposed && panels.length === 0, 'one video is untouched');
-    // Two videos a moment apart (more than the window): two players.
-    const x = resolve(b);
-    await sleep(250);
-    assert.ok(!one.disposed && !x.disposed && panels.length === 0, 'videos apart are untouched');
-    // A burst of two: compare, and the burst's tabs close.
-    const p1 = resolve(a); const p2 = resolve(b);
-    const tab = { input: { uri: W.Uri.file(b), viewType: 'videoPreviewEnhanced.player' }, group: { viewColumn: 1 } };
-    tabListener({ opened: [tab], closed: [], changed: [] });
-    await sleep(300);
-    assert.strictEqual(panels.length, 1, 'one compare opened');
-    assert.ok(/"names":\["s_h264\.mp4","rotated\.mp4"\]/.test(panels[0].webview.html), 'both videos, in order');
-    assert.ok(p1.disposed && p2.disposed, 'the burst players close');
-    assert.strictEqual(closedTabs.length, 1, 'the tab of the burst closes');
+    // One video: a viewer of its own.
+    const one = h2.open(a);
+    await one.shown;
+    await sleep(150);
+    assert.deepStrictEqual(names(one), ['s_h264.mp4'], 'one video is untouched');
+    // Two videos a moment apart (more than the window): two viewers.
+    const x = h2.open(b);
+    await x.shown;
+    await sleep(150);
+    assert.deepStrictEqual([names(one), names(x)], [['s_h264.mp4'], ['rotated.mp4']], 'videos apart are untouched');
+    // A burst of two: one viewer with both, in the first tab; the other tab closes.
+    const p1 = h2.open(a);
+    const p2 = h2.open(b);
+    const p2Closed = closed(p2);
+    await Promise.all([p1.shown, p2.shown]);
+    await sleep(100);
+    assert.deepStrictEqual(names(p1), ['s_h264.mp4', 'rotated.mp4'], 'both videos, in order');
+    assert.ok(p2Closed() && !p2.panel.webview.html, 'the burst\'s other tab closes unused');
     assert.strictEqual(infos.length, 1, 'first time: one notice');
     assert.ok(/2 videos together/.test(infos[0][0]) && infos[0].slice(1).join() === 'Got it,Open Settings', 'notice text and buttons');
     assert.strictEqual(h2.context.globalState.get('videoPreviewEnhanced.openTogetherNoticed'), true, 'noticed is remembered');
-    // End Add Mode so subsequent opens exercise Open Together again.
-    await W._commands['videoPreviewEnhanced.stopAddFromExplorer']();
-    const dropped = videoTab(W, b, 2);
-    seeded.isPreview = false;
-    closedTabs.length = 0;
-    tabGroups.all[0].tabs.push(dropped);
-    tabListener({ opened: [dropped], changed: [seeded] });
-    await sleep(300);
-    assert.strictEqual(panels.length, 2, 'the preview present at activation joins a two-video drop');
-    assert.strictEqual(panels[1].viewColumn, 2);
-    assert.ok(/"names":\["s_h264\.mp4","rotated\.mp4"\]/.test(panels[1].webview.html));
-    assert.deepStrictEqual(closedTabs, [seeded, dropped], 'both tabs close once, including the reused preview');
-
-    const unrelated = videoTab(W, path.join(path.dirname(a), 'unrelated.mp4'), 1, true);
-    tabGroups.all = [{ viewColumn: 1, tabs: [unrelated] }];
-    tabListener({ opened: [unrelated] });
-    await sleep(250);
-    const newTabs = [videoTab(W, a, 1), videoTab(W, b, 1)];
-    tabGroups.all[0].tabs.push(...newTabs);
-    closedTabs.length = 0;
-    tabListener({ opened: newTabs, changed: [unrelated] });
-    await sleep(300);
-    assert.strictEqual(panels.length, 3, 'new tabs compare even when another video is still in preview');
-    assert.ok(/"names":\["s_h264\.mp4","rotated\.mp4"\]/.test(panels[2].webview.html));
-    assert.deepStrictEqual(closedTabs, newTabs, 'an unchanged preview stays open');
-
-    unrelated.isPreview = false;
-    tabListener({ closed: [unrelated] });
-    tabListener({ changed: [unrelated], opened: [videoTab(W, b, 1)] });
-    await sleep(250);
-    assert.strictEqual(panels.length, 3, 'closed tabs are forgotten');
-
-    const preview = videoTab(W, a, 1, true);
-    tabListener({ opened: [preview] });
-    await sleep(250);
-    preview.isPreview = false;
-    closedTabs.length = 0;
-    const second = videoTab(W, b, 1);
-    tabGroups.all = [{ viewColumn: 1, tabs: [preview, second] }];
-    tabListener({ opened: [second] });
-    tabListener({ changed: [preview] });
-    await sleep(300);
-    assert.strictEqual(panels.length, 4, 'a preview opened after activation joins the drop');
-    assert.deepStrictEqual(closedTabs, [second, preview]);
-
-    // A single click's preview tab of a compared video stays in the group: it closes with the compare.
-    const prev = { input: { uri: W.Uri.file(a), viewType: 'videoPreviewEnhanced.player' }, group: { viewColumn: 1 } };
-    const elsewhere = { input: { uri: W.Uri.file(a), viewType: 'videoPreviewEnhanced.player' }, group: { viewColumn: 2 } };
-    tabGroups.all = [{ viewColumn: 1, tabs: [prev] }, { viewColumn: 2, tabs: [elsewhere] }];
-    closedTabs.length = 0;
-    resolve(a); resolve(b);
-    await sleep(300);
-    assert.deepStrictEqual(closedTabs, [prev], 'the leftover preview tab closes, other groups stay');
+    // Again: no second notice.
+    const r1 = h2.open(a);
+    const r2 = h2.open(b);
+    await Promise.all([r1.shown, r2.shown]);
+    await sleep(100);
     assert.strictEqual(infos.length, 1, 'the notice never repeats');
-    tabGroups.all = [];
-    // The direct compare command closes the same duplicates.
-    tabGroups.all = [{ viewColumn: 1, tabs: [prev] }];
-    closedTabs.length = 0;
-    await W._commands['videoPreviewEnhanced.compare'](W.Uri.file(a), [W.Uri.file(a), W.Uri.file(b)]);
-    assert.deepStrictEqual(closedTabs, [prev], 'Compare Videos closes the duplicate tab');
-    tabGroups.all = [];
-    const dropWithPreview = async () => {
-      const preview = videoTab(W, a, 1, true);
-      tabListener({ opened: [preview] });
-      await sleep(250);
-      preview.isPreview = false;
-      tabListener({ changed: [preview], opened: [videoTab(W, b, 1)] });
-      await sleep(250);
-    };
-    await W._commands['videoPreviewEnhanced.addFromExplorer']();
-    const count = panels.length;
-    closedTabs.length = 0;
-    await dropWithPreview();
-    assert.strictEqual(panels.length, count, 'Add Mode prevents a separate Compare');
-    assert.deepStrictEqual(closedTabs, [], 'the burst does not close tabs in Add Mode');
-    panels.length = 1;
+
+    // A viewer that captures takes the opens instead (Add from the Explorer): no burst.
+    await one.send({ type: 'ready' });
+    await one.send({ type: 'capture', on: true });
+    const c1 = h2.open(a);
+    const c2 = h2.open(b);
+    await Promise.all([c1.shown, c2.shown]);
+    await sleep(100);
+    assert.ok(!c1.panel.webview.html && !c2.panel.webview.html, 'both went to the capturing viewer');
+    assert.ok(opened(one, 'rotated.mp4'), 'the capturing viewer has the new video');
     await W._commands['videoPreviewEnhanced.stopAddFromExplorer']();
+
     // The setting turns it off.
     settings['videoPreviewEnhanced.compare.openTogether'] = false; // read at each open
-    const q1 = resolve(a); const q2 = resolve(b);
-    await sleep(250);
-    assert.ok(!q1.disposed && !q2.disposed && panels.length === 1, 'setting off: separate tabs');
-    await dropWithPreview();
-    assert.strictEqual(panels.length, 1, 'setting off: pinning a preview during the drop still leaves separate tabs');
-    assert.deepStrictEqual(closedTabs, [], 'setting off: the burst closes no tabs');
+    const q1 = h2.open(a);
+    const q2 = h2.open(b);
+    await Promise.all([q1.shown, q2.shown]);
+    await sleep(100);
+    assert.deepStrictEqual([names(q1), names(q2)], [['s_h264.mp4'], ['rotated.mp4']], 'setting off: separate tabs');
   } finally { h2.dispose(); }
 })().then(() => { console.log('burst: ok'); process.exit(0); }, (e) => { console.error(e); process.exit(1); });

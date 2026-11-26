@@ -1,7 +1,9 @@
 'use strict';
 // The test hook (VPE_LOG only, never a setting: a workspace could point it at any file and run commands):
-// JSON lines appended to <log>.cmd are sent to open players (debug actions) or run as commands. The Layer 3
+// JSON lines appended to <log>.cmd are sent to open viewers (debug actions) or run as commands. The Layer 3
 // scenarios in test/vscode/ drive the extension through it. Everything the lines touch is injected.
+// A line's "name" picks the viewers whose title contains it (src/unified-session.js titleOf); a "Compare" line goes to
+// the viewers that show two videos or more.
 
 // checkJs: start
 /** Node's globals, untyped here (the check runs without @types/node). */
@@ -23,18 +25,24 @@ const DEBUG_COMMANDS = new Set([
  * @param {any} deps.fs
  * @param {(msg: string) => void} deps.log
  * @param {string} deps.logFile  VPE_LOG; empty: no hook
- * @param {Set<any>} deps.sessions  open players
- * @param {Set<any>} deps.compareSessions  open compare panels
+ * @param {Set<any>} deps.viewers  the open viewers (src/unified-viewer.js createUnifiedViewer)
  * @param {any} deps.frameserver  src/frameserver.js
  * @param {any} deps.remotestream  src/remotestream.js (may be a lazy proxy)
- * @param {(hook: ((items: any[]) => Promise<any>) | null) => void} deps.setPickHook  src/compare.js
+ * @param {(hook: ((items: any[]) => Promise<any>) | null) => void} deps.setPickHook  src/comparepick.js
  * @param {(context: any, url: string, where: string) => Promise<any>} deps.openUrl
  * @param {(uri: any) => Promise<any>} deps.openLink
  * @param {() => void} deps.resetTools  forget the found ffmpeg (PATH may have changed)
  * @param {(files: any[] | undefined) => void} deps.setCompareFiles  the open dialog's result for the next Start Compare
+ * @param {(viewer: any, index: number, uri: any) => Promise<any>} [deps.replaceClip]  a viewer's video at index replaced
  */
 function createDebugCommands(deps) {
-  const { vscode, fs, log, logFile, sessions, compareSessions, frameserver, remotestream, setPickHook, openUrl, openLink, resetTools, setCompareFiles } = deps;
+  const { vscode, fs, log, logFile, viewers, frameserver, remotestream, setPickHook, openUrl, openLink, resetTools, setCompareFiles } = deps;
+  /** A viewer's tab title (its videos' names). @param {any} v */
+  const nameOf = (v) => String(v.session && v.session.title || '');
+  /** The viewers a line names (all without a name). @param {any} c */
+  const named = (c) => [...viewers].filter((v) => !v.disposed && (!c.name || nameOf(v).includes(c.name)));
+  /** The viewers that compare (two videos or more). */
+  const comparing = () => [...viewers].filter((v) => !v.disposed && v.session.clips.length >= 2);
 
   /**
    * Test hook: throughput of the localhost frame server (src/frameserver.js) into the webview.
@@ -45,9 +53,9 @@ function createDebugCommands(deps) {
     const size = c.size || 3110400;
     const count = c.count || 60;
     let data;
-    for (const sess of sessions) {
-      if (c.name && !sess.name.includes(c.name)) continue;
-      if (!sess.framePort || !sess.webviewOrigin) continue;
+    for (const sess of named(c)) {
+      // A viewer that exposes its frame server channel (framePort, webviewOrigin, benchChannels) takes part.
+      if (!sess.framePort || !sess.webviewOrigin || !sess.benchChannels) continue;
       data ||= node.Buffer.alloc(size, 7);
       const ch = new frameserver.Channel({
         origin: sess.webviewOrigin,
@@ -123,7 +131,10 @@ function createDebugCommands(deps) {
                 for (const f of c.openWithBurst) vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(f), c.viewType || 'videoPreviewEnhanced.player', { preview: false, preserveFocus: true }).then(undefined, (e) => log(`debug openWithBurst failed: ${e && e.message || e}`));
                 continue;
               }
-              if (c.compareAdd) { for (const s of compareSessions) s.addUris(c.compareAdd.map((f) => vscode.Uri.file(f))); continue; }
+              if (c.compareAdd) {
+                for (const v of comparing()) for (const f of c.compareAdd) v.addUri(vscode.Uri.file(f)).catch((/** @type {any} */ e) => log(`debug compareAdd failed: ${e && e.message || e}`));
+                continue;
+              }
               // Scenario tests (test/vscode/scenarios.js) run many checks in one VS Code: between them they change
               // user settings, the extension host's environment (the VPE_* test switches, PATH) and clear the stored
               // state, as a fresh profile would have. Each answers "debug done <id>" once applied.
@@ -150,25 +161,30 @@ function createDebugCommands(deps) {
                 log(`tabs ${JSON.stringify(tabs)}`);
                 continue;
               }
-              if (c.compareReplace) { for (const s of compareSessions) s.replaceUri(Number(c.compareReplace.index), vscode.Uri.file(c.compareReplace.file)); continue; }
-              if (c.compareWith) { // Start Compare from a player, with the open dialog's result supplied by the test
-                const from = [...sessions].find((s) => !s.url && !s.sequence && (!c.name || s.name.includes(c.name)));
-                if (from) {
-                  setCompareFiles(c.compareWith.map((f) => vscode.Uri.file(f)));
-                  vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', from.uri, { t: Number(c.t) || 0 })
-                    .catch((e) => log(`debug compareWith failed: ${e.message}`));
+              if (c.compareReplace) {
+                for (const v of comparing()) {
+                  if (deps.replaceClip) deps.replaceClip(v, Number(c.compareReplace.index), vscode.Uri.file(c.compareReplace.file)).catch((/** @type {any} */ e) => log(`debug compareReplace failed: ${e && e.message || e}`));
                 }
                 continue;
               }
-              if (c.compare) { for (const s of compareSessions) s.post({ ...c, type: 'debug' }); continue; }
+              if (c.compareWith) { // Start Compare from a viewer, with the open dialog's result supplied by the test
+                const from = named(c).map((v) => v.session.clips.find((/** @type {any} */ x) => x.uri && (!x.kind || x.kind === 'file'))).find(Boolean);
+                if (from) {
+                  setCompareFiles(c.compareWith.map((/** @type {string} */ f) => vscode.Uri.file(f)));
+                  vscode.commands.executeCommand('videoPreviewEnhanced.compareWith', from.uri, { t: Number(c.t) || 0 })
+                    .then(undefined, (/** @type {any} */ e) => log(`debug compareWith failed: ${e.message}`));
+                }
+                continue;
+              }
+              if (c.compare) { for (const v of comparing()) v.post({ ...c, type: 'debug' }); continue; }
               if (c.pickSubtitles) {
-                for (const s of sessions) if (s.name === c.name) s.testPickSubtitles = c.pickSubtitles.map((f) => vscode.Uri.file(f));
+                for (const v of viewers) if (nameOf(v) === c.name || nameOf(v).includes(c.name)) v.testPickSubtitles = c.pickSubtitles.map((/** @type {string} */ f) => vscode.Uri.file(f));
                 log('debug subtitles picker ready');
                 continue;
               }
               if (c.bench) {
                 // Throughput of extension host -> webview messages (raw-frame transport test).
-                for (const sess of sessions) if (!c.name || sess.name.includes(c.name)) {
+                for (const sess of named(c)) {
                   const size = c.size || 3110400;
                   sess.post({ type: 'benchStart', count: c.count || 60, size });
                   for (let i = 0; i < (c.count || 60); i++) sess.post({ type: 'bench', i, data: new Uint8Array(size) });
@@ -177,7 +193,12 @@ function createDebugCommands(deps) {
               }
               if (c.benchFs) { benchFrameServer(c); continue; }
               if (c.action === 'remoteStreamKill') {
-                for (const s of sessions) if (s.name === c.name && s.native instanceof remotestream.RemoteStream) s.native.proc?.kill("SIGKILL");
+                for (const v of named(c)) {
+                  for (const x of v.session.clips) {
+                    const d = v.decoderOf(x.id);
+                    if (d instanceof remotestream.RemoteStream) d.proc?.kill('SIGKILL');
+                  }
+                }
                 continue;
               }
               if (c.action === 'defaultKeybindings') {
@@ -201,7 +222,7 @@ function createDebugCommands(deps) {
                 log(`debug tabs: ${JSON.stringify(tabs)}`);
                 continue;
               }
-              for (const s of sessions) if (!c.name || s.name.includes(c.name)) s.post({ ...c, type: 'debug' }); // type last: a line can't pose as another message
+              for (const v of named(c)) v.post({ ...c, type: 'debug' }); // type last: a line can't pose as another message
             } catch { log(`bad debug command: ${line}`); }
           }
           seen = lines.length;

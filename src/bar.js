@@ -1,6 +1,6 @@
 'use strict';
 // The player's bar (seek bar and buttons), shared by the player (src/extension.js html()) and compare
-// (src/compare.js compareHtml), so both look and behave the same (docs/notes/ui-simple.md, docs/notes/compare-ui.md).
+// (src/unified-html.js, one page for 1 to N videos), so both look and behave the same (docs/notes/ui-simple.md, docs/notes/compare-ui.md).
 // Compare leaves out CC and the player's Compare button, and adds its own panel and reorder buttons.
 
 // Every bar icon: an 18 px box on a 24-unit grid with 1.6 stroke (= 1.20 px rendered) and uniform ~14.4-15u vertical span.

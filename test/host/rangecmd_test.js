@@ -162,7 +162,7 @@ assert.strictEqual(args.at(-1), 'target.mp4');
 
   const s = h.open(file);
   try {
-    await s.shown;
+    await s.send({ type: 'ready' }); // the viewer posts to its page once it is ready
     const page = webviewConfig(s.panel.webview).page;
     const origPost = s.panel.webview.postMessage;
     const grabbed = [];

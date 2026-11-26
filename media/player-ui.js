@@ -590,6 +590,9 @@
     const capBanner = $('capBanner'), splitterEl = $('splitter'), dividerEl = $('divider');
     const seekEl = need('seek'), nowEl = $('now'), durEl = $('dur'), timeEl = $('time'), tipEl = $('tip');
     const tracksBtn = $('tracks'), cmpBtn = need('startCompareBtn');
+    // Here the Compare button is the Capture toggle (aria-pressed, set when it renders), not a start dialog: the
+    // dialog attributes src/bar.js gives it would point at nothing.
+    for (const a of ['aria-haspopup', 'aria-controls', 'aria-expanded']) cmpBtn.removeAttribute(a);
     const playBtn = need('play'), prevBtn = need('prev'), nextBtn = need('next');
     const prevSize = $('prevSize'), nextSize = $('nextSize');
     const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate');
@@ -687,9 +690,12 @@
     const fmt = (/** @type {number} */ f) => formatTime(f, fps(), prefs.timeMode, W.VpeTime ? W.VpeTime.fmtTimecode : null);
     const clockText = (/** @type {number} */ sec) => formatTime(Math.round(sec * fps()), fps(), 0);
     const single = () => tab().tiles.length === 1;
-    /** The arrow keys' jump sizes (settings videoPreviewEnhanced.jump.*): seconds, or 'frame'. Live settings update it. */
-    /** @type {{ arrow: number | string, shift: number | string, ctrl: number | string }} */
-    const JUMP = { arrow: 5, shift: 1, ctrl: 'frame' };
+    /**
+     * The arrow keys' and the stage wheel's jump sizes (settings videoPreviewEnhanced.jump.*): seconds, or 'frame'.
+     * Live settings update it.
+     * @type {{ arrow: number | string, shift: number | string, ctrl: number | string, wheel: number | string, wheelShift: number | string }}
+     */
+    const JUMP = { arrow: 5, shift: 1, ctrl: 'frame', wheel: 'frame', wheelShift: 1 };
     /** The setting stepButtons: what the buttons beside Play step until a step size is picked. */
     let stepButtons = /** @type {'frame' | 'jump'} */ ('frame');
     const stepPrefs = () => ({ stepSize: prefs.stepSize, stepButtons, jump: JUMP });
@@ -1605,7 +1611,8 @@
       isZoomed: () => tab().zoom !== 1,
       isBlocked: () => !!(tileDrag && tileDrag.isDragging()),
       getZoom: () => tab().zoom,
-      onStepWheel: (/** @type {number} */ dir, /** @type {boolean} */ shift) => (shift ? act.jump({ dir, shift: true }) : commit(S.stepFrame(ws, dir))),
+      // The wheel's own jump sizes (jump.wheel, jump.wheelShift): a frame by default, Shift+wheel a second.
+      onStepWheel: (/** @type {number} */ dir, /** @type {boolean} */ shift) => jumpBy(shift ? JUMP.wheelShift : JUMP.wheel, dir),
       onZoomWheel: (/** @type {number} */ factor, /** @type {number} */ cx, /** @type {number} */ cy) => zoomAt(factor, cx, cy),
       onPanStart: () => { panLast = { dx: 0, dy: 0 }; return true; },
       onPanMove: (/** @type {number} */ dx, /** @type {number} */ dy) => {
@@ -1830,7 +1837,7 @@
         // VS Code's settings changed: the jump sizes, what the step buttons step, Live transcode.
         onApplyLivePrefs: (/** @type {any} */ p) => {
           if (p.jump) {
-            for (const k of /** @type {const} */ (['arrow', 'shift', 'ctrl'])) {
+            for (const k of /** @type {const} */ (['arrow', 'shift', 'ctrl', 'wheel', 'wheelShift'])) {
               const v = p.jump[k];
               if (v === 'frame') JUMP[k] = 'frame';
               else if (Number(v) > 0) JUMP[k] = Number(v);
