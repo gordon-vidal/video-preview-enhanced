@@ -583,6 +583,8 @@
     };
     /** Pending resume time (seconds) from cfg.savedPos or sessionState.savedPos, applied once the clock clip's fps & duration arrive. */
     let pendingResumeSec = !cfg.goto ? resumeSecOf(cfg.savedPos) : null;
+    /** Pending { frame, playing } to restore after restartPlayer (e.g. HLS quality switch) once the new decoder opens. @type {Map<string, { frame: number, playing: boolean }>} */
+    const pendingRestore = new Map();
     /** Autoplay on open (setting videoPreviewEnhanced.autoplay, or Autoplay "Play next in folder"): start playing once firstShown. */
     let pendingAutoPlay = !cfg.goto && (!!cfg.fromAutoNext || !!(cfg.prefs && cfg.prefs.autoplay));
     /** Report the clock clip's position to the host so it can persist resume position across reopen. */
@@ -723,8 +725,8 @@
       if (disposed || !ui) return;
       const t = S.getTab(ui.getState());
       const p = players.get(clockIdOf(t));
-      // While paused with a seek/step still in flight, p.currentFrame() still holds the old frame: never overwrite t.frame.
-      if (!p || (!t.playing && busy(p))) return;
+      // While paused with a seek/step still in flight, or waiting to restore after a reload, never overwrite t.frame.
+      if (!p || pendingRestore.has(clockIdOf(t)) || (!t.playing && busy(p))) return;
       if (typeof p.currentFrame === 'function') {
         try { onPlayerFrame(clockIdOf(t), Number(p.currentFrame())); } catch { /* a closing decoder */ }
       }
@@ -761,6 +763,19 @@
         if (!firstFrameLogged || !firstPicturesLogged) notePresented(id);
         if (pendingResumeSec !== null && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) tryApplyResume();
         if (pendingGoto !== null && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) tryApplyGoto(id, p);
+        if (pendingRestore.has(id) && p.firstShown) {
+          const r = /** @type {{ frame: number, playing: boolean }} */ (pendingRestore.get(id));
+          pendingRestore.delete(id);
+          appliedTargets.delete(id);
+          applied = null;
+          const cur = S.getTab(ui.getState());
+          let nextWs = S.seekFrame(ui.getState(), r.frame);
+          if (r.playing && !S.getTab(nextWs).playing) nextWs = S.togglePlay(nextWs);
+          else if (!r.playing && S.getTab(nextWs).playing) nextWs = S.togglePlay(nextWs);
+          if (nextWs !== ui.getState()) ui.setState(nextWs);
+          driveDecoders(S.getTab(ui.getState()));
+          if (cur.tiles.includes(id)) ui.render();
+        }
         if (pendingAutoPlay && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) {
           pendingAutoPlay = false;
           const cur = ui.getState();
@@ -1683,6 +1698,11 @@
      * @param {string} id
      */
     function restartPlayer(id) {
+      const had = players.has(id);
+      const tBefore = ui ? S.getTab(ui.getState()) : null;
+      if (had && tBefore && tBefore.tiles.includes(id) && (tBefore.frame > 0 || tBefore.playing)) {
+        pendingRestore.set(id, { frame: tBefore.frame, playing: tBefore.playing });
+      }
       disposePlayer(id);
       appliedTargets.delete(id);
       const p = ensurePlayer(id);
