@@ -279,7 +279,7 @@
     const W = (/** @type {string} */ k) => widgets[k] || (win && win[k]) || G[k];
 
     /** @type {HostAdapter & { slots: () => string[] }} */
-    const host = HostApi.create({ vscode, win, page: cfg.page, boot: cfg.boot, surface: cfg.surface || 'unified' });
+    const host = HostApi.create({ vscode, win, page: cfg.page, boot: cfg.boot });
     // The page's log goes to the host's output channel as "webview: ..." (src/unified-viewer.js), as media/player.js
     // posts it: the layer-3 scenarios wait for lines such as "webview: first frame shown".
     const log = env.log || ((/** @type {any[]} */ ...a) => host.post({ type: 'log', msg: a.map(String).join(' ') }));
@@ -977,9 +977,9 @@
       let ids = [];
       if (key !== null) ids = [key];
       else if (m.type === 'resize' && Array.isArray(m.tiles)) {
-        // Compare's host names tiles by index (the slots of the last 'tiles' report).
-        const slots = host.slots();
-        ids = m.tiles.map((/** @type {any} */ i) => (typeof i === 'number' ? slots[i] : i));
+        // A tile may be named by its display index in the active tab instead of its clip id.
+        const shown = ui ? S.getTab(ui.getState()).tiles : [];
+        ids = m.tiles.map((/** @type {any} */ i) => (typeof i === 'number' ? shown[i] : i));
       } else if (players.size === 1) ids = [...players.keys()];
       else if (m.type === 'exactFrame' && exacts.size === 1) ids = [...exacts.keys()];
       for (const id of ids) {
@@ -1001,18 +1001,18 @@
     }
 
     /**
-     * The clip a lifecycle message is for: clipId / key, else Compare's tile `index` (the host's slots), else the one
-     * clip the active tab shows.
+     * The clip a lifecycle message is for: clipId / key, else the tile `index` (display order of the active tab),
+     * else the one clip the active tab shows.
      * @param {any} m @returns {string | null}
      */
     function lifecycleClip(m) {
       const key = keyOf(m);
       if (key !== null) return specs.has(key) || players.has(key) ? key : null;
+      const tiles = ui ? S.getTab(ui.getState()).tiles : [...specs.keys()];
       if (typeof m.index === 'number') {
-        const id = host.slots()[m.index];
+        const id = tiles[m.index];
         if (typeof id === 'string') return id;
       }
-      const tiles = ui ? S.getTab(ui.getState()).tiles : [...specs.keys()];
       return tiles.length === 1 ? tiles[0] : null;
     }
 
@@ -1390,7 +1390,7 @@
         get mode() { return t().layout; }, get dock() { return t().dock; }, get heroRatio() { return t().heroRatio; },
         get clock() { return Math.max(0, indexOf(clockIdOf(t()))); }, get sound() { return indexOf(t().soundId); },
         get muted() { return !!(prefsNow() || {}).muted; }, get split() { return t().split; },
-        get order() { const slots = host.slots(); return t().tiles.map((/** @type {string} */ id, /** @type {number} */ i) => (slots.includes(id) ? slots.indexOf(id) : i)); },
+        get order() { return t().tiles.map((/** @type {string} */ _id, /** @type {number} */ i) => i); },
         get offsets() { return t().tiles.map((/** @type {string} */ id) => (S.getOffset ? S.getOffset(t(), id) : { v: 0, unit: 'frames' })); },
         get pic() { return { mode: t().picMode, zoom: t().zoom, cx: 0.5, cy: 0.5 }; },
         get rate() { return ratePrefs(); }, get loop() { return loopPref(prefsNow()); },

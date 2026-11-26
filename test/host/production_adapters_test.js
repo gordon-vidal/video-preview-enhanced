@@ -1,8 +1,7 @@
 'use strict';
 // The production adapters (media/player-engine-adapter.js, media/player-host-adapter.js) against the same contract
 // the mockup's fakes pass (test/host/adapter_contract_test.js), plus what only the production side does: player
-// metadata, the sound routing over N players, the page / boot envelope, the per-surface message names and the
-// webview state. No video is decoded: the players are in-memory stubs, the host is FakeHost behind a vscode bridge.
+// metadata, the sound routing over N players, the page / boot envelope and the webview state. No video is decoded: the players are in-memory stubs, the host is FakeHost behind a vscode bridge.
 const assert = require('assert');
 const { runEngineAdapterContract, runHostAdapterContract, fakeCanvas } = require('./adapter_contract_test');
 const VpeEngineAdapter = require('../../media/player-engine-adapter.js');
@@ -78,35 +77,10 @@ function makeEngine(/** @type {any} */ extra = {}) {
 
 /**
  * A webview: vscode API + window 'message' events, wired to a FakeHost that answers with this page's envelope.
- * On 'compare' the bridge plays src/compare.js: it keeps its own slot table (tiles in the order the host opened
- * them) and reads only the numeric `order` / `index` / `keep` the adapter sends, never the ids beside them, so a
- * wrong index reaches FakeHost as the wrong video.
+ * The adapter sends the controller's own messages, so FakeHost reads them unchanged.
  */
-function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, boot?: string }} */ env = { page: 'page-1', boot: 'boot-1' }) {
+function makeBridge(/** @type {{ page?: string, boot?: string }} */ env = { page: 'page-1', boot: 'boot-1' }) {
   const { page, boot } = env;
-  /** @type {string[]} Compare's host: clip ids by tile index, in opening order */
-  const hostSlots = [];
-  const compare = surface === 'compare';
-  const idAt = (/** @type {any} */ i) => (Number.isInteger(i) ? hostSlots[i] : undefined);
-  /** Production host messages back to FakeHost's unified names: a stand-in for src/extension.js / src/compare.js. */
-  const toUnified = (/** @type {any} */ m) => {
-    switch (m.type) {
-      case 'comparePick': case 'add': return { type: 'pickVideo', exclude: m.exclude || [] };
-      case 'replace': return { type: 'replaceVideo', oldId: idAt(m.index) };
-      case 'leave': return { type: 'leaveCompare', keepId: idAt(m.keep), t: m.t };
-      case 'tileOrder': return { type: 'tileOrder', order: compare ? (m.order || []).map(idAt) : m.order };
-      case 'tileSize': return m.tile ? { type: 'tileSize', ...m.tile } : m;
-      case 'playbackPrefs': return m.prefs ? m : { type: 'playbackPrefs', prefs: { volume: m.volume, rate: m.rate, timeMode: m.timeMode, stepSize: m.stepSize } };
-      default: return m;
-    }
-  };
-  /** What the host does to its own tiles (opening order; a replaced tile keeps its slot). @param {any} m */
-  const hostTracks = (m) => {
-    if (!compare) return;
-    // The page only shows tiles the host opened: one it reports that the host has not seen was opened before.
-    if (m.type === 'tiles' && Array.isArray(m.tiles)) for (const id of m.tiles) if (!hostSlots.includes(id)) hostSlots.push(id);
-    if (m.type === 'leave' && idAt(m.keep)) hostSlots.splice(0, hostSlots.length, /** @type {string} */ (idAt(m.keep)));
-  };
   /** @type {Set<(e: any) => void>} */
   const listeners = new Set();
   const win = {
@@ -114,35 +88,28 @@ function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, b
     removeEventListener(/** @type {string} */ t, /** @type {any} */ f) { if (t === 'message') listeners.delete(f); },
   };
   const dispatch = (/** @type {any} */ data) => { for (const f of [...listeners]) f({ data }); };
-  const deliver = (/** @type {any} */ m) => {
-    if (compare && m.type === 'replaceTile') { const i = hostSlots.indexOf(m.oldId); if (i >= 0) hostSlots[i] = m.newId; }
-    if (compare && m.type === 'openVideo' && m.compare && !hostSlots.includes(m.clipId)) hostSlots.push(m.clipId);
-    dispatch({ ...m, page, boot });
-  };
-  const fake = createFakeHost({ clips: createFakeEngine().clips, deliver });
+  const fake = createFakeHost({ clips: createFakeEngine().clips, deliver: (/** @type {any} */ m) => dispatch({ ...m, page, boot }) });
   /** @type {any[]} */
   const sent = [];
   let state = /** @type {any} */ (undefined);
   const vscode = {
-    postMessage(/** @type {any} */ m) { sent.push(m); const u = toUnified(m); hostTracks(m); fake.post(u); },
+    postMessage(/** @type {any} */ m) { sent.push(m); fake.post(m); },
     getState: () => state,
     setState: (/** @type {any} */ s) => { state = s; },
   };
-  const host = VpeHostAdapter.create({ vscode, win, page, boot, surface: /** @type {any} */ (surface) });
-  return { host, fake, sent, listeners, dispatch, vscode, hostSlots };
+  const host = VpeHostAdapter.create({ vscode, win, page, boot });
+  return { host, fake, sent, listeners, dispatch, vscode };
 }
 
 (async () => {
   // ---- the shared contracts ----
   await runEngineAdapterContract('production EngineAdapter', () => makeEngine().engine);
   await runEngineAdapterContract('production EngineAdapter (no pictureApi)', () => makeEngine({ pictureApi: undefined }).engine);
-  for (const surface of ['unified', 'player', 'compare']) {
-    await runHostAdapterContract(`production HostAdapter (${surface})`, () => {
-      const b = makeBridge(surface);
-      // The fake's own record of what reached the host, so the contract checks the round trip too.
-      return Object.assign(b.host, { snapshot: b.fake.snapshot, broadcastPrefs: b.fake.broadcastPrefs, exitFocusMode: b.fake.exitFocusMode });
-    });
-  }
+  await runHostAdapterContract('production HostAdapter', () => {
+    const b = makeBridge();
+    // The fake's own record of what reached the host, so the contract checks the round trip too.
+    return Object.assign(b.host, { snapshot: b.fake.snapshot, broadcastPrefs: b.fake.broadcastPrefs, exitFocusMode: b.fake.exitFocusMode });
+  });
 
   // ---- engine: metadata from the players ----
   {
@@ -233,17 +200,17 @@ function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, b
 
   // ---- host: page / boot envelope on every post ----
   {
-    const b = makeBridge('compare', { page: 'p7', boot: 'b7' });
+    const b = makeBridge({ page: 'p7', boot: 'b7' });
     b.host.post({ type: 'copyText', text: 'x' });
     assert.deepStrictEqual(b.sent.pop(), { type: 'copyText', text: 'x', page: 'p7', boot: 'b7' });
-    const plain = makeBridge('player', {});
+    const plain = makeBridge({});
     plain.host.post({ type: 'external' });
     assert.deepStrictEqual(plain.sent.pop(), { type: 'external' }, 'no envelope fields when the page has none');
   }
 
   // ---- host: replies for another page or boot are dropped; toasts are capped ----
   {
-    const b = makeBridge('unified', { page: 'p1', boot: 'b1' });
+    const b = makeBridge({ page: 'p1', boot: 'b1' });
     /** @type {any[]} */
     const got = [];
     b.host.connect((m) => got.push(m));
@@ -256,47 +223,24 @@ function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, b
     assert.deepStrictEqual(got.map((m) => [m.text, m.ms]), [['no envelope', 10000], ['mine', 2500]]);
   }
 
-  // ---- host: pickVideo and the other names per surface ----
+  // ---- host: the controller's messages go out unchanged, ids and all ----
   {
-    const player = makeBridge('player');
-    player.host.post({ type: 'pickVideo', exclude: ['clip-0'], t: 1.5 });
-    assert.deepStrictEqual(player.sent.pop(), { type: 'comparePick', t: 1.5, exclude: ['clip-0'], page: 'page-1', boot: 'boot-1' });
-    const cmp = makeBridge('compare');
-    cmp.host.post({ type: 'pickVideo', exclude: ['clip-0'] });
-    assert.strictEqual(cmp.sent.pop().type, 'add');
-    const uni = makeBridge('unified');
-    uni.host.post({ type: 'pickVideo', exclude: [] });
-    assert.strictEqual(uni.sent.pop().type, 'pickVideo');
-
-    cmp.host.post({ type: 'tiles', tabId: 1, tiles: ['clip-0', 'clip-1', 'clip-2'], current: 'clip-0' });
-    cmp.sent.length = 0;
-    cmp.host.post({ type: 'tileOrder', order: ['clip-2', 'clip-0', 'clip-1'] });
-    cmp.host.post({ type: 'replaceVideo', oldId: 'clip-1' });
-    cmp.host.post({ type: 'leaveCompare', keepId: 'clip-2', t: 4 });
-    cmp.host.post({ type: 'tileSize', w: 640, h: 360, cols: 2, rows: 1, zoom: 1 });
-    cmp.host.post({ type: 'playbackPrefs', prefs: { volume: 0.5, rate: 2 } });
+    const b = makeBridge();
     const strip = (/** @type {any} */ m) => { const { page: _p, boot: _b, ...rest } = m; return rest; };
-    assert.deepStrictEqual(cmp.sent.map(strip), [
-      { type: 'tileOrder', order: [2, 0, 1], ids: ['clip-2', 'clip-0', 'clip-1'] },
-      { type: 'replace', index: 1, oldId: 'clip-1' },
-      { type: 'leave', keepId: 'clip-2', keep: 2, t: 4 },
-      { type: 'tileSize', tile: { w: 640, h: 360, cols: 2, rows: 1, zoom: 1 } },
-      { type: 'playbackPrefs', volume: 0.5, rate: 2 },
-    ]);
-    cmp.sent.length = 0;
-    cmp.host.post({ type: 'replaceVideo', oldId: 'not-a-tile' });
-    cmp.host.post({ type: 'leaveCompare' });
-    cmp.host.post({ type: 'tileOrder', order: ['x'] });
-    assert.deepStrictEqual(cmp.sent, [], 'an unknown tile is never sent as an index');
-    for (const type of ['rail', 'neighbour', 'copyText', 'saveFrame', 'openSettings', 'openUrl', 'external', 'focusMode', 'focusModeExited']) {
-      cmp.host.post({ type, x: 1 });
-      assert.strictEqual(strip(cmp.sent.pop()).type, type, `${type} keeps its name`);
-    }
+    const msgs = [
+      { type: 'pickVideo', exclude: ['clip-0'] },
+      { type: 'tileOrder', order: ['clip-2', 'clip-0', 'clip-1'] },
+      { type: 'replaceVideo', oldId: 'clip-1' },
+      { type: 'leaveCompare', keepId: 'clip-2', t: 4 },
+      { type: 'playbackPrefs', prefs: { volume: 0.5, rate: 2 } },
+    ];
+    for (const m of msgs) b.host.post(m);
+    assert.deepStrictEqual(b.sent.map(strip), msgs);
   }
 
   // ---- host: storage and dispose ----
   {
-    const b = makeBridge('player');
+    const b = makeBridge();
     assert.strictEqual(b.host.storage.getState(), undefined);
     b.host.storage.setState({ volume: 0.3 });
     assert.deepStrictEqual(b.host.storage.getState(), { volume: 0.3 });
@@ -520,47 +464,6 @@ function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, b
     assert.strictEqual(engine2.pixelAt('W', 1, 1).text, 'x=1 y=1 rgb=(9,8,7) #090807', 'a source with no 2D context: via a 1×1 canvas');
     assert.deepStrictEqual(drawn, [[1, 1, 1, 1, 0, 0, 1, 1]]);
     assert.strictEqual(engine.pixelAt('W', 0, 0), null, 'no player picture: null');
-  }
-
-  // ---- host: a Swap reorders the display, never Compare's slots ----
-  {
-    const [A, B] = ['clip-0', 'clip-1'];
-    const strip = (/** @type {any} */ m) => { const { page: _p, boot: _b, ...rest } = m; return rest; };
-    const b = makeBridge('compare');
-    b.host.post({ type: 'tiles', tiles: [A, B], current: A });
-    b.host.post({ type: 'tiles', tiles: [B, A], current: B });
-    assert.deepStrictEqual(b.host.slots(), [A, B], 'a reordered tiles report keeps the slot table');
-    b.sent.length = 0;
-    b.host.post({ type: 'tileOrder', order: [B, A] });
-    assert.deepStrictEqual(strip(b.sent.pop()).order, [1, 0], 'after a Swap the order is [1, 0]');
-    assert.deepStrictEqual(b.fake.snapshot().tileOrder, [B, A], 'the host read the numeric order as [B, A]');
-    b.host.post({ type: 'leaveCompare', keepId: B, t: 1 });
-    assert.strictEqual(strip(b.sent.pop()).keep, 1, 'leaveCompare keeps host slot 1 (B)');
-    assert.deepStrictEqual(b.fake.snapshot().leftCompare, { keepId: B, t: 1 }, 'the host kept B, not A');
-
-    const r = makeBridge('compare');
-    /** @type {any[]} */
-    const got = [];
-    r.host.connect((m) => got.push(m));
-    r.host.post({ type: 'tiles', tiles: [A, B], current: A });
-    r.host.post({ type: 'tiles', tiles: [B, A], current: B });
-    r.host.post({ type: 'tileOrder', order: [B, A] });
-    r.sent.length = 0;
-    r.host.post({ type: 'replaceVideo', oldId: B });
-    assert.strictEqual(strip(r.sent.pop()).index, 1, 'replaceVideo of B targets host slot 1');
-    const rep = got.filter((m) => m.type === 'replaceTile').pop();
-    assert.ok(rep && rep.oldId === B, 'the host replaced B, not A');
-    assert.deepStrictEqual(r.host.slots(), [A, rep.newId], 'the new video takes B\'s slot');
-    assert.deepStrictEqual(r.hostSlots, [A, rep.newId], '... as on the host');
-    r.host.post({ type: 'tiles', tiles: [rep.newId, A], current: rep.newId });
-    assert.deepStrictEqual(r.host.slots(), [A, rep.newId], 'the page\'s report after the replace changes nothing');
-    r.host.post({ type: 'replaceVideo', oldId: rep.newId });
-    assert.strictEqual(strip(r.sent.pop()).index, 1, 'the replaced tile is still slot 1');
-    r.host.post({ type: 'tiles', tiles: [r.host.slots()[1], A, 'x-late'] });
-    assert.deepStrictEqual(r.host.slots().slice(0, 1).concat(r.host.slots().slice(2)), [A, 'x-late'], 'a new tile is appended');
-    r.host.post({ type: 'tiles', tiles: ['x-late', A] });
-    assert.deepStrictEqual(r.host.slots(), [A, 'x-late'], 'a closed tile drops out; the others keep their order');
-    assert.deepStrictEqual(VpeHostAdapter.mergeSlots(['x', 'y', 'z'], ['z', 'w', 'x', 7]), ['x', 'z', 'w'], 'mergeSlots');
   }
 
   // ---- pictureInfo / transcodeInfo / exactFrame: what the reduced-res and slow notices and the Live chip read ----

@@ -157,7 +157,6 @@ const context = { extensionUri: Uri.file(ROOT) };
       }
       const cfg = cfgOf(html);
       assert.strictEqual(cfg.page, 1);
-      assert.strictEqual(cfg.surface, 'unified');
       assert.deepStrictEqual(cfg.tiles, [clipA.id]);
       assert.deepStrictEqual(cfg.clips.map((c) => [c.id, c.clipId, c.name, c.size, c.native]),
         [[clipA.id, clipA.id, 'a.mp4', 8, false]]);
