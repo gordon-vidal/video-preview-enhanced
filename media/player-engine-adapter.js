@@ -150,10 +150,11 @@
 
   /**
    * The one timeline mapping of Compare (forward): the tile frame at the shared clock frame, mapped through time when
-   * the clock runs at another rate, plus the tile's offset in its own frames, floored once with a quarter-frame nudge
-   * (rounding the mapped frame and the offset separately drifts a frame for mixed rates and fractional ms offsets).
-   * The nudge is media/stepgoal.js followerTime's: a paused seek or step lands on the frame a follower decoder shows
-   * at the same clock time while playing, so pausing never moves a tile by a frame.
+   * the clock runs at another rate, plus the tile's offset in its own frames, rounded once (rounding the mapped frame
+   * and the offset separately drifts a frame for mixed rates and fractional ms offsets). Rounding is what a follower
+   * decoder shows at the same clock time while playing: media/stepgoal.js followerTime nudges its time a quarter frame
+   * early and media/engine.js presents a frame up to a quarter frame early, floor(v + 0.25 + 0.25) = round(v), so a
+   * paused seek or step lands on the playing picture.
    * @param {number} sharedFrame @param {number} tileFps @param {number | undefined} clockFps @param {Offset} [offset]
    */
   function tileFrameAt(sharedFrame, tileFps, clockFps, offset) {
@@ -161,7 +162,7 @@
     const cf = Number(clockFps);
     const same = !(cf > 0) || !Number.isFinite(cf) || !(tileFps > 0) || Math.abs(cf - tileFps) < 1e-9;
     const v = (same ? f : (f / cf) * tileFps) + offsetFrames(offset, tileFps);
-    const r = Math.floor(Number((v + 0.25).toFixed(6))); // float noise (59.9999999) never decides the frame
+    const r = Math.round(Number(v.toFixed(6))); // float noise (59.9999999) never decides the frame
     return r === 0 ? 0 : r; // never -0
   }
 

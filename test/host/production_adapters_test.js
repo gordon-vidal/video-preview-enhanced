@@ -377,7 +377,7 @@ function makeBridge(/** @type {{ page?: string, boot?: string }} */ env = { page
     assert.deepStrictEqual(engine.shownFrame('P60', 1, 1.5, 24), { frame: 4, outOfRange: false }, 'one rounding, not two');
     // shownFrame's inverse for a clock tile lands back on the frame it came from.
     assert.strictEqual(engine.clockFrameFromDecoder('P60', 66, 6, 60), 60);
-    assert.strictEqual(engine.clockFrameFromDecoder('A', 25, { unit: 'ms', v: 62.5 }), 24, '62.5 ms is 1.5 frames at 24 fps: 24 + 1.5 (+ the quarter-frame nudge) floors to 25');
+    assert.strictEqual(engine.clockFrameFromDecoder('A', 25, { unit: 'ms', v: 62.5 }), 23, '62.5 ms is 1.5 frames at 24 fps: 23 + 1.5 rounds to 25');
   }
 
   // ---- engine: one timeline mapping, forward and back, for every rate pair and offset (no 1-frame drift) ----
@@ -419,9 +419,10 @@ function makeBridge(/** @type {{ page?: string, boot?: string }} */ env = { page
       for (const off of offsets) {
         for (let g = 0; g < 600; g++) {
           // The follower's media time at the clock's shared time g / clockFps (its offset counted in the shared frame),
-          // floored to the frame a decoder presents then (same 1e-6 float guard as tileFrameAt).
+          // and the frame media/engine.js presents then: the newest one due a quarter frame early (same 1e-6 float
+          // guard as tileFrameAt).
           const t = followerTime(g / clockFps, 0, offsetSeconds(off, tileFps), tileFps);
-          const want = Math.floor(Number((t * tileFps).toFixed(6)));
+          const want = Math.floor(Number((t * tileFps + 0.25).toFixed(6)));
           assert.strictEqual(tileFrameAt(g, tileFps, clockFps, off), want,
             `tile ${tileFps}, clock ${clockFps}, offset ${JSON.stringify(off)}, shared ${g}: step and playback agree`);
         }
