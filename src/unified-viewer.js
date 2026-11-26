@@ -323,7 +323,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const target = s.openTarget;
     /** @type {Record<string, any>} */
     const cfg = {
-      page: ++page, surface: 'unified', debug: !!deps.debug, engine: ec,
+      page: ++page, debug: !!deps.debug, engine: ec,
       clips: s.clips.map((c) => ({ ...clipDescriptor(c), id: c.id })), tiles: s.order,
       prefs: deps.prefs(),
       rail: deps.rail && folder ? { ...folderRail.sanitizeRailPrefs(deps.rail.prefs.get()), layout: deps.rail.layout() } : null,

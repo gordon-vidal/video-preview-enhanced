@@ -207,7 +207,7 @@ test('decoder messages reach the right decoder; UI messages reach the controller
     assert.strictEqual(n(b, 'nd'), 0);
     assert.deepStrictEqual([n(a, 'ndv'), n(b, 'ndv'), n(a, 'nda'), n(b, 'nda')], [0, 1, 1, 0]);
     assert.deepStrictEqual([n(a, 'thumb'), n(b, 'thumb'), n(a, 'exactFrame'), n(b, 'stream')], [0, 1, 1, 1]);
-    // resize by tile index (the slots of the last 'tiles' report).
+    // resize by tile index in the active tab.
     send({ type: 'resize', tiles: [1] });
     assert.deepStrictEqual([n(a, 'resize'), n(b, 'resize')], [0, 1]);
 
