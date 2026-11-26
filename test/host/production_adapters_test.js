@@ -377,7 +377,7 @@ function makeBridge(/** @type {{ page?: string, boot?: string }} */ env = { page
     assert.deepStrictEqual(engine.shownFrame('P60', 1, 1.5, 24), { frame: 4, outOfRange: false }, 'one rounding, not two');
     // shownFrame's inverse for a clock tile lands back on the frame it came from.
     assert.strictEqual(engine.clockFrameFromDecoder('P60', 66, 6, 60), 60);
-    assert.strictEqual(engine.clockFrameFromDecoder('A', 25, { unit: 'ms', v: 62.5 }), 23, '62.5 ms is 1.5 frames at 24 fps: 23 + 1.5 rounds to 25');
+    assert.strictEqual(engine.clockFrameFromDecoder('A', 25, { unit: 'ms', v: 62.5 }), 24, '62.5 ms is 1.5 frames at 24 fps: 24 + 1.5 (+ the quarter-frame nudge) floors to 25');
   }
 
   // ---- engine: one timeline mapping, forward and back, for every rate pair and offset (no 1-frame drift) ----
@@ -404,6 +404,26 @@ function makeBridge(/** @type {{ page?: string, boot?: string }} */ env = { page
             // For the clock tile itself (its own rate) the trip is exact: frame read back, frame sent out.
             if (clockFps === tileFps || clockFps === undefined) assert.strictEqual(back, g, `${at}: the clock's own frames are exact`);
           }
+        }
+      }
+    }
+  }
+
+  // ---- engine: a paused seek / step lands where playback shows the tile (media/stepgoal.js followerTime) ----
+  {
+    const { tileFrameAt, offsetSeconds } = VpeEngineAdapter;
+    const { followerTime } = require('../../media/stepgoal.js');
+    const pairs = [[25, 25], [24, 60], [60, 24], [30, 25], [25, 30], [23.976, 29.97], [29.97, 23.976], [50, 59.94], [24, 24]];
+    const offsets = [0, 3, -7, 1.5, { unit: 'ms', v: 24 }, { unit: 'ms', v: -24 }, { unit: 'ms', v: 62.5 }, { unit: 'ms', v: 1000 }];
+    for (const [tileFps, clockFps] of pairs) {
+      for (const off of offsets) {
+        for (let g = 0; g < 600; g++) {
+          // The follower's media time at the clock's shared time g / clockFps (its offset counted in the shared frame),
+          // floored to the frame a decoder presents then (same 1e-6 float guard as tileFrameAt).
+          const t = followerTime(g / clockFps, 0, offsetSeconds(off, tileFps), tileFps);
+          const want = Math.floor(Number((t * tileFps).toFixed(6)));
+          assert.strictEqual(tileFrameAt(g, tileFps, clockFps, off), want,
+            `tile ${tileFps}, clock ${clockFps}, offset ${JSON.stringify(off)}, shared ${g}: step and playback agree`);
         }
       }
     }

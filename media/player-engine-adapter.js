@@ -150,8 +150,10 @@
 
   /**
    * The one timeline mapping of Compare (forward): the tile frame at the shared clock frame, mapped through time when
-   * the clock runs at another rate, plus the tile's offset in its own frames, rounded once (rounding the mapped frame
-   * and the offset separately drifts a frame for mixed rates and fractional ms offsets).
+   * the clock runs at another rate, plus the tile's offset in its own frames, floored once with a quarter-frame nudge
+   * (rounding the mapped frame and the offset separately drifts a frame for mixed rates and fractional ms offsets).
+   * The nudge is media/stepgoal.js followerTime's: a paused seek or step lands on the frame a follower decoder shows
+   * at the same clock time while playing, so pausing never moves a tile by a frame.
    * @param {number} sharedFrame @param {number} tileFps @param {number | undefined} clockFps @param {Offset} [offset]
    */
   function tileFrameAt(sharedFrame, tileFps, clockFps, offset) {
@@ -159,7 +161,7 @@
     const cf = Number(clockFps);
     const same = !(cf > 0) || !Number.isFinite(cf) || !(tileFps > 0) || Math.abs(cf - tileFps) < 1e-9;
     const v = (same ? f : (f / cf) * tileFps) + offsetFrames(offset, tileFps);
-    const r = Math.round(Number(v.toFixed(6))); // float noise (59.9999999) never decides the frame
+    const r = Math.floor(Number((v + 0.25).toFixed(6))); // float noise (59.9999999) never decides the frame
     return r === 0 ? 0 : r; // never -0
   }
 
@@ -174,7 +176,8 @@
     const same = !(cf > 0) || !Number.isFinite(cf) || !(tileFps > 0) || Math.abs(cf - tileFps) < 1e-9;
     const ratio = same ? 1 : tileFps / cf;
     const est = (x - offsetFrames(offset, tileFps)) / ratio;
-    for (let g = Math.ceil(est) + 1; g >= Math.floor(est) - 1; g--) {
+    // A slower tile shows each of its frames for 1 / ratio shared frames: look that far past the estimate.
+    for (let g = Math.ceil(est + 1 / ratio) + 1; g >= Math.floor(est) - 1; g--) {
       if (tileFrameAt(g, tileFps, clockFps, offset) <= x) return g;
     }
     return Math.floor(est);

@@ -42,9 +42,9 @@ const UNIFIED_SCRIPTS = [
   'exactframe.js', 'reduced-res-notice.js', 'slow-notice.js', 'subtitles.js', 'tracks-menu.js', 'xray.js', 'modes.js',
   'range-drag.js', 'controls.js', 'ctxmenu.js', 'timefmt.js', 'abloop.js', 'autoplay.js', 'folder-rail.js',
   'debug-probe.js', 'frame-player.js',
-  // ... plus Compare's tiles: stepgoal.js before compare-sync.js (VpeStepGoal).
+  // ... plus Compare's tiles (stepgoal.js: VpeStepGoal, read by player-unified.js).
   'stepgoal.js', 'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js',
-  'compare-sync.js', 'compare-debug.js',
+  'compare-debug.js',
   // Pure state and the shared UI controller: the player-ui-*.js modules before player-ui.js, which reads them.
   'player-state.js', 'player-ui-tiles.js', 'player-ui-input.js', 'player-ui-tools.js', 'player-ui-lifecycle.js',
   'player-ui.js',

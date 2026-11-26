@@ -78,7 +78,7 @@ const srcsOf = (html, nonce = 'NONCE123') => [...html.matchAll(new RegExp(`<scri
   // The decoder and media base keeps its order, first.
   assert.deepStrictEqual(UNIFIED_SCRIPTS.slice(0, BASE_ORDER.length), BASE_ORDER, 'the base order is kept, first');
   for (const dep of ['block-cache.js', 'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js']) before(dep, 'engine.js');
-  before('stepgoal.js', 'compare-sync.js');
+  assert.ok(!UNIFIED_SCRIPTS.includes('compare-sync.js'), 'the old Compare lockstep is gone (player-unified.js holdLagging)');
   for (const dep of ['player-state.js', 'compare-grid.js']) before(dep, 'player-ui-tiles.js');
   for (const ui of ['player-ui-tiles.js', 'player-ui-input.js', 'player-ui-tools.js', 'player-ui-lifecycle.js']) {
     before(ui, 'player-ui.js');

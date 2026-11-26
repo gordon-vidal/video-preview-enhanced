@@ -1493,7 +1493,7 @@ const SHORT_LONG = {
 };
 const playsOf = (p) => p.calls.filter((c) => c[0] === 'play').length;
 
-test('compare transport invariant fuzzer: no tile out of its clip plays, every other one plays with the tab, none starts over from 0', () => {
+test('compare transport invariant fuzzer: no tile out of its clip plays, every other one plays with the tab, none starts over from 0, a paused one settles on its target', () => {
   // Deterministic LCG so failures are 100% reproducible.
   let seed = 0x51a7c0de;
   const rnd = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 0x100000000; };
@@ -1537,6 +1537,18 @@ test('compare transport invariant fuzzer: no tile out of its clip plays, every o
       else if (op === 'loop') app.ui.dispatch('loop');
       frames(1 + pick(6));
       assertInvariants(step, op);
+      // (e) paused and settled: every tile in its clip shows its target (seek / step and playback map alike).
+      if (rnd() < 0.15) {
+        if (S.getTab(app.ui.getState()).playing) app.ui.dispatch('playPause');
+        frames(3);
+        const paused = S.getTab(app.ui.getState());
+        for (const id of paused.tiles) {
+          const s = app.engine.shownFrame(id, paused.frame, S.getOffset(paused, id), paused.fps);
+          if (s.frame === null) continue;
+          assert.strictEqual(playerOf(id).currentFrame(), s.frame,
+            `step ${step} (${op}, then paused) clock ${paused.clockId} frame ${paused.frame} max ${paused.maxFrame}: tile ${id} settled on ${playerOf(id).currentFrame()}, target ${s.frame}`);
+        }
+      }
     }
   }, {
     cfg: {
@@ -1548,6 +1560,152 @@ test('compare transport invariant fuzzer: no tile out of its clip plays, every o
       tiles: ['A', 'B', 'C'],
     },
     createPlayer: selfStoppingPlayer,
+    raf: true,
+  });
+});
+
+/**
+ * A decoder whose sound outlasts its picture (media/engine.js): its length `n` comes from the duration (150 frames)
+ * but its last picture is frame 100, so currentFrame() stays there while the sound plays on to its end. `t` is its
+ * position in frames; play() at its end with no seek pending starts over from 0, as engine.js does.
+ */
+function soundLongerPlayer(clip, host, hooks) {
+  const p = selfStoppingPlayer(clip, host, hooks);
+  const lastPicture = 100;
+  Object.assign(p, {
+    n: 150, t: 0,
+    seekFrame(f) { p.calls.push(['seek', f]); p.t = Math.max(0, Math.min(149, f)); p.frame = Math.min(p.t, lastPicture); p.playing = false; p.seekPending = true; },
+    seekTime(sec) { p.calls.push(['seekTime', sec]); p.seekFrame(Math.round(sec * clip.fps)); p.calls.pop(); },
+    play() {
+      p.calls.push(['play']);
+      if (p.t >= 149 && !p.seekPending) { p.t = 0; p.frame = 0; p.restartsByPlay++; }
+      p.playing = true;
+    },
+    tick() {
+      p.seekPending = false;
+      if (!p.playing) return;
+      if (p.t >= 149) { p.playing = false; hooks.onEnded({ natural: true }); return; }
+      p.t++;
+      p.frame = Math.min(p.t, lastPicture);
+    },
+  });
+  return p;
+}
+
+test('sound longer than the picture: play after its end starts over from 0, not from the end of the sound', () => {
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    frames(2);
+    const p = made[0];
+    app.ui.dispatch('playPause');
+    frames(160);
+    assert.strictEqual(p.isPlaying(), false, 'stopped at the end of the sound');
+    assert.strictEqual(S.getTab(app.ui.getState()).playing, false, 'and the bar with it');
+    assert.strictEqual(p.t, 149, 'the bar going to its end did not seek the decoder (it stays at its own end)');
+    app.ui.dispatch('playPause');
+    frames(5);
+    assert.strictEqual(p.isPlaying(), true, 'play after the end plays');
+    assert.ok(p.t < 10, `and starts over (at ${p.t})`);
+  }, { cfg: { clips: [{ id: 'A', name: 'audio_longer.mp4', fps: 30, frames: 150 }] }, createPlayer: soundLongerPlayer, raf: true });
+});
+
+test('a sound-only file whose length was counted at another rate plays and loops to the end of its sound', () => {
+  // The clip's numbers (24 fps fallback, 121 frames by the duration) and the decoder's frames (counted at 30 fps, 151)
+  // disagree: a single video is never "outside its clip", so it is never paused for it, and the bar follows it.
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    frames(2);
+    const p = made[0];
+    // As seen in VS Code: the timeline kept the fallback length (240 frames), the clip learnt 121.
+    app.ui.setState(S.syncClockMeta(app.ui.getState(), { fps: 24, maxFrame: 239 }));
+    assert.strictEqual(app.engine.getClip('A').frames, 121);
+    app.ui.dispatch('loop');
+    app.ui.dispatch('playPause');
+    frames(135);
+    assert.ok(p.frame > 125, `plays past the clip's counted length (at ${p.frame})`);
+    assert.strictEqual(p.isPlaying(), true, 'never paused for being outside its clip');
+    assert.ok(S.getTab(app.ui.getState()).frame > 121, `the bar follows it (at ${S.getTab(app.ui.getState()).frame}, max ${S.getTab(app.ui.getState()).maxFrame})`);
+    frames(20); // the end of its sound: Loop starts it over
+    assert.strictEqual(p.isPlaying(), true, 'loops');
+    assert.ok(p.frame < 25, `from the start (at ${p.frame})`);
+  }, {
+    cfg: { clips: [{ id: 'A', name: 'sine_only.mkv', fps: 24, frames: 121 }] }, raf: true,
+    // The decoder counts 151 frames (5.02 s at its default 30 fps).
+    createPlayer: (clip, host, hooks) => Object.assign(selfStoppingPlayer({ ...clip, fps: 30, frames: 151 }, host, hooks), { clip }),
+  });
+});
+
+/**
+ * selfStoppingPlayer with media/engine.js's lockstep surface (syncState, rel, now, holdAt, setFollowerMode). `frozen`:
+ * its picture stops (a slow decoder): shownT and shownCount stay where they are while it "plays".
+ */
+function syncedPlayer(clip, host, hooks) {
+  const p = selfStoppingPlayer(clip, host, hooks);
+  const fps = clip.fps;
+  const tick = p.tick;
+  Object.assign(p, {
+    frozen: false, holds: [], gen: 0, follow: null,
+    tick() { if (p.frozen) { p.seekPending = false; return; } tick(); if (p.playing) p.shownCount++; },
+    syncState: () => Object.freeze({
+      startT: 0, shownT: p.frame / fps, pauseT: p.frame / fps, seekTarget: null, nextQueuedT: null, eof: false,
+      gen: p.gen, fps, shownCount: p.shownCount, current: true, firstFrameReady: false, settled: !p.playing,
+    }),
+    rel: (x) => x,
+    now: () => p.frame / fps,
+    holdAt: (x) => p.holds.push(x),
+    setFollowerMode: (fn) => { p.follow = fn; },
+  });
+  return p;
+}
+
+test('compare lockstep: a follower that lags holds the clock (and the heard tile) until it catches up or stalls for 3 s', () => {
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    frames(2);
+    const [pA, pB, pC] = made;
+    assert.strictEqual(typeof pB.follow, 'function', 'a follower follows the clock decoder');
+    assert.strictEqual(pA.follow, null, 'the clock runs on its own');
+    app.ui.setState(S.setSound(app.ui.getState(), 'C'));
+    app.ui.dispatch('playPause');
+    frames(10, 40);
+    assert.deepStrictEqual([pA.holds.length, pC.holds.length], [0, 0], 'in step: nothing is held');
+    pB.frozen = true; // B's picture stops (a slow 4K tile in the built-in decoder)
+    frames(3, 40); // lag below max(0.12 s, 2 frames): not yet
+    const before = pA.holds.length;
+    frames(5, 40);
+    assert.ok(pA.holds.length > before, 'B more than 0.12 s behind holds the clock');
+    assert.strictEqual(pA.holds[pA.holds.length - 1], pA.frame / 30, 'on its shown picture');
+    assert.ok(pC.holds.length > 0, 'and the heard tile with it');
+    // B makes no progress at all: after 3 s it stops holding the group.
+    frames(80, 40);
+    const stalled = pA.holds.length;
+    frames(10, 40);
+    assert.strictEqual(pA.holds.length, stalled, 'a follower stalled for 3 s holds no more');
+    // B moves again (and lags): it holds again; caught up (in step with the clock): it lets go.
+    pB.frozen = false;
+    pB.shownCount++;
+    frames(1, 40);
+    assert.ok(pA.holds.length > stalled, 'progress holds again while it lags');
+    pB.frame = pA.frame;
+    pB.shownCount++;
+    const caught = pA.holds.length;
+    frames(5, 40);
+    assert.strictEqual(pA.holds.length, caught, 'caught up: nothing is held');
+    // Paused: no lockstep.
+    app.ui.dispatch('playPause');
+    pB.frozen = true;
+    frames(5, 40);
+    assert.strictEqual(pA.holds.length, caught);
+  }, {
+    cfg: {
+      clips: [
+        { id: 'A', name: 'a.mp4', fps: 30, frames: 600 },
+        { id: 'B', name: 'b.mp4', fps: 30, frames: 600 },
+        { id: 'C', name: 'c.mp4', fps: 30, frames: 600 },
+      ],
+      tiles: ['A', 'B', 'C'],
+    },
+    createPlayer: syncedPlayer,
     raf: true,
   });
 });

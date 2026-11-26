@@ -714,6 +714,12 @@
      * @type {Map<string, number>}
      */
     const endedAt = new Map();
+    /**
+     * The target a paused, settled tile was last sought to because it showed another frame (reconcile on a frame):
+     * one such seek per target. Forgotten when the tile plays.
+     * @type {Map<string, number>}
+     */
+    const corrected = new Map();
     const clockIdOf = (/** @type {any} */ t) => (t.clockId && t.tiles.includes(t.clockId) ? t.clockId : t.tiles[0]);
     /**
      * The shared clock frame the clock decoder's own frame stands for: shownFrame's inverse in the adapter, so a frame
@@ -735,9 +741,10 @@
       if (disposed || !ui) return;
       const t = S.getTab(ui.getState());
       if (id !== clockIdOf(t) || !Number.isFinite(frame)) return;
-      // A seek took the timeline outside the clock's own clip (its offset): its decoder stayed on its last picture
-      // and must not pull the bar back there.
-      if (targetOf(t, id) === null) return;
+      // Compare: a seek took the timeline outside the clock's own clip (its offset): its decoder stayed on its last
+      // picture and must not pull the bar back there. A single video's frames are the timeline, whatever its length
+      // says (a sound-only file counts frames at a default rate).
+      if (t.tiles.length >= 2 && targetOf(t, id) === null) return;
       // The clock decoder's frame on the shared timeline (its own sync offset taken off), inside the timeline: a
       // clock with a negative offset at its end must not push the bar past its last frame.
       const max = Number(t.maxFrame) > 0 ? Number(t.maxFrame) : Infinity;
@@ -777,7 +784,15 @@
           try { fp.pause(); } catch { /* closing */ }
         }
       }
-      if (typeof ui.onDecoderEnded === 'function') { ui.onDecoderEnded({ natural }); return; }
+      if (typeof ui.onDecoderEnded === 'function') {
+        // The controller moves the bar to the timeline's end (its last frame by the duration, which can lie past the
+        // decoder's last picture when the sound outlasts it): the decoder's own doing, only noted (driveDecoders), not
+        // a seek that would take the decoder there and lose its end. Loop and A-B restarts are explicit transport
+        // seeks (playing: true), which pass.
+        fromClock = true;
+        try { ui.onDecoderEnded({ natural }); } finally { fromClock = false; }
+        return;
+      }
       // A controller without onDecoderEnded: the bar stops playing (its decoders are paused already).
       if (t.playing && typeof S.togglePlay === 'function') ui.setState(S.togglePlay(ui.getState()));
     }
@@ -913,7 +928,7 @@
       }
       pump();
       // Every frame: a decoder that stopped or started on its own (its end, a recovered stall) is put back in line.
-      if (ui && !disposed) reconcile(S.getTab(ui.getState()), { tick: true });
+      if (ui && !disposed) reconcile(S.getTab(ui.getState()), { tick: true, now });
       if (painted && ui && !disposed) {
         ui.render();
         // A paused frame change reads the pixel under the pointer again (not every frame while playing: a GPU read).
@@ -958,6 +973,16 @@
       const s = adapter.shownFrame(id, frame, S.getOffset ? S.getOffset(t, id) : null, t.fps);
       return s && s.frame !== null && s.frame !== undefined ? s.frame : null;
     }
+    /**
+     * The frame reconcile sends `id`'s decoder to: targetOf, or in a single video, where nothing is outside the
+     * clip, the timeline's frame itself when the clip's length disagrees (a sound-only file: its frames are counted at a
+     * default rate; the decoder keeps to its own end).
+     * @param {any} t @param {string} id @param {number} frame
+     */
+    function decoderTarget(t, id, frame) {
+      const target = targetOf(t, id, frame);
+      return target === null && t.tiles.length < 2 ? Math.max(0, Math.round(Number(frame) || 0)) : target;
+    }
     /** Whether the decoder plays (null: it cannot say). @param {any} p */
     const playingOf = (p) => {
       try { return typeof p.isPlaying === 'function' ? !!p.isPlaying() : typeof p.playing === 'boolean' ? p.playing : null; } catch { return null; }
@@ -996,9 +1021,7 @@
      * @param {string} id @param {any} p
      */
     function followerClock(id, p) {
-      const G2 = W('VpeStepGoal');
-      const follow = G2 && typeof G2.followerTime === 'function' ? G2.followerTime
-        : (/** @type {number} */ ct, /** @type {number} */ co, /** @type {number} */ to, /** @type {number} */ r) => ct - co + to + 0.25 / r;
+      const follow = followerTimeFn();
       return () => {
         const st = p.syncState();
         if (disposed || !ui) return st.pauseT;
@@ -1008,10 +1031,69 @@
         if (!c || c === p || st.startT === null || typeof c.syncState !== 'function') return st.pauseT;
         const cs = c.syncState();
         if (cs.startT === null) return st.pauseT;
-        // The clock's picture time once its seek is done (media/compare-sync.js clockPosition).
-        const clockRel = c.rel(cs.shownT !== null && cs.seekTarget === null ? cs.shownT : c.now());
-        return st.startT + follow(clockRel, offsetSecOf(t, cid, cs.fps), offsetSecOf(t, id, st.fps), st.fps);
+        return st.startT + follow(clockPosition(c, cs), offsetSecOf(t, cid, cs.fps), offsetSecOf(t, id, st.fps), st.fps);
       };
+    }
+    /** media/stepgoal.js followerTime (or the same sum when it is not loaded). */
+    function followerTimeFn() {
+      const G2 = W('VpeStepGoal');
+      return G2 && typeof G2.followerTime === 'function' ? G2.followerTime
+        : (/** @type {number} */ ct, /** @type {number} */ co, /** @type {number} */ to, /** @type {number} */ r) => ct - co + to + 0.25 / r;
+    }
+    /** The clock decoder's picture time once its seek is done, else its running time. @param {any} c @param {any} cs */
+    const clockPosition = (c, cs) => c.rel(cs.shownT !== null && cs.seekTarget === null ? cs.shownT : c.now());
+
+    // ---- lockstep: a follower that falls behind holds the clock (and the sound) until it catches up ----
+    /** A lagging follower that shows no progress for this long stops holding the group (a seek that never lands). */
+    const LOCK_STALL_MS = 3000;
+    /** Per lagging follower decoder: its progress mark and since when it has not changed. @type {Map<any, { mark: string, since: number }>} */
+    const stalls = new Map();
+    /** The clock decoder and its seek generation the stalls were measured against. */
+    let lockClock = /** @type {any} */ (null);
+    let lockGen = -1;
+    /**
+     * While playing, a follower more than max(0.12 s, 2 frames) behind the clock's picture (a slow 4K HEVC tile in the
+     * built-in decoder next to an H.264 clock) holds the clock on its picture, and the heard tile with it, so the
+     * pictures stay together instead of the clock running away. One that makes no progress for LOCK_STALL_MS stops
+     * holding. Only decoders that report their sync state (media/engine.js syncState / holdAt) take part.
+     * @param {any} t @param {boolean} playing @param {number} [now]
+     */
+    function holdLagging(t, playing, now) {
+      const cid = clockIdOf(t);
+      const c = players.get(cid);
+      if (!playing || t.tiles.length < 2 || !c || typeof c.syncState !== 'function' || typeof c.holdAt !== 'function'
+        || typeof c.rel !== 'function' || playingOf(c) !== true) { stalls.clear(); return; }
+      const cs = c.syncState();
+      if (cs.startT === null) return;
+      if (c !== lockClock || cs.gen !== lockGen) { lockClock = c; lockGen = cs.gen; stalls.clear(); }
+      const clockRel = clockPosition(c, cs);
+      const follow = followerTimeFn();
+      const at = Number.isFinite(now) ? /** @type {number} */ (now) : Date.now();
+      let hold = false;
+      for (const id of t.tiles) {
+        const p = players.get(id);
+        if (!p || id === cid) continue;
+        if (typeof p.syncState !== 'function' || playingOf(p) !== true || targetOf(t, id) === null) { stalls.delete(p); continue; }
+        const st = p.syncState();
+        if (st.startT === null) continue;
+        const due = st.startT + follow(clockRel, offsetSecOf(t, cid, cs.fps), offsetSecOf(t, id, st.fps), st.fps);
+        const done = st.eof && st.nextQueuedT === null;
+        // Its next picture is not due yet (after a seek, a gap, another frame grid): it shows what is due.
+        const waitsForClock = st.seekTarget === null && st.nextQueuedT !== null && st.nextQueuedT > due + 0.25 / st.fps;
+        const lag = st.seekTarget !== null || st.shownT === null ? Infinity : due - st.shownT;
+        if (done || waitsForClock || !(lag > Math.max(0.12, 2 / st.fps))) { stalls.delete(p); continue; }
+        const mark = `${st.gen}|${st.shownCount}|${st.nextQueuedT}|${st.seekTarget}`;
+        const seen = stalls.get(p);
+        if (!seen || seen.mark !== mark) { stalls.set(p, { mark, since: at }); hold = true; }
+        else if (at - seen.since <= LOCK_STALL_MS) hold = true;
+      }
+      // Not while the clock's own picture is about to jump (a seek within its decoded frames): holding at the old
+      // picture would take its time back there.
+      if (!hold || cs.shownT === null || cs.seekTarget !== null || cs.current === false) return;
+      c.holdAt(cs.shownT);
+      const sid = soundIdNow();
+      const s = sid && sid !== cid ? players.get(sid) : null;
+      if (s && playingOf(s) === true && typeof s.holdAt === 'function' && typeof s.now === 'function') s.holdAt(s.now());
     }
     /**
      * In Compare every decoder but the clock's follows the clock decoder's time (where the decoder can: media/engine.js
@@ -1034,16 +1116,18 @@
     /**
      * Make every decoder of the tab agree with it, from whatever each decoder does now. Idempotent: it runs on every
      * change (onChange), transport command (onTransport) and animation frame (tick), and only acts on a difference.
-     *  - A tile outside its clip (target null) never plays.
+     *  - A tile outside its clip (target null) never plays (Compare only: a single video is never outside its clip).
      *  - Every other tile plays exactly when the tab plays. One that stopped itself (its end) stays on its last picture
      *    while its target is there or later; when the tab plays at an earlier target it is sought there first, so
      *    play() never starts it over from 0. One that was outside its clip is sought when it comes in.
      *  - Seeks: `seek` sends a tile whose target differs from the frame it was last sought to, `force` every tile in
      *    its clip; `record` only notes the targets (the clock decoder moved itself, the followers follow it).
+     *  - On a frame (`tick`): a paused, settled follower that shows another frame than its target is sought there, and
+     *    while playing a follower that lags holds the clock (holdLagging). `now` is the frame's time.
      * `frame` / `playing` override the tab's (a transport command arrives before its state change).
      * @param {any} t
      * @param {{ seek?: boolean, record?: boolean, force?: boolean, tick?: boolean, frame?: number, playing?: boolean,
-     *   ids?: string[] }} [o]
+     *   ids?: string[], now?: number }} [o]
      */
     function reconcile(t, o = {}) {
       if (disposed) return;
@@ -1055,7 +1139,7 @@
         // A decoder reopening (restartPlayer) is put in line once its first picture shows (tick's pendingRestore).
         if (!p || (o.tick && pendingRestore.has(id))) continue;
         try {
-          const target = targetOf(t, id, frame);
+          const target = decoderTarget(t, id, frame);
           const before = sought.has(id) ? sought.get(id) : undefined;
           let movedNow = false;
           if (o.record) sought.set(id, target);
@@ -1067,8 +1151,18 @@
           if (!playing || target === null) {
             // Paused tab, or outside its clip: it must not play (nor be heard from 0 behind "No frame").
             if (is === true || (is === null && !o.tick)) { if (typeof p.pause === 'function') p.pause(); }
+            else if (o.tick && target !== null && !movedNow && t.tiles.length >= 2 && corrected.get(id) !== target
+              && !busy(p)) {
+              // Compare, paused and settled on another frame than its target (a follower that ran on its own clock,
+              // one whose last seek landed elsewhere, a clock that played past the timeline's end): sought there, once
+              // per target so a decoder that cannot reach it never seeks on every frame. A single video's frame is
+              // the timeline itself (pump).
+              const now = frameOf(p);
+              if (Number.isFinite(now) && now !== target) { corrected.set(id, target); seekTo(id, p, target); }
+            }
             continue;
           }
+          corrected.delete(id);
           if (is === true || (is === null && o.tick) || typeof p.play !== 'function') continue;
           if (!movedNow) {
             // Where it stopped itself, or its last frame: play() there would start it over from 0.
@@ -1081,7 +1175,9 @@
           p.play();
         } catch (err) { log(`decoder ${id}: ${err && /** @type {any} */ (err).message || err}`); }
       }
-      if (!o.tick) scheduleTick();
+      if (o.tick) {
+        try { holdLagging(t, playing, o.now); } catch (err) { log(`lockstep: ${err && /** @type {any} */ (err).message || err}`); }
+      } else scheduleTick();
     }
 
     /**
@@ -1095,7 +1191,7 @@
       if (key === setupKey) return;
       const tilesChanged = setupKey === null || setupKey.slice(0, setupKey.lastIndexOf('|')) !== tilesKey;
       setupKey = key;
-      for (const m of [sought, endedAt]) for (const id of [...m.keys()]) if (!t.tiles.includes(id)) m.delete(id);
+      for (const m of [sought, endedAt, corrected]) for (const id of [...m.keys()]) if (!t.tiles.includes(id)) m.delete(id);
       if (!tilesChanged) return;
       const loop = effectiveLoop(t);
       for (const id of t.tiles) {
@@ -1119,14 +1215,16 @@
     }
 
     /**
-     * Play pressed with the clock decoder on its last frame: the timeline starts over (media/engine.js play() would
-     * restart that one decoder alone). The clock goes back to its start, every other tile to its frame there.
+     * Play pressed with the clock decoder on its last frame, or where it stopped itself (its end: sound that outlasts
+     * the picture stops after the last frame, which is then not the clip's last by its duration): the timeline starts
+     * over (media/engine.js play() would restart that one decoder alone). The clock goes back to its start, every
+     * other tile to its frame there.
      * @param {any} t
      */
     function restartAtEnd(t) {
       const cid = clockIdOf(t);
       const p = players.get(cid);
-      if (!p || playingOf(p) === true || !atEnd(p)) return false;
+      if (!p || playingOf(p) === true || !(atEnd(p) || endedAt.has(cid))) return false;
       endedAt.delete(cid);
       if (typeof p.seekTime === 'function') p.seekTime(0);
       else if (typeof p.seekFrame === 'function') p.seekFrame(0);
@@ -1995,6 +2093,7 @@
       }
       disposePlayer(id);
       sought.delete(id);
+      corrected.delete(id);
       endedAt.delete(id);
       const p = ensurePlayer(id);
       if (!p || !ui) return p;
@@ -2078,6 +2177,7 @@
       if (typeof createPlayer !== 'function' || [...players.values()].some(isReady)) markReady();
       setupKey = null;
       sought.clear();
+      corrected.clear();
       endedAt.clear();
       driveDecoders(S.getTab(ui.getState()));
     }

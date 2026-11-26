@@ -470,5 +470,39 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     assert.deepStrictEqual(posts.map((m) => m.type), ['replaceTile']);
   }
 
+  { // session.batch holds back only tile changes and notices: replies to the old page's requests (blocks, native
+    // frames, thumbnails, exact frames) reach it at once, and none is sent on to the new page after the render.
+    const input = { cspSource: 'c:', uri: (...p) => p.join('/'), base: 'b', loader: 'l.js', nonce: 'N', cfg: {} };
+    const { s, posts } = make({ renderHtml: () => input });
+    s.render();
+    await s.onMessage({ type: 'ready' });
+    assert.ok(s.addClip(clip('b.mp4')));
+    posts.length = 0;
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const done = s.batch(async () => {
+      s.replaceClip('b.mp4', clip('c.mp4'));
+      s.post({ type: 'block', pos: 0, data: 'x' });
+      assert.ok(s.postNativeReply('a.mp4', { type: 'frame', n: 1 }));
+      s.post({ type: 'thumb', id: 1 });
+      s.post({ type: 'exactFrame', id: 2 });
+      s.post({ type: 'toast', text: 'later', ms: 1 });
+      await gate; // the old page keeps asking while the batch waits (a reload re-preparing its clips)
+      s.post({ type: 'block', pos: 1, data: 'y' });
+    });
+    assert.deepStrictEqual(posts.map((m) => m.type), ['block', 'nd', 'thumb', 'exactFrame'],
+      'replies reach the old page at once; no replaceTile, the toast waits');
+    release();
+    await done;
+    assert.deepStrictEqual(posts.map((m) => m.type), ['block', 'nd', 'thumb', 'exactFrame', 'block']);
+    assert.strictEqual(s.ready, false, 'the batch rendered a new page');
+    // A reply that comes after the render but before the new page is ready is for the old page: never delivered.
+    s.post({ type: 'block', pos: 2, data: 'z' });
+    posts.length = 0;
+    await s.onMessage({ type: 'ready' });
+    assert.deepStrictEqual(posts.map((m) => m.type), ['sessionState', 'toast'], 'the new page gets its state and the notice only');
+    assert.strictEqual(toasts(posts)[0], 'later');
+  }
+
   console.log('unified_session_test: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

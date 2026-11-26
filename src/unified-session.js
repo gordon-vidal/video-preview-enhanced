@@ -86,6 +86,12 @@ const TITLE_NAMES = 3;
 const STATE_MESSAGES = new Set(['openVideo', 'replaceTile']);
 /** What a batch (session.batch) drops: the tile changes its closing render carries in the new page's sessionState. */
 const BATCH_DROPPED = new Set([...STATE_MESSAGES, 'removeVideo']);
+/**
+ * Replies to a page's requests and its decoders' data (file blocks, native frames and sound, thumbnails, exact frames,
+ * native tile sizes): they reach the page that asked at once, also inside a batch, and are never queued: a page that is
+ * not ready yet asked for none of them (the one that did is gone), so they would only reach the wrong page.
+ */
+const REPLY_MESSAGES = new Set(['block', 'nd', 'nda', 'ndv', 'thumb', 'exactFrame', 'resize']);
 
 const SOURCE_KINDS = new Set(['file', 'url', 'sequence']);
 const AB_KINDS = new Set(['exportRange', 'clipRange', 'ffmpegRange', 'exportFrame']);
@@ -239,7 +245,10 @@ function createUnifiedSession(deps) {
   let ready = false;
   /** @type {HostToPageMessage[]} posts before the page is ready (toasts): sent on 'ready' */
   let queued = [];
-  /** Open session.batch calls: while > 0 tile changes are not posted one by one, other posts wait for the new page. */
+  /**
+   * Open session.batch calls: while > 0 tile changes are not posted one by one, other posts (toasts) wait for the new
+   * page, replies (REPLY_MESSAGES) go on to the old one.
+   */
   let batchDepth = 0;
   /** @type {Map<string, { w: number, h: number }>} */
   const tileSizes = new Map();
@@ -280,12 +289,13 @@ function createUnifiedSession(deps) {
   /** @param {HostToPageMessage} m */
   function post(m) {
     if (disposed) return;
-    if (batchDepth > 0) {
+    const reply = REPLY_MESSAGES.has(m.type);
+    if (batchDepth > 0 && !reply) {
       if (!BATCH_DROPPED.has(m.type)) queued.push(m);
       return;
     }
     if (!ready) {
-      if (!STATE_MESSAGES.has(m.type)) queued.push(m);
+      if (!STATE_MESSAGES.has(m.type) && !reply) queued.push(m);
       return;
     }
     send(m);
@@ -642,8 +652,9 @@ function createUnifiedSession(deps) {
   /**
    * A host transaction: the clip changes `fn` makes (addClip, replaceClip, reloadClip, removeClip ...) post nothing
    * one by one; the page is set once at the end (render), and its 'ready' sessionState carries them all. Other posts
-   * made meanwhile (toasts) wait for that page. `fn` may be async: the batch ends when its promise settles, also on a
-   * failure (the changes made until then still show). Nested batches render once, at the outermost end.
+   * made meanwhile (toasts) wait for that page. Replies to the old page's requests (REPLY_MESSAGES: blocks, native
+   * frames, thumbnails, exact frames) reach it at once, as it lives until the render, and never the new page. `fn`
+   * may be async: the batch ends when its promise settles, also on a failure (the changes made until then still show). Nested batches render once, at the outermost end.
    * @template T
    * @param {() => T} fn
    * @returns {T}

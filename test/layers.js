@@ -218,8 +218,7 @@ const unit = [
   { file: 'test/unit/frame_player_test.js', sources: ['media/frame-player.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
   { file: 'test/unit/gl_renderer_test.js', sources: ['media/gl-renderer.js', 'media/engine.js', 'media/compare-compositor.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
   { file: 'test/unit/scrub_drag_test.js', sources: ['media/range-drag.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
-  { file: 'test/unit/stepgoal_test.js', sources: ['media/stepgoal.js', 'media/compare-sync.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
-  { file: 'test/unit/compare_sync_test.js', sources: ['media/compare-sync.js', 'media/engine.js', 'media/stepgoal.js'] },
+  { file: 'test/unit/stepgoal_test.js', sources: ['media/stepgoal.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
   { file: 'test/unit/timefmt_test.js', sources: ['media/timefmt.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
   { file: 'test/avi_test.js', args: ['test/media/cases/s_mjpeg.avi'], media: ['s_mjpeg.avi'], needs: ['ffmpeg'], sources: ['src/avi.js'] },
 ].filter((e) => fs.existsSync(path.join(ROOT, e.file)));
