@@ -73,13 +73,20 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 #message { font-size: 1.15em; }
-/* Over the (black) picture, the theme's text colour can be dark: white with the shadow reads on any picture. */
-#stage:has(> canvas:not([hidden])) #overlay { color: #fff; }
+/* One status line per Compare tile ("A: Opening…") in the unified page (media/player-ui-lifecycle.js renderMessage). */
+#overlay .overlay-line { max-width: 46em; line-height: 1.35; overflow-wrap: anywhere; }
+/* An error stays readable above the tiles' hover controls (.ov, z-index 4) and keeps long paths inside the stage. */
+#overlay.error { z-index: 5; }
+#overlay.error #message { max-width: 46em; overflow-wrap: anywhere; }
+/* Over the (black) picture, the theme's text colour can be dark: white with the shadow reads on any picture.
+   The unified page draws into the tiles' canvases (#cells .cell > canvas), not the stage's own #canvas. */
+#stage:has(> canvas:not([hidden])) #overlay, #stage:has(> #cells > .cell > canvas) #overlay { color: #fff; }
 /* A video is dragged over the player: compare with it (media/player.js, key D's twin). */
 #dropHint { position: absolute; inset: 12px; display: flex; align-items: center; justify-content: center; border: 2px dashed var(--vscode-focusBorder); border-radius: 8px; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 1.3em; pointer-events: none; z-index: 5; }
 #dropHint[hidden] { display: none; }
 #hint { opacity: 0.8; max-width: 46em; }
-#action {
+/* #overlay .overlay-action: the same button when the unified page creates it (media/player-ui-lifecycle.js). */
+#action, #overlay .overlay-action {
   pointer-events: auto;
   margin-top: 8px;
   padding: 6px 14px;
@@ -90,8 +97,8 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
   color: var(--vscode-button-foreground);
   background: var(--vscode-button-background);
 }
-#action:hover { background: var(--vscode-button-hoverBackground); }
-#action:disabled { opacity: 0.7; cursor: default; }
+#action:hover, #overlay .overlay-action:hover { background: var(--vscode-button-hoverBackground); }
+#action:disabled, #overlay .overlay-action:disabled { opacity: 0.7; cursor: default; }
 
 #toast {
   --toast-top: 12px;
@@ -339,6 +346,22 @@ body.idle { cursor: none; }
   z-index: 2;
 }
 #thumb canvas { display: block; background: #000; }
+/* The unified page's hover thumbnail: one canvas in #seekRow, just before #tip (media/player-ui.js), drawn by the engine
+   and placed by its left (the pointer). The same frame as #thumb, without the wrapper. */
+#seekRow canvas.seek-thumb {
+  position: absolute;
+  bottom: 42px;
+  transform: translateX(-50%);
+  max-width: none;
+  max-height: none;
+  border-radius: 6px;
+  background: #000;
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-editorWidget-border, transparent));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 2;
+}
+#seekRow canvas.seek-thumb[hidden] { display: none; }
 /* ---- xray: Codec X-ray strip (media/xray.js) ---- */
 #xray, #seekRow { --xray-inset: 8px; }
 #xray { position: relative; height: 46px; cursor: crosshair; }

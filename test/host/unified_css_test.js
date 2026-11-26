@@ -1,0 +1,227 @@
+'use strict';
+// node test/run.js unit --grep unified_css: media/player.css and media/compare.css loaded together, as the unified page
+// (src/unified-html.js UNIFIED_CSS) and the mock-up harness (tools/mockup/render.js) do. One video has no body.compare;
+// Compare (two or more) has. Checks: both files parse (balanced braces), the selectors the unified controller's DOM
+// needs exist, and compare.css never restyles the player's own elements unless the rule is scoped to Compare.
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const { UNIFIED_CSS } = require('../../src/unified-html');
+
+const MEDIA = path.join(__dirname, '..', '..', 'media');
+const read = (f) => fs.readFileSync(path.join(MEDIA, f), 'utf8').replace(/^﻿/, '');
+const PLAYER = read('player.css');
+const COMPARE = read('compare.css');
+
+/** Comments out, strings kept (a brace inside `content: '}'` is not a block). */
+const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+
+/** Brace depth never below zero and back to zero at the end, outside strings. @param {string} css */
+function balanced(css) {
+  let depth = 0, quote = '';
+  for (const ch of stripComments(css)) {
+    if (quote) { if (ch === quote) quote = ''; continue; }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '{') depth++;
+    else if (ch === '}' && --depth < 0) return false;
+  }
+  return depth === 0 && !quote;
+}
+
+/** Split at a separator outside (), [] and strings. @param {string} s @param {RegExp} sep one character */
+function splitTop(s, sep) {
+  const out = [];
+  let depth = 0, cur = '', quote = '';
+  for (const ch of s) {
+    if (quote) { cur += ch; if (ch === quote) quote = ''; continue; }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+    if (depth === 0 && sep.test(ch)) { out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  out.push(cur);
+  return out.map((x) => x.trim()).filter(Boolean);
+}
+
+/**
+ * Style rules, flattened out of @media / @supports; @keyframes skipped.
+ * @param {string} css
+ * @returns {{ selectors: string[], body: string, at: string }[]}
+ */
+function rules(css) {
+  const src = stripComments(css);
+  const out = [];
+  let i = 0;
+  const block = (from) => { // index just past the } that closes the { at `from`
+    let depth = 0;
+    for (let j = from; j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}' && --depth === 0) return j + 1;
+    }
+    throw new Error('unbalanced');
+  };
+  const walk = (start, end, at) => {
+    i = start;
+    while (i < end) {
+      const open = src.indexOf('{', i);
+      if (open < 0 || open >= end) break;
+      const prelude = src.slice(i, open).replace(/^[\s;}]+/, '').trim();
+      const close = block(open);
+      if (/^@(media|supports|layer|container)\b/.test(prelude)) {
+        walk(open + 1, close - 1, prelude);
+      } else if (!prelude.startsWith('@')) {
+        out.push({ selectors: splitTop(prelude, /,/), body: src.slice(open + 1, close - 1).trim(), at });
+      }
+      i = close;
+    }
+  };
+  walk(0, src.length, '');
+  return out;
+}
+
+const norm = (s) => s.replace(/\s+/g, ' ').replace(/\s*([>+~])\s*/g, ' $1 ').trim();
+const selectorsOf = (css) => new Set(rules(css).flatMap((r) => r.selectors.map(norm)));
+/** Declarations of the first rule (outside @media) whose selector list holds `sel`. */
+const declsOf = (css, sel) => {
+  const r = rules(css).find((x) => !x.at && x.selectors.map(norm).includes(norm(sel)));
+  assert.ok(r, `no rule for ${sel}`);
+  return Object.fromEntries(splitTop(r.body, /;/).map((d) => {
+    const k = d.indexOf(':');
+    return [d.slice(0, k).trim(), d.slice(k + 1).trim()];
+  }));
+};
+/** Every selector in `css` that `test` accepts (for "some rule styles X"). */
+const anySelector = (css, test) => [...selectorsOf(css)].some(test);
+
+{ // The unified page loads both, player.css first (compare.css overrides on top of it).
+  assert.ok(UNIFIED_CSS.indexOf('player.css') >= 0 && UNIFIED_CSS.indexOf('player.css') < UNIFIED_CSS.indexOf('compare.css'));
+}
+
+{ // Both files parse: braces balance (an unclosed block swallows every rule after it without an error).
+  assert.ok(balanced(PLAYER), 'player.css braces');
+  assert.ok(balanced(COMPARE), 'compare.css braces');
+  assert.ok(!balanced('a { b { }'), 'the check sees an open block');
+  assert.ok(!balanced('a { } }'), 'the check sees a stray close');
+  assert.ok(balanced('a::after { content: "}" }'), 'a brace in a string is text');
+  assert.ok(rules(PLAYER).length > 100 && rules(COMPARE).length > 50, 'both files parse into rules');
+}
+
+{ // The selectors the unified controller's DOM needs (media/player-ui.js, player-ui-lifecycle.js, src/unified-html.js).
+  const has = (css, re, what) => assert.ok(anySelector(css, (s) => re.test(s)), `${what} is styled`);
+  // player.css: one video and the shared overlay, thumbnail, notice and subtitles.
+  has(PLAYER, /(^|[\s>])canvas\.seek-thumb$/, 'canvas.seek-thumb');
+  has(PLAYER, /\.seek-thumb\[hidden\]$/, '.seek-thumb[hidden]');
+  has(PLAYER, /#overlay \.overlay-line$/, '#overlay .overlay-line');
+  has(PLAYER, /^#overlay\.error$/, '#overlay.error');
+  has(PLAYER, /#overlay \.overlay-action$/, '#overlay .overlay-action');
+  has(PLAYER, /#overlay \.overlay-action:hover$/, '#overlay .overlay-action:hover');
+  has(PLAYER, /#overlay \.overlay-action:disabled$/, '#overlay .overlay-action:disabled');
+  has(PLAYER, /^#notice$/, '#notice');
+  has(PLAYER, /^#subs$/, '#subs');
+  // compare.css: the tiles and Compare's controls.
+  has(COMPARE, /^#cells$/, '#cells');
+  has(COMPARE, /^#cells\.dense\b/, '#cells.dense');
+  // #splitter is <div id="splitter" class="splitter">: compare.css styles it by its class (shared with media/compare.js).
+  has(COMPARE, /^(#splitter|\.splitter)$/, '#splitter (.splitter)');
+  has(COMPARE, /^(#splitter|\.splitter)\[hidden\]$/, '#splitter[hidden]');
+  has(COMPARE, /^#divider$/, '#divider');
+  has(COMPARE, /^#menu$/, '#menu');
+  has(COMPARE, /^\.tile-stats$/, '.tile-stats');
+  has(COMPARE, /^\.sync-pill\b/, '.sync-pill');
+  has(COMPARE, /^#stage\.tile-dragging$/, '#stage.tile-dragging');
+  has(COMPARE, /\.cell > canvas$/, "a tile's canvas");
+  has(COMPARE, /^\.cell-border$/, '.cell-border');
+}
+
+{ // The dynamically created overlay button looks exactly like #action (same rule, same declarations).
+  assert.deepStrictEqual(declsOf(PLAYER, '#overlay .overlay-action'), declsOf(PLAYER, '#action'));
+  const a = declsOf(PLAYER, '#overlay .overlay-action');
+  assert.strictEqual(a['pointer-events'], 'auto', 'the button takes clicks inside the click-through overlay');
+}
+
+{ // The seek thumbnail: above #tip, ignores the pointer, hidden by [hidden], the frame of #thumb.
+  const sel = [...selectorsOf(PLAYER)].find((s) => /canvas\.seek-thumb$/.test(s));
+  const t = declsOf(PLAYER, sel);
+  const thumb = declsOf(PLAYER, '#thumb');
+  assert.strictEqual(t.position, 'absolute');
+  assert.strictEqual(t['pointer-events'], 'none');
+  assert.strictEqual(t.bottom, thumb.bottom, 'the same height above the seek bar as #thumb');
+  assert.ok(parseFloat(t.bottom) > parseFloat(declsOf(PLAYER, '#tip').bottom), 'above the time tip');
+  for (const k of ['border', 'border-radius', 'box-shadow', 'transform']) assert.strictEqual(t[k], thumb[k], k);
+  const hid = [...selectorsOf(PLAYER)].find((s) => /\.seek-thumb\[hidden\]$/.test(s));
+  assert.strictEqual(declsOf(PLAYER, hid).display, 'none');
+}
+
+{ // Overlay lines wrap inside the stage; an error sits above the tiles' hover controls (.ov).
+  const line = declsOf(PLAYER, '#overlay .overlay-line');
+  assert.strictEqual(line['overflow-wrap'], 'anywhere');
+  const err = declsOf(PLAYER, '#overlay.error');
+  assert.ok(Number(err['z-index']) > Number(declsOf(COMPARE, '.ov')['z-index']), '#overlay.error above .ov');
+  // White text over the black picture also when the picture is a tile's canvas (the unified page), not #canvas.
+  assert.ok(anySelector(PLAYER, (s) => /^#stage:has\(.*\.cell > canvas\) #overlay$/.test(s)), 'white overlay text over tiles');
+}
+
+{ // compare.css never restyles the player's own elements for one video: a rule whose subject is one of them must be
+  // scoped to Compare (body.compare, a high-contrast body, a Compare-only ancestor, or a #stage state Compare sets).
+  const PLAYER_OWNED = /^(html|body|:root|\*|video|canvas|\[hidden\]|#stage|#canvas|#bar|#row|#toast|#overlay|#message|#hint|#action|#seekRow|#seek|#tip|#notice|#subs|#main|#panel|#sheet|#ctxmenu)(?![\w-])/;
+  const COMPARE_STATE = /#stage\.(tile-dragging|pannable|panning|zoomed|sync-mode)\b/;
+  const COMPARE_ANCESTOR = /(^|[\s>+~])(\.(cell|ov|pill|tile-[\w-]+|sync-pill|nudge|splitter|skeleton|add-pop|cmp-group)\b|#(cells|divider|splitter|menu|cmpGroup)\b)/;
+  const scoped = (sel) => /body\.(compare|vscode-high-contrast(-light)?)\b/.test(sel) || COMPARE_STATE.test(sel)
+    || COMPARE_ANCESTOR.test(splitTop(sel, /[\s>+~]/).slice(0, -1).join(' '));
+  const leaks = [];
+  for (const r of rules(COMPARE)) {
+    for (const s of r.selectors.map(norm)) {
+      const parts = splitTop(s, /[\s>+~]/);
+      const subject = parts[parts.length - 1];
+      if (PLAYER_OWNED.test(subject) && !scoped(s)) leaks.push(`${r.at ? `${r.at} ` : ''}${s}`);
+    }
+  }
+  assert.deepStrictEqual(leaks, [], `compare.css restyles player elements outside Compare:\n${leaks.join('\n')}`);
+  // The checker itself: an unscoped rule on a player element is caught, Compare-scoped ones are not.
+  for (const bad of ['#canvas', 'body', '#stage', '#bar #row', 'canvas', '#stage #toast']) {
+    const parts = splitTop(bad, /[\s>+~]/);
+    assert.ok(PLAYER_OWNED.test(parts[parts.length - 1]) && !scoped(bad), `caught: ${bad}`);
+  }
+  for (const ok of ['body.compare #canvas', '#stage.tile-dragging', '#stage .cell > canvas', 'body.compare #main > #stage']) {
+    assert.ok(scoped(ok), `allowed: ${ok}`);
+  }
+}
+
+{ // compare.css's global rules on the shared names stay where they were: no bare element or :root rules at all.
+  const bare = [...selectorsOf(COMPARE)].filter((s) => /^(html|body|:root|\*|video|canvas|button|input|select|\[hidden\])$/.test(s));
+  assert.deepStrictEqual(bare, []);
+}
+
+{ // One video in the unified page is a single .cell in #cells: it keeps the player's pointer (no grab hand), Compare's
+  // tiles still show it. Every rule that sets cursor: grab on tiles is scoped to body.compare or to a cell with siblings.
+  const grab = rules(COMPARE).filter((r) => /(^|;)\s*cursor:\s*grab\s*(;|$)/.test(r.body))
+    .flatMap((r) => r.selectors.map(norm)).filter((s) => /\.cell\b/.test(s) && !/^#stage\./.test(s));
+  assert.ok(grab.length > 0, 'tiles have a grab cursor in Compare');
+  for (const s of grab) {
+    assert.ok(/^body\.compare\b/.test(s) || /:not\(:only-child\)/.test(s), `grab cursor leaks to one video: ${s}`);
+  }
+  // A tile's canvas fills its cell over player.css's #stage.fit / #stage.zoom picture sizing.
+  const cv = declsOf(COMPARE, '#stage .cell > canvas');
+  assert.strictEqual(cv.width, '100%');
+  assert.strictEqual(cv.height, '100%');
+  assert.strictEqual(cv['max-width'], 'none');
+  assert.strictEqual(cv['max-height'], 'none');
+}
+
+{ // Specificity: the tile canvas rule (1 id, 1 class, 1 type) is not weaker than player.css's #stage.fit canvas and
+  // #stage.zoom canvas (1 id, 1 class, 1 type), and compare.css loads later, so it wins the tie.
+  const spec = (sel) => {
+    const s = sel.replace(/:not\(([^)]*)\)/g, ' $1');
+    return [(s.match(/#[\w-]+/g) || []).length,
+      (s.match(/\.[\w-]+|\[[^\]]*\]|:(?!:)[\w-]+/g) || []).length,
+      (s.replace(/[#.][\w-]+|\[[^\]]*\]|::?[\w-]+(\([^)]*\))?/g, ' ').match(/(^|[\s>+~])[a-z][\w-]*/gi) || []).length];
+  };
+  const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  for (const p of ['#stage.fit canvas', '#stage.zoom canvas']) {
+    assert.ok(selectorsOf(PLAYER).has(p), p);
+    assert.ok(cmp(spec('#stage .cell > canvas'), spec(p)) >= 0, `${p} does not beat a tile's canvas`);
+  }
+}
+
+console.log('unified_css: ok');
