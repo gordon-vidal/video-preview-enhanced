@@ -17,7 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { createUnifiedSession, clipDescriptor, sourceKindOf } = require('./unified-session');
 const { UNIFIED_CSS, UNIFIED_SCRIPTS } = require('./unified-html');
-const { inlineAssetsFor } = require('./player-html');
+const { inlineAssetsFor } = require('./page-assets');
 const { serveBlock, readFileBlock } = require('./read-block');
 const { NativeDecoder } = require('./native');
 const { nativeThumb } = require('./thumbhost');
@@ -822,9 +822,18 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const uris = (picked || []).filter(isViewable);
     /** @type {ViewerClip[]} */
     const out = [];
+    /** @type {string[]} */
+    const failed = [];
     for (const u of uris) {
       try { out.push(await prepareClip(u, prepDeps(u))); }
-      catch (e) { log(`cannot open ${path.basename(u.fsPath)}: ${errText(e)}`); }
+      catch (e) {
+        // The full error (an ENOENT names the path) stays in the host log; the page hears only the file's name.
+        log(`cannot open ${path.basename(u.fsPath)}: ${errText(e)}`);
+        failed.push(path.basename(u.fsPath));
+      }
+    }
+    if (failed.length && !disposed) {
+      toast(failed.length === 1 ? `${failed[0]} cannot be opened.` : `${failed.length} videos cannot be opened.`, 4000);
     }
     return out;
   }

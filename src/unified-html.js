@@ -5,7 +5,7 @@
 // and host adapters. Pure, like src/player-html.js and src/compare.js compareHtml: strings in, string out, so a Node
 // test (test/host/unified_html_test.js) checks the CSP, the script order and the DOM the controller needs. Its
 // host is src/unified-viewer.js (through src/unified-session.js render), which passes the boot script as `entryScript`.
-const { assetTags, frameSourcesOf } = require('./player-html');
+const { assetTags, frameSourcesOf } = require('./page-assets');
 const { barHtml, playFlashHtml } = require('./bar');
 const { folderRailHtml } = require('./folder-rail-html');
 

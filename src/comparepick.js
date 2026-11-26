@@ -10,6 +10,35 @@ const FOLDER_MAX_DEPTH = 16;
 const FOLDER_MAX_DIRS = 1000;
 const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
+/**
+ * The tile letters, 'A'-'P', in order: media/compare-grid.js TILE_KEYS, repeated because this module imports
+ * nothing (.dependency-cruiser.cjs pure-logic-dependencies); test/host/unified_viewer_test.js holds them equal.
+ */
+const TILE_KEYS = 'ABCDEFGHIJKLMNOP';
+/** Videos in one panel at most (the setting compare.maxVideos picks 2-16; 8 by default). */
+const MAX_TILES = TILE_KEYS.length;
+/** Engine keys: 'A'-'P' for the tiles, 'sA' and 'sB' for the scan (of the first two). */
+const SCAN_KEY = /^s[AB]$/;
+/**
+ * The file index of an engine key, or -1 for anything else (a malformed key never means file A).
+ * @param {unknown} key
+ * @returns {number}
+ */
+function fileOfKey(key) {
+  if (typeof key !== 'string' || !(key.length === 1 || SCAN_KEY.test(key))) return -1;
+  return TILE_KEYS.indexOf(key.slice(-1));
+}
+
+/**
+ * Tests: answers the next "Compare with…" quick pick (its items) without showing it. Kept here, with no vscode
+ * dependency, so the quick pick's owner reads it through getPickHook and src/debug-cmd.js sets it.
+ * @type {((items: any[]) => Promise<any>) | null}
+ */
+let pickHook = null;
+/** @param {((items: any[]) => Promise<any>) | null} fn */
+function setPickHook(fn) { pickHook = typeof fn === 'function' ? fn : null; }
+function getPickHook() { return pickHook; }
+
 /** `recent` with `uri` moved to the front (strings, newest first, at most RECENT_MAX). */
 function pushRecent(recent, uri) {
   return [uri, ...(recent || []).filter((u) => u !== uri)].slice(0, RECENT_MAX);
@@ -179,4 +208,5 @@ function planAddToCompare({ videos, compare, player, max, key }) {
 module.exports = {
   pickRows, pushRecent, droppedVideos, folderVideos, collectFolderVideos,
   planAddToCompare, compareTargets, VIDEO_EXT, RECENT_MAX,
+  fileOfKey, MAX_TILES, TILE_KEYS, setPickHook, getPickHook,
 };
