@@ -29,7 +29,7 @@ function make(more = {}) {
 /** The descriptor a clip made by clip() has: no probed facts yet. */
 const desc = (name, more = {}) => ({
   clipId: name, label: name, name, size: 0, duration: 0, fps: 0, frames: 0, width: 0, height: 0, rotation: 0,
-  hasAudio: true, native: false, codec: '', kind: 'file', ...more,
+  hasAudio: true, native: false, codec: '', kind: 'file', sourceKind: 'file', ...more,
 });
 const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.text);
 
@@ -47,7 +47,7 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     assert.deepStrictEqual(titles, ['a.mp4']);
     await s.onMessage({ type: 'ready' });
     assert.deepStrictEqual(posts.shift(), {
-      type: 'sessionState', clips: [desc('a.mp4')], order: ['a.mp4'], capture: false, maxVideos: 4,
+      type: 'sessionState', clips: [desc('a.mp4')], order: ['a.mp4'], capture: false, maxVideos: 4, sourceKind: 'file',
     });
     assert.strictEqual(s.addClip(clip('b.mp4')), true);
     assert.strictEqual(panel.title, 'a.mp4 ↔ b.mp4');
@@ -312,6 +312,100 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     await s.onMessage({ type: 'tiles', tiles: ['a.mp4', 'b.mp4'] });
     assert.deepStrictEqual(s.order, ['a.mp4', 'b.mp4'], 'acknowledged C can be removed');
     assert.strictEqual(s.clips.length, 2);
+  }
+
+  { // The player's remaining messages: each to its callback, with the clip it names (else the first one shown).
+    const calls = [];
+    const rec = (name) => (...a) => { calls.push([name, ...a]); };
+    const { s } = make({
+      onLoadSubs: rec('loadSubs'), onCopyLink: rec('copyLink'), onExportAb: rec('exportAb'), onExactFrame: rec('exact'),
+      onPos: rec('pos'), onAction: rec('action'), onTranscodePref: rec('transcodePref'),
+      onTranscodeResolution: rec('transcodeResolution'), onOriginalTile: rec('originalTile'), onQuality: rec('quality'),
+      onRailAdopted: rec('railAdopted'),
+    });
+    s.addClip(clip('b.mp4'));
+    await s.onMessage({ type: 'loadSubs', clipId: 'b.mp4' });
+    await s.onMessage({ type: 'copyLink', frame: 3, t: 0.12 });
+    await s.onMessage({ type: 'copyLink', clipId: 'gone', frame: 3 });
+    for (const type of ['exportRange', 'clipRange', 'ffmpegRange']) await s.onMessage({ type, clipId: 'b.mp4', range: { a: 1, b: 2 } });
+    await s.onMessage({ type: 'exportFrame', id: 4, frame: 9, data: new Uint8Array(1) });
+    await s.onMessage({ type: 'grabExactFrame', key: 'b.mp4', reqId: 1, t: 2 });
+    await s.onMessage({ type: 'pos', clipId: 'b.mp4', t: 12.5, d: 60 });
+    await s.onMessage({ type: 'pos', t: -1 });
+    await s.onMessage({ type: 'pos', clipId: 'a.mp4', t: 'x' });
+    await s.onMessage({ type: 'action', id: 'fullRes' });
+    await s.onMessage({ type: 'action', id: 7 });
+    await s.onMessage({ type: 'whenSlow', value: 'skip' });
+    await s.onMessage({ type: 'transcodePref', mode: 'off' });
+    await s.onMessage({ type: 'transcodeResolution', height: 720 });
+    await s.onMessage({ type: 'originalTile', clipId: 'b.mp4' });
+    await s.onMessage({ type: 'quality', pick: 'auto' });
+    await s.onMessage({ type: 'railAdopted', id: 2, ok: true });
+    // The first argument: a clip (its id), an export kind or action id (a string), or the message (its mode / id).
+    const first = (a) => (typeof a === 'string' ? a : a.label ? a.id : a.mode || a.id);
+    assert.deepStrictEqual(calls.map((c) => [c[0], first(c[1])]), [
+      ['loadSubs', 'b.mp4'], ['copyLink', 'a.mp4'],
+      ['exportAb', 'exportRange'], ['exportAb', 'clipRange'], ['exportAb', 'ffmpegRange'], ['exportAb', 'exportFrame'],
+      ['exact', 'b.mp4'], ['pos', 'b.mp4'], ['action', 'fullRes'], ['action', 'whenSlow'], ['transcodePref', 'off'],
+      ['transcodeResolution', 'a.mp4'], ['originalTile', 'b.mp4'], ['quality', 'a.mp4'], ['railAdopted', 2],
+    ]);
+    assert.strictEqual(calls.find((c) => c[0] === 'exportAb')[2].id, 'b.mp4', 'the range names its clip');
+    assert.deepStrictEqual(calls.find((c) => c[0] === 'pos')[2], { t: 12.5, d: 60 });
+    assert.deepStrictEqual(s.positionOf('b.mp4'), { t: 12.5, d: 60 });
+    assert.strictEqual(s.positionOf('a.mp4'), null, 'bad positions are not kept');
+    assert.strictEqual(calls.find((c) => c[0] === 'action' && c[1] === 'whenSlow')[2].value, 'skip');
+    assert.strictEqual(s.clipFor({ clipId: 'zzz' }), null);
+    assert.strictEqual(s.clipFor({}).id, 'a.mp4');
+    assert.strictEqual(s.clipFor({ key: 'b.mp4' }).id, 'b.mp4');
+  }
+
+  { // Open target: a frame link / saved position / rail carry go with the first sessionState only; live goto.
+    const { s, posts } = make({
+      initialClip: { ...clip('a.mp4'), kind: 'url', goto: { frame: 5, junk: 1 }, savedPos: { t: 3 } },
+      openTarget: { goto: { t: 1.5, mode: 'paused' }, savedPos: { t: 40, d: 100 }, railCarry: { open: true } },
+    });
+    assert.deepStrictEqual(s.openTarget, { goto: { t: 1.5, mode: 'paused' }, savedPos: { t: 40, d: 100 }, railCarry: { open: true } });
+    await s.onMessage({ type: 'ready' });
+    const st = posts.shift();
+    assert.strictEqual(st.sourceKind, 'url');
+    assert.deepStrictEqual([st.goto, st.savedPos, st.railCarry], [{ t: 1.5, mode: 'paused' }, { t: 40, d: 100 }, { open: true }]);
+    assert.deepStrictEqual(st.clips[0], desc('a.mp4', { kind: 'url', sourceKind: 'url', goto: { frame: 5 }, savedPos: { t: 3, d: 0 } }));
+    assert.strictEqual(s.openTarget, null, 'spent');
+    await s.onMessage({ type: 'ready' });
+    const again = posts.shift();
+    assert.ok(!('goto' in again) && !('railCarry' in again), 'a reloaded page does not jump again');
+    assert.strictEqual(s.goto({ frame: 10, t: 0.4 }), true);
+    assert.deepStrictEqual(posts.pop(), { type: 'goto', frame: 10, t: 0.4 });
+    assert.strictEqual(s.goto({ frame: -1 }), false);
+    assert.strictEqual(s.goto(null), false);
+    assert.strictEqual(s.goto({ t: 2 }, 'a.mp4'), true);
+    assert.deepStrictEqual(posts.pop(), { type: 'goto', t: 2, clipId: 'a.mp4' });
+    s.setOpenTarget({ goto: { bad: 1 } });
+    assert.strictEqual(s.openTarget, null);
+    assert.strictEqual(clipDescriptor({ id: 'q', label: 'q', sourceKind: 'sequence', kind: 'url' }).sourceKind, 'sequence');
+    assert.strictEqual(clipDescriptor({ id: 'q', label: 'q', kind: 'remote' }).sourceKind, 'file');
+  }
+
+  { // reloadClip: the same tile under a new id, at its last position, tile size kept; no webview reload.
+    const { s, posts, panel } = make();
+    s.addClip(clip('b.mp4'));
+    await s.onMessage({ type: 'ready' });
+    await s.onMessage({ type: 'tileSize', clipId: 'b.mp4', w: 320, h: 180 });
+    await s.onMessage({ type: 'pos', clipId: 'b.mp4', t: 7, d: 20 });
+    posts.length = 0;
+    const html = panel.webview.html;
+    assert.strictEqual(s.reloadClip('b.mp4', { ...clip('b.mp4'), size: 99 }), 'clip1', 'the old id is never reused');
+    const r = posts.pop();
+    assert.deepStrictEqual([r.type, r.oldId, r.newId, r.reload, r.clip.size, r.clip.savedPos], ['replaceTile', 'b.mp4', 'clip1', true, 99, { t: 7, d: 20 }]);
+    assert.deepStrictEqual(s.order, ['a.mp4', 'clip1']);
+    assert.deepStrictEqual(s.tileSize('clip1'), { w: 320, h: 180 });
+    assert.deepStrictEqual(s.positionOf('clip1'), { t: 7, d: 20 });
+    assert.strictEqual(s.positionOf('b.mp4'), null);
+    assert.strictEqual(panel.webview.html, html);
+    assert.strictEqual(s.reloadClip('clip1', { ...clip('b.mp4'), id: 'b2' }), 'b2');
+    assert.strictEqual(s.reloadClip('nope', clip('q.mp4')), null);
+    assert.strictEqual(s.reloadClip('b2', clip('a.mp4')), null, 'another shown file');
+    assert.deepStrictEqual(s.order, ['a.mp4', 'b2']);
   }
 
   console.log('unified_session_test: ok');

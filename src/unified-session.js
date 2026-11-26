@@ -52,7 +52,27 @@ const { unifiedHtml } = require('./unified-html');
  * @property {(clip: UnifiedClip, m: PageMessage) => any} [onThumb]
  * @property {(clip: UnifiedClip, m: PageMessage) => any} [onNative]  'nd': the page's native-decoder request for a clip
  * @property {(size: TileSize, clip: UnifiedClip | null) => any} [onTileSize]  the page's decode size (clip: per tile)
+ * @property {(clip: UnifiedClip | null, m: PageMessage, s: UnifiedSession) => any} [onLoadSubs]  "Load subtitles…"
+ * @property {(clip: UnifiedClip, m: PageMessage, s: UnifiedSession) => any} [onCopyLink]  a frame link to the clipboard
+ * @property {(kind: AbKind, clip: UnifiedClip | null, m: PageMessage, s: UnifiedSession) => any} [onExportAb]
+ *   the A-B export protocol: the page's range (exportRange, clipRange, ffmpegRange) or a grabbed frame (exportFrame)
+ * @property {(clip: UnifiedClip, m: PageMessage, s: UnifiedSession) => any} [onExactFrame]  'grabExactFrame'
+ * @property {(clip: UnifiedClip, pos: SavedPos, s: UnifiedSession) => any} [onPos]  the page's position report
+ * @property {(id: string, m: PageMessage, s: UnifiedSession) => any} [onAction]  'action' (and 'whenSlow' as id 'whenSlow')
+ * @property {(m: PageMessage, s: UnifiedSession) => any} [onTranscodePref]
+ * @property {(clip: UnifiedClip | null, m: PageMessage, s: UnifiedSession) => any} [onTranscodeResolution]
+ * @property {(clip: UnifiedClip, m: PageMessage, s: UnifiedSession) => any} [onOriginalTile]  Live transcode -> built-in
+ * @property {(clip: UnifiedClip, m: PageMessage, s: UnifiedSession) => any} [onQuality]  a URL clip's HLS quality pick
+ * @property {(m: PageMessage, s: UnifiedSession) => any} [onRailAdopted]  the page's answer to a 'railHandoff'
+ * @property {OpenTarget | null} [openTarget]  what the first page shows first: a frame link, the saved position, the rail
  * @property {(s: UnifiedSession) => void} [onDispose]
+ *
+ * @typedef {'exportRange' | 'clipRange' | 'ffmpegRange' | 'exportFrame'} AbKind
+ * @typedef {'file' | 'url' | 'sequence'} SourceKind
+ * @typedef {{ frame?: number, t?: number, mode?: string }} GotoTarget
+ * @typedef {{ t: number, d: number }} SavedPos
+ * @typedef {{ goto?: GotoTarget | null, savedPos?: SavedPos | null, railCarry?: any }} OpenTarget
+ * @typedef {ClipDescriptor & { sourceKind: SourceKind, goto?: GotoTarget, savedPos?: SavedPos }} ClipDescriptorPlus
  *
  * @typedef {'active' | 'capture' | 'clips' | 'dispose'} SessionEvent
  * @typedef {ReturnType<typeof createUnifiedSession>} UnifiedSession
@@ -64,6 +84,9 @@ const TITLE_NAMES = 3;
 /** Page state the 'sessionState' message on 'ready' carries anyway: not queued before the page is ready. */
 const STATE_MESSAGES = new Set(['openVideo', 'replaceTile']);
 
+const SOURCE_KINDS = new Set(['file', 'url', 'sequence']);
+const AB_KINDS = new Set(['exportRange', 'clipRange', 'ffmpegRange', 'exportFrame']);
+
 /** @param {unknown} v */
 const isId = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
 
@@ -74,11 +97,43 @@ function fileKeyOf(c) {
 }
 
 /**
+ * A frame link's target as the page takes it (media/player-ui-lifecycle.js cleanGoto): a frame or a time; anything
+ * else is dropped.
+ * @param {any} g @returns {GotoTarget | null}
+ */
+function cleanGoto(g) {
+  if (!g || typeof g !== 'object') return null;
+  /** @type {GotoTarget} */
+  const out = {};
+  if (Number.isSafeInteger(g.frame) && g.frame >= 0) out.frame = g.frame;
+  if (Number.isFinite(g.t) && g.t >= 0) out.t = g.t;
+  if (out.frame === undefined && out.t === undefined) return null;
+  if (typeof g.mode === 'string' && /^[a-z]{1,16}$/i.test(g.mode)) out.mode = g.mode;
+  return out;
+}
+
+/** A position { t, d } in seconds (d: the duration, 0 when unknown), or null. @param {any} p @returns {SavedPos | null} */
+function cleanPos(p) {
+  if (!p || typeof p !== 'object' || !(Number.isFinite(p.t) && p.t >= 0)) return null;
+  return { t: p.t, d: Number.isFinite(p.d) && p.d >= 0 ? p.d : 0 };
+}
+
+/** What a clip plays from: its sourceKind, else its kind, else (and for anything else) a file. @param {any} c @returns {SourceKind} */
+function sourceKindOf(c) {
+  const meta = c && c.meta && typeof c.meta === 'object' ? c.meta : {};
+  for (const v of [c && c.sourceKind, c && c.kind, meta.sourceKind, meta.kind]) {
+    if (SOURCE_KINDS.has(v)) return /** @type {SourceKind} */ (v);
+  }
+  return 'file';
+}
+
+/**
  * What the page may know about a clip: its id, label and probed facts, never its path or URI (the page reads
  * blocks by clip id). A field the clip lacks comes from its meta, if that has it. The numbers (size, duration,
- * fps ...) are what the page's decoders need before they probe (media/player-unified.js createPlayer).
+ * fps ...) are what the page's decoders need before they probe (media/player-unified.js createPlayer). A frame link
+ * (goto) or saved position (savedPos) the clip opens at rides along when it has one.
  * @param {UnifiedClip} c
- * @returns {ClipDescriptor}
+ * @returns {ClipDescriptorPlus}
  */
 function clipDescriptor(c) {
   const meta = c.meta && typeof c.meta === 'object' ? /** @type {Record<string, any>} */ (c.meta) : {};
@@ -89,7 +144,8 @@ function clipDescriptor(c) {
   const num = (k) => { const v = Number(pick(k)); return Number.isFinite(v) && v >= 0 ? v : 0; };
   const codec = pick('codec');
   const kind = pick('kind');
-  return {
+  /** @type {ClipDescriptorPlus} */
+  const d = {
     clipId: c.id, label: c.label, name: c.label,
     size: num('size'), duration: num('duration'), fps: num('fps'), frames: num('frames'),
     width: num('width'), height: num('height'), rotation: num('rotation'),
@@ -97,7 +153,13 @@ function clipDescriptor(c) {
     native: !!pick('native'),
     codec: typeof codec === 'string' ? codec : '',
     kind: typeof kind === 'string' && kind ? kind : 'file',
+    sourceKind: sourceKindOf(c),
   };
+  const g = cleanGoto(pick('goto'));
+  if (g) d.goto = g;
+  const p = cleanPos(pick('savedPos'));
+  if (p) d.savedPos = p;
+  return d;
 }
 
 /**
@@ -110,8 +172,10 @@ function tileSizeOf(m) {
   if (!(w > 0 && h > 0 && Number.isFinite(w) && Number.isFinite(h))) return null;
   /** @type {TileSize} */
   const size = { w, h };
-  for (const k of /** @type {const} */ (['n', 'zoom', 'rate'])) if (Number.isFinite(t[k])) size[k] = t[k];
+  // The grid and fit factor size each native tile's output (src/unified-viewer.js nativeHeightFor).
+  for (const k of /** @type {const} */ (['n', 'cols', 'rows', 'zoom', 'rate', 'factor', 'aspect'])) if (Number.isFinite(t[k])) size[k] = t[k];
   if (typeof t.layout === 'string') size.layout = t.layout;
+  if (typeof t.actual === 'boolean') size.actual = t.actual;
   return size;
 }
 
@@ -161,6 +225,18 @@ function createUnifiedSession(deps) {
   /** @type {{ refreshMembers(): void } | null} */
   let rail = null;
   let title = '';
+  /** @type {Map<string, SavedPos>} each clip's last reported position ('pos'), for a reload in place */
+  const positions = new Map();
+  /** @type {OpenTarget | null} what the next page shows first; sent with its sessionState, then spent */
+  let openTarget = null;
+  /** @param {OpenTarget | null | undefined} t */
+  const setOpenTarget = (t) => {
+    const goto = t ? cleanGoto(t.goto) : null;
+    const savedPos = t ? cleanPos(t.savedPos) : null;
+    const railCarry = t && t.railCarry !== undefined && t.railCarry !== null ? t.railCarry : null;
+    openTarget = !disposed && (goto || savedPos || railCarry) ? { goto, savedPos, railCarry } : null;
+  };
+  setOpenTarget(deps.openTarget);
   /** @type {Set<(e: SessionEvent, s: UnifiedSession) => void>} */
   const listeners = new Set();
 
@@ -202,6 +278,7 @@ function createUnifiedSession(deps) {
       if (panel) panel.title = next;
       if (deps.onTitleChange) deps.onTitleChange(next);
     }
+    for (const id of [...positions.keys()]) if (!clipOf(id)) positions.delete(id);
     if (rail) rail.refreshMembers();
     emit('clips');
   }
@@ -248,6 +325,49 @@ function createUnifiedSession(deps) {
     changed();
     post({ type: 'replaceTile', oldId, newId: c.id, label: c.label, clip: clipDescriptor(c) });
     return true;
+  }
+
+  /**
+   * The same source again (its file changed on disk, or it must be decoded another way), in the tile's place and at
+   * its last position: the page starts a new decoder for it (replaceTile under a new id, reload: true) and the webview
+   * stays. Not a duplicate of the clip it replaces.
+   * @param {string} clipId
+   * @param {Partial<UnifiedClip> & { uri?: UriLike | string }} newClip
+   * @returns {string | null} the new clip id (null: no such clip, or a duplicate of another one)
+   */
+  function reloadClip(clipId, newClip) {
+    if (disposed || !newClip || !clipOf(clipId)) return null;
+    const dup = duplicateOf(newClip, clipId);
+    if (dup) { toast(`${dup.label} is in compare already`, 2000); return null; }
+    const pos = positions.get(clipId);
+    const src = /** @type {Record<string, any>} */ (newClip);
+    // Never the old id (nor another shown one): the page must drop the old decoder and its cached frames.
+    const freshId = isId(newClip.id) && newClip.id !== clipId && !clipOf(/** @type {string} */ (newClip.id));
+    const c = normalize({
+      ...newClip, id: freshId ? newClip.id : undefined,
+      ...(src.savedPos === undefined && pos ? { savedPos: pos } : {}),
+    });
+    clips = clips.map((x) => (x.id === clipId ? c : x));
+    order = order.map((id) => (id === clipId ? c.id : id));
+    if (pendingAdds.delete(clipId)) pendingAdds.add(c.id);
+    const size = tileSizes.get(clipId);
+    tileSizes.delete(clipId);
+    if (size) tileSizes.set(c.id, size);
+    if (pos) positions.set(c.id, pos);
+    changed();
+    post(/** @type {any} */ ({ type: 'replaceTile', oldId: clipId, newId: c.id, label: c.label, clip: clipDescriptor(c), reload: true }));
+    return c.id;
+  }
+
+  /**
+   * The clip a page message is about: its clipId (or key), else the first one shown. An id the session does not show
+   * is no clip (a tile closed meanwhile).
+   * @param {any} m @returns {UnifiedClip | null}
+   */
+  function clipFor(m) {
+    const id = m && (m.clipId !== undefined && m.clipId !== null ? m.clipId : m.key);
+    if (id !== undefined && id !== null) return isId(id) ? clipOf(id) : null;
+    return ordered()[0] || null;
   }
 
   /**
@@ -305,10 +425,20 @@ function createUnifiedSession(deps) {
     switch (m.type) {
       case 'ready': {
         ready = true;
-        send({
+        const first = ordered()[0];
+        /** @type {Record<string, any>} */
+        const state = {
           type: 'sessionState', clips: ordered().map(clipDescriptor),
-          order: [...order], capture, maxVideos,
-        });
+          order: [...order], capture, maxVideos, sourceKind: first ? sourceKindOf(first) : 'file',
+        };
+        // A frame link, the saved position and the rail carried over a reload: for the first page only.
+        if (openTarget) {
+          if (openTarget.goto) state.goto = openTarget.goto;
+          if (openTarget.savedPos) state.savedPos = openTarget.savedPos;
+          if (openTarget.railCarry) state.railCarry = openTarget.railCarry;
+          openTarget = null;
+        }
+        send(/** @type {any} */ (state));
         const q = queued;
         queued = [];
         for (const x of q) send(x);
@@ -362,6 +492,40 @@ function createUnifiedSession(deps) {
       case 'playbackPrefs': return deps.onPlaybackPrefs ? deps.onPlaybackPrefs(m, session) : undefined;
       case 'copyText': return deps.onCopyText ? deps.onCopyText(String(m.text || '')) : undefined;
       case 'saveFrame': return deps.onSaveFrame ? deps.onSaveFrame(m, session) : undefined;
+      case 'loadSubs': return deps.onLoadSubs ? deps.onLoadSubs(clipFor(m), m, session) : undefined;
+      case 'copyLink': {
+        const c = clipFor(m);
+        return c && deps.onCopyLink ? deps.onCopyLink(c, m, session) : undefined;
+      }
+      case 'exportRange':
+      case 'clipRange':
+      case 'ffmpegRange':
+      case 'exportFrame':
+        return deps.onExportAb && AB_KINDS.has(m.type) ? deps.onExportAb(/** @type {AbKind} */ (m.type), clipFor(m), m, session) : undefined;
+      case 'grabExactFrame': {
+        const c = clipFor(m);
+        return c && deps.onExactFrame ? deps.onExactFrame(c, m, session) : undefined;
+      }
+      case 'pos': {
+        const c = clipFor(m);
+        const p = cleanPos(m);
+        if (!c || !p) return undefined;
+        positions.set(c.id, p);
+        return deps.onPos ? deps.onPos(c, p, session) : undefined;
+      }
+      case 'action': return typeof m.id === 'string' && deps.onAction ? deps.onAction(m.id, m, session) : undefined;
+      case 'whenSlow': return deps.onAction ? deps.onAction('whenSlow', m, session) : undefined;
+      case 'transcodePref': return deps.onTranscodePref ? deps.onTranscodePref(m, session) : undefined;
+      case 'transcodeResolution': return deps.onTranscodeResolution ? deps.onTranscodeResolution(clipFor(m), m, session) : undefined;
+      case 'originalTile': {
+        const c = clipFor(m);
+        return c && deps.onOriginalTile ? deps.onOriginalTile(c, m, session) : undefined;
+      }
+      case 'quality': {
+        const c = clipFor(m);
+        return c && deps.onQuality ? deps.onQuality(c, m, session) : undefined;
+      }
+      case 'railAdopted': return deps.onRailAdopted ? deps.onRailAdopted(m, session) : undefined;
       case 'openSettings': return deps.onOpenSettings ? deps.onOpenSettings() : undefined;
       case 'openUrl': return deps.onOpenUrl ? deps.onOpenUrl(m) : undefined;
       case 'external': return deps.onExternal ? deps.onExternal(m) : undefined;
@@ -427,7 +591,23 @@ function createUnifiedSession(deps) {
   }
 
   const session = {
-    addClip, replaceClip, leaveCompare, shouldCapture, onMessage, render, dispose, post, postNativeReply,
+    addClip, replaceClip, reloadClip, leaveCompare, shouldCapture, onMessage, render, dispose, post, postNativeReply,
+    clipFor, setOpenTarget,
+    /** What the next page shows first (null: nothing), until its 'ready' spends it. */
+    get openTarget() { return openTarget; },
+    /** A clip's last reported position, or null. @param {string} id */
+    positionOf: (id) => positions.get(id) || null,
+    /**
+     * A frame link opened on this panel while it is open: the page seeks there, paused.
+     * @param {any} target { frame?, t?, mode? } @param {string} [clipId] the tile it names (default: the page's)
+     * @returns {boolean} posted (false: not a target)
+     */
+    goto(target, clipId) {
+      const g = cleanGoto(target);
+      if (disposed || !g) return false;
+      post(/** @type {any} */ (clipId && isId(clipId) && clipOf(clipId) ? { type: 'goto', ...g, clipId } : { type: 'goto', ...g }));
+      return true;
+    },
     /** @param {boolean} on */
     setCapture(on) { if (!disposed) setCapture(on); },
     /** The panel became (in)active (onDidChangeViewState): the registry prefers the most recently active. @param {boolean} on */
@@ -511,4 +691,6 @@ function createUnifiedRegistry() {
 }
 // checkJs: end
 
-module.exports = { createUnifiedSession, createUnifiedRegistry, titleOf, clipDescriptor, DEFAULT_MAX };
+module.exports = {
+  createUnifiedSession, createUnifiedRegistry, titleOf, clipDescriptor, cleanGoto, cleanPos, sourceKindOf, DEFAULT_MAX,
+};
