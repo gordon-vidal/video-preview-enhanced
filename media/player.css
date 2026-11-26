@@ -170,7 +170,8 @@ body.idle { cursor: none; }
   background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
   border: 1px solid var(--vscode-editorHoverWidget-border, transparent);
   pointer-events: none;
-  z-index: 3;
+  /* Above the open Folder Rail (.rail z-index 5, collapse tab 8) and the seek thumbnail (9). */
+  z-index: 10;
 }
 
 #notice {
@@ -348,7 +349,8 @@ body.idle { cursor: none; }
   border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-editorWidget-border, transparent));
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   pointer-events: none;
-  z-index: 2;
+  /* Above the open Folder Rail (.rail z-index 5, collapse tab 8) so scrubbing previews stay visible. */
+  z-index: 9;
 }
 #thumb canvas { display: block; background: #000; }
 /* The unified page's hover thumbnail: one canvas in #seekRow, just before #tip (media/player-ui.js), drawn by the engine
@@ -364,7 +366,7 @@ body.idle { cursor: none; }
   border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-editorWidget-border, transparent));
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   pointer-events: none;
-  z-index: 2;
+  z-index: 9;
 }
 #seekRow canvas.seek-thumb[hidden] { display: none; }
 /* ---- xray: Codec X-ray strip (media/xray.js) ---- */
