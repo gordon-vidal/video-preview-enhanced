@@ -23,6 +23,7 @@
     "src/player-html.js",
     "src/unified-html.js",
     "src/unified-session.js",
+    "src/unified-viewer.js",
     "src/stream-adapt.js",
     "src/stream-buffer.js",
     "src/associations.js",

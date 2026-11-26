@@ -29,8 +29,8 @@ function settingValues(config) {
   };
 }
 
-// These settings are resolved by Compare or file associations, or are deprecated and ignored.
-const otherDefaults = { advancedMode: false, 'compare.openTogether': true, 'compare.maxVideos': 8, overrideFileIcons: true };
+// These settings are resolved by Compare, the unified viewer's routing or file associations, or are deprecated and ignored.
+const otherDefaults = { advancedMode: false, 'compare.openTogether': true, 'compare.maxVideos': 8, overrideFileIcons: true, unifiedViewer: false };
 assert.deepStrictEqual(resolved, fallback, 'the host fallback and manifest-backed configuration must agree');
 const expected = { ...settingValues(fallback), ...otherDefaults };
 assert.deepStrictEqual(Object.keys(manifest).sort(), Object.keys(expected).map((k) => section + '.' + k).sort());

@@ -1,10 +1,10 @@
 // @ts-check
 'use strict';
-// The unified webview page (docs/notes/player-ui-controller.md, "Next step: one unified page"): one page for one
+// The unified webview page (docs/notes/player-ui-controller.md, "Production wiring"): one page for one
 // video and for a comparison of N, mounted by media/player-ui.js (VpePlayerUi.create) over the production engine
 // and host adapters. Pure, like src/player-html.js and src/compare.js compareHtml: strings in, string out, so a Node
-// test (test/host/unified_html_test.js) checks the CSP, the script order and the DOM the controller needs. Not wired
-// to a webview yet: the Phase 5 cutover plugs it in and passes the thin boot script as `entryScript`.
+// test (test/host/unified_html_test.js) checks the CSP, the script order and the DOM the controller needs. Its
+// host is src/unified-viewer.js (through src/unified-session.js render), which passes the boot script as `entryScript`.
 const { assetTags, frameSourcesOf } = require('./player-html');
 const { barHtml, playFlashHtml } = require('./bar');
 const { folderRailHtml } = require('./folder-rail-html');
@@ -26,7 +26,7 @@ const { folderRailHtml } = require('./folder-rail-html');
  * @property {boolean} [compareOpen]
  * @property {boolean} [folder] the folder capsule and rail (not URLs or image sequences)
  * @property {string} [bodyClass] a class on <body> (media/compare.css scopes its stage rules to body.compare)
- * @property {string} [entryScript] the boot script under media/, loaded last (none until Phase 5 adds one)
+ * @property {string} [entryScript] the boot script under media/, loaded last (media/player-unified.js)
  * @property {string[]} [inlineCss] CSS text to inline in `<style nonce="...">` (no unstyled first paint)
  * @property {Record<string, string>} [inlineScripts] script file name -> source to inline (remote hosts)
  */

@@ -52,9 +52,10 @@ function sanitizePlaybackPrefs(raw, base = DEFAULT_PLAYBACK_PREFS) {
  * @param {{ resolveSetting(o: any): any, resolutionOf(v: any): number }} deps.transcodePolicy
  * @param {Iterable<PageTarget>} deps.sessions         open players
  * @param {Iterable<PageTarget>} deps.compareSessions  open compare panels
+ * @param {Iterable<PageTarget>} [deps.unifiedViewers]  open unified viewers (src/unified-viewer.js)
  */
-function createSettings({ vscode, getState, log, transcodePolicy, sessions, compareSessions }) {
-  const allPages = () => [...sessions, ...compareSessions];
+function createSettings({ vscode, getState, log, transcodePolicy, sessions, compareSessions, unifiedViewers }) {
+  const allPages = () => [...sessions, ...compareSessions, ...(unifiedViewers || [])];
 
   /** Where to write a player preference: the scope that sets it now, so a workspace value doesn't shadow the change. */
   function prefTarget(/** @type {string} */ key) {

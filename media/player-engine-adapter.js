@@ -1,6 +1,6 @@
 // @ts-check
 'use strict';
-// Production EngineAdapter for media/player-ui.js (docs/notes/player-ui-controller.md, "Next step: one unified page").
+// Production EngineAdapter for media/player-ui.js (docs/notes/player-ui-controller.md, "Production wiring").
 // It puts the decoders a page already runs (engine.js players, frame-player.js, the Compare compositor) behind the
 // same contract the mockup's FakeEngine passes (test/host/adapter_contract_test.js), so VpePlayerUi.create() can
 // mount in a production webview without knowing about decoders.

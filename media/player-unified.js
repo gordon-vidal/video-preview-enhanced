@@ -1,6 +1,6 @@
 // @ts-check
 'use strict';
-// The unified page's entry script (docs/notes/player-ui-controller.md, "Next step: one unified page"): the one browser
+// The unified page's entry script (docs/notes/player-ui-controller.md, "Production wiring"): the one browser
 // script src/unified-html.js loads last (`entryScript`). It owns only what no shared module owns: the decoder per clip
 // (a Map clipId -> player), the routing of the host's decoder messages to the right one, and the link between the
 // decoder clock and the controller. Every bit of UI behaviour goes through VpePlayerUi.create() (media/player-ui.js)

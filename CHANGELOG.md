@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Unified viewer (preview, off by default):** the new setting `unifiedViewer` opens video files in one tab that shows one video and grows to a comparison of several and back, in place. With **Capture** on in such a tab, the next video you open joins it instead of opening its own tab. It does not have everything the player has yet (no frame links, subtitles, export, resume or Live transcode); video URLs and image sequences always open in the player.
 - Start / Add to Compare on a folder now follows symlinked subfolders and Docker / remote-mount directory entries (loops are detected), and searches level by level so one huge empty subfolder no longer hides videos in its siblings.
 - **Compare playback and stepping:** seeking forward while playing no longer freezes every video when one of them lands on a picture just after the others (it could wait forever, most often over Remote-SSH); a video that stalls holds the others for 3 s at most; and stepping back after such a seek no longer leaves a video on its old picture.
 - **Compare:** the per-tile ⓘ clip details card has a × close button in its top-right corner (it closes the card like the ⓘ button does). The host log now says per tile why Live transcode was used or skipped, so a Compare that mixes Live transcode and "your GPU (built into VS Code)" tiles can be explained.

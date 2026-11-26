@@ -1,14 +1,14 @@
 // @ts-check
 'use strict';
-// The unified page's host side (docs/notes/player-ui-controller.md, "Next step: one unified page"): one webview
+// The unified page's host side (docs/notes/player-ui-controller.md, "Production wiring"): one webview
 // panel that grows from 1 video to N and back to 1 in place, without a new webview. CompareSession
 // (src/compare.js) replaces its page when a video is added or removed; this coordinator only tells the page
 // what changed (openVideo, replaceTile) and keeps the host's view of it: the clips, their display order, the
 // tab title, the folder rail's "in Compare" marks and whether newly opened videos join this panel (capture).
 //
 // Pure: no vscode, no fs. Every effect is an injected callback, so a Node test drives it
-// (test/host/unified_session_test.js). Not wired yet: the Phase 5 cutover creates sessions from src/extension.js
-// and asks createUnifiedRegistry().routeOpen() before it opens a new tab for a video.
+// (test/host/unified_session_test.js). src/unified-viewer.js gives it those effects for a real panel, and
+// src/extension.js asks createUnifiedRegistry().routeOpen() before a newly opened video gets a tab of its own.
 const { unifiedHtml } = require('./unified-html');
 
 // checkJs: start

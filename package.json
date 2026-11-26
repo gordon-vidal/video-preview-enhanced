@@ -489,6 +489,11 @@
           "default": true,
           "markdownDescription": "Videos that VS Code opens together (several files selected in the Explorer, then **Open With…**, Enter or double-click) open in **one compare view** instead of separate tabs. Opening one video, or videos a moment apart, is not affected. Up to `compare.maxVideos`."
         },
+        "videoPreviewEnhanced.unifiedViewer": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Preview.** Open video files in the unified viewer: one tab that shows one video and grows to a comparison of several and back, in place. With **Capture** on in such a tab, the next video you open joins it instead of opening its own tab. It does not yet have everything the player has (frame links, subtitles, export, resume, Live transcode); video URLs and image sequences always open in the player. Applies to the next video you open."
+        },
         "videoPreviewEnhanced.compare.maxVideos": {
           "type": "integer",
           "default": 8,

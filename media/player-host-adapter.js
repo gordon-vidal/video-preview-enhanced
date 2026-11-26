@@ -1,6 +1,6 @@
 // @ts-check
 'use strict';
-// Production HostAdapter for media/player-ui.js (docs/notes/player-ui-controller.md, "Next step: one unified page"):
+// Production HostAdapter for media/player-ui.js (docs/notes/player-ui-controller.md, "Production wiring"):
 // `post(msg)` goes to the extension host through the webview's vscode API, tagged with this page's `page` / `boot`
 // envelope, and translated from the unified controller's names to what the host of today's page understands;
 // the host's replies arrive on window 'message' and go to `connect(onHostMessage)`. Same contract as the mockup's
@@ -10,7 +10,7 @@
 //   host.connect(ui.onHostMessage);
 //
 // surface: 'player' (src/extension.js single player), 'compare' (src/compare.js) or 'unified' (no translation; the
-// future single page whose host speaks the controller's protocol).
+// unified page, whose host src/unified-session.js speaks the controller's protocol).
 (function (root) {
   // checkJs: start
   /**

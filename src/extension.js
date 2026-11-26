@@ -39,7 +39,9 @@ const proxy = lazy(() => require('./proxy'));
 const { rotationOf, sniffNativeMp4 } = require('./rotation');
 const { sniffNativeMatroska } = require('./sniff-matroska');
 const { EarlyProbeController } = require('./early-probe');
-const { registerCompare, setPickHook } = require('./compare'); // compare mode (src/compare.js)
+const { registerCompare, setPickHook, maxVideos: compareMaxVideos } = require('./compare'); // compare mode (src/compare.js)
+const { createUnifiedRegistry } = require('./unified-session'); // which unified viewer takes a newly opened video
+const unifiedViewer = require('./unified-viewer'); // the opt-in unified viewer's host (one panel, 1 to N videos)
 const { playerHtml, inlineAssetsFor, SCRIPTS: PLAYER_SCRIPTS, CSS: PLAYER_CSS } = require('./player-html'); // the player page's HTML, CSP and script order
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
@@ -97,6 +99,11 @@ let linkSim = null;
 const sessionLink = new LinkSessionMemory();
 const sessions = new Set();
 const compareSessions = new Set(); // open compare panels (src/compare.js)
+// The unified viewer (src/unified-viewer.js; the setting unifiedViewer, off by default): its open panels, the registry
+// that says which one captures a newly opened video, and what it shares with the player and Compare (set in activate).
+const unifiedViewers = new Set();
+const unifiedRegistry = createUnifiedRegistry();
+let unifiedDeps = null;
 const clipExports = new WeakSet();
 /** Sound codecs whose WebCodecs decoder lagged in this VS Code session ('audio-aac', ...): the built-in decoder plays them from then on. */
 const wcFailed = new Set();
@@ -134,7 +141,7 @@ function log(msg) {
 }
 
 const { prefTarget, rememberPlaybackPrefs, prefsOf, config, setSetting } = createSettings({
-  vscode, getState: () => globalState, log, transcodePolicy, sessions, compareSessions,
+  vscode, getState: () => globalState, log, transcodePolicy, sessions, compareSessions, unifiedViewers,
 });
 const { makeDefault, undoDefault, autoDefault, fileIcons } = createAssociations({ vscode, getState: () => globalState, log });
 const {
@@ -144,7 +151,7 @@ const {
 const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
 
 function broadcastFocusMode(active) {
-  for (const sess of [...sessions, ...compareSessions]) sess.post({ type: 'focusMode', active: !!active });
+  for (const sess of [...sessions, ...compareSessions, ...unifiedViewers]) sess.post({ type: 'focusMode', active: !!active });
 }
 setFocusModeListener(broadcastFocusMode);
 
@@ -871,6 +878,8 @@ function activate(context) {
       const handoff = railHandoffs.take(doc.uri.with({ fragment: '' }).toString(), panel.viewColumn);
       // Add mode (docs/notes/compare-ui.md): the video goes into compare, and this new tab closes unused.
       if (!handoff && compareApi && compareApi.claimOpen(doc.uri)) { setTimeout(() => panel.dispose(), 0); return undefined; }
+      // The unified viewer (opt-in): one panel for 1 to N videos; a viewer that captures takes this video instead.
+      if (!handoff && unifiedWanted(doc.uri)) return openUnified(context, doc.uri, panel);
       // Several videos opened at once (an Explorer multi-selection) become one compare (src/burst.js).
       const noted = !handoff && !!compareApi && compareApi.noteOpen(doc.uri, { panel });
       const session = new Session(context, { uri: doc.uri, handoff }, panel);
@@ -953,6 +962,7 @@ function activate(context) {
         const layout = config().railLayout;
         for (const s of sessions) if (s.railAllowed()) s.post({ type: 'rail', op: 'layout', layout });
         for (const c of compareSessions) if (c.railDir && c.railDir()) c.post({ type: 'rail', op: 'layout', layout });
+        for (const v of unifiedViewers) v.post({ type: 'rail', op: 'layout', layout });
       }
       if (Object.keys(PREFS).some((k) => e.affectsConfiguration(`videoPreviewEnhanced.${k}`))
         || e.affectsConfiguration('videoPreviewEnhanced.transcode')
@@ -969,7 +979,7 @@ function activate(context) {
           }
         }
         const msg = { type: 'prefs', prefs: prefsOf(c) };
-        for (const sess of [...sessions, ...compareSessions]) sess.post(msg);
+        for (const sess of [...sessions, ...compareSessions, ...unifiedViewers]) sess.post(msg);
         for (const sess of compareSessions) sess.updateTranscode(msg.prefs);
       }
     }),
@@ -986,7 +996,7 @@ function activate(context) {
 
   // ---- Compare and Add to Compare (src/compare.js) ----
   let testCompareFiles;
-  compareApi = registerCompare(context, {
+  const compareDeps = {
     vscode, log, sessions, compareSessions, nativeTransport, nativeQueue, exportClips, linkSim, remoteAuthority,
     compareOpenChanged: () => { for (const session of sessions) session.sendCompareOpen(); },
     showOpenDialog: logFile ? (options) => {
@@ -1065,8 +1075,22 @@ function activate(context) {
       });
       return { tools: d.use === 'native' ? t : null, probed: pr, method: d.method, methodGuessed: !!d.guessed, maxHeight, messageMaxHeight, reason: d.reason };
     },
-  });
+  };
+  compareApi = registerCompare(context, compareDeps);
   // ---- end compare mode ----
+
+  // ---- the unified viewer (opt-in): the decoder config and native decision Compare's tiles use, per clip ----
+  unifiedDeps = {
+    log, engineCfg: compareDeps.engineCfg, nativeFor: compareDeps.nativeFor, nativeTransport, nativeQueue, rotationOf,
+    libavBuild: () => libavBuild(context.extensionUri), prefs: () => prefsOf(config()), maxVideos: compareMaxVideos,
+    pick: (label, defaultUri, many) => (compareDeps.showOpenDialog || vscode.window.showOpenDialog)({
+      canSelectMany: !!many, openLabel: label, defaultUri, filters: videoPickerOptions().filters,
+    }),
+    setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
+    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : noteFocusModeExited()),
+    rail: { ...compareDeps.rail },
+    debug: !!logFile, remote: !!vscode.env.remoteName,
+  };
 
   // Test hook: with VPE_LOG set, JSON lines appended to <log>.cmd are sent to open players or run as commands.
   createDebugCommands({
@@ -1076,6 +1100,55 @@ function activate(context) {
   }).install(context);
   T_ACTIVATED = Date.now();
   if (logFile) log(`activated: module load ${T_ACTIVATE - T_LOAD} ms, activate() ${T_ACTIVATED - T_ACTIVATE} ms, pid ${process.pid}`);
+}
+
+/**
+ * Whether this video opens in the unified viewer: the setting is on and the lane can show it. A frame link's moment
+ * (a #t= fragment, a pending vscode:// link) and anything that is not a file on disk stay with the shipped player.
+ */
+function unifiedWanted(uri) {
+  if (!unifiedDeps || !unifiedViewer.isViewable(uri) || uri.fragment) return false;
+  if (vscode.workspace.getConfiguration('videoPreviewEnhanced').get('unifiedViewer') !== true) return false;
+  return !pendingGoto.has(uri.toString());
+}
+
+/**
+ * Opens a video file in the unified viewer (src/unified-viewer.js). A viewer whose capture is on takes it into its
+ * own panel, and the tab VS Code just made closes unused; else that tab becomes a viewer. A file the lane cannot
+ * prepare (it vanished, no access) goes to the player, which shows the error.
+ */
+async function openUnified(context, uri, panel) {
+  let gone = false;
+  panel.onDidDispose(() => { gone = true; });
+  const prep = { rotationOf, nativeFor: unifiedDeps.nativeFor, transport: nativeTransport, log };
+  let clip;
+  try {
+    clip = await unifiedViewer.prepareClip(uri, prep);
+  } catch (e) {
+    log(`unified viewer: cannot prepare ${path.basename(uri.fsPath)} (${e && e.message || e}); using the player`);
+    return gone ? undefined : new Session(context, { uri }, panel).show();
+  }
+  if (gone) return undefined;
+  const routed = unifiedRegistry.routeOpen(clip);
+  if (routed.captured) {
+    log(`unified viewer: ${clip.label} ${routed.added ? 'joined' : 'not added to'} ${routed.session.title}`);
+    setTimeout(() => panel.dispose(), 0);
+    return undefined;
+  }
+  let framePort;
+  if (!remoteName() && nativeTransport() !== 'message') {
+    // The CSP needs the selected port before the page is created.
+    try { await frameserver.start(); framePort = frameserver.port; }
+    catch (e) { log(`frame server could not start: ${e.message}`); }
+    if (gone) return undefined;
+  }
+  const viewer = unifiedViewer.createUnifiedViewer({
+    vscode, context, panel, clip, registry: unifiedRegistry, deps: { ...unifiedDeps, framePort },
+  });
+  unifiedViewers.add(viewer);
+  viewer.onDispose = () => unifiedViewers.delete(viewer);
+  viewer.show();
+  return undefined;
 }
 
 function resolveLinkTarget(rawTarget) {

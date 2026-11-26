@@ -87,7 +87,7 @@ const srcsOf = (html, nonce = 'NONCE123') => [...html.matchAll(new RegExp(`<scri
   assert.deepStrictEqual(UNIFIED_SCRIPTS.slice(-2), ['player-engine-adapter.js', 'player-host-adapter.js'], 'adapters last');
 }
 
-{ // entryScript: the Phase 5 boot script loads last; without one the page ends with the adapters.
+{ // entryScript: the boot script loads last; without one the page ends with the adapters.
   const html = unifiedHtml(input({ entryScript: 'player-unified.js' }));
   const srcs = srcsOf(html);
   assert.deepStrictEqual(srcs, [...UNIFIED_SCRIPTS, 'player-unified.js']);
