@@ -407,7 +407,7 @@
       /** @type {PlayerHooks} */
       const hooks = {
         onFrame: (f) => { onPlayerFrame(id, f); markReady(); notePresented(id, f); },
-        onReady: () => { markReady(); tryApplyResume(); if (ui) ui.render(); scheduleTick(); },
+        onReady: () => { markReady(); if (ui) ui.render(); scheduleTick(); },
         onMeta: () => onPlayerMeta(id),
         onEnded: (info) => onPlayerEnded(id, info),
         post: (m) => { if (!disposed) host.post(m); },
@@ -716,6 +716,7 @@
         const prev = Number(p.shownCount) || 0;
         try { p.tick(now); } catch (err) { log(`decoder ${id} tick: ${err && /** @type {any} */ (err).message || err}`); }
         if (!firstFrameLogged || !firstPicturesLogged) notePresented(id);
+        if (pendingResumeSec !== null && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) tryApplyResume();
         const next = Number(p.shownCount) || 0;
         if (next !== prev || (next > 0 && lastShown.get(id) !== next)) {
           lastShown.set(id, next);
