@@ -51,6 +51,10 @@
     "media/player-ui.js",
     "media/player-ui-tiles.js",
     "media/player-ui-input.js",
+    "media/player-ui-tools.js",
+    "media/player-ui-lifecycle.js",
+    "media/player-engine-adapter.js",
+    "media/player-host-adapter.js",
     "media/player.js"
   ],
   "exclude": ["media/libav-vpe"]

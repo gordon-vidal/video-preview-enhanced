@@ -40,7 +40,9 @@ function sanitizeCssForInlineFrame(css) {
 
 /**
  * Shared stage + rail + bar + popup markup used by both the rendered mockup harness and the strict Node DOM
- * fixture (test/host/player_ui_test.js), so the test fixture can never drift from the rendered harness.
+ * fixture (test/host/player_ui_test.js), so the test fixture can never drift from the rendered harness. The stage
+ * carries src/player-html.js's #subs cue layer, #overlay (status / error; hidden here, the fake engine opens at once)
+ * and #notice banner, so the tool and lifecycle controllers run against the same elements as production.
  */
 function stageMarkupHtml() {
   const realBarHtml = barHtml({ compare: false, canCompare: true, compareOpen: false, folder: true });
@@ -48,6 +50,8 @@ function stageMarkupHtml() {
   return `<div id="main">
     <div id="stage" class="fit">
       <div id="cells"></div>
+      <div id="subs" hidden></div>
+      <div id="overlay" hidden><div id="message"></div><div id="hint"></div><button id="action" type="button" hidden></button></div>
       ${playFlashHtml}
       <div class="cap-banner" id="capBanner" hidden>
         <span class="cap-pulse"></span>
@@ -57,6 +61,13 @@ function stageMarkupHtml() {
       <div class="splitter h" id="splitter" hidden><div class="splitter-bar"></div></div>
       <div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" hidden><div class="h">⇄</div></div>
       <div id="toast" hidden aria-hidden="true"></div>
+      <div id="notice" hidden>
+        <span id="noticeText"></span>
+        <button id="noticeAction" type="button"></button>
+        <button id="noticeSettings" class="noticeSecondary" type="button" hidden></button>
+        <button id="noticeHide" class="noticeSecondary" type="button" hidden></button>
+        <button id="noticeClose" type="button" title="Dismiss" aria-label="Dismiss">×</button>
+      </div>
     </div>
     ${realRailHtml}
   </div>
@@ -97,6 +108,10 @@ function buildMockupHtml(opts = {}) {
     'media/folder-rail.js',
     'media/player-ui-tiles.js',
     'media/player-ui-input.js',
+    'media/reduced-res-notice.js',
+    'media/slow-notice.js',
+    'media/player-ui-tools.js',
+    'media/player-ui-lifecycle.js',
     'media/player-ui.js',
     'tools/mockup/fake-engine.js',
     'tools/mockup/fake-host.js',
@@ -394,6 +409,10 @@ ${inlinedScripts}
       VpePlayerUiTiles: globalThis.VpePlayerUiTiles,
       VpePlayerUiInput: globalThis.VpePlayerUiInput,
       CompareGrid: globalThis.CompareGrid,
+      VpePlayerUiTools: globalThis.VpePlayerUiTools,
+      VpePlayerUiLifecycle: globalThis.VpePlayerUiLifecycle,
+      VpeReducedResNotice: globalThis.VpeReducedResNotice,
+      VpeSlowNotice: globalThis.VpeSlowNotice,
     },
     initial: SCENARIOS[INITIAL_KEY],
     container: $('wb'),

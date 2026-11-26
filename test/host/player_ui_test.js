@@ -1274,9 +1274,11 @@ for (const key of Object.keys(SCENARIOS)) {
   assert.deepStrictEqual(findForbiddenIdentifiers('acquireVsCodeApi();', UI_FORBIDDEN), ['acquireVsCodeApi'], 'catches VS Code API leak');
 
   const stateSrc = fs.readFileSync(path.join(ROOT, 'media/player-state.js'), 'utf8');
-  const uiSrc = fs.readFileSync(path.join(ROOT, 'media/player-ui.js'), 'utf8');
   assert.deepStrictEqual(findForbiddenIdentifiers(stateSrc, STATE_FORBIDDEN), [], 'media/player-state.js has zero forbidden references');
-  assert.deepStrictEqual(findForbiddenIdentifiers(uiSrc, UI_FORBIDDEN), [], 'media/player-ui.js has zero forbidden references');
+  for (const f of ['player-ui.js', 'player-ui-tools.js', 'player-ui-lifecycle.js']) {
+    const src = fs.readFileSync(path.join(ROOT, 'media', f), 'utf8');
+    assert.deepStrictEqual(findForbiddenIdentifiers(src, UI_FORBIDDEN), [], `media/${f} has zero forbidden references`);
+  }
 
   // Rendered harness divider is keyboard-reachable and labelled as a slider.
   const renderedHtml = buildMockupHtml({ scenario: 'split-wipe' });
@@ -1291,6 +1293,17 @@ for (const key of Object.keys(SCENARIOS)) {
     const rule = depRules.find((r) => r.name === name);
     assert.ok(rule && rule.severity === 'error' && rule.from && rule.from.path, `.dependency-cruiser.cjs enforces ${name}`);
   }
+  for (const name of ['player-ui-not-to-host-or-engine', 'player-ui-no-core']) {
+    const from = new RegExp(depRules.find((r) => r.name === name).from.path);
+    for (const f of ['player-ui', 'player-ui-tiles', 'player-ui-input', 'player-ui-tools', 'player-ui-lifecycle']) {
+      assert.ok(from.test(`media/${f}.js`), `${name} covers media/${f}.js`);
+    }
+    assert.ok(!from.test('media/player-ui-other.js'), `${name} names its modules`);
+  }
+  // checkJs (tools/check-js.js) covers the controller, its modules and the production adapters.
+  const checked = JSON.parse(fs.readFileSync(path.join(ROOT, 'tsconfig.check.json'), 'utf8')).files;
+  for (const f of ['player-ui.js', 'player-ui-tiles.js', 'player-ui-input.js', 'player-ui-tools.js', 'player-ui-lifecycle.js',
+    'player-engine-adapter.js', 'player-host-adapter.js']) assert.ok(checked.includes(`media/${f}`), `tsconfig.check.json checks media/${f}`);
   // Multi-pointer guard on bindSplitDivider: a second pointer cannot hijack or terminate an active drag.
   {
     const el = createDom('<div id="d" role="slider" tabindex="0"></div>').$('d');
@@ -1318,6 +1331,307 @@ for (const key of Object.keys(SCENARIOS)) {
   assert.ok(!compareSrc.includes('VpePlayerUi.splitKeyRatio('), 'compare.js: the divider keys come with bindSplitDivider');
 }
 
-const ms = Date.now() - T0;
-assert.ok(ms < 5000, `the UI seam is checked in milliseconds, not by playing video (${ms} ms)`);
-console.log(`player_ui_test: ok (${ms} ms, no video decoded)`);
+// ---- 10. Phase 3 and 4 wired into create(): VpePlayerUiTools (notices, inspection, subtitles, frame export) and
+// VpePlayerUiLifecycle (prefs sync, goto / resume, rail handoff, overlay, lifecycle bridge), over the same fixture ----
+const toolWidgets = () => ({
+  ...realWidgets(),
+  VpePlayerUiTools: require('../../media/player-ui-tools'),
+  VpePlayerUiLifecycle: require('../../media/player-ui-lifecycle'),
+  VpeReducedResNotice: require('../../media/reduced-res-notice'),
+  VpeSlowNotice: require('../../media/slow-notice'),
+});
+/** The fake engine plus the optional tool methods a decoder adapter may have (none decodes anything). */
+const toolEngine = (base = createFakeEngine()) => ({
+  ...base,
+  draw() {},
+  statsText: (id) => `stats ${id}`,
+  packetIndex: () => [{ t: 0, key: true }, { t: 1, key: false }, { t: 2, key: true }, { t: 4, key: true }],
+  chapters: () => [{ start: 0, title: 'Intro' }, { start: 5, title: 'Middle' }],
+  pixelAt: (_id, x, y) => ({ text: `rgb(${x},${y},0)` }),
+  cueAt: (_id, t, track) => (t >= 1 && t < 3 ? `cue ${track}` : null),
+  pictureInfo: () => ({ nativeLossy: true, video: { width: 1280, height: 720, sourceWidth: 3840, sourceHeight: 2160 } }),
+});
+/** mount() for the tool and lifecycle wiring; `fn` may be async (the globals stay until it settles). */
+async function mountTools(initial, fn, extra = {}) {
+  const dom = fixtureDom();
+  const GLOBALS = {
+    document: dom.doc, window: dom.win, innerWidth: dom.win.innerWidth, innerHeight: dom.win.innerHeight,
+    matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
+    requestAnimationFrame: () => 0, cancelAnimationFrame: () => {}, Element: FakeElement, HTMLElement: FakeElement, Node: FakeNode,
+  };
+  const savedGlobals = Object.fromEntries(Object.keys(GLOBALS).map((k) => [k, Object.getOwnPropertyDescriptor(global, k)]));
+  Object.assign(global, GLOBALS);
+  try {
+    const engine = extra.engine || toolEngine();
+    const host = createFakeHost({ clips: engine.clips });
+    const docKeys0 = dom.doc.listenerCount('keydown');
+    const winHide0 = dom.win.listenerCount('pagehide');
+    const ui = PUI.create({ doc: dom.doc, win: dom.win, stateApi: S, engine, host, widgets: toolWidgets(), initial, tickMs: 42, ...(extra.env || {}) });
+    host.connect(ui.onHostMessage);
+    ui.render();
+    const tab = () => S.getTab(ui.getState());
+    const key = (k, mods = {}) => dom.doc.body.fire('keydown', { key: k, ...mods });
+    const timer = (ms) => { const i = dom.timers.findIndex((x) => x && x.ms === ms); if (i < 0) return null; const t = dom.timers[i]; dom.timers[i] = null; return t; };
+    const run = (ms) => { const t = timer(ms); assert.ok(t, `a ${ms} ms timer is pending`); t.fn(); };
+    const last = (type) => host.log.filter((m) => m.type === type).pop();
+    const count = (type) => host.log.filter((m) => m.type === type).length;
+    /** One beat of create()'s playback clock (its 42 ms interval). */
+    const clock = () => { const t = dom.timers.find((x) => x && x.ms === 42); assert.ok(t, 'the playback clock runs'); t.fn(); };
+    try {
+      await fn({ dom, ui, host, engine, tab, key, timer, run, clock, last, count, $: dom.$, docKeys0, winHide0 });
+    } finally { ui.dispose(); }
+  } finally {
+    for (const [k, d] of Object.entries(savedGlobals)) { if (d) Object.defineProperty(global, k, d); else delete global[k]; }
+  }
+}
+const tick = () => new Promise((r) => setImmediate(r));
+
+async function phase34() {
+  assert.ok(FIXTURE.includes('id="subs"') && FIXTURE.includes('id="overlay"') && FIXTURE.includes('id="notice"'),
+    'the shared stage has the cue layer, the overlay and the notice banner');
+  assert.ok(/<div id="overlay" hidden>/.test(FIXTURE), 'the mockup overlay starts hidden');
+
+  // Notices: the reduced-resolution offer before an exact tool, the slow-playback hint, Esc after the panels, focus back to Play.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, key, $, dom }) => {
+    const n = ui.parts.notices;
+    assert.ok(n && ui.parts.insp && ui.parts.subs && ui.parts.frameExport, 'the tool controllers are mounted');
+    assert.ok(ui.parts.prefsSync && ui.parts.gotoResume && ui.parts.railCtl && ui.parts.overlay && ui.parts.bridge, 'and the lifecycle ones');
+    key('w');
+    assert.strictEqual($('notice').hidden, false, 'W first offers the full-resolution picture (exactTool)');
+    assert.match($('noticeText').textContent, /^Playing at 1280×720 \(8-bit\)/, 'media/reduced-res-notice.js words it');
+    assert.strictEqual(n.kind(), 'reducedRes');
+    $('noticeAction').fire('click');
+    assert.deepStrictEqual(host.log.filter((m) => m.type === 'action').pop(), { type: 'action', id: 'fullRes' }, 'its action goes to the host');
+    n.hide();
+    assert.strictEqual(n.getDismissals().reducedRes, true, 'any close is remembered');
+    ui.onHostMessage({ type: 'slowPlayback', variant: 'every' });
+    assert.strictEqual(n.kind(), 'slowPlayback');
+    assert.match($('noticeText').textContent, /every frame is shown/);
+    $('noticeAction').focus();
+    key('?');
+    assert.strictEqual(ui.controls.sheetOpen(), true);
+    key('Escape');
+    assert.deepStrictEqual([ui.controls.anyOpen(), $('notice').hidden], [false, false], 'Esc: the sheet goes before the banner');
+    $('noticeAction').focus();
+    key('Escape');
+    assert.strictEqual($('notice').hidden, true, 'the second Esc closes the banner');
+    assert.strictEqual(dom.doc.activeElement, $('play'), 'and the focus goes back to Play');
+    assert.strictEqual(n.getDismissals().slowPlayback, true, 'Esc counts as a close');
+    n.setDismissals({});
+    ui.onHostMessage({ type: 'slowPlayback', variant: 'setupFfmpeg', offerSetup: true });
+    assert.strictEqual(n.kind(), 'slowPlayback');
+    ui.onHostMessage({ type: 'hideSlowPlaybackNotice' });
+    assert.deepStrictEqual([$('notice').hidden, n.getDismissals().slowPlayback], [true, true], 'turned off in Settings: closed and remembered');
+  });
+
+  // Inspection: W, X (one video), Shift+I, Shift+X, { }, PageUp / PageDown, a click with the inspector on, ⚙ › Inspection, Esc order.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, tab, key, $, dom }) => {
+    const insp = ui.parts.insp;
+    ui.parts.notices.setDismissals({ reducedRes: true });
+    assert.strictEqual(key('w').defaultPrevented, true);
+    assert.strictEqual(insp.getState().scopes, 'waveform', 'W: the luma waveform');
+    assert.strictEqual($('toast').textContent, 'Luma waveform');
+    key('x');
+    assert.strictEqual(insp.getState().inspector, 'loupe', 'X: the pixel inspector with one video');
+    const playing = tab().playing;
+    dom.$('cells').querySelector('canvas').fire('click', { clientX: 340, clientY: 185 });
+    assert.match(host.log.filter((m) => m.type === 'copyText').pop().text, /^rgb\(\d+,\d+,0\)$/, 'a click copies the pixel under it');
+    assert.strictEqual(tab().playing, playing, 'and does not play');
+    key('I', { shiftKey: true });
+    assert.strictEqual(insp.getState().stats, true, 'Shift+I: the stats overlay');
+    assert.strictEqual(dom.doc.querySelector('pre.stats').textContent, 'stats clip-0');
+    key('X', { shiftKey: true });
+    await tick();
+    assert.strictEqual(insp.getState().xray, true, 'Shift+X: Codec X-ray');
+    ui.dispatch('seek', 0);
+    key('}');
+    await tick(); await tick();
+    assert.strictEqual(tab().frame, 48, '}: the next keyframe (2 s)');
+    key('{');
+    await tick(); await tick();
+    assert.strictEqual(tab().frame, 0, '{: the one before');
+    key('PageDown');
+    assert.deepStrictEqual([tab().frame, $('toast').textContent], [120, 'Chapter 2: Middle'], 'PageDown: the next chapter');
+    ui.controls.show('inspect', $('cog'));
+    const rows = [...$('panel').querySelectorAll('[data-tool]')].map((b) => b.dataset.tool);
+    assert.deepStrictEqual(rows, ['Scopes', 'Inspector', 'Stats', 'Codec X-ray'], '⚙ › Inspection lists the tools');
+    key('Escape');
+    assert.strictEqual(ui.controls.anyOpen(), false, 'Esc: the panel first');
+    key('Escape');
+    assert.strictEqual(insp.getState().inspector, null, 'then the inspector');
+    key('Escape');
+    assert.strictEqual(insp.getState().scopes, null, 'then the scopes');
+    key('Escape');
+    assert.strictEqual(insp.getState().xray, false, 'then X-ray');
+    assert.strictEqual(key('Escape').defaultPrevented, false, 'then nothing: Esc goes on');
+  });
+  await mountTools({ tiles: ['clip-0', 'clip-1'] }, async ({ ui, tab, key }) => {
+    key('x');
+    assert.deepStrictEqual(tab().tiles, ['clip-1', 'clip-0'], 'X is still Swap with two videos');
+    assert.strictEqual(ui.parts.insp.getState().inspector, null);
+    key('X', { shiftKey: true });
+    await tick();
+    assert.strictEqual(ui.parts.insp.getState().xray, true, 'Shift+X works in Compare too');
+  });
+
+  // Subtitles: C / V / Shift+V / G / H, the CC button, the host's tracks, the cue over the picture, the panel.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, tab, key, $ }) => {
+    key('c');
+    assert.match($('toast').textContent, /^No subtitles/, 'C without tracks says how to get some');
+    $('tracks').fire('click');
+    assert.strictEqual(ui.controls.view(), 'subs', 'the CC button without tracks opens Settings › Subtitles');
+    key('Escape');
+    ui.onHostMessage({ type: 'subs', tracks: [{ name: 'English' }, { lang: 'de' }] });
+    assert.strictEqual($('toast').textContent, 'Subtitles: English', 'the first track comes on');
+    assert.deepStrictEqual([$('tracks').classList.contains('on'), $('tracks').getAttribute('aria-label')], [true, 'Subtitles on: English']);
+    ui.dispatch('seek', 48);
+    assert.deepStrictEqual([$('subs').hidden, $('subs').textContent], [false, 'cue 0'], 'the cue of the shown time');
+    assert.ok(/px$/.test($('subs').style.top) && $('subs').style.width, 'placed inside the picture');
+    key('v');
+    assert.deepStrictEqual([ui.parts.subs.getState().track, $('subs').textContent], [1, 'cue 1'], 'V: the next track');
+    key('V', { shiftKey: true });
+    assert.deepStrictEqual([ui.parts.subs.getState().track, $('subs').hidden], [-1, true], 'Shift+V: off');
+    $('tracks').fire('click');
+    assert.strictEqual(ui.parts.subs.getState().track, 1, 'the CC button turns the last track back on');
+    key('h');
+    assert.strictEqual($('toast').textContent, 'Subtitle delay +50 ms', 'H: later');
+    key('g'); key('g');
+    assert.strictEqual(ui.parts.subs.getState().delayMs, -50, 'G: earlier');
+    ui.controls.show('subs', $('tracks'));
+    const radios = [...$('panel').querySelectorAll('[role="radio"], [role="menuitemradio"]')].map((b) => b.textContent.trim());
+    assert.deepStrictEqual(radios.map((t) => t.replace(/^\W+/, '')), ['Off', 'English', 'de'], "the panel lists the host's tracks");
+    key('Escape');
+    ui.setState(S.openVideo(S.toggleCapture(ui.getState()).state, 'clip-1').state);
+    assert.strictEqual($('subs').hidden, true, 'no cue in Compare');
+    assert.strictEqual(key('c').defaultPrevented, false, 'C is not a Compare key');
+    void tab;
+  });
+
+  // Frame export: T, Shift+C, S, Ctrl+C without a clipboard, the A–B items, abQuery, exportGrab.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, tab, key, last, count, $ }) => {
+    ui.parts.notices.setDismissals({ reducedRes: true });
+    ui.dispatch('seek', 48);
+    key('t');
+    assert.strictEqual(last('copyText').text, '0:02.000', 'T copies m:ss.mmm');
+    key('C', { shiftKey: true });
+    assert.deepStrictEqual(last('copyLink'), { type: 'copyLink', frame: 49, t: 2.0208 }, 'Shift+C: a link to frame 49 (its middle)');
+    assert.strictEqual(key('s').defaultPrevented, true);
+    await tick(); await tick();
+    const save = last('saveFrame');
+    assert.ok(save && save.frame === 48 && save.data instanceof Uint8Array && save.data[1] === 0x50, 'S saves the shown frame as PNG bytes');
+    const copies = count('copyFrame');
+    key('c', { ctrlKey: true });
+    assert.strictEqual(count('copyFrame'), copies + 1, 'Ctrl+C without a clipboard API: the host copies');
+    key('Escape');
+    ui.onHostMessage({ type: 'abQuery' });
+    assert.deepStrictEqual(last('exportRange'), { type: 'exportRange', range: null }, 'abQuery with no range: the host says so');
+    ui.dispatch('seek', 24); key('a');
+    ui.dispatch('seek', 48); key('b');
+    ui.onHostMessage({ type: 'abQuery', then: 'ffmpeg' });
+    assert.deepStrictEqual([last('ffmpegRange').range.fa, last('ffmpegRange').range.fb], [24, 48], 'abQuery answers with the frames');
+    ui.controls.show('ab', $('cog'));
+    const item = [...$('panel').querySelectorAll('[data-tool]')].find((b) => b.dataset.tool === 'Export frames A–B…');
+    assert.ok(item, '⚙ › A–B Range lists the exports');
+    item.fire('click');
+    assert.strictEqual(last('exportRange').range.fb, 48, 'Export frames A–B… sends the range');
+    ui.dispatch('playPause');
+    ui.onHostMessage({ type: 'exportGrab', id: 7, frame: 30 });
+    await ui.parts.frameExport.idle();
+    const f = last('exportFrame');
+    assert.deepStrictEqual([f.id, f.frame, f.data instanceof Uint8Array, tab().frame, tab().playing], [7, 30, true, 30, false],
+      'exportGrab shows frame 30 paused and answers with its PNG');
+    ui.onHostMessage({ type: 'exportEnd' });
+  });
+
+  // Prefs: published on change, applied quietly without an echo, live settings, saved state and resume.
+  {
+    let store = { clipId: 'clip-0', time: 4, volume: 0.4, rate: 1.5 };
+    const storage = { getState: () => store, setState: (s) => { store = s; } };
+    await mountTools({ tiles: ['clip-0'] }, async ({ ui, tab, key, last, count, run, $ }) => {
+      assert.deepStrictEqual([tab().frame, ui.getPrefs().volume, ui.getPrefs().rate], [96, 0.4, 1.5], 'resumes at the saved time with the saved prefs');
+      assert.strictEqual($('toast').textContent, 'Resumed at 0:04.000 (Home: start)');
+      assert.strictEqual(count('playbackPrefs'), 0, 'opening posts no prefs');
+      key(']');
+      assert.strictEqual(last('playbackPrefs').rate, ui.getPrefs().rate, '] tells the other tabs');
+      const n = count('playbackPrefs');
+      ui.onHostMessage({ type: 'playbackPrefs', prefs: { rate: 2, volume: 0.5, timeMode: 2 } });
+      ui.render();
+      assert.deepStrictEqual([ui.getPrefs().rate, ui.getPrefs().volume, ui.getPrefs().timeMode], [2, 0.5, 2], 'another tab\'s prefs apply');
+      assert.strictEqual(count('playbackPrefs'), n, 'quietly: no echo');
+      assert.strictEqual($('now').textContent, 'frame 97', 'the bar follows');
+      ui.onHostMessage({ type: 'prefs', prefs: { jump: { arrow: 2 } } });
+      ui.dispatch('seek', 0);
+      key('ArrowRight');
+      assert.strictEqual(tab().frame, 48, 'live settings: → jumps 2 s');
+      run(300);
+      assert.deepStrictEqual([store.clipId, store.time, store.rate], ['clip-0', 2, 2], 'the state is saved after a quiet spell');
+    }, { env: { storage } });
+  }
+
+  // Live goto, rail handoff, Autoplay next, the overlay, pauseForTest, tile size.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, tab, key, last, run, clock, $ }) => {
+    assert.ok(host.log.some((m) => m.type === 'rail' && m.op === 'self' && m.duration === 10 && m.width === 3840), 'the rail learns this clip once');
+    ui.dispatch('playPause');
+    ui.onHostMessage({ type: 'goto', frame: 100 });
+    assert.deepStrictEqual([tab().frame, tab().playing, $('toast').textContent], [99, false, 'Frame 100'], 'a frame link: frame 100, paused');
+    ui.onHostMessage({ type: 'goto', t: 3 });
+    assert.strictEqual(tab().frame, 72);
+    ui.onHostMessage({ type: 'railHandoff', id: 'h1', onEnd: 'next', fromAutoNext: true, rail: { open: false } });
+    assert.deepStrictEqual(last('railAdopted'), { type: 'railAdopted', id: 'h1', ok: true }, 'the handoff applies and the host may close the source tab');
+    assert.deepStrictEqual([ui.getPrefs().onEnd, tab().frame, tab().playing], ['next', 0, true], 'Autoplay next, from the start, playing');
+    ui.onHostMessage({ type: 'railHandoffCancel', id: 'h1' });
+    ui.dispatch('seek', 240);
+    ui.dispatch('playPause'); ui.dispatch('playPause');
+    clock();
+    assert.ok(host.log.some((m) => m.type === 'neighbour' && m.d === 1 && m.auto === true), 'the natural end plays the next video in the folder');
+    assert.deepStrictEqual(tab().tiles, ['clip-1']);
+    ui.onHostMessage({ type: 'error', message: 'Cannot open this file', hint: 'Optional ffmpeg can play it.', action: 'setupFfmpeg' });
+    assert.deepStrictEqual([$('overlay').hidden, $('overlay').classList.contains('error'), $('message').textContent, $('action').textContent],
+      [false, true, 'Cannot open this file', 'Set up ffmpeg'], 'host errors show in #overlay with their action');
+    $('action').fire('click');
+    assert.deepStrictEqual(last('action'), { type: 'action', id: 'setupFfmpeg' });
+    ui.onHostMessage({ type: 'openVideo', clipId: 'clip-2', replace: true });
+    assert.strictEqual($('overlay').hidden, true, 'the next video clears it');
+    if (!tab().playing) ui.dispatch('playPause');
+    ui.onHostMessage({ type: 'pauseForTest' });
+    assert.deepStrictEqual([tab().playing, $('toast').textContent], [false, 'Paused while ffmpeg is tested'], 'pauseForTest pauses');
+    key(']');
+    run(150);
+    assert.strictEqual(last('tileSize').tile.rate, ui.getPrefs().rate, 'a speed change posts the tile size after a quiet spell');
+  });
+
+  // dispose() and pagehide leave nothing behind.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, dom, host, key, docKeys0, winHide0 }) => {
+    ui.dispose();
+    assert.strictEqual(dom.doc.listenerCount('keydown'), docKeys0, 'no key listener left');
+    assert.strictEqual(dom.win.listenerCount('pagehide'), winHide0, 'no pagehide listener left');
+    const n = host.log.length;
+    key('w'); key('t');
+    ui.onHostMessage({ type: 'goto', frame: 5 });
+    ui.onHostMessage({ type: 'subs', tracks: [{ name: 'x' }] });
+    assert.strictEqual(host.log.length, n, 'a disposed page posts nothing');
+  });
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, dom, host, key }) => {
+    dom.win.fire('pagehide');
+    const n = host.log.length;
+    key('t');
+    ui.onHostMessage({ type: 'abQuery' });
+    assert.strictEqual(host.log.length, n, 'pagehide disposes the page');
+  });
+
+  // The rendered harness inlines the tool and lifecycle modules and hands them to create().
+  const html = buildMockupHtml({ scenario: 'single' });
+  for (const src of ['media/reduced-res-notice.js', 'media/slow-notice.js', 'media/player-ui-tools.js', 'media/player-ui-lifecycle.js']) {
+    assert.ok(html.indexOf(`data-src="${src}"`) >= 0 && html.indexOf(`data-src="${src}"`) < html.indexOf('data-src="media/player-ui.js"'),
+      `the harness inlines ${src} before media/player-ui.js`);
+  }
+  const harness = html.slice(html.lastIndexOf('<script>'));
+  for (const w of ['VpePlayerUiTools', 'VpePlayerUiLifecycle', 'VpeReducedResNotice', 'VpeSlowNotice']) {
+    assert.ok(harness.includes(`${w}: globalThis.${w}`), `the harness passes ${w}`);
+  }
+}
+phase34().then(() => {
+  const ms = Date.now() - T0;
+  assert.ok(ms < 5000, `the UI seam is checked in milliseconds, not by playing video (${ms} ms)`);
+  console.log(`player_ui_test: ok (${ms} ms, no video decoded)`);
+}, (e) => { console.error(e); process.exit(1); });
