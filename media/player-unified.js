@@ -1312,7 +1312,9 @@
               prefs: pr, volume: Number(pr.volume) || 0, muted: !!pr.muted, loop: loopPref(pr), onEnd: pr.onEnd,
               rail: ux().rail && typeof ux().rail.snapshot === 'function' ? ux().rail.snapshot() : null,
               streamQ: streams.get(clockIdOf(tabNow())) || null, loopStats: { ...loopStats },
-              loopBusy: tickPending ? 'busy' : 'rest', picturePct: null, seekDragging: false, volumeDragging: false,
+              loopBusy: tickPending ? 'busy' : 'rest', picturePct: null,
+              seekDragging: !!(ui && typeof /** @type {any} */ (ui).dragState === 'function' && /** @type {any} */ (ui).dragState().seek),
+              volumeDragging: !!(ui && typeof /** @type {any} */ (ui).dragState === 'function' && /** @type {any} */ (ui).dragState().volume),
             };
           },
         });
