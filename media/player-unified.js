@@ -57,6 +57,8 @@
     },
     ndv: (p, m) => { if (typeof p.onNativeVideo === 'function') p.onNativeVideo(m); },
     nda: (p, m) => { if (typeof p.onNativeAudio === 'function') p.onNativeAudio(m); },
+    // media/engine.js onHostThumb answers only its own page's replies; the host adapter takes the envelope off, so
+    // routeDecoder puts the page id back on.
     thumb: (p, m) => { if (typeof p.onHostThumb === 'function') p.onHostThumb(m); },
     exactFrame: (p, m) => { if (typeof p.onExactFrame === 'function') p.onExactFrame(m); },
     stream: (p, m) => { if (typeof p.onStream === 'function') p.onStream(m); },
@@ -478,6 +480,7 @@
           applyRateAndLoop(p);
           // Embedded subtitle cues (media/engine.js emitCue): the text and picture cues of the selected track.
           if (typeof p === 'object') p.onSubCue = (/** @type {any} */ c) => onSubCue(id, c);
+          syncLumaCapture();
         }
         if (p && isReady(p)) markReady();
         return p || null;
@@ -776,6 +779,56 @@
     }
     /** Last seen shownCount per visible decoder so frame 0 / paused seeks repaint the visible tile canvas. @type {Map<string, number>} */
     const lastShown = new Map();
+
+    // ---- Compare metrics (media/compare-metrics.js): debug builds only, logged, never shown ----
+    /** media/compare-metrics.js's runner: the paused pair's PSNR / SSIM and the first-difference search. */
+    let debugMetrics = /** @type {any} */ (null);
+    /** Decoders whose drawn frames are kept for the metrics' exact luma (VpeCompareMetrics.captureLuma). */
+    const lumaCaptured = new Set();
+    /**
+     * Debug builds keep each drawn frame of a Compare with 2-4 tiles for exact metrics (media/compare.js did so
+     * outside a large grid: cloning every frame of 5+ tiles is expensive); a larger grid lets them go.
+     */
+    function syncLumaCapture() {
+      const M = W('VpeCompareMetrics');
+      if (!cfg.debug || !M || typeof M.captureLuma !== 'function') return;
+      const n = ui ? S.getTab(ui.getState()).tiles.length : players.size;
+      const keep = n <= 4;
+      const R = W('VpeGlRenderer');
+      for (const p of players.values()) {
+        if (!p || typeof p !== 'object' || !p.gl) continue;
+        if (keep && !lumaCaptured.has(p)) {
+          try { M.captureLuma(p, R); lumaCaptured.add(p); } catch (err) { log(`luma capture: ${err && /** @type {any} */ (err).message || err}`); }
+        } else if (!keep && lumaCaptured.has(p)) {
+          lumaCaptured.delete(p);
+          if (typeof M.releaseLuma === 'function') M.releaseLuma(p, R);
+        }
+      }
+      for (const p of [...lumaCaptured]) if (![...players.values()].includes(p)) lumaCaptured.delete(p);
+    }
+    /** The two tiles of a two-video Compare, in display order, or null. */
+    function metricsPair() {
+      if (!ui) return null;
+      const t = S.getTab(ui.getState());
+      if (t.tiles.length !== 2) return null;
+      const ps = t.tiles.map((/** @type {string} */ id) => players.get(id));
+      return ps.every(Boolean) ? ps : null;
+    }
+    /**
+     * Every tile of the active tab shows the frame it was last sent to and has no work in flight (a tile outside its
+     * clip, target null, counts as there).
+     */
+    function tilesSettled() {
+      if (!ui) return false;
+      return S.getTab(ui.getState()).tiles.every((/** @type {string} */ id) => {
+        const p = players.get(id);
+        if (!p) return false;
+        const want = appliedTargets.get(id);
+        if (want === null) return true;
+        if (busy(p)) return false;
+        return want === undefined || typeof p.currentFrame !== 'function' || Number(p.currentFrame()) === want;
+      });
+    }
     /**
      * One animation frame of the shared loop (media/player.js frameTick): every visible decoder ticks (presents its
      * due frame, settles its seek, reaches its end), then the clock decoder's frame drives the controller.
@@ -831,6 +884,7 @@
       bitmapSubs.update();
       xrayHost.tick();
       scopesHost.tick(now);
+      if (debugMetrics) debugMetrics.check();
     }
     /** The shared loop's work, for the debug probe's state: animation frames that ticked, and the times it rested. */
     const loopStats = { frames: 0, rests: 0 };
@@ -990,6 +1044,7 @@
       const t = S.getTab(ws);
       doc.body.classList.toggle('compare', t.tiles.length >= 2);
       syncPlayers(ws);
+      if (cfg.debug) syncLumaCapture();
       driveDecoders(t);
       // The shown clip's streams join the subtitle list (a clip whose decoder listed them before it was shown),
       // after this change (the controller is mid-commit); picture subtitles and the pixel grid follow the picture.
@@ -1740,7 +1795,8 @@
           continue;
         }
         if (!p) continue;
-        try { DECODER_ROUTES[m.type](p, m); } catch (err) { log(`${m.type}: ${err && /** @type {any} */ (err).message || err}`); }
+        const msg = m.type === 'thumb' ? { ...m, page: cfg.page } : m;
+        try { DECODER_ROUTES[m.type](p, msg); } catch (err) { log(`${m.type}: ${err && /** @type {any} */ (err).message || err}`); }
       }
     }
 
@@ -1940,7 +1996,8 @@
       tab: () => tabNow(),
       step: stepBy, play: () => playTo(true), pause: () => playTo(false),
       seekFrame: (/** @type {number} */ f) => act('seek', Math.round(Number(f) || 0)),
-      seekClock: (/** @type {number} */ s) => act('seek', Math.round((Number(s) || 0) * tabNow().fps)),
+      // The frame holding time s (media/compare.js seekClock; the single probe's seek): 1.35 s at 30 fps is frame 40.
+      seekClock: (/** @type {number} */ s) => act('seek', Math.max(0, Math.floor((Number(s) || 0) * tabNow().fps + 1e-6))),
       setRate: setRateTo,
       pictureInfo: (/** @type {string} */ id) => (typeof ax().pictureInfo === 'function'
         ? ax().pictureInfo(id || clockIdOf(tabNow())) : null),
@@ -2170,6 +2227,47 @@
     }
 
     /**
+     * media/compare-metrics.js's runner over this page's two tiles (createDebugMetrics), its pictures read back by a
+     * VpeCompareMetrics.install over the compositor's GL helpers; null when the page lacks either module.
+     */
+    function makeDebugMetrics() {
+      const M = W('VpeCompareMetrics');
+      const C = W('VpeCompareCompositor');
+      if (!M || typeof M.createDebugMetrics !== 'function') return null;
+      let readback = /** @type {any} */ (null);
+      const pairMetrics = (/** @type {any} */ pa, /** @type {any} */ pb, /** @type {any} */ o) => {
+        if (!readback) {
+          if (!C || typeof M.install !== 'function') return Promise.reject(new Error('no WebGL helpers for the metrics'));
+          readback = M.install({ glProgram: C.glProgram, glTexture: C.glTexture, log });
+        }
+        return readback.pairMetrics(pa, pb, o);
+      };
+      try {
+        const dm = M.createDebugMetrics({
+          pairMetrics, log: (/** @type {string} */ s) => log(s),
+          pair: metricsPair,
+          paused: () => !!ui && !S.getTab(ui.getState()).playing,
+          settled: tilesSettled,
+          outOfRange: () => !!ui && S.getTab(ui.getState()).tiles.some((/** @type {string} */ id) => appliedTargets.get(id) === null),
+          offsetKey: () => (ui ? JSON.stringify(S.getTab(ui.getState()).tiles.map((/** @type {string} */ id) => (S.getOffset ? S.getOffset(S.getTab(ui.getState()), id) : null))) : ''),
+          frameOf: (/** @type {any} */ p) => (p && typeof p.currentFrame === 'function' ? Number(p.currentFrame()) : 0),
+          seekFrame: (/** @type {number} */ f) => { if (ui) ui.dispatch('seek', f); },
+          maxFrame: () => (ui ? S.getTab(ui.getState()).maxFrame : 0),
+          pause: () => { if (ui && S.getTab(ui.getState()).playing) ui.dispatch('playPause'); },
+          setTimer: (/** @type {() => void} */ fn, /** @type {number} */ ms) => (win && typeof win.setTimeout === 'function' ? win.setTimeout(fn, ms) : setTimeout(fn, ms)),
+          clearTimer: (/** @type {any} */ h) => (win && typeof win.clearTimeout === 'function' ? win.clearTimeout(h) : clearTimeout(h)),
+        });
+        const stop = dm.dispose;
+        // The read-back canvas's WebGL context goes with the page, not at garbage collection.
+        dm.dispose = () => { stop(); if (readback) readback.resetReadback(); readback = null; };
+        return dm;
+      } catch (err) {
+        log(`compare metrics could not start: ${err && /** @type {any} */ (err).message || err}`);
+        return null;
+      }
+    }
+
+    /**
      * media/compare-debug.js (VpeCompareDebug) over the unified page, as media/compare.js installs it. It reads the
      * tile count once (N), so it is installed again when the count changes; an older install keeps its listener but
      * no longer matches the page (its `cfg.page` is a value no message carries), as does every install while the tab
@@ -2188,7 +2286,8 @@
       /** Display index of the clip, -1 when it is not shown. @param {any} id */
       const indexOf = (id) => t().tiles.indexOf(id);
       let sel = 0;
-      let thresh = 0;
+      const scanner = debugMetrics ? debugMetrics.scanner
+        : { start: () => log('scan: no metrics on this page'), running: false, found: null, thresh: 40 };
       const st = {
         get mode() { return t().layout; }, get dock() { return t().dock; }, get heroRatio() { return t().heroRatio; },
         get clock() { return Math.max(0, indexOf(clockIdOf(t()))); }, get sound() { return indexOf(t().soundId); },
@@ -2198,7 +2297,8 @@
         get pic() { return { mode: t().picMode, zoom: t().zoom, cx: 0.5, cy: 0.5 }; },
         get rate() { return ratePrefs(); }, get loop() { return loopPref(prefsNow()); },
         get sel() { return sel; }, set sel(v) { sel = Number(v) || 0; },
-        get thresh() { return thresh; }, set thresh(v) { thresh = Number(v) || 0; },
+        // The scan's PSNR threshold (the debug 'scan' action sets it, then starts the scan).
+        get thresh() { return scanner.thresh; }, set thresh(v) { if (Number(v) > 0) scanner.thresh = Number(v); },
       };
       const cellsEl = elOf('cells');
       const picRectFor = (/** @type {string | undefined} */ cid, /** @type {{ x: number, y: number, w: number, h: number }} */ box) => {
@@ -2235,7 +2335,7 @@
             show: safe(ux().controls, 'show', undefined), closeAll: safe(ux().controls, 'closeAll', undefined),
             view: safe(ux().controls, 'view', null),
           },
-          scanner: { start: () => log('scan: not in the unified viewer'), running: false, found: null },
+          scanner,
           $: (/** @type {string} */ id) => doc.getElementById(id),
           getState: () => ({
             tiles: debugApi.tiles, clock: clockPlayer(), cells: cells(), hover: null, syncMode: !!t().syncMode,
@@ -2250,7 +2350,13 @@
             const want = appliedTargets.get(id);
             return !p || want === null || want === undefined || typeof p.currentFrame !== 'function' || Number(p.currentFrame()) === want;
           }),
-          tileSize: () => { const c = cells().find((x) => !x.add); return c ? { w: Math.round(c.w), h: Math.round(c.h) } : { w: 0, h: 0 }; },
+          // The report's `stage`: the whole picture area in device pixels, as media/compare.js tileSize() (the
+          // scenarios fit each tile's picture into its share of it).
+          tileSize: () => {
+            const r = elOf('stage').getBoundingClientRect();
+            const dpr = (win && Number(win.devicePixelRatio) > 0) ? Number(win.devicePixelRatio) : 1;
+            return { w: Math.floor(r.width * dpr), h: Math.floor(r.height * dpr) };
+          },
           frameFactor: () => {
             const tab = t();
             const c = cells().find((x) => !x.add);
@@ -2277,6 +2383,7 @@
       } catch (err) { log(`compare debug could not start: ${err && /** @type {any} */ (err).message || err}`); }
     }
 
+    debugMetrics = cfg.debug ? makeDebugMetrics() : null;
     debugProbe = cfg.debug ? installDebugProbe() : null;
     probesReady = true;
     if (cfg.debug) installCompareDebug();
@@ -2300,6 +2407,7 @@
       bitmapSubs.dispose();
       xrayHost.dispose();
       compareDebugGen++; // an installed Compare probe matches no message any more
+      if (debugMetrics) { try { debugMetrics.dispose(); } catch { /* ignore */ } }
       for (const id of [...players.keys()]) disposePlayer(id);
       for (const x of [sync, compositor]) if (x && typeof x.dispose === 'function') { try { x.dispose(); } catch { /* ignore */ } }
       try { ui.dispose(); } catch { /* ignore */ }

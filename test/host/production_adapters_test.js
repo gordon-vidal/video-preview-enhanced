@@ -466,6 +466,26 @@ function makeBridge(/** @type {{ page?: string, boot?: string }} */ env = { page
     assert.strictEqual(engine.pixelAt('W', 0, 0), null, 'no player picture: null');
   }
 
+  // ---- markOf: an A-B mark's picture times (media/engine.js shownMarkTime, nativeTimestamp, remoteStream) ----
+  {
+    /** @type {Record<string, any>} */
+    const players = {
+      // Native ffmpeg with the file's own timestamp: the picture at slot 1.00 s is the one from 0.96 s.
+      N: { shownT: 11, fps: 25, rel: (/** @type {number} */ t) => t - 10, shownMarkTime: () => 0.96, shownFrame: { nativeTimestamp: false } },
+      // Native without picture timestamps: only a slot count.
+      S: { shownT: 12, fps: 25, rel: (/** @type {number} */ t) => t - 10, shownMarkTime: () => 2, shownFrame: { nativeTimestamp: true } },
+      L: { shownT: 3, fps: 30, rel: (/** @type {number} */ t) => t, remoteStream: true },
+      E: { shownT: null, rel: (/** @type {number} */ t) => t },
+    };
+    const e = /** @type {any} */ (VpeEngineAdapter.create({
+      clips: ['N', 'S', 'L', 'E'].map((id) => ({ id, fps: 25 })), getPlayer: (/** @type {string} */ id) => players[id] || null,
+    }));
+    assert.deepStrictEqual(e.markOf('N'), { shownRel: 1, markRel: 0.96, fps: 25, synthetic: false });
+    assert.deepStrictEqual(e.markOf('S'), { shownRel: 2, markRel: 2, fps: 25, synthetic: true });
+    assert.deepStrictEqual(e.markOf('L'), { shownRel: 3, markRel: 3, fps: 30, synthetic: true }, 'Live transcode re-times pictures');
+    assert.strictEqual(e.markOf('E'), null, 'no picture yet');
+  }
+
   // ---- pictureInfo / transcodeInfo / exactFrame: what the reduced-res and slow notices and the Live chip read ----
   {
     const quality = { variants: [{ height: 720 }, { height: 1080 }] };

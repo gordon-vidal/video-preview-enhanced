@@ -1600,6 +1600,84 @@ test('Astra regressions: offset nudge keeps playing, Compare loop stays shared, 
   });
 });
 
+test('native thumbnails: the host\'s reply reaches media/engine.js onHostThumb with this page\'s id', () => {
+  withPage(({ send, made }) => {
+    send({ type: 'open' });
+    // The host adapter takes the envelope off; onHostThumb ignores a reply for another page (m.page !== env.page).
+    send({ type: 'thumb', clipId: 'A', key: 'A', id: 3, w: 4, h: 2, data: [1] });
+    const got = made[0].calls.filter((c) => c[0] === 'thumb').map((c) => c[1]);
+    assert.strictEqual(got.length, 1);
+    assert.strictEqual(got[0].page, 7, 'the page id is back on the reply');
+    assert.strictEqual(got[0].id, 3);
+  });
+});
+
+testAsync('Compare metrics (debug): the paused pair is logged once per pair, the scan finds the first difference; report stage', async () => {
+  const VpeCompareDebug = require('../../media/compare-debug');
+  const realMetrics = require('../../media/compare-metrics');
+  const measured = [];
+  // No WebGL in Node: the read-back is a stub; B differs from frame 41 (0-based) on.
+  const VpeCompareMetrics = {
+    ...realMetrics,
+    install: () => ({
+      pairMetrics: async (pa, pb, o) => {
+        measured.push([pa.frame, pb.frame, o]);
+        const v = pa.frame >= 41 ? 21.5 : Infinity;
+        return { psnrY: v, psnrRGB: v, ssimY: 1, exactY: true, w: 4, h: 4 };
+      },
+      resetReadback() {},
+    }),
+  };
+  const timed = (clip, host, hooks) => Object.assign(stubPlayer(clip, host, hooks), {
+    // What the Compare report reads of a decoder (media/engine.js fields).
+    shownCount: 1, shownT: 0, startT: 0, pauseT: 0, fps: 25, cv: { width: 1280, height: 720 }, cfg: { native: false }, info: {},
+    rel(t) { return t; }, shownMarkTime() { return this.frame / 25; }, currentTime() { return this.frame / 25; },
+    seekFrame(f) { this.frame = f; this.shownCount++; this.calls.push(['seek', f]); },
+  });
+  await withPage(async ({ $, win, app, send, made, posted, frames }) => {
+    send({ type: 'open' });
+    send({ type: 'openVideo', clipId: 'B', compare: true, clip: CLIPS[1] });
+    // seek t: the frame holding t (40.5 / 25 s is frame 40), as media/compare.js seekClock.
+    send({ type: 'debug', action: 'seek', t: 40.5 / 25 });
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 40);
+    frames(3);
+    await microtasks();
+    await microtasks();
+    const lines = () => logsOf(posted).filter((l) => l.startsWith('metrics '));
+    assert.strictEqual(lines().length, 1, `one metrics line: ${logsOf(posted).slice(-5)}`);
+    assert.match(lines()[0], /^metrics frameA=41 frameB=41 psnrY=Infinity psnrRGB=Infinity /);
+    frames(3);
+    await microtasks();
+    assert.strictEqual(lines().length, 1, 'the same pictures are not measured again');
+    // The scan from #41 on stops at #42 (B's PSNR drops there).
+    send({ type: 'debug', action: 'scan', thresh: 35 });
+    // The page's timers are the fake window's: run what is due, tick, repeat.
+    const runTimers = () => {
+      const ts = win.timers;
+      for (let i = 0; i < ts.length; i++) { const x = ts[i]; if (x) { ts[i] = null; x.fn(); } }
+    };
+    for (let i = 0; i < 40 && !logsOf(posted).some((l) => l.startsWith('scan: ')); i++) {
+      runTimers();
+      frames(1);
+      await microtasks();
+    }
+    const scan = logsOf(posted).find((l) => l.startsWith('scan: '));
+    assert.match(scan || '', /^scan: #42: PSNR Y 21\.50 dB \(< 35 dB\)/);
+    assert.ok(measured.some((m) => m[2].ssim === false), 'the scan measured luma PSNR only');
+    // The report's stage is the whole picture area in device pixels (the scenarios fit tiles into it).
+    send({ type: 'debug', action: 'report', delay: 1 });
+    await new Promise((r) => setTimeout(r, 10));
+    const report = logsOf(posted).find((l) => l.startsWith('compare report '));
+    const r = $('stage').getBoundingClientRect();
+    assert.ok(report && report.includes(` stage=${Math.floor(r.width)}x${Math.floor(r.height)} `), `stage in the report: ${report}`);
+    assert.ok(report.includes(' scan=found:42'), 'the report shows the scan result');
+    assert.strictEqual(made.length, 2);
+  }, {
+    cfg: { debug: true }, createPlayer: timed, raf: true,
+    extraWidgets: { VpeCompareDebug, VpeCompareMetrics, VpeCompareCompositor: { glProgram() {}, glTexture() {} } },
+  });
+});
+
 (async () => {
   for (const [name, fn] of asyncTests) {
     try { await fn(); count++; } catch (e) { e.message = `${name}: ${e.message}`; console.error(e); process.exit(1); }

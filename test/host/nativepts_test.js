@@ -314,6 +314,20 @@ function refusal() {
   assert.strictEqual(clipsource.syntheticRefusal([{ tile: 0, range }, { tile: 1, range: { ...range, native: false } }], [0], true), null);
   assert.strictEqual(clipsource.syntheticRefusal([{ range: { a: 1, b: 2, early: 0 } }], [0]), null, 'exact marks are never refused');
   assert.strictEqual(clipsource.syntheticRefusal([], [0]), null);
+  // Compare's jobs from the page's per-tile ranges: display order and letters, the clip's own range, ids only.
+  const clips = [{ id: 'b', uri: 'U-b' }, { id: 'a', uri: 'U-a' }, { id: 'c', uri: 'U-c' }];
+  const jobs = clipsource.compareClipJobs(clips, [
+    { clipId: 'a', range: { a: 1, b: 2, early: 0.02, native: true } },
+    { clipId: 'b', range: { a: 0.5, b: 1.5, early: 0, extra: 'dropped' } },
+    { clipId: 'c', range: { a: 3, b: 2 } }, // empty: no job
+    { clipId: 'zzz', range: { a: 0, b: 1 } }, // not in the session
+  ], ['A', 'B', 'C']);
+  assert.deepStrictEqual(jobs, [
+    { uri: 'U-b', letter: 'A', tile: 0, range: { a: 0.5, b: 1.5, early: 0 } },
+    { uri: 'U-a', letter: 'B', tile: 1, range: { a: 1, b: 2, early: 0.02, native: true } },
+  ]);
+  assert.deepStrictEqual(clipsource.compareClipJobs(clips, 'bad', ['A']), []);
+  assert.deepStrictEqual(clipsource.compareClipJobs(clips, [{ clipId: 'a', range: { a: NaN, b: 1 } }], ['A']), []);
 }
 
 (async () => {

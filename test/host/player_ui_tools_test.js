@@ -907,6 +907,63 @@ test('export: exportAb kinds, empty range, refused clip, abQuery', () => {
   assert.strictEqual(x.onHostMessage({ type: 'nope' }), false);
 });
 
+test('A-B marks: captureAbMark takes each tile\'s own picture time; compareClipRanges falls back to the offsets', () => {
+  // The clock A (offset 0) holds its 0.96 s picture at the 1.00 s slot of a variable-rate file; B (+2 frames at 25 fps)
+  // shows 1.08 s; C is still seeking (2 frames away).
+  const mk = (shownRel, markRel, synthetic = false) => ({ shownRel, markRel, synthetic, fps: 25 });
+  const cap = T.captureAbMark({
+    clockId: 'A',
+    tiles: [
+      { clipId: 'A', offset: 0, fps: 25, mark: mk(1.0, 0.96) },
+      { clipId: 'B', offset: 0.08, fps: 25, mark: mk(1.08, 1.08) },
+      { clipId: 'C', offset: 0, fps: 25, mark: mk(1.08, 1.08) },
+      { clipId: 'D', offset: 0, fps: 25, mark: null },
+    ],
+  });
+  assert.strictEqual(cap.t, 1.0);
+  assert.strictEqual(cap.pts, 0.96, 'the clock\'s own picture time is the mark');
+  assert.strictEqual(cap.synthetic, false);
+  assert.deepStrictEqual(cap.tiles, { A: { rel: 0.96, synthetic: false }, B: { rel: 1.08, synthetic: false }, C: null, D: null });
+  assert.strictEqual(T.captureAbMark({ clockId: 'A', tiles: [{ clipId: 'A', offset: 0, fps: 25, mark: null }] }), null);
+  // A clock offset moves the mark onto the shared timeline.
+  const off = T.captureAbMark({ clockId: 'B', tiles: [{ clipId: 'B', offset: 0.5, fps: 25, mark: mk(2, 2, true) }] });
+  assert.deepStrictEqual([off.t, off.pts, off.synthetic], [1.5, 1.5, true]);
+
+  const ranges = T.compareClipRanges({
+    a: 1.6, b: 2.76, clockId: 'A',
+    tiles: [
+      { clipId: 'A', offset: 0, fps: 25, atA: { rel: 1.6, synthetic: false }, atB: { rel: 2.76, synthetic: false } },
+      { clipId: 'B', offset: 0.08, fps: 25 },
+      { clipId: 'C', offset: 0, fps: 25, synthetic: true, atA: { rel: 1.6, synthetic: false }, atB: null },
+    ],
+  });
+  assert.deepStrictEqual(ranges, [
+    { clipId: 'A', range: { a: 1.6, b: 2.76, early: 0 } },
+    { clipId: 'B', range: { a: 1.6 + 0.08, b: 2.76 + 0.08, early: 0.02 } },
+    { clipId: 'C', range: { a: 1.6, b: 2.76, early: 0.02, native: true } },
+  ]);
+  const syn = T.compareClipRanges({ a: 0, b: 1, synthetic: true, clockId: 'A', tiles: [{ clipId: 'A', offset: 0, fps: 25 }] });
+  assert.deepStrictEqual(syn, [{ clipId: 'A', range: { a: 0, b: 1, early: 0, native: true } }]);
+});
+
+test('export: Compare posts one clip range per tile (no page-side refusal: the host weighs every tile)', () => {
+  const ranges = [{ clipId: 'clipB', range: { a: 0.08, b: 1.08, early: 0.02, native: true } }, { clipId: 'clipA', range: { a: 0, b: 1, early: 0 } }];
+  let give = ranges;
+  const { x, log, ctx } = exportSetup({ getClipRanges: () => give });
+  assert.strictEqual(x.exportAb('clipRange'), true);
+  const m = log.posts.at(-1);
+  assert.strictEqual(m.type, 'clipRange');
+  assert.deepStrictEqual(m.ranges, ranges);
+  assert.deepStrictEqual(m.range, ranges.find((r) => r.clipId === ctx.clipId).range, 'range: the clock tile\'s');
+  assert.deepStrictEqual(log.refused, [], 'one synthetic tile does not refuse the export');
+  // One video (null): the single range as before.
+  give = null;
+  assert.strictEqual(x.exportAb('clipRange'), true);
+  assert.deepStrictEqual(log.posts.at(-1), { type: 'clipRange', range: { a: 0.1, b: 2 }, page: 'p1' });
+  assert.strictEqual(x.exportAb('exportRange'), true, 'the frame export never reads the clip ranges');
+  assert.strictEqual(log.posts.at(-1).ranges, undefined);
+});
+
 test('export: exportGrab shows each frame in order and posts exportFrame; errors are posted', async () => {
   const { x, log, engine, png } = exportSetup();
   const order = [];

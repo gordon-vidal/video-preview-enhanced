@@ -23,4 +23,28 @@ function syntheticRefusal(jobs, liveTiles = [], compare = false) {
   return { message: NATIVE_MESSAGE, label: compare ? null : 'Switch to built-in decoder', tiles: [] };
 }
 
-module.exports = { syntheticRefusal, LIVE_MESSAGE, NATIVE_MESSAGE };
+/**
+ * Compare's export jobs from the page's per-tile ranges ({ clipId, range } from media/player-ui-tools.js
+ * compareClipRanges): one per session clip in display order, lettered A, B, ... like the tiles, each with the range
+ * the page measured for that clip. A clip the page sent no valid range for gets no job; ids the session does not
+ * show are ignored (the page names clips, never paths).
+ * @param {Array<{ id: string, uri: any }>} clips the session's clips in display order
+ * @param {unknown} ranges
+ * @param {string[]} letters
+ * @returns {Array<{ uri: any, letter: string, tile: number, range: { a: number, b: number, early: number, native?: boolean } }>}
+ */
+function compareClipJobs(clips, ranges, letters) {
+  const list = Array.isArray(ranges) ? ranges : [];
+  /** @type {Array<{ uri: any, letter: string, tile: number, range: { a: number, b: number, early: number, native?: boolean } }>} */
+  const jobs = [];
+  clips.forEach((c, tile) => {
+    const e = list.find((x) => x && typeof x === 'object' && x.clipId === c.id);
+    const r = e && e.range;
+    if (!r || typeof r.a !== 'number' || typeof r.b !== 'number' || !Number.isFinite(r.a) || !Number.isFinite(r.b) || r.b < r.a) return;
+    const early = typeof r.early === 'number' && Number.isFinite(r.early) && r.early >= 0 ? r.early : 0;
+    jobs.push({ uri: c.uri, letter: letters[tile] || String(tile + 1), tile, range: { a: r.a, b: r.b, early, ...(r.native ? { native: true } : {}) } });
+  });
+  return jobs;
+}
+
+module.exports = { syntheticRefusal, compareClipJobs, LIVE_MESSAGE, NATIVE_MESSAGE };

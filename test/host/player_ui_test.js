@@ -1772,6 +1772,44 @@ async function phase34() {
     assert.strictEqual(last('tileSize').tile.rate, ui.getPrefs().rate, 'a speed change posts the tile size after a quiet spell');
   });
 
+  // A–B clip marks in Compare: each end takes the pictures on screen (engine.markOf), and the clip export sends one
+  // range per tile; the tile size carries each tile's cell.
+  await mountTools({ tiles: ['clip-0', 'clip-1'] }, async ({ ui, engine, host, tab, key, last, run }) => {
+    ui.parts.notices.setDismissals({ reducedRes: true });
+    const fpsOf = (id) => engine.getClip(id).fps;
+    // clip-0 (the clock) holds a picture 10 ms before its slot (variable frame rate); clip-1 shows its slot.
+    engine.markOf = (id) => {
+      const f = tab().frame;
+      const s = f / fpsOf(id);
+      return { shownRel: s, markRel: id === 'clip-0' ? s - 0.01 : s, synthetic: false, fps: fpsOf(id) };
+    };
+    const r0 = fpsOf('clip-0');
+    ui.dispatch('seek', 24); key('a');
+    ui.dispatch('seek', 48); key('b');
+    ui.onHostMessage({ type: 'abQuery', then: 'clip' });
+    const m = last('clipRange');
+    assert.ok(m && Array.isArray(m.ranges), `Compare sends per-tile ranges: ${JSON.stringify(m)}`);
+    assert.deepStrictEqual(m.ranges.map((x) => x.clipId), ['clip-0', 'clip-1']);
+    const near = (a, b) => Math.abs(a - b) < 1e-9;
+    const [a0, a1] = m.ranges.map((x) => x.range);
+    assert.ok(near(a0.a, 24 / r0 - 0.01) && near(a0.b, 48 / r0 - 0.01) && a0.early === 0, `the clock's own picture times: ${JSON.stringify(a0)}`);
+    assert.ok(near(a1.a, 24 / fpsOf('clip-1')) && near(a1.b, 48 / fpsOf('clip-1')), `the follower's own pictures: ${JSON.stringify(a1)}`);
+    assert.ok(near(m.range.a, a0.a), 'range: the clock tile\'s');
+    // A tile that was still seeking at A: its range is mapped through its offset (and the follower allowance).
+    engine.markOf = (id) => (id === 'clip-1' ? null : { shownRel: tab().frame / r0, markRel: tab().frame / r0, synthetic: false, fps: r0 });
+    ui.dispatch('seek', 24); key('a'); key('a');
+    ui.onHostMessage({ type: 'abQuery', then: 'clip' });
+    const r1 = last('clipRange').ranges[1].range;
+    assert.ok(near(r1.early, 0.5 / fpsOf('clip-1')), `nominal follower range: ${JSON.stringify(r1)}`);
+    // Each tile's cell goes with the tile size (the host decodes native tiles at their own cell).
+    key(']');
+    run(150);
+    const ts = last('tileSize').tile;
+    assert.deepStrictEqual(ts.tiles.map((x) => x.clipId), ['clip-0', 'clip-1']);
+    assert.ok(ts.tiles.every((x) => x.w > 0 && x.h > 0), JSON.stringify(ts.tiles));
+    assert.strictEqual(host.log.filter((x) => x.type === 'clipRange').every((x) => x.range), true);
+  });
+
   // dispose() and pagehide leave nothing behind.
   await mountTools({ tiles: ['clip-0'] }, async ({ ui, dom, host, key, docKeys0, winHide0 }) => {
     ui.dispose();

@@ -180,6 +180,24 @@ function tileSizeOf(m) {
   return size;
 }
 
+/**
+ * A tileSize message's per-tile cells ({ tile: { tiles: [{ clipId, w, h }] } }, media/player-ui.js in Compare): the
+ * well-formed entries only (at most 64: more tiles than Compare shows are not the page's).
+ * @param {PageMessage} m @returns {Array<{ clipId: string, w: number, h: number }>}
+ */
+function perTileSizes(m) {
+  const t = m.tile && typeof m.tile === 'object' ? m.tile : m;
+  const list = Array.isArray(t.tiles) ? t.tiles.slice(0, 64) : [];
+  /** @type {Array<{ clipId: string, w: number, h: number }>} */
+  const out = [];
+  for (const e of list) {
+    if (!e || typeof e !== 'object' || typeof e.clipId !== 'string') continue;
+    const w = Number(e.w), h = Number(e.h);
+    if (w > 0 && h > 0 && Number.isFinite(w) && Number.isFinite(h)) out.push({ clipId: e.clipId, w, h });
+  }
+  return out;
+}
+
 /** @param {string} p */
 const baseName = (p) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
 
@@ -488,6 +506,8 @@ function createUnifiedSession(deps) {
         const c = m.clipId !== undefined ? clipOf(m.clipId) : null;
         lastTileSize = size;
         if (c) tileSizes.set(c.id, size);
+        // Compare: each tile's own cell (a Spotlight's hero and its strip differ), for the clips this session shows.
+        for (const t of perTileSizes(m)) if (clipOf(t.clipId)) tileSizes.set(t.clipId, { ...size, w: t.w, h: t.h });
         return deps.onTileSize ? deps.onTileSize(size, c) : undefined;
       }
       case 'capture': {

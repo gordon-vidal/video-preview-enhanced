@@ -46,7 +46,7 @@ const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
 const rangecmd = lazy(() => require('./rangecmd')); // A-B frame export and ffmpeg command
 const exclusiveWrite = lazy(() => require('./exclusivewrite')); // create-only frame writes (no overwrite race)
 const clipExport = lazy(() => require('./clipexport'));
-const { syntheticRefusal } = require('./clipsource');
+const { syntheticRefusal, compareClipJobs } = require('./clipsource');
 const membudget = require('../media/membudget.js'); // decoder pool and frame caches sized from the machine's memory
 const urlsource = lazy(() => require('./urlsource')); // Open Video URL… (docs/notes/url-stream.md)
 const { createSettings, PREFS } = require('./settings'); // settings, player prefs, globalState fallback
@@ -640,7 +640,7 @@ function reloadViewers(why) {
  * A-B clip export (src/clipexport.js) of a viewer's clip: native ffmpeg cuts the file. `clip` is the clip the page's
  * range is for. One export per viewer at a time.
  */
-async function exportClips(viewer, clip, jobs) {
+async function exportClips(viewer, clip, jobs, compare = false) {
   if (clipExports.has(viewer)) return;
   const source = clip && clip.uri;
   if (!source || clip.kind === 'url' || clip.kind === 'sequence' || !FS_SCHEMES.has(source.scheme)) {
@@ -652,7 +652,7 @@ async function exportClips(viewer, clip, jobs) {
     return;
   }
   const live = viewer.session.clips.flatMap((c, i) => (viewer.decoderKind(c.id) === 'stream' ? [i] : []));
-  const refusal = syntheticRefusal(jobs, live, false);
+  const refusal = syntheticRefusal(jobs, live, compare);
   if (refusal) {
     // Marks without source timestamps: refuse before any ffmpeg work, and offer the switch in one click.
     const answer = await vscode.window.showWarningMessage(refusal.message, ...(refusal.label ? [refusal.label] : []));
@@ -679,7 +679,7 @@ async function exportClips(viewer, clip, jobs) {
     }
     const testDir = logFile && process.env.VPE_CLIP_EXPORT_DIR;
     await clipExport.exportClips({
-      vscode, tools: native, jobs, compare: false, defaultUri: vscode.Uri.joinPath(source, '..'), log,
+      vscode, tools: native, jobs, compare, defaultUri: vscode.Uri.joinPath(source, '..'), log,
       announce: (message) => viewer.post({ type: 'toast', text: message, ms: 5000 }),
       testFolder: testDir ? vscode.Uri.file(testDir) : undefined,
       testConfirm: !!testDir && process.env.VPE_CLIP_EXPORT_CONFIRM === '1',
@@ -1363,6 +1363,10 @@ function exportAb(kind, c, m, viewer) {
   if (kind === 'exportRange') return exportRange(viewer, c, m.range);
   if (kind === 'ffmpegRange') return copyFfmpegRange(viewer, c, m.range);
   if (kind === 'clipRange') {
+    // Compare: one clip per tile, each from the range the page measured for it (A_, B_ ... in display order).
+    if (Array.isArray(m.ranges) && viewer.session.clips.length >= 2) {
+      return exportClips(viewer, c, compareClipJobs(viewer.session.clips, m.ranges, Grid.TILE_KEYS), true);
+    }
     const tile = viewer.session.clips.findIndex((x) => x.id === c.id);
     return exportClips(viewer, c, m.range ? [{ uri: c.uri, range: m.range, tile: Math.max(0, tile) }] : []);
   }

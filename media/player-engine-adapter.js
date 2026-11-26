@@ -653,6 +653,28 @@
       };
     }
     /**
+     * The shown picture's times for an A-B mark (media/player.js abTime / synthTimes, media/comparerange.js
+     * snapshotTile): `shownRel` from the clip's first picture, `markRel` the file's own timestamp (native ffmpeg
+     * reports it, engine.js shownMarkTime; the other decoders' picture times are that already), `synthetic` when the
+     * time is only a slot count (native without picture timestamps, Live transcode). null before a picture shows.
+     * @param {string} clipId
+     */
+    function markOf(clipId) {
+      const c = clipOrFirst(clipId);
+      const p = c ? playerOf(c.id) : null;
+      if (!c || !p || p.shownT === null || p.shownT === undefined || typeof p.rel !== 'function') return null;
+      try {
+        const shownRel = Number(p.rel(p.shownT));
+        const own = typeof p.shownMarkTime === 'function' ? p.shownMarkTime() : null;
+        const markRel = own !== null && own !== undefined && Number.isFinite(Number(own)) ? Number(own) : shownRel;
+        if (!Number.isFinite(shownRel)) return null;
+        return {
+          shownRel, markRel, fps: Number(p.fps) > 0 ? Number(p.fps) : c.fps,
+          synthetic: !!((p.shownFrame && p.shownFrame.nativeTimestamp) || p.remoteStream),
+        };
+      } catch { return null; }
+    }
+    /**
      * The Live transcode the clip plays through (the first transcoded clip when no id is given), or null when none
      * does: `{ clipId, lossy, transcode, stream, quality }` (engine.js info.transcode / info.remoteStream).
      * @param {string} [clipId]
@@ -706,6 +728,7 @@
       unregisterClip,
       pictureInfo,
       transcodeInfo,
+      markOf,
       exactFrame,
       setSoundSource,
       setVolume,

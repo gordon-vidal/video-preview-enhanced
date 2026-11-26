@@ -755,6 +755,50 @@
       notices.setContext(c);
     };
     const ab = W.VpeAbLoop.create();
+    /**
+     * What each tile showed when A or B was set, keyed by that end's pts (media/compare.js `marks`): each Compare
+     * tile's clip then starts and ends on its own pictures. Only A's and B's entries are kept.
+     * @type {Map<number, Record<string, { rel: number, synthetic: boolean } | null>>}
+     */
+    const abTileMarks = new Map();
+    /** A tile's sync offset in seconds (ms, or frames of that tile). @param {any} t @param {string} id */
+    const offsetSecOf = (t, id) => {
+      const o = S.getOffset(t, id);
+      if (!o) return 0;
+      return o.unit === 'ms' ? (Number(o.v) || 0) / 1000 : (Number(o.v) || 0) / clipFps(id);
+    };
+    /** The tiles' pictures as an A-B mark (VpePlayerUiTools.captureAbMark), or null without engine.markOf. @param {any} t */
+    const captureMark = (t) => {
+      if (!Tools || typeof Tools.captureAbMark !== 'function' || typeof engine.markOf !== 'function') return null;
+      const clockId = t.clockId && t.tiles.includes(t.clockId) ? t.clockId : t.tiles[0];
+      if (!clockId) return null;
+      return Tools.captureAbMark({
+        clockId,
+        tiles: t.tiles.map((/** @type {string} */ id) => ({
+          clipId: id, offset: offsetSecOf(t, id), fps: clipFps(id), mark: /** @type {any} */ (engine).markOf(id),
+        })),
+      });
+    };
+    /** Compare's per-tile clip ranges for the A-B export (VpePlayerUiTools.compareClipRanges); null with one video. */
+    const clipRangesNow = () => {
+      const t = tab();
+      const span = ab.presentationRange();
+      if (t.tiles.length < 2 || !span || !Tools || typeof Tools.compareClipRanges !== 'function') return null;
+      const atA = abTileMarks.get(/** @type {number} */ (ab.aPts)) || {};
+      const atB = abTileMarks.get(/** @type {number} */ (ab.bPts)) || {};
+      const lo = /** @type {number} */ (ab.aPts) <= /** @type {number} */ (ab.bPts);
+      const clockId = t.clockId && t.tiles.includes(t.clockId) ? t.clockId : t.tiles[0];
+      return Tools.compareClipRanges({
+        a: span.a, b: span.b, synthetic: !!span.native, clockId,
+        tiles: t.tiles.map((/** @type {string} */ id) => {
+          const m = typeof (/** @type {any} */ (engine)).markOf === 'function' ? /** @type {any} */ (engine).markOf(id) : null;
+          return {
+            clipId: id, offset: offsetSecOf(t, id), fps: clipFps(id), synthetic: !!(m && m.synthetic),
+            atA: (lo ? atA : atB)[id] || null, atB: (lo ? atB : atA)[id] || null,
+          };
+        }),
+      });
+    };
     let lastTilesKey = '';
     /** The seek bar's and the volume slider's drags (media/range-drag.js), when the page has it. */
     /** @type {any} */ let seekDrag = null;
@@ -1312,9 +1356,15 @@
     function markAB(/** @type {'a' | 'b' | null} */ which, reset = false) {
       const t = tab();
       const sec = t.frame / fps();
-      if (which && reset) ab.reset(which, sec, t.frame, sec, false);
-      else if (which) ab.set(which, sec, t.frame, sec, false);
-      else ab.cycle(sec, t.frame, sec, false);
+      // The clip cuts at the pictures on screen (their own timestamps), not the slot the clock is at.
+      const cap = captureMark(t);
+      const pts = cap ? cap.pts : sec;
+      const synthetic = cap ? cap.synthetic : false;
+      if (which && reset) ab.reset(which, sec, t.frame, pts, synthetic);
+      else if (which) ab.set(which, sec, t.frame, pts, synthetic);
+      else ab.cycle(sec, t.frame, pts, synthetic);
+      if (cap) abTileMarks.set(pts, cap.tiles);
+      for (const k of [...abTileMarks.keys()]) if (k !== ab.aPts && k !== ab.bPts) abTileMarks.delete(k);
       toast(ab.toast((/** @type {number} */ s) => (W.VpeTime && typeof W.VpeTime.fmtClock === 'function' ? W.VpeTime.fmtClock(s) : fmt(Math.round(s * fps())))));
       controls.refresh();
       render();
@@ -1407,7 +1457,7 @@
       },
       setA: () => markAB('a'),
       setB: () => markAB('b'),
-      clearAB: () => { ab.clear(); controls.refresh(); render(); toast('A–B range cleared'); },
+      clearAB: () => { ab.clear(); abTileMarks.clear(); controls.refresh(); render(); toast('A–B range cleared'); },
       cycleTime: () => {
         const t = tab();
         if (t.tiles.length === 1 && /** @type {any} */ (engine.getClip(t.tiles[0]) || {}).live) return;
@@ -2004,6 +2054,7 @@
         onPause: () => { if (tab().playing) { ws = S.togglePlay(ws); render(); } },
         onBeforeSnapshot: exactTool,
         getRange: (/** @type {string} */ kind) => (kind === 'clipRange' ? ab.presentationRange() : ab.exportRange(fps(), tab().maxFrame + 1)),
+        getClipRanges: clipRangesNow,
         onRefuse: () => { if (notices) notices.showClipRefusal({ syntheticTimes: true }); },
       });
       cleanups.push(() => frameExport.dispose());
@@ -2105,7 +2156,12 @@
         : null;
       const w = Math.round((pic && pic.w > 0 ? pic.w : c.w) * dpr);
       const h = Math.round((pic && pic.h > 0 ? pic.h : c.h) * dpr);
-      return { w, h, n: ui.n, layout: ui.effectiveLayout, zoom: t.zoom, rate: prefs.rate, actual: t.picMode === 'actual' };
+      // Compare: each tile's own cell (a Spotlight's side tiles are smaller than its hero), so the host decodes every
+      // native tile at its cell's size (src/unified-session.js keeps them per clip).
+      const tiles = ui.isMulti
+        ? ui.cells.map((/** @type {any} */ x) => ({ clipId: x.clipId, w: Math.round(x.w * dpr), h: Math.round(x.h * dpr) }))
+        : undefined;
+      return { w, h, n: ui.n, layout: ui.effectiveLayout, zoom: t.zoom, rate: prefs.rate, actual: t.picMode === 'actual', ...(tiles ? { tiles } : {}) };
     };
     /** Layout, size, zoom or speed changed: tell the host after a quiet spell. */
     const checkTileSize = () => {

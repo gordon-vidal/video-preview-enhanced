@@ -159,6 +159,12 @@ export interface EngineAdapter {
   /** The Live transcode the clip (else the first transcoded clip) plays through, or null when none does. */
   transcodeInfo?(clipId?: string): TranscodeInfo | null;
   /**
+   * The clip's shown picture for an A-B mark: its time from the clip's first picture (`shownRel`), the file's own
+   * timestamp of it for an exact clip (`markRel`) and whether that time is only a slot count (`synthetic`: native
+   * ffmpeg without picture timestamps, Live transcode). null before a picture shows.
+   */
+  markOf?(clipId: string): AbMarkInfo | null;
+  /**
    * The exact (full-resolution) picture of the clip's shown frame during Live transcode or lossy native playback:
    * `{ img, w, h, png }`, `{ error }`, or null (no player, or the shown picture is exact already).
    */
@@ -179,6 +185,14 @@ export interface PictureInfo {
   display?: any;
   quality?: any;
   [extra: string]: unknown;
+}
+
+/** EngineAdapter.markOf. */
+export interface AbMarkInfo {
+  shownRel: number;
+  markRel: number;
+  synthetic: boolean;
+  fps: number;
 }
 
 /** EngineAdapter.transcodeInfo. */
@@ -214,6 +228,8 @@ export interface TileSizePayload {
   factor?: number;
   aspect?: number;
   actual?: boolean;
+  /** Compare: each tile's own cell in device pixels (src/unified-session.js keeps them per clip). */
+  tiles?: Array<{ clipId: string; w: number; h: number }>;
 }
 
 /** Shared playback preferences (src/settings.js rememberPlaybackPrefs). */

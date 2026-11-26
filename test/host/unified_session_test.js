@@ -127,6 +127,16 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     await s.onMessage({ type: 'tileSize', clipId: 'x', w: 640, h: 360 });
     assert.deepStrictEqual(s.tileSize('a.mp4'), { w: 640, h: 360 });
     assert.strictEqual(s.tileSize('x'), null);
+    // Compare: the page's per-tile cells (a Spotlight hero and its strip) are kept per clip, with the shared fields;
+    // an unknown clip or a malformed entry is skipped.
+    await s.onMessage({ type: 'tileSize', tile: { w: 1200, h: 680, n: 3, layout: 'spotlight', zoom: 1, tiles: [
+      { clipId: 'c.mp4', w: 1200, h: 680 }, { clipId: 'a.mp4', w: 599, h: 300 }, { clipId: 'x', w: 9, h: 9 },
+      { clipId: 'b.mp4', w: -1, h: 300 }, null, { clipId: 7, w: 5, h: 5 },
+    ] } });
+    assert.deepStrictEqual(s.tileSize('c.mp4'), { w: 1200, h: 680, n: 3, layout: 'spotlight', zoom: 1 });
+    assert.deepStrictEqual(s.tileSize('a.mp4'), { w: 599, h: 300, n: 3, layout: 'spotlight', zoom: 1 });
+    assert.strictEqual(s.tileSize('x'), null);
+    assert.strictEqual(s.tileSize('b.mp4'), null, 'a malformed cell is not kept');
     await s.onMessage({ type: 'tiles', order: ['b.mp4', 'a.mp4'], capture: true });
     assert.deepStrictEqual(s.order, ['b.mp4', 'a.mp4']);
     assert.strictEqual(s.capture, true);

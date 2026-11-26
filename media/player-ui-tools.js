@@ -1041,6 +1041,8 @@
    * @param {(clipId?: any) => void} [env.onPause]
    * @param {(what: string) => void} [env.onBeforeSnapshot] the reduced-resolution offer (exactTool)
    * @param {(kind: string) => any} [env.getRange] the A-B range for an export kind, or null
+   * @param {() => Array<{ clipId: string, range: any }> | null} [env.getClipRanges] Compare: each tile's clip range
+   *   (compareClipRanges), or null with one video or no range
    * @param {(range: any) => void} [env.onRefuse] an exact clip refused (synthetic picture times)
    * @param {(text: string) => void} [env.log]
    */
@@ -1146,6 +1148,14 @@
      * @param {boolean} [promptInHost] the host asked: an empty range goes back so it can say so itself
      */
     function exportAb(kind, promptInHost = false) {
+      // Compare: one range per tile (the host exports every eligible tile and refuses only when all are synthetic).
+      const ranges = kind === 'clipRange' && env.getClipRanges ? env.getClipRanges() : null;
+      if (ranges && ranges.length) {
+        const ctx = ctxOf(undefined);
+        const own = ranges.find((/** @type {any} */ r) => ctx && r.clipId === ctx.clipId) || ranges[0];
+        host.postMessage(tag(ctx, { type: kind, range: own.range, ranges }));
+        return true;
+      }
       const range = env.getRange ? env.getRange(kind) : null;
       if (!range && !promptInHost) { toast('Set an A–B range first (A, B)'); return false; }
       if (kind === 'clipRange' && range && range.native) { if (env.onRefuse) env.onRefuse(range); return false; }
@@ -1231,11 +1241,67 @@
     };
   }
 
+  // ---- A-B clip marks (media/comparerange.js, as media/player.js and media/compare.js set them) ----
+
+  /**
+   * @typedef {{ shownRel: number, markRel: number, synthetic: boolean, fps: number }} AbMarkInfo
+   * @typedef {{ clipId: string, offset: number, fps: number, mark: AbMarkInfo | null }} AbTileInput
+   * @typedef {{ rel: number, synthetic: boolean }} AbTileMark
+   */
+
+  /**
+   * An A or B mark on the shared timeline from what each tile shows now: the clock tile's picture time (`t`) and its
+   * own source timestamp (`pts`, what an exact clip cuts at), both minus the clock's offset; per tile its own picture's
+   * source time when that picture is on the clock's moment (within 1.5 frames), else null (still seeking: the nominal
+   * mapping is used for that tile). null when the clock tile shows no picture.
+   * @param {{ clockId: string, tiles: AbTileInput[] }} o
+   * @returns {{ t: number, pts: number, synthetic: boolean, tiles: Record<string, AbTileMark | null> } | null}
+   */
+  function captureAbMark({ clockId, tiles }) {
+    const clock = tiles.find((x) => x.clipId === clockId);
+    if (!clock || !clock.mark) return null;
+    const t = clock.mark.shownRel - clock.offset;
+    /** @type {Record<string, AbTileMark | null>} */
+    const out = {};
+    for (const x of tiles) {
+      const m = x.mark;
+      const fps = Number(x.fps) > 0 ? Number(x.fps) : (m && m.fps) || 30;
+      out[x.clipId] = m && Number.isFinite(m.shownRel) && Number.isFinite(m.markRel)
+        && Math.abs(m.shownRel - (t + x.offset)) <= 1.5 / fps ? { rel: m.markRel, synthetic: !!m.synthetic } : null;
+    }
+    return { t, pts: clock.mark.markRel - clock.offset, synthetic: !!clock.mark.synthetic, tiles: out };
+  }
+
+  /**
+   * Each Compare tile's clip range for an A-B export (media/compare.js exportAB): from the pictures it showed at A and B,
+   * else A and B mapped through its offset (a follower gets the early-presentation allowance). `synthetic` (sent as
+   * `native`, src/clipsource.js) when a time is only a slot count.
+   * @param {{ a: number, b: number, synthetic?: boolean, clockId: string,
+   *   tiles: Array<{ clipId: string, offset: number, fps: number, synthetic?: boolean,
+   *     atA?: AbTileMark | null, atB?: AbTileMark | null }> }} o
+   * @returns {Array<{ clipId: string, range: { a: number, b: number, early: number, native?: boolean } }>}
+   */
+  function compareClipRanges({ a, b, synthetic = false, clockId, tiles }) {
+    return tiles.map((x) => {
+      if (x.atA && x.atB) {
+        const lo = Math.min(x.atA.rel, x.atB.rel), hi = Math.max(x.atA.rel, x.atB.rel);
+        const syn = x.atA.synthetic || x.atB.synthetic;
+        return { clipId: x.clipId, range: { a: lo, b: hi, early: 0, ...(syn ? { native: true } : {}) } };
+      }
+      const fps = Number(x.fps) > 0 ? Number(x.fps) : 30;
+      const syn = synthetic || !!x.synthetic;
+      return {
+        clipId: x.clipId,
+        range: { a: a + x.offset, b: b + x.offset, early: x.clipId === clockId ? 0 : 0.5 / fps, ...(syn ? { native: true } : {}) },
+      };
+    });
+  }
+
   const api = {
     SCOPE_MODES, SCOPE_NAMES, INSPECTOR_MODES, STATS_MS, DELAY_STEP_MS, EXPORT_FRAME_TIMEOUT_MS,
     NOTICE_PRIORITY, NOTICE_OPEN_CLASS, LOUPE_PX, GRID_AT,
     createNoticeController, shouldSuppressToast, createInspectionController, createPixelInspector,
-    createSubtitleController, createFrameExportController, fmtStamp,
+    createSubtitleController, createFrameExportController, fmtStamp, captureAbMark, compareClipRanges,
   };
   // checkJs: end
 
