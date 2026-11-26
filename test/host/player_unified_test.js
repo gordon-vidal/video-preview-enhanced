@@ -444,7 +444,7 @@ test('onDecoderFrame / onDecoderEnded / onTransport: the clock reaches the contr
     assert.strictEqual(a.calls.filter((c) => c[0] === 'play').length, 1, 'play once');
     h.rec.env.onTransport({ type: 'rate', rate: 2 });
     h.rec.env.onTransport({ type: 'loop', loop: true });
-    assert.deepStrictEqual(b.calls.filter((c) => c[0] === 'rate' || c[0] === 'loop'), [['rate', 2], ['loop', true]]);
+    assert.deepStrictEqual(b.calls.filter((c) => c[0] === 'rate' || c[0] === 'loop'), [['rate', 1], ['loop', false], ['rate', 2], ['loop', true]]);
     // The clock decoder's end goes to onDecoderEnded; another tile's does not.
     b.hooks.onEnded({ natural: true });
     a.hooks.onEnded({ natural: true, ran: 3 });
@@ -749,6 +749,59 @@ test('decoder showMessage / toast: on the overlay and the toast; a startup error
     assert.ok(overlay.textContent.includes('The decoder failed to start.'));
     assert.ok(overlay.textContent.includes('no wasm here'));
   }, { createPlayer: () => { throw new Error('no wasm here'); } });
+});
+
+test('Astra #3: production decoder wrapper stamps page on outbound nd messages & new/replaced tiles inherit rate and loop', () => {
+  // 1. defaultCreatePlayer stamps cfg.page and clipId on engine outbound messages (e.g. native nd open).
+  const rawPosts = [];
+  const win = { document: { createElement: () => ({}) } };
+  let capturedEngOpts = null;
+  win.createEngine = (opts) => {
+    capturedEngOpts = opts;
+    return {
+      LibavPlayer: function MockLibav() {
+        this.dispose = () => {};
+        opts.vscode.postMessage({ type: 'nd', m: { op: 'open' } });
+      },
+    };
+  };
+  const { html } = (() => ({
+    html: unifiedHtml({
+      cspSource: 'https://x', uri: (f) => `u/${f}`, base: 'u/b', loader: 'l.js', nonce: 'n',
+      cfg: { page: 7, boot: 'b1', clips: [CLIPS[0]], tiles: ['A'] }, sequence: true, folder: true,
+    }),
+  }))();
+  const dom = createDom(html);
+  withGlobals(dom, () => {
+    const res = U.boot({
+      doc: dom.doc, win: Object.assign(dom.win, { createEngine: win.createEngine }),
+      vscode: { postMessage: (m) => rawPosts.push(m), getState: () => null, setState() {} },
+      widgets: widgets(), stateApi: S, engineApi: EngineAdapter, hostApi: HostAdapter, uiApi: PUI,
+    });
+    dom.win.fire('message', { data: { type: 'open', page: 7, boot: 'b1' } });
+    const ndMsg = rawPosts.find((m) => m.type === 'nd');
+    assert.ok(ndMsg && ndMsg.page === 7 && ndMsg.clipId === 'A' && ndMsg.key === 'A' && capturedEngOpts.page === 7,
+      `outbound nd message must include page & clipId: ${JSON.stringify(ndMsg)}`);
+    res.dispose();
+  });
+
+  // 2. Added and replaced decoders inherit active rate and loop policy before playback.
+  withPage(({ app, send, made }) => {
+    send({ type: 'open' });
+    // Set rate to 2x and loop on via controller transport.
+    app.onTransport({ type: 'rate', rate: 2 });
+    app.onTransport({ type: 'loop', loop: true });
+    // Add B while rate is 2x.
+    send({ type: 'openVideo', clipId: 'B', compare: true, clip: CLIPS[1] });
+    const b = made.find((p) => p.clip.id === 'B');
+    assert.ok(b && b.calls.some((c) => c[0] === 'rate' && c[1] === 2), 'newly added tile inherits active rate');
+    assert.ok(b && b.calls.some((c) => c[0] === 'loop' && c[1] === true), 'newly added tile inherits active loop');
+    // Replace B with C.
+    send({ type: 'replaceTile', oldId: 'B', newId: 'C', label: 'c.mp4', clip: CLIPS[2] });
+    const c = made.find((p) => p.clip.id === 'C');
+    assert.ok(c && c.calls.some((c2) => c2[0] === 'rate' && c2[1] === 2), 'replaced tile inherits active rate');
+    assert.ok(c && c.calls.some((c2) => c2[0] === 'loop' && c2[1] === true), 'replaced tile inherits active loop');
+  });
 });
 
 console.log(`player_unified_test: ${count} ok (${Date.now() - T0} ms)`);

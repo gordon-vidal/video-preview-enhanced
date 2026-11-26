@@ -105,18 +105,24 @@
    * The production decoder factory over media/engine.js (the page global createEngine), as media/compare.js
    * makeEngine builds a tile: one LibavPlayer per clip, its host messages tagged with the clip. null when the page has
    * no engine (Node, or a page without engine.js).
-   * @param {any} G the page's globals @param {any} vscode @param {any} cfg
+   * @param {any} G the page's globals @param {any} win @param {any} doc @param {any} vscode @param {any} cfg
    * @returns {CreatePlayer | null}
    */
-  function defaultCreatePlayer(G, vscode, cfg) {
-    const createEngine = G && G.createEngine;
-    if (typeof createEngine !== 'function' || !G.document) return null;
+  function defaultCreatePlayer(G, win, doc, vscode, cfg) {
+    const createEngine = (win && win.createEngine) || (G && G.createEngine);
+    const d = doc || (G && G.document);
+    if (typeof createEngine !== 'function' || !d) return null;
     return (clip, _host, hooks) => {
-      const cv = G.document.createElement('canvas');
+      const cv = d.createElement('canvas');
+      const envTag = {
+        ...(cfg.page !== undefined ? { page: cfg.page } : {}),
+        ...(cfg.boot !== undefined ? { boot: cfg.boot } : {}),
+        key: clip.id, clipId: clip.id,
+      };
       const eng = createEngine({
         page: cfg.page, debug: !!cfg.debug, canvas: cv,
         // Decoder traffic (blocks, native frames) is not the controller's: it goes straight to the host, tagged.
-        vscode: { postMessage: (/** @type {any} */ m) => vscode.postMessage({ ...m, key: clip.id, clipId: clip.id }), getState: () => ({}), setState() {} },
+        vscode: { postMessage: (/** @type {any} */ m) => vscode.postMessage({ ...m, ...envTag }), getState: () => ({}), setState() {} },
         log: hooks.log,
         showMessage: (/** @type {any} */ msg, /** @type {any} */ hint) => hooks.showMessage(msg, hint),
         toast: (/** @type {any} */ text, /** @type {any} */ ms) => hooks.toast(text, ms),
@@ -219,7 +225,7 @@
 
     /** @type {HostAdapter & { slots: () => string[] }} */
     const host = HostApi.create({ vscode, win, page: cfg.page, boot: cfg.boot, surface: cfg.surface || 'unified' });
-    const createPlayer = env.createPlayer !== undefined ? env.createPlayer : defaultCreatePlayer(G, vscode, cfg);
+    const createPlayer = env.createPlayer !== undefined ? env.createPlayer : defaultCreatePlayer(G, win, doc, vscode, cfg);
     const { compositor = null, sync = null } = env;
 
     // ---- clips and their decoders ----
@@ -281,6 +287,26 @@
       }
     }
 
+    /** Last rate / loop sent via onTransport (null until first set; falls back to controller prefs). */
+    let currentRate = /** @type {number | null} */ (null);
+    let currentLoop = /** @type {boolean | null} */ (null);
+    /**
+     * Initialize a newly created/replaced decoder with the controller's active playback rate and loop policy before
+     * playback starts (engine.js defaults to 1x and loop=true).
+     * @param {any} p
+     */
+    function applyRateAndLoop(p) {
+      if (!p) return;
+      const prefs = ui && typeof ui.getPrefs === 'function' ? ui.getPrefs() : null;
+      const rate = currentRate !== null ? currentRate : (prefs && Number(prefs.rate) > 0 ? Number(prefs.rate) : 1);
+      const loop = currentLoop !== null ? currentLoop : !!(prefs && prefs.loop);
+      try {
+        if (rate > 0 && typeof p.setRate === 'function') p.setRate(rate);
+        if (typeof p.setLoop === 'function') p.setLoop(loop);
+        else p.loop = loop;
+      } catch (err) { log(`decoder init rate/loop: ${err && /** @type {any} */ (err).message || err}`); }
+    }
+
     /** The decoder for `id`, made on first need (after 'open': the host serves blocks from then on). @param {string} id */
     function ensurePlayer(id) {
       if (players.has(id) || !opened || disposed || typeof createPlayer !== 'function') return players.get(id) || null;
@@ -299,7 +325,10 @@
       };
       try {
         const p = createPlayer({ ...spec }, host, hooks);
-        if (p) players.set(id, p);
+        if (p) {
+          players.set(id, p);
+          applyRateAndLoop(p);
+        }
         if (p && isReady(p)) markReady();
         return p || null;
       } catch (err) {
@@ -579,6 +608,8 @@
           return;
         }
         case 'rate': case 'loop':
+          if (c.type === 'rate' && Number(c.value) > 0) currentRate = Number(c.value);
+          if (c.type === 'loop') currentLoop = !!c.value;
           for (const id of t.tiles) {
             const p = players.get(id);
             if (!p) continue;
@@ -614,7 +645,7 @@
     /** @type {UnifiedControllerApi} the controller; null only until create() below returns */
     let ui = /** @type {any} */ (null);
     ui = UiApi.create({
-      doc, win, stateApi: S, engine, host, widgets: env.widgets, initial,
+      doc, win, stateApi: S, engine, host, widgets, initial,
       prefs: cfg.prefs, railCfg: cfg.rail || cfg.railCfg, storage: host.storage, goto: cfg.goto,
       fragment: win && win.location ? win.location.hash : null, railCarry: cfg.railCarry, page: cfg.page,
       tickMs: 0, onChange, onTransport,
@@ -735,7 +766,31 @@
     root.VpeUnified = api;
     const G = /** @type {any} */ (globalThis);
     if (typeof G.acquireVsCodeApi === 'function' && root.document && root.document.getElementById('cfg')) {
-      try { root.vpeUnified = boot(); } catch (err) { console.error('VpeUnified.boot failed', err); }
+      // Classic <script> top-level `const` widgets live in the global lexical scope, not on `window`.
+      const browserWidgets = {
+        VpeControls: typeof VpeControls !== 'undefined' ? VpeControls : undefined,
+        VpeFolderRail: typeof VpeFolderRail !== 'undefined' ? VpeFolderRail : undefined,
+        VpeCtxMenu: typeof VpeCtxMenu !== 'undefined' ? VpeCtxMenu : undefined,
+        VpeAbLoop: typeof VpeAbLoop !== 'undefined' ? VpeAbLoop : undefined,
+        VpeAutoplay: typeof VpeAutoplay !== 'undefined' ? VpeAutoplay : undefined,
+        VpeTime: typeof VpeTime !== 'undefined' ? VpeTime : undefined,
+        VpePicture: typeof VpePicture !== 'undefined' ? VpePicture : undefined,
+        VpeModes: typeof VpeModes !== 'undefined' ? VpeModes : undefined,
+        VpeRangeDrag: typeof VpeRangeDrag !== 'undefined' ? VpeRangeDrag : undefined,
+        VpeReducedResNotice: typeof VpeReducedResNotice !== 'undefined' ? VpeReducedResNotice : undefined,
+        VpeSlowNotice: typeof VpeSlowNotice !== 'undefined' ? VpeSlowNotice : undefined,
+        CompareGrid: typeof CompareGrid !== 'undefined' ? CompareGrid : undefined,
+        VpePlayerUiTiles: typeof VpePlayerUiTiles !== 'undefined' ? VpePlayerUiTiles : undefined,
+        VpePlayerUiInput: typeof VpePlayerUiInput !== 'undefined' ? VpePlayerUiInput : undefined,
+        VpePlayerUiTools: typeof VpePlayerUiTools !== 'undefined' ? VpePlayerUiTools : undefined,
+        VpePlayerUiLifecycle: typeof VpePlayerUiLifecycle !== 'undefined' ? VpePlayerUiLifecycle : undefined,
+      };
+      try { root.vpeUnified = boot({ widgets: browserWidgets }); }
+      catch (err) {
+        console.error('VpeUnified.boot failed', err);
+        const msg = root.document.getElementById('message');
+        if (msg) msg.textContent = `Unified viewer boot failed: ${err && err.message || err}`;
+      }
     }
   }
 }(typeof self !== 'undefined' ? self : /** @type {any} */ (this)));

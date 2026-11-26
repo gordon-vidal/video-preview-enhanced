@@ -387,7 +387,8 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, deps }) {
     if (m.type === 'log') { log(`webview: ${m.msg}`); return undefined; }
     const done = Promise.resolve(session.onMessage(m)).catch((e) => {
       log(`${m.type} failed: ${e && e.stack || e}`);
-      if (!disposed) session.post({ type: 'toast', text: `Video Preview action failed. ${e && e.message || e}` });
+      // Never leak raw OS error messages (e.g. fs.stat ENOENT paths) into the webview toast.
+      if (!disposed) session.post({ type: 'toast', text: 'Video Preview action failed.' });
     });
     if (m.type === 'ready') sendRailPos().catch((e) => log(`folder: ${e && e.code || e}`));
     return done;

@@ -206,6 +206,9 @@ function createUnifiedSession(deps) {
     emit('clips');
   }
 
+  /** Clip ids sent via openVideo/replaceTile that the page has not yet echoed back in a `tiles` report. @type {Set<string>} */
+  const pendingAdds = new Set();
+
   /**
    * Adds a video after the ones shown. A duplicate or a full panel only says so (a toast).
    * @param {Partial<UnifiedClip> & { uri?: UriLike | string }} clip
@@ -220,6 +223,7 @@ function createUnifiedSession(deps) {
     const c = normalize(clip);
     clips = [...clips, c];
     order = [...order, c.id];
+    pendingAdds.add(c.id);
     changed();
     post({ type: 'openVideo', clipId: c.id, label: c.label, clip: clipDescriptor(c), compare });
     return true;
@@ -238,6 +242,8 @@ function createUnifiedSession(deps) {
     const c = normalize(newClip);
     clips = clips.map((x) => (x.id === oldId ? c : x));
     order = order.map((id) => (id === oldId ? c.id : id));
+    pendingAdds.delete(oldId);
+    pendingAdds.add(c.id);
     tileSizes.delete(oldId);
     changed();
     post({ type: 'replaceTile', oldId, newId: c.id, label: c.label, clip: clipDescriptor(c) });
@@ -255,6 +261,7 @@ function createUnifiedSession(deps) {
     if (!kept) return false;
     clips = [kept];
     order = [kept.id];
+    pendingAdds.clear();
     for (const id of [...tileSizes.keys()]) if (id !== kept.id) tileSizes.delete(id);
     setCapture(false);
     changed();
@@ -277,11 +284,14 @@ function createUnifiedSession(deps) {
     const ids = list ? list.map((/** @type {any} */ c) => (c && typeof c === 'object' ? c.clipId || c.id : c)) : null;
     if (ids) {
       const known = [...new Set(ids.filter((id) => isId(id) && clipOf(id)))];
+      for (const id of known) pendingAdds.delete(id);
+      // Preserve newly added clips the page hasn't acknowledged yet so an older tiles report cannot drop them.
+      const keep = [...known, ...order.filter((id) => pendingAdds.has(id) && !known.includes(id) && clipOf(id))];
       // The page never shows no video: an empty or foreign list is not one of ours.
-      if (known.length) {
-        clips = clips.filter((c) => known.includes(c.id));
-        order = known;
-        for (const id of [...tileSizes.keys()]) if (!known.includes(id)) tileSizes.delete(id);
+      if (keep.length) {
+        clips = clips.filter((c) => keep.includes(c.id));
+        order = keep;
+        for (const id of [...tileSizes.keys()]) if (!keep.includes(id)) tileSizes.delete(id);
       }
     }
     if (typeof m.capture === 'boolean') setCapture(m.capture);
@@ -309,6 +319,7 @@ function createUnifiedSession(deps) {
         const o = Array.isArray(m.order) ? m.order : null;
         // Only a reordering of the clips shown: same ids, each once.
         if (!o || o.length !== order.length || new Set(o).size !== o.length || !o.every((id) => isId(id) && clipOf(id))) return undefined;
+        for (const id of o) pendingAdds.delete(id);
         order = [...o];
         changed();
         return undefined;

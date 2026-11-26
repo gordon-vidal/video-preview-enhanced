@@ -229,6 +229,24 @@ const context = { extensionUri: Uri.file(ROOT) };
       assert.strictEqual(panel.title, 'a.mp4');
       handlers.dispose();
     }
+
+    { // A vanished file error stays in the host log and never discloses an absolute path in the webview toast.
+      const { panel, posts, handlers } = fakePanel();
+      const missingPath = path.join(dir, 'vanished-secret-dir', 'gone.mp4');
+      const clipA = await prepareClip(a, {});
+      const d = deps();
+      d.pick = async () => [uriOf(missingPath)];
+      const viewer = createUnifiedViewer({ vscode, context, panel, clip: clipA, registry: null, deps: d });
+      viewer.show();
+      await handlers.message({ type: 'ready', page: 1 });
+      posts.length = 0;
+      await handlers.message({ type: 'pickVideo', page: 1 });
+      const toastMsg = posts.find((m) => m.type === 'toast');
+      assert.ok(toastMsg, 'error posts a user-facing toast');
+      assert.ok(!toastMsg.text.includes(dir) && !toastMsg.text.includes('vanished-secret-dir'),
+        `toast must not leak filesystem path: ${toastMsg.text}`);
+      handlers.dispose();
+    }
   } finally {
     await tick(); // the file handles close
     fs.rmSync(dir, { recursive: true, force: true });

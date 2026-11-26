@@ -219,6 +219,7 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     assert.strictEqual(s.addClip(clip('c.mp4')), false, 'full');
     assert.deepStrictEqual(s.members(), ['/v/a.mp4', '/v/b.mp4']);
     await s.onMessage({ type: 'tileSize', clipId: 'b.mp4', w: 10, h: 10 });
+    await s.onMessage({ type: 'tiles', tabId: 't1', tiles: ['a.mp4', 'b.mp4'], current: 'a.mp4' });
     const before = refreshed;
     await s.onMessage({ type: 'tiles', tabId: 't1', tiles: ['a.mp4'], current: 'a.mp4' });
     assert.deepStrictEqual(s.order, ['a.mp4']);
@@ -294,6 +295,23 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     one.leaveCompare('a.mp4');
     assert.strictEqual(one.capture, false, 'Leave compare ends capture');
     assert.strictEqual(reg.capturing(), null);
+  }
+
+  { // Multi-add interleaving: adding B and C then receiving an earlier [A, B] tiles report does not drop C.
+    const { s } = make();
+    await s.onMessage({ type: 'ready' });
+    assert.strictEqual(s.addClip(clip('b.mp4')), true);
+    assert.strictEqual(s.addClip(clip('c.mp4')), true);
+    assert.deepStrictEqual(s.order, ['a.mp4', 'b.mp4', 'c.mp4']);
+    // Page processed B first and sent tiles: [A, B] before processing C's openVideo.
+    await s.onMessage({ type: 'tiles', tiles: ['a.mp4', 'b.mp4'] });
+    assert.deepStrictEqual(s.order, ['a.mp4', 'b.mp4', 'c.mp4'], 'in-flight C is preserved');
+    assert.strictEqual(s.clips.length, 3);
+    // Once the page acknowledges C, a subsequent close of C removes it cleanly.
+    await s.onMessage({ type: 'tiles', tiles: ['a.mp4', 'b.mp4', 'c.mp4'] });
+    await s.onMessage({ type: 'tiles', tiles: ['a.mp4', 'b.mp4'] });
+    assert.deepStrictEqual(s.order, ['a.mp4', 'b.mp4'], 'acknowledged C can be removed');
+    assert.strictEqual(s.clips.length, 2);
   }
 
   console.log('unified_session_test: ok');
