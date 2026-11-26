@@ -44,7 +44,11 @@ const { unifiedHtml } = require('./unified-html');
  * @property {(m: PageMessage, s: UnifiedSession) => any} [onRailMessage]  'rail' and 'neighbour'
  * @property {(clip: UnifiedClip, m: PageMessage) => any} [onReadBlock]
  * @property {(clip: UnifiedClip, m: PageMessage) => any} [onThumb]
+ * @property {(clip: UnifiedClip, m: PageMessage) => any} [onNative]  'nd': the page's native-decoder request for a clip
+ * @property {(size: TileSize, clip: UnifiedClip | null) => any} [onTileSize]  the page's decode size (clip: per tile)
  * @property {(s: UnifiedSession) => void} [onDispose]
+ *
+ * @typedef {{ w: number, h: number, n?: number, layout?: string, zoom?: number, rate?: number }} TileSize
  *
  * @typedef {'active' | 'capture' | 'clips' | 'dispose'} SessionEvent
  * @typedef {ReturnType<typeof createUnifiedSession>} UnifiedSession
@@ -63,6 +67,48 @@ const isId = (v) => typeof v === 'string' && v.length > 0 && v.length <= 200;
 function fileKeyOf(c) {
   if (c.uri) return String(c.uri);
   return c.fsPath || '';
+}
+
+/** Numeric facts the page's decoders need before they probe (media/player-unified.js createPlayer). */
+const NUM_FIELDS = ['size', 'duration', 'fps', 'frames', 'width', 'height', 'rotation'];
+
+/**
+ * What the page may know about a clip: its id, label and probed facts, never its path or URI (the page reads
+ * blocks by clip id). A field the clip lacks comes from its meta, if that has it.
+ * @param {UnifiedClip} c
+ */
+function clipDescriptor(c) {
+  const meta = c.meta && typeof c.meta === 'object' ? /** @type {Record<string, any>} */ (c.meta) : {};
+  const src = /** @type {Record<string, any>} */ (c);
+  /** @param {string} k */
+  const pick = (k) => (src[k] !== undefined ? src[k] : meta[k]);
+  /** @param {string} k */
+  const num = (k) => { const v = Number(pick(k)); return Number.isFinite(v) && v >= 0 ? v : 0; };
+  /** @type {Record<string, any>} */
+  const d = { clipId: c.id, label: c.label, name: c.label };
+  for (const k of NUM_FIELDS) d[k] = num(k);
+  d.hasAudio = pick('hasAudio') !== false;
+  d.native = !!pick('native');
+  const codec = pick('codec');
+  d.codec = typeof codec === 'string' ? codec : '';
+  const kind = pick('kind');
+  d.kind = typeof kind === 'string' && kind ? kind : 'file';
+  return d;
+}
+
+/**
+ * A tileSize message's size: { tile: { w, h, ... } } (media/player-ui-lifecycle.js) or top-level w, h.
+ * @param {PageMessage} m @returns {TileSize | null}
+ */
+function tileSizeOf(m) {
+  const t = m.tile && typeof m.tile === 'object' ? m.tile : m;
+  const w = Number(t.w), h = Number(t.h);
+  if (!(w > 0 && h > 0 && Number.isFinite(w) && Number.isFinite(h))) return null;
+  /** @type {TileSize} */
+  const size = { w, h };
+  for (const k of /** @type {const} */ (['n', 'zoom', 'rate'])) if (Number.isFinite(t[k])) size[k] = t[k];
+  if (typeof t.layout === 'string') size.layout = t.layout;
+  return size;
 }
 
 /** @param {string} p */
@@ -106,6 +152,8 @@ function createUnifiedSession(deps) {
   let queued = [];
   /** @type {Map<string, { w: number, h: number }>} */
   const tileSizes = new Map();
+  /** @type {TileSize | null} the last size the page reported, for any tile */
+  let lastTileSize = null;
   /** @type {{ refreshMembers(): void } | null} */
   let rail = null;
   let title = '';
@@ -169,7 +217,7 @@ function createUnifiedSession(deps) {
     clips = [...clips, c];
     order = [...order, c.id];
     changed();
-    post({ type: 'openVideo', clipId: c.id, label: c.label, compare });
+    post({ type: 'openVideo', clipId: c.id, label: c.label, clip: clipDescriptor(c), compare });
     return true;
   }
 
@@ -188,7 +236,7 @@ function createUnifiedSession(deps) {
     order = order.map((id) => (id === oldId ? c.id : id));
     tileSizes.delete(oldId);
     changed();
-    post({ type: 'replaceTile', oldId, newId: c.id, label: c.label });
+    post({ type: 'replaceTile', oldId, newId: c.id, label: c.label, clip: clipDescriptor(c) });
     return true;
   }
 
@@ -220,7 +268,9 @@ function createUnifiedSession(deps) {
 
   /** The page's tiles: the clips it still shows, in its order (a tile closed in the page). @param {PageMessage} m */
   function syncTiles(m) {
-    const ids = Array.isArray(m.order) ? m.order : Array.isArray(m.clips) ? m.clips.map((/** @type {any} */ c) => (c && typeof c === 'object' ? c.clipId || c.id : c)) : null;
+    // media/player-ui.js posts { tiles, current }; older pages { order } or { clips }.
+    const list = Array.isArray(m.tiles) ? m.tiles : Array.isArray(m.order) ? m.order : Array.isArray(m.clips) ? m.clips : null;
+    const ids = list ? list.map((/** @type {any} */ c) => (c && typeof c === 'object' ? c.clipId || c.id : c)) : null;
     if (ids) {
       const known = [...new Set(ids.filter((id) => isId(id) && clipOf(id)))];
       // The page never shows no video: an empty or foreign list is not one of ours.
@@ -241,7 +291,7 @@ function createUnifiedSession(deps) {
       case 'ready': {
         ready = true;
         send({
-          type: 'sessionState', clips: ordered().map((c) => ({ clipId: c.id, label: c.label })),
+          type: 'sessionState', clips: ordered().map(clipDescriptor),
           order: [...order], capture, maxVideos,
         });
         const q = queued;
@@ -259,9 +309,14 @@ function createUnifiedSession(deps) {
         return undefined;
       }
       case 'tileSize': {
-        const w = Number(m.w), h = Number(m.h);
-        if (isId(m.clipId) && clipOf(m.clipId) && w > 0 && h > 0 && Number.isFinite(w) && Number.isFinite(h)) tileSizes.set(m.clipId, { w, h });
-        return undefined;
+        const size = tileSizeOf(m);
+        if (!size) return undefined;
+        // A clip id the session does not show: not ours (a tile closed meanwhile).
+        if (m.clipId !== undefined && !(isId(m.clipId) && clipOf(m.clipId))) return undefined;
+        const c = m.clipId !== undefined ? clipOf(m.clipId) : null;
+        lastTileSize = size;
+        if (c) tileSizes.set(c.id, size);
+        return deps.onTileSize ? deps.onTileSize(size, c) : undefined;
       }
       case 'capture': {
         const on = typeof m.on === 'boolean' ? m.on : m.capture;
@@ -307,8 +362,25 @@ function createUnifiedSession(deps) {
         const c = isId(m.clipId) ? clipOf(m.clipId) : null;
         return c && deps.onThumb ? deps.onThumb(c, m) : undefined;
       }
+      // Native ffmpeg (src/native.js): per clip; a reply goes back through postNativeReply with the same id.
+      case 'nd': {
+        const id = m.clipId ?? m.key;
+        const c = id === undefined || id === null ? (clips.length === 1 ? clips[0] : null) : isId(id) ? clipOf(id) : null;
+        return c && deps.onNative ? deps.onNative(c, m) : undefined;
+      }
       default: return undefined;
     }
+  }
+
+  /**
+   * A native decoder's message to the page for one clip, tagged so two native tiles' replies never mix.
+   * @param {string} clipId @param {any} reply
+   * @returns {boolean} posted (false: the clip is gone)
+   */
+  function postNativeReply(clipId, reply) {
+    if (disposed || !isId(clipId) || !clipOf(clipId)) return false;
+    post({ type: 'nd', clipId, key: clipId, m: reply });
+    return true;
   }
 
   /**
@@ -339,7 +411,7 @@ function createUnifiedSession(deps) {
   }
 
   const session = {
-    addClip, replaceClip, leaveCompare, shouldCapture, onMessage, render, dispose, post,
+    addClip, replaceClip, leaveCompare, shouldCapture, onMessage, render, dispose, post, postNativeReply,
     /** @param {boolean} on */
     setCapture(on) { if (!disposed) setCapture(on); },
     /** The panel became (in)active (onDidChangeViewState): the registry prefers the most recently active. @param {boolean} on */
@@ -365,6 +437,8 @@ function createUnifiedSession(deps) {
     get maxVideos() { return maxVideos; },
     /** @param {string} id */
     tileSize: (id) => tileSizes.get(id) || null,
+    /** The last size the page reported for any tile (its decode size), or null. */
+    get lastTileSize() { return lastTileSize; },
   };
   changed();
   return session;
@@ -421,4 +495,4 @@ function createUnifiedRegistry() {
 }
 // checkJs: end
 
-module.exports = { createUnifiedSession, createUnifiedRegistry, titleOf, DEFAULT_MAX };
+module.exports = { createUnifiedSession, createUnifiedRegistry, titleOf, clipDescriptor, DEFAULT_MAX };

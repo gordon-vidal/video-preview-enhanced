@@ -4,7 +4,7 @@
 // Leave compare, tile order, message routing by clip id, and the registry that routes newly opened videos into a
 // capturing session.
 const assert = require('assert');
-const { createUnifiedSession, createUnifiedRegistry, titleOf } = require('../../src/unified-session');
+const { createUnifiedSession, createUnifiedRegistry, titleOf, clipDescriptor } = require('../../src/unified-session');
 
 const clip = (name) => ({ id: name, uri: `file:///v/${name}`, fsPath: `/v/${name}`, label: name });
 
@@ -26,6 +26,11 @@ function make(more = {}) {
   });
   return { s, posts, titles, calls, panel };
 }
+/** The descriptor a clip made by clip() has: no probed facts yet. */
+const desc = (name, more = {}) => ({
+  clipId: name, label: name, name, size: 0, duration: 0, fps: 0, frames: 0, width: 0, height: 0, rotation: 0,
+  hasAudio: true, native: false, codec: '', kind: 'file', ...more,
+});
 const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.text);
 
 (async () => {
@@ -42,11 +47,11 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     assert.deepStrictEqual(titles, ['a.mp4']);
     await s.onMessage({ type: 'ready' });
     assert.deepStrictEqual(posts.shift(), {
-      type: 'sessionState', clips: [{ clipId: 'a.mp4', label: 'a.mp4' }], order: ['a.mp4'], capture: false, maxVideos: 4,
+      type: 'sessionState', clips: [desc('a.mp4')], order: ['a.mp4'], capture: false, maxVideos: 4,
     });
     assert.strictEqual(s.addClip(clip('b.mp4')), true);
     assert.strictEqual(panel.title, 'a.mp4 ↔ b.mp4');
-    assert.deepStrictEqual(posts.pop(), { type: 'openVideo', clipId: 'b.mp4', label: 'b.mp4', compare: true });
+    assert.deepStrictEqual(posts.pop(), { type: 'openVideo', clipId: 'b.mp4', label: 'b.mp4', clip: desc('b.mp4'), compare: true });
     assert.strictEqual(s.addClip(clip('c.mp4'), { compare: false }), true);
     assert.strictEqual(panel.title, 'a.mp4 · b.mp4 · c.mp4');
     assert.strictEqual(posts.pop().compare, false);
@@ -93,7 +98,9 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     assert.deepStrictEqual(s.order, ['a.mp4', 'b.mp4']);
     assert.deepStrictEqual(toasts(posts), ['a.mp4 is in compare already']);
     await s.onMessage({ type: 'replaceVideo', clipId: 'b.mp4' });
-    assert.deepStrictEqual(posts.pop(), { type: 'replaceTile', oldId: 'b.mp4', newId: 'z.mp4', label: 'z.mp4' });
+    assert.deepStrictEqual(posts.pop(), {
+      type: 'replaceTile', oldId: 'b.mp4', newId: 'z.mp4', label: 'z.mp4', clip: desc('z.mp4'),
+    });
     assert.deepStrictEqual(s.order, ['a.mp4', 'z.mp4']);
     assert.strictEqual(s.title, 'a.mp4 ↔ z.mp4');
     assert.strictEqual(s.replaceClip('z.mp4', clip('a.mp4')), false, 'replacing with a shown file');
@@ -158,6 +165,88 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     assert.strictEqual(calls[10][1].fsPath, '/v/b.mp4');
     assert.strictEqual(calls[10][2].pos, 0);
     assert.strictEqual(calls[11][1].id, 'a.mp4');
+  }
+
+  { // Clip descriptors: probed facts reach the page (sessionState, openVideo, replaceTile), paths never do.
+    const probed = (name, more) => ({ ...clip(name), ...more });
+    const { s, posts } = make({
+      initialClip: probed('a.mp4', { size: 1000, duration: 2.5, fps: 25, frames: 62, width: 640, height: 360, codec: 'h264' }),
+      onReplacePick: async () => probed('r.mkv', { meta: { size: 77, native: true, codec: 'prores', fsPath: '/secret' } }),
+    });
+    await s.onMessage({ type: 'ready' });
+    const st = posts.shift();
+    assert.deepStrictEqual(st.clips, [desc('a.mp4', {
+      size: 1000, duration: 2.5, fps: 25, frames: 62, width: 640, height: 360, codec: 'h264',
+    })]);
+    s.addClip(probed('n.mov', { size: 5e9, native: true, hasAudio: false, kind: 'remote', duration: -1, fps: 'x' }));
+    const ov = posts.pop();
+    assert.deepStrictEqual(ov.clip, desc('n.mov', { size: 5e9, native: true, hasAudio: false, kind: 'remote' }));
+    await s.onMessage({ type: 'replaceVideo', clipId: 'n.mov' });
+    const rt = posts.pop();
+    assert.deepStrictEqual(rt.clip, desc('r.mkv', { size: 77, native: true, codec: 'prores' }), 'meta fills what the clip lacks');
+    const text = JSON.stringify([st, ov, rt]);
+    assert.ok(!/\/v\/|file:|secret|fsPath|uri/.test(text), `no path leaks: ${text}`);
+    assert.deepStrictEqual(clipDescriptor({ id: 'q', label: 'q' }), { ...desc('q') });
+  }
+
+  { // Native decoders ('nd'): by clip id; two native clips' interleaved replies keep their ids; unknown ids ignored.
+    const got = [];
+    const { s, posts } = make({ initialClip: { ...clip('a.mp4'), native: true }, onNative: (c, m) => { got.push([c.id, m.m.type]); } });
+    await s.onMessage({ type: 'nd', m: { type: 'open' } });
+    assert.deepStrictEqual(got, [['a.mp4', 'open']], 'one clip: an untagged request is its');
+    s.addClip({ ...clip('b.mp4'), native: true });
+    await s.onMessage({ type: 'ready' });
+    posts.length = 0;
+    await s.onMessage({ type: 'nd', key: 'b.mp4', clipId: 'b.mp4', m: { type: 'open' } });
+    await s.onMessage({ type: 'nd', clipId: 'a.mp4', m: { type: 'seek', t: 1 } });
+    await s.onMessage({ type: 'nd', key: 'b.mp4', m: { type: 'seek', t: 2 } });
+    await s.onMessage({ type: 'nd', clipId: 'zzz', m: { type: 'open' } });
+    await s.onMessage({ type: 'nd', m: { type: 'open' } });
+    assert.deepStrictEqual(got.slice(1), [['b.mp4', 'open'], ['a.mp4', 'seek'], ['b.mp4', 'seek']]);
+    assert.ok(s.postNativeReply('a.mp4', { type: 'frame', n: 1 }));
+    assert.ok(s.postNativeReply('b.mp4', { type: 'frame', n: 7 }));
+    assert.ok(s.postNativeReply('a.mp4', { type: 'frame', n: 2 }));
+    assert.strictEqual(s.postNativeReply('zzz', { type: 'frame' }), false);
+    assert.deepStrictEqual(posts.map((m) => [m.type, m.clipId, m.key, m.m.n]),
+      [['nd', 'a.mp4', 'a.mp4', 1], ['nd', 'b.mp4', 'b.mp4', 7], ['nd', 'a.mp4', 'a.mp4', 2]]);
+  }
+
+  { // tiles from media/player-ui.js ({ tabId, tiles, current }): a closed tile leaves the session and frees a slot.
+    const { s, panel } = make({ maxVideos: 2 });
+    let refreshed = 0;
+    s.setRail({ refreshMembers: () => { refreshed++; } });
+    assert.ok(s.addClip(clip('b.mp4')));
+    assert.strictEqual(s.addClip(clip('c.mp4')), false, 'full');
+    assert.deepStrictEqual(s.members(), ['/v/a.mp4', '/v/b.mp4']);
+    await s.onMessage({ type: 'tileSize', clipId: 'b.mp4', w: 10, h: 10 });
+    const before = refreshed;
+    await s.onMessage({ type: 'tiles', tabId: 't1', tiles: ['a.mp4'], current: 'a.mp4' });
+    assert.deepStrictEqual(s.order, ['a.mp4']);
+    assert.deepStrictEqual(s.clips.map((c) => c.id), ['a.mp4']);
+    assert.strictEqual(panel.title, 'a.mp4');
+    assert.deepStrictEqual(s.members(), ['/v/a.mp4']);
+    assert.ok(refreshed > before, 'rail marks refreshed');
+    assert.strictEqual(s.tileSize('b.mp4'), null);
+    assert.ok(s.addClip(clip('c.mp4')), 'a slot is free again');
+    await s.onMessage({ type: 'capture', on: true });
+    assert.strictEqual(s.capture, true);
+  }
+
+  { // tileSize as media/player-ui-lifecycle.js posts it ({ tile }), and top-level with a clip id.
+    const sizes = [];
+    const { s } = make({ onTileSize: (size, c) => { sizes.push([size, c && c.id]); } });
+    assert.strictEqual(s.lastTileSize, null);
+    await s.onMessage({ type: 'tileSize', tile: { w: 800, h: 450, n: 2, layout: 'grid', zoom: 1, rate: 1 } });
+    const t = { w: 800, h: 450, n: 2, layout: 'grid', zoom: 1, rate: 1 };
+    assert.deepStrictEqual(s.lastTileSize, t);
+    assert.deepStrictEqual(sizes, [[t, null]]);
+    await s.onMessage({ type: 'tileSize', clipId: 'a.mp4', w: 320, h: 180 });
+    assert.deepStrictEqual(s.tileSize('a.mp4'), { w: 320, h: 180 });
+    assert.deepStrictEqual(sizes[1], [{ w: 320, h: 180 }, 'a.mp4']);
+    await s.onMessage({ type: 'tileSize', tile: { w: 0, h: 450 } });
+    await s.onMessage({ type: 'tileSize', clipId: 'gone', w: 1, h: 1 });
+    assert.strictEqual(sizes.length, 2, 'bad sizes and unknown clips ignored');
+    assert.deepStrictEqual(s.lastTileSize, { w: 320, h: 180 });
   }
 
   { // Dispose: once, nothing after.
