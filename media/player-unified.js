@@ -398,6 +398,8 @@
     const openWith = new Map();
     /** The prefs the controller has now (null before it exists). */
     const prefsNow = () => (ui && typeof ui.getPrefs === 'function' ? ui.getPrefs() || null : null);
+    /** Loop on in the controller's prefs: its end policy (onEnd 'loop'); a bare `loop` flag where there is none. */
+    const loopPref = (/** @type {any} */ pr) => !!pr && (pr.onEnd !== undefined ? pr.onEnd === 'loop' : !!pr.loop);
     /** The decoder for `id`, made on first need (after 'open': the host serves blocks from then on). @param {string} id */
     function ensurePlayer(id) {
       if (players.has(id) || !opened || disposed || typeof createPlayer !== 'function') return players.get(id) || null;
@@ -685,6 +687,7 @@
       }
       pump();
       if (painted && ui && !disposed) ui.render();
+      scopesHost.tick(now);
     }
     /** The shared loop's work, for the debug probe's state: animation frames that ticked, and the times it rested. */
     const loopStats = { frames: 0, rests: 0 };
@@ -699,7 +702,8 @@
       loopStats.frames++;
       if (disposed || !ui) return;
       const t = S.getTab(ui.getState());
-      if (t.playing || visiblePlayers(t).some((/** @type {any} */ e) => busy(e[1]))) scheduleTick();
+      // Open scopes keep the loop going: their GPU read finishes on a later frame, and a paused frame change is sampled.
+      if (t.playing || scopesHost.active() || visiblePlayers(t).some((/** @type {any} */ e) => busy(e[1]))) scheduleTick();
       else loopStats.rests++;
     };
     /** Wake the loop (a decoder's wake, a seek, play): one animation frame is asked for at a time. */
@@ -825,13 +829,82 @@
       ? { ...ws0, tabs: ws0.tabs.map((/** @type {any} */ t) => ({ ...t, fps: meta0.fps, maxFrame: Math.max(1, meta0.frames - 1) })) }
       : ws0;
 
+    /** The clock tile's decoder canvas (a real element, which drawImage and the scopes need), else the page's #canvas. */
+    function realCanvas() {
+      const p = ui ? players.get(clockIdOf(S.getTab(ui.getState()))) : null;
+      return (p && (p.cv || p.canvas)) || (doc && typeof doc.getElementById === 'function' ? doc.getElementById('canvas') : null) || null;
+    }
+    /**
+     * The scopes (W, Inspection › Scopes) for the controller's inspection tools (inspectWidgets.scopes). media/scopes.js
+     * samples one real canvas, so its panel is made again when the clock tile's decoder canvas changes (another video,
+     * a rebuilt decoder). The controller toasts the mode; the panel's own toast stays quiet.
+     */
+    const scopesHost = (() => {
+      /** @type {any} */
+      let inst = null;
+      /** @type {any} */
+      let instCanvas = null;
+      /** @type {string | null} */
+      let want = null;
+      const drop = () => {
+        if (!inst) return;
+        try { inst.setMode(null); } catch { /* ignore */ }
+        const old = doc && typeof doc.getElementById === 'function' ? doc.getElementById('scopes') : null;
+        if (old && typeof old.remove === 'function') old.remove();
+        inst = null;
+        instCanvas = null;
+      };
+      const ensure = () => {
+        const VS = W('VpeScopes');
+        const cv = realCanvas();
+        const stage = doc && typeof doc.getElementById === 'function' ? doc.getElementById('stage') : null;
+        if (!VS || typeof VS.create !== 'function' || !cv || !stage) return null;
+        if (inst && instCanvas === cv) return inst;
+        drop();
+        try {
+          inst = VS.create({
+            stage, canvas: cv, getPlayer: () => (realCanvas() === cv ? clockPlayer() : null), getExact: () => null,
+            toast: () => {}, log, returnFocus: () => { const b = doc.getElementById('play'); if (b && b.focus) b.focus(); },
+          });
+          instCanvas = cv;
+          if (want) inst.setMode(want);
+        } catch (err) {
+          log(`scopes: ${err && /** @type {any} */ (err).message || err}`);
+          inst = null;
+        }
+        return inst;
+      };
+      /** @param {string} fn @param {any} dflt */
+      const read = (fn, dflt) => { try { return inst && typeof inst[fn] === 'function' ? inst[fn]() : dflt; } catch { return dflt; } };
+      return {
+        /** @param {string | null} name */
+        setMode: (name) => {
+          want = name || null;
+          const sc = want ? ensure() : inst;
+          if (sc) sc.setMode(want);
+          scheduleTick();
+        },
+        /** From the shared loop: follow the clock canvas, then sample (~10 Hz playing, once per paused frame). */
+        tick: (/** @type {number} */ now) => {
+          if (!want) return;
+          const sc = ensure();
+          if (sc && typeof sc.tick === 'function') { try { sc.tick(now); } catch (err) { log(`scopes tick: ${err && /** @type {any} */ (err).message || err}`); } }
+        },
+        active: () => !!want,
+        mode: () => (want ? read('mode', null) : null),
+        analysis: () => read('analysis', null),
+        perf: () => read('perf', null),
+        dispose: () => { want = null; drop(); },
+      };
+    })();
+
     /** @type {UnifiedControllerApi} the controller; null only until create() below returns */
     let ui = /** @type {any} */ (null);
     ui = UiApi.create({
       doc, win, stateApi: S, engine, host, widgets, initial,
       prefs: cfg.prefs, railCfg: cfg.rail || cfg.railCfg, storage: host.storage, goto: cfg.goto,
       fragment: win && win.location ? win.location.hash : null, railCarry: cfg.railCarry, page: cfg.page,
-      tickMs: 0, onChange, onTransport,
+      tickMs: 0, onChange, onTransport, inspectWidgets: { scopes: scopesHost },
     });
     onChange(ui.getState());
 
@@ -1188,7 +1261,8 @@
           log, win: probeWin, doc,
           getPlayer: () => clockPlayer(),
           isLibavPlayer: (/** @type {any} */ p) => !!(p && p.queue),
-          stage: elOf('stage'), canvas: liveCanvas, overlay: elOf('overlay'), message: elOf('message'), hint: elOf('hint'),
+          stage: elOf('stage'), canvas: liveCanvas, snapshotSource: realCanvas,
+          overlay: elOf('overlay'), message: elOf('message'), hint: elOf('hint'),
           actionBtn: elOf('action'), dropHint: elOf('dropHint'), compareBackdrop: elOf('compareBackdrop'),
           ui: uiEls,
           controls: {
@@ -1204,7 +1278,7 @@
             zoomedSize: () => null,
           },
           scopes: {
-            mode: () => null, analysis: () => null, perf: () => null,
+            mode: scopesHost.mode, analysis: scopesHost.analysis, perf: scopesHost.perf,
             columnLevels: typeof VS.columnLevels === 'function' ? VS.columnLevels : () => [],
             targets75: typeof VS.targets75 === 'function' ? VS.targets75 : () => [],
           },
@@ -1212,10 +1286,20 @@
             debugPixels: H && typeof H.debugPixels === 'function' ? H.debugPixels : () => Promise.reject(new Error('no VpeHdr on this page')),
             probe: H && typeof H.probe === 'function' ? H.probe : () => Promise.reject(new Error('no VpeHdr on this page')),
           },
-          ab: { presentationRange: safe(ux().ab, 'presentationRange', null) },
+          // Read late: the controller's A-B marks, whatever object holds them now.
+          ab: { presentationRange: () => safe(ux().ab, 'presentationRange', null)() },
           frameText: typeof T.frameText === 'function' ? T.frameText : (/** @type {number} */ f, /** @type {number} */ n) => `${f + 1} / ${n}`,
           step: stepBy,
           setRate: setRateTo,
+          // Through the controller, so its frame, the seek bar and every decoder move (a decoder seeked alone is put
+          // back by the controller's next drive). The frame holding t, as a decoder's seekTime picks it.
+          seek: (/** @type {number} */ sec) => {
+            const fps = Number(tabNow().fps) || Number((clockPlayer() || {}).fps) || 30;
+            act('seek', Math.max(0, Math.floor((Number(sec) || 0) * fps + 1e-6)));
+            scheduleTick();
+          },
+          play: debugApi.play,
+          pause: debugApi.pause,
           runTool: (/** @type {string} */ label) => {
             const b = panelButtons().find((x) => ((x.getAttribute && x.getAttribute('aria-label')) || x.textContent || '').trim().startsWith(label));
             if (b) b.click();
@@ -1225,7 +1309,7 @@
           getState: () => {
             const pr = prefsNow() || {};
             return {
-              prefs: pr, volume: Number(pr.volume) || 0, muted: !!pr.muted, loop: !!pr.loop, onEnd: pr.onEnd,
+              prefs: pr, volume: Number(pr.volume) || 0, muted: !!pr.muted, loop: loopPref(pr), onEnd: pr.onEnd,
               rail: ux().rail && typeof ux().rail.snapshot === 'function' ? ux().rail.snapshot() : null,
               streamQ: streams.get(clockIdOf(tabNow())) || null, loopStats: { ...loopStats },
               loopBusy: tickPending ? 'busy' : 'rest', picturePct: null, seekDragging: false, volumeDragging: false,
@@ -1265,7 +1349,7 @@
         get order() { const slots = host.slots(); return t().tiles.map((/** @type {string} */ id, /** @type {number} */ i) => (slots.includes(id) ? slots.indexOf(id) : i)); },
         get offsets() { return t().tiles.map((/** @type {string} */ id) => (S.getOffset ? S.getOffset(t(), id) : { v: 0, unit: 'frames' })); },
         get pic() { return { mode: t().picMode, zoom: t().zoom, cx: 0.5, cy: 0.5 }; },
-        get rate() { return ratePrefs(); }, get loop() { return !!(prefsNow() || {}).loop; },
+        get rate() { return ratePrefs(); }, get loop() { return loopPref(prefsNow()); },
         get sel() { return sel; }, set sel(v) { sel = Number(v) || 0; },
         get thresh() { return thresh; }, set thresh(v) { thresh = Number(v) || 0; },
       };
@@ -1331,6 +1415,7 @@
       tickPending = false;
       if (win && typeof win.removeEventListener === 'function') win.removeEventListener('pagehide', dispose);
       if (debugProbe) { try { debugProbe.dispose(); } catch { /* ignore */ } }
+      scopesHost.dispose();
       compareDebugGen++; // an installed Compare probe matches no message any more
       for (const id of [...players.keys()]) disposePlayer(id);
       for (const x of [sync, compositor]) if (x && typeof x.dispose === 'function') { try { x.dispose(); } catch { /* ignore */ } }

@@ -970,4 +970,86 @@ test('debug: VpeDebugProbe answers with one video, VpeCompareDebug with two; win
   }, { cfg: { debug: true }, createPlayer: timedPlayer, extraWidgets: { VpeDebugProbe, VpeCompareDebug } });
 });
 
+test('debug probe: thumb draws the real decoder canvas, seek moves controller and decoder, state has loop and A-B, W scopes', () => {
+  const VpeDebugProbe = require('../../media/debug-probe');
+  const { isProxy } = require('util').types;
+  /** The decoder's own canvas: a plain object (as an HTMLCanvasElement would be), never the probe's Proxy. */
+  const realPlayer = (clip, host, hooks) => Object.assign(stubPlayer(clip, host, hooks), {
+    cv: { width: 1280, height: 720, hidden: false, style: {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 640, height: 360 }) },
+    currentTime() { return this.frame / 25; },
+    seekTime(t) { this.calls.push(['seekTime', t]); },
+  });
+  /** @type {any[]} */
+  const scopeEnvs = [];
+  let scopeMode = null;
+  const VpeScopes = {
+    create: (env) => {
+      scopeEnvs.push(env);
+      return { setMode: (m) => { scopeMode = m; }, mode: () => scopeMode, analysis: () => null, perf: () => ({ updates: 0 }), tick() {} };
+    },
+    columnLevels: () => [], targets75: () => [],
+  };
+  withPage(({ doc, app, send, made, posted }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    const answer = (kind) => {
+      const l = logsOf(posted).filter((x) => x.startsWith(`${kind} `)).pop();
+      assert.ok(l, `${kind} answered`);
+      return JSON.parse(l.slice(kind.length + 1));
+    };
+    // thumb: drawImage gets the decoder's canvas (Chromium's drawImage throws on a Proxy).
+    const drawn = [];
+    const make = doc.createElement.bind(doc);
+    doc.createElement = (tag) => {
+      const e = make(tag);
+      if (tag === 'canvas') {
+        e.getContext = () => ({
+          drawImage: (src) => drawn.push(src),
+          getImageData: (_x, _y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+        });
+      }
+      return e;
+    };
+    try {
+      send({ type: 'debug', action: 'thumb', id: 21, w: 4, h: 2 });
+    } finally { doc.createElement = make; }
+    const th = answer('thumb');
+    assert.ok(!th.error, `thumb without an error: ${th.error}`);
+    assert.strictEqual(drawn[0], p.cv, 'the first drawImage source is the clock decoder\'s canvas');
+    assert.ok(!isProxy(drawn[0]), 'never a Proxy');
+    // seek: the controller's frame and the decoder both move (the frame holding t), not the decoder alone.
+    send({ type: 'debug', action: 'seek', t: 2.5 });
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 62, 'the controller is at 2.5 s (frame 62 at 25 fps)');
+    assert.deepStrictEqual(seeksOf(p).slice(-1), [62], 'the decoder is sent there');
+    assert.ok(!p.calls.some((c) => c[0] === 'seekTime'), 'not seeked behind the controller\'s back');
+    send({ type: 'debug', action: 'state', id: 22 });
+    const st = answer('state');
+    assert.ok(!st.error, `state without an error: ${st.error}`);
+    assert.strictEqual(st.frame, 62, 'state reports the new frame');
+    // Loop and the A-B range: what the controller holds.
+    const loop0 = app.ui.getPrefs().onEnd === 'loop'; // the controller's Loop is its end policy
+    app.ui.dispatch('loop');
+    assert.strictEqual(app.ui.getPrefs().onEnd === 'loop', !loop0);
+    send({ type: 'debug', action: 'a11y', id: 23 });
+    assert.strictEqual(answer('a11y').loop, !loop0, 'the probe\'s loop follows the controller');
+    app.ui.dispatch('seek', 25);
+    app.ui.dispatch('setA');
+    app.ui.dispatch('seek', 75);
+    app.ui.dispatch('setB');
+    const range = app.ui.ab.presentationRange();
+    assert.ok(range, 'the controller has an A-B range');
+    send({ type: 'debug', action: 'state', id: 24 });
+    assert.deepStrictEqual(answer('state').abRange, range, 'state reports the controller\'s A-B range');
+    // W: the inspection controller's scopes reach media/scopes.js over the decoder's real canvas.
+    app.ui.dispatch('scopes');
+    assert.strictEqual(scopeEnvs.length, 1, 'a scopes panel is made');
+    assert.strictEqual(scopeEnvs[0].canvas, p.cv, 'over the clock decoder\'s canvas');
+    send({ type: 'debug', action: 'scopesDump', id: 25 });
+    assert.strictEqual(answer('scopesDump').mode, 'waveform', 'scopesDump sees the open scopes');
+    for (let i = 0; i < 4; i++) app.ui.dispatch('scopes');
+    send({ type: 'debug', action: 'scopesDump', id: 26 });
+    assert.strictEqual(answer('scopesDump').mode, 'off', 'W cycles back to off');
+  }, { cfg: { debug: true }, createPlayer: realPlayer, extraWidgets: { VpeDebugProbe, VpeScopes } });
+});
+
 console.log(`player_unified_test: ${count} ok (${Date.now() - T0} ms)`);

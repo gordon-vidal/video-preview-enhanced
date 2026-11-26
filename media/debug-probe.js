@@ -108,6 +108,10 @@
    *   runTool: (label: string) => boolean,
    *   getToolCount: () => number,
    *   getState: () => PlayerUiSnapshot,
+   *   snapshotSource?: () => any,
+   *   seek?: (t: number) => void,
+   *   play?: () => void,
+   *   pause?: () => void,
    *   win?: any,
    *   doc?: any,
    *   perf?: { now: () => number },
@@ -228,6 +232,11 @@
       compareBackdrop, ui, controls, ctxMenu, insp, scopes, hdr, ab,
       frameText, step, setRate, runTool, getToolCount, getState,
     } = deps;
+    /**
+     * What `thumb` draws: a real canvas element. `canvas` may be a stand-in (the unified page passes a Proxy that
+     * follows the clock tile), and Chromium's drawImage rejects anything but a real image source.
+     */
+    const snapshotSource = () => (deps.snapshotSource && deps.snapshotSource()) || canvas;
 
     let disposed = false;
     /** @type {any} */
@@ -519,9 +528,10 @@
         case 'thumb': {
           // The canvas as w x h luma, area-averaged in two steps (as ffmpeg's scale flags=area), base64.
           const w = m.w || 64, h = m.h || 36;
-          if (!canvas.width || !canvas.height) { log(`thumb ${JSON.stringify({ id: m.id, error: 'no picture' })}`); break; }
+          const src = snapshotSource();
+          if (!src || !src.width || !src.height) { log(`thumb ${JSON.stringify({ id: m.id, error: 'no picture' })}`); break; }
           const mid = doc.createElement('canvas'); mid.width = w * 4; mid.height = h * 4;
-          const mc = mid.getContext('2d'); mc.imageSmoothingQuality = 'high'; mc.drawImage(canvas, 0, 0, mid.width, mid.height);
+          const mc = mid.getContext('2d'); mc.imageSmoothingQuality = 'high'; mc.drawImage(src, 0, 0, mid.width, mid.height);
           const c = doc.createElement('canvas'); c.width = w; c.height = h;
           const cx = c.getContext('2d', { willReadFrequently: true }); cx.imageSmoothingQuality = 'high'; cx.drawImage(mid, 0, 0, w, h);
           const d = cx.getImageData(0, 0, w, h).data;
@@ -656,9 +666,11 @@
       const player = getPlayer();
       if (!player) return;
       if (m.action === 'remoteStreamRate' && player.remoteStream) player.debugRemoteRate = m.bytesPerSecond;
-      if (m.action === 'seek') player.seekTime(m.t);
+      // A page with a controller over its decoders (the unified viewer) seeks / plays through it, so its state and
+      // every decoder follow; a bare player is told directly.
+      if (m.action === 'seek') { if (deps.seek) deps.seek(Number(m.t) || 0); else player.seekTime(m.t); wake(); }
       if (m.action === 'step') step(m.d);
-      if (m.action === 'pause') player.pause();
+      if (m.action === 'pause') { if (deps.pause) deps.pause(); else player.pause(); }
       // Tests: a picture area of this many CSS pixels (as a resized panel or fullscreen would give); 0 restores it.
       if (m.action === 'stageSize') { stage.style.flex = m.h ? 'none' : ''; stage.style.width = m.w ? `${m.w}px` : ''; stage.style.height = m.h ? `${m.h}px` : ''; }
       if (m.action === 'wheel') stage.dispatchEvent(new WheelEvent('wheel', { deltaY: Number(m.deltaY) || 0, ctrlKey: !!m.ctrl, clientX: stage.getBoundingClientRect().width / 2, clientY: stage.getBoundingClientRect().height / 2, bubbles: true, cancelable: true }));
@@ -674,7 +686,7 @@
       if (m.action === 'stageClick') { const o = { bubbles: true, cancelable: true, button: 0 }; stage.dispatchEvent(new PointerEvent('pointerdown', o)); stage.dispatchEvent(new PointerEvent('pointerup', o)); stage.dispatchEvent(new MouseEvent('click', o)); }
       if (m.action === 'ctxClose') ctxMenu.close(true);
       if (m.action === 'ctxPick') { const b = doc.querySelector(`#ctxmenu [data-id="${m.id}"]`); if (b) b.click(); else log(`ctxmenu item not found: ${m.id}`); }
-      if (m.action === 'play') { player.play(); wake(); }
+      if (m.action === 'play') { if (deps.play) deps.play(); else player.play(); wake(); }
       if (m.action === 'rate') setRate(m.r);
       if (m.action === 'panel') { if (m.view) controls.show(m.view, m.view === 'info' ? ui.infoBtn : m.view === 'speed' ? ui.rate : ui.cog); else controls.closeAll(false); }
       if (m.action === 'tool') { if (m.open) controls.show('main', ui.cog); else if (!runTool(m.label)) log(`tool not found: ${m.label}`); }
