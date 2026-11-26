@@ -151,9 +151,47 @@ export interface EngineAdapter {
   bufferedRanges?(clipId: string): any[];
   cueAt?(clipId: string, t: number, track: number): any;
   selectSubtitle?(clipId: string, track: number): void;
-  /** `{ nativeLossy?, transcoded?, video?, stream?, display? }`: what the reduced-resolution notice reads. */
-  pictureInfo?(clipId: string): any;
+  /**
+   * What the reduced-resolution notice reads, and what tells the notices (setContext) that Live transcode or
+   * streaming plays. null: no such clip.
+   */
+  pictureInfo?(clipId: string): PictureInfo | null;
+  /** The Live transcode the clip (else the first transcoded clip) plays through, or null when none does. */
+  transcodeInfo?(clipId?: string): TranscodeInfo | null;
+  /**
+   * The exact (full-resolution) picture of the clip's shown frame during Live transcode or lossy native playback:
+   * `{ img, w, h, png }`, `{ error }`, or null (no player, or the shown picture is exact already).
+   */
+  exactFrame?(clipId: string): Promise<ExactFrameResult | null>;
 }
+
+/** EngineAdapter.pictureInfo: how the shown picture differs from the file. */
+export interface PictureInfo {
+  clipId?: string;
+  /** Native ffmpeg scaled the picture down or reduced it to 8-bit. */
+  nativeLossy?: boolean;
+  /** Live transcode pixels (the host's spec, or a remote stream). */
+  transcoded?: boolean;
+  /** A URL / HLS clip, or a remote Live stream. */
+  streaming?: boolean;
+  video?: any;
+  stream?: any;
+  display?: any;
+  quality?: any;
+  [extra: string]: unknown;
+}
+
+/** EngineAdapter.transcodeInfo. */
+export interface TranscodeInfo {
+  clipId: string;
+  lossy: boolean;
+  transcode: any;
+  stream: any;
+  quality: any;
+}
+
+/** EngineAdapter.exactFrame: the picture, or why there is none. */
+export type ExactFrameResult = { img: any; w: number; h: number; png?: any } | { error: string };
 
 // ---- messages ---------------------------------------------------------------------------------------------------
 
@@ -206,14 +244,37 @@ export type PageToHostMessage = PageEnvelope & (
   | ({ type: 'playbackPrefs'; prefs?: PlaybackPrefs } & PlaybackPrefs)
   | { type: 'copyText'; text: string }
   | { type: 'copyFrame'; clipId?: string; [field: string]: any }
-  | { type: 'copyLink'; frame: number; t?: number }
+  // A frame link to the clock's frame (1-based `frame`); without `frame` the host links the page's position.
+  | { type: 'copyLink'; clipId?: string; key?: string; frame?: number; t?: number; id?: number }
   | { type: 'saveFrame'; frame?: number; data?: any; clipId?: string }
-  | { type: 'exportFrame'; id?: number; [field: string]: any }
-  | { type: 'exportRange' | 'clipRange' | 'ffmpegRange'; range?: RangePayload; [field: string]: any }
+  // One frame of an A-B export (the answer to 'exportGrab'): its PNG, or why there is none.
+  | {
+    type: 'exportFrame'; clipId?: string; key?: string; id?: number; frame?: number; data?: any; error?: string;
+    [field: string]: any;
+  }
+  | {
+    type: 'exportRange' | 'clipRange' | 'ffmpegRange'; clipId?: string; key?: string; range?: RangePayload;
+    [field: string]: any;
+  }
   | { type: 'abQuery'; [field: string]: any }
-  | { type: 'openSettings' | 'loadSubs' | 'openUrl' | 'external' | 'fullscreen' }
+  // The exact picture of a shown frame from the host's ffmpeg (answered by 'exactFrame' with the same reqId).
+  | { type: 'grabExactFrame'; clipId?: string; key?: string; reqId?: number; t?: number; frame?: number }
+  // The clip's position (`t` seconds, `d` its duration), kept for a reload in place.
+  | { type: 'pos'; clipId?: string; key?: string; t: number; d?: number }
+  | { type: 'loadSubs'; clipId?: string; key?: string }
+  | { type: 'openSettings' | 'openUrl' | 'external' | 'fullscreen'; clipId?: string; key?: string }
   | { type: 'focusMode' | 'focusModeExited' }
   | { type: 'action'; id: string; [field: string]: any }
+  // The slow-playback notice's choice ('every' frame or 'skip'), saved as the whenSlow setting.
+  | { type: 'whenSlow'; value?: string }
+  // The Live transcode settings: its mode and the bitrate cap.
+  | { type: 'transcodePref'; mode?: string; maxBitrateMbps?: number }
+  // A Live transcode resolution for the clip (`height`), and whether it is a pick to remember.
+  | { type: 'transcodeResolution'; clipId?: string; key?: string; height?: number; pick?: boolean }
+  // Leave Live transcode for the built-in decoder on this tile.
+  | { type: 'originalTile'; clipId?: string; key?: string }
+  // A URL / HLS clip's quality pick.
+  | { type: 'quality'; clipId?: string; key?: string; pick?: any }
   | { type: 'goto'; [field: string]: any }
   | { type: 'railAdopted'; id: number; ok: boolean }
   | ({ type: 'rail' } & RailPayload)
@@ -232,21 +293,34 @@ export interface PageEnvelope {
 
 /** Host -> page. */
 export type HostToPageMessage = PageEnvelope & (
-  | { type: 'sessionState'; clips: ClipDescriptor[]; order: string[]; capture: boolean; maxVideos: number }
+  | {
+    type: 'sessionState'; clips: ClipDescriptor[]; order: string[]; capture: boolean; maxVideos: number;
+    /** What the first clip plays from: 'file', 'url' or 'sequence'. */
+    sourceKind?: string;
+    /** For the first page only: a frame link, the saved position and the rail carried over a reload. */
+    goto?: GotoTarget;
+    savedPos?: { t: number; d: number };
+    railCarry?: any;
+  }
   | { type: 'open'; clips?: ClipSpec[] }
   | {
     type: 'openVideo'; clipId: string; label?: string; clip?: ClipDescriptor;
     compare?: boolean; replace?: boolean; forceNewTab?: boolean;
   }
-  | { type: 'replaceTile'; oldId: string; newId: string; label?: string; clip?: ClipDescriptor }
+  // `reload`: the same file again with another decoder (the page restarts the tile in place).
+  | { type: 'replaceTile'; oldId: string; newId: string; label?: string; clip?: ClipDescriptor; reload?: boolean }
   | { type: 'removeVideo'; clipId: string }
   | { type: 'toast'; text: string; ms?: number }
   | { type: 'focusMode'; active: boolean }
   | { type: 'setVisible' | 'visible'; visible: boolean; active?: boolean }
   | { type: 'playbackPrefs'; prefs: PlaybackPrefs }
   | { type: 'prefs'; prefs: Record<string, any> }
-  | { type: 'goto'; mode?: string; frame?: number; t?: number }
-  | { type: 'subs'; tracks: any[]; select?: any }
+  // A frame link opened on this panel: the page seeks there, paused (`clipId`: the tile it names).
+  | ({ type: 'goto'; clipId?: string } & GotoTarget)
+  // Subtitle files found next to the clip or loaded by the user (`files`: the same list; `select`: turn one on).
+  | { type: 'subs'; clipId?: string; key?: string; tracks: any[]; files?: any[]; select?: any; restore?: boolean }
+  // Whether native ffmpeg is installed, and whether to offer setting it up (`mb`: its download size).
+  | { type: 'ffmpegState'; installed: boolean; offer: boolean; mb?: number }
   | { type: 'abQuery' | 'exportGrab' | 'exportEnd'; [field: string]: any }
   | { type: 'hideReducedResNotice' | 'hideSlowPlaybackNotice' }
   | { type: 'slowPlayback'; variant: string; offerSetup?: boolean; mb?: number }
@@ -261,7 +335,23 @@ export type HostToPageMessage = PageEnvelope & (
   | { type: 'nd'; clipId?: string; key?: string; m: any }
   | { type: 'ndv' | 'nda' | 'thumb' | 'exactFrame' | 'stream'; clipId?: string; key?: string; [field: string]: any }
   | { type: 'resize'; clipId?: string; key?: string; tiles?: Array<number | string> }
+  // The page's own decoder lifecycle (media/player-unified.js LIFECYCLE_TYPES), for the clip in clipId / key:
+  // a frame player's meta (MJPEG AVI, image sequences) and its sound when it came whole, one of its pictures, a part
+  // of its sound sent ahead, the built-in decoder restarted with the host's meta, and Live transcode giving way to the
+  // built-in decoder (`notice`: why).
+  | { type: 'frames'; clipId?: string; key?: string; meta: any; wav?: any }
+  | { type: 'frame'; clipId?: string; key?: string; index: number; data: any }
+  | { type: 'wavPart'; clipId?: string; key?: string; data: any }
+  | { type: 'libav'; clipId?: string; key?: string; meta?: any }
+  | { type: 'originalTile'; clipId?: string; key?: string; notice?: string }
 );
+
+/** Where a frame link points: a frame (0-based) or a time in seconds; `mode` how it was written. */
+export interface GotoTarget {
+  mode?: string;
+  frame?: number;
+  t?: number;
+}
 
 export type PageToHostType = PageToHostMessage['type'];
 export type HostToPageType = HostToPageMessage['type'];

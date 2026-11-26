@@ -1443,6 +1443,32 @@ async function phase34() {
     assert.deepStrictEqual([$('notice').hidden, n.getDismissals().slowPlayback], [true, true], 'turned off in Settings: closed and remembered');
   });
 
+  // Story C: a toast that repeats the open banner is dropped; Live transcode / streaming keeps the slow hint away.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, $ }) => {
+    const n = ui.parts.notices;
+    ui.onHostMessage({ type: 'slowPlayback', variant: 'every' });
+    assert.strictEqual(n.kind(), 'slowPlayback');
+    ui.onHostMessage({ type: 'toast', text: 'hello' });
+    assert.strictEqual($('toast').textContent, 'hello', 'an unrelated toast shows beside the banner');
+    ui.onHostMessage({ type: 'toast', text: $('noticeText').textContent });
+    assert.strictEqual($('toast').textContent, 'hello', 'a toast with the banner text is suppressed');
+    n.hide();
+    ui.onHostMessage({ type: 'toast', text: 'Transcoding started' });
+    assert.strictEqual($('toast').textContent, 'Transcoding started', 'no Live chip on screen: the status toast shows');
+    $('remoteLiveBtn').hidden = false;
+    ui.onHostMessage({ type: 'toast', text: 'Transcoding at 720p' });
+    assert.strictEqual($('toast').textContent, 'Transcoding started', 'the visible Live chip already says it');
+  });
+  const liveEngine = toolEngine();
+  liveEngine.pictureInfo = (id) => ({ clipId: id, nativeLossy: false, transcoded: true, streaming: false, video: null });
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, $ }) => {
+    const n = ui.parts.notices;
+    n.setDismissals({});
+    ui.onHostMessage({ type: 'slowPlayback', variant: 'every' });
+    assert.deepStrictEqual([n.isOpen(), $('notice').hidden], [false, true],
+      'pictureInfo says Live transcode: the local slow-playback notice stays away');
+  }, { engine: liveEngine });
+
   // Inspection: W, X (one video), Shift+I, Shift+X, { }, PageUp / PageDown, a click with the inspector on, ⚙ › Inspection, Esc order.
   await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, tab, key, $, dom }) => {
     const insp = ui.parts.insp;

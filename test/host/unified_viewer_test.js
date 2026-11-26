@@ -11,6 +11,9 @@ const { createUnifiedRegistry } = require('../../src/unified-session');
 const { createUnifiedViewer, prepareClip, sourceClip, isViewable, clipIdOf, ENTRY_SCRIPT } = require('../../src/unified-viewer');
 
 const ROOT = path.join(__dirname, '..', '..');
+const comparePick = require('../../src/comparepick');
+const Grid = require('../../media/compare-grid');
+const pageAssets = require('../../src/page-assets');
 
 /** The parts of vscode.Uri the viewer uses. */
 class Uri {
@@ -75,6 +78,27 @@ const context = { extensionUri: Uri.file(ROOT) };
   const b = write('b.mp4', [9, 8, 7]);
 
   try {
+    { // The pure helpers the viewer keeps once src/compare.js and src/player-html.js are gone (Wave B2).
+      assert.strictEqual(comparePick.TILE_KEYS, Grid.TILE_KEYS, 'comparepick repeats the grid tile letters');
+      assert.strictEqual(comparePick.MAX_TILES, Grid.MAX_VIDEOS);
+      assert.deepStrictEqual(['A', 'P', 'sA', 'sB', 'sC', 'AB', '', 7, null].map(comparePick.fileOfKey),
+        [0, 15, 0, 1, -1, -1, -1, -1, -1], 'tile and scan keys map to files; a malformed key never means file A');
+      const hook = async () => null;
+      comparePick.setPickHook(hook);
+      assert.strictEqual(comparePick.getPickHook(), hook);
+      comparePick.setPickHook(null);
+      assert.strictEqual(comparePick.getPickHook(), null);
+      const tags = pageAssets.assetTags({
+        uri: (f) => `https://w/${f}`, nonce: 'n', cssFiles: ['a.css'], scriptFiles: ['x.js', 'y.js'],
+        inlineScripts: { 'x.js': 'a</script>b' },
+      });
+      assert.strictEqual(tags.styles, '<link rel="stylesheet" href="https://w/a.css">');
+      assert.ok(tags.scripts.includes('<script nonce="n" data-src="x.js">a<\\/script>b</script>'), 'inlined, escaped');
+      assert.ok(tags.scripts.includes('<script nonce="n" src="https://w/y.js"></script>'));
+      assert.deepStrictEqual(pageAssets.frameSourcesOf({ framePort: 9, transport: 'ws', debug: false }), ['ws://127.0.0.1:9']);
+      const inl = pageAssets.inlineAssetsFor(path.join(ROOT, 'media'), { cssFiles: ['player.css'], scriptFiles: ['timefmt.js'], inlineScripts: true });
+      assert.ok(inl.inlineCss.length === 1 && typeof inl.inlineScripts['timefmt.js'] === 'string', 'reads media/ files');
+    }
     { // Which videos the lane takes: files on disk, local or remote; never a URL or a virtual file.
       assert.strictEqual(isViewable(a), true);
       assert.strictEqual(isViewable(new Uri('vscode-remote', '/v/a.mp4', 'ssh-remote+box')), true);
@@ -235,7 +259,7 @@ const context = { extensionUri: Uri.file(ROOT) };
       const missingPath = path.join(dir, 'vanished-secret-dir', 'gone.mp4');
       const clipA = await prepareClip(a, {});
       const d = deps();
-      d.pick = async () => [uriOf(missingPath)];
+      d.pick = async () => [Uri.file(missingPath)];
       const viewer = createUnifiedViewer({ vscode, context, panel, clip: clipA, registry: null, deps: d });
       viewer.show();
       await handlers.message({ type: 'ready', page: 1 });
@@ -243,8 +267,11 @@ const context = { extensionUri: Uri.file(ROOT) };
       await handlers.message({ type: 'pickVideo', page: 1 });
       const toastMsg = posts.find((m) => m.type === 'toast');
       assert.ok(toastMsg, 'error posts a user-facing toast');
+      assert.strictEqual(toastMsg.text, 'gone.mp4 cannot be opened.', 'the toast names the file only');
       assert.ok(!toastMsg.text.includes(dir) && !toastMsg.text.includes('vanished-secret-dir'),
         `toast must not leak filesystem path: ${toastMsg.text}`);
+      assert.ok(logs.some((l) => /\] cannot open gone\.mp4: .*ENOENT/.test(l)), 'the real fs.stat ENOENT stays in the host log');
+      assert.ok(!posts.some((m) => m.type === 'openVideo'), 'and no tile is added');
       handlers.dispose();
     }
     // ---- host feature parity (src/extension.js Session, src/compare.js) ----

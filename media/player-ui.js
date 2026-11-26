@@ -627,7 +627,7 @@
     const live = Input && liveEl ? Input.createLiveAnnouncer({ liveEl, win }) : null;
     if (live) cleanups.push(live.dispose);
     const announce = (/** @type {string} */ t) => { if (live) live.announce(t); else if (liveEl) liveEl.textContent = t; };
-    const toast = $('toast') ? W.VpeControls.createToast($('toast'), announce) : announce;
+    const rawToast = $('toast') ? W.VpeControls.createToast($('toast'), announce) : announce;
     const flashPlay = $('playFlash') ? W.VpeControls.createPlayFlash($('playFlash'), stageEl) : () => {};
 
     // ---- state ----
@@ -650,6 +650,35 @@
     /** @type {any} */ let railCtl = null;
     /** @type {any} */ let overlay = null;
     /** @type {any} */ let bridge = null;
+    const liveChipEl = $('remoteLiveBtn');
+    /**
+     * Every toast goes through here: one that only repeats the open #notice banner or the visible Live chip
+     * (#remoteLiveBtn) is dropped (player-ui-tools.js shouldSuppressToast), so the same news never shows twice.
+     * @param {string} text
+     * @param {number} [ms]
+     */
+    const showToast = (text, ms) => {
+      if (notices && notices.shouldSuppressToast(text, { liveChipVisible: !!(liveChipEl && !liveChipEl.hidden) })) return;
+      rawToast(text, ms);
+    };
+    const toast = showToast;
+    /** The last context the notices were told ('' before the first), so render() calls setContext only on a change. */
+    let noticeContextKey = '';
+    /**
+     * Live transcode / streaming of the active clip (engine.pictureInfo) goes to the notices, which then keep the
+     * local decoder's slow-playback advice away: the Live chip owns that state.
+     */
+    const syncNoticeContext = () => {
+      if (!notices || typeof engine.pictureInfo !== 'function') return;
+      const t = tab();
+      const id = t.clockId || t.tiles[0];
+      const info = id ? engine.pictureInfo(id) : null;
+      const c = { transcoded: !!(info && info.transcoded), streaming: !!(info && info.streaming) };
+      const key = `${c.transcoded}|${c.streaming}`;
+      if (key === noticeContextKey) return;
+      noticeContextKey = key;
+      notices.setContext(c);
+    };
     const ab = W.VpeAbLoop.create();
     let lastTilesKey = '';
     let disposed = false;
@@ -2264,6 +2293,7 @@
     function render() {
       if (disposed) return;
       postCapture();
+      syncNoticeContext();
       const t = tab();
       const { width, height } = stageSize();
       const ui = S.deriveUi(t, { width, height });
@@ -2416,7 +2446,12 @@
         persist();
         return;
       }
-      if (msg.type === 'slowPlayback') { if (notices) notices.maybeShowSlowPlayback(msg); return; }
+      if (msg.type === 'slowPlayback') {
+        // The clip may have switched to Live transcode since the last render: the context first.
+        syncNoticeContext();
+        if (notices) notices.maybeShowSlowPlayback(msg);
+        return;
+      }
       if (prefsSync && prefsSync.onHostMessage(msg)) return;
       if (gotoResume && gotoResume.handleGotoMessage(msg)) return;
       if (railCtl && railCtl.onHostMessage(msg)) return;
