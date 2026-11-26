@@ -505,44 +505,48 @@ function rail(fsys, o = {}) {
       await B.send({ type: 'rail', op: 'browse', gen: list.gen, id: list.entries.find((e) => e.name === 'more').id });
       const sub = B.posted.filter((m) => m.op === 'list').pop();
       assert.deepStrictEqual(sub.entries.map((e) => e.name), ['..', 'deep.mp4']);
-      const swaps = () => B.posted.filter((m) => m.type === 'replaceTile');
       await B.send({ type: 'rail', op: 'activate', gen: list.gen, id: list.entries[2].id });
-      assert.strictEqual(swaps().length, 0, 'an id of the old listing does nothing');
+      assert.strictEqual(opens().length, 0, 'an id of the old listing does nothing');
       await B.send({ type: 'rail', op: 'activate', gen: sub.gen, id: '/etc/passwd' });
-      assert.strictEqual(swaps().length, 0, 'a path from the page does nothing');
-      // Shift+N: the next video of the playback folder plays in this tab's place (no new tab).
-      await B.send({ type: 'neighbour', d: 1 });
-      assert.strictEqual(swaps().length, 1);
-      assert.strictEqual(swaps()[0].label, 'a 10.mov', 'natural order: a 2 then a 10');
-      assert.strictEqual(opens().length, 0, 'no new tab');
+      assert.strictEqual(opens().length, 0, 'a path from the page does nothing');
+      // Shift+N: opens the next video of the playback folder in its own tab (tab swap) and closes the source tab.
+      let bClosed = false;
+      B.panel.onDidDispose(() => { bClosed = true; });
+      await B.send({ type: 'neighbour', d: 1, rail: { open: true, width: 260, onEnd: 'next' } });
+      assert.strictEqual(opens().length, 1);
+      assert.strictEqual(path.basename(opens()[0][1].fsPath), 'a 10.mov', 'natural order: a 2 then a 10');
+      assert.strictEqual(bClosed, true, 'source tab closed after tab swap');
+      // The new tab takes the handoff (rail state & Autoplay) when VS Code opens it.
+      const C = h.open(path.join(dir, 'a 10.mov'));
+      await C.send({ type: 'ready' });
+      const cfgC = webviewConfig(C.panel.webview);
+      assert.deepStrictEqual(cfgC.railCarry, { open: true, width: 260, filter: '', onEnd: 'next' }, 'rail state carried over');
       // At the last video: it stays, and says so.
-      await B.send({ type: 'neighbour', d: 1 });
-      assert.strictEqual(swaps().length, 1, 'a 10.mov is the last video: no advance');
-      assert.ok(B.posted.some((m) => m.type === 'toast' && /Last video/.test(m.text)));
-      await B.send({ type: 'neighbour', d: -1 });
-      assert.strictEqual(swaps().pop().label, 'a 2.mkv', 'Shift+P: back');
-      // A row of the browsed folder plays in place too.
-      await B.send({ type: 'rail', op: 'activate', gen: sub.gen, id: sub.entries.find((e) => e.name === 'deep.mp4').id });
-      assert.strictEqual(swaps().pop().label, 'deep.mp4');
-
-      // "Compare all videos in folder" on a folder row: the folder's videos; one video is not enough.
+      await C.send({ type: 'neighbour', d: 1 });
+      assert.strictEqual(opens().length, 1, 'a 10.mov is the last video: no advance');
+      assert.ok(C.posted.some((m) => m.type === 'toast' && /Last video/.test(m.text)));
+      // A row of the browsed folder opens via tab swap too (first test Compare folder on a fresh tab before closing).
       const toUriPath = (u) => (process.platform === 'win32' ? u.path.replace(/^\//, '') : u.path);
       h.vscode.workspace.fs.stat = async (u) => ({ type: fs.statSync(toUriPath(u)).isDirectory() ? 2 : 1 });
       h.vscode.workspace.fs.readDirectory = async (u) => fs.readdirSync(toUriPath(u), { withFileTypes: true }).map((d) => [d.name, d.isDirectory() ? 2 : 1]);
-      await B.send({ type: 'rail', op: 'close' });
-      await B.send({ type: 'rail', op: 'open' });
-      const relisted = B.posted.filter((m) => m.op === 'list').pop();
+      await C.send({ type: 'rail', op: 'open' });
+      const relisted = C.posted.filter((m) => m.op === 'list').pop();
       const up = relisted.entries.find((e) => e.name === '..');
-      await B.send({ type: 'rail', op: 'browse', gen: relisted.gen, id: up.id });
-      const top = B.posted.filter((m) => m.op === 'list').pop();
+      await C.send({ type: 'rail', op: 'browse', gen: relisted.gen, id: up.id });
+      const top = C.posted.filter((m) => m.op === 'list').pop();
       const more = top.entries.find((e) => e.name === 'more');
-      await B.send({ type: 'rail', op: 'compareFolder', gen: top.gen, id: top.entries.find((e) => e.name === 'a 1.mp4').id });
-      await B.send({ type: 'rail', op: 'compareFolder', gen: top.gen - 1, id: more.id });
+      await C.send({ type: 'rail', op: 'compareFolder', gen: top.gen, id: top.entries.find((e) => e.name === 'a 1.mp4').id });
+      await C.send({ type: 'rail', op: 'compareFolder', gen: top.gen - 1, id: more.id });
       await settle(10);
-      assert.ok(!B.posted.some((m) => m.type === 'toast' && /fewer than 2|Compare/.test(m.text)), 'a video row or an old listing does nothing');
-      await B.send({ type: 'rail', op: 'compareFolder', gen: top.gen, id: more.id });
-      await B.until((ps) => ps.some((m) => m.type === 'toast' && /fewer than 2 videos/.test(m.text)), 3000);
-      B.panel.dispose(); // file watchers would keep Node alive
+      assert.ok(!C.posted.some((m) => m.type === 'toast' && /fewer than 2|Compare/.test(m.text)), 'a video row or an old listing does nothing');
+      await C.send({ type: 'rail', op: 'compareFolder', gen: top.gen, id: more.id });
+      await C.until((ps) => ps.some((m) => m.type === 'toast' && /fewer than 2 videos/.test(m.text)), 3000);
+      // Shift+P from a 10.mov opens a 2.mkv in its own tab.
+      let cClosed = false;
+      C.panel.onDidDispose(() => { cClosed = true; });
+      await C.send({ type: 'neighbour', d: -1 });
+      assert.strictEqual(path.basename(opens().pop()[1].fsPath), 'a 2.mkv', 'Shift+P: back');
+      assert.strictEqual(cClosed, true, 'C closed after tab swap');
       h.dispose();
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
@@ -575,15 +579,16 @@ function rail(fsys, o = {}) {
       assert.deepStrictEqual(list.members.sort(), [id('a 1.mp4'), id('a 2.mkv')].sort(), 'both compared videos are marked');
       assert.strictEqual(list.count, 2);
       assert.ok(!list.current, 'no single playing row in a comparison');
-      // A video row joins the comparison (in the same page); one already in it only says so.
+      // A video row joins the comparison (in the same page); clicking it again removes it.
       await rail({ op: 'activate', gen: list.gen, id: id('a 10.mov') });
       assert.deepStrictEqual(names(), ['a 1.mp4', 'a 2.mkv', 'a 10.mov']);
-      await rail({ op: 'activate', gen: list.gen, id: id('a 1.mp4') });
-      assert.deepStrictEqual(names(), ['a 1.mp4', 'a 2.mkv', 'a 10.mov']);
-      assert.ok(p.posted.some((m) => m.type === 'toast' && /in compare already/.test(m.text)));
       // The marks follow: the added video is marked too.
       const marks = p.posted.filter((m) => m.type === 'rail' && m.op === 'members').pop();
       assert.ok(marks && marks.ids.includes(id('a 10.mov')) && marks.count === 3, 'members after an add');
+      await rail({ op: 'activate', gen: list.gen, id: id('a 10.mov') });
+      assert.deepStrictEqual(names(), ['a 1.mp4', 'a 2.mkv'], 'clicking a member again removes it');
+      await rail({ op: 'activate', gen: list.gen, id: id('a 10.mov') });
+      assert.deepStrictEqual(names(), ['a 1.mp4', 'a 2.mkv', 'a 10.mov']);
       // A folder row: its videos join (no duplicates), up to compare.maxVideos (5 here).
       await rail({ op: 'compareFolder', gen: list.gen, id: id('more') });
       await p.until(() => names().length === 5, 3000);

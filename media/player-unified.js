@@ -548,6 +548,8 @@
     };
     /** Pending resume time (seconds) from cfg.savedPos or sessionState.savedPos, applied once the clock clip's fps & duration arrive. */
     let pendingResumeSec = !cfg.goto ? resumeSecOf(cfg.savedPos) : null;
+    /** Autoplay "Play next in folder" opened this tab: start playing from 0 once the first frame shows. */
+    let pendingAutoNext = !!cfg.fromAutoNext;
     /** Report the clock clip's position to the host so it can persist resume position across reopen. */
     function reportPos() {
       if (disposed || !ui) return;
@@ -668,6 +670,8 @@
       const t = S.getTab(ui.getState());
       if (id !== clockIdOf(t)) return;
       const natural = !!(info && info.natural);
+      const onEnd = (typeof ui.getPrefs === 'function' && ui.getPrefs().onEnd) || 'off';
+      if (natural) log(`end of file: ${onEnd}`);
       // The decoder paused itself at its end: a Loop or A-B restart's play must reach it, not pass for a repeat.
       if (applied) applied = { ...applied, playing: false };
       if (typeof ui.onDecoderEnded === 'function') { ui.onDecoderEnded({ natural }); return; }
@@ -717,6 +721,11 @@
         try { p.tick(now); } catch (err) { log(`decoder ${id} tick: ${err && /** @type {any} */ (err).message || err}`); }
         if (!firstFrameLogged || !firstPicturesLogged) notePresented(id);
         if (pendingResumeSec !== null && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) tryApplyResume();
+        if (pendingAutoNext && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) {
+          pendingAutoNext = false;
+          const cur = ui.getState();
+          if (!S.getTab(cur).playing) ui.setState(S.togglePlay(cur));
+        }
         const next = Number(p.shownCount) || 0;
         if (next !== prev || (next > 0 && lastShown.get(id) !== next)) {
           lastShown.set(id, next);

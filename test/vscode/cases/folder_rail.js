@@ -170,28 +170,40 @@ module.exports = [{
           while (Date.now() < end) { try { s = await ui(); if (pred(s)) return s; } catch { /* page reloading */ } await h.sleep(250); }
           throw new Error(`TIMEOUT waiting for ${what}; last: ${JSON.stringify(s && s.rail)}`);
         };
-        let s = await until((x) => x.rail && !x.rail.open, 'the Compare page with its rail');
+        // The tab grew into Compare in place with the rail still open (browsing cases/); close it first to verify the
+        // closed edge-tab affordance in Compare, then reopen via the edge tab.
+        let s = await until((x) => x.rail && x.rail.pos === '3 in Compare', 'the Compare page with its rail');
+        if (s.rail.open) {
+          act({ action: 'click', sel: '#railClose' });
+          s = await until((x) => x.rail && !x.rail.open, 'the rail closed in Compare');
+        }
         ok(s.rail.cap.hidden && s.rail.openTabIndex === 0, `no capsule; the edge tab is a Tab stop: ${JSON.stringify([s.rail.cap, s.rail.openTabIndex])}`);
         ok(!s.bar.ids.includes('capCount'), 'no capsule on the bar');
         act({ action: 'click', sel: '#railOpenTab' });
         s = await until((x) => x.rail.open && x.rail.rows.length >= 4, 'the rail listing in Compare');
+        // Browse into neigh/ (where n1..n3 live) if currently in the parent folder.
+        const neighRow = s.rail.rows.find((r) => r.name === 'neigh');
+        if (neighRow) {
+          act({ action: 'click', sel: `#rail-${neighRow.id.replace('.', '-')}` });
+          s = await until((x) => x.rail.rows.some((r) => r.name === 'n1.mp4'), 'the neigh folder in Compare');
+        }
         const rows = s.rail.rows;
         ok(rows.filter((x) => x.inCompare).map((x) => x.name).join() === 'n1.mp4,n2.mp4,n3.mp4', `marked: ${rows.filter((x) => x.inCompare).map((x) => x.name)}`);
         ok(s.rail.pos === '3 in Compare' && s.rail.autoplay !== undefined, `footer: ${s.rail.pos}`);
-        // Up one folder, then a video of it (not in Compare): added; the page reloads with the rail open and marked.
+        // Up one folder, then a video of it (not in Compare): added in place with the rail open and marked.
         act({ action: 'click', sel: '#railList .r-row[title="Parent folder"]' });
         s = await until((x) => x.rail.rows.some((r) => r.name === 'neigh'), 'the parent folder in Compare');
         const extra = s.rail.rows.find((r) => r.kind === 'video' && /^s_h264\.mp4$/.test(r.name)) || s.rail.rows.find((r) => r.kind === 'video');
         const from = vs.mark();
         act({ action: 'click', sel: `#rail-${extra.id.replace('.', '-')}` });
         await vs.waitLog(new RegExp(`compare .*\\] add ${lib.esc(extra.name)}`), { from, timeout: 15000, what: `${extra.name} added` });
-        s = await until((x) => x.rail && x.rail.open && x.rail.rows.some((r) => r.name === extra.name && r.inCompare), 'the added clip marked after the reload', 20000);
+        s = await until((x) => x.rail && x.rail.open && x.rail.rows.some((r) => r.name === extra.name && r.inCompare), 'the added clip marked', 20000);
         ok(s.rail.pos === '4 in Compare', `footer after the add: ${s.rail.pos}`);
-        // Clicking it again: removed from Compare (the page reloads with the rail open and unmarked).
+        // Clicking it again: removed from Compare in place (rail stays open, row unmarked).
         const rmFrom = vs.mark();
         act({ action: 'click', sel: `#railList .r-row.in-cmp[aria-selected="true"]` });
         await vs.waitLog(new RegExp(`compare .*\\] remove ${lib.esc(extra.name)}`), { from: rmFrom, timeout: 15000, what: `${extra.name} removed` });
-        s = await until((x) => x.rail && x.rail.open && x.rail.rows.some((r) => r.name === extra.name && !r.inCompare), 'the removed clip unmarked after the reload', 20000);
+        s = await until((x) => x.rail && x.rail.open && x.rail.rows.some((r) => r.name === extra.name && !r.inCompare), 'the removed clip unmarked', 20000);
         ok(s.rail.pos === '3 in Compare', `footer after the remove: ${s.rail.pos}`);
       });
     } finally { await h.closeClip(vs); }

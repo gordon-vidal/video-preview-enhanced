@@ -375,9 +375,10 @@
       }
     }
 
-    /** The rail as it was before a reload (config railCarry). @param {any} carry */
+    /** The rail as it was before a tab swap or reload (config railCarry). @param {any} carry */
     function adoptCarry(carry) {
       if (!rail || !carry) return false;
+      if (carry.onEnd) onSetAutoplay(carry.onEnd);
       rail.adopt(carry);
       return true;
     }

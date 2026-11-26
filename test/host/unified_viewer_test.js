@@ -639,6 +639,32 @@ const context = { extensionUri: Uri.file(ROOT) };
       handlers.dispose();
     }
 
+    { // Folder ‹ / › with openFolderFile (Option B tab swap): delegates to host with rail state & fromAutoNext instead of replacing in place.
+      const { panel, posts, handlers } = fakePanel();
+      const clipA = await prepareClip(a, {});
+      const opened = [];
+      const viewer = createUnifiedViewer({
+        vscode, context, panel, clip: clipA, registry: null,
+        openTarget: { railCarry: { open: true, width: 260, onEnd: 'next' }, railBrowse: path.dirname(a.fsPath), fromAutoNext: true },
+        deps: deps({
+          rail: { cache: null, probe: null, prefs: { get: () => ({}), set: () => {} }, layout: () => 'dock', caseless: false },
+          openFolderFile: (_v, target, opts) => { opened.push({ target: path.basename(target), opts }); },
+        }),
+      });
+      viewer.show();
+      const cfg = cfgOf(panel.webview.html);
+      assert.strictEqual(cfg.fromAutoNext, true, 'fromAutoNext carried to page cfg');
+      assert.strictEqual(cfg.railCarry.onEnd, 'next', 'railCarry carried to page cfg');
+      assert.strictEqual(viewer.railDir(), path.dirname(a.fsPath), 'railBrowse carried to viewer');
+      await open(handlers);
+      await settle();
+      posts.length = 0;
+      await handlers.message({ type: 'neighbour', page: 1, d: 1, auto: true, rail: { open: true, width: 260, onEnd: 'next' } });
+      assert.deepStrictEqual(opened, [{ target: 'b.mp4', opts: { rail: { open: true, width: 260, onEnd: 'next' }, fromAutoNext: true } }]);
+      assert.strictEqual(posts.find((m) => m.type === 'replaceTile'), undefined, 'tab swap does not replace in place');
+      handlers.dispose();
+    }
+
     { // A reload (file changed on disk) keeps the Live transcode resolution picked for the clip.
       const { panel, posts, handlers } = fakePanel();
       const e = write('e.mp4', [1, 2, 3]);

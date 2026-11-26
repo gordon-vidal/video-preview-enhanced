@@ -180,8 +180,8 @@ function nativeHeightFor(c, size, perTile) {
  * @param {any} o.panel  the WebviewPanel (a custom editor's, or one made for this viewer)
  * @param {ViewerClip} o.clip  the first video (prepareClip, or sourceClip for a URL / sequence)
  * @param {{ add(s: UnifiedSession): () => void } | null} [o.registry]  createUnifiedRegistry(): capture routing
- * @param {{ goto?: any, savedPos?: SavedPos | null, railCarry?: any } | null} [o.openTarget]
- *   what the page shows first: a frame link, the saved position (resume), the rail carried over a reload
+ * @param {{ goto?: any, savedPos?: SavedPos | null, railCarry?: any, railBrowse?: string | null, fromAutoNext?: boolean } | null} [o.openTarget]
+ *   what the page shows first: a frame link, the saved position (resume), the rail carried over a tab swap or reload
  * @param {object} o.deps  what src/extension.js shares with the shipped player and Compare
  * @param {(m: string) => void} o.deps.log
  * @param {(webview: any) => any} o.deps.engineCfg  the page's decoder config (as Compare's)
@@ -234,6 +234,8 @@ function nativeHeightFor(c, size, perTile) {
  *   handles (decode speed samples, WebCodecs failures, Compare's quick pick ...)
  * @param {{ cache: any, probe: any, prefs: { get(): any, set(v: any): any }, layout: () => string, caseless: boolean } | null} [o.deps.rail]
  * @param {(folder: UriLike, viewer: any) => any} [o.deps.compareFolder]  the rail's "Compare all videos in folder"
+ * @param {(viewer: any, targetPath: string, opts: { rail?: any, fromAutoNext?: boolean }) => any} [o.deps.openFolderFile]
+ *   folder navigation from a single-video tab (tab swap via railHandoff); omitted: replaces the clip in place
  * @param {number} [o.deps.adoptMs]
  * @param {(name: string) => ({ sendDown(m: any, deliver: () => void): any, sendUp(m: any, deliver: () => void): any,
  *   dispose(): void } | null)} [o.deps.link]  tests (VPE_SIMULATE_LINK): this panel's slice of a simulated slow link,
@@ -288,7 +290,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   let rail = null;
   let railOpen = false;
   /** @type {string | null} */
-  let railBrowse = null;
+  let railBrowse = openTarget && typeof openTarget.railBrowse === 'string' && openTarget.railBrowse ? openTarget.railBrowse : null;
   const link = deps.link ? deps.link(clip.label) : null;
   /** @type {UnifiedSession} set below; the helpers before it run only once it exists */
   let session = /** @type {any} */ (null);
@@ -333,6 +335,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     if (target && target.goto) cfg.goto = target.goto;
     if (target && target.savedPos) cfg.savedPos = target.savedPos;
     if (target && target.railCarry) cfg.railCarry = target.railCarry;
+    if (target && target.fromAutoNext) cfg.fromAutoNext = true;
     const scriptFiles = [...UNIFIED_SCRIPTS, ENTRY_SCRIPT];
     const { inlineCss, inlineScripts } = inlineAssetsFor(media.fsPath, {
       cssFiles: UNIFIED_CSS, scriptFiles, inlineScripts: !!deps.remote,
@@ -852,11 +855,15 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   /**
    * The folder rail moves to the tab that opens the next video (auto-next, a rail row in another tab): the page
    * hands its rail over. Resolves true when the page adopted it, false after ADOPT_MS or a newer handoff.
-   * @param {{ rail: any, fromAutoNext?: boolean }} intent @returns {Promise<boolean>}
+   * @param {{ rail: any, fromAutoNext?: boolean, browse?: string | null }} intent @returns {Promise<boolean>}
    */
   function railHandoff(intent) {
     if (adoptWait) adoptWait.done(false);
     if (disposed || !intent || !intent.rail) return Promise.resolve(false);
+    if (intent.browse) {
+      railBrowse = intent.browse;
+      if (rail && railOpen) rail.open(intent.browse);
+    }
     const id = ++adoptSeq;
     return new Promise((resolve) => {
       const timer = setTimeout(() => { postAny({ type: 'railHandoffCancel', id }); done(false); }, deps.adoptMs || ADOPT_MS);
@@ -961,6 +968,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       if (disposed) return undefined;
       if (!at.target) { toast(m.d > 0 ? 'Last video in this folder' : 'First video in this folder'); return undefined; }
       // `auto`: Autoplay "Play next in folder" at the end of the video (media/folder-rail.js go): the next one plays.
+      if (deps.openFolderFile) return deps.openFolderFile(viewer, at.target, { rail: m.rail, fromAutoNext: m.auto === true });
       await showFile(at.target, { autoPlay: m.auto === true });
       return sendRailPos();
     }
@@ -972,8 +980,25 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       startDir: () => railBrowse || ctl.dir() || path.dirname(f.fsPath),
       setOpen: (open) => { railOpen = open; },
       setBrowse: (dir) => { railBrowse = dir; },
-      // A row plays in the single video's place (or joins a comparison); its Compare button always joins.
-      onVideo: async (e) => { await showFile(e.path); return sendRailPos(); },
+      // Single video: opens the file in its own tab (tab swap) when the host provides openFolderFile, else in place.
+      // Compare (2+): clicking a listed video toggles it in Compare (add if absent, remove if present).
+      onVideo: async (e) => {
+        if (session.clips.length === 1) {
+          if (deps.openFolderFile) return deps.openFolderFile(viewer, e.path, { rail: m.rail, fromAutoNext: false });
+          await showFile(e.path);
+          return sendRailPos();
+        }
+        const uri = uriOf(e.path);
+        const key = fileKey(uri);
+        const existing = session.clips.find((c) => c.uri && fileKey(/** @type {any} */ (c.uri)) === key);
+        if (existing) {
+          log(`remove ${existing.label}`);
+          return session.removeClip(existing.id);
+        }
+        const added = await addUri(uri);
+        if (added) log(`add ${path.basename(e.path)}`);
+        return added;
+      },
       onCompareVideo: (e) => addUri(uriOf(e.path)),
       onCompareFolder: (e) => (deps.compareFolder ? deps.compareFolder(uriOf(e.path), viewer) : undefined),
     }, m);
@@ -1116,7 +1141,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     if (link) link.dispose();
     session.dispose();
     if (viewer.onDispose) viewer.onDispose();
-    log('closed');
+    log('session closed');
   }
   panel.onDidDispose(dispose);
   panel.onDidChangeViewState(() => {
@@ -1134,6 +1159,8 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
 
   const viewer = {
     session, panel, addUri, receive, dispose, grabFrame, railHandoff, useFullRes,
+    /** The folder the rail is currently browsing, or null. */
+    railDir: () => (rail ? rail.dir() : railBrowse),
     /** Host -> page, for the broadcasts every open page gets (playback prefs, Zen Mode, live settings). @param {any} m */
     post: (m) => session.post(m),
     /** An A-B export from a command: the page answers with its range (then: 'export' | 'clip' | 'ffmpeg'). @param {string} [then] */

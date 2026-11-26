@@ -891,11 +891,11 @@
     let ctxMenu = null;
     /** @type {any} */
     let tileMenu = null;
-    const setOnEnd = (/** @type {string} */ m) => {
+    const setOnEnd = (/** @type {string} */ m, { silent = false } = {}) => {
       prefs.onEnd = m;
       if (rail) rail.refreshOnEnd();
       if (controls) controls.refresh();
-      toast(`Autoplay: ${W.VpeAutoplay.label(m)}`);
+      if (!silent) toast(`Autoplay: ${W.VpeAutoplay.label(m)}`);
       emitTransport();
     };
     const rail = createFolderRail(W.VpeFolderRail, doc, {
@@ -1493,6 +1493,14 @@
       [picBtn, act.cyclePicture, true], [fullBtn, act.fullscreen, true],
     ], onClick);
     bindStepBadges([prevSize, nextSize], (b) => controls.toggle('step', b), (el, type, fn) => listen(el, type, fn));
+    listen(prevBtn, 'contextmenu', (/** @type {MouseEvent} */ e) => {
+      if (!single()) return;
+      e.preventDefault(); e.stopPropagation(); act.prevVideo();
+    });
+    listen(nextBtn, 'contextmenu', (/** @type {MouseEvent} */ e) => {
+      if (!single()) return;
+      e.preventDefault(); e.stopPropagation(); act.nextVideo();
+    });
     if (volEl) listen(volEl, 'input', () => act.volume(Number(volEl.value)));
     // A drag on the seek bar or the volume keeps going off its edges, even outside the webview (media/range-drag.js:
     // pointer capture). The seek bar seeks as it goes and lands on the frame where it is let go.
@@ -1976,7 +1984,7 @@
       });
       railCtl = Life.createRailHandoffController({
         host: hostPort, rail,
-        onSetAutoplay: setOnEnd,
+        onSetAutoplay: (/** @type {string} */ m) => setOnEnd(m, { silent: true }),
         onPlayFromStart: () => {
           const base = S.seekFrame(ws, 0);
           commit(S.getTab(base).playing ? base : S.togglePlay(base));
@@ -2418,6 +2426,7 @@
     function syncCapsule(/** @type {boolean} */ isMulti) {
       const folderCap = $('folderCap');
       if (folderCap && isMulti) folderCap.hidden = true;
+      if (rail && typeof rail.setCompare === 'function') rail.setCompare(isMulti);
     }
 
     /** The Spotlight splitter on the band between the main tile and the strip, along the dock. */

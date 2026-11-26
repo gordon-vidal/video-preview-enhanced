@@ -110,7 +110,9 @@ const clipExports = new WeakSet();
 const wcFailed = new Set();
 // Frame links (vscode://<id>/open?…) waiting for their viewer: file URI string -> {t, frame}.
 const pendingGoto = new Map();
-// The file metadata (ffprobe) the folder rails of every viewer share.
+// Folder navigation (src/folder-rail.js): the intent a new tab takes over (rail state, Autoplay), registered before
+// vscode.openWith, and the file metadata (ffprobe) the rails of every viewer share.
+const railHandoffs = folderRail.createHandoffs();
 const railMeta = folderRail.createMetaCache();
 /** ffprobe (cached by size and date) for the rail's Duration column and hover card; none in Restricted Mode. */
 async function railProbe(file, signal) {
@@ -1027,6 +1029,7 @@ function activate(context) {
     setTranscodePref: (m) => setTranscodePref(m),
     onPageMessage: (m, viewer) => onPageMessage(m, viewer),
     compareFolder: (folder, viewer) => compareFolderRow(viewer, folder),
+    openFolderFile: (viewer, target, opts) => openFolderFile(viewer, target, opts),
     // The first-open popup (no ffmpeg yet) once a video's page shows, as the player did.
     onReady: () => { offers.maybeOnboard().catch((e) => log(`onboarding failed: ${e && e.message || e}`)); },
     adoptMs: ADOPT_MS,
@@ -1704,8 +1707,11 @@ async function resolveVideo(context, rawUri, panel) {
     setTimeout(() => panel.dispose(), 0);
     return undefined;
   }
+  // A folder navigation of a single-video tab (Shift+N, the rail, Autoplay) opens this tab in its place: never taken
+  // by Open Together or Compare's Add Mode.
+  const handoff = railHandoffs.take(fileKey(uri), panel.viewColumn);
   // Opened with others within a moment: the burst takes them into one viewer and this tab waits for its verdict.
-  if (!goto && noteOpen(uri, panel) && await holdOpen(uri)) return undefined;
+  if (!goto && !handoff && noteOpen(uri, panel) && await holdOpen(uri)) return undefined;
   if (panelViewers.has(panel) || closed()) return undefined; // the burst made this tab a viewer, or it closed
   let clip;
   try {
@@ -1717,7 +1723,7 @@ async function resolveVideo(context, rawUri, panel) {
     return undefined;
   }
   if (closed()) return undefined;
-  if (!goto) {
+  if (!goto && !handoff) {
     const routed = unifiedRegistry.routeOpen(clip);
     if (routed.captured) {
       log(`${clip.label} ${routed.added ? 'joined' : 'not added to'} ${routed.session.title}`);
@@ -1725,9 +1731,49 @@ async function resolveVideo(context, rawUri, panel) {
       return undefined;
     }
   }
-  const savedPos = goto ? null : resumeAt(uri.fsPath);
-  await showViewer(context, panel, clip, goto ? { goto } : savedPos ? { savedPos } : null);
+  const savedPos = goto || (handoff && handoff.fromAutoNext) ? null : resumeAt(uri.fsPath);
+  const openTarget = goto || savedPos || handoff ? {
+    ...(goto ? { goto } : {}),
+    ...(savedPos ? { savedPos } : {}),
+    ...(handoff ? { railCarry: handoff.rail, railBrowse: handoff.browse, fromAutoNext: !!handoff.fromAutoNext } : {}),
+  } : null;
+  await showViewer(context, panel, clip, openTarget);
   return undefined;
+}
+
+/**
+ * Folder navigation from a single-video tab (next/prev, capsule, rail row, Autoplay "Play next in folder"): opens the
+ * target file in its own VS Code tab in this editor group (or hands over to an existing tab for it), carries over the
+ * rail state and Autoplay mode, then closes the source tab (tab swap).
+ */
+async function openFolderFile(viewer, targetPath, { rail = null, fromAutoNext = false } = {}) {
+  const f = viewer.session.clips.find((c) => c.uri && (!c.kind || c.kind === 'file'));
+  const local = vscode.Uri.file(targetPath);
+  const uri = f ? f.uri.with({ path: local.path, fragment: '', query: '' }) : local;
+  const key = fileKey(uri);
+  const column = viewer.panel.viewColumn;
+  const carry = folderRail.sanitizeRailCarry(rail);
+  const browse = carry.open && viewer.railDir ? viewer.railDir() : null;
+  const intent = { rail: carry, fromAutoNext: !!fromAutoNext, browse };
+  if (logFile) log(`[${viewer.session.title}] folder: open ${path.basename(targetPath)}${fromAutoNext ? ' (autoplay next)' : ''}`);
+  // Open already in this editor group as a single-video tab: focus it and hand off the rail state; close this tab once adopted.
+  const open = [...unifiedViewers].find((v) => v !== viewer && !v.disposed
+    && v.session.clips.length === 1 && v.session.clips[0].uri
+    && fileKey(v.session.clips[0].uri) === key && v.panel.viewColumn === column);
+  if (open) {
+    open.panel.reveal(column, false);
+    await open.railHandoff(intent);
+    if (!viewer.disposed) viewer.panel.dispose();
+    return;
+  }
+  const token = railHandoffs.register(key, column, intent);
+  try {
+    await vscode.commands.executeCommand('vscode.openWith', uri, playerViewType(uri), { viewColumn: column, preview: false });
+  } catch (e) {
+    railHandoffs.drop(token);
+    throw e;
+  }
+  if (!viewer.disposed) viewer.panel.dispose();
 }
 
 /** "Play sequence": numbered pictures in a folder, played by the page's frame player. */
@@ -1848,6 +1894,7 @@ async function openCompare(context, uris, { goto = null } = {}) {
   if (uris.length > max) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
   const clips = await prepareUris(uris.slice(0, max));
   if (!clips.length) { vscode.window.showWarningMessage('Video Preview: none of these videos can be opened.'); return null; }
+  log(`compare: ${clips.map((c) => c.label).join(' <-> ')}`);
   rememberRecent(uris.slice(0, max));
   const panel = vscode.window.createWebviewPanel(COMPARE_VIEW_TYPE, clips.map((c) => c.label).join(' · '), vscode.ViewColumn.Active, { retainContextWhenHidden: true });
   panel.iconPath = new vscode.ThemeIcon('split-horizontal');
@@ -2021,6 +2068,7 @@ async function compareFolderRow(viewer, folderUri) {
     if (!first || viewer.disposed) return;
     if (!only || !viewer.session.replaceClip(only.id, first)) viewer.session.addClip(first, { compare: true });
     for (const c of rest) viewer.session.addClip(c, { compare: true });
+    log(`compare: ${[first, ...rest].map((c) => c.label).join(' <-> ')}`);
     if (plan.skipped) say(`Compare shows up to ${max} videos: the first ${max} of ${name}`);
     return;
   }

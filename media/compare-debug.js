@@ -86,7 +86,7 @@
       const { cells, hover, syncMode, statsIds } = getState();
       const text = (e) => (e ? (e.textContent || '').replace(/\s+/g, ' ').trim() : '');
       const rect = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
-      const shown = (e) => !!e && !e.hidden && getComputedStyle(e).display !== 'none';
+      const shown = (e) => !!e && !e.hidden && (!e.closest || !e.closest('[hidden]')) && getComputedStyle(e).display !== 'none';
       const splitter = $('splitter');
       const addPop = $('addPop');
       return {

@@ -72,7 +72,7 @@ const { unifiedHtml } = require('./unified-html');
  * @typedef {'file' | 'url' | 'sequence'} SourceKind
  * @typedef {{ frame?: number, t?: number, mode?: string }} GotoTarget
  * @typedef {{ t: number, d: number }} SavedPos
- * @typedef {{ goto?: GotoTarget | null, savedPos?: SavedPos | null, railCarry?: any }} OpenTarget
+ * @typedef {{ goto?: GotoTarget | null, savedPos?: SavedPos | null, railCarry?: any, fromAutoNext?: boolean }} OpenTarget
  * @typedef {ClipDescriptor & { sourceKind: SourceKind, goto?: GotoTarget, savedPos?: SavedPos }} ClipDescriptorPlus
  *
  * @typedef {'active' | 'capture' | 'clips' | 'dispose'} SessionEvent
@@ -235,7 +235,9 @@ function createUnifiedSession(deps) {
     const goto = t ? cleanGoto(t.goto) : null;
     const savedPos = t ? cleanPos(t.savedPos) : null;
     const railCarry = t && t.railCarry !== undefined && t.railCarry !== null ? t.railCarry : null;
-    openTarget = !disposed && (goto || savedPos || railCarry) ? { goto, savedPos, railCarry } : null;
+    const fromAutoNext = !!(t && t.fromAutoNext);
+    openTarget = !disposed && (goto || savedPos || railCarry || fromAutoNext)
+      ? { goto, savedPos, railCarry, ...(fromAutoNext ? { fromAutoNext: true } : {}) } : null;
   };
   setOpenTarget(deps.openTarget);
   /** @type {Set<(e: SessionEvent, s: UnifiedSession) => void>} */
@@ -375,6 +377,25 @@ function createUnifiedSession(deps) {
   }
 
   /**
+   * Removes one clip from a multi-video session (e.g. clicking an already-compared video in the folder rail).
+   * Never removes the last remaining clip.
+   * @param {string} id
+   * @returns {boolean} removed
+   */
+  function removeClip(id) {
+    if (disposed || clips.length < 2 || !clipOf(id)) return false;
+    clips = clips.filter((c) => c.id !== id);
+    order = order.filter((x) => x !== id);
+    pendingAdds.delete(id);
+    tileSizes.delete(id);
+    positions.delete(id);
+    if (clips.length < 2) setCapture(false);
+    changed();
+    post(/** @type {any} */ ({ type: 'removeVideo', clipId: id }));
+    return true;
+  }
+
+  /**
    * Back to one video: the kept clip stays, capture ends.
    * @param {string} keepId
    * @returns {boolean} collapsed (false: no such clip)
@@ -440,6 +461,7 @@ function createUnifiedSession(deps) {
           if (openTarget.goto) state.goto = openTarget.goto;
           if (openTarget.savedPos) state.savedPos = openTarget.savedPos;
           if (openTarget.railCarry) state.railCarry = openTarget.railCarry;
+          if (openTarget.fromAutoNext) state.fromAutoNext = true;
           openTarget = null;
         }
         send(/** @type {any} */ (state));
@@ -601,7 +623,7 @@ function createUnifiedSession(deps) {
   }
 
   const session = {
-    addClip, replaceClip, reloadClip, leaveCompare, shouldCapture, onMessage, render, dispose, post, postNativeReply,
+    addClip, removeClip, replaceClip, reloadClip, leaveCompare, shouldCapture, onMessage, render, dispose, post, postNativeReply,
     clipFor, setOpenTarget,
     /** What the next page shows first (null: nothing), until its 'ready' spends it. */
     get openTarget() { return openTarget; },
