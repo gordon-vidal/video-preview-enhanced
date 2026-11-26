@@ -12,8 +12,10 @@
 // 'replaceVideo' { oldId } answers { type: 'replaceTile', oldId, newId }; 'playbackPrefs' { prefs } is stored and
 // broadcastPrefs() simulates another tab's change; 'toast' { text, ms? } echoes back (ms capped at 10 s);
 // 'focusMode' { active } / 'focusModeExited' answer { type: 'focusMode', active }. test/host/adapter_contract_test.js
-// is the contract every HostAdapter (this fake now, the real one later) must pass.
+// is the contract every HostAdapter (this fake and media/player-host-adapter.js) must pass; its types are
+// media/unified-contracts.d.ts (HostAdapter, PageToHostMessage, HostToPageMessage).
 (() => {
+  /** @typedef {import('../../media/unified-contracts').HostAdapter} HostAdapter */
   const ROOT_CRUMB = 'clips / dailies_v4';
   const SUB_CRUMB = 'clips / dailies_v4 / renders';
   const COMMAND_TOASTS = {
@@ -211,10 +213,12 @@
       deliver({ type: 'focusMode', active });
     }
 
-    return {
+    const host = {
       post,
       log,
-      connect(fn) { deliver = fn; },
+      connect(/** @type {(m: any) => void} */ fn) { deliver = fn; },
+      /** Nothing to release: the fake holds no listener of its own. */
+      dispose() { deliver = () => {}; },
       /** The simulated VS Code Explorer: a click opens the video the way the extension does. */
       explorerOpen(id) { deliver({ type: 'openVideo', clipId: id, label: label(id) }); },
       /** Another player tab changed its playback preferences: the host broadcasts them to this page. */
@@ -230,6 +234,7 @@
         tileSize: tileSize && { ...tileSize }, leftCompare: leftCompare && { ...leftCompare }, prefs: { ...prefs }, focusMode,
       }),
     };
+    return /** @satisfies {HostAdapter} */ (host);
   }
 
   const api = { createFakeHost };

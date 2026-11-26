@@ -15,8 +15,13 @@
 (function (root) {
   // checkJs: start
   /**
-   * @typedef {{ id: string, name?: string, fps?: number, frames?: number, duration?: number, width?: number,
-   *   height?: number, hasAudio?: boolean, codec?: string, size?: number, [k: string]: any }} ClipSpec
+   * The shared contracts (media/unified-contracts.d.ts): the adapters, the controller and both message unions.
+   * @typedef {import('./unified-contracts').EngineAdapter} EngineAdapter
+   * @typedef {import('./unified-contracts').HostAdapter} HostAdapter
+   * @typedef {import('./unified-contracts').UnifiedControllerApi} UnifiedControllerApi
+   * @typedef {import('./unified-contracts').HostToPageMessage} HostToPageMessage
+   * @typedef {import('./unified-contracts').TransportCommand} TransportCommand
+   * @typedef {import('./unified-contracts').ClipSpec & { [k: string]: any }} ClipSpec
    * @typedef {{ onFrame: (frame: number) => void, onReady: () => void, onMeta: () => void,
    *   onEnded: (info?: { natural?: boolean }) => void, post: (m: any) => void, log: (...a: any[]) => void,
    *   wake: () => void, showMessage: (msg?: string, hint?: string) => void,
@@ -52,7 +57,9 @@
     exactFrame: (p, m) => { if (typeof p.onExactFrame === 'function') p.onExactFrame(m); },
     stream: (p, m) => { if (typeof p.onStream === 'function') p.onStream(m); },
   };
-  const DECODER_TYPES = Object.keys(DECODER_ROUTES);
+  /** The decoder message types, each one a HostToPageMessage type (tools/unified-contracts-check.js). */
+  const DECODER_TYPES = /** @type {Array<'block' | 'resize' | 'nd' | 'ndv' | 'nda' | 'thumb' | 'exactFrame' | 'stream'>} */ (
+    Object.keys(DECODER_ROUTES));
 
   /** The clip a decoder message is for: clipId, else `key` (what the default factory tags a decoder's posts with). @param {any} m */
   const keyOf = (m) => (typeof m.clipId === 'string' ? m.clipId : typeof m.key === 'string' ? m.key : null);
@@ -210,6 +217,7 @@
     const widgets = env.widgets || {};
     const W = (/** @type {string} */ k) => widgets[k] || (win && win[k]) || G[k];
 
+    /** @type {HostAdapter & { slots: () => string[] }} */
     const host = HostApi.create({ vscode, win, page: cfg.page, boot: cfg.boot, surface: cfg.surface || 'unified' });
     const createPlayer = env.createPlayer !== undefined ? env.createPlayer : defaultCreatePlayer(G, vscode, cfg);
     const { compositor = null, sync = null } = env;
@@ -230,6 +238,7 @@
       clips: [...specs.values()], getPlayer: (/** @type {string} */ id) => players.get(id) || null, compositor,
       pictureApi: W('VpePicture'), controlsApi: W('VpeControls'), doc,
     });
+    /** @type {EngineAdapter} */
     let adapter = makeAdapter();
     const live = () => typeof adapter.registerClip === 'function' && typeof adapter.unregisterClip === 'function';
     /** Clip ids the adapter knows (the config's from create, then each registerClip). */
@@ -546,7 +555,7 @@
     /**
      * The user's play / pause / seek / rate / loop as the controller reports it (VpePlayerUi.create onTransport),
      * straight to the decoders. A seek the decoder clock caused is never sent back to it.
-     * @param {any} a @param {any} [b]
+     * @param {TransportCommand | string} a @param {any} [b] the value, when `a` is the command's name
      */
     function onTransport(a, b) {
       const c = transportOf(a, b);
@@ -602,8 +611,8 @@
       ? { ...ws0, tabs: ws0.tabs.map((/** @type {any} */ t) => ({ ...t, fps: meta0.fps, maxFrame: Math.max(1, meta0.frames - 1) })) }
       : ws0;
 
-    /** @type {any} */
-    let ui = null;
+    /** @type {UnifiedControllerApi} the controller; null only until create() below returns */
+    let ui = /** @type {any} */ (null);
     ui = UiApi.create({
       doc, win, stateApi: S, engine, host, widgets: env.widgets, initial,
       prefs: cfg.prefs, railCfg: cfg.rail || cfg.railCfg, storage: host.storage, goto: cfg.goto,
@@ -613,8 +622,10 @@
     onChange(ui.getState());
 
     // ---- host -> page ----
-    /** @param {any} m */
-    function onHostMessage(m) {
+    /** @param {HostToPageMessage} msg */
+    function onHostMessage(msg) {
+      // Read loosely: the host's message is checked field by field at run time.
+      const m = /** @type {any} */ (msg);
       if (disposed || !m || typeof m.type !== 'string') return;
       if (DECODER_ROUTES[m.type]) { routeDecoder(m); return; }
       if (m.type === 'open') { onOpen(m); return; }

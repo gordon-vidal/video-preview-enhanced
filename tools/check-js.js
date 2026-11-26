@@ -28,23 +28,37 @@ function checkedLines(file) {
   return lines;
 }
 
-function main() {
-  const config = ts.getParsedCommandLineOfConfigFile(path.join(root, 'tsconfig.check.json'), {}, {
+/** Files checked in full: the contract files (no opt-in region; they hold types and assertions only). */
+const WHOLE_FILES = new Set(['read-block-contract.js', 'unified-contracts-check.js'].map((name) => path.join(__dirname, name)));
+const isWhole = (file) => file.isDeclarationFile || WHOLE_FILES.has(path.resolve(file.fileName));
+
+/** @param {string} name a tsconfig in the repo root @returns {{ program: import('typescript').Program, errors: readonly import('typescript').Diagnostic[] } | null} */
+function load(name) {
+  const config = ts.getParsedCommandLineOfConfigFile(path.join(root, name), {}, {
     ...ts.sys,
     onUnRecoverableConfigFileDiagnostic: report,
   });
-  if (!config) return;
-
+  if (!config) return null;
   const program = ts.createProgram(config.fileNames, config.options);
-  const diagnostics = [
-    ...config.errors,
-    ...program.getOptionsDiagnostics(),
-    ...program.getGlobalDiagnostics(),
-    ...program.getSyntacticDiagnostics(),
-  ];
+  return {
+    program,
+    errors: [
+      ...config.errors,
+      ...program.getOptionsDiagnostics(),
+      ...program.getGlobalDiagnostics(),
+    ],
+  };
+}
+
+/** tsconfig.check.json: every listed file's opt-in regions (the contract files in full). */
+function checkRegions() {
+  const loaded = load('tsconfig.check.json');
+  if (!loaded) return;
+  const { program } = loaded;
+  const diagnostics = [...loaded.errors, ...program.getSyntacticDiagnostics()];
   for (const file of program.getRootFileNames().map((name) => program.getSourceFile(name)).filter(Boolean)) {
     const errors = program.getSemanticDiagnostics(file);
-    if (path.resolve(file.fileName) === path.join(__dirname, 'read-block-contract.js')) {
+    if (isWhole(file)) {
       diagnostics.push(...errors);
     } else {
       const lines = checkedLines(file);
@@ -53,6 +67,28 @@ function main() {
     }
   }
   diagnostics.forEach(report);
+}
+
+/**
+ * tsconfig.contracts.json: the unified viewer's contracts across files. Imports resolve here, so
+ * tools/unified-contracts-check.js sees each module's real exported types and holds them to
+ * media/unified-contracts.d.ts. Only the contract files' own errors count: the modules it pulls in are checked by
+ * their regions above, not in full under this program's `strict`.
+ */
+function checkContracts() {
+  const loaded = load('tsconfig.contracts.json');
+  if (!loaded) return;
+  const { program } = loaded;
+  const diagnostics = [...loaded.errors];
+  for (const file of program.getRootFileNames().map((name) => program.getSourceFile(name)).filter(Boolean)) {
+    diagnostics.push(...program.getSyntacticDiagnostics(file), ...program.getSemanticDiagnostics(file));
+  }
+  diagnostics.forEach(report);
+}
+
+function main() {
+  checkRegions();
+  checkContracts();
 }
 
 function report(diagnostic) {

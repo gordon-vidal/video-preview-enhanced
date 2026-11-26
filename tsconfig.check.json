@@ -49,6 +49,7 @@
     "media/compare-sync.js",
     "media/compare-debug.js",
     "media/frame-player.js",
+    "media/unified-contracts.d.ts",
     "media/player-state.js",
     "media/player-ui.js",
     "media/player-ui-tiles.js",

@@ -1,7 +1,9 @@
 'use strict';
 // Deterministic synthetic EngineAdapter for the reusable UI mockup harness (tools/mockup/render.js).
 // Draws crisp, animated 2D canvas frames per clip with zero decoder/ffmpeg/WebCodecs dependencies.
+// It implements the EngineAdapter contract of media/unified-contracts.d.ts (tools/unified-contracts-check.js).
 (() => {
+  /** @typedef {import('../../media/unified-contracts').EngineAdapter} EngineAdapter */
   // width/height are the natural picture size; hasAudio false on clip-2 so a no-audio clip is testable.
   const SAMPLE_CLIPS = [
     { id: 'clip-0', name: 'shot_01_graded.mp4', codec: 'H.264 4K', fps: 24, frames: 240, width: 3840, height: 2160, hasAudio: true, color: '#38bdf8', bg1: '#0f2942', bg2: '#1d4e89', accent: '#38bdf8' },
@@ -292,7 +294,7 @@
         fake.muted = !!muted;
       },
     };
-    return engine;
+    return /** @satisfies {EngineAdapter} */ (engine);
   }
 
   /** @type {number[] | null} */

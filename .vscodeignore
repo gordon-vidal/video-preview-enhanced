@@ -19,6 +19,9 @@ CLAUDE.md
 .gitattributes
 package-lock.json
 tsconfig.check.json
+tsconfig.contracts.json
+# Type declarations for `npm run typecheck` only: no page or host loads them
+media/**/*.d.ts
 .dependency-cruiser.cjs
 knip.json
 *.vsix

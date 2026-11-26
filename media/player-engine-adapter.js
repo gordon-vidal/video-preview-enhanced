@@ -16,12 +16,12 @@
 (function (root) {
   // checkJs: start
   /**
-   * @typedef {{ id: string, name?: string, fps?: number, frames?: number, duration?: number, width?: number,
-   *   height?: number, hasAudio?: boolean, codec?: string, size?: number }} ClipSpec
-   * @typedef {{ id: string, name: string, fps: number, frames: number, duration: number, width: number,
-   *   height: number, hasAudio: boolean, codec: string, size: number }} ClipMeta
-   * @typedef {{ x: number, y: number, w: number, h: number }} Rect
-   * @typedef {number | { unit?: string, v?: number } | null | undefined} Offset
+   * The shared contracts (media/unified-contracts.d.ts): this adapter implements EngineAdapter.
+   * @typedef {import('./unified-contracts').EngineAdapter} EngineAdapter
+   * @typedef {import('./unified-contracts').ClipSpec} ClipSpec
+   * @typedef {import('./unified-contracts').ClipMeta} ClipMeta
+   * @typedef {import('./unified-contracts').PictureRect} Rect
+   * @typedef {import('./unified-contracts').OffsetSpec} Offset
    * @typedef {{ clips: ClipSpec[], getPlayer: (id: string) => any, compositor?: any, pictureApi?: any,
    *   controlsApi?: any, doc?: any, showFrameTimeoutMs?: number }} EngineAdapterOptions
    */
@@ -571,7 +571,7 @@
       try { return p[name](...args); } catch { return fallback; }
     };
 
-    return {
+    const adapter = {
       clips: specs,
       getClip,
       naturalSize,
@@ -600,6 +600,8 @@
       /** What the adapter applied (tests and debugging). */
       sound: () => ({ soundSource, volume, muted }),
     };
+    // More than the contract (sound), so checked as a value, not as a fresh literal.
+    return /** @satisfies {EngineAdapter} */ (adapter);
   }
 
   const api = { create, offsetFrames, plainRect, clockToTileFrame, formatPixel };

@@ -21,6 +21,12 @@ const { unifiedHtml } = require('./unified-html');
  * @property {string} [fsPath]
  * @property {unknown} [meta]
  *
+ * The shared contracts (media/unified-contracts.d.ts): the page's messages in, the host's out.
+ * @typedef {import('../media/unified-contracts').PageToHostMessage} PageToHostMessage
+ * @typedef {import('../media/unified-contracts').HostToPageMessage} HostToPageMessage
+ * @typedef {import('../media/unified-contracts').ClipDescriptor} ClipDescriptor
+ * @typedef {import('../media/unified-contracts').TileSizePayload} TileSize
+ * A page message as received: untrusted, so every field is read loosely and checked at run time.
  * @typedef {{ type: string, [k: string]: any }} PageMessage
  *
  * @typedef {object} UnifiedSessionDeps
@@ -29,7 +35,7 @@ const { unifiedHtml } = require('./unified-html');
  * @property {number} [maxVideos]  the setting compare.maxVideos (2-16)
  * @property {boolean} [capture]   start capturing newly opened videos (default off)
  * @property {(s: UnifiedSession) => any} [renderHtml]  the page's UnifiedHtmlInput when render() gets none
- * @property {(m: PageMessage) => void} [onPost]          host -> page (default: panel.webview.postMessage)
+ * @property {(m: HostToPageMessage) => void} [onPost]    host -> page (default: panel.webview.postMessage)
  * @property {(title: string) => void} [onTitleChange]
  * @property {(excludeIds: string[], s: UnifiedSession) => Promise<any> | any} [onPickVideo]
  *   "Add video": a clip, an array of clips, or nothing (cancelled)
@@ -47,8 +53,6 @@ const { unifiedHtml } = require('./unified-html');
  * @property {(clip: UnifiedClip, m: PageMessage) => any} [onNative]  'nd': the page's native-decoder request for a clip
  * @property {(size: TileSize, clip: UnifiedClip | null) => any} [onTileSize]  the page's decode size (clip: per tile)
  * @property {(s: UnifiedSession) => void} [onDispose]
- *
- * @typedef {{ w: number, h: number, n?: number, layout?: string, zoom?: number, rate?: number }} TileSize
  *
  * @typedef {'active' | 'capture' | 'clips' | 'dispose'} SessionEvent
  * @typedef {ReturnType<typeof createUnifiedSession>} UnifiedSession
@@ -69,13 +73,12 @@ function fileKeyOf(c) {
   return c.fsPath || '';
 }
 
-/** Numeric facts the page's decoders need before they probe (media/player-unified.js createPlayer). */
-const NUM_FIELDS = ['size', 'duration', 'fps', 'frames', 'width', 'height', 'rotation'];
-
 /**
  * What the page may know about a clip: its id, label and probed facts, never its path or URI (the page reads
- * blocks by clip id). A field the clip lacks comes from its meta, if that has it.
+ * blocks by clip id). A field the clip lacks comes from its meta, if that has it. The numbers (size, duration,
+ * fps ...) are what the page's decoders need before they probe (media/player-unified.js createPlayer).
  * @param {UnifiedClip} c
+ * @returns {ClipDescriptor}
  */
 function clipDescriptor(c) {
   const meta = c.meta && typeof c.meta === 'object' ? /** @type {Record<string, any>} */ (c.meta) : {};
@@ -84,16 +87,17 @@ function clipDescriptor(c) {
   const pick = (k) => (src[k] !== undefined ? src[k] : meta[k]);
   /** @param {string} k */
   const num = (k) => { const v = Number(pick(k)); return Number.isFinite(v) && v >= 0 ? v : 0; };
-  /** @type {Record<string, any>} */
-  const d = { clipId: c.id, label: c.label, name: c.label };
-  for (const k of NUM_FIELDS) d[k] = num(k);
-  d.hasAudio = pick('hasAudio') !== false;
-  d.native = !!pick('native');
   const codec = pick('codec');
-  d.codec = typeof codec === 'string' ? codec : '';
   const kind = pick('kind');
-  d.kind = typeof kind === 'string' && kind ? kind : 'file';
-  return d;
+  return {
+    clipId: c.id, label: c.label, name: c.label,
+    size: num('size'), duration: num('duration'), fps: num('fps'), frames: num('frames'),
+    width: num('width'), height: num('height'), rotation: num('rotation'),
+    hasAudio: pick('hasAudio') !== false,
+    native: !!pick('native'),
+    codec: typeof codec === 'string' ? codec : '',
+    kind: typeof kind === 'string' && kind ? kind : 'file',
+  };
 }
 
 /**
@@ -148,7 +152,7 @@ function createUnifiedSession(deps) {
   let active = false;
   let disposed = false;
   let ready = false;
-  /** @type {PageMessage[]} posts before the page is ready (toasts): sent on 'ready' */
+  /** @type {HostToPageMessage[]} posts before the page is ready (toasts): sent on 'ready' */
   let queued = [];
   /** @type {Map<string, { w: number, h: number }>} */
   const tileSizes = new Map();
@@ -172,7 +176,7 @@ function createUnifiedSession(deps) {
   /** @param {SessionEvent} e */
   const emit = (e) => { for (const fn of [...listeners]) { try { fn(e, session); } catch { /* a listener never breaks the session */ } } };
 
-  /** @param {PageMessage} m */
+  /** @param {HostToPageMessage} m */
   function post(m) {
     if (disposed) return;
     if (!ready) {
@@ -181,7 +185,7 @@ function createUnifiedSession(deps) {
     }
     send(m);
   }
-  /** @param {PageMessage} m */
+  /** @param {HostToPageMessage} m */
   function send(m) {
     if (deps.onPost) deps.onPost(m);
     else if (panel && panel.webview) panel.webview.postMessage(m);
@@ -284,8 +288,9 @@ function createUnifiedSession(deps) {
     changed();
   }
 
-  /** @param {PageMessage} m */
-  async function onMessage(m) {
+  /** @param {PageToHostMessage} msg */
+  async function onMessage(msg) {
+    const m = /** @type {PageMessage} */ (msg);
     if (disposed || !m || typeof m !== 'object' || typeof m.type !== 'string') return undefined;
     switch (m.type) {
       case 'ready': {

@@ -14,6 +14,7 @@
 (function (root) {
   // checkJs: start
   /**
+   * @typedef {import('./unified-contracts').HostAdapter} HostAdapter the contract this adapter implements
    * @typedef {'player' | 'compare' | 'unified'} Surface
    * @typedef {{ vscode: { postMessage: (m: any) => void, getState?: () => any, setState?: (s: any) => void },
    *   win?: { addEventListener: (t: string, f: (e: any) => void) => void, removeEventListener: (t: string, f: (e: any) => void) => void } | null,
@@ -167,7 +168,9 @@
       },
     };
 
-    return { post, connect, dispose, storage, surface, slots: () => slots.slice() };
+    const adapter = { post, connect, dispose, storage, surface, slots: () => slots.slice() };
+    // More than the contract (surface, slots), so checked as a value, not as a fresh literal.
+    return /** @satisfies {HostAdapter} */ (adapter);
   }
 
   const api = { create, translate, capToast, mergeSlots, MAX_TOAST_MS };

@@ -49,45 +49,14 @@
 (() => {
   // checkJs: start
   /**
-   * @typedef {object} ClipMeta
-   * @property {string} id
-   * @property {string} name
-   * @property {string} [codec]
-   * @property {number} [fps]
-   * @property {number} [frames]
-   * @property {string} [color]
-   */
-  /**
-   * @typedef {object} EngineAdapter
-   * @property {ClipMeta[]} clips
-   * @property {(id: string) => ClipMeta} getClip
-   * @property {(canvas: HTMLCanvasElement, clipId: string, frame: number, opts?: { width?: number, height?: number, splitClipRatio?: number | null, picMode?: string, zoom?: number, panX?: number, panY?: number }) => void} draw
-   * @property {(clipId: string) => { title: string, sub: string, rows: string[][] }} [facts]
-   * @property {(clipId: string) => boolean} [hasAudio]
-   * @property {(clipId: string, clockFrame: number, offset?: { unit: string, v: number } | number | null, clockFps?: number) => { frame: number | null, outOfRange: boolean }} [shownFrame]
-   *   `clockFrame` counts frames of the clock tile, at `clockFps` (Compare may mix frame rates)
-   * @property {(clipId: string, frame: number, opts?: { signal?: AbortSignal }) => any} [showFrame] shows a frame of the
-   *   clip paused; resolves with the frame really presented (a number), else null
-   * @property {(clipId: string, cellW: number, cellH: number, picMode?: string, zoom?: number, panX?: number, panY?: number) => { x: number, y: number, w: number, h: number }} [pictureRect]
-   * @property {(clipId: string, seconds: number, cb: any, scrubbing?: boolean) => void} [thumbnail]
-   * @property {(immediate?: boolean) => void} [thumbnailLeave]
-   * @property {(clipId: string | null) => void} [setSoundSource]
-   * @property {(volume: number, muted: boolean) => void} [setVolume]
-   * @property {(clipId: string) => { width: number, height: number }} [naturalSize]
-   * @property {(clipId: string, frame?: number) => any} [snapshot] a still: PNG bytes, or { data } holding them
-   * @property {(clipId: string) => string} [statsText]
-   * @property {(clipId: string) => any} [packetIndex]
-   * @property {(clipId: string) => any[]} [chapters]
-   * @property {(clipId: string, x: number, y: number) => any} [pixelAt]
-   * @property {(clipId: string, t: number, track: number) => any} [cueAt]
-   * @property {(clipId: string, track: number) => void} [selectSubtitle]
-   * @property {(clipId: string) => any} [pictureInfo] { nativeLossy?, transcoded?, video?, stream?, display? }: the
-   *   reduced-resolution offer before an exact pixel tool
-   */
-  /**
-   * @typedef {object} HostAdapter
-   * @property {(msg: any) => void} post
-   * @property {{ getState: () => any, setState: (s: any) => void }} [storage] the webview's saved state
+   * The shared contracts (media/unified-contracts.d.ts). The controller needs `clips`, `getClip` and `draw` of an
+   * engine and `post` of a host; every other engine method is used only when the engine has it.
+   * @typedef {import('./unified-contracts').EngineAdapter} FullEngineAdapter
+   * @typedef {Pick<FullEngineAdapter, 'clips' | 'getClip' | 'draw'> & Partial<FullEngineAdapter>} EngineAdapter
+   * @typedef {Pick<import('./unified-contracts').HostAdapter, 'post' | 'storage'>} HostAdapter
+   * @typedef {import('./unified-contracts').ClipMeta} ClipMeta
+   * @typedef {import('./unified-contracts').TransportCommand} TransportCommand
+   * @typedef {import('./unified-contracts').UnifiedControllerApi} UnifiedControllerApi
    */
   /**
    * @typedef {object} Prefs
@@ -582,8 +551,7 @@
    *   keyTarget?: EventTarget,
    *   tickMs?: number,
    *   onChange?: (ws: any, ui: any) => void,
-   *   onTransport?: (ev: { type: 'play' | 'pause' | 'seek' | 'rate' | 'loop', frame?: number, playing?: boolean,
-   *     rate?: number, loop?: boolean }) => void,
+   *   onTransport?: (ev: TransportCommand) => void,
    * }} env
    * `tickMs: 0` hands the clock to a decoder: the page then reports what the user does through `onTransport` and
    * follows the decoder through the controller's `onDecoderFrame` / `onDecoderEnded`.
@@ -734,7 +702,7 @@
     let seen = null;
     /** True while the decoder's own frames, its end or a confirmed presentation land: those are not told back. */
     let quiet = false;
-    const tell = (/** @type {any} */ ev) => { if (env.onTransport && !disposed) env.onTransport(ev); };
+    const tell = (/** @type {TransportCommand} */ ev) => { if (env.onTransport && !disposed) env.onTransport(ev); };
     /** Compare the transport with the last look and tell `env.onTransport` what changed (seek first, then play / pause). */
     const emitTransport = () => {
       const t = tab();
@@ -834,7 +802,7 @@
     let infoSel = 0;
     const facts = (/** @type {string} */ id) => {
       if (engine.facts) return engine.facts(id);
-      const c = engine.getClip(id) || { id, name: id };
+      const c = /** @type {Partial<ClipMeta> & { name: string }} */ (engine.getClip(id) || { id, name: id });
       const t = tab();
       return {
         title: c.name,
@@ -2479,7 +2447,7 @@
       for (const c of cleanups.splice(0)) c();
     }
 
-    return {
+    const controller = {
       render,
       onHostMessage,
       /** Run one action by name (the same table the keys, bar and menus use). */
@@ -2513,6 +2481,8 @@
       },
       dispose: () => disposeAll(),
     };
+    // More than the contract (rail, controls, menus, ab), so checked as a value, not as a fresh literal.
+    return /** @satisfies {UnifiedControllerApi} */ (controller);
   }
 
   const api = {
