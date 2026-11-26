@@ -85,7 +85,10 @@ const CLIPS = [
  * gets every page -> host message (a real host: src/unified-session.js); it exists before boot, so it sees 'ready'.
  * `engineApi` / `uiApi` replace the production adapter / controller modules.
  */
-function withPage(fn, { cfg = {}, createPlayer = stubPlayer, hostSink = null, engineApi = EngineAdapter, uiApi = PUI, raf = false } = {}) {
+function withPage(fn, {
+  cfg = {}, createPlayer = stubPlayer, hostSink = null, engineApi = EngineAdapter, uiApi = PUI, raf = false,
+  defaultFactory = false, extraWidgets = {},
+} = {}) {
   const page = 7;
   const fullCfg = { page, boot: 1, clips: [CLIPS[0]], ...cfg };
   const html = unifiedHtml({
@@ -119,7 +122,8 @@ function withPage(fn, { cfg = {}, createPlayer = stubPlayer, hostSink = null, en
   const factory = createPlayer && ((clip, host, hooks) => { const p = createPlayer(clip, host, hooks); made.push(p); return p; });
   return withGlobals(dom, () => {
     const app = U.boot({
-      doc: dom.doc, win: dom.win, vscode, createPlayer: factory, widgets: widgets(),
+      doc: dom.doc, win: dom.win, vscode, ...(defaultFactory ? {} : { createPlayer: factory }),
+      widgets: { ...widgets(), ...extraWidgets },
       stateApi: S, engineApi, hostApi: HostAdapter, uiApi,
     });
     try { return fn({ ...dom, app, posted, send, made, vscode, frames, rafQueue }); } finally { app.dispose(); }
@@ -802,6 +806,168 @@ test('Astra #3: production decoder wrapper stamps page on outbound nd messages &
     assert.ok(c && c.calls.some((c2) => c2[0] === 'rate' && c2[1] === 2), 'replaced tile inherits active rate');
     assert.ok(c && c.calls.some((c2) => c2[0] === 'loop' && c2[1] === true), 'replaced tile inherits active loop');
   });
+});
+
+const logsOf = (posted) => posted.filter((m) => m.type === 'log').map((m) => m.msg);
+const FramePlayerApi = require('../../media/frame-player');
+
+test('a sequence clip gets a FramePlayer: its picture requests go out tagged, its pictures come back to it', () => {
+  const SEQ = { id: 'S', name: 'shot_%04d.png', kind: 'sequence', fps: 10, frames: 30, width: 64, height: 36 };
+  withPage(({ app, send, posted }) => {
+    assert.strictEqual(app.players.size, 0, 'no decoder before open');
+    send({ type: 'open' });
+    const p = app.players.get('S');
+    assert.ok(p && p.bitmaps instanceof Map && p.n === 30 && p.fps === 10, 'a frame player with the clip\'s numbers');
+    const req = posted.find((m) => m.type === 'frames');
+    assert.ok(req && req.clipId === 'S' && req.page === 7 && req.indices[0] === 0, `tagged picture request ${JSON.stringify(req)}`);
+    const got = [];
+    p.onFrame = (i, data) => got.push([i, data]);
+    send({ type: 'frame', clipId: 'S', index: 3, data: 'jpeg' });
+    send({ type: 'frame', index: 4, data: 'jpeg' }); // untagged, one clip: still this one
+    assert.deepStrictEqual(got, [[3, 'jpeg'], [4, 'jpeg']]);
+    assert.strictEqual(app.engine.getClip('S').frames, 30);
+  }, { cfg: { clips: [SEQ] }, defaultFactory: true, extraWidgets: { VpeFramePlayer: FramePlayerApi } });
+
+  // A clip the host plays as pictures ('frames', MJPEG AVI): the frame player starts with the host's meta.
+  withPage(({ app, send }) => {
+    send({ type: 'open' });
+    assert.strictEqual(app.players.size, 0, 'no engine.js in Node and not a sequence: no decoder');
+    send({ type: 'frames', clipId: 'A', meta: { frames: 5, fps: 10, width: 32, height: 18 } });
+    const p = app.players.get('A');
+    assert.ok(p && p.n === 5 && p.meta.width === 32, 'the frame player has the host\'s meta');
+    assert.strictEqual(app.engine.getClip('A').frames, 5, 'the clip learns the frame count');
+    // A second 'frames' (reopened) replaces the decoder; the old one is closed.
+    send({ type: 'frames', clipId: 'A', meta: { frames: 6, fps: 10 } });
+    assert.ok(p.disposed && app.players.get('A') !== p && app.players.get('A').n === 6, 'restarted with the new meta');
+  }, { defaultFactory: true, extraWidgets: { VpeFramePlayer: FramePlayerApi } });
+});
+
+test('originalTile: the transcoded decoder closes, the clip restarts on the built-in decoder, the notice shows', () => {
+  const LIVE = { ...CLIPS[0], native: true, transcoded: true };
+  withPage(({ app, send, made, doc }) => {
+    send({ type: 'open' });
+    assert.strictEqual(app.engine.pictureInfo('A').transcoded, true, 'Live transcode before');
+    app.ui.dispatch('seek', 40);
+    const old = made[0];
+    send({ type: 'originalTile', clipId: 'A', notice: 'Playing the original video.' });
+    assert.ok(old.disposed, 'the transcoded decoder is closed');
+    const now = app.players.get('A');
+    assert.ok(now && now !== old && now === made[1], 'a new decoder for A');
+    assert.ok(now.clip.native === false && now.clip.transcoded === false, `built-in: ${JSON.stringify(now.clip)}`);
+    assert.deepStrictEqual(app.engine.pictureInfo('A').transcoded, false, 'pictureInfo follows');
+    assert.ok(now.calls.some((c) => c[0] === 'seek' && c[1] === 40), 'the new decoder is sought to the clip\'s place');
+    assert.ok(doc.getElementById('toast').textContent.includes('Playing the original video.'), 'the notice is toasted');
+    // Compare's host names the tile by index (its slots).
+    send({ type: 'openVideo', clipId: 'B', compare: true, clip: { ...CLIPS[1], native: true, transcoded: true } });
+    const b = app.players.get('B');
+    send({ type: 'originalTile', index: 1, notice: 'Original.' });
+    assert.ok(b.disposed && app.players.get('B').clip.transcoded === false, 'by index');
+    assert.ok(doc.getElementById('toast').textContent.includes('b.mp4: Original.'), 'with 2 videos the toast names the clip');
+  }, { cfg: { clips: [LIVE] } });
+});
+
+test('libav: the host\'s meta restarts the clip\'s built-in decoder with it', () => {
+  withPage(({ app, send, made }) => {
+    send({ type: 'open' });
+    const meta = { size: 123, duration: 10, native: true, label: 'a.mp4' };
+    send({ type: 'libav', clipId: 'A', meta });
+    assert.ok(made[0].disposed, 'the old decoder is closed');
+    assert.deepStrictEqual(made[1].clip.meta, meta, 'the new decoder opens with the host\'s meta');
+    assert.strictEqual(made[1].clip.native, true, 'the clip follows the native flag of the meta');
+    assert.strictEqual(app.players.get('A'), made[1]);
+  });
+});
+
+test('stream and exactFrame: the Quality variants reach pictureInfo; an exact-frame reply reaches the clip\'s request', () => {
+  const posts = [];
+  const replies = [];
+  const VpeExact = {
+    available: (p) => !!(p && p.nativeLossy),
+    shownTime: () => 1.5,
+    failureText: () => 'failed',
+    create: (o) => ({
+      grab: (key, t) => { o.post({ type: 'grabExactFrame', page: o.page, reqId: 1, t }); posts.push(key); return Promise.resolve(null); },
+      onReply: (m) => { replies.push(m); return Promise.resolve(); },
+      invalidate() {},
+    }),
+  };
+  const noExact = (clip, host, hooks) => { const p = stubPlayer(clip, host, hooks); delete p.onExactFrame; return p; };
+  withPage(({ app, send, posted }) => {
+    send({ type: 'open' });
+    const quality = { variants: [{ height: 360 }, { height: 720 }] };
+    send({ type: 'stream', clipId: 'A', quality });
+    assert.ok(app.engine.pictureInfo('A').streaming && app.engine.pictureInfo('A').quality === quality, 'HLS variants');
+    const p = app.players.get('A');
+    p.nativeLossy = true;
+    p.gen = 2;
+    app.engine.exactFrame('A');
+    const req = posted.find((m) => m.type === 'grabExactFrame');
+    assert.ok(req && req.clipId === 'A' && req.page === 7 && req.t === 1.5, `exact request ${JSON.stringify(req)}`);
+    assert.deepStrictEqual(posts, ['2|0|0']);
+    send({ type: 'exactFrame', clipId: 'A', reqId: 1, png: 'x' });
+    assert.ok(replies.length === 1 && replies[0].page === 7 && replies[0].png === 'x', 'the reply, with the page id');
+  }, { createPlayer: noExact, extraWidgets: { VpeExact } });
+});
+
+test('first frame shown: logged once to the host; not again when the decoder said it itself', () => {
+  withPage(({ send, made, posted }) => {
+    send({ type: 'open' });
+    made[0].hooks.onFrame(0);
+    made[0].hooks.onFrame(1);
+    const lines = logsOf(posted).filter((l) => /first frame shown/.test(l));
+    assert.deepStrictEqual(lines, ['first frame shown at 0.000 s'], 'once, unprefixed with one video');
+    const log = posted.find((m) => m.type === 'log');
+    assert.strictEqual(log.page, 7, 'with the page envelope (src/unified-viewer.js reads it)');
+    // 2 videos: "first pictures shown" once both have a picture.
+    send({ type: 'openVideo', clipId: 'B', compare: true, clip: CLIPS[1] });
+    made[1].hooks.onFrame(0);
+    assert.deepStrictEqual(logsOf(posted).filter((l) => l === 'first pictures shown'), [], 'A has no counted picture yet');
+    made[0].shownCount = 1;
+    made[1].shownCount = 1;
+    made[1].hooks.onFrame(1);
+    assert.deepStrictEqual(logsOf(posted).filter((l) => l === 'first pictures shown'), ['first pictures shown']);
+    made[1].hooks.log('hello');
+    assert.ok(logsOf(posted).includes('[B] hello'), 'with 2 decoders a decoder line names its clip');
+  });
+  withPage(({ send, made, posted }) => {
+    send({ type: 'open' });
+    made[0].hooks.log('first frame shown at 0.040 s'); // media/engine.js says it
+    made[0].hooks.onFrame(1);
+    assert.deepStrictEqual(logsOf(posted).filter((l) => /first frame shown/.test(l)), ['first frame shown at 0.040 s']);
+  });
+});
+
+test('debug: VpeDebugProbe answers with one video, VpeCompareDebug with two; window.vpe / vpeCompare', () => {
+  const VpeDebugProbe = require('../../media/debug-probe');
+  const VpeCompareDebug = require('../../media/compare-debug');
+  // What the probes read of a real decoder besides the stub's: its clock time.
+  const timedPlayer = (clip, host, hooks) => Object.assign(stubPlayer(clip, host, hooks), { currentTime() { return this.frame / 25; } });
+  withPage(({ win, app, send, made, posted }) => {
+    send({ type: 'open' });
+    assert.ok(logsOf(posted).some((l) => l.startsWith('webview env:')), 'the probe is installed');
+    assert.ok(win.vpe && win.vpe.clock === made[0] && win.vpeCompare && win.vpeCompare.A === made[0], 'window hooks');
+    send({ type: 'debug', action: 'state', id: 11 });
+    const state = logsOf(posted).find((l) => l.startsWith('state '));
+    assert.ok(state, 'state answered');
+    const s = JSON.parse(state.slice(6));
+    assert.strictEqual(s.id, 11);
+    assert.ok(!s.error, `state without an error: ${s.error}`);
+    assert.strictEqual(s.frame, 0, 'the clock decoder\'s frame');
+    const frame0 = S.getTab(app.ui.getState()).frame;
+    send({ type: 'debug', action: 'step', d: 1 });
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, frame0 + 1, 'one step from the single probe');
+    // Two videos: the Compare probe answers (one step, not two), the single probe is quiet.
+    send({ type: 'openVideo', clipId: 'B', compare: true, clip: CLIPS[1] });
+    const f1 = S.getTab(app.ui.getState()).frame;
+    send({ type: 'debug', action: 'step', d: 1 });
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, f1 + 1, 'exactly one step with two videos');
+    send({ type: 'debug', action: 'a11y', id: 12 });
+    const a11y = logsOf(posted).filter((l) => /^(compare )?a11y /.test(l));
+    assert.ok(a11y.length === 1 && a11y[0].startsWith('compare a11y '), `the Compare probe answered: ${a11y}`);
+    assert.strictEqual(win.vpeCompare.B, made[1]);
+    send({ type: 'debug', action: 'offset', tile: 1, v: 3, unit: 'f' });
+    assert.deepStrictEqual(S.getOffset(S.getTab(app.ui.getState()), 'B'), { v: 3, unit: 'frames' }, 'offset via the Compare probe');
+  }, { cfg: { debug: true }, createPlayer: timedPlayer, extraWidgets: { VpeDebugProbe, VpeCompareDebug } });
 });
 
 console.log(`player_unified_test: ${count} ok (${Date.now() - T0} ms)`);

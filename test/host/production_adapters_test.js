@@ -563,5 +563,46 @@ function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, b
     assert.deepStrictEqual(VpeHostAdapter.mergeSlots(['x', 'y', 'z'], ['z', 'w', 'x', 7]), ['x', 'z', 'w'], 'mergeSlots');
   }
 
+  // ---- pictureInfo / transcodeInfo / exactFrame: what the reduced-res and slow notices and the Live chip read ----
+  {
+    const quality = { variants: [{ height: 720 }, { height: 1080 }] };
+    /** @type {any[]} */
+    const grabs = [];
+    const { engine, players } = makeEngine({
+      streamInfo: (/** @type {string} */ id) => (id === 'C' ? quality : null),
+      grabExact: (/** @type {string} */ id, /** @type {any} */ p) => { grabs.push([id, p]); return Promise.resolve({ w: 1, h: 1 }); },
+    });
+    const e = /** @type {any} */ (engine);
+    assert.deepStrictEqual(e.pictureInfo('A'), {
+      clipId: 'A', nativeLossy: false, transcoded: false, streaming: false,
+      video: { codec: 'h264', width: 1920, height: 1080 }, stream: null, display: null,
+    }, 'a plain built-in clip: neither lossy nor transcoded nor streaming');
+    // Native ffmpeg scaled B down; Live transcode feeds A from a remote stream.
+    /** @type {any} */ (players.B).nativeLossy = true;
+    const remote = { fps: 24, w: 1280, h: 720 };
+    Object.assign(/** @type {any} */ (players.A), { remoteStream: true });
+    Object.assign(players.A.info, { remoteStream: remote, transcode: { lossy: true, codec: 'h264' } });
+    const a = e.pictureInfo('A');
+    assert.ok(a.transcoded && a.streaming && a.stream === remote, `Live transcode: transcoded and streaming ${JSON.stringify(a)}`);
+    assert.ok(e.pictureInfo('B').nativeLossy && !e.pictureInfo('B').transcoded, 'native lossy, not transcoded');
+    const c = e.pictureInfo('C');
+    assert.ok(c.streaming && !c.transcoded && c.quality === quality, 'an HLS clip streams, with its Quality variants');
+    assert.strictEqual(e.pictureInfo('nope').clipId, 'A', 'an unknown clip reads as the first, as getClip does');
+    assert.deepStrictEqual(e.transcodeInfo(), {
+      clipId: 'A', lossy: true, transcode: { lossy: true, codec: 'h264' }, stream: remote, quality: null,
+    }, 'transcodeInfo(): the first transcoded clip');
+    assert.strictEqual(e.transcodeInfo('B'), null, 'B is not transcoded');
+    // A spec the host marks transcoded counts before its decoder knows.
+    e.registerClip({ id: 'C', name: 'c.mp4', transcoded: true });
+    assert.strictEqual(e.transcodeInfo('C').clipId, 'C', 'spec.transcoded');
+    // exactFrame: the player's own wins, else the page's grabExact; no player, null.
+    assert.deepStrictEqual(await e.exactFrame('A'), { w: 1, h: 1 });
+    assert.ok(grabs.length === 1 && grabs[0][0] === 'A' && grabs[0][1] === players.A, 'grabExact gets the clip and its player');
+    /** @type {any} */ (players.B).exactFrame = () => ({ own: true });
+    assert.deepStrictEqual(await e.exactFrame('B'), { own: true }, 'the player\'s exactFrame wins');
+    assert.strictEqual(await e.exactFrame('Z'), null, 'unknown clip');
+    assert.strictEqual(grabs.length, 1);
+  }
+
   console.log(`production_adapters_test: ok (${Date.now() - T0} ms)`);
 })().catch((e) => { console.error(e); process.exitCode = 1; });

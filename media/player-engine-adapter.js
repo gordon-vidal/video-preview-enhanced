@@ -23,7 +23,10 @@
    * @typedef {import('./unified-contracts').PictureRect} Rect
    * @typedef {import('./unified-contracts').OffsetSpec} Offset
    * @typedef {{ clips: ClipSpec[], getPlayer: (id: string) => any, compositor?: any, pictureApi?: any,
-   *   controlsApi?: any, doc?: any, showFrameTimeoutMs?: number }} EngineAdapterOptions
+   *   controlsApi?: any, doc?: any, showFrameTimeoutMs?: number, streamInfo?: (id: string) => any,
+   *   grabExact?: (id: string, player: any) => any }} EngineAdapterOptions
+   * streamInfo: the host's 'stream' report for a clip (URL / HLS: its Quality variants), or null.
+   * grabExact: the page's exact-frame request for a clip (media/exactframe.js grab), or null when none applies.
    */
 
   const FALLBACK = { fps: 24, frames: 240, width: 1920, height: 1080 };
@@ -143,6 +146,11 @@
     const { compositor, pictureApi, controlsApi } = opts;
     const doc = opts.doc || /** @type {any} */ (globalThis).document || null;
     const showFrameTimeoutMs = Number(opts.showFrameTimeoutMs) > 0 ? Number(opts.showFrameTimeoutMs) : SHOW_FRAME_TIMEOUT_MS;
+    /** @param {string} id */
+    const streamOf = (id) => {
+      if (typeof opts.streamInfo !== 'function') return null;
+      try { return opts.streamInfo(id) || null; } catch { return null; }
+    };
 
     /** @param {string} id */
     const playerOf = (id) => {
@@ -571,6 +579,68 @@
       try { return p[name](...args); } catch { return fallback; }
     };
 
+    // ---- what the picture is made of: the reduced-resolution / slow-playback notices and the Live chip read it ----
+    /**
+     * `{ clipId, nativeLossy, transcoded, streaming, video, stream, display }` for the clip, or null for an unknown
+     * one. nativeLossy: native ffmpeg scaled the picture down or reduced it to 8-bit (engine.js); transcoded: Live
+     * transcode (the host said so in the clip's spec, or the decoder is fed a remote stream); streaming: a URL / HLS
+     * clip (the host's 'stream' report, then also `quality`) or a remote Live stream.
+     * @param {string} clipId
+     */
+    function pictureInfo(clipId) {
+      const c = clipOrFirst(clipId);
+      if (!c) return null;
+      const spec = /** @type {any} */ (byId.get(c.id)) || {};
+      const p = playerOf(c.id);
+      const info = (p && p.info) || {};
+      const quality = streamOf(c.id);
+      const remote = !!(p && p.remoteStream);
+      return {
+        clipId: c.id,
+        nativeLossy: !!(p && p.nativeLossy),
+        transcoded: spec.transcoded === true || remote,
+        streaming: !!quality || remote,
+        video: info.video || null,
+        stream: info.remoteStream || null,
+        display: null,
+        ...(quality ? { quality } : {}),
+      };
+    }
+    /**
+     * The Live transcode the clip plays through (the first transcoded clip when no id is given), or null when none
+     * does: `{ clipId, lossy, transcode, stream, quality }` (engine.js info.transcode / info.remoteStream).
+     * @param {string} [clipId]
+     */
+    function transcodeInfo(clipId) {
+      const ids = typeof clipId === 'string' ? [clipId] : specs.map((s) => s.id);
+      for (const id of ids) {
+        const pi = pictureInfo(id);
+        if (!pi || !pi.transcoded) continue;
+        const p = playerOf(pi.clipId);
+        const transcode = (p && p.info && p.info.transcode) || null;
+        return {
+          clipId: pi.clipId, lossy: transcode && transcode.lossy !== undefined ? !!transcode.lossy : pi.nativeLossy,
+          transcode, stream: pi.stream, quality: streamOf(pi.clipId),
+        };
+      }
+      return null;
+    }
+    /**
+     * The exact (full-resolution) picture of the clip's shown frame during Live transcode or lossy native playback:
+     * the player's own exactFrame() wins, else the page's grabExact (answered by the host's 'exactFrame' reply).
+     * Resolves `{ img, w, h, png }`, `{ error }` or null (no player, or the shown picture is exact already).
+     * @param {string} clipId
+     */
+    function exactFrame(clipId) {
+      const p = playerOf(clipId);
+      if (!p) return Promise.resolve(null);
+      try {
+        if (typeof p.exactFrame === 'function') return Promise.resolve(p.exactFrame()).catch(() => null);
+        if (typeof opts.grabExact === 'function') return Promise.resolve(opts.grabExact(clipId, p)).catch(() => null);
+      } catch { /* a closed player */ }
+      return Promise.resolve(null);
+    }
+
     const adapter = {
       clips: specs,
       getClip,
@@ -588,6 +658,9 @@
       pixelAt,
       registerClip,
       unregisterClip,
+      pictureInfo,
+      transcodeInfo,
+      exactFrame,
       setSoundSource,
       setVolume,
       /** Inspection and subtitles, when the clip's player has them (else null / []). */
