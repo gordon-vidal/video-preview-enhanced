@@ -29,7 +29,6 @@
     "src/associations.js",
     "src/framelink.js",
     "src/debug-cmd.js",
-    "src/early-probe.js",
     "src/folder-rail.js",
     "src/folder-rail-html.js",
     "media/folder-rail.js",

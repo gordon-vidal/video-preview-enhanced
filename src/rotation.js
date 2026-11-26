@@ -3,8 +3,6 @@
 // Returns 0, 90, 180 or 270 (degrees clockwise to turn the decoded picture for display).
 
 const fs = require('fs');
-const { hevcFormat, av1Format, h264Format, vp9Format } = require('./sniff-codecs');
-const { looksLikePlaylist } = require('./ffmpeg');
 
 // Top-level boxes walked to find moov. Real files have a handful before it (ftyp, free, mdat);
 // without a cap a file of tiny boxes kept this synchronous walk on the extension host thread for
@@ -12,7 +10,7 @@ const { looksLikePlaylist } = require('./ffmpeg');
 const MAX_TOP_BOXES = 1024;
 
 /** Iterates boxes in buf[start, end): yields { type, start (payload), end }. */
-function* boxes(buf, start, end, strict = false) {
+function* boxes(buf, start, end) {
   let p = start;
   while (p + 8 <= end) {
     let size = buf.readUInt32BE(p);
@@ -24,7 +22,6 @@ function* boxes(buf, start, end, strict = false) {
     yield { type, start: p + hdr, end: p + size };
     p += size;
   }
-  if (strict && p !== end) throw new Error('truncated MP4 box');
 }
 
 function topLevelBoxSize(h, remaining) {
@@ -123,118 +120,4 @@ async function readRotation(file, size) {
   return 0;
 }
 
-function sampleFormat(entry, config) {
-  switch (entry) {
-    case 'hvc1':
-    case 'hev1': return ['hevc', hevcFormat(config('hvcC'))];
-    case 'av01': return ['av1', av1Format(config('av1C'))];
-    case 'vp09': return ['vp9', vp9Format(config('vpcC'))];
-    case 'avc1': return ['h264', h264Format(config('avcC'))];
-    // Only the ProRes 422 profiles. The 4444 profiles can carry alpha too.
-    case 'apco':
-    case 'apcs':
-    case 'apcn':
-    case 'apch': return ['prores', 'yuv422p10le'];
-    default: return [];
-  }
-}
-
-// A constant decode delta can still hide uneven presentation times in ctts.
-function constantPresentation(buf, ctts, count, delta) {
-  if (!ctts) return true;
-  const { start, end } = ctts;
-  if (start + 8 > end || buf[start] > 1 || count > 32768) return false;
-  const runs = buf.readUInt32BE(start + 4);
-  if (start + 8 + runs * 8 !== end) return false;
-  const seen = new Uint8Array(count);
-  let sample = 0;
-  let low = Infinity;
-  let high = -Infinity;
-  for (let p = start + 8; p < end; p += 8) {
-    const run = buf.readUInt32BE(p);
-    const offset = buf[start] ? buf.readInt32BE(p + 4) : buf.readUInt32BE(p + 4);
-    if (!run || sample + run > count || offset % delta) return false;
-    low = Math.min(low, sample + offset / delta);
-    high = Math.max(high, sample + run - 1 + offset / delta);
-    sample += run;
-  }
-  if (sample !== count || high - low + 1 !== count) return false;
-  sample = 0;
-  for (let p = start + 8; p < end; p += 8) {
-    const run = buf.readUInt32BE(p);
-    const offset = buf[start] ? buf.readInt32BE(p + 4) : buf.readUInt32BE(p + 4);
-    let pts = sample + offset / delta - low;
-    for (let i = 0; i < run; i++, pts++) {
-      if (seen[pts]) return false;
-      seen[pts] = 1;
-    }
-    sample += run;
-  }
-  return true;
-}
-
-/**
- * Enough metadata to start decoding a simple MP4/MOV while ffprobe runs. The guess
- * is used only to launch ffmpeg: the probe still decides what reaches the player.
- */
-async function sniffNativeMp4(file, stat, signal) {
-  if (!/\.(mp4|m4v|mov)$/i.test(file)) return null;
-  let fd;
-  try {
-    fd = await fs.promises.open(file, 'r');
-    signal?.throwIfAborted();
-    const st = await fd.stat();
-    if (st.size !== stat.size || st.mtimeMs !== stat.mtimeMs) return null;
-    // A manifest posing as MP4 must not start ffmpeg before ffprobe's check (src/ffmpeg.js).
-    const head = Buffer.alloc(4096);
-    const { bytesRead } = await fd.read(head, 0, head.length, 0);
-    if (looksLikePlaylist(head.subarray(0, bytesRead))) return null;
-    const moov = await readMoov(fd, st.size, signal);
-    if (!moov) return null;
-    const children = (b) => [...boxes(moov, b.start, b.end, true)];
-    const find = (b, type) => b && children(b).find((x) => x.type === type);
-    const root = children({ start: 0, end: moov.length })[0];
-    if (!root || root.type !== 'moov' || find(root, 'mvex')) return null; // the frame rate may live in later fragments
-    const tracks = children(root).filter((b) => b.type === 'trak');
-    if (!tracks.length || tracks.length > 2) return null;
-    let video = null;
-    let audio = null;
-    for (const [index, trak] of tracks.entries()) {
-      const mdia = find(trak, 'mdia');
-      const h = find(mdia, 'hdlr');
-      if (!h || h.start + 12 > h.end) return null;
-      const kind = moov.toString('latin1', h.start + 8, h.start + 12);
-      if (kind === 'soun' && !audio) { audio = { index }; continue; }
-      if (kind !== 'vide' || video) return null;
-      const stbl = find(find(mdia, 'minf'), 'stbl');
-      const stsd = find(stbl, 'stsd');
-      const stts = find(stbl, 'stts');
-      const mdhd = find(mdia, 'mdhd');
-      if (!stsd || stsd.start + 8 > stsd.end || moov.readUInt32BE(stsd.start + 4) !== 1 ||
-          !stts || stts.start + 16 > stts.end || moov.readUInt32BE(stts.start + 4) !== 1 || !mdhd) return null;
-      const entries = children({ start: stsd.start + 8, end: stsd.end });
-      const [entry] = entries;
-      if (entries.length !== 1 || entry.end !== stsd.end || entry.start + 78 > entry.end) return null;
-      const config = (type) => {
-        const box = find({ start: entry.start + 78, end: entry.end }, type);
-        return box ? moov.subarray(box.start, box.end) : Buffer.alloc(0);
-      };
-      const [codec, pixFmt] = sampleFormat(entry.type, config);
-      const scale = mdhd.start + (moov[mdhd.start] === 1 ? 20 : 12);
-      if (!pixFmt || scale + 4 > mdhd.end || moov[mdhd.start] > 1 || stts.end !== stts.start + 16) return null;
-      const count = moov.readUInt32BE(stts.start + 8);
-      const delta = moov.readUInt32BE(stts.start + 12);
-      const fps = moov.readUInt32BE(scale) / delta;
-      const width = moov.readUInt16BE(entry.start + 24);
-      const height = moov.readUInt16BE(entry.start + 26);
-      if (!(fps > 0 && fps < 1000 && width >= 2 && height >= 2) || !count || width % 2 || height % 2 ||
-          !constantPresentation(moov, find(stbl, 'ctts'), count, delta)) return null;
-      video = { index, codec, width, height, fps, pixFmt };
-    }
-    return video ? { video, audio } : null;
-  } catch { return null; } finally {
-    if (fd) try { await fd.close(); } catch { /* ignore */ }
-  }
-}
-
-module.exports = { rotationOf, sniffNativeMp4, MAX_TOP_BOXES };
+module.exports = { rotationOf, MAX_TOP_BOXES };

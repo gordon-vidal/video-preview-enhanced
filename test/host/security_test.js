@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const ff = require('../../src/ffmpeg');
 const r = require('../../src/rangecmd');
-const { sniffNativeMp4, MAX_TOP_BOXES } = require('../../src/rotation');
+const { rotationOf, MAX_TOP_BOXES } = require('../../src/rotation');
 
 (async () => {
   // #1 text manifests are not media: DASH (XML), HLS, ffconcat, with BOM or leading white space.
@@ -27,8 +27,6 @@ const { sniffNativeMp4, MAX_TOP_BOXES } = require('../../src/rotation');
     assert.strictEqual(await ff.isPlaylistFile(mpd), true);
     // ffprobe is never started for it (the tools here do not exist).
     await assert.rejects(ff.probe({ ffprobe: path.join(dir, 'no-such-ffprobe') }, mpd), /playlist or manifest/);
-    // ...and the early native start (header sniff) refuses it too.
-    assert.strictEqual(await sniffNativeMp4(mpd, fs.statSync(mpd)), null);
     assert.strictEqual(await ff.isPlaylistFile(path.join(dir, 'missing.mp4')), false);
 
     // #4 a file of tiny top-level boxes ends the moov search after MAX_TOP_BOXES reads.
@@ -36,7 +34,7 @@ const { sniffNativeMp4, MAX_TOP_BOXES } = require('../../src/rotation');
     const one = Buffer.concat([Buffer.from([0, 0, 0, 8]), b('free')]);
     fs.writeFileSync(tiny, Buffer.concat([Buffer.concat([Buffer.from([0, 0, 0, 8]), b('ftyp')]), Buffer.alloc(0), ...Array(MAX_TOP_BOXES * 4).fill(one)]));
     const t0 = Date.now();
-    assert.strictEqual(await sniffNativeMp4(tiny, fs.statSync(tiny)), null);
+    assert.strictEqual(await rotationOf(tiny), 0);
     assert.ok(Date.now() - t0 < 5000);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
