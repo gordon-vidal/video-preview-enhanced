@@ -1115,7 +1115,7 @@ async function nativeFor(file, transport, tile, o = {}) {
     else {
       const stream = await transcodeOptions(t, pr, c, remoteLink, false);
       // Policy chose it; whether it runs depends on an encoder being available.
-      log(stream ? `[${name}] live transcode on: ${decision.reason}`
+      log(stream ? `[${name}] decoder: remote stream (${stream.encoder}): ${decision.reason}`
         : `[${name}] live transcode chosen (${decision.reason}) but no encoder is available: falling back`);
       if (stream) return { tools: t, probed: pr, maxHeight: maxStreamHeight, stream, informTranscode: c.transcode !== 'always' };
     }
