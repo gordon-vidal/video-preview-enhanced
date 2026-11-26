@@ -1348,8 +1348,15 @@
       playPause: () => {
         if (vis) vis.forgetResume();
         ws = S.togglePlay(ws);
-        flashPlay(tab().playing);
-        render();
+        const t = tab();
+        playBtn.classList.toggle('playing', t.playing);
+        const playLabel = `${t.playing ? 'Pause' : 'Play'}${t.tiles.length >= 2 ? ' all' : ''}`;
+        playBtn.setAttribute('aria-label', playLabel);
+        playBtn.title = `${playLabel}  Space`;
+        flashPlay(t.playing);
+        // Tell the decoders immediately instead of waiting behind N synchronous tile canvas redraws.
+        emitTransport();
+        render({ skipCells: true });
       },
       skip: (/** @type {number} */ sec) => commit(S.seekFrame(ws, tab().frame + Math.round(sec * fps()))),
       /** J / L: ten seconds, with the toast the player shows. */
@@ -2586,7 +2593,8 @@
     }
 
     let lastSound = '';
-    function render() {
+    let lastCmpBtnKey = '';
+    function render(/** @type {{ skipCells?: boolean }} */ opts = {}) {
       if (disposed) return;
       postCapture();
       syncNoticeContext();
@@ -2594,8 +2602,10 @@
       const { width, height } = stageSize();
       const ui = S.deriveUi(t, { width, height });
 
-      lastSplitPic = null;
-      renderCells(t, ui);
+      if (!opts.skipCells) {
+        lastSplitPic = null;
+        renderCells(t, ui);
+      }
       const c0 = ui.cells[0];
       const pic0 = c0 && typeof engine.pictureRect === 'function'
         ? engine.pictureRect(c0.clipId, c0.w, c0.h, t.picMode, t.zoom, t.panX, t.panY)
@@ -2631,9 +2641,13 @@
       cmpBtn.classList.toggle('cap-on', t.capture);
       cmpBtn.title = ui.captureTitle;
       cmpBtn.setAttribute('aria-pressed', String(t.capture));
-      cmpBtn.innerHTML = t.capture
-        ? `<span class="cap-pulse"></span><span>${esc(ui.captureLabel)}</span>`
-        : `${ICONS.compare}<span>${esc(ui.captureLabel)}</span>`;
+      const cmpKey = `${t.capture ? 1 : 0}|${ui.captureLabel}`;
+      if (cmpKey !== lastCmpBtnKey) {
+        lastCmpBtnKey = cmpKey;
+        cmpBtn.innerHTML = t.capture
+          ? `<span class="cap-pulse"></span><span>${esc(ui.captureLabel)}</span>`
+          : `${ICONS.compare}<span>${esc(ui.captureLabel)}</span>`;
+      }
 
       const isLive = !ui.isMulti && !!(/** @type {any} */ (engine.getClip(t.tiles[0]) || {}).live);
       seekEl.disabled = isLive;
