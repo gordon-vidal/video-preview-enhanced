@@ -22,6 +22,7 @@
     "src/compare.js",
     "src/player-html.js",
     "src/unified-html.js",
+    "src/unified-session.js",
     "src/stream-adapt.js",
     "src/stream-buffer.js",
     "src/associations.js",
@@ -56,6 +57,7 @@
     "media/player-ui-lifecycle.js",
     "media/player-engine-adapter.js",
     "media/player-host-adapter.js",
+    "media/player-unified.js",
     "media/player.js"
   ],
   "exclude": ["media/libav-vpe"]

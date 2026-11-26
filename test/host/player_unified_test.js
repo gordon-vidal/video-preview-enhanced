@@ -64,6 +64,8 @@ function stubPlayer(clip, host, hooks) {
     onStream: (m) => p.calls.push(['stream', m]),
     onResize: (m) => p.calls.push(['resize', m]),
     seekFrame: (f) => { p.frame = f; p.calls.push(['seek', f]); },
+    setRate: (r) => p.calls.push(['rate', r]),
+    setLoop: (l) => p.calls.push(['loop', l]),
     play: () => { p.playing = true; p.calls.push(['play']); },
     pause: () => { p.playing = false; p.calls.push(['pause']); },
     isPlaying: () => p.playing,
@@ -78,8 +80,12 @@ const CLIPS = [
   { id: 'B', name: 'b.mp4', fps: 25, frames: 250, width: 1280, height: 720 },
 ];
 
-/** Boot the page; `fn` gets the fixture and runs inside the browser globals. */
-function withPage(fn, { cfg = {}, createPlayer = stubPlayer } = {}) {
+/**
+ * Boot the page; `fn` gets the fixture and runs inside the browser globals. `hostSink(send)` returns a function that
+ * gets every page -> host message (a real host: src/unified-session.js); it exists before boot, so it sees 'ready'.
+ * `engineApi` / `uiApi` replace the production adapter / controller modules.
+ */
+function withPage(fn, { cfg = {}, createPlayer = stubPlayer, hostSink = null, engineApi = EngineAdapter, uiApi = PUI } = {}) {
   const page = 7;
   const fullCfg = { page, boot: 1, clips: [CLIPS[0]], ...cfg };
   const html = unifiedHtml({
@@ -93,15 +99,19 @@ function withPage(fn, { cfg = {}, createPlayer = stubPlayer } = {}) {
   dom.win.location = { origin: 'vscode-webview://test', hash: '' };
   const posted = [];
   let state;
-  const vscode = { postMessage: (m) => posted.push(m), getState: () => state, setState: (s) => { state = s; } };
-  const made = [];
-  const factory = createPlayer && ((clip, host, hooks) => { const p = createPlayer(clip, host, hooks); made.push(p); return p; });
   /** The host sends one message to the page (window 'message', with this page's envelope). */
   const send = (m) => dom.win.fire('message', { data: { page, boot: 1, ...m } });
+  const sink = hostSink ? hostSink(send) : null;
+  const vscode = {
+    postMessage: (m) => { posted.push(m); if (sink) sink(m); },
+    getState: () => state, setState: (s) => { state = s; },
+  };
+  const made = [];
+  const factory = createPlayer && ((clip, host, hooks) => { const p = createPlayer(clip, host, hooks); made.push(p); return p; });
   return withGlobals(dom, () => {
     const app = U.boot({
       doc: dom.doc, win: dom.win, vscode, createPlayer: factory, widgets: widgets(),
-      stateApi: S, engineApi: EngineAdapter, hostApi: HostAdapter, uiApi: PUI,
+      stateApi: S, engineApi, hostApi: HostAdapter, uiApi,
     });
     try { return fn({ ...dom, app, posted, send, made, vscode }); } finally { app.dispose(); }
   });
@@ -281,6 +291,227 @@ test('without a decoder factory the page still boots (no engine.js in Node)', ()
     assert.strictEqual(app.players.size, 0);
     assert.strictEqual(doc.getElementById('overlay').hidden, true);
   }, { createPlayer: null });
+});
+
+// ---- the host's 'sessionState' (src/unified-session.js) and the controller's decoder / transport hooks ----
+
+const seeksOf = (p) => p.calls.filter((c) => c[0] === 'seek').map((c) => c[1]);
+
+test('sessionIds and applySessionState: the tab shows the session\'s clips in its order, no-op when it does already', () => {
+  assert.deepStrictEqual(U.sessionIds({ clips: [{ clipId: 'A' }, { clipId: 'B' }, { clipId: 'C' }], order: ['B', 'Z', 'A', 'B'] }), ['B', 'A', 'C']);
+  assert.deepStrictEqual(U.sessionIds({}), []);
+  const ws = S.createWorkspaceState({ tiles: ['A'], capture: false, frame: 0 });
+  assert.strictEqual(U.applySessionState(S, ws, ['A'], { capture: false }), ws, 'same clips: same state object');
+  assert.strictEqual(U.applySessionState(S, ws, [], {}), ws);
+  const two = U.applySessionState(S, ws, ['B', 'A'], { capture: true, maxVideos: 4 });
+  assert.deepStrictEqual(S.getTab(two).tiles, ['B', 'A']);
+  assert.strictEqual(S.getTab(two).capture, true);
+  assert.strictEqual(S.getTab(two).maxVideos, 4);
+  const back = U.applySessionState(S, two, ['A'], { capture: false });
+  assert.deepStrictEqual(S.getTab(back).tiles, ['A']);
+  assert.strictEqual(S.getTab(back).capture, false);
+  // A tab never shows no video: a different single clip is added before the old one goes.
+  assert.deepStrictEqual(S.getTab(U.applySessionState(S, ws, ['C'], {})).tiles, ['C']);
+  assert.deepStrictEqual(U.transportOf({ type: 'seek', frame: 5 }), { type: 'seek', value: 5 });
+  assert.deepStrictEqual(U.transportOf('rate', 2), { type: 'rate', value: 2 });
+  assert.deepStrictEqual(U.transportOf({ kind: 'loop', on: true }), { type: 'loop', value: true });
+  assert.strictEqual(U.transportOf(null), null);
+});
+
+test('sessionState on ready: the session\'s clips and order, their decoders once, the overlay gone', () => {
+  withPage(({ doc, app, send, made }) => {
+    assert.strictEqual(made.length, 0);
+    const msg = { type: 'sessionState', clips: [{ clipId: 'A', label: 'a.mp4' }, { clipId: 'B', label: 'b.mp4' }], order: ['B', 'A'], capture: true, maxVideos: 4 };
+    send(msg);
+    const t = S.getTab(app.ui.getState());
+    assert.deepStrictEqual(t.tiles, ['B', 'A']);
+    assert.strictEqual(t.capture, true);
+    assert.strictEqual(t.maxVideos, 4);
+    assert.strictEqual(isCompare(doc), true);
+    assert.deepStrictEqual(made.map((p) => p.clip.id).sort(), ['A', 'B'], 'one decoder per clip');
+    assert.strictEqual(app.engine.getClip('B').name, 'b.mp4');
+    assert.strictEqual(doc.getElementById('overlay').hidden, true);
+    assert.deepStrictEqual(app.session(), { ids: ['B', 'A'], capture: true, maxVideos: 4 });
+    // The same state again (a reload of the host's view): nothing changes, no new decoder.
+    const ws = app.ui.getState();
+    send(msg);
+    assert.strictEqual(app.ui.getState(), ws);
+    assert.strictEqual(made.length, 2);
+  });
+});
+
+/** An engine adapter module with registerClip / unregisterClip over the production one (records the calls). */
+function liveEngineApi() {
+  const calls = [];
+  let creates = 0;
+  return {
+    calls, creates: () => creates,
+    create(opts) {
+      creates++;
+      let specs = opts.clips.slice();
+      let inner = EngineAdapter.create({ ...opts, clips: specs });
+      const rebuild = () => { inner = EngineAdapter.create({ ...opts, clips: specs }); };
+      const extra = {
+        registerClip: (spec) => { calls.push(['register', spec.id]); specs = [...specs.filter((s) => s.id !== spec.id), spec]; rebuild(); },
+        unregisterClip: (id) => { calls.push(['unregister', id]); specs = specs.filter((s) => s.id !== id); rebuild(); },
+      };
+      return new Proxy({}, {
+        get: (_t, k) => { if (k in extra) return extra[k]; const v = inner[k]; return typeof v === 'function' ? v.bind(inner) : v; },
+        has: (_t, k) => k in extra || k in inner,
+      });
+    },
+  };
+}
+
+/** The production controller plus onDecoderFrame / onDecoderEnded (records the calls; keeps create's env). */
+function hookedUiApi() {
+  const rec = { calls: [], env: null };
+  return {
+    rec,
+    api: {
+      ...PUI,
+      create(env) {
+        rec.env = env;
+        const ui = PUI.create(env);
+        ui.onDecoderFrame = (f, id) => { rec.calls.push(['frame', f, id]); ui.dispatch('seek', f); };
+        ui.onDecoderEnded = (o) => rec.calls.push(['ended', o]);
+        return ui;
+      },
+    },
+  };
+}
+
+test('registerClip / unregisterClip: the adapter learns and forgets clips in place, never rebuilt', () => {
+  const eng = liveEngineApi();
+  withPage(({ app, send }) => {
+    send({ type: 'open' });
+    assert.strictEqual(eng.creates(), 1);
+    send({ type: 'openVideo', clipId: 'B', label: 'b.mp4', compare: true, clip: CLIPS[1] });
+    assert.deepStrictEqual(eng.calls, [['register', 'B']]);
+    assert.strictEqual(app.engine.getClip('B').name, 'b.mp4');
+    send({ type: 'replaceTile', oldId: 'B', newId: 'C', label: 'c.mp4' });
+    assert.deepStrictEqual(eng.calls.slice(1), [['register', 'C'], ['unregister', 'B']]);
+    assert.strictEqual(app.engine.getClip('B'), null, 'B is gone from the adapter');
+    // B back again: registered anew.
+    send({ type: 'openVideo', clipId: 'B', label: 'b.mp4', compare: true });
+    assert.deepStrictEqual(eng.calls.slice(3), [['register', 'B']]);
+    assert.strictEqual(eng.creates(), 1, 'never rebuilt');
+  }, { engineApi: eng });
+});
+
+test('onDecoderFrame / onDecoderEnded / onTransport: the clock reaches the controller, user commands the decoders, once each', () => {
+  const h = hookedUiApi();
+  withPage(({ app, send, made }) => {
+    send({ type: 'open' });
+    send({ type: 'openVideo', clipId: 'B', compare: true, clip: CLIPS[1] });
+    const [a, b] = made;
+    assert.strictEqual(typeof h.rec.env.onTransport, 'function', 'the page passes onTransport to create()');
+    // The clock decoder's frame goes through onDecoderFrame, and is not seeked back.
+    const before = [seeksOf(a).length, seeksOf(b).length];
+    a.hooks.onFrame(17);
+    assert.deepStrictEqual(h.rec.calls, [['frame', 17, 'A']]);
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 17);
+    assert.deepStrictEqual([seeksOf(a).length, seeksOf(b).length], before, 'no seek echoed to the decoders');
+    b.hooks.onFrame(99);
+    assert.strictEqual(h.rec.calls.length, 1, 'only the clock tile drives the controller');
+    // A user seek: transport first, then the state change; the decoders hear it once.
+    h.rec.env.onTransport({ type: 'seek', frame: 30 });
+    app.ui.dispatch('seek', 30);
+    assert.deepStrictEqual(seeksOf(b).slice(-1), [30]);
+    assert.strictEqual(seeksOf(b).filter((f) => f === 30).length, 1);
+    // The other order: the state change first, the transport after it adds nothing.
+    app.ui.dispatch('seek', 40);
+    h.rec.env.onTransport('seek', 40);
+    assert.strictEqual(seeksOf(a).filter((f) => f === 40).length, 1);
+    // A seek the clock caused is never sent back, even through onTransport.
+    const n = seeksOf(a).length;
+    app.ui.onDecoderFrame = (f) => { h.rec.env.onTransport({ type: 'seek', frame: f }); app.ui.dispatch('seek', f); };
+    a.hooks.onFrame(41);
+    assert.strictEqual(seeksOf(a).length, n);
+    // Play / pause, rate and loop.
+    h.rec.env.onTransport({ type: 'play' });
+    assert.strictEqual(a.playing && b.playing, true);
+    app.ui.dispatch('playPause');
+    assert.strictEqual(a.calls.filter((c) => c[0] === 'play').length, 1, 'play once');
+    h.rec.env.onTransport({ type: 'rate', rate: 2 });
+    h.rec.env.onTransport({ type: 'loop', loop: true });
+    assert.deepStrictEqual(b.calls.filter((c) => c[0] === 'rate' || c[0] === 'loop'), [['rate', 2], ['loop', true]]);
+    // The clock decoder's end goes to onDecoderEnded; another tile's does not.
+    b.hooks.onEnded({ natural: true });
+    a.hooks.onEnded({ natural: true, ran: 3 });
+    assert.deepStrictEqual(h.rec.calls.filter((c) => c[0] === 'ended'), [['ended', { natural: true }]]);
+  }, { uiApi: h.api });
+});
+
+test('without onDecoderEnded the decoder\'s end stops the bar', () => {
+  withPage(({ app, send, made }) => {
+    send({ type: 'open' });
+    app.ui.dispatch('playPause');
+    assert.strictEqual(S.getTab(app.ui.getState()).playing, true);
+    made[0].hooks.onEnded({ natural: true });
+    assert.strictEqual(S.getTab(app.ui.getState()).playing, false);
+  });
+});
+
+test('end to end: src/unified-session.js and the page, from one video to two and back', () => {
+  const { createUnifiedSession } = require('../../src/unified-session');
+  const titles = [];
+  let session = null;
+  const hostSink = (send) => {
+    session = createUnifiedSession({
+      initialClip: { id: 'A', label: 'clip-a', fsPath: '/videos/clip-a' },
+      onPost: (m) => send(m),
+      onTitleChange: (t) => titles.push(t),
+    });
+    return (m) => { session.onMessage(m); };
+  };
+  withPage(({ doc, app, posted, made }) => {
+    // Open clip A: the page says ready, the session answers with its state, the decoder starts.
+    assert.ok(posted.some((m) => m.type === 'ready'));
+    assert.strictEqual(session.ready, true);
+    assert.deepStrictEqual(app.session(), { ids: ['A'], capture: false, maxVideos: 8 });
+    assert.deepStrictEqual(made.map((p) => p.clip.id), ['A']);
+    assert.strictEqual(doc.getElementById('overlay').hidden, true);
+    assert.strictEqual(session.title, 'clip-a');
+    assert.strictEqual(isCompare(doc), false);
+
+    // Add clip B after boot: N = 2.
+    assert.strictEqual(session.addClip({ id: 'B', label: 'clip-b', fsPath: '/videos/clip-b' }), true);
+    assert.deepStrictEqual(S.getTab(app.ui.getState()).tiles, ['A', 'B']);
+    assert.strictEqual(isCompare(doc), true);
+    assert.strictEqual(session.title, 'clip-a ↔ clip-b');
+    assert.deepStrictEqual(made.map((p) => p.clip.id), ['A', 'B']);
+    assert.deepStrictEqual(session.order, ['A', 'B'], 'the page\'s tiles report kept both');
+
+    // Swap: the page tells the order, the session follows.
+    app.ui.dispatch('swap');
+    assert.deepStrictEqual(posted.filter((m) => m.type === 'tileOrder').pop().order, ['B', 'A']);
+    assert.deepStrictEqual(session.order, ['B', 'A']);
+    assert.strictEqual(session.title, 'clip-b ↔ clip-a');
+
+    // Leave compare keeping B (the clock tile): N = 1, A's decoder closed.
+    app.ui.dispatch('setClock', 'B');
+    app.ui.dispatch('leaveCompare');
+    assert.deepStrictEqual(posted.filter((m) => m.type === 'leaveCompare').pop().keepId, 'B');
+    assert.deepStrictEqual(S.getTab(app.ui.getState()).tiles, ['B']);
+    assert.strictEqual(isCompare(doc), false);
+    assert.strictEqual(session.title, 'clip-b');
+    assert.deepStrictEqual(session.clips.map((c) => c.id), ['B']);
+    assert.strictEqual(made[0].disposed, true, 'A\'s decoder closed');
+    assert.strictEqual(app.players.has('A'), false);
+    assert.strictEqual(made[1].disposed, false);
+    assert.deepStrictEqual(titles, ['clip-a', 'clip-a ↔ clip-b', 'clip-b ↔ clip-a', 'clip-b']);
+
+    // Seek: the decoder hears it; its own frame then moves the bar without a seek back.
+    const b = made[1];
+    app.ui.dispatch('seek', 60);
+    assert.deepStrictEqual(seeksOf(b).slice(-1), [60]);
+    const n = seeksOf(b).length;
+    b.hooks.onFrame(61);
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 61);
+    assert.strictEqual(seeksOf(b).length, n, 'no feedback seek');
+  }, { hostSink });
+  assert.strictEqual(session.disposed, false, 'the page going away does not end the host session');
 });
 
 console.log(`player_unified_test: ${count} ok (${Date.now() - T0} ms)`);

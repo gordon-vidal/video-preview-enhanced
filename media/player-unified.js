@@ -17,8 +17,8 @@
   /**
    * @typedef {{ id: string, name?: string, fps?: number, frames?: number, duration?: number, width?: number,
    *   height?: number, hasAudio?: boolean, codec?: string, size?: number, [k: string]: any }} ClipSpec
-   * @typedef {{ onFrame: (frame: number) => void, onReady: () => void, onMeta: () => void, post: (m: any) => void,
-   *   log: (...a: any[]) => void }} PlayerHooks
+   * @typedef {{ onFrame: (frame: number) => void, onReady: () => void, onMeta: () => void,
+   *   onEnded: (info?: { natural?: boolean }) => void, post: (m: any) => void, log: (...a: any[]) => void }} PlayerHooks
    * @typedef {(clip: ClipSpec, host: any, hooks: PlayerHooks) => any} CreatePlayer
    * @typedef {{ doc?: any, win?: any, vscode?: any, cfg?: any, createPlayer?: CreatePlayer | null, compositor?: any,
    *   sync?: any, widgets?: any, stateApi?: any, engineApi?: any, hostApi?: any, uiApi?: any, log?: (...a: any[]) => void }} BootEnv
@@ -93,6 +93,7 @@
         log: hooks.log, showMessage: () => {}, toast: () => {},
         getState: () => ({}), setMuteUi: () => {},
         onReady: () => hooks.onReady(), onMeta: () => hooks.onMeta(), wake: () => {},
+        onEnded: (/** @type {any} */ _p, /** @type {any} */ info) => hooks.onEnded(info),
       });
       const p = new eng.LibavPlayer({ size: clip.size || 0, duration: clip.duration || 0, label: clip.name || '', native: !!clip.native },
         { ...(cfg.engine || {}), rotation: Number(clip.rotation) || 0 });
@@ -100,6 +101,70 @@
       p.key = clip.id;
       return p;
     };
+  }
+
+  /**
+   * The clip ids src/unified-session.js lists in a 'sessionState' (display order first, then its other clips), each once.
+   * @param {any} m @returns {string[]}
+   */
+  function sessionIds(m) {
+    /** @type {string[]} */
+    const ids = [];
+    const clips = Array.isArray(m && m.clips) ? m.clips : [];
+    const known = new Set(clips.map((/** @type {any} */ c) => (c && typeof c === 'object' ? c.clipId || c.id : c))
+      .filter((/** @type {any} */ id) => typeof id === 'string'));
+    for (const id of Array.isArray(m && m.order) ? m.order : []) if (known.has(id) && !ids.includes(id)) ids.push(id);
+    for (const id of known) if (!ids.includes(id)) ids.push(id);
+    return ids;
+  }
+
+  /**
+   * The workspace state after the host's 'sessionState': the active tab shows exactly `ids` in that order, with the
+   * host's capture and limit. Pure, in player-state steps (offsets, clock and Spotlight follow their clips); returns
+   * `ws` itself when the page already matches, so a page that booted with the host's clips changes nothing.
+   * @param {any} S media/player-state.js @param {any} ws @param {string[]} ids
+   * @param {{ capture?: boolean, maxVideos?: number }} [o]
+   */
+  function applySessionState(S, ws, ids, o = {}) {
+    if (!ids.length) return ws;
+    let next = ws;
+    const t0 = S.getTab(next);
+    const max = o.maxVideos;
+    if (typeof max === 'number' && Number.isInteger(max) && max >= Math.max(2, ids.length) && t0.maxVideos !== max) {
+      next = { ...next, tabs: next.tabs.map((/** @type {any} */ t) => (t.id === t0.id ? { ...t, maxVideos: max } : t)) };
+    }
+    const capture0 = S.getTab(next).capture;
+    // Added first (a tab never shows no video), with capture on so openVideo joins this tab.
+    for (const id of ids) {
+      if (S.getTab(next).tiles.includes(id)) continue;
+      if (!S.getTab(next).capture) next = S.toggleCapture(next).state;
+      next = S.openVideo(next, id).state;
+    }
+    for (const id of S.getTab(next).tiles.slice()) if (!ids.includes(id)) next = S.removeTile(next, id).state;
+    ids.forEach((id, i) => {
+      const from = S.getTab(next).tiles.indexOf(id);
+      if (from >= 0 && from !== i) next = S.moveTile(next, from, i);
+    });
+    const capture = typeof o.capture === 'boolean' ? o.capture : capture0;
+    if (S.getTab(next).capture !== capture) next = S.toggleCapture(next).state;
+    const a = S.getTab(ws), b = S.getTab(next);
+    const same = a.tiles.join('\n') === b.tiles.join('\n') && a.capture === b.capture && a.maxVideos === b.maxVideos;
+    return same ? ws : next;
+  }
+
+  /**
+   * A transport command from the controller (VpePlayerUi.create's onTransport) as { type, value }. Takes
+   * ({ type | kind | op, frame | rate | loop | on | value }) or (type, value).
+   * @param {any} a @param {any} [b] @returns {{ type: string, value: any } | null}
+   */
+  function transportOf(a, b) {
+    if (typeof a === 'string') return { type: a, value: b };
+    if (!a || typeof a !== 'object') return null;
+    const type = a.type || a.kind || a.op;
+    if (typeof type !== 'string') return null;
+    const value = a.frame !== undefined ? a.frame : a.rate !== undefined ? a.rate : a.loop !== undefined ? a.loop
+      : a.on !== undefined ? a.on : a.value;
+    return { type, value };
   }
 
   /** @param {BootEnv} [env] */
@@ -134,12 +199,33 @@
     let disposed = false;
     let opened = false;
 
-    /** The adapter is rebuilt when a clip arrives (it reads its clips once); the controller keeps this facade. */
+    /**
+     * An adapter with registerClip / unregisterClip learns clips in place; one without them reads its clips once, so
+     * it is rebuilt when a clip arrives. Either way the controller keeps the facade below.
+     */
     const makeAdapter = () => EngineApi.create({
       clips: [...specs.values()], getPlayer: (/** @type {string} */ id) => players.get(id) || null, compositor,
       pictureApi: W('VpePicture'), controlsApi: W('VpeControls'), doc,
     });
     let adapter = makeAdapter();
+    const live = () => typeof adapter.registerClip === 'function' && typeof adapter.unregisterClip === 'function';
+    /** Clip ids the adapter knows (the config's from create, then each registerClip). */
+    const registered = new Set(specs.keys());
+    /** @param {ClipSpec} spec */
+    function learnClip(spec) {
+      if (!live()) { adapter = makeAdapter(); return; }
+      try {
+        adapter.registerClip(spec);
+        registered.add(spec.id);
+      } catch (err) { log(`registerClip ${spec.id}: ${err && /** @type {any} */ (err).message || err}`); }
+    }
+    /** No tab shows the clip any more: the adapter forgets it (a rebuilt adapter keeps its spec instead). @param {string} id */
+    function forgetClip(id) {
+      if (!live() || !registered.has(id)) return;
+      registered.delete(id);
+      specs.delete(id);
+      try { adapter.unregisterClip(id); } catch { /* already gone */ }
+    }
     /** @type {any} */
     const engine = new Proxy({}, {
       get: (_t, k) => {
@@ -156,7 +242,10 @@
       const prev = specs.get(id);
       const next = { ...(prev || {}), ...(m.clip && typeof m.clip === 'object' ? m.clip : {}), id };
       if (typeof m.label === 'string' && !next.name) next.name = m.label;
-      if (!prev || JSON.stringify(prev) !== JSON.stringify(next)) { specs.set(id, next); adapter = makeAdapter(); }
+      if (!prev || JSON.stringify(prev) !== JSON.stringify(next) || (live() && !registered.has(id))) {
+        specs.set(id, next);
+        learnClip(next);
+      }
     }
 
     /** The decoder for `id`, made on first need (after 'open': the host serves blocks from then on). @param {string} id */
@@ -167,7 +256,8 @@
       const hooks = {
         onFrame: (f) => onPlayerFrame(id, f),
         onReady: () => { if (ui) ui.render(); },
-        onMeta: () => { adapter = makeAdapter(); if (ui) ui.render(); },
+        onMeta: () => { if (!live()) adapter = makeAdapter(); if (ui) ui.render(); },
+        onEnded: (info) => onPlayerEnded(id, info),
         post: (m) => { if (!disposed) host.post(m); },
         log: (...a) => log(`[${id}]`, ...a),
       };
@@ -191,6 +281,7 @@
       const wanted = new Set();
       for (const t of ws.tabs) for (const id of t.tiles) wanted.add(id);
       for (const id of [...players.keys()]) if (!wanted.has(id)) disposePlayer(id);
+      for (const id of [...registered]) if (!wanted.has(id)) forgetClip(id);
       for (const id of wanted) ensurePlayer(id);
     }
 
@@ -207,7 +298,23 @@
       const f = Math.round(frame);
       if (f === t.frame) return;
       fromClock = true;
-      try { ui.dispatch('seek', f); } finally { fromClock = false; }
+      try {
+        if (typeof ui.onDecoderFrame === 'function') ui.onDecoderFrame(f, id);
+        else ui.dispatch('seek', f);
+      } finally { fromClock = false; }
+    }
+    /**
+     * The clock decoder stopped at its end (or on an error): the controller decides (loop, autoplay, pause).
+     * @param {string} id @param {any} info
+     */
+    function onPlayerEnded(id, info) {
+      if (disposed || !ui) return;
+      const t = S.getTab(ui.getState());
+      if (id !== clockIdOf(t)) return;
+      const natural = !!(info && info.natural);
+      if (typeof ui.onDecoderEnded === 'function') { ui.onDecoderEnded({ natural }); return; }
+      // A controller without onDecoderEnded: the bar stops playing (its decoders are paused already).
+      if (t.playing && typeof S.togglePlay === 'function') ui.setState(S.togglePlay(ui.getState()));
     }
     /** Poll the clock decoder (media/engine.js has no frame callback): one read per animation frame while playing. */
     function pump() {
@@ -227,29 +334,86 @@
     };
     const wakeLoop = () => { if (!raf && win && typeof win.requestAnimationFrame === 'function') raf = win.requestAnimationFrame(loop) || 0; };
 
-    /** The controller changed the tab: seeks (not the clock's own), play / pause and new tiles reach the decoders. @param {any} t */
+    /**
+     * Seek and / or play-pause every decoder of the tab (to `frame` / `playing`, else the tab's own).
+     * @param {any} t @param {{ seek?: boolean, play?: boolean, frame?: number, playing?: boolean }} o
+     */
+    function applyToDecoders(t, o) {
+      const frame = o.frame === undefined ? t.frame : o.frame;
+      const playing = o.playing === undefined ? t.playing : o.playing;
+      for (const id of t.tiles) {
+        const p = players.get(id);
+        if (!p) continue;
+        try {
+          if (o.seek && typeof p.seekFrame === 'function') {
+            const s = adapter.shownFrame(id, frame, S.getOffset ? S.getOffset(t, id) : null);
+            if (s.frame !== null) p.seekFrame(s.frame);
+          }
+          if (o.play) {
+            const isPlaying = typeof p.isPlaying === 'function' ? !!p.isPlaying() : null;
+            if (playing && isPlaying !== true && typeof p.play === 'function') p.play();
+            else if (!playing && isPlaying !== false && typeof p.pause === 'function') p.pause();
+          }
+        } catch (err) { log(`decoder ${id}: ${err && /** @type {any} */ (err).message || err}`); }
+      }
+      if (playing) wakeLoop();
+    }
+
+    /**
+     * The controller changed the tab: seeks (not the clock's own), play / pause and new tiles reach the decoders.
+     * `applied` is what the decoders were last told, here or by onTransport, so neither path repeats the other.
+     * @param {any} t
+     */
     function driveDecoders(t) {
       const tilesKey = t.tiles.join(',');
       const prev = applied;
       applied = { frame: t.frame, playing: t.playing, tiles: tilesKey };
       const seek = !fromClock && (!prev || prev.frame !== t.frame || prev.tiles !== tilesKey);
       const play = !prev || prev.playing !== t.playing || prev.tiles !== tilesKey;
-      for (const id of t.tiles) {
-        const p = players.get(id);
-        if (!p) continue;
-        try {
-          if (seek && typeof p.seekFrame === 'function') {
-            const s = adapter.shownFrame(id, t.frame, S.getOffset ? S.getOffset(t, id) : null);
-            if (s.frame !== null) p.seekFrame(s.frame);
+      if (seek || play) applyToDecoders(t, { seek, play });
+      else if (t.playing) wakeLoop();
+    }
+
+    /**
+     * The user's play / pause / seek / rate / loop as the controller reports it (VpePlayerUi.create onTransport),
+     * straight to the decoders. A seek the decoder clock caused is never sent back to it.
+     * @param {any} a @param {any} [b]
+     */
+    function onTransport(a, b) {
+      const c = transportOf(a, b);
+      if (disposed || !c || !ui) return;
+      const t = S.getTab(ui.getState());
+      const tilesKey = t.tiles.join(',');
+      // New tiles first go through driveDecoders (onChange), which seeks and starts them all.
+      if (!applied || applied.tiles !== tilesKey) return;
+      switch (c.type) {
+        case 'seek': {
+          const f = Math.round(Number(c.value));
+          if (fromClock || !Number.isFinite(f) || applied.frame === f) return;
+          applied = { ...applied, frame: f };
+          applyToDecoders(t, { seek: true, frame: f });
+          return;
+        }
+        case 'play': case 'pause': {
+          const playing = c.type === 'play';
+          if (applied.playing === playing) return;
+          applied = { ...applied, playing };
+          applyToDecoders(t, { play: true, playing });
+          return;
+        }
+        case 'rate': case 'loop':
+          for (const id of t.tiles) {
+            const p = players.get(id);
+            if (!p) continue;
+            try {
+              if (c.type === 'rate') { if (Number(c.value) > 0 && typeof p.setRate === 'function') p.setRate(Number(c.value)); }
+              else if (typeof p.setLoop === 'function') p.setLoop(!!c.value);
+              else p.loop = !!c.value;
+            } catch (err) { log(`decoder ${id}: ${err && /** @type {any} */ (err).message || err}`); }
           }
-          if (play) {
-            const isPlaying = typeof p.isPlaying === 'function' ? !!p.isPlaying() : null;
-            if (t.playing && isPlaying !== true && typeof p.play === 'function') p.play();
-            else if (!t.playing && isPlaying !== false && typeof p.pause === 'function') p.pause();
-          }
-        } catch (err) { log(`decoder ${id}: ${err && /** @type {any} */ (err).message || err}`); }
+          return;
+        default: break;
       }
-      if (t.playing) wakeLoop();
     }
 
     /** @param {any} ws */
@@ -276,7 +440,7 @@
       doc, win, stateApi: S, engine, host, widgets: env.widgets, initial,
       prefs: cfg.prefs, railCfg: cfg.rail || cfg.railCfg, storage: host.storage, goto: cfg.goto,
       fragment: win && win.location ? win.location.hash : null, railCarry: cfg.railCarry, page: cfg.page,
-      tickMs: 0, onChange,
+      tickMs: 0, onChange, onTransport,
     });
     onChange(ui.getState());
 
@@ -286,6 +450,7 @@
       if (disposed || !m || typeof m.type !== 'string') return;
       if (DECODER_ROUTES[m.type]) { routeDecoder(m); return; }
       if (m.type === 'open') { onOpen(m); return; }
+      if (m.type === 'sessionState') { onSessionState(m); return; }
       if (m.type === 'openVideo' || m.type === 'replaceTile') {
         const id = m.type === 'replaceTile' ? m.newId : m.clipId;
         if (typeof id === 'string') {
@@ -328,6 +493,30 @@
       driveDecoders(S.getTab(ui.getState()));
     }
 
+    /** @type {{ ids: string[], capture: boolean, maxVideos: number | null } | null} the host's last 'sessionState' */
+    let session = null;
+    /**
+     * src/unified-session.js answers 'ready' with the panel's clips, their order, capture and the limit: the page
+     * shows exactly those (a clip it booted with is not opened again) and starts their decoders, as 'open' does.
+     * @param {any} m
+     */
+    function onSessionState(m) {
+      const ids = sessionIds(m);
+      for (const c of Array.isArray(m.clips) ? m.clips : []) {
+        const id = c && typeof c === 'object' ? c.clipId || c.id : null;
+        if (typeof id === 'string') addSpec({ clipId: id, label: c.label, clip: c.clip });
+      }
+      const maxVideos = Number.isInteger(m.maxVideos) ? m.maxVideos : undefined;
+      const capture = typeof m.capture === 'boolean' ? m.capture : undefined;
+      session = { ids, capture: !!capture, maxVideos: maxVideos === undefined ? null : maxVideos };
+      const ws = ui.getState();
+      const next = applySessionState(S, ws, ids, { capture, maxVideos });
+      // Decoders start with the state that names their clips: no decoder for a clip the session dropped.
+      opened = true;
+      if (next !== ws) ui.setState(next);
+      onOpen({});
+    }
+
     host.connect(onHostMessage);
 
     // ---- teardown: the page goes away (pagehide) or the caller disposes ----
@@ -349,10 +538,14 @@
     if (bridge) bridge.sendReady({ origin: win && win.location ? win.location.origin : undefined });
     else host.post({ type: 'ready' });
 
-    return { ui, host, engine, players, onHostMessage, pump, dispose, isDisposed: () => disposed };
+    return {
+      ui, host, engine, players, onHostMessage, onTransport, pump, dispose, isDisposed: () => disposed,
+      /** The host's last 'sessionState' (null with a host that sends 'open' instead). */
+      session: () => (session ? { ...session, ids: session.ids.slice() } : null),
+    };
   }
 
-  const api = { boot, clipsOf, readCfg, DECODER_TYPES };
+  const api = { boot, clipsOf, readCfg, sessionIds, applySessionState, transportOf, DECODER_TYPES };
   // checkJs: end
   if (typeof module === 'object' && module.exports) module.exports = api;
   else {
