@@ -377,6 +377,45 @@ function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, b
     assert.strictEqual(await engine.showFrame('nope', 1), null, 'an unknown clip: null');
   }
 
+  // ---- engine: showFrame needs a fresh picture: a stale or uncounted one times out to null, never the old frame ----
+  {
+    const spec = { id: 'S', fps: 25, frames: 100, width: 640, height: 360, audio: false };
+    const p = stubPlayer(spec);
+    const engine = VpeEngineAdapter.create({ clips: [{ id: 'S' }], getPlayer: () => p, showFrameTimeoutMs: 120 });
+    // The seek clears but the decoder never presents: shownCount stays, the old frame 0 is still on screen.
+    p.seekFrame = (/** @type {number} */ k) => { p.seeks.push(k); p.seekTarget = null; };
+    assert.strictEqual(await engine.showFrame('S', 10), null, 'no new picture: null, not the previous frame');
+    // A stale picture of the asked frame is not settled, even with nothing pending.
+    /** @type {any} */ (p).shownStale = true;
+    p.shown = 10;
+    const seeks = p.seeks.length;
+    assert.strictEqual(await engine.showFrame('S', 10), null, 'stale on the asked frame: null after the timeout');
+    assert.strictEqual(p.seeks.length, seeks + 1, 'a stale picture is sought again, not taken as shown');
+    // A presentation that counts but stays stale (skipped-over frames) is no evidence either.
+    p.seekFrame = (/** @type {number} */ k) => {
+      p.seekTarget = k / 25;
+      setTimeout(() => { p.shown = k; p.shownT = k / 25; p.seekTarget = null; p.shownCount++; }, 5);
+    };
+    assert.strictEqual(await engine.showFrame('S', 12), null, 'counted but stale: null');
+    // A fresh picture: shownCount moves, shownStale clears.
+    p.seekFrame = (/** @type {number} */ k) => {
+      p.seekTarget = k / 25;
+      setTimeout(() => {
+        p.shown = k; p.shownT = k / 25; p.seekTarget = null; p.shownCount++;
+        /** @type {any} */ (p).shownStale = false;
+      }, 5);
+    };
+    assert.strictEqual(await engine.showFrame('S', 14), 14, 'a fresh presentation resolves with the frame shown');
+    const n = p.seekTarget;
+    p.seekFrame = () => { throw new Error('must not seek'); };
+    assert.strictEqual(await engine.showFrame('S', 14), 14, 'already cleanly on screen: at once, no seek');
+    assert.strictEqual(n, null);
+    // A seek still pending on the asked frame is not "already shown".
+    p.seekTarget = 3;
+    p.seekFrame = (/** @type {number} */ k) => { p.seeks.push(k); };
+    assert.strictEqual(await engine.showFrame('S', 14), null, 'a pending seek never counts as shown');
+  }
+
   // ---- engine: mixed-fps Compare: a 24 fps clock on a 60 fps tile ----
   {
     const { engine } = makeEngine();
@@ -441,6 +480,46 @@ function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, b
     /** @type {any} */ (players.B).readPixels = () => { throw new Error('not used'); };
     assert.deepStrictEqual(engine.pixelAt('B', 5, 6), { text: 'B 5,6' }, 'the player\'s pixelAt wins');
     assert.strictEqual(engine.pixelAt('nope', 0, 0), null, 'an unknown clip: null');
+  }
+
+  // ---- engine: pixelAt on a production-shaped player (engine.js): no pixelAt / readPixels, only its picture ----
+  {
+    /** A 4×2 2D canvas whose pixel (x, y) is (x*10, y*20, 7, 255). */
+    const reads = /** @type {any[]} */ ([]);
+    const px = (/** @type {number} */ x, /** @type {number} */ y) => new Uint8ClampedArray([x * 10, y * 20, 7, 255]);
+    const ctx2d = { getImageData: (/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ w, /** @type {number} */ h) => { reads.push([x, y, w, h]); return { data: px(x, y) }; } };
+    const canvas = { width: 4, height: 2, getContext: (/** @type {string} */ k) => (k === '2d' ? ctx2d : null) };
+    const players = /** @type {any} */ ({ A: { snapshotSource: () => canvas } });
+    const engine = VpeEngineAdapter.create({ clips: [{ id: 'A' }, { id: 'G' }, { id: 'W' }], getPlayer: (id) => players[id] || null, doc: null });
+    assert.deepStrictEqual(engine.pixelAt('A', 3, 1), { r: 30, g: 20, b: 7, a: 255, text: 'x=3 y=1 rgb=(30,20,7) #1e1407' },
+      'the presented canvas, read 1×1 as media/inspect.js does');
+    assert.deepStrictEqual(reads.pop(), [3, 1, 1, 1]);
+    assert.strictEqual(engine.pixelAt('A', 4, 0), null, 'right of the picture: null');
+    assert.strictEqual(engine.pixelAt('A', -1, 0), null, 'left of the picture: null');
+    players.A = { canvas };
+    assert.strictEqual(engine.pixelAt('A', 1, 0).text, 'x=1 y=0 rgb=(10,0,7) #0a0007', 'a player with only a canvas');
+    // engine.js's WebGL renderer (p.gl.gl): one pixel from the default framebuffer, rows from the bottom.
+    const glCalls = /** @type {any[]} */ ([]);
+    const gl = {
+      READ_FRAMEBUFFER_BINDING: 1, READ_FRAMEBUFFER: 2, RGBA: 3, UNSIGNED_BYTE: 4,
+      getParameter: () => 'fb', bindFramebuffer: (/** @type {any} */ _t, /** @type {any} */ b) => glCalls.push(['bind', b]),
+      readPixels: (/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ _w, /** @type {number} */ _h, /** @type {any} */ _f, /** @type {any} */ _t, /** @type {Uint8Array} */ buf) => {
+        glCalls.push(['read', x, y]);
+        buf.set([1, 2, 3, 255]);
+      },
+    };
+    players.G = { gl: { gl }, snapshotSource: () => ({ width: 4, height: 2, getContext: () => null }) };
+    assert.strictEqual(engine.pixelAt('G', 2, 0).text, 'x=2 y=0 rgb=(1,2,3) #010203', 'the WebGL picture');
+    assert.deepStrictEqual(glCalls, [['bind', null], ['read', 2, 1], ['bind', 'fb']], 'GL row 1 is picture row 0; the framebuffer is restored');
+    // A WebGL canvas without the renderer at hand: drawn into a 1×1 2D canvas from opts.doc.
+    const drawn = /** @type {any[]} */ ([]);
+    const doc = { createElement: () => ({ width: 0, height: 0, getContext: () => ({
+      drawImage: (/** @type {any[]} */ ...a) => drawn.push(a.slice(1)), getImageData: () => ({ data: new Uint8ClampedArray([9, 8, 7, 255]) }),
+    }) }) };
+    const engine2 = VpeEngineAdapter.create({ clips: [{ id: 'W' }], getPlayer: () => ({ snapshotSource: () => ({ width: 4, height: 2, getContext: () => null }) }), doc });
+    assert.strictEqual(engine2.pixelAt('W', 1, 1).text, 'x=1 y=1 rgb=(9,8,7) #090807', 'a source with no 2D context: via a 1×1 canvas');
+    assert.deepStrictEqual(drawn, [[1, 1, 1, 1, 0, 0, 1, 1]]);
+    assert.strictEqual(engine.pixelAt('W', 0, 0), null, 'no player picture: null');
   }
 
   // ---- host: a Swap reorders the display, never Compare's slots ----
