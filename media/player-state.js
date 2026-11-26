@@ -627,6 +627,29 @@
   }
 
   /**
+   * The clock tile's frame rate and length, after the clock moved to another video (setClock, removeTile,
+   * replaceTile, leaveCompare, openVideo). `tab.frame` counts frames of the clock video, so it is carried over by
+   * time: the old clock's moment in the new clock's frames (`frame / oldFps * newFps`), clamped to the new length.
+   * An explicit `meta.frame` wins. Missing or invalid fields keep the tab's own value; no change returns `ws`.
+   * @param {WorkspaceState} ws
+   * @param {{ fps?: number, maxFrame?: number, frame?: number }} meta
+   * @param {number} [tabId]
+   * @returns {WorkspaceState}
+   */
+  function syncClockMeta(ws, meta, tabId) {
+    const target = getTab(ws, tabId);
+    const m = meta || {};
+    const fps = Number(m.fps) > 0 ? Number(m.fps) : target.fps;
+    const maxFrame = Number(m.maxFrame) >= 1 ? Math.floor(Number(m.maxFrame)) : target.maxFrame;
+    const raw = m.frame !== undefined && Number.isFinite(m.frame)
+      ? Number(m.frame)
+      : (target.frame / target.fps) * fps;
+    const frame = clamp(Math.round(raw), 0, maxFrame);
+    if (fps === target.fps && maxFrame === target.maxFrame && frame === target.frame) return ws;
+    return updateTab(ws, target.id, (t) => ({ ...t, fps, maxFrame, frame }));
+  }
+
+  /**
    * The sound tile: heard alone, the others muted. Only a tile of this tab.
    * @param {WorkspaceState} ws
    * @param {string} clipId
@@ -1101,6 +1124,7 @@
     setLayout,
     setDock,
     setClock,
+    syncClockMeta,
     setSound,
     setOffset,
     nudgeOffset,

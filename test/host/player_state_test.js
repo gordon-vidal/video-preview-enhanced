@@ -527,4 +527,38 @@ const { SCENARIOS, buildMockupHtml } = require('../../tools/mockup/render');
   }
 }
 
+// ---- Mixed frame rates: the clock's fps and length follow the clock tile, the moment is kept ----
+{
+  // A: 24 fps, 2 s (48 frames, maxFrame 47). B: 60 fps, 10 s (600 frames, maxFrame 599).
+  const meta = { a: { fps: 24, maxFrame: 47 }, b: { fps: 60, maxFrame: 599 } };
+  let ws = S.createWorkspaceState({ tiles: ['a', 'b'], frame: 24 });
+  ws = S.syncClockMeta(ws, meta.a);
+  let t = S.getTab(ws);
+  assert.deepStrictEqual([t.clockId, t.fps, t.maxFrame, t.frame], ['a', 24, 47, 24], 'A sets the clock: 24 fps, 48 frames');
+  assert.strictEqual(S.syncClockMeta(ws, meta.a), ws, 'nothing new: the same state');
+
+  ws = S.syncClockMeta(S.setClock(ws, 'b'), meta.b);
+  t = S.getTab(ws);
+  assert.deepStrictEqual([t.clockId, t.fps, t.maxFrame, t.frame], ['b', 60, 599, 60], 'B sets the clock: 1 s is frame 60 at 60 fps');
+  assert.deepStrictEqual(S.tabInvariantErrors(t), []);
+
+  // Past A's end: back on A the clock clamps to A's last frame.
+  ws = S.seekFrame(ws, 300); // 5 s
+  ws = S.syncClockMeta(S.removeTile(ws, 'b').state, meta.a);
+  t = S.getTab(ws);
+  assert.deepStrictEqual([t.tiles, t.clockId, t.fps, t.maxFrame, t.frame], [['a'], 'a', 24, 47, 47],
+    'back to one tile (A): 5 s is past A\'s 2 s, so its last frame');
+
+  // leaveCompare keeping B, and replaceTile, remap the same way; an explicit frame wins; bad fields are ignored.
+  ws = S.openVideo(S.toggleCapture(ws).state, 'b').state;
+  ws = S.seekFrame(ws, 12); // 0.5 s on A
+  ws = S.syncClockMeta(S.leaveCompare(ws, 'b').state, meta.b);
+  t = S.getTab(ws);
+  assert.deepStrictEqual([t.tiles, t.fps, t.maxFrame, t.frame], [['b'], 60, 599, 30], 'leave Compare on B: 0.5 s is frame 30');
+  ws = S.syncClockMeta(ws, { fps: 30, maxFrame: 99, frame: 7 });
+  assert.strictEqual(S.getTab(ws).frame, 7, 'an explicit frame wins');
+  ws = S.syncClockMeta(ws, { fps: -1, maxFrame: NaN });
+  assert.deepStrictEqual([S.getTab(ws).fps, S.getTab(ws).maxFrame], [30, 99], 'invalid fields keep the tab\'s own');
+}
+
 console.log('player_state_test: all assertions passed');
