@@ -407,7 +407,7 @@
       /** @type {PlayerHooks} */
       const hooks = {
         onFrame: (f) => { onPlayerFrame(id, f); markReady(); notePresented(id, f); },
-        onReady: () => { markReady(); if (ui) ui.render(); scheduleTick(); },
+        onReady: () => { markReady(); tryApplyResume(); if (ui) ui.render(); scheduleTick(); },
         onMeta: () => onPlayerMeta(id),
         onEnded: (info) => onPlayerEnded(id, info),
         post: (m) => { if (!disposed) host.post(m); },
@@ -613,7 +613,6 @@
             if (next !== ui.getState()) ui.setState(next);
           }
         }
-        tryApplyResume();
       }
       ui.render();
       scheduleTick();
