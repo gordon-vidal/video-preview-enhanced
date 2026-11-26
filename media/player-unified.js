@@ -662,6 +662,8 @@
         return (p.seekTarget !== null && p.seekTarget !== undefined) || !!p.shownStale;
       } catch { return false; }
     }
+    /** Last seen shownCount per visible decoder so frame 0 / paused seeks repaint the visible tile canvas. @type {Map<string, number>} */
+    const lastShown = new Map();
     /**
      * One animation frame of the shared loop (media/player.js frameTick): every visible decoder ticks (presents its
      * due frame, settles its seek, reaches its end), then the clock decoder's frame drives the controller.
@@ -669,12 +671,20 @@
      */
     function tick(now) {
       if (disposed || !ui) return;
+      let painted = false;
       for (const [id, p] of visiblePlayers(S.getTab(ui.getState()))) {
         if (typeof p.tick !== 'function') continue;
+        const prev = Number(p.shownCount) || 0;
         try { p.tick(now); } catch (err) { log(`decoder ${id} tick: ${err && /** @type {any} */ (err).message || err}`); }
         if (!firstFrameLogged || !firstPicturesLogged) notePresented(id);
+        const next = Number(p.shownCount) || 0;
+        if (next !== prev || (next > 0 && lastShown.get(id) !== next)) {
+          lastShown.set(id, next);
+          painted = true;
+        }
       }
       pump();
+      if (painted && ui && !disposed) ui.render();
     }
     /** The shared loop's work, for the debug probe's state: animation frames that ticked, and the times it rested. */
     const loopStats = { frames: 0, rests: 0 };
@@ -1116,11 +1126,18 @@
     }
     /** The page's elements by id, for the probes' `ui.<id>` reads. */
     const uiEls = new Proxy({}, { get: (_t, k) => (typeof k === 'string' ? elOf(k) : undefined) });
+    /** Layout properties read from the visible tile canvas in #cells; pixel buffer props read from the decoder canvas. */
+    const LAYOUT_PROPS = new Set(['getBoundingClientRect', 'offsetWidth', 'offsetHeight', 'clientWidth', 'clientHeight', 'hidden']);
+    const visibleCellCanvas = () => {
+      const cellsEl = doc.getElementById('cells');
+      return (cellsEl && typeof cellsEl.querySelector === 'function' && cellsEl.querySelector('.cell canvas')) || null;
+    };
     /** The clock tile's canvas (its decoder's own), else the page's #canvas: what the probe measures and reads. */
     const liveCanvas = new Proxy({}, {
       get: (_t, k) => {
         const p = clockPlayer();
-        const cv = (p && (p.cv || p.canvas)) || elOf('canvas');
+        const cv = (typeof k === 'string' && LAYOUT_PROPS.has(k) && visibleCellCanvas())
+          || (p && (p.cv || p.canvas)) || elOf('canvas');
         const v = cv[k];
         return typeof v === 'function' ? v.bind(cv) : v;
       },

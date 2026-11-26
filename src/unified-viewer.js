@@ -293,7 +293,11 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   /** @type {UnifiedSession} set below; the helpers before it run only once it exists */
   let session = /** @type {any} */ (null);
   /** @param {string} m */
-  const log = (m) => deps.log(`[unified ${session ? session.title : clip.label}] ${m}`);
+  const log = (m) => {
+    const t = session ? session.title : clip.label;
+    const tag = session && session.clips.length >= 2 ? `compare ${t}` : t;
+    deps.log(`[${tag}] ${m}`);
+  };
   /** @param {UriLike} [uri] @param {boolean} [compare] the clip will show beside others (Compare's transcode policy) */
   const prepDeps = (uri, compare = false) => ({
     rotationOf: deps.rotationOf, nativeFor: deps.nativeFor || null, transport: deps.nativeTransport, log,
