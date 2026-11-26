@@ -850,7 +850,10 @@
           if (o.play) {
             const isPlaying = typeof p.isPlaying === 'function' ? !!p.isPlaying() : null;
             if (playing && isPlaying !== true && typeof p.play === 'function') {
-              if (p.eof && typeof p.seekTime === 'function') p.seekTime(0);
+              // p.eof is demuxer EOF (true for any short video once fully decoded in RAM), NOT playhead-at-end:
+              // only restart from 0 when the playhead is actually on the last frame.
+              const atEnd = p.eof && Number(p.n) > 1 && typeof p.currentFrame === 'function' && Number(p.currentFrame()) >= Number(p.n) - 1;
+              if (atEnd && typeof p.seekTime === 'function') p.seekTime(0);
               p.play();
             } else if (!playing && isPlaying !== false && typeof p.pause === 'function') p.pause();
           }

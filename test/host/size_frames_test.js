@@ -41,9 +41,9 @@ const origin = 'vscode-webview://size-frames-test';
     h.dispose();
     return `${v.width}x${v.height}`;
   }
-  // The tile's own height (src/unified-viewer.js nativeHeightFor), never above the source.
-  assert.strictEqual(await frames({}), '1600x900', 'default (on): frames sized to the tile');
-  assert.strictEqual(await frames({ 'videoPreviewEnhanced.sizeFramesToView': true }), '1600x900', 'on');
+  // Stepped to NativeDecoder.VIEW_HEIGHTS (540/720/1080/1440/2160) for a lone video, never above the source.
+  assert.strictEqual(await frames({}), '1920x1080', 'default (on): frames stepped to the view (900 -> 1080p)');
+  assert.strictEqual(await frames({ 'videoPreviewEnhanced.sizeFramesToView': true }), '1920x1080', 'on');
   assert.strictEqual(await frames({ 'videoPreviewEnhanced.sizeFramesToView': false }), '3840x2160', 'off: the automatic cap (2160p for 4K30)');
   assert.strictEqual(await frames({ 'videoPreviewEnhanced.sizeFramesToView': false, 'videoPreviewEnhanced.nativeMaxHeight': 1440 }), '2560x1440', 'off: a number wins');
   assert.strictEqual(await frames({ 'videoPreviewEnhanced.sizeFramesToView': true, 'videoPreviewEnhanced.nativeMaxHeight': 2160 }), '3840x2160', 'on: a number wins too');

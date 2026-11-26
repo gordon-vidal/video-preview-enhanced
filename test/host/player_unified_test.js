@@ -1385,6 +1385,31 @@ test('engine adapter: a seek-bar thumbnail (thumbs.js { bmp, w, h, rot }) fills 
   assert.strictEqual(big.style.imageRendering, '');
 });
 
+test('pause then play on a fully-decoded clip (p.eof true mid-clip) resumes in place instead of seeking to 0', () => {
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    p.n = 90;
+    p.eof = true; // demuxer finished decoding all frames into RAM, playhead is still mid-clip
+    p.seekTime = (s) => { p.calls.push(['seekTime', s]); p.frame = Math.round(s * 30); };
+    app.ui.dispatch('seek', 30);
+    frames(2);
+    assert.strictEqual(p.currentFrame(), 30);
+    const seeksBefore = p.calls.filter((c) => c[0] === 'seekTime').length;
+    app.ui.dispatch('playPause'); // play from frame 30 with p.eof === true
+    assert.strictEqual(p.calls.filter((c) => c[0] === 'seekTime').length, seeksBefore, 'must not seek back to 0 mid-clip');
+    assert.strictEqual(p.currentFrame(), 30);
+    app.ui.dispatch('playPause'); // pause
+    // At the actual last frame with p.eof === true, play DOES restart from 0.
+    app.ui.dispatch('seek', 89);
+    frames(2);
+    const seeksAtEnd = p.calls.filter((c) => c[0] === 'seekTime').length;
+    app.ui.dispatch('playPause');
+    assert.strictEqual(p.calls.filter((c) => c[0] === 'seekTime').length, seeksAtEnd + 1, 'restarts from 0 when on the last frame');
+    assert.strictEqual(p.calls.filter((c) => c[0] === 'seekTime').pop()[1], 0);
+  }, { cfg: { clips: [{ id: 'A', name: 'a.mp4', fps: 30, frames: 90 }] }, createPlayer: enginePlayer, raf: true });
+});
+
 (async () => {
   for (const [name, fn] of asyncTests) {
     try { await fn(); count++; } catch (e) { e.message = `${name}: ${e.message}`; console.error(e); process.exit(1); }

@@ -207,14 +207,16 @@
       const hasAudio = typeof spec.hasAudio === 'boolean' ? spec.hasAudio
         : !!(p && (p.audio || (p.info && p.info.audio) || meta.hasAudio));
       const sAny = /** @type {any} */ (spec);
+      const sourceKind = sAny.sourceKind || sAny.kind || (meta.url ? 'url' : 'file');
+      const live = !!(sAny.live || meta.live);
+      const host = sAny.host || meta.host || '';
       return /** @type {any} */ ({
         id, name: typeof spec.name === 'string' ? spec.name : id,
         fps, frames, duration: frames / fps, width, height, hasAudio,
         codec: spec.codec || (video && video.codec) || '', size: pos(spec.size) || pos(meta.size),
-        sourceKind: sAny.sourceKind || sAny.kind || (meta.url ? 'url' : 'file'),
-        kind: sAny.kind || (meta.url ? 'url' : 'file'),
-        live: !!(sAny.live || meta.live),
-        host: sAny.host || meta.host || '',
+        ...(sourceKind !== 'file' ? { sourceKind, kind: sourceKind } : {}),
+        ...(live ? { live: true } : {}),
+        ...(host ? { host } : {}),
       });
     }
     /** @param {string} id */

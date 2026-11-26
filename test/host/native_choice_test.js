@@ -57,7 +57,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     ({ h, s } = await start(remote));
     meta = s.cfg().clips[0];
     const log = logOf(h);
-    const got = !meta.native ? 'builtin' : /live transcode on/.test(log) ? 'stream' : 'native';
+    const got = !meta.native ? 'builtin' : /live transcode on|decoder: remote stream/.test(log) ? 'stream' : 'native';
     assert.strictEqual(got, want, `${remote}${rs ? ` (remoteStream ${rs})` : ''}: ${want}
 ${log}`);
     s.panel.dispose(); h.dispose();
