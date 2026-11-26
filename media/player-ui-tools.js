@@ -427,9 +427,10 @@
     let packetsReq = 0;
     let disposed = false;
 
-    let statsEl = widgets.stats;
+    let statsEl = widgets.stats || (typeof doc.getElementById === 'function' ? doc.getElementById('stats') : null);
     if (!statsEl) {
       statsEl = doc.createElement('pre');
+      statsEl.id = 'stats';
       statsEl.className = 'stats';
       statsEl.hidden = true;
       doc.body.appendChild(statsEl);

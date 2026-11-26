@@ -351,9 +351,24 @@
       streams.delete(id);
       try { adapter.unregisterClip(id); } catch { /* already gone */ }
     }
+    /** @type {Map<string, any>} shown-fps mark per clip for Shift+I stats overlay */
+    const statsMarks = new Map();
     /** @type {any} */
     const engine = new Proxy({}, {
       get: (_t, k) => {
+        if (k === 'statsText') {
+          return (/** @type {string} */ id) => {
+            const p = players.get(id);
+            if (!p) return '';
+            if (typeof p.statsText === 'function') return p.statsText();
+            const I = W('VpeInspect');
+            if (!I || typeof I.formatStats !== 'function') return '';
+            const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+            const res = I.formatStats(p, now, p.cv || p.canvas, statsMarks.get(id) || null);
+            statsMarks.set(id, res.mark);
+            return res.text;
+          };
+        }
         const v = adapter[/** @type {any} */ (k)];
         return typeof v === 'function' ? v.bind(adapter) : v;
       },
@@ -686,7 +701,9 @@
       if (disposed || !ui) return;
       const t = S.getTab(ui.getState());
       const p = players.get(clockIdOf(t));
-      if (p && typeof p.currentFrame === 'function') {
+      // While paused with a seek/step still in flight, p.currentFrame() still holds the old frame: never overwrite t.frame.
+      if (!p || (!t.playing && busy(p))) return;
+      if (typeof p.currentFrame === 'function') {
         try { onPlayerFrame(clockIdOf(t), Number(p.currentFrame())); } catch { /* a closing decoder */ }
       }
     }
@@ -1555,6 +1572,7 @@
         VpeAutoplay: typeof VpeAutoplay !== 'undefined' ? VpeAutoplay : undefined,
         VpeTime: typeof VpeTime !== 'undefined' ? VpeTime : undefined,
         VpePicture: typeof VpePicture !== 'undefined' ? VpePicture : undefined,
+      VpeInspect: typeof VpeInspect !== 'undefined' ? VpeInspect : undefined,
         VpeModes: typeof VpeModes !== 'undefined' ? VpeModes : undefined,
         VpeRangeDrag: typeof VpeRangeDrag !== 'undefined' ? VpeRangeDrag : undefined,
         VpeReducedResNotice: typeof VpeReducedResNotice !== 'undefined' ? VpeReducedResNotice : undefined,

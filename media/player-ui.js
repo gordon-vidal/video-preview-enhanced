@@ -128,11 +128,11 @@
       case 'z': case 'Z': return shift ? null : a('cyclePicture');
       case '+': case '=': return a('plus');
       case '-': case '_': return a('minus');
-      case 'i': case 'I': return a('info');
+      case 'i': case 'I': return shift ? null : a('info');
       case 's': case 'S': return a('saveFrame');
-      case 'c': case 'C': return a('cc');
-      case 'w': case 'W': return a('scopes');
-      case 'x': case 'X': return a('swap');
+      case 'c': case 'C': return shift ? null : a('cc');
+      case 'w': case 'W': return shift ? null : a('scopes');
+      case 'x': case 'X': return shift ? null : a('swap');
       case 'd': return a('pickVideo');
       case 'D': return a(shift ? 'capture' : 'pickVideo');
       case '?': return a('keys');
@@ -1866,6 +1866,7 @@
     const stageEls = /** @type {any[]} */ ([]);
     const ownEl = (/** @type {string} */ tag, /** @type {string} */ cls) => {
       const x = doc.createElement(tag);
+      x.id = cls;
       x.className = cls;
       x.hidden = true;
       stageEl.appendChild(x);

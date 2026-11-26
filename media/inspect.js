@@ -650,7 +650,62 @@ const VpeInspect = (() => {
     };
   }
 
-  return { create, exactPixel, parseGoto, resolveGoto, parseFragment, clampPan, zoomAround, displayToSource, yuvAt, softFormat, vfSample };
+  const mb = (b) => `${(b / 1e6).toFixed(b < 1e7 ? 1 : 0)} MB`;
+  /** Format the Shift+I stats overlay text for decoder `p` (shared by VpeInspect.create and media/player-unified.js). */
+  function formatStats(p, now, canvas, mark) {
+    const L = [];
+    const row = (k, v) => L.push(`${k.padEnd(9)}${v}`);
+    const count = p.shownCount || 0;
+    let nextMark = mark;
+    if (!nextMark) nextMark = { at: now, n: count, fps: '-' };
+    else if (now - nextMark.at >= 950) nextMark = { at: now, n: count, fps: ((count - nextMark.n) / ((now - nextMark.at) / 1000)).toFixed(1) };
+    const shownFps = nextMark.fps;
+    if (!p.queue) {
+      row('decoder', 'browser images (MJPEG / sequence)');
+      row('picture', `${(canvas && canvas.width) || 0}×${(canvas && canvas.height) || 0}`);
+      row('fps', `${p.fps}`);
+      row('cache', `${p.bitmaps.size} frames, ${p.inflight.size} loading`);
+      row('rate', `${p.playing ? '' : 'paused '}${(p.audio && p.audio.playbackRate) || 1}×`);
+      return { text: L.join('\n'), mark: nextMark };
+    }
+    const v = p.info && p.info.video;
+    const a = p.info && p.info.audio;
+    const wi = p.wcInfo;
+    const path = p.cfg && p.cfg.native ? 'native ffmpeg'
+      : p.vmode === 'webcodecs' ? `WebCodecs ${wi ? `${wi.codec} ` : ''}(GPU)`
+        : p.vmode === 'soft' ? `WebAssembly (soft)${wi && wi.failed ? ` · WebCodecs failed: ${wi.failed}` : wi && wi.skipped ? ` · WebCodecs off: ${wi.skipped}` : ''}` : p.vmode || '-';
+    const pool = p.worker && p.worker.extras ? ` · pool ${p.worker.mode} +${p.worker.extras.filter((x) => x.state === 'ready').length}` : '';
+    row('decoder', `${path}${pool}`);
+    row('video', v ? `${v.codec}${v.profile > 0 ? ` p${v.profile}` : ''} ${p.meta.width}×${p.meta.height}${p.gl && p.gl.rot ? ` turned ${p.gl.rot}°` : ''}` : 'none');
+    const ls = p.lastShown;
+    const fmt = ls && ls.yuv ? softFormat(ls.yuv) : p.shownFmt;
+    row('pixels', fmt ? `${fmt} · ${p.shownMatrix()}` : '-');
+    if (v && (v.colorTrc === 16 || v.colorTrc === 18)) {
+      const tf = v.colorTrc === 16 ? 'PQ' : 'HLG';
+      const out = p.hdrOutput && p.hdrOutput.on;
+      row('HDR', out ? `${tf} · HDR output (Display P3, 203 nits = SDR white)`
+        : `${tf} → SDR · HDR tone-mapped to SDR · ${v.colorTrc === 16 ? (p.gl && p.gl.hdrPeak > 203 ? `peak ${p.gl.hdrPeak} nits` : 'peak 1000 nits (assumed)') : '1000-nit display'} · BT.2390${p.hdrOutput && p.hdrOutput.why ? ` (${p.hdrOutput.why})` : ''}`);
+    }
+    row('fps', `${p.fps || '?'} file · ${shownFps} shown`);
+    row('frames', `${p.dropped || 0} dropped · ${p.late || 0} late · ${p.skips || 0} skips`);
+    const ratio = p.decodeRate && p.fps ? p.decodeRate / p.fps : null;
+    row('decode', `${ratio ? `${ratio.toFixed(2)}× real time` : '-'}${p.decodeRate ? ` (${p.decodeRate.toFixed(1)} fps)` : ''}`);
+    const q = p.queue;
+    const ahead = q.length ? p.rel(q[q.length - 1].t) - p.currentTime() : 0;
+    row('queue', `${q.length} frames · ${ahead.toFixed(2)} s · ${mb(p.queuedBytes())}${p.vdec ? ` · ${p.vdec.decodeQueueSize} in decoder` : ''}`);
+    const master = p.audioMaster && p.audioMaster();
+    const drift = master && p.shownT !== null && p.playing ? `${((p.now() - p.shownT) * 1000).toFixed(0)} ms` : '-';
+    row('audio', a ? `${a.codec} ${a.sampleRate / 1000} kHz ${a.channels} ch · ${p.amode} · ${p.ac ? p.ac.state : '-'}` : 'none');
+    row('clock', `${master ? 'audio' : 'timer'} · drift ${drift} · ${p.audio.length} chunks`);
+    row('rate', `${p.rate}× ${p.playing ? 'playing' : 'paused'} · when slow: ${p.whenSlow}${p.autoEvery ? ' (auto every)' : ''}`);
+    if (p.blocks) row('cache', `${p.blocks.size} × ${mb(p.blockSize)} = ${mb(p.blockBytes)} · ${p.inflight.size} in flight · ahead ${p.readAhead}${p.cfg.remote ? ' · remote' : ''}`);
+    else row('cache', p.cfg && p.cfg.native ? 'native reader' : '-');
+    const st = p.status && p.status();
+    if (st) row('status', st.text);
+    return { text: L.join('\n'), mark: nextMark };
+  }
+
+  return { create, formatStats, exactPixel, parseGoto, resolveGoto, parseFragment, clampPan, zoomAround, displayToSource, yuvAt, softFormat, vfSample };
 })();
 
 if (typeof module !== 'undefined') module.exports = VpeInspect;
