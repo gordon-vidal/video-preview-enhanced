@@ -983,6 +983,10 @@
           ensurePlayer(id);
         }
       }
+      if (m.type === 'setVisible') {
+        const hidden = m.visible === false;
+        for (const p of players.values()) if (p && typeof p.setHidden === 'function') p.setHidden(hidden);
+      }
       ui.onHostMessage(m);
       // A message the controller declined (a duplicate, a full view) leaves no decoder behind.
       syncPlayers(ui.getState());

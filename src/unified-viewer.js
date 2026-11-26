@@ -1151,7 +1151,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     if (!panel.visible && thumbJob) thumbJob.controller.abort();
     for (const [id, kind] of kinds) {
       const d = natives.get(id);
-      if (kind === 'stream' && d && d.setHidden) d.setHidden(!panel.visible);
+      if ((kind === 'stream' || kind === 'native') && d && d.setHidden) d.setHidden(!panel.visible);
     }
     session.post({ type: 'setVisible', visible: !!panel.visible, active: !!panel.active });
   });

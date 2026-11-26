@@ -1121,7 +1121,7 @@ async function nativeFor(file, transport, tile, o = {}) {
   // Tests (VPE_LOG only): VPE_NATIVE_METHOD holds ffmpeg's method (cuda, d3d11va, auto, none…), as a stored probe would.
   const forced = logFile ? process.env.VPE_NATIVE_METHOD : '';
   const method = forced && d.use === 'native' ? forced : d.method;
-  log(`${name}: decoder: ${d.use === 'native' ? `native ffmpeg (${method})` : 'built-in'}: ${d.reason}`);
+  log(`[${name}] decoder: ${d.use === 'native' ? `native ffmpeg (${method})` : 'built-in'}: ${d.reason}`);
   return { tools: d.use === 'native' ? t : null, probed: pr, method, methodGuessed: !!d.guessed, maxHeight, messageMaxHeight, reason: d.reason };
 }
 
