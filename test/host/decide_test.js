@@ -174,16 +174,16 @@ assert.strictEqual(d.describe({ codec: 'hevc', depth: 10, width: 3840, height: 2
 const slow4k = { codec: 'hevc', depth: 10, width: 3840, height: 2160, fps: 30, ratio: 0.1 };
 let g = d.nativeGain(slow4k, null);
 assert.deepStrictEqual([g.source, g.cpu, g.gpu], ['table', d.MEASURED_GAIN['hevc/10/2160'].cpu, d.MEASURED_GAIN['hevc/10/2160'].gpu]);
-assert.match(d.hintText(slow4k, { mb: 77 }), /^HEVC 10-bit 4K decodes at 0\.1× here \(3\.0 of 30 fps\)\. Set up ffmpeg \(≈77 MB, no admin needed\): on an 8-core test PC it decoded this kind of video about \d+× faster with the GPU, [\d.]+× on the CPU alone\.$/);
-assert.match(d.hintText({ ...slow4k, ratio: 0.4 }, { mb: 77 }), /faster with the GPU, [\d.]+× on the CPU alone, likely real time here\.$/);
-assert.match(d.hintText({ ...slow4k, codec: 'prores', width: 1920, height: 1080, ratio: 0.7 }, { mb: 77 }), /ProRes 10-bit 1080p .*decoded this kind of video about [\d.]+× faster, likely real time here\.$/, 'no GPU number: CPU only');
+assert.match(d.hintText(slow4k, { mb: 77 }), /^HEVC 10-bit 4K plays at about 3\.0 of 30 frames per second here\. Set up ffmpeg \(≈77 MB, no admin needed\): about \d+× faster with a GPU \([\d.]+× on CPU\) on our test PC\.$/);
+assert.match(d.hintText({ ...slow4k, ratio: 0.4 }, { mb: 77 }), /faster with a GPU \([\d.]+× on CPU\) on our test PC, likely smooth here\.$/);
+assert.match(d.hintText({ ...slow4k, codec: 'prores', width: 1920, height: 1080, ratio: 0.7 }, { mb: 77 }), /ProRes 10-bit 1080p .*about [\d.]+× faster on our test PC, likely smooth here\.$/, 'no GPU number: CPU only');
 assert.strictEqual(d.measuredGain({ codec: 'hevc', depth: 8, width: 3840, height: 2160 }).cpu, Math.min(...Object.entries(d.MEASURED_GAIN).filter(([c]) => c.startsWith('hevc/')).map(([, x]) => x.cpu)), 'unmeasured class: the lowest of the codec');
-assert.match(d.hintText({ ...slow4k, codec: 'wmv3' }, { mb: 77 }), /Set up ffmpeg \(≈77 MB, no admin needed\): it decodes this natively, usually much faster\.$/, 'not measured: no number');
+assert.match(d.hintText({ ...slow4k, codec: 'wmv3' }, { mb: 77 }), /Set up ffmpeg \(≈77 MB, no admin needed\) to play it much faster on this computer\.$/, 'not measured: no number');
 // A probe from an earlier ffmpeg on this machine wins; capped at what 1080p frames can carry (48 fps).
 const probed = { results: { 'hevc/10/2160': { method: 'd3d11va', bpp: 0.01, tried: [{ method: 'd3d11va', ok: true, fps: 120 }] } } };
 g = d.nativeGain(slow4k, probed);
 assert.deepStrictEqual([g.source, g.fps], ['probe', 48]);
-assert.match(d.hintText(slow4k, { mb: 77, probeRecord: probed }), /it plays this in real time here \(about 16× faster, tested on this computer\)\.$/);
+assert.match(d.hintText(slow4k, { mb: 77, probeRecord: probed }), /plays smoothly here \(about 16× faster, tested on this computer\)\.$/);
 assert.strictEqual(d.describe({ codec: 'h264', depth: 8, width: 1920, height: 1080 }), 'H.264 1080p');
 
 // ---- files native failed on ------------------------------------------------------------

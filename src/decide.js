@@ -310,20 +310,19 @@ const times = (x) => `${x >= 10 ? Math.round(x) : Math.round(x * 10) / 10}×`;
 
 /** The hint's text for a slow sample. */
 function hintText(sample, { mb, probeRecord } = {}) {
-  const r = sample.ratio >= 0.1 ? sample.ratio.toFixed(1) : sample.ratio.toFixed(2);
   const fps = sample.fps || 30;
   const shown = Math.max(0.1, sample.ratio * fps);
-  const head = `${describe(sample)} decodes at ${r}× here (${shown >= 10 ? Math.round(shown) : shown.toFixed(1)} of ${Math.round(fps)} fps).`;
+  const head = `${describe(sample)} plays at about ${shown >= 10 ? Math.round(shown) : shown.toFixed(1)} of ${Math.round(fps)} frames per second here.`;
   const size = `(≈${mb} MB, no admin needed)`;
   const g = nativeGain(sample, probeRecord);
-  if (!g) return `${head} Set up ffmpeg ${size}: it decodes this natively, usually much faster.`;
+  if (!g) return `${head} Set up ffmpeg ${size} to play it much faster on this computer.`;
   if (g.source === 'probe') {
-    return g.fps >= fps ? `${head} Set up ffmpeg ${size}: it plays this in real time here (about ${times(g.gain)} faster, tested on this computer).`
+    return g.fps >= fps ? `${head} Set up ffmpeg ${size}: plays smoothly here (about ${times(g.gain)} faster, tested on this computer).`
       : `${head} Set up ffmpeg ${size}: about ${times(g.gain)} faster here (tested on this computer).`;
   }
-  const how = g.gpu && g.gpu > g.cpu * 1.2 ? `about ${times(g.gpu)} faster with the GPU, ${times(g.cpu)} on the CPU alone` : `about ${times(g.cpu)} faster`;
-  const rt = g.fps >= fps ? ', likely real time here' : '';
-  return `${head} Set up ffmpeg ${size}: on an 8-core test PC it decoded this kind of video ${how}${rt}.`;
+  const how = g.gpu && g.gpu > g.cpu * 1.2 ? `about ${times(g.gpu)} faster with a GPU (${times(g.cpu)} on CPU)` : `about ${times(g.cpu)} faster`;
+  const rt = g.fps >= fps ? ', likely smooth here' : '';
+  return `${head} Set up ffmpeg ${size}: ${how} on our test PC${rt}.`;
 }
 
 /** The hint state after the user's answer ('Set up', 'Not now', "Don't Show Again" or nothing). */
@@ -338,7 +337,7 @@ function afterHint(hint, answer, now = Date.now()) {
 // the method (vendorMethod) and a failing one falls back. When playback still falls behind real time
 // with ffmpeg installed (native, or the built-in decoder), one notification offers the test.
 const PROBE_OFFER_KEY = 'videoPreviewEnhanced.gpuTestOffer';
-const PROBE_OFFER_TEXT = 'Video Preview: this video plays slower than real time. Test ffmpeg on this computer (about 20 seconds) to find the fastest way to decode on your GPU?';
+const PROBE_OFFER_TEXT = 'This video is playing slower than normal. Test ffmpeg on this computer (about 20 seconds) to find the fastest way to play on your GPU?';
 const PROBE_OFFER_RUN = 'Run test';
 const PROBE_OFFER_LATER = 'Not now';
 const PROBE_OFFER_NEVER = "Don't Show Again";

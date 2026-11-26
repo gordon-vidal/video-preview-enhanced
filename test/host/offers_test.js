@@ -12,7 +12,7 @@ function make({ remote, trusted = true, tools = null, config = {}, answers = [],
   const store = new Map();
   const globalState = { get: (k) => store.get(k), update: async (k, v) => { store.set(k, v); } };
   const shown = [];
-  const calls = { off: 0, setup: 0, download: 0, probeUi: [], toolsCalls: 0 };
+  const calls = { off: 0, setup: 0, download: 0, probeUi: [], toolsCalls: 0, settings: [] };
   const queue = [...answers];
   const gates = []; // resolvers of messages left hanging (popup "showing")
   const env = { remote, trusted, hang: false };
@@ -43,6 +43,7 @@ function make({ remote, trusted = true, tools = null, config = {}, answers = [],
     setupFfmpeg: () => { calls.setup++; },
     turnOffTranscode: async () => { calls.off++; },
     downloadRemoteFfmpeg: async () => { calls.download++; },
+    openSettings: (id) => { calls.settings.push(id); },
     hostPlatform: () => 'linux', hostArch: () => 'x64', hostname: () => 'devbox', sessions,
   });
   return { offers, store, shown, calls, logs, post, env, gates, state: globalState };
@@ -154,7 +155,7 @@ const sample = { ratio: 0.4, native: false };
   t = make({ tools: ffmpeg, answers: [decide.PROBE_OFFER_RUN] });
   const r = await t.offers.maybeOfferProbe(sess, { ratio: 0.4, native: true });
   assert.strictEqual(t.shown[0][0], decide.PROBE_OFFER_TEXT);
-  assert.deepStrictEqual(t.shown[0].slice(1), [decide.PROBE_OFFER_RUN, decide.PROBE_OFFER_LATER, decide.PROBE_OFFER_NEVER]);
+  assert.deepStrictEqual(t.shown[0].slice(1), [decide.PROBE_OFFER_RUN, decide.PROBE_OFFER_LATER, decide.PROBE_OFFER_NEVER, 'Settings']);
   assert.match(t.logs[0], /\[a\.mp4\] native ffmpeg at 0\.40x \(sample 5\), no GPU test yet: offering it/);
   assert.strictEqual(r, 'rec');
   assert.deepStrictEqual(t.post, [['native', { type: 'pauseForTest' }]], 'only live native players pause');
@@ -266,25 +267,28 @@ const sample = { ratio: 0.4, native: false };
   t = make({ answers: [undefined] });
   await t.offers.maybeInformTranscode(tab);
   assert.strictEqual(t.shown.length, 1);
-  assert.deepStrictEqual(t.shown[0], [informed.informText(), 'Use original video', 'Turn off']);
+  assert.deepStrictEqual(t.shown[0], [informed.informText(), 'Got it', 'Use original (this tab)', 'Turn off (all videos)', 'Settings']);
   assert.ok(t.store.get(informed.INFORM_KEY), 'remembered in globalState');
   await t.offers.maybeInformTranscode(tab);
   assert.strictEqual(t.shown.length, 1, 'not a second time');
   assert.strictEqual(used + t.calls.off, 0, 'dismissing changes nothing');
   // A new session (flag already stored) shows nothing.
-  t = make({ answers: ['Turn off'] });
+  t = make({ answers: ['Turn off (all videos)'] });
   t.store.set(informed.INFORM_KEY, 1);
   await t.offers.maybeInformTranscode(tab);
   assert.strictEqual(t.shown.length, 0);
   // Two tiles starting at once show it once; the buttons act.
-  t = make({ answers: ['Use original video'] });
+  t = make({ answers: ['Use original (this tab)'] });
   await Promise.all([t.offers.maybeInformTranscode(tab), t.offers.maybeInformTranscode(tab)]);
   assert.strictEqual(t.shown.length, 1);
-  assert.strictEqual(used, 1, '"Use original video" is this tab only');
+  assert.strictEqual(used, 1, '"Use original (this tab)" is this tab only');
   assert.strictEqual(t.calls.off, 0);
-  t = make({ answers: ['Turn off'] });
+  t = make({ answers: ['Turn off (all videos)'] });
   await t.offers.maybeInformTranscode(tab);
-  assert.strictEqual(t.calls.off, 1, '"Turn off" sets transcode to off');
+  assert.strictEqual(t.calls.off, 1, '"Turn off (all videos)" sets transcode to off');
+  t = make({ answers: ['Settings'] });
+  await t.offers.maybeInformTranscode(tab);
+  assert.deepStrictEqual(t.calls.settings, ['videoPreviewEnhanced.transcode'], '"Settings" opens transcode setting');
 
   // A rejected globalState.update must clear the in-flight guard so a later start can still show the notice.
   t = make({ answers: [undefined] });

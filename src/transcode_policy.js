@@ -245,18 +245,19 @@ function evaluateLocalStall(o) {
 
 // The one-time, non-blocking notice the first time Live transcode starts (2026-11-23: replaces the 'ask' prompts).
 const INFORM_KEY = 'videoPreviewEnhanced.transcodeInformed';
-const INFORM_ORIGINAL = 'Use original video';
-const INFORM_OFF = 'Turn off';
+const INFORM_GOT_IT = 'Got it';
+const INFORM_ORIGINAL = 'Use original (this tab)';
+const INFORM_OFF = 'Turn off (all videos)';
+const INFORM_SETTINGS = 'Settings';
 
 function informText() {
-  return 'Live transcode is on for smooth playback: this video is re-encoded to H.264 (lossy) as you watch. '
-    + 'Use original video for this tab, or turn it off for every video (also in ⚙ › Live transcode).';
+  return 'Live transcode is on for smooth playback. Video Preview streams a lighter version of this video as you watch '
+    + 'so it plays smoothly instead of stuttering. Switching to the original file gives exact pixels, but playback may be slower.';
 }
 
 function driverNoticeText(notice) {
   const drv = notice && notice.minDriver ? `NVIDIA driver ${notice.minDriver} or newer` : 'a newer NVIDIA driver';
-  const api = notice && notice.requiredApi && notice.foundApi ? ` (ffmpeg requires NVENC API ${notice.requiredApi}, driver has ${notice.foundApi})` : '';
-  return `Live transcode: hardware NVIDIA encoding needs ${drv}${api}. Update your driver or run "Set Up Optional ffmpeg" to install a driver-compatible build.`;
+  return `Hardware NVIDIA encoding needs ${drv}. Playback still works on the CPU; update your driver or run "Set up ffmpeg" to install a compatible build.`;
 }
 
 module.exports = {
@@ -282,8 +283,10 @@ module.exports = {
   shouldTranscodeOnOpen,
   evaluateLocalStall,
   INFORM_KEY,
+  INFORM_GOT_IT,
   INFORM_ORIGINAL,
   INFORM_OFF,
+  INFORM_SETTINGS,
   informText,
   driverNoticeText,
 };

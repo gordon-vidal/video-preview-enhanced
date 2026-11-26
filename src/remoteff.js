@@ -55,9 +55,8 @@ const OFFER_NEVER = "Don't Show Again";
 
 function offerText({ codec, host, mb }) {
   const what = codec ? String(codec).toUpperCase() : 'This video';
-  return `${what} plays in the built-in decoder in this window (4K slowly). With ffmpeg on ${host}, Live transcode ` +
-    `decodes it there (on its GPU when it has one) and streams a lighter H.264 version to this window in real time. ` +
-    `Download ffmpeg (~${mb} MB, LGPL build matched to ${host}'s GPU driver, no admin) into the extension's folder on ${host}?`;
+  return `${what} plays slowly in this remote window. With ffmpeg on ${host}, Live transcode plays it smoothly ` +
+    `(using its GPU when available). Download portable ffmpeg (~${mb} MB, no admin) into the extension's folder on ${host}?`;
 }
 
 /** globalState OFFER_KEY after an answer: "Don't Show Again" is kept per remote. */
