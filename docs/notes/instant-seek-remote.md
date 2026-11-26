@@ -118,6 +118,41 @@ across tiles (as `transcodeSplitBitrate` already does for bitrate). Level-3/4 wo
 (NVENC session cap on GeForce, playback encoders first), the clock tile first, and Compare's tile sizes (cell size,
 zoom ≥ 1.5 upgrade) decide the rendition size.
 
+### Display mode: the remote-desktop model for paused review (added 2026-11-26)
+
+How game and desktop streamers get their latency, and what carries over:
+
+| Streamer technique | Why it is fast | VPE |
+| --- | --- | --- |
+| Zero-copy capture (NvFBC, DXGI desktop duplication); the frame never leaves GPU memory before NVENC | ~1-2 ms | Not needed: the host decodes the file itself |
+| Low-latency encode: no B-frames, no lookahead, CBR with a VBV of about one frame, slices | 2-8 ms, and every frame fits the link in about one frame time | Same NVENC options through stock ffmpeg (`-tune ull`, `-delay 0`, `-bf 0`) |
+| Endless GOP: one IDR at the start, then only P-frames; on loss, reference frame invalidation or intra refresh instead of a new IDR | No IDR spikes | **The key idea: encode what is shown, as a delta from what was shown last.** A step back is then as cheap as a step forward |
+| UDP with FEC (Moonlight) or a custom reliable UDP protocol with its own bitrate control (Parsec BUD, DTLS) | No TCP head-of-line blocking | Not available: everything goes through VS Code's SSH tunnel (TCP). It is reliable, so encoder and decoder stay in step with no FEC, but a big transfer in flight delays a step reply: interactive frames need priority over prefetch on the host send queue |
+| No jitter buffer: present on arrival | Lowest latency, occasional stutter | For paused steps only; playback keeps its buffered media stream (A/V sync, jitter) |
+| Progressive refinement on static content (PCoIP "build to lossless") | A still image looks good even on <1 Mb/s | A random seek sends a small coarse frame first, then refinement P-frames, then (only for pixel tools) the exact PNG |
+
+A player inside Parsec does not seek faster: the player seeks locally next to the file with a warm decoder; Parsec
+only makes the network cost about one frame. VPE needs both halves: (a) a warm frame source next to the file and
+(b) a display-style encoder.
+
+**Display mode** (paused, stepping, scrubbing; playback stays as today): the host keeps one persistent encoder process
+(stock ffmpeg reading raw frames on stdin, endless GOP, low-latency NVENC). The page asks for "show source frame N"; the
+host takes frame N from its frame source, feeds it to the encoder and sends the packet (a P-frame relative to what the
+page shows). The page's decoder runs in a "display" mode: packets tagged with their source time, shown on arrival, no
+clock. Frame sources, in order of effort:
+
+1. **Host decoded-frame RAM cache** filled by ffmpeg CLI decode windows at view size (1080p NV12 ≈ 3 MB: 32 GB host RAM
+   ≈ 7 minutes at 24 fps), background-filled at ~300 fps around the playhead. No new binaries. A miss outside it still
+   pays the CLI restart (0.3-1.2 s), shown as a coarse keyframe first.
+2. **Level-4 proxy** decoded on the host as the source.
+3. **A native persistent decoder** (libavcodec seek + flush, NVDEC) would remove the ~250 ms restart floor on misses. It
+   is a fourth component: binaries per host platform, LGPL notices, PRODUCT decision. Only if 1-2 leave misses that
+   matter. Even then a long source GOP must be decoded from its keyframe; only caches remove that.
+
+Expected step cost with a host RAM hit: RTT + 3-8 ms encode + frame bytes / link rate + 2-5 ms decode. A 1080p P-frame of
+20-60 KB is ~6-20 ms at 25 Mb/s, 80-240 ms at 2 Mb/s. Levels 1-2 (page caches) stay faster still for revisits (no
+network at all), so the cache and display mode combine: caches for anything seen, display mode for first visits.
+
 ### Not proposed
 
 - **A persistent seekable decoder on the host** (a libav helper or a Python/PyAV process) would remove the ~250 ms
@@ -137,6 +172,13 @@ zoom ≥ 1.5 upgrade) decide the rendition size.
 | `maximum` | `seekCacheMemoryGB` (default 4, up to what the machine has) | RAM + disk up to `seekCacheHostGB` (default 8) | level 3 + level 4 whole-file build |
 
 Host parts are machine-scoped (they live in the remote's settings), like `transcode`.
+
+Maintainer direction (2026-11-26): defaults conservative (never make the machine unusable), with full user control and
+support for very limited links. So: the preset only sets defaults for individual settings the user can override (page
+RAM GB, host RAM GB, host disk GB (default 0), background work `off | whenPaused | always`, share of the measured link
+for prefetch (default 25 %, none on slow links), background GPU processes (default 1, lowest priority)). Note that in a
+remote window the page cannot see the local machine's real RAM (`navigator.deviceMemory` stops at 8 GB), so going
+beyond today's budget must come from the user's setting.
 
 ## Order of work
 
