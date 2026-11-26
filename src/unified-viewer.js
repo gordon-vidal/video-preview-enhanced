@@ -431,8 +431,9 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const n = Math.max(1, session.clips.length);
     // A tile size the page already reported: ffmpeg starts at it (no restart once the first frames show).
     const own = session.tileSize(c.id);
-    const size = fitTiles() ? own || session.lastTileSize : null;
-    const fit = size ? nativeHeightFor(c, size, !!own) : 0;
+    const size = /** @type {any} */ (fitTiles() ? own || session.lastTileSize : null);
+    const singleReal = n < 2 && !deps.createNative && !(size && (Number(size.cols) > 1 || Number(size.rows) > 1));
+    const fit = !singleReal && size ? nativeHeightFor(c, size, !!own) : 0;
     const maxHeight = fit > 0 ? Math.min(d.maxHeight, fit) : d.maxHeight;
     clipLog(c, `native ffmpeg (${d.method}) at up to ${maxHeight}p: ${d.reason}`);
     /** @type {HostDecoder} */
@@ -440,6 +441,8 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const opts = {
       tools: d.tools, file: c.fsPath, maxHeight, messageMaxHeight: Math.min(maxHeight, d.messageMaxHeight),
       method: d.method, methodGuessed: !!d.methodGuessed, probed: d.probed, transport, origin,
+      fitView: singleReal && fitTiles(),
+      view: singleReal && size ? { w: size.actual ? 99999 : size.w, h: size.actual ? 99999 : size.h } : undefined,
       maxQueued: Grid.nativeQueuePerTile(deps.nativeQueue ? deps.nativeQueue() : 8, n), largeGrid: Grid.isLarge(n),
       post: (/** @type {any} */ msg) => { if (natives.get(c.id) === decoder) session.postNativeReply(c.id, msg); },
       postRaw: (/** @type {any} */ msg) => { if (natives.get(c.id) === decoder) postAny({ ...msg, key: c.id, clipId: c.id }); },
@@ -586,9 +589,11 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       const kind = kinds.get(c.id);
       if (!dec || !c.decision) continue;
       const own = session.tileSize(c.id);
-      const size = own || session.lastTileSize;
+      const size = /** @type {any} */ (own || session.lastTileSize);
       if (!size) continue;
-      if (kind === 'native' && fit && typeof dec.resize === 'function') {
+      if (kind === 'native' && fit && session.clips.length < 2 && typeof dec.setView === 'function') {
+        dec.setView({ w: size.actual ? 99999 : size.w, h: size.actual ? 99999 : size.h });
+      } else if (kind === 'native' && fit && typeof dec.resize === 'function') {
         const h = nativeHeightFor(c, size, !!own);
         const mmh = c.decision.messageMaxHeight > 0 ? c.decision.messageMaxHeight : h;
         if (!h) continue;

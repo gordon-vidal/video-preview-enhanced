@@ -2078,17 +2078,21 @@
       const c = ui.cells[0];
       if (!c) return null;
       const dpr = win.devicePixelRatio || 1;
-      return { w: Math.round(c.w * dpr), h: Math.round(c.h * dpr), n: ui.n, layout: ui.effectiveLayout, zoom: t.zoom, rate: prefs.rate };
+      const pic = !ui.isMulti && typeof engine.pictureRect === 'function'
+        ? engine.pictureRect(c.clipId, c.w, c.h, t.picMode, t.zoom, t.panX, t.panY)
+        : null;
+      const w = Math.round((pic && pic.w > 0 ? pic.w : c.w) * dpr);
+      const h = Math.round((pic && pic.h > 0 ? pic.h : c.h) * dpr);
+      return { w, h, n: ui.n, layout: ui.effectiveLayout, zoom: t.zoom, rate: prefs.rate, actual: t.picMode === 'actual' };
     };
-    /** Layout, size, zoom or speed changed: tell the host after a quiet spell (the first size is the page's own). */
+    /** Layout, size, zoom or speed changed: tell the host after a quiet spell. */
     const checkTileSize = () => {
       if (!bridge) return;
       const tile = tileNow();
       const key = tile ? JSON.stringify(tile) : '';
       if (key === lastTileSizeKey) return;
-      const first = lastTileSizeKey === null;
       lastTileSizeKey = key;
-      if (!first && tile) bridge.scheduleTileSize(tileNow, prefs.transcodeMode !== 'always');
+      if (tile) bridge.scheduleTileSize(tileNow, prefs.transcodeMode !== 'always');
     };
     /** The clip this single page shows: the rail learns its size once, a waiting handoff may apply, X-ray reloads. */
     let lastSeedId = /** @type {string | null} */ (null);
