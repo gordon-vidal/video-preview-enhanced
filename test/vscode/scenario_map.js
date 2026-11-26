@@ -22,13 +22,13 @@ const DEPENDENCIES = [
   { when: ['media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/pool.js'], why: 'stepping, seeking, decoder pool, end of file', run: ['seeking', 'playback'] },
   { when: ['src/native.js', 'src/frameserver.js'], why: 'native ffmpeg transport and frame sizes', run: ['native', 'picture-size-native'] },
   { when: ['media/picture.js', 'media/inspect.js'], why: 'drawn picture size, zoom, pan', run: ['picture-size', 'compare', 'inspect'] },
-  { when: ['media/compare.js', 'media/compare-compositor.js', 'media/compare-grid.js', 'src/compare.js'], why: 'compare / multi-view', run: ['compare', 'multiview'] },
+  { when: ['media/player-unified.js', 'media/player-ui-tiles.js', 'media/compare-compositor.js', 'media/compare-grid.js', 'src/unified-viewer.js', 'src/unified-session.js', 'src/unified-html.js'], why: 'compare / multi-view', run: ['compare', 'multiview'] },
   { when: ['src/remotestream.js', 'src/stream-adapt.js', 'src/stream-buffer.js'], why: 'remote stream', run: ['remote-stream'] },
   { when: ['src/urlsource.js'], why: 'URLs', run: ['url', 'url-native'] },
   { when: ['media/controls.js', 'media/range-drag.js', 'src/bar.js'], why: 'the bar, panels, keys', run: ['ui'] },
   { when: ['media/subtitles.js', 'media/tracks-menu.js'], why: 'subtitles, tracks', run: ['subtitles'] },
   { when: ['src/folder-rail.js', 'media/folder-rail.js', 'media/autoplay.js'], why: 'folder rail, Autoplay, tab swap', run: ['folder-rail', 'ui', 'compare'] },
-  { when: ['media/player-ui.js', 'media/player-state.js'], why: 'the shared UI seam (keys, bar, A-B pins, rail, Compare gestures)', run: ['ui', 'compare', 'folder-rail'] },
+  { when: ['media/player-ui.js', 'media/player-ui-input.js', 'media/player-ui-tools.js', 'media/player-ui-lifecycle.js', 'media/player-state.js'], why: 'the shared UI seam (keys, bar, A-B pins, rail, Compare gestures)', run: ['ui', 'compare', 'folder-rail'] },
 ];
 
 /**

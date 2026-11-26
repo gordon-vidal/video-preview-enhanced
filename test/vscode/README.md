@@ -102,7 +102,7 @@ state another case left (the runner resets settings and stored state, not the fi
 
 **Hooks the cases use** (test only, VPE_LOG set): `{name, action}` lines in `<VPE_LOG>.cmd` go to the player as
 debug messages: `seek step pause play rate key report wcprobe tool panel modesReport scrub`, for compare `mode key
-offset clock sound step play pause seek sync report`, and the probes in `debugProbe` (media/player.js): `state`
+offset clock sound step play pause seek sync report`, and the probes in `debugProbe` (media/player-unified.js, media/player-ui.js): `state`
 (toast, pill, message, canvas, tracks, subtitle overlay, scopes, thumbnail, X-ray ... as one JSON line), `thumb`
 (the picture as 64x36 luma), `pixels`, `scopesDump`, `dom` (mouse / pointer / wheel event at a point), `hdrcaps`,
 `hdrpixels`, `gotoText`, `track`, `click`. `key` takes `ctrl` and a `target` selector. In the extension

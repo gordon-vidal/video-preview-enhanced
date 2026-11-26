@@ -7,17 +7,20 @@
 //
 // Step: { case, only?, skip?, settings?, env?, ffmpeg?, keepState?, timeout? }
 
-const PLAYER = ['media/player.js', 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/autoplay.js', 'media/frame-player.js', 'media/player.css', 'src/bar.js'];
-const RAIL = ['media/folder-rail.js', 'media/folder-rail.css', 'src/folder-rail.js', 'src/folder-rail-html.js', 'src/player-html.js'];
+// The unified viewer (replaces the old player.js / compare.js pair and their host files).
+const UNIFIED_MEDIA = ['media/player-unified.js', 'media/player-ui.js', 'media/player-ui-tiles.js', 'media/player-ui-input.js', 'media/player-ui-tools.js', 'media/player-ui-lifecycle.js', 'media/player-state.js'];
+const UNIFIED_SRC = ['src/unified-viewer.js', 'src/unified-session.js', 'src/unified-html.js'];
+const PLAYER = [...UNIFIED_MEDIA, 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/autoplay.js', 'media/frame-player.js', 'media/player.css', 'src/bar.js'];
+const RAIL = ['media/folder-rail.js', 'media/folder-rail.css', 'src/folder-rail.js', 'src/folder-rail-html.js', ...UNIFIED_SRC];
 const ENGINE_CORE = [
   'media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/gl-renderer.js',
 ];
 const ENGINE = [...ENGINE_CORE, 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
-const HOST = ['src/extension.js', 'src/early-probe.js', 'src/player-html.js', 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
+const HOST = ['src/extension.js', 'src/early-probe.js', ...UNIFIED_SRC, 'src/decide.js', 'src/sniff-codecs.js', 'src/sniff-matroska.js', 'src/avi.js', 'src/rotation.js'];
 const NATIVE = ['src/native.js', 'src/nativepts.js', 'src/frameserver.js', 'src/ffmpeg.js', 'src/probe.js', 'src/hwaccel.js', 'src/hardware.js', 'src/localff.js', 'src/thumbhost.js'];
 const COMPARE = [
-  'src/compare.js', 'src/comparemenu.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js', 'src/framelink.js',
-  'media/compare.js', 'media/compare-compositor.js', 'media/compare-sync.js', 'media/compare-metrics.js',
+  ...UNIFIED_SRC, 'src/comparemenu.js', 'src/addmode.js', 'src/burst.js', 'src/comparepick.js', 'src/framelink.js',
+  ...UNIFIED_MEDIA, 'media/compare-compositor.js', 'media/compare-sync.js', 'media/compare-metrics.js',
   'media/compare-debug.js', 'media/timefmt.js', 'media/compare.css', 'media/compare-grid.js', 'media/range-drag.js',
 ];
 
@@ -25,7 +28,7 @@ module.exports = [
   {
     name: 'open-formats',
     journey: 'A user without ffmpeg opens each kind of file: the right decoder (GPU for H.264 / VP8 in every container, WebAssembly for the rest), it plays, a paused seek lands',
-    sources: [...HOST, ...ENGINE, 'media/player.js', 'media/frame-player.js'],
+    sources: [...HOST, ...ENGINE, ...UNIFIED_MEDIA, 'media/frame-player.js'],
     steps: [{ case: 'open-formats' }],
   },
   {
@@ -80,7 +83,7 @@ module.exports = [
   {
     name: 'folder-rail',
     journey: 'The folder rail and the bar capsule: open docked, resize, browse up and back, the column menu, the edge tab, a right-click on |▶ swaps the tab with the rail state, Autoplay plays the next video once',
-    sources: [...PLAYER, ...RAIL, 'src/extension.js', 'src/settings.js', 'src/compare.js', 'media/compare.js', 'media/compare.css'],
+    sources: [...PLAYER, ...RAIL, 'src/extension.js', 'src/settings.js', 'media/compare.css'],
     steps: [{ case: 'folder-rail' }],
   },
   {
@@ -92,7 +95,7 @@ module.exports = [
   {
     name: 'picture-size-native',
     journey: 'With ffmpeg: native frames grow for Fill and 100 % and wait for the next seek when back to Fit',
-    sources: ['media/picture.js', 'media/inspect.js', ...ENGINE_CORE, ...NATIVE, 'src/compare.js'],
+    sources: ['media/picture.js', 'media/inspect.js', ...ENGINE_CORE, ...NATIVE, ...UNIFIED_SRC],
     steps: [{ case: 'picture_size_native' }],
   },
   {
@@ -134,7 +137,7 @@ module.exports = [
   {
     name: 'native',
     journey: 'With ffmpeg: native decoding plays, frames sized to the picture and grown on resize / zoom, the message fallback, About this video',
-    sources: [...NATIVE, 'src/decide.js', 'src/extension.js', 'media/framestream.js', ...ENGINE_CORE, 'media/player.js', 'media/frame-player.js'],
+    sources: [...NATIVE, 'src/decide.js', 'src/extension.js', 'media/framestream.js', ...ENGINE_CORE, ...UNIFIED_MEDIA, 'media/frame-player.js'],
     steps: [
       { case: 'open-native' }, { case: 'native-transfer' }, { case: 'native-transfer-resize' }, { case: 'native-transfer-fallback' }, { case: 'ui_info_native' },
     ],
@@ -142,7 +145,7 @@ module.exports = [
   {
     name: 'invisible',
     journey: 'Work a user never notices: a hidden native tab stops ffmpeg, paused players read only about 1 s ahead, the frame loop rests while paused',
-    sources: [...NATIVE, ...ENGINE_CORE, 'media/player.js', 'media/membudget.js'],
+    sources: [...NATIVE, ...ENGINE_CORE, ...UNIFIED_MEDIA, 'media/membudget.js'],
     steps: [{ case: 'perf-invisible', skip: '^audio-rest$' }],
   },
   {
@@ -160,7 +163,7 @@ module.exports = [
   {
     name: 'wheel-step',
     journey: 'Paused mouse-wheel frame steps on heavy 4K HEVC 10-bit: rapid and slow notches back and forward land on exactly the frame (built-in, native, native HDR output)',
-    sources: ['media/player.js', 'src/native.js', ...ENGINE],
+    sources: [...UNIFIED_MEDIA, 'src/native.js', ...ENGINE],
     steps: [{ case: 'wheel_step' }, { case: 'wheel_step_native' }],
   },
   {
@@ -190,7 +193,7 @@ module.exports = [
   {
     name: 'remote-stream',
     journey: 'Remote windows: formats the GPU decoder can\'t play are re-encoded to H.264 by ffmpeg; seeks, scrubbing, the quality ladder, pixel tools',
-    sources: ['src/remotestream.js', 'src/stream.js', 'src/stream-adapt.js', 'src/stream-buffer.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', ...ENGINE_CORE, 'media/player.js', 'media/frame-player.js'],
+    sources: ['src/remotestream.js', 'src/stream.js', 'src/stream-adapt.js', 'src/stream-buffer.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', ...ENGINE_CORE, ...UNIFIED_MEDIA, 'media/frame-player.js'],
     steps: [{ case: 'remote_stream' }, { case: 'remote_stream_long' }, { case: 'remote_stream_size' }, { case: 'remote_stream_fallback' }],
   },
   {
