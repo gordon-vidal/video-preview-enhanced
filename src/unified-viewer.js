@@ -1236,8 +1236,18 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     decoderKind: (clipId) => kinds.get(clipId) || null,
     /** Native ffmpeg is decoding for this panel right now (the GPU test waits for it). */
     busy: () => [...natives.values()].some((d) => typeof d.busy === 'function' && d.busy()),
-    /** Every file clip prepared again (ffmpeg was set up or changed): each reloads in its tile. @param {string} why */
-    reloadAll: (why) => Promise.all(session.clips.map((c) => reprepare(c.id, why))),
+    /** Every file clip prepared again (ffmpeg was set up or changed), followed by one clean webview refresh. @param {string} why */
+    async reloadAll(why) {
+      if (disposed) return;
+      builtIn.clear();
+      // Prepare sequentially (avoids N parallel encoder probes) and refresh the webview once so Compare tiles
+      // start together with balanced bitrate caps and updated ffmpegState instead of N racing replaceTile updates.
+      for (const c of session.clips.slice()) {
+        if (disposed || !isFileClip(c)) continue;
+        await reprepare(c.id, why);
+      }
+      if (!disposed) session.render();
+    },
     /** Live transcode tiles to the built-in decoder ("Use original video"); true when one switched. */
     useOriginalVideo: () => session.clips.filter((c) => kinds.get(c.id) === 'stream').map((c) => toBuiltIn(c.id)).some(Boolean),
     /** Native ffmpeg tiles of this panel play at a reduced size (the frame export warns). */
