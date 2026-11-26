@@ -25,7 +25,10 @@
    * @typedef {{ onFrame: (frame: number) => void, onReady: () => void, onMeta: () => void,
    *   onEnded: (info?: { natural?: boolean }) => void, post: (m: any) => void, log: (...a: any[]) => void,
    *   wake: () => void, showMessage: (msg?: string, hint?: string) => void,
-   *   toast: (text: string, ms?: number) => void }} PlayerHooks
+   *   toast: (text: string, ms?: number) => void, getRate: () => number, getLoop: () => boolean,
+   *   getMuted: () => boolean, getVolume: () => number }} PlayerHooks
+   *   getRate / getLoop / getMuted / getVolume: the page's live settings for a decoder that reads them on demand
+   *   (media/frame-player.js); getMuted is true for every clip but the sound source.
    * @typedef {(clip: ClipSpec, host: any, hooks: PlayerHooks) => any} CreatePlayer
    * @typedef {{ doc?: any, win?: any, vscode?: any, cfg?: any, createPlayer?: CreatePlayer | null, compositor?: any,
    *   sync?: any, widgets?: any, stateApi?: any, engineApi?: any, hostApi?: any, uiApi?: any, log?: (...a: any[]) => void }} BootEnv
@@ -78,7 +81,16 @@
 
   /** The page-safe clip descriptor fields the host may send (src/unified-session.js), besides the clip's id. */
   const CLIP_FIELDS = ['name', 'size', 'duration', 'fps', 'frames', 'width', 'height', 'hasAudio', 'native', 'codec',
-    'kind', 'rotation'];
+    'kind', 'rotation', 'transcoded'];
+
+  /**
+   * Host -> page messages about a clip's decoder as a whole (media/player.js and media/compare.js read them too), handled
+   * by the page rather than by a decoder method: 'frames' starts a frame player (MJPEG AVI, image sequences) with its
+   * meta and the sound sent ahead in 'wavPart's, 'frame' is one of its pictures, 'libav' restarts the built-in
+   * decoder with the host's meta, 'originalTile' leaves Live transcode for the built-in decoder. Not in DECODER_TYPES:
+   * media/unified-contracts.d.ts does not list them yet (tools/unified-contracts-check.js).
+   */
+  const LIFECYCLE_TYPES = ['frames', 'frame', 'wavPart', 'libav', 'originalTile'];
 
   /**
    * The clip descriptor a host message carries: its `clip` object, else the descriptor fields on the message (or
@@ -94,6 +106,15 @@
     return out;
   }
 
+  /** The positive numbers of a decoder's meta a clip spec keeps (fps, frames, width, height, duration). @param {any} meta */
+  function numbersOf(meta) {
+    /** @type {Record<string, number>} */
+    const out = {};
+    if (!meta || typeof meta !== 'object') return out;
+    for (const k of ['fps', 'frames', 'width', 'height', 'duration']) if (Number(meta[k]) > 0) out[k] = Number(meta[k]);
+    return out;
+  }
+
   /** #cfg's JSON, or {} if the page has none or it does not parse. @param {any} doc */
   function readCfg(doc) {
     const el = doc && typeof doc.getElementById === 'function' ? doc.getElementById('cfg') : null;
@@ -102,16 +123,27 @@
   }
 
   /**
+   * A clip played as separate pictures (media/frame-player.js): an image sequence, or the host's 'frames' meta.
+   * @param {any} clip @param {any} cfg
+   */
+  const isSequence = (clip, cfg) => !!(clip && (clip.frameMeta || clip.kind === 'sequence')) || !!(cfg && cfg.sequence);
+
+  /**
    * The production decoder factory over media/engine.js (the page global createEngine), as media/compare.js
-   * makeEngine builds a tile: one LibavPlayer per clip, its host messages tagged with the clip. null when the page has
-   * no engine (Node, or a page without engine.js).
+   * makeEngine builds a tile: one LibavPlayer per clip, its host messages tagged with the clip; an image sequence (or
+   * a clip the host sent 'frames' for) gets a FramePlayer (media/frame-player.js, VpeFramePlayer) instead, as
+   * media/player.js does. A LibavPlayer opens with the host's 'libav' meta when the clip carries it (`meta`). A
+   * sequence whose length is not known yet makes no decoder: the host's 'frames' brings it. null when the page has
+   * neither decoder (Node, or a page without engine.js).
    * @param {any} G the page's globals @param {any} win @param {any} doc @param {any} vscode @param {any} cfg
+   * @param {any} [framesApi] media/frame-player.js (VpeFramePlayer)
    * @returns {CreatePlayer | null}
    */
-  function defaultCreatePlayer(G, win, doc, vscode, cfg) {
+  function defaultCreatePlayer(G, win, doc, vscode, cfg, framesApi) {
     const createEngine = (win && win.createEngine) || (G && G.createEngine);
+    const FP = framesApi && typeof framesApi.createFramePlayer === 'function' ? framesApi : null;
     const d = doc || (G && G.document);
-    if (typeof createEngine !== 'function' || !d) return null;
+    if ((typeof createEngine !== 'function' && !FP) || !d) return null;
     return (clip, _host, hooks) => {
       const cv = d.createElement('canvas');
       const envTag = {
@@ -119,10 +151,33 @@
         ...(cfg.boot !== undefined ? { boot: cfg.boot } : {}),
         key: clip.id, clipId: clip.id,
       };
+      // Decoder traffic (blocks, native frames, picture requests) is not the controller's: straight to the host, tagged.
+      const tagged = { postMessage: (/** @type {any} */ m) => vscode.postMessage({ ...m, ...envTag }), getState: () => ({}), setState() {} };
+      if (FP && isSequence(clip, cfg)) {
+        const fps = Number(clip.fps) || 0;
+        const frames = Number(clip.frames) || 0;
+        const meta = clip.frameMeta || (fps > 0 && frames > 0
+          ? { frames, fps, ...(clip.width ? { width: clip.width, height: clip.height } : {}) } : null);
+        if (!meta) return null;
+        const FramePlayer = FP.createFramePlayer({
+          canvas: cv, vscode: tagged, log: hooks.log,
+          showMessage: (/** @type {any} */ text) => hooks.showMessage(text),
+          // The bar owns mute: a refused autoplay with sound plays on muted, the bar is not changed from here.
+          setMute: () => {},
+          getRate: () => hooks.getRate(), getLoop: () => hooks.getLoop(),
+          getMuted: () => hooks.getMuted(), getVolume: () => hooks.getVolume(),
+          onEnded: (/** @type {any} */ _p, /** @type {any} */ info) => hooks.onEnded(info),
+        });
+        const fp = /** @type {any} */ (new FramePlayer(meta, clip.wav));
+        fp.cv = cv;
+        fp.key = clip.id;
+        fp.cfg = { native: false };
+        return fp;
+      }
+      if (typeof createEngine !== 'function') return null;
       const eng = createEngine({
         page: cfg.page, debug: !!cfg.debug, canvas: cv,
-        // Decoder traffic (blocks, native frames) is not the controller's: it goes straight to the host, tagged.
-        vscode: { postMessage: (/** @type {any} */ m) => vscode.postMessage({ ...m, ...envTag }), getState: () => ({}), setState() {} },
+        vscode: tagged,
         log: hooks.log,
         showMessage: (/** @type {any} */ msg, /** @type {any} */ hint) => hooks.showMessage(msg, hint),
         toast: (/** @type {any} */ text, /** @type {any} */ ms) => hooks.toast(text, ms),
@@ -131,8 +186,9 @@
         onReady: () => hooks.onReady(), onMeta: () => hooks.onMeta(), wake: () => hooks.wake(),
         onEnded: (/** @type {any} */ _p, /** @type {any} */ info) => hooks.onEnded(info),
       });
-      const p = new eng.LibavPlayer({ size: clip.size || 0, duration: clip.duration || 0, label: clip.name || '', native: !!clip.native },
-        { ...(cfg.engine || {}), rotation: Number(clip.rotation) || 0 });
+      const meta = clip.meta && typeof clip.meta === 'object' ? clip.meta
+        : { size: clip.size || 0, duration: clip.duration || 0, label: clip.name || '', native: !!clip.native };
+      const p = new eng.LibavPlayer(meta, { ...(cfg.engine || {}), rotation: Number(clip.rotation) || 0 });
       p.cv = cv;
       p.key = clip.id;
       return p;
@@ -219,13 +275,16 @@
     for (const [name, v] of [['VpePlayerState', S], ['VpeEngineAdapter', EngineApi], ['VpeHostAdapter', HostApi], ['VpePlayerUi', UiApi]]) {
       if (!v) throw new Error(`VpeUnified.boot: ${name} is missing`);
     }
-    const log = env.log || (() => {});
     const widgets = env.widgets || {};
     const W = (/** @type {string} */ k) => widgets[k] || (win && win[k]) || G[k];
 
     /** @type {HostAdapter & { slots: () => string[] }} */
     const host = HostApi.create({ vscode, win, page: cfg.page, boot: cfg.boot, surface: cfg.surface || 'unified' });
-    const createPlayer = env.createPlayer !== undefined ? env.createPlayer : defaultCreatePlayer(G, win, doc, vscode, cfg);
+    // The page's log goes to the host's output channel as "webview: ..." (src/unified-viewer.js), as media/player.js
+    // posts it: the layer-3 scenarios wait for lines such as "webview: first frame shown".
+    const log = env.log || ((/** @type {any[]} */ ...a) => host.post({ type: 'log', msg: a.map(String).join(' ') }));
+    const createPlayer = env.createPlayer !== undefined ? env.createPlayer
+      : defaultCreatePlayer(G, win, doc, vscode, cfg, W('VpeFramePlayer'));
     const { compositor = null, sync = null } = env;
 
     // ---- clips and their decoders ----
@@ -240,9 +299,35 @@
      * An adapter with registerClip / unregisterClip learns clips in place; one without them reads its clips once, so
      * it is rebuilt when a clip arrives. Either way the controller keeps the facade below.
      */
+    /** The host's 'stream' report per clip (URL / HLS: the variants of the Quality page). @type {Map<string, any>} */
+    const streams = new Map();
+    /** media/exactframe.js controllers per clip, made on the first exact-frame request. @type {Map<string, any>} */
+    const exacts = new Map();
+    /**
+     * The exact picture of the clip's shown frame from the host (Live transcode, lossy native), as media/player.js
+     * asks for it: null when VpeExact is missing or the shown picture is exact already.
+     * @param {string} id @param {any} p
+     */
+    function grabExact(id, p) {
+      const X = W('VpeExact');
+      if (!X || disposed || !p || !X.available(p, cfg)) return null;
+      let ex = exacts.get(id);
+      if (!ex) {
+        ex = X.create({
+          page: cfg.page, toast, log: (/** @type {string} */ s) => log(s),
+          // The reply names the clip, so it reaches this controller (routeDecoder).
+          post: (/** @type {any} */ m) => host.post({ ...m, clipId: id }),
+          onFail: (/** @type {any} */ _k, /** @type {any} */ error) => toast(X.failureText(players.get(id), error), 4500),
+        });
+        exacts.set(id, ex);
+      }
+      return ex.grab(`${p.gen}|${p.currentFrame()}|${p.shownCount || 0}`, X.shownTime(p));
+    }
     const makeAdapter = () => EngineApi.create({
       clips: [...specs.values()], getPlayer: (/** @type {string} */ id) => players.get(id) || null, compositor,
       pictureApi: W('VpePicture'), controlsApi: W('VpeControls'), doc,
+      streamInfo: (/** @type {string} */ id) => streams.get(id) || null,
+      grabExact: (/** @type {string} */ id, /** @type {any} */ p) => grabExact(id, p),
     });
     /** @type {EngineAdapter} */
     let adapter = makeAdapter();
@@ -262,6 +347,8 @@
       if (!live() || !registered.has(id)) return;
       registered.delete(id);
       specs.delete(id);
+      openWith.delete(id);
+      streams.delete(id);
       try { adapter.unregisterClip(id); } catch { /* already gone */ }
     }
     /** @type {any} */
@@ -307,24 +394,43 @@
       } catch (err) { log(`decoder init rate/loop: ${err && /** @type {any} */ (err).message || err}`); }
     }
 
+    /** What the decoder of a clip opens with (the host's 'frames' / 'libav' meta and the sound sent ahead). @type {Map<string, any>} */
+    const openWith = new Map();
+    /** The prefs the controller has now (null before it exists). */
+    const prefsNow = () => (ui && typeof ui.getPrefs === 'function' ? ui.getPrefs() || null : null);
     /** The decoder for `id`, made on first need (after 'open': the host serves blocks from then on). @param {string} id */
     function ensurePlayer(id) {
       if (players.has(id) || !opened || disposed || typeof createPlayer !== 'function') return players.get(id) || null;
       const spec = specs.get(id) || { id };
       /** @type {PlayerHooks} */
       const hooks = {
-        onFrame: (f) => { onPlayerFrame(id, f); markReady(); },
+        onFrame: (f) => { onPlayerFrame(id, f); markReady(); notePresented(id, f); },
         onReady: () => { markReady(); if (ui) ui.render(); scheduleTick(); },
         onMeta: () => onPlayerMeta(id),
         onEnded: (info) => onPlayerEnded(id, info),
         post: (m) => { if (!disposed) host.post(m); },
-        log: (...a) => log(`[${id}]`, ...a),
+        log: (...a) => decoderLog(id, a),
         wake: () => scheduleTick(),
         showMessage: (msg, hint) => showDecoderMessage(id, msg, hint),
-        toast: (text, ms) => { if (!disposed && ui && text) ui.onHostMessage({ type: 'toast', text: String(text), ms }); },
+        toast: (text, ms) => toast(text, ms),
+        getRate: () => {
+          const pr = prefsNow();
+          return currentRate !== null ? currentRate : pr && Number(pr.rate) > 0 ? Number(pr.rate) : 1;
+        },
+        getLoop: () => (currentLoop !== null ? currentLoop : !!(prefsNow() || {}).loop),
+        getMuted: () => {
+          const s = typeof /** @type {any} */ (adapter).sound === 'function' ? /** @type {any} */ (adapter).sound() : null;
+          return s ? s.soundSource !== id || !!s.muted : !!(prefsNow() || {}).muted;
+        },
+        getVolume: () => {
+          const s = typeof /** @type {any} */ (adapter).sound === 'function' ? /** @type {any} */ (adapter).sound() : null;
+          const v = s ? Number(s.volume) : Number((prefsNow() || {}).volume);
+          return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
+        },
       };
       try {
-        const p = createPlayer({ ...spec }, host, hooks);
+        // Kept (not taken once): a clip closed and opened again, or restarted, opens with the host's meta again.
+        const p = createPlayer({ ...spec, ...(openWith.get(id) || {}) }, host, hooks);
         if (p) {
           players.set(id, p);
           applyRateAndLoop(p);
@@ -385,6 +491,54 @@
         if (el) { el.textContent = message; el.hidden = false; }
       }
     }
+    /** A toast on the controller (a decoder's, a notice of the host's). @param {any} text @param {any} [ms] */
+    function toast(text, ms) {
+      if (!disposed && ui && text) ui.onHostMessage({ type: 'toast', text: String(text), ...(Number(ms) > 0 ? { ms: Number(ms) } : {}) });
+    }
+
+    // ---- the start-up lines the layer-3 scenarios wait for (test/vscode/cases/startup.js and others) ----
+    let firstFrameLogged = false;
+    let firstPicturesLogged = false;
+    /**
+     * A decoder's log line: as it is with one decoder (media/player.js: "first frame shown at ..."), with the clip's
+     * id in front once several decode.
+     * @param {string} id @param {any[]} a
+     */
+    function decoderLog(id, a) {
+      const line = a.map(String).join(' ');
+      // media/engine.js says it itself: the page does not say it again (notePresented).
+      if (/^first frame shown/.test(line)) firstFrameLogged = true;
+      log(players.size >= 2 ? `[${id}] ${line}` : line);
+    }
+    /** The decoder has a picture on screen (engine.js firstShown, frame-player.js shown, or a counted picture). @param {any} p */
+    const presented = (p) => !!p && (p.firstShown === true || (typeof p.shown === 'number' && p.shown >= 0)
+      || Number(p.shownCount) > 0);
+    /**
+     * A decoder presented a picture: the page says "first frame shown" once (for a decoder that does not say it
+     * itself), and "first pictures shown" once every tile of a 2+ tab has one (media/compare.js).
+     * @param {string} id @param {number} [frame] the frame a decoder's onFrame reported
+     */
+    function notePresented(id, frame) {
+      if (disposed || !ui) return;
+      const p = players.get(id);
+      if (!firstFrameLogged && (frame !== undefined || presented(p))) {
+        firstFrameLogged = true;
+        let t = NaN;
+        try { t = p && typeof p.currentTime === 'function' ? Number(p.currentTime()) : NaN; } catch { /* closing */ }
+        if (!Number.isFinite(t)) {
+          const c = engine.getClip(id);
+          const f = frame !== undefined ? frame : p && typeof p.currentFrame === 'function' ? Number(p.currentFrame()) : 0;
+          t = c && c.fps > 0 ? (Number(f) || 0) / c.fps : 0;
+        }
+        log(`first frame shown at ${t.toFixed(3)} s`);
+      }
+      const t = S.getTab(ui.getState());
+      if (!firstPicturesLogged && t.tiles.length >= 2 && t.tiles.every((/** @type {string} */ x) => presented(players.get(x)))) {
+        firstPicturesLogged = true;
+        log('first pictures shown');
+      }
+    }
+
     /**
      * The decoder learned its numbers (fps, length, size): the adapter's spec takes the ones the host did not give,
      * and the clock's fps and length follow at once, even when the clock tile did not change.
@@ -428,6 +582,8 @@
     function disposePlayer(id) {
       const p = players.get(id);
       players.delete(id);
+      const ex = exacts.get(id);
+      if (ex) { exacts.delete(id); try { ex.invalidate(); } catch { /* nothing pending */ } }
       if (p && typeof p.dispose === 'function') { try { p.dispose(); } catch { /* already closed */ } }
     }
     /** Every clip of every tab has a decoder; one no tab shows any more is closed. @param {any} ws */
@@ -500,6 +656,9 @@
       try {
         if (typeof p.settled === 'function') return !p.settled();
         if (typeof p.isPlaying === 'function' ? p.isPlaying() : p.playing) return true;
+        // A frame player (media/frame-player.js) draws its target once the picture has arrived and decoded: until
+        // then each animation frame looks again (it has no wake of its own).
+        if (typeof p.shown === 'number' && p.bitmaps && typeof p.currentFrame === 'function' && p.shown !== p.currentFrame()) return true;
         return (p.seekTarget !== null && p.seekTarget !== undefined) || !!p.shownStale;
       } catch { return false; }
     }
@@ -513,9 +672,12 @@
       for (const [id, p] of visiblePlayers(S.getTab(ui.getState()))) {
         if (typeof p.tick !== 'function') continue;
         try { p.tick(now); } catch (err) { log(`decoder ${id} tick: ${err && /** @type {any} */ (err).message || err}`); }
+        if (!firstFrameLogged || !firstPicturesLogged) notePresented(id);
       }
       pump();
     }
+    /** The shared loop's work, for the debug probe's state: animation frames that ticked, and the times it rested. */
+    const loopStats = { frames: 0, rests: 0 };
     let tickPending = false;
     let raf = 0;
     /** One animation frame: tick, then another while a visible decoder is busy or the tab plays; else rest. */
@@ -524,9 +686,11 @@
       if (disposed || !ui) { tickPending = false; return; }
       // A wake from inside the tick (onReady, a frame, the end) asks for nothing more: the check below decides.
       try { tick(Number.isFinite(now) ? now : Date.now()); } finally { tickPending = false; }
+      loopStats.frames++;
       if (disposed || !ui) return;
       const t = S.getTab(ui.getState());
       if (t.playing || visiblePlayers(t).some((/** @type {any} */ e) => busy(e[1]))) scheduleTick();
+      else loopStats.rests++;
     };
     /** Wake the loop (a decoder's wake, a seek, play): one animation frame is asked for at a time. */
     function scheduleTick() {
@@ -605,6 +769,7 @@
           if (applied.playing === playing) return;
           applied = { ...applied, playing };
           applyToDecoders(t, { play: true, playing });
+          if (playing && debugProbe) debugProbe.wake();
           return;
         }
         case 'rate': case 'loop':
@@ -624,6 +789,10 @@
       }
     }
 
+    /** The debug hooks exist (installed after the controller): the tile count may reinstall the Compare probe. */
+    let probesReady = false;
+    /** media/debug-probe.js once installed (debug pages only). @type {{ dispose: () => void, wake: () => void } | null} */
+    let debugProbe = null;
     /** @param {any} ws */
     function onChange(ws) {
       if (disposed) return;
@@ -631,6 +800,10 @@
       doc.body.classList.toggle('compare', t.tiles.length >= 2);
       syncPlayers(ws);
       driveDecoders(t);
+      if (probesReady && cfg.debug && ui) {
+        installCompareDebug();
+        if (debugProbe && t.playing) debugProbe.wake();
+      }
     }
 
     // ---- the initial state: the config's clips in one tab, at the clip's own fps and length ----
@@ -659,6 +832,7 @@
       const m = /** @type {any} */ (msg);
       if (disposed || !m || typeof m.type !== 'string') return;
       if (DECODER_ROUTES[m.type]) { routeDecoder(m); return; }
+      if (LIFECYCLE_TYPES.includes(m.type)) { onLifecycle(m); return; }
       if (m.type === 'open') { onOpen(m); return; }
       if (m.type === 'sessionState') { onSessionState(m); return; }
       if (m.type === 'openVideo' || m.type === 'replaceTile') {
@@ -676,18 +850,119 @@
     /** @param {any} m */
     function routeDecoder(m) {
       const key = keyOf(m);
-      /** @type {any[]} */
-      let targets = [];
-      if (key !== null) {
-        const p = players.get(key);
-        if (p) targets = [p];
-      } else if (m.type === 'resize' && Array.isArray(m.tiles)) {
+      /** @type {string[]} */
+      let ids = [];
+      if (key !== null) ids = [key];
+      else if (m.type === 'resize' && Array.isArray(m.tiles)) {
         // Compare's host names tiles by index (the slots of the last 'tiles' report).
         const slots = host.slots();
-        targets = m.tiles.map((/** @type {any} */ i) => players.get(typeof i === 'number' ? slots[i] : i)).filter(Boolean);
-      } else if (players.size === 1) targets = [...players.values()];
-      for (const p of targets) {
+        ids = m.tiles.map((/** @type {any} */ i) => (typeof i === 'number' ? slots[i] : i));
+      } else if (players.size === 1) ids = [...players.keys()];
+      else if (m.type === 'exactFrame' && exacts.size === 1) ids = [...exacts.keys()];
+      for (const id of ids) {
+        const p = players.get(id);
+        // HLS: the Quality page's variants (media/player.js streamQ), what pictureInfo / transcodeInfo report.
+        if (m.type === 'stream' && typeof id === 'string' && specs.has(id)) {
+          if (m.quality && Array.isArray(m.quality.variants)) streams.set(id, m.quality);
+          else streams.delete(id);
+        }
+        // An exact frame the page asked for (grabExact): the reply goes to that clip's request, with this page's id.
+        if (m.type === 'exactFrame' && !(p && typeof p.onExactFrame === 'function')) {
+          const ex = exacts.get(id);
+          if (ex) ex.onReply({ ...m, page: cfg.page }).then(() => scheduleTick(), () => {});
+          continue;
+        }
+        if (!p) continue;
         try { DECODER_ROUTES[m.type](p, m); } catch (err) { log(`${m.type}: ${err && /** @type {any} */ (err).message || err}`); }
+      }
+    }
+
+    /**
+     * The clip a lifecycle message is for: clipId / key, else Compare's tile `index` (the host's slots), else the one
+     * clip the active tab shows.
+     * @param {any} m @returns {string | null}
+     */
+    function lifecycleClip(m) {
+      const key = keyOf(m);
+      if (key !== null) return specs.has(key) || players.has(key) ? key : null;
+      if (typeof m.index === 'number') {
+        const id = host.slots()[m.index];
+        if (typeof id === 'string') return id;
+      }
+      const tiles = ui ? S.getTab(ui.getState()).tiles : [...specs.keys()];
+      return tiles.length === 1 ? tiles[0] : null;
+    }
+
+    /**
+     * The clip's decoder starts over (another decoder kind, the host's new meta): the old one closes, the new one is
+     * sought to the clip's place and given the tab's play state, rate and loop.
+     * @param {string} id
+     */
+    function restartPlayer(id) {
+      disposePlayer(id);
+      appliedTargets.delete(id);
+      const p = ensurePlayer(id);
+      if (!p || !ui) return p;
+      const t = S.getTab(ui.getState());
+      if (t.tiles.includes(id)) {
+        applied = null;
+        driveDecoders(t);
+      }
+      return p;
+    }
+
+    /** 'frames', 'frame', 'wavPart', 'libav', 'originalTile' (LIFECYCLE_TYPES). @param {any} m */
+    function onLifecycle(m) {
+      const id = lifecycleClip(m);
+      if (id === null) { log(`${m.type}: no clip for it`); return; }
+      switch (m.type) {
+        case 'wavPart': { // MJPEG AVI sound, in parts before its 'frames' message
+          const w = openWith.get(id) || {};
+          openWith.set(id, { ...w, wavParts: [...(w.wavParts || []), m.data] });
+          return;
+        }
+        case 'frames': {
+          const w = openWith.get(id) || {};
+          const wav = m.wav || w.wavParts || null;
+          openWith.set(id, { frameMeta: m.meta, ...(wav ? { wav } : {}) });
+          addSpec({ clipId: id, clip: { kind: 'sequence', ...numbersOf(m.meta) } });
+          restartPlayer(id);
+          return;
+        }
+        case 'frame': {
+          const p = players.get(id);
+          if (p && typeof p.onFrame === 'function') p.onFrame(m.index, m.data);
+          scheduleTick();
+          return;
+        }
+        case 'libav': {
+          const meta = m.meta && typeof m.meta === 'object' ? m.meta : null;
+          openWith.set(id, meta ? { meta } : {});
+          const spec = specs.get(id);
+          if (spec && meta && typeof meta.native === 'boolean' && spec.native !== meta.native) {
+            specs.set(id, { ...spec, native: meta.native });
+            learnClip(/** @type {ClipSpec} */ (specs.get(id)));
+          }
+          restartPlayer(id);
+          return;
+        }
+        case 'originalTile': {
+          // Live transcode gave way to the built-in decoder (media/compare.js useOriginalTile).
+          const spec = specs.get(id);
+          if (!spec) return;
+          openWith.delete(id);
+          streams.delete(id);
+          specs.set(id, { ...spec, native: false, transcoded: false });
+          learnClip(/** @type {ClipSpec} */ (specs.get(id)));
+          restartPlayer(id);
+          if (m.notice) {
+            const many = ui ? S.getTab(ui.getState()).tiles.length >= 2 : specs.size >= 2;
+            toast(many ? `${spec.name || id}: ${m.notice}` : String(m.notice));
+          }
+          if (ui) ui.render();
+          return;
+        }
+        default: break;
       }
     }
 
@@ -730,6 +1005,304 @@
       onOpen({});
     }
 
+    // ---- test hooks: window.vpe / window.vpeCompare and the debug probes the layer-3 scenarios talk to ----
+    /** The controller with its extras (rail, controls, ctxMenu, ab), beyond UnifiedControllerApi. */
+    const ux = () => /** @type {any} */ (ui);
+    const tabNow = () => S.getTab(ui.getState());
+    const clockPlayer = () => (ui ? players.get(clockIdOf(tabNow())) || null : null);
+    const compareActive = () => !!ui && tabNow().tiles.length >= 2;
+    /** The adapter with its extras (transcodeInfo, sound), beyond EngineAdapter; read late (it may be rebuilt). */
+    const ax = () => /** @type {any} */ (adapter);
+    /** Apply a pure state step to the controller's state. @param {(ws: any) => any} f */
+    const update = (f) => ui.setState(f(ui.getState()));
+    /**
+     * Runs a controller action; false when the controller has no such action (or it failed).
+     * @param {string} name @param {any[]} a
+     */
+    const act = (name, ...a) => {
+      try { ui.dispatch(name, ...a); return true; } catch (err) {
+        log(`debug ${name}: ${err && /** @type {any} */ (err).message || err}`);
+        return false;
+      }
+    };
+    /** @param {number} d frames, + or - */
+    const stepBy = (d) => {
+      const n = Math.round(Number(d) || 0);
+      for (let i = 0; i < Math.abs(n); i++) act(n < 0 ? 'prevFrame' : 'nextFrame');
+    };
+    const ratePrefs = () => Number((prefsNow() || {}).rate) || 1;
+    /** @param {number} r */
+    const setRateTo = (r) => {
+      const Ctl = W('VpeControls');
+      const step = Ctl && Number(Ctl.SPEED_STEP) > 0 ? Number(Ctl.SPEED_STEP) : 0.25;
+      if (Number(r) > 0) act('rateStep', (Number(r) - ratePrefs()) / step);
+    };
+    const playTo = (/** @type {boolean} */ on) => { if (tabNow().playing !== on) act('playPause'); };
+    /** The tile id at a Compare index (a number, or a clip id), else the first tile. @param {any} i */
+    const tileId = (i) => {
+      const tiles = tabNow().tiles;
+      return typeof i === 'string' && tiles.includes(i) ? i : tiles[Number(i)] || tiles[0];
+    };
+    const tileOr0 = (/** @type {any} */ i) => {
+      const n = Number(i);
+      return Number.isInteger(n) && n >= 0 && n < tabNow().tiles.length ? n : 0;
+    };
+    const debugApi = {
+      ui, host, engine, players, specs, streams,
+      get clock() { return clockPlayer(); },
+      get tiles() { return tabNow().tiles.map((/** @type {string} */ id) => players.get(id)).filter(Boolean); },
+      state: () => ui.getState(),
+      tab: () => tabNow(),
+      step: stepBy, play: () => playTo(true), pause: () => playTo(false),
+      seekFrame: (/** @type {number} */ f) => act('seek', Math.round(Number(f) || 0)),
+      seekClock: (/** @type {number} */ s) => act('seek', Math.round((Number(s) || 0) * tabNow().fps)),
+      setRate: setRateTo,
+      pictureInfo: (/** @type {string} */ id) => (typeof ax().pictureInfo === 'function'
+        ? ax().pictureInfo(id || clockIdOf(tabNow())) : null),
+      transcodeInfo: (/** @type {string} */ id) => (typeof ax().transcodeInfo === 'function' ? ax().transcodeInfo(id) : null),
+    };
+    /** media/compare.js window.vpeCompare, over the unified state (tiles by their index in the active tab). */
+    const compareApi = {
+      get tiles() { return debugApi.tiles; }, get clock() { return clockPlayer(); },
+      get A() { return debugApi.tiles[0]; }, get B() { return debugApi.tiles[1]; },
+      step: stepBy, seekClock: debugApi.seekClock, seekA: debugApi.seekClock, play: debugApi.play, pause: debugApi.pause,
+      setMode: (/** @type {string} */ m) => act('layout', m),
+      setDock: (/** @type {string} */ d) => { if (typeof S.setDock === 'function') update((ws) => S.setDock(ws, d)); },
+      setHeroRatio: (/** @type {number} */ r) => {
+        if (typeof S.setHeroRatio === 'function') update((ws) => S.setHeroRatio(ws, Number(r)));
+      },
+      setSyncMode: (/** @type {boolean} */ on) => { if (tabNow().syncMode !== !!on) act('sync'); },
+      setOffset: (/** @type {any} */ i, /** @type {number} */ v, /** @type {string} */ unit) => {
+        const id = tileId(i);
+        let ws = ui.getState();
+        const u = unit === 'ms' ? 'ms' : 'frames';
+        const cur = S.getOffset ? S.getOffset(S.getTab(ws), id) : null;
+        if (cur && cur.unit !== u && typeof S.setOffsetUnit === 'function') {
+          ws = S.setOffsetUnit(ws, id, u, (engine.getClip(id) || {}).fps || tabNow().fps);
+        }
+        if (typeof S.setOffset === 'function') ui.setState(S.setOffset(ws, id, Number(v) || 0));
+      },
+      setClock: (/** @type {any} */ i) => act('setClock', tileId(i)),
+      setSound: (/** @type {any} */ i) => act('setSound', tileId(i)),
+      removeTile: (/** @type {any} */ i) => act('removeTile', tileId(i)),
+      setSplit: (/** @type {number} */ x) => {
+        if (typeof S.setSplitRatio === 'function') update((ws) => S.setSplitRatio(ws, Number(x)));
+      },
+      swapSides: () => act('swap'),
+      nudge: (/** @type {any} */ i, /** @type {number} */ d) => act('nudge', tileId(i), Number(d) || 1),
+      leave: () => act('leaveCompare'),
+      railState: () => (ux().rail && typeof ux().rail.snapshot === 'function' ? ux().rail.snapshot() : null),
+    };
+    if (win) {
+      win.vpe = debugApi;
+      win.vpeCompare = compareApi;
+    }
+    let compareDebugTiles = 0;
+    let compareDebugGen = 0;
+
+    /** An element of the page, or an inert stand-in (the unified page lacks a few of media/player.js's). @param {string} id */
+    function elOf(id) {
+      const e = doc.getElementById(id);
+      if (e) return e;
+      const none = () => null;
+      return {
+        id, hidden: true, disabled: false, textContent: '', innerText: '', value: '0', max: '0', min: '0', title: '',
+        style: {}, dataset: {}, children: [], className: '', offsetWidth: 0, offsetHeight: 0,
+        classList: { contains: () => false, add() {}, remove() {}, toggle() {} },
+        getAttribute: none, hasAttribute: () => false, setAttribute() {}, querySelector: none, querySelectorAll: () => [],
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0 }),
+        addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true, click() {}, focus() {}, closest: none,
+      };
+    }
+    /** The page's elements by id, for the probes' `ui.<id>` reads. */
+    const uiEls = new Proxy({}, { get: (_t, k) => (typeof k === 'string' ? elOf(k) : undefined) });
+    /** The clock tile's canvas (its decoder's own), else the page's #canvas: what the probe measures and reads. */
+    const liveCanvas = new Proxy({}, {
+      get: (_t, k) => {
+        const p = clockPlayer();
+        const cv = (p && (p.cv || p.canvas)) || elOf('canvas');
+        const v = cv[k];
+        return typeof v === 'function' ? v.bind(cv) : v;
+      },
+      set: (_t, k, v) => {
+        const p = clockPlayer();
+        const cv = (p && (p.cv || p.canvas)) || elOf('canvas');
+        cv[k] = v;
+        return true;
+      },
+    });
+    const safe = (/** @type {any} */ o, /** @type {string} */ k, /** @type {any} */ dflt) => (/** @type {any[]} */ ...a) => {
+      try { return o && typeof o[k] === 'function' ? o[k](...a) : dflt; } catch { return dflt; }
+    };
+
+    /**
+     * media/debug-probe.js (window.VpeDebugProbe) over the unified page, as media/player.js installs it: the probe
+     * reads the clock tile's decoder. With 2+ tiles the Compare probe answers instead (one handler per message).
+     */
+    function installDebugProbe() {
+      const Probe = W('VpeDebugProbe');
+      if (!Probe || typeof Probe.install !== 'function' || !win) return null;
+      const VS = W('VpeScopes') || {};
+      const H = W('VpeHdr') || null;
+      const T = W('VpeTime') || {};
+      /** @type {Map<any, any>} the probe's message listeners, wrapped to stay quiet while Compare answers */
+      const wrapped = new Map();
+      const probeWin = new Proxy(win, {
+        get: (t, k) => {
+          if (k === 'addEventListener' || k === 'removeEventListener') {
+            return (/** @type {string} */ type, /** @type {any} */ fn, /** @type {any} */ o) => {
+              let f = fn;
+              if (type === 'message') {
+                if (k === 'addEventListener') {
+                  f = (/** @type {any} */ e) => { if (!compareActive()) fn(e); };
+                  wrapped.set(fn, f);
+                } else { f = wrapped.get(fn) || fn; wrapped.delete(fn); }
+              }
+              return t[k](type, f, o);
+            };
+          }
+          const v = t[k];
+          return typeof v === 'function' ? v.bind(t) : v;
+        },
+      });
+      const panelButtons = () => Array.from(elOf('panel').querySelectorAll('button') || []);
+      try {
+        return Probe.install({
+          log, win: probeWin, doc,
+          getPlayer: () => clockPlayer(),
+          isLibavPlayer: (/** @type {any} */ p) => !!(p && p.queue),
+          stage: elOf('stage'), canvas: liveCanvas, overlay: elOf('overlay'), message: elOf('message'), hint: elOf('hint'),
+          actionBtn: elOf('action'), dropHint: elOf('dropHint'), compareBackdrop: elOf('compareBackdrop'),
+          ui: uiEls,
+          controls: {
+            view: safe(ux().controls, 'view', null), sheetOpen: safe(ux().controls, 'sheetOpen', false),
+            show: safe(ux().controls, 'show', undefined), closeAll: safe(ux().controls, 'closeAll', undefined),
+          },
+          ctxMenu: {
+            open: safe(ux().ctxMenu, 'open', undefined), close: safe(ux().ctxMenu, 'close', undefined),
+            snapshot: safe(ux().ctxMenu, 'snapshot', null),
+          },
+          insp: {
+            picture: () => { const t = tabNow(); return { mode: t.picMode, zoom: t.zoom, panX: t.panX, panY: t.panY }; },
+            zoomedSize: () => null,
+          },
+          scopes: {
+            mode: () => null, analysis: () => null, perf: () => null,
+            columnLevels: typeof VS.columnLevels === 'function' ? VS.columnLevels : () => [],
+            targets75: typeof VS.targets75 === 'function' ? VS.targets75 : () => [],
+          },
+          hdr: {
+            debugPixels: H && typeof H.debugPixels === 'function' ? H.debugPixels : () => Promise.reject(new Error('no VpeHdr on this page')),
+            probe: H && typeof H.probe === 'function' ? H.probe : () => Promise.reject(new Error('no VpeHdr on this page')),
+          },
+          ab: { presentationRange: safe(ux().ab, 'presentationRange', null) },
+          frameText: typeof T.frameText === 'function' ? T.frameText : (/** @type {number} */ f, /** @type {number} */ n) => `${f + 1} / ${n}`,
+          step: stepBy,
+          setRate: setRateTo,
+          runTool: (/** @type {string} */ label) => {
+            const b = panelButtons().find((x) => ((x.getAttribute && x.getAttribute('aria-label')) || x.textContent || '').trim().startsWith(label));
+            if (b) b.click();
+            return !!b;
+          },
+          getToolCount: () => panelButtons().length,
+          getState: () => {
+            const pr = prefsNow() || {};
+            return {
+              prefs: pr, volume: Number(pr.volume) || 0, muted: !!pr.muted, loop: !!pr.loop, onEnd: pr.onEnd,
+              rail: ux().rail && typeof ux().rail.snapshot === 'function' ? ux().rail.snapshot() : null,
+              streamQ: streams.get(clockIdOf(tabNow())) || null, loopStats: { ...loopStats },
+              loopBusy: tickPending ? 'busy' : 'rest', picturePct: null, seekDragging: false, volumeDragging: false,
+            };
+          },
+        });
+      } catch (err) {
+        log(`debug probe could not start: ${err && /** @type {any} */ (err).message || err}`);
+        return null;
+      }
+    }
+
+    /**
+     * media/compare-debug.js (VpeCompareDebug) over the unified page, as media/compare.js installs it. It reads the
+     * tile count once (N), so it is installed again when the count changes; an older install keeps its listener but
+     * no longer matches the page (its `cfg.page` is a value no message carries), as does every install while the tab
+     * shows one video.
+     */
+    function installCompareDebug() {
+      const CD = W('VpeCompareDebug');
+      if (!CD || typeof CD.install !== 'function' || !cfg.debug || disposed) return;
+      const n = tabNow().tiles.length;
+      if (n < 2 || n === compareDebugTiles) return;
+      compareDebugTiles = n;
+      const gen = ++compareDebugGen;
+      const off = {};
+      const Grid = W('CompareGrid');
+      const t = () => tabNow();
+      /** Display index of the clip, -1 when it is not shown. @param {any} id */
+      const indexOf = (id) => t().tiles.indexOf(id);
+      let sel = 0;
+      let thresh = 0;
+      const st = {
+        get mode() { return t().layout; }, get dock() { return t().dock; }, get heroRatio() { return t().heroRatio; },
+        get clock() { return Math.max(0, indexOf(clockIdOf(t()))); }, get sound() { return indexOf(t().soundId); },
+        get muted() { return !!(prefsNow() || {}).muted; }, get split() { return t().split; },
+        get order() { const slots = host.slots(); return t().tiles.map((/** @type {string} */ id, /** @type {number} */ i) => (slots.includes(id) ? slots.indexOf(id) : i)); },
+        get offsets() { return t().tiles.map((/** @type {string} */ id) => (S.getOffset ? S.getOffset(t(), id) : { v: 0, unit: 'frames' })); },
+        get pic() { return { mode: t().picMode, zoom: t().zoom, cx: 0.5, cy: 0.5 }; },
+        get rate() { return ratePrefs(); }, get loop() { return !!(prefsNow() || {}).loop; },
+        get sel() { return sel; }, set sel(v) { sel = Number(v) || 0; },
+        get thresh() { return thresh; }, set thresh(v) { thresh = Number(v) || 0; },
+      };
+      const cellsEl = elOf('cells');
+      const cells = () => {
+        const o = cellsEl.getBoundingClientRect();
+        return Array.from(cellsEl.children || []).map((/** @type {any} */ d, /** @type {number} */ i) => {
+          const r = d.getBoundingClientRect();
+          const box = { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
+          const add = !!(d.classList && d.classList.contains('add'));
+          return /** @type {any} */ ({ ...box, ...(add ? { add: true } : { tiles: [i] }), full: { ...box }, pic: { ...box } });
+        });
+      };
+      try {
+        CD.install({
+          cfg: { debug: true, get page() { return gen === compareDebugGen && compareActive() ? cfg.page : off; } },
+          log, N: n, MAX_TILES: t().maxVideos,
+          Grid: Grid && typeof Grid.gridFor === 'function' ? Grid : { gridFor: () => ({ cols: n, rows: 1 }) },
+          st, canvas: liveCanvas, stage: elOf('stage'), cellsEl, ui: uiEls,
+          controls: {
+            show: safe(ux().controls, 'show', undefined), closeAll: safe(ux().controls, 'closeAll', undefined),
+            view: safe(ux().controls, 'view', null),
+          },
+          scanner: { start: () => log('scan: not in the unified viewer'), running: false, found: null },
+          $: (/** @type {string} */ id) => doc.getElementById(id),
+          getState: () => ({
+            tiles: debugApi.tiles, clock: clockPlayer(), cells: cells(), hover: null, syncMode: !!t().syncMode,
+            statsIds: new Set(t().statsOpen.map(indexOf)),
+          }),
+          contextCount: () => 0,
+          setHover: () => {},
+          frameOf: (/** @type {any} */ p) => (p && typeof p.currentFrame === 'function' ? Number(p.currentFrame()) : 0),
+          fpsOf: (/** @type {any} */ p) => Number(p && p.fps) || t().fps,
+          synced: () => t().tiles.every((/** @type {string} */ id) => {
+            const p = players.get(id);
+            const want = appliedTargets.get(id);
+            return !p || want === null || want === undefined || typeof p.currentFrame !== 'function' || Number(p.currentFrame()) === want;
+          }),
+          tileSize: () => { const c = cells().find((x) => !x.add); return c ? { w: Math.round(c.w), h: Math.round(c.h) } : { w: 0, h: 0 }; },
+          frameFactor: () => 1,
+          picState: () => ({ pct: null }),
+          setMode: compareApi.setMode, setDock: compareApi.setDock, setHeroRatio: compareApi.setHeroRatio,
+          setSyncMode: compareApi.setSyncMode, setOffset: compareApi.setOffset, setClock: compareApi.setClock,
+          removeTile: compareApi.removeTile, setSound: compareApi.setSound,
+          step: stepBy, play: debugApi.play, pause: debugApi.pause, seekClock: debugApi.seekClock, setRate: setRateTo,
+          setSplit: compareApi.setSplit, tileOr0, leave: compareApi.leave,
+        });
+      } catch (err) { log(`compare debug could not start: ${err && /** @type {any} */ (err).message || err}`); }
+    }
+
+    debugProbe = cfg.debug ? installDebugProbe() : null;
+    probesReady = true;
+    if (cfg.debug) installCompareDebug();
+
     host.connect(onHostMessage);
 
     // ---- teardown: the page goes away (pagehide) or the caller disposes ----
@@ -740,6 +1313,8 @@
       raf = 0;
       tickPending = false;
       if (win && typeof win.removeEventListener === 'function') win.removeEventListener('pagehide', dispose);
+      if (debugProbe) { try { debugProbe.dispose(); } catch { /* ignore */ } }
+      compareDebugGen++; // an installed Compare probe matches no message any more
       for (const id of [...players.keys()]) disposePlayer(id);
       for (const x of [sync, compositor]) if (x && typeof x.dispose === 'function') { try { x.dispose(); } catch { /* ignore */ } }
       try { ui.dispose(); } catch { /* ignore */ }
