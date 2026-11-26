@@ -206,11 +206,16 @@
       const height = pos(spec.height) || pos(meta.height) || pos(video && (video.sourceHeight || video.height)) || FALLBACK.height;
       const hasAudio = typeof spec.hasAudio === 'boolean' ? spec.hasAudio
         : !!(p && (p.audio || (p.info && p.info.audio) || meta.hasAudio));
-      return {
+      const sAny = /** @type {any} */ (spec);
+      return /** @type {any} */ ({
         id, name: typeof spec.name === 'string' ? spec.name : id,
         fps, frames, duration: frames / fps, width, height, hasAudio,
         codec: spec.codec || (video && video.codec) || '', size: pos(spec.size) || pos(meta.size),
-      };
+        sourceKind: sAny.sourceKind || sAny.kind || (meta.url ? 'url' : 'file'),
+        kind: sAny.kind || (meta.url ? 'url' : 'file'),
+        live: !!(sAny.live || meta.live),
+        host: sAny.host || meta.host || '',
+      });
     }
     /** @param {string} id */
     const clipOrFirst = (id) => getClip(id) || getClip(specs[0] && specs[0].id);
@@ -231,10 +236,14 @@
           const info = (p && p.info) || {};
           let tracks = null;
           try { tracks = p && typeof p.tracks === 'function' ? p.tracks() : null; } catch { tracks = null; }
+          const cAny = /** @type {any} */ (c);
+          const q = streamOf(c.id);
+          const curVar = q && Array.isArray(q.variants) ? q.variants.find((/** @type {any} */ v) => v.id === q.current) || null : null;
+          const stream = cAny.sourceKind === 'url' ? { host: cAny.host || '', live: !!cAny.live, variant: curVar } : null;
           const f = controlsApi.facts({
             name: c.name, size: c.size, duration: c.duration, width: c.width, height: c.height, fps: c.fps, info,
             vmode: p && p.vmode, amode: p && p.amode, native: !!(p && p.cfg && p.cfg.native),
-            remoteStream: !!(p && p.remoteStream), hasSound: c.hasAudio,
+            remoteStream: !!(p && p.remoteStream), hasSound: c.hasAudio, stream,
             tracks: { audio: tracks && tracks.audio ? tracks.audio.length : c.hasAudio ? 1 : 0, sub: tracks && tracks.sub ? tracks.sub.length : 0 },
           });
           const rows = f && Array.isArray(f.rows)

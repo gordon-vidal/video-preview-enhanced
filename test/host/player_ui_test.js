@@ -977,14 +977,15 @@ const withGlobals = (dom, fn) => {
         dom.win.fire('pointermove', { pointerId: 1, clientX: 200, clientY: 500 });
         assert.strictEqual(ui.getPrefs().volume, v1, 'a move after the release does nothing');
 
-        // Seek bar: a drag far above the bar keeps seeking; the release lands on that frame.
+        // Seek bar: with thumbnails active, a drag holds the main picture while moving the slider; the release commits.
         const seek = $('seek');
         Object.assign(seek, { min: '0', step: '1' });
+        const beforeSeek = tab().frame;
         const want = Math.round(0.75 * Number(seek.max));
         seek.fire('pointerdown', { button: 0, pointerId: 2, clientX: 680 * 0.2, clientY: 2 });
-        assert.deepStrictEqual([ui.dragState().seek, tab().frame], [true, 48], 'the press seeks');
+        assert.deepStrictEqual([ui.dragState().seek, seek.value, tab().frame], [true, '48', beforeSeek], 'the press moves the slider and holds the picture');
         dom.win.fire('pointermove', { pointerId: 2, clientX: 680 * 0.75, clientY: -250 });
-        assert.deepStrictEqual([seek.value, tab().frame], [String(want), want], 'above the bar it still follows');
+        assert.deepStrictEqual([seek.value, tab().frame], [String(want), beforeSeek], 'above the bar the slider follows while holding the picture');
         ui.onDecoderFrame(150); // a late decoder frame does not pull the bar back under the pointer
         assert.strictEqual(seek.value, String(want));
         dom.win.fire('pointerup', { pointerId: 2, clientX: 680 * 0.75, clientY: -250 });

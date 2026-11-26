@@ -359,6 +359,7 @@
     /** @type {any} */
     const engine = new Proxy({}, {
       get: (_t, k) => {
+        if (k === 'quality') return (/** @type {string} */ id) => streams.get(id) || null;
         if (k === 'statsText') {
           return (/** @type {string} */ id) => {
             const p = players.get(id);
@@ -1644,6 +1645,10 @@
         if (m.type === 'stream' && typeof id === 'string' && specs.has(id)) {
           if (m.quality && Array.isArray(m.quality.variants)) streams.set(id, m.quality);
           else streams.delete(id);
+          if (ui) {
+            ui.render();
+            if (controlsInst && typeof controlsInst.refresh === 'function') controlsInst.refresh();
+          }
         }
         // An exact frame the page asked for (grabExact): the reply goes to that clip's request, with this page's id.
         if (m.type === 'exactFrame' && !(p && typeof p.onExactFrame === 'function')) {
@@ -1718,9 +1723,14 @@
           const meta = m.meta && typeof m.meta === 'object' ? m.meta : null;
           openWith.set(id, meta ? { meta } : {});
           const spec = specs.get(id);
-          if (spec && meta && typeof meta.native === 'boolean' && spec.native !== meta.native) {
-            specs.set(id, { ...spec, native: meta.native });
-            learnClip(/** @type {ClipSpec} */ (specs.get(id)));
+          if (spec && meta) {
+            const patch = /** @type {any} */ ({ ...spec });
+            if (typeof meta.native === 'boolean') patch.native = meta.native;
+            if (meta.live !== undefined) patch.live = !!meta.live;
+            if (meta.url) { patch.sourceKind = 'url'; patch.kind = 'url'; }
+            if (typeof meta.host === 'string' && meta.host) patch.host = meta.host;
+            specs.set(id, patch);
+            learnClip(patch);
           }
           restartPlayer(id);
           return;
@@ -2103,19 +2113,28 @@
         get thresh() { return thresh; }, set thresh(v) { thresh = Number(v) || 0; },
       };
       const cellsEl = elOf('cells');
+      const picRectFor = (/** @type {string | undefined} */ cid, /** @type {{ x: number, y: number, w: number, h: number }} */ box) => {
+        if (!cid || typeof engine.pictureRect !== 'function') return { ...box };
+        const tab = t();
+        const r = engine.pictureRect(cid, box.w, box.h, tab.picMode, tab.zoom, tab.panX, tab.panY);
+        return r && r.w > 0 ? { x: box.x + r.x, y: box.y + r.y, w: r.w, h: r.h } : { ...box };
+      };
       const cells = () => {
         const o = cellsEl.getBoundingClientRect();
-        if (t().layout === 'split' && t().tiles.length === 2) {
+        const tab = t();
+        if (tab.layout === 'split' && tab.tiles.length === 2) {
           const first = cellsEl.children[0];
           const r = first ? first.getBoundingClientRect() : o;
           const box = { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
-          return [/** @type {any} */ ({ ...box, tiles: [0, 1], full: { ...box }, pic: { ...box } })];
+          const full = picRectFor(tab.tiles[0], box);
+          return [/** @type {any} */ ({ ...box, tiles: [0, 1], full, pic: { ...box } })];
         }
         return Array.from(cellsEl.children || []).map((/** @type {any} */ d, /** @type {number} */ i) => {
           const r = d.getBoundingClientRect();
           const box = { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
           const add = !!(d.classList && d.classList.contains('add'));
-          return /** @type {any} */ ({ ...box, ...(add ? { add: true } : { tiles: [i] }), full: { ...box }, pic: { ...box } });
+          const full = add ? { ...box } : picRectFor(tab.tiles[i], box);
+          return /** @type {any} */ ({ ...box, ...(add ? { add: true } : { tiles: [i] }), full, pic: { ...box } });
         });
       };
       try {
@@ -2144,8 +2163,23 @@
             return !p || want === null || want === undefined || typeof p.currentFrame !== 'function' || Number(p.currentFrame()) === want;
           }),
           tileSize: () => { const c = cells().find((x) => !x.add); return c ? { w: Math.round(c.w), h: Math.round(c.h) } : { w: 0, h: 0 }; },
-          frameFactor: () => 1,
-          picState: () => ({ pct: null }),
+          frameFactor: () => {
+            const tab = t();
+            const c = cells().find((x) => !x.add);
+            if (!c || !tab.tiles[0] || typeof engine.pictureRect !== 'function') return 1;
+            const fit = engine.pictureRect(tab.tiles[0], c.w, c.h, 'fit', 1, 0, 0);
+            if (!fit || !(fit.w > 0 && fit.h > 0)) return 1;
+            return Math.max(1, c.full.w / fit.w, c.full.h / fit.h);
+          },
+          picState: () => {
+            const tab = t();
+            const c = cells().find((x) => !x.add);
+            const cid = tab.tiles[0];
+            const clip = cid ? engine.getClip(cid) : null;
+            if (!c || !clip || !(clip.width > 0)) return { pct: null };
+            const dpr = (win && Number(win.devicePixelRatio) > 0) ? Number(win.devicePixelRatio) : 1;
+            return { pct: Math.round((c.full.w * dpr / clip.width) * 100) };
+          },
           setMode: compareApi.setMode, setDock: compareApi.setDock, setHeroRatio: compareApi.setHeroRatio,
           setSyncMode: compareApi.setSyncMode, setOffset: compareApi.setOffset, setClock: compareApi.setClock,
           removeTile: compareApi.removeTile, setSound: compareApi.setSound,

@@ -1561,7 +1561,8 @@
     // pointer capture). The seek bar seeks as it goes and lands on the frame where it is let go.
     const RangeDrag = W.VpeRangeDrag || null;
     seekDrag = RangeDrag ? RangeDrag.bindSeek(seekEl, {
-      preview: (/** @type {number} */ f) => act.seek(f),
+      // With seek-bar thumbnails active, hold the main picture while dragging and seek on release (commit).
+      preview: (/** @type {number} */ f) => { if (!thumbCanvas) act.seek(f); },
       finish: () => render(),
       commit: (/** @type {number} */ f) => act.seek(f),
     }) : null;

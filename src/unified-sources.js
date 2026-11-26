@@ -203,7 +203,8 @@ function createUrlDecoder(c, io, deps) {
       },
     });
     postStream();
-    io.postRaw({ type: 'libav', meta: { size: 0, duration: 0, label: '', native: true, live: !!live, url: true } });
+    const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
+    io.postRaw({ type: 'libav', meta: { size: 0, duration: 0, label: '', native: true, live: !!live, url: true, host } });
     sendHlsSubs(signal, null);
   }
 
@@ -301,7 +302,7 @@ function createUrlDecoder(c, io, deps) {
     if (stale()) return;
     io.log(`decoding with libav.js (${deps.libavVariant || 'vpe'}) over HTTP`);
     postStream();
-    io.postRaw({ type: 'libav', meta: { size: net.size, duration: net.duration || 0, label: '', url: true, native: false } });
+    io.postRaw({ type: 'libav', meta: { size: net.size, duration: net.duration || 0, label: '', url: true, native: false, host: (() => { try { return new URL(url).host; } catch { return ''; } })() } });
     sendHlsSubs(signal, U.HlsFile && net instanceof U.HlsFile ? net : null);
   }
 
