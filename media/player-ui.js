@@ -212,6 +212,16 @@
     return `${m}:${(t % 60).toFixed(2).padStart(5, '0')}`;
   }
 
+  /** m:ss.mmm without media/timefmt.js (milliseconds cut, as its fmtClock). @param {number} sec */
+  function clockFallback(sec) {
+    const t = Number.isFinite(sec) && sec > 0 ? sec : 0;
+    const m = Math.floor(t / 60);
+    const s = t - m * 60;
+    const whole = Math.floor(s + 1e-6);
+    const ms = Math.min(999, Math.floor((s - whole) * 1000 + 1e-6));
+    return `${m}:${String(whole).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+  }
+
   /**
    * Wire bar buttons. Each entry is [element, run, stop]; `stop` keeps the click from reaching the stage or the bar
    * (whose own click handlers play / pause or dismiss panels). The pages use the `onclick` property (a page can swap
@@ -543,7 +553,8 @@
    *   host: HostAdapter,
    *   widgets?: { VpeControls?: any, VpeFolderRail?: any, VpeCtxMenu?: any, VpeAbLoop?: any, VpeAutoplay?: any,
    *     VpeTime?: any, VpePicture?: any, VpeModes?: any, VpePlayerUiTiles?: any, VpePlayerUiInput?: any, CompareGrid?: any,
-   *     VpePlayerUiTools?: any, VpePlayerUiLifecycle?: any, VpeReducedResNotice?: any, VpeSlowNotice?: any },
+   *     VpePlayerUiTools?: any, VpePlayerUiLifecycle?: any, VpeReducedResNotice?: any, VpeSlowNotice?: any,
+   *     VpeRangeDrag?: any },
    *   inspectWidgets?: { scopes?: any, inspector?: any, stats?: any, xray?: any },
    *   storage?: { getState: () => any, setState: (s: any) => void },
    *   goto?: { frame?: number, t?: number, mode?: string } | null,
@@ -575,7 +586,7 @@
     const win = /** @type {any} */ (env.win || doc.defaultView || globalThis);
     const GLOBAL_WIDGETS = ['VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay', 'VpeTime', 'VpePicture',
       'VpeModes', 'VpePlayerUiTiles', 'VpePlayerUiInput', 'CompareGrid', 'VpePlayerUiTools', 'VpePlayerUiLifecycle',
-      'VpeReducedResNotice', 'VpeSlowNotice'];
+      'VpeReducedResNotice', 'VpeSlowNotice', 'VpeRangeDrag'];
     const W = /** @type {any} */ ({ ...Object.fromEntries(GLOBAL_WIDGETS.map((k) => [k, win[k]])), ...(env.widgets || {}) });
     for (const k of ['VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay']) {
       if (!W[k]) throw new Error(`player-ui: widget ${k} is missing`);
@@ -624,9 +635,37 @@
     const splitBtn = barButton('splitBtn', 'Split Wipe (2 videos)', ICONS.split);
     const swapBtn = barButton('swapBtn', 'Swap sides  X', ICONS.swap);
     const syncBtn = barButton('syncBtn', 'Sync frame offsets', ICONS.sync);
+    // Compare's own panel button (src/bar.js barHtml({ compare }) has it; the unified bar does not): videos, offsets,
+    // clock and sound. Shown with two videos or more; the Compare / capture toggle beside it stays what it is.
+    const cmpPanelBtn = (() => {
+      let b = $('cmpBtn');
+      if (!b) {
+        b = barButton('cmpBtn', 'Compare: videos, offsets, clock, sound', ICONS.compare);
+        b.setAttribute('aria-label', 'Compare');
+        b.setAttribute('aria-expanded', 'false');
+        b.setAttribute('aria-controls', 'panel');
+      }
+      return b;
+    })();
 
     /** @type {(() => void)[]} */
     const cleanups = [];
+    /**
+     * The page's empty button placeholders (#overlay's action, the #notice buttons) get their words only when a
+     * message needs them; until then a stand-in name keeps every button named in words. Once they hold text, the
+     * text is their name again.
+     */
+    const PLACEHOLDERS = [['action', 'Overlay action'], ['noticeAction', 'Notice action'],
+      ['noticeSettings', 'Notice settings'], ['noticeHide', 'Hide this notice']];
+    const namePlaceholders = () => {
+      for (const [id, name] of PLACEHOLDERS) {
+        const b = $(id);
+        if (!b) continue;
+        const text = String(b.textContent || '').trim();
+        if (!text) { if (b.getAttribute('aria-label') !== name) b.setAttribute('aria-label', name); }
+        else if (b.getAttribute('aria-label') === name) b.removeAttribute('aria-label');
+      }
+    };
     const listen = (/** @type {any} */ target, /** @type {string} */ type, /** @type {any} */ fn, /** @type {any} */ opts) => {
       target.addEventListener(type, fn, opts);
       cleanups.push(() => target.removeEventListener(type, fn, opts));
@@ -636,6 +675,15 @@
     const live = Input && liveEl ? Input.createLiveAnnouncer({ liveEl, win }) : null;
     if (live) cleanups.push(live.dispose);
     const announce = (/** @type {string} */ t) => { if (live) live.announce(t); else if (liveEl) liveEl.textContent = t; };
+    namePlaceholders();
+    if (typeof win.MutationObserver === 'function') {
+      const mo = new win.MutationObserver(() => namePlaceholders());
+      for (const [id] of PLACEHOLDERS) {
+        const b = $(id);
+        if (b) mo.observe(b, { childList: true, characterData: true, subtree: true });
+      }
+      cleanups.push(() => mo.disconnect());
+    }
     const rawToast = $('toast') ? W.VpeControls.createToast($('toast'), announce) : announce;
     const flashPlay = $('playFlash') ? W.VpeControls.createPlayFlash($('playFlash'), stageEl) : () => {};
 
@@ -702,11 +750,16 @@
     };
     const ab = W.VpeAbLoop.create();
     let lastTilesKey = '';
+    /** The seek bar's and the volume slider's drags (media/range-drag.js), when the page has it. */
+    /** @type {any} */ let seekDrag = null;
+    /** @type {any} */ let volDrag = null;
     let disposed = false;
     const tab = () => S.getTab(ws);
     const fps = () => tab().fps || 24;
     const fmt = (/** @type {number} */ f) => formatTime(f, fps(), prefs.timeMode, W.VpeTime ? W.VpeTime.fmtTimecode : null);
-    const clockText = (/** @type {number} */ sec) => formatTime(Math.round(sec * fps()), fps(), 0);
+    /** The bar's clock (m:ss.mmm, as media/timefmt.js fmtClock): the readout, the seek slider's words, the tips. */
+    const clockText = (/** @type {number} */ sec) => (W.VpeTime && W.VpeTime.fmtClock
+      ? W.VpeTime.fmtClock(sec) : clockFallback(sec));
     const single = () => tab().tiles.length === 1;
     /**
      * The arrow keys' and the stage wheel's jump sizes (settings videoPreviewEnhanced.jump.*): seconds, or 'frame'.
@@ -1014,7 +1067,7 @@
       sheet: need('sheet'),
       bar: barEl,
       onShow: () => { if (ctxMenu) ctxMenu.close(false); if (tileMenu) tileMenu.close(); },
-      buttons: { cog: cogBtn, info: infoBtn, rate: rateBtn, tracks: tracksBtn, cmp: cmpBtn, stepPrev: prevSize, stepNext: nextSize },
+      buttons: { cog: cogBtn, info: infoBtn, rate: rateBtn, tracks: tracksBtn, cmp: cmpPanelBtn, stepPrev: prevSize, stepNext: nextSize },
       views: cmpViews,
       get: () => {
         const t = tab();
@@ -1032,7 +1085,7 @@
           picture: { mode: t.picMode, pct: Math.round(t.zoom * 100), zoomed: t.zoom !== 1 },
           tools: [
             isMulti
-              ? { id: 'compare', label: 'Compare', note: `${t.tiles.length} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', cmpBtn) }
+              ? { id: 'compare', label: 'Compare', note: `${t.tiles.length} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', cmpPanelBtn) }
               : { id: 'compare', label: t.capture ? 'Pause Compare capture' : 'Start Compare', key: 'Shift+D', on: t.capture, run: () => act.capture() },
             ...(rail ? [{ id: 'rail', label: rail.isOpen() ? 'Close Folder Rail' : 'Open Folder Rail', on: rail.isOpen(), run: () => { rail.toggle(); render(); } }] : []),
             // ⚙ › Inspection (media/player.js TOOLS): each tool with its key; the inspector is X only with one video.
@@ -1071,7 +1124,8 @@
         setAutoplay: (/** @type {string} */ m) => setOnEnd(m),
         cycleAB: () => markAB(null),
         copyFrame: () => act.copyFrame(),
-        setRate: (/** @type {number} */ r) => setRate(r),
+        // The speed slider: its panel stays as it is while the slider owns the pointer (a redraw would end the drag).
+        setRate: (/** @type {number} */ r) => setRate(r, false),
         pickRate: (/** @type {number} */ r) => setRate(r),
         stepRate: (/** @type {number} */ d) => setRate(prefs.rate + d * W.VpeControls.SPEED_STEP),
         setTranscode: (/** @type {string} */ m) => { prefs.transcodeMode = m; controls.refresh(); toast(`Live transcode: ${m}`); },
@@ -1114,7 +1168,8 @@
       },
       beforeOpen: () => { controls.closeAll(false); if (tileMenu) tileMenu.close(); },
       actions: {
-        playPause: () => act.playPause(), loop: () => act.loop(), setA: () => act.setA(), setB: () => act.setB(),
+        // From the menu "Set" always sets (at this moment); the A / B keys toggle (media/player.js MENU_ACTIONS).
+        playPause: () => act.playPause(), loop: () => act.loop(), setA: () => markAB('a', true), setB: () => markAB('b', true),
         clearAB: () => act.clearAB(), copyFrame: () => act.copyFrame(), saveFrame: () => act.saveFrame(),
         copyTime: () => act.copyTime(), startCompare: () => act.capture(),
         // Add to Compare never turns a running capture off: with capture on it picks the next video instead.
@@ -1176,10 +1231,10 @@
     });
 
     // ---- actions (the bar, the keys, the menus and the panels all land here) ----
-    function setRate(/** @type {number} */ r) {
+    function setRate(/** @type {number} */ r, refresh = true) {
       prefs.rate = W.VpeControls.clampRate(r);
       drawBar();
-      controls.refresh();
+      if (refresh) controls.refresh();
       emitTransport();
     }
     function setPicture(/** @type {string} */ m) {
@@ -1188,10 +1243,12 @@
       controls.refresh();
       toast(`Picture size: ${m}`);
     }
-    function markAB(/** @type {'a' | 'b' | null} */ which) {
+    /** A / B (and the panel's rows) toggle that end; `reset` (the right-click menu's "Set") always sets it here. */
+    function markAB(/** @type {'a' | 'b' | null} */ which, reset = false) {
       const t = tab();
       const sec = t.frame / fps();
-      if (which) ab.set(which, sec, t.frame, sec, false);
+      if (which && reset) ab.reset(which, sec, t.frame, sec, false);
+      else if (which) ab.set(which, sec, t.frame, sec, false);
       else ab.cycle(sec, t.frame, sec, false);
       toast(ab.toast((/** @type {number} */ s) => fmt(Math.round(s * fps()))));
       controls.refresh();
@@ -1288,7 +1345,7 @@
       /** C (one video): subtitles on / off; the CC button (ccClick) opens Settings › Subtitles when there are none. */
       cc: () => {
         if (!subs || !single()) return false;
-        subs.toggle();
+        subs.ccClick();
         return true;
       },
       /** W: the scopes (luma waveform, RGB parade, vectorscope, histogram, off). */
@@ -1380,7 +1437,7 @@
         commit(S.setSound(ws, id), `Sound from ${letterOf(tab(), id)}`);
       },
       toggleStats: (/** @type {string} */ id) => commit(S.toggleTileStats(ws, id)),
-      openTile: (/** @type {string} */ id) => { selId = id; controls.show('cmpVid', cmpBtn); },
+      openTile: (/** @type {string} */ id) => { selId = id; controls.show('cmpVid', cmpPanelBtn); },
       replace: (/** @type {string} */ id) => postHost({ type: 'replaceVideo', oldId: id, exclude: tab().tiles.slice() }),
       leaveCompare: () => {
         const t = tab();
@@ -1417,7 +1474,7 @@
     bindButtons([
       [cmpBtn, act.capture, true], [splitBtn, () => act.layout(tab().layout === 'split' ? 'grid' : 'split'), true],
       [spotBtn, () => act.layout('spotlight'), true], [gridBtn, () => act.layout('grid'), true], [swapBtn, act.swap, true],
-      [syncBtn, act.sync, true],
+      [syncBtn, act.sync, true], [cmpPanelBtn, () => controls.toggle('cmp', cmpPanelBtn), true],
       [playBtn, act.playPause, true], [prevBtn, () => act.stepButton(-1), true], [nextBtn, () => act.stepButton(1), true],
       [muteBtn, act.mute, true], [timeEl, act.cycleTime, true], [setABtn, act.setA, true], [setBBtn, act.setB, true],
       [cogBtn, () => controls.toggle('main', cogBtn), true], [infoBtn, act.info, true],
@@ -1426,7 +1483,33 @@
     ], onClick);
     bindStepBadges([prevSize, nextSize], (b) => controls.toggle('step', b), (el, type, fn) => listen(el, type, fn));
     if (volEl) listen(volEl, 'input', () => act.volume(Number(volEl.value)));
-    listen(seekEl, 'input', () => act.seek(Number(seekEl.value)));
+    // A drag on the seek bar or the volume keeps going off its edges, even outside the webview (media/range-drag.js:
+    // pointer capture). The seek bar seeks as it goes and lands on the frame where it is let go.
+    const RangeDrag = W.VpeRangeDrag || null;
+    seekDrag = RangeDrag ? RangeDrag.bindSeek(seekEl, {
+      preview: (/** @type {number} */ f) => act.seek(f),
+      finish: () => render(),
+      commit: (/** @type {number} */ f) => act.seek(f),
+    }) : null;
+    if (!seekDrag) listen(seekEl, 'input', () => act.seek(Number(seekEl.value)));
+    volDrag = RangeDrag && volEl ? RangeDrag.bind(volEl) : null;
+    if (volDrag && W.VpeControls.holdVolumeOpen) W.VpeControls.holdVolumeOpen(volEl);
+    cleanups.push(() => { if (seekDrag) seekDrag.stop(); if (volDrag) volDrag.stop(); });
+    // The wheel over the speed button steps the speed, over the volume the volume (media/player.js).
+    if (rateBtn) {
+      listen(rateBtn, 'wheel', (/** @type {WheelEvent} */ e) => {
+        if (!e.deltaY) return;
+        e.preventDefault();
+        act.rateStep(e.deltaY < 0 ? 1 : -1);
+      }, { passive: false });
+    }
+    if (volEl) {
+      listen(volEl, 'wheel', (/** @type {WheelEvent} */ e) => {
+        if (!e.deltaY || !hasAudio(tab().soundId)) return;
+        e.preventDefault();
+        act.volumeStep(e.deltaY < 0 ? 0.05 : -0.05);
+      }, { passive: false });
+    }
     if (capBanner) {
       const stopBtn = capBanner.querySelector('[data-act="pause"]') || $('capStopBtn');
       const pickBtn = capBanner.querySelector('[data-act="pick"]') || $('capPickBtn');
@@ -1948,6 +2031,8 @@
       }
       if (e.shiftKey && (e.key === 'C' || e.key === 'c') && !e.ctrlKey && !e.altKey) { act.copyLink(); return true; }
       if (insp && INSPECT_KEYS.has(e.key) && insp.handleKey(e)) { controls.refresh(); return true; }
+      // C: subtitles on / off, or (no track yet) Settings › Subtitles to load a file; C again closes it.
+      if (subs && single() && (e.key === 'c' || e.key === 'C') && !e.shiftKey) { subs.ccClick(); return true; }
       if (subs && single() && SUB_KEYS.has(e.key)) return subs.handleKey(e);
       return false;
     };
@@ -1989,6 +2074,38 @@
     const DBLCLICK_MS = 250;
     cleanups.push(() => { if (clickTimer) win.clearTimeout(clickTimer); });
     const NOT_A_TILE_CLICK = 'button, .tile-stats, #menu';
+
+    /**
+     * A click on the picture that only ends something: the release of a drag or pan, or a press that closed a panel
+     * or a menu (their consumeDismiss: the press closed it before this click), or one that closes what is still open.
+     * True when the click is used up; it then neither plays / pauses nor enlarges.
+     */
+    function dismissClick() {
+      // Both are read (and reset) every time: a stale "dismissed" must not swallow a later click.
+      const pressed = [controls, ctxMenu].map((x) => !!(x && typeof x.consumeDismiss === 'function' && x.consumeDismiss()));
+      if (consumeDragClick()) return true;
+      if (pressed.includes(true)) return true;
+      if (controls.anyOpen() || ctxMenu.isOpen() || (tileMenu && tileMenu.isOpen())) {
+        controls.closeAll(false); ctxMenu.close(false); if (tileMenu) tileMenu.close(); return true;
+      }
+      return false;
+    }
+    /** What on the stage is not the picture: its own controls, banners and boxes. */
+    const NOT_THE_PICTURE = 'button, input, a, #notice, #goto, #splitter, #divider, #menu, #ctxmenu, .tile-stats';
+    // One video: a click anywhere on the picture (the tile's canvas, the stage around a letterboxed picture, a
+    // subtitle) plays / pauses at once (no double-click wait: the double-click is fullscreen), as media/player.js.
+    listen(stageEl, 'click', (/** @type {any} */ e) => {
+      if (!single()) return;
+      if (e.target && e.target.closest && e.target.closest(NOT_THE_PICTURE)) return;
+      if (dismissClick()) return;
+      if (insp && insp.getState().inspector && pickPixel(e, tab().tiles[0])) return;
+      act.playPause();
+    });
+    listen(stageEl, 'dblclick', (/** @type {any} */ e) => {
+      if (!single()) return;
+      if (e.target && e.target.closest && e.target.closest(NOT_THE_PICTURE)) return;
+      act.fullscreen();
+    });
 
     /** The clock frame at which tile `id` shows its frame `f` (shownOf the other way round). */
     function clockFrameOf(/** @type {any} */ t, /** @type {string} */ id, /** @type {number} */ f) {
@@ -2129,21 +2246,20 @@
         // A tile's double-click enlarges it, so its single click waits out the double-click window: playback
         // never stutters pause → play before the enlarge. One video (and Split) play at once, as media/player.js.
         const enlargeable = ui.isMulti && !split;
+        // One video: the stage's own click handler (pictureClick) takes it, wherever on the picture it lands.
         cell.addEventListener('click', (/** @type {any} */ e) => {
+          if (!ui.isMulti) return;
           if (e.target && e.target.closest && e.target.closest(NOT_A_TILE_CLICK)) return;
-          if (consumeDragClick()) return;
-          if (controls.anyOpen() || ctxMenu.isOpen() || (tileMenu && tileMenu.isOpen())) {
-            controls.closeAll(false); ctxMenu.close(false); if (tileMenu) tileMenu.close(); return;
-          }
-          if (insp && !ui.isMulti && insp.getState().inspector && pickPixel(e, r.clipId)) return;
+          if (dismissClick()) return;
           if (!enlargeable) { act.playPause(); return; }
           if (clickTimer) win.clearTimeout(clickTimer);
           clickTimer = win.setTimeout(() => { clickTimer = 0; act.playPause(); }, DBLCLICK_MS);
         });
         cell.addEventListener('dblclick', (/** @type {any} */ e) => {
+          if (!ui.isMulti) return;
           if (e.target && e.target.closest && e.target.closest(NOT_A_TILE_CLICK)) return;
           if (clickTimer) { win.clearTimeout(clickTimer); clickTimer = 0; }
-          if (enlargeable) act.enlarge(r.clipId); else if (!ui.isMulti) act.fullscreen();
+          if (enlargeable) act.enlarge(r.clipId);
         });
         cellsEl.appendChild(cell);
         cellNodes.set(r.clipId, { cell, cv, ov, stats, move, frEl: null, offEl: null, ovKey: '', statsKey: '' });
@@ -2155,7 +2271,7 @@
         // Clicking the empty space around the compact button still toggles play/pause like any tile.
         slot.addEventListener('click', (/** @type {any} */ e) => {
           if (e.target && e.target.closest && e.target.closest('button')) return;
-          if (controls.anyOpen() || ctxMenu.isOpen()) { controls.closeAll(false); ctxMenu.close(false); return; }
+          if (dismissClick()) return;
           act.playPause();
         });
         const b = slot.querySelector('button');
@@ -2252,6 +2368,9 @@
       }
       if (picBtn && W.VpePicture) pictureButton(picBtn, W.VpePicture, t.picMode, multi ? 'all videos' : '');
       else if (picBtn) picBtn.dataset.mode = t.picMode;
+      // CC: one video only, and (with the subtitle controller) only once the clip has a track; until then C and
+      // ⚙ › Subtitles offer to load a file. Without the controller (the mock-up) its demo list shows.
+      if (tracksBtn) tracksBtn.hidden = multi || !!(subs && !subs.getCcButtonState().visible);
       if (tracksBtn && subs) {
         const cc = subs.getCcButtonState();
         tracksBtn.classList.toggle('on', cc.on);
@@ -2338,7 +2457,6 @@
       }
       if (capBanner) capBanner.hidden = !ui.showCaptureBanner;
 
-      if (tracksBtn) tracksBtn.hidden = !ui.showCC;
       // Compare's layout buttons: Spotlight / Equal Grid (N >= 2), Split Wipe and Swap (N = 2).
       const layoutBtn = (/** @type {any} */ b, /** @type {boolean} */ show, /** @type {boolean} */ on) => {
         b.hidden = !show;
@@ -2349,6 +2467,7 @@
       layoutBtn(gridBtn, ui.isMulti, ui.effectiveLayout === 'grid');
       layoutBtn(splitBtn, ui.showSplitBtn, ui.effectiveLayout === 'split');
       swapBtn.hidden = ui.n !== 2;
+      cmpPanelBtn.hidden = !ui.isMulti;
       layoutBtn(syncBtn, ui.showSyncBtn, t.syncMode);
       cmpBtn.classList.toggle('cap-on', t.capture);
       cmpBtn.title = ui.captureTitle;
@@ -2358,7 +2477,8 @@
         : `${ICONS.compare}<span>${esc(ui.captureLabel)}</span>`;
 
       seekEl.max = String(t.maxFrame);
-      seekEl.value = String(t.frame);
+      // While the seek bar is dragged it shows where the pointer is, not the decoder's last frame.
+      if (!(seekDrag && seekDrag.dragging())) seekEl.value = String(t.frame);
       const rd = timeReadout({
         f: t.frame, t: t.frame / fps(), dur: t.maxFrame / fps(), fps: fps(), nFrames: t.maxFrame + 1, mode: prefs.timeMode,
         fmtClock: clockText, fmtTimecode: W.VpeTime ? W.VpeTime.fmtTimecode : (/** @type {number} */ f) => String(f),
@@ -2371,6 +2491,11 @@
         ? Input.formatSeekAria({ letter, timeText: clockText(t.frame / fps()), durText: clockText(t.maxFrame / fps()), frame: t.frame })
         : `${letter ? `${letter} ` : ''}${clockText(t.frame / fps())} of ${clockText(t.maxFrame / fps())}, frame ${t.frame + 1}`;
       seekEl.setAttribute('aria-valuetext', aria);
+      if (timeEl) {
+        const at = `${letter ? `${letter} ` : ''}${clockText(t.frame / fps())}, frame ${t.frame + 1}`;
+        timeEl.setAttribute('aria-label', `Position ${at}. Click to change the format.`);
+      }
+      namePlaceholders();
       playBtn.classList.toggle('playing', t.playing);
       const playLabel = `${t.playing ? 'Pause' : 'Play'}${ui.isMulti ? ' all' : ''}`;
       playBtn.setAttribute('aria-label', playLabel);
@@ -2518,7 +2643,9 @@
       actions: () => Object.keys(dispatchTable),
       getState: () => ws,
       setState: (/** @type {any} */ next) => { ws = next; ab.clear(); render(); },
-      getPrefs: () => ({ ...prefs, picMode: tab().picMode }),
+      getPrefs: () => ({ ...prefs, picMode: tab().picMode, loop: prefs.onEnd === 'loop' }),
+      /** Whether the seek bar or the volume slider is being dragged (the test hooks' drag state). */
+      dragState: () => ({ seek: !!(seekDrag && seekDrag.dragging()), volume: !!(volDrag && volDrag.dragging()) }),
       /** The clock video's decoder learnt its real fps / length: the seek bar, readout and stepping follow it. */
       syncClockMeta: () => {
         const before = ws;
