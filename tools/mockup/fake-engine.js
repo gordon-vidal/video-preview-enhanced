@@ -12,15 +12,23 @@
     { id: 'clip-5', name: 'shot_05_hdr.mkv', codec: 'HEVC HDR10', fps: 24, frames: 240, width: 3840, height: 2160, hasAudio: true, color: '#f97316', bg1: '#3a1a0a', bg2: '#9a3412', accent: '#fdba74' },
   ].map((c) => ({ ...c, duration: c.frames / c.fps }));
 
-  function createFakeEngine(clips = SAMPLE_CLIPS) {
+  function createFakeEngine(/** @type {any[]} */ initialClips = SAMPLE_CLIPS) {
+    // A copy: registerClip / unregisterClip change this engine's list, never the caller's (or SAMPLE_CLIPS).
+    const clips = initialClips.slice();
+    const first = clips[0];
+    let nextSeed = clips.length;
     const byId = new Map(clips.map((c, idx) => [c.id, { ...c, seed: idx }]));
-    const clipOf = (/** @type {string} */ id) => byId.get(id) || byId.get(clips[0].id);
+    const clipOf = (/** @type {string} */ id) => byId.get(id) || byId.get(clips.length ? clips[0].id : first.id) || { ...first, seed: 0 };
     // Caller-supplied clips may omit the newer metadata: fall back to a 1080p, 24 fps, 240-frame clip with sound.
     const fpsOf = (/** @type {any} */ c) => (c.fps > 0 ? c.fps : 24);
     const framesOf = (/** @type {any} */ c) => (c.frames > 0 ? c.frames : 240);
     const sizeOf = (/** @type {any} */ c) => ({ width: c.width > 0 ? c.width : 1920, height: c.height > 0 ? c.height : 1080 });
     /** What the contract tests read back: calls the page made that have no visible output in a fake. */
-    const fake = { soundSource: /** @type {string | null} */ (null), volume: 1, muted: false, thumbnails: 0, thumbHover: false };
+    const fake = {
+      soundSource: /** @type {string | null} */ (null), volume: 1, muted: false, thumbnails: 0, thumbHover: false,
+      /** @type {Record<string, number>} the frame each clip last showed through showFrame */
+      shown: /** @type {Record<string, number>} */ ({}),
+    };
     /** @type {{ clipId: string, seconds: number, cb: any } | null} a scrub preview coalesced to the next microtask */
     let pendingThumb = null;
     let thumbGen = 0;
@@ -30,6 +38,28 @@
       fake,
       getClip(id) {
         return byId.get(id) || clips[0];
+      },
+      /** A clip opened after boot (or a known one updated). Returns it, or null without an id. @param {any} clip */
+      registerClip(clip) {
+        if (!clip || typeof clip.id !== 'string' || !clip.id) return null;
+        const known = byId.get(clip.id);
+        const i = clips.findIndex((c) => c.id === clip.id);
+        if (i >= 0) clips[i] = clip;
+        else clips.push(clip);
+        const base = SAMPLE_CLIPS[(known ? known.seed : nextSeed) % SAMPLE_CLIPS.length];
+        // Colours come from a sample clip so a new tile still draws; the caller's fields win.
+        byId.set(clip.id, { ...base, ...clip, seed: known ? known.seed : nextSeed++ });
+        return clip;
+      },
+      /** Forget a closed clip; true when it was known. @param {string} clipId */
+      unregisterClip(clipId) {
+        if (!byId.has(clipId)) return false;
+        byId.delete(clipId);
+        const i = clips.findIndex((c) => c.id === clipId);
+        if (i >= 0) clips.splice(i, 1);
+        if (fake.soundSource === clipId) fake.soundSource = null;
+        delete fake.shown[clipId];
+        return true;
       },
       /**
        * Render a deterministic synthetic video frame onto a 2D canvas.
@@ -124,19 +154,24 @@
       // ---- timing ----
       /**
        * The frame a tile shows at the shared clock frame, given its sync offset (frames, or { unit, v }).
-       * Outside the clip there is no picture: { frame: null, outOfRange: true }.
+       * Outside the clip there is no picture: { frame: null, outOfRange: true }. A clock at another rate
+       * (`clockFps`) is mapped through time into the clip's frames before the offset is added.
        * @param {string} clipId @param {number} clockFrame
-       * @param {number | { unit: 'frames' | 'ms', v: number } | null} [offset]
+       * @param {number | { unit: 'frames' | 'ms', v: number } | null} [offset] @param {number} [clockFps]
        */
-      shownFrame(clipId, clockFrame, offset) {
+      shownFrame(clipId, clockFrame, offset, clockFps) {
         const c = clipOf(clipId);
+        const fps = fpsOf(c);
+        const cf = Number(clockFps);
+        const mixed = Number.isFinite(cf) && cf > 0 && Math.abs(cf - fps) >= 1e-9;
+        const base = mixed ? Math.round(((Number(clockFrame) || 0) / cf) * fps) : Math.round(Number(clockFrame) || 0);
         let off = 0;
         if (typeof offset === 'number') off = offset;
         else if (offset && typeof offset === 'object') {
           const v = Number(offset.v) || 0;
-          off = offset.unit === 'ms' ? (v / 1000) * fpsOf(c) : v;
+          off = offset.unit === 'ms' ? (v / 1000) * fps : v;
         }
-        const f = Math.round(Number(clockFrame) || 0) + Math.round(off);
+        const f = base + Math.round(off);
         if (f < 0 || f >= framesOf(c)) return { frame: null, outOfRange: true };
         return { frame: f, outOfRange: false };
       },
@@ -211,8 +246,41 @@
       snapshot(clipId, frame) {
         const c = clipOf(clipId);
         const { width, height } = sizeOf(c);
-        const f = Math.max(0, Math.min(framesOf(c) - 1, Math.round(Number(frame) || 0)));
+        const asked = frame === undefined || frame === null ? fake.shown[c.id] || 0 : frame;
+        const f = Math.max(0, Math.min(framesOf(c) - 1, Math.round(Number(asked) || 0)));
         return { clipId: c.id, frame: f, width, height, mimeType: 'image/png', data: pngHeader(width, height) };
+      },
+      /**
+       * Show `frame` paused; resolves (next microtask, like a presented picture) with the frame shown, or null for
+       * an unknown clip or an aborted signal. @param {string} clipId @param {number} frame
+       * @param {{ signal?: AbortSignal | null }} [opts] @returns {Promise<number | null>}
+       */
+      async showFrame(clipId, frame, opts = {}) {
+        const signal = opts && opts.signal;
+        const c = byId.get(clipId);
+        if (!c || (signal && signal.aborted)) return null;
+        await Promise.resolve();
+        if (signal && signal.aborted) return null;
+        const f = Math.max(0, Math.min(framesOf(c) - 1, Math.round(Number(frame) || 0)));
+        fake.shown[c.id] = f;
+        return f;
+      },
+      /**
+       * The pixel at picture point (x, y): a deterministic colour per clip and place, as { r, g, b, a, text }.
+       * Outside the picture there is none (null). @param {string} clipId @param {number} x @param {number} y
+       */
+      pixelAt(clipId, x, y) {
+        const c = byId.get(clipId);
+        if (!c) return null;
+        const { width, height } = sizeOf(c);
+        const px = Math.floor(Number(x));
+        const py = Math.floor(Number(y));
+        if (!(px >= 0 && py >= 0 && px < width && py < height)) return null;
+        const r = (px * 7 + c.seed * 40) & 255;
+        const g = (py * 5 + c.seed * 90) & 255;
+        const b = ((fake.shown[c.id] || 0) * 3 + c.seed * 60) & 255;
+        const hex = [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+        return { r, g, b, a: 255, text: `x=${px} y=${py} rgb=(${r},${g},${b}) #${hex}` };
       },
 
       // ---- sound ----

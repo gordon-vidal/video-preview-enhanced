@@ -14,19 +14,42 @@ const { createFakeHost } = require('../../tools/mockup/fake-host');
 const T0 = Date.now();
 const pngSource = createFakeEngine();
 
-/** An engine.js-like player: meta, fps, n, info, the shown picture, thumbnails and volume. */
+/**
+ * An engine.js-like player: meta, fps, n, info, the shown picture, thumbnails and volume. A seek is presented
+ * `o.delayMs` later (engine.js: seekTarget clears, shownT is set, shownCount counts the picture), and the picture's
+ * PNG ends with the shown frame's number, so successive frames give visibly different bytes.
+ */
 function stubPlayer(/** @type {any} */ o) {
+  const png = (/** @type {number} */ k) => Buffer.concat([Buffer.from(pngSource.snapshot('clip-0', 0).data), Buffer.from([k & 255])]);
   const p = {
     meta: { duration: o.frames / o.fps, width: o.width, height: o.height, size: 1e6 },
     fps: o.fps, n: o.frames, audio: o.audio ? {} : null,
     info: { video: { codec: 'h264', width: o.width, height: o.height }, ...(o.audio ? { audio: { codec: 'aac', channels: 2, sampleRate: 48000 } } : {}) },
     shown: 0,
+    shownT: /** @type {number | null} */ (0),
+    seekTarget: /** @type {number | null} */ (null),
+    shownCount: 1,
+    seeks: /** @type {number[]} */ ([]),
+    paused: 0,
     volume: /** @type {any} */ (null),
     thumbs: 0,
     leaves: 0,
     currentFrame() { return p.shown; },
+    pause() { p.paused++; },
+    seekFrame(/** @type {number} */ k) {
+      p.seeks.push(k);
+      p.seekTarget = k / o.fps;
+      setTimeout(() => {
+        if (p.seekTarget !== k / o.fps) return; // a later seek won
+        p.shown = k;
+        p.shownT = k / o.fps;
+        p.seekTarget = null;
+        p.shownCount++;
+      }, o.delayMs || 0);
+    },
     snapshotSource() {
-      return { width: o.width, height: o.height, toDataURL: () => `data:image/png;base64,${Buffer.from(pngSource.snapshot('clip-0', 0).data).toString('base64')}` };
+      const k = p.shown;
+      return { width: o.width, height: o.height, toDataURL: () => `data:image/png;base64,${png(k).toString('base64')}` };
     },
     thumbnail(/** @type {number} */ _t, /** @type {any} */ cb) { p.thumbs++; cb({ width: 160, height: 90 }); return true; },
     thumbnailLeave() { p.leaves++; },
@@ -53,22 +76,37 @@ function makeEngine(/** @type {any} */ extra = {}) {
   return { engine, players };
 }
 
-/** Production host messages back to FakeHost's unified names: a stand-in for src/extension.js / src/compare.js. */
-function toUnified(/** @type {any} */ m) {
-  switch (m.type) {
-    case 'comparePick': case 'add': return { type: 'pickVideo', exclude: m.exclude || [] };
-    case 'replace': return { type: 'replaceVideo', oldId: m.oldId };
-    case 'leave': return { type: 'leaveCompare', keepId: m.keepId, t: m.t };
-    case 'tileOrder': return { type: 'tileOrder', order: m.ids || m.order };
-    case 'tileSize': return m.tile ? { type: 'tileSize', ...m.tile } : m;
-    case 'playbackPrefs': return m.prefs ? m : { type: 'playbackPrefs', prefs: { volume: m.volume, rate: m.rate, timeMode: m.timeMode, stepSize: m.stepSize } };
-    default: return m;
-  }
-}
-
-/** A webview: vscode API + window 'message' events, wired to a FakeHost that answers with this page's envelope. */
+/**
+ * A webview: vscode API + window 'message' events, wired to a FakeHost that answers with this page's envelope.
+ * On 'compare' the bridge plays src/compare.js: it keeps its own slot table (tiles in the order the host opened
+ * them) and reads only the numeric `order` / `index` / `keep` the adapter sends, never the ids beside them, so a
+ * wrong index reaches FakeHost as the wrong video.
+ */
 function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, boot?: string }} */ env = { page: 'page-1', boot: 'boot-1' }) {
   const { page, boot } = env;
+  /** @type {string[]} Compare's host: clip ids by tile index, in opening order */
+  const hostSlots = [];
+  const compare = surface === 'compare';
+  const idAt = (/** @type {any} */ i) => (Number.isInteger(i) ? hostSlots[i] : undefined);
+  /** Production host messages back to FakeHost's unified names: a stand-in for src/extension.js / src/compare.js. */
+  const toUnified = (/** @type {any} */ m) => {
+    switch (m.type) {
+      case 'comparePick': case 'add': return { type: 'pickVideo', exclude: m.exclude || [] };
+      case 'replace': return { type: 'replaceVideo', oldId: idAt(m.index) };
+      case 'leave': return { type: 'leaveCompare', keepId: idAt(m.keep), t: m.t };
+      case 'tileOrder': return { type: 'tileOrder', order: compare ? (m.order || []).map(idAt) : m.order };
+      case 'tileSize': return m.tile ? { type: 'tileSize', ...m.tile } : m;
+      case 'playbackPrefs': return m.prefs ? m : { type: 'playbackPrefs', prefs: { volume: m.volume, rate: m.rate, timeMode: m.timeMode, stepSize: m.stepSize } };
+      default: return m;
+    }
+  };
+  /** What the host does to its own tiles (opening order; a replaced tile keeps its slot). @param {any} m */
+  const hostTracks = (m) => {
+    if (!compare) return;
+    // The page only shows tiles the host opened: one it reports that the host has not seen was opened before.
+    if (m.type === 'tiles' && Array.isArray(m.tiles)) for (const id of m.tiles) if (!hostSlots.includes(id)) hostSlots.push(id);
+    if (m.type === 'leave' && idAt(m.keep)) hostSlots.splice(0, hostSlots.length, /** @type {string} */ (idAt(m.keep)));
+  };
   /** @type {Set<(e: any) => void>} */
   const listeners = new Set();
   const win = {
@@ -76,17 +114,22 @@ function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, b
     removeEventListener(/** @type {string} */ t, /** @type {any} */ f) { if (t === 'message') listeners.delete(f); },
   };
   const dispatch = (/** @type {any} */ data) => { for (const f of [...listeners]) f({ data }); };
-  const fake = createFakeHost({ clips: createFakeEngine().clips, deliver: (m) => dispatch({ ...m, page, boot }) });
+  const deliver = (/** @type {any} */ m) => {
+    if (compare && m.type === 'replaceTile') { const i = hostSlots.indexOf(m.oldId); if (i >= 0) hostSlots[i] = m.newId; }
+    if (compare && m.type === 'openVideo' && m.compare && !hostSlots.includes(m.clipId)) hostSlots.push(m.clipId);
+    dispatch({ ...m, page, boot });
+  };
+  const fake = createFakeHost({ clips: createFakeEngine().clips, deliver });
   /** @type {any[]} */
   const sent = [];
   let state = /** @type {any} */ (undefined);
   const vscode = {
-    postMessage(/** @type {any} */ m) { sent.push(m); fake.post(toUnified(m)); },
+    postMessage(/** @type {any} */ m) { sent.push(m); const u = toUnified(m); hostTracks(m); fake.post(u); },
     getState: () => state,
     setState: (/** @type {any} */ s) => { state = s; },
   };
   const host = VpeHostAdapter.create({ vscode, win, page, boot, surface: /** @type {any} */ (surface) });
-  return { host, fake, sent, listeners, dispatch, vscode };
+  return { host, fake, sent, listeners, dispatch, vscode, hostSlots };
 }
 
 (async () => {
@@ -270,6 +313,175 @@ function makeBridge(/** @type {string} */ surface, /** @type {{ page?: string, b
     b.host.post({ type: 'copyText', text: 'late' });
     assert.deepStrictEqual([got.length, b.sent.length], [0, 0], 'nothing in or out after dispose');
     assert.doesNotThrow(() => b.host.dispose(), 'dispose twice');
+  }
+
+  // ---- engine: showFrame waits for a slow decoder to present, and each frame is its own picture ----
+  {
+    const specs = [{ id: 'S', fps: 25, frames: 100, width: 640, height: 360, audio: false, delayMs: 30 }];
+    const players = { S: stubPlayer(specs[0]) };
+    const engine = VpeEngineAdapter.create({ clips: [{ id: 'S' }], getPlayer: (id) => /** @type {any} */ (players)[id] || null });
+    const p = players.S;
+    const picture = () => engine.snapshot('S').data;
+    const s5 = engine.showFrame('S', 5);
+    assert.strictEqual(p.shown, 0, 'nothing presented yet: showFrame did not answer before the decoder');
+    assert.strictEqual(await s5, 5, 'showFrame resolves once frame 5 is presented');
+    assert.ok(p.paused > 0, 'showFrame pauses the player');
+    const pic5 = picture();
+    assert.strictEqual(pic5[pic5.length - 1], 5, 'the snapshot is frame 5\'s picture');
+    assert.strictEqual(await engine.showFrame('S', 6), 6);
+    const pic6 = picture();
+    assert.strictEqual(pic6[pic6.length - 1], 6, 'the snapshot is frame 6\'s picture');
+    assert.notDeepStrictEqual(pic5, pic6, 'successive frames give distinct pictures');
+    // A still taken before the decoder has presented is still the old frame: showFrame is what makes it exact.
+    const s7 = engine.showFrame('S', 7);
+    assert.strictEqual(picture()[pic6.length - 1], 6, 'before presentation the picture is the previous frame');
+    assert.strictEqual(await s7, 7);
+    assert.strictEqual(picture()[pic6.length - 1], 7);
+    const seeks = p.seeks.length;
+    assert.strictEqual(await engine.showFrame('S', 7), 7, 'the frame already on screen answers at once');
+    assert.strictEqual(p.seeks.length, seeks, '... without a seek');
+
+    const ac = new AbortController();
+    const aborted = engine.showFrame('S', 40, { signal: ac.signal });
+    setTimeout(() => ac.abort(), 5);
+    assert.strictEqual(await aborted, null, 'aborted mid-presentation: null');
+    const pre = new AbortController();
+    pre.abort();
+    const before = p.seeks.length;
+    assert.strictEqual(await engine.showFrame('S', 50, { signal: pre.signal }), null, 'aborted before: null');
+    assert.strictEqual(p.seeks.length, before, 'an aborted request never seeks');
+    await new Promise((r) => setTimeout(r, 50)); // let the aborted seek's presentation land
+
+    // The decoder lands on a neighbour (VFR or a gap): the frame actually shown is returned, not the one asked.
+    p.seekFrame = (/** @type {number} */ k) => {
+      p.seekTarget = k;
+      setTimeout(() => { p.shown = k - 1; p.shownT = (k - 1) / 25; p.seekTarget = null; p.shownCount++; }, 10);
+    };
+    assert.strictEqual(await engine.showFrame('S', 20), 19, 'the frame presented, not the frame asked');
+
+    // A player with its own showFrame(frame, opts) is awaited and its answer passed on.
+    /** @type {any[]} */
+    const asked = [];
+    /** @type {any} */ (p).showFrame = async (/** @type {number} */ k, /** @type {any} */ o) => {
+      asked.push([k, !!(o && o.signal)]);
+      await new Promise((r) => setTimeout(r, 10));
+      return k + 1;
+    };
+    const ac2 = new AbortController();
+    assert.strictEqual(await engine.showFrame('S', 30, { signal: ac2.signal }), 31, 'the player\'s own showFrame answer');
+    assert.deepStrictEqual(asked, [[30, true]], 'the signal is passed to the player');
+    const ac3 = new AbortController();
+    const cut = engine.showFrame('S', 31, { signal: ac3.signal });
+    ac3.abort();
+    assert.strictEqual(await cut, null, 'aborted while the player\'s showFrame runs: null');
+    assert.strictEqual(await engine.showFrame('nope', 1), null, 'an unknown clip: null');
+  }
+
+  // ---- engine: mixed-fps Compare: a 24 fps clock on a 60 fps tile ----
+  {
+    const { engine } = makeEngine();
+    engine.registerClip({ id: 'P60', name: 'p60.mp4', fps: 60, frames: 600, width: 1280, height: 720, hasAudio: false });
+    assert.deepStrictEqual(engine.shownFrame('P60', 24, 0, 24), { frame: 60, outOfRange: false }, '1.0 s of a 24 fps clock is frame 60');
+    assert.deepStrictEqual(engine.shownFrame('P60', 24, 0), { frame: 24, outOfRange: false }, 'no clock rate: the frame as given');
+    assert.deepStrictEqual(engine.shownFrame('P60', 24, 0, 60), { frame: 24, outOfRange: false }, 'the tile\'s own rate: the frame as given');
+    assert.deepStrictEqual(engine.shownFrame('P60', 24, 6, 24), { frame: 66, outOfRange: false }, 'the frame offset is in the tile\'s frames');
+    assert.deepStrictEqual(engine.shownFrame('P60', 24, { unit: 'ms', v: 500 }, 24), { frame: 90, outOfRange: false }, 'then +500 ms at 60 fps');
+    assert.deepStrictEqual(engine.shownFrame('A', 60, 0, 60), { frame: 24, outOfRange: false }, 'and back: 1.0 s of a 60 fps clock on a 24 fps tile');
+    assert.deepStrictEqual(engine.shownFrame('A', 600, 0, 60), { frame: null, outOfRange: true }, '10 s is past a 10 s tile');
+  }
+
+  // ---- engine: a clip opened after boot replaces the original as the only tile ----
+  {
+    const { engine, players } = makeEngine();
+    assert.strictEqual(engine.getClip('D'), null, 'D is not there at boot');
+    engine.setSoundSource('D');
+    assert.strictEqual(engine.sound().soundSource, null, 'an unknown clip is never the sound source (no fall back to the first clip)');
+    assert.ok(players.A.volume.m && players.B.volume.m, 'and nothing is heard');
+    /** @type {any} */ (players).D = stubPlayer({ id: 'D', fps: 50, frames: 500, width: 3840, height: 2160, audio: true });
+    const got = engine.registerClip({ id: 'D', name: 'd.mov' });
+    assert.deepStrictEqual([got.id, got.fps, got.frames, got.width, got.hasAudio], ['D', 50, 500, 3840, true], 'its player\'s metadata');
+    assert.strictEqual(players.D.volume.m, true, 'a new player starts muted');
+    engine.setSoundSource('D');
+    assert.strictEqual(engine.sound().soundSource, 'D');
+    assert.deepStrictEqual([players.A.volume.m, players.D.volume.m], [true, false], 'D is heard, A is not');
+    for (const id of ['A', 'B', 'C']) assert.strictEqual(engine.unregisterClip(id), true);
+    assert.deepStrictEqual(engine.clips.map((c) => c.id), ['D'], 'D is the only tile');
+    assert.strictEqual(engine.getClip('A'), null, 'the original clip is gone');
+    assert.deepStrictEqual(engine.naturalSize('D'), { width: 3840, height: 2160 });
+    assert.strictEqual(engine.hasAudio('D'), true);
+    assert.strictEqual(engine.facts('D').title, 'd.mov');
+    assert.deepStrictEqual(engine.shownFrame('D', 499), { frame: 499, outOfRange: false });
+    assert.strictEqual(engine.sound().soundSource, 'D', 'closing other tiles keeps D heard');
+    engine.setVolume(0.7, false);
+    assert.deepStrictEqual(players.D.volume, { v: 0.7, m: false });
+    assert.strictEqual(await engine.showFrame('D', 12), 12, 'showFrame on the registered clip');
+    await runEngineAdapterContract('production EngineAdapter (registered after boot)', () => engine);
+    engine.unregisterClip('D');
+    assert.strictEqual(players.D.volume.m, true, 'an unregistered player is muted');
+    assert.strictEqual(engine.sound().soundSource, null, 'and is no longer the sound source');
+  }
+
+  // ---- engine: pixelAt through the player's pixelAt or readPixels ----
+  {
+    const { engine, players } = makeEngine();
+    assert.strictEqual(engine.pixelAt('A', 1, 2), null, 'no pixel reader: null');
+    /** @type {any} */ (players.A).readPixels = () => [10, 20, 30, 255];
+    assert.deepStrictEqual(engine.pixelAt('A', 1, 2), { r: 10, g: 20, b: 30, a: 255, text: 'x=1 y=2 rgb=(10,20,30) #0a141e' });
+    /** @type {any} */ (players.A).readPixels = () => new Uint8Array([255, 0, 128]);
+    assert.strictEqual(engine.pixelAt('A', 3, 4).text, 'x=3 y=4 rgb=(255,0,128) #ff0080', 'a typed array, no alpha');
+    /** @type {any} */ (players.A).readPixels = () => ({ r: 1, g: 2, b: 3 });
+    assert.deepStrictEqual(engine.pixelAt('A', 0, 0), { r: 1, g: 2, b: 3, a: 255, text: 'x=0 y=0 rgb=(1,2,3) #010203' });
+    /** @type {any} */ (players.A).readPixels = () => ({ text: 'frame 3 x=0 y=0 rgb=(1,2,3)' });
+    assert.strictEqual(engine.pixelAt('A', 0, 0).text, 'frame 3 x=0 y=0 rgb=(1,2,3)', 'a player\'s own text is kept');
+    /** @type {any} */ (players.A).readPixels = () => null;
+    assert.strictEqual(engine.pixelAt('A', 0, 0), null, 'outside the picture: null');
+    /** @type {any} */ (players.A).readPixels = () => { throw new Error('lost context'); };
+    assert.strictEqual(engine.pixelAt('A', 0, 0), null, 'a throwing reader: null');
+    /** @type {any} */ (players.B).pixelAt = (/** @type {number} */ x, /** @type {number} */ y) => `B ${x},${y}`;
+    /** @type {any} */ (players.B).readPixels = () => { throw new Error('not used'); };
+    assert.deepStrictEqual(engine.pixelAt('B', 5, 6), { text: 'B 5,6' }, 'the player\'s pixelAt wins');
+    assert.strictEqual(engine.pixelAt('nope', 0, 0), null, 'an unknown clip: null');
+  }
+
+  // ---- host: a Swap reorders the display, never Compare's slots ----
+  {
+    const [A, B] = ['clip-0', 'clip-1'];
+    const strip = (/** @type {any} */ m) => { const { page: _p, boot: _b, ...rest } = m; return rest; };
+    const b = makeBridge('compare');
+    b.host.post({ type: 'tiles', tiles: [A, B], current: A });
+    b.host.post({ type: 'tiles', tiles: [B, A], current: B });
+    assert.deepStrictEqual(b.host.slots(), [A, B], 'a reordered tiles report keeps the slot table');
+    b.sent.length = 0;
+    b.host.post({ type: 'tileOrder', order: [B, A] });
+    assert.deepStrictEqual(strip(b.sent.pop()).order, [1, 0], 'after a Swap the order is [1, 0]');
+    assert.deepStrictEqual(b.fake.snapshot().tileOrder, [B, A], 'the host read the numeric order as [B, A]');
+    b.host.post({ type: 'leaveCompare', keepId: B, t: 1 });
+    assert.strictEqual(strip(b.sent.pop()).keep, 1, 'leaveCompare keeps host slot 1 (B)');
+    assert.deepStrictEqual(b.fake.snapshot().leftCompare, { keepId: B, t: 1 }, 'the host kept B, not A');
+
+    const r = makeBridge('compare');
+    /** @type {any[]} */
+    const got = [];
+    r.host.connect((m) => got.push(m));
+    r.host.post({ type: 'tiles', tiles: [A, B], current: A });
+    r.host.post({ type: 'tiles', tiles: [B, A], current: B });
+    r.host.post({ type: 'tileOrder', order: [B, A] });
+    r.sent.length = 0;
+    r.host.post({ type: 'replaceVideo', oldId: B });
+    assert.strictEqual(strip(r.sent.pop()).index, 1, 'replaceVideo of B targets host slot 1');
+    const rep = got.filter((m) => m.type === 'replaceTile').pop();
+    assert.ok(rep && rep.oldId === B, 'the host replaced B, not A');
+    assert.deepStrictEqual(r.host.slots(), [A, rep.newId], 'the new video takes B\'s slot');
+    assert.deepStrictEqual(r.hostSlots, [A, rep.newId], '... as on the host');
+    r.host.post({ type: 'tiles', tiles: [rep.newId, A], current: rep.newId });
+    assert.deepStrictEqual(r.host.slots(), [A, rep.newId], 'the page\'s report after the replace changes nothing');
+    r.host.post({ type: 'replaceVideo', oldId: rep.newId });
+    assert.strictEqual(strip(r.sent.pop()).index, 1, 'the replaced tile is still slot 1');
+    r.host.post({ type: 'tiles', tiles: [r.host.slots()[1], A, 'x-late'] });
+    assert.deepStrictEqual(r.host.slots().slice(0, 1).concat(r.host.slots().slice(2)), [A, 'x-late'], 'a new tile is appended');
+    r.host.post({ type: 'tiles', tiles: ['x-late', A] });
+    assert.deepStrictEqual(r.host.slots(), [A, 'x-late'], 'a closed tile drops out; the others keep their order');
+    assert.deepStrictEqual(VpeHostAdapter.mergeSlots(['x', 'y', 'z'], ['z', 'w', 'x', 7]), ['x', 'z', 'w'], 'mergeSlots');
   }
 
   console.log(`production_adapters_test: ok (${Date.now() - T0} ms)`);

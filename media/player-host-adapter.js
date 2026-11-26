@@ -32,7 +32,7 @@
 
   /**
    * The unified controller's message as the given surface's host understands it (null = nothing to send).
-   * Ids become tile indices on Compare through `slots` (the clip ids by tile index, from the last 'tiles' report).
+   * Ids become tile indices on Compare through `slots` (the host's slot table in opening order; see mergeSlots).
    * Fields the host does not read are kept, so a host may move to the unified names without a page change.
    * @param {any} m @param {Surface} surface @param {string[]} slots
    */
@@ -82,6 +82,20 @@
     }
   }
 
+  /**
+   * The host's slot table after the page reports its tiles. Compare's host keeps its tiles in the order they were
+   * opened and addresses them by that index; the page's 'tiles' list is in display order, which a Swap or a drag
+   * permutes. So a reported list never reorders the table: slots still shown keep their index, closed ones drop
+   * out (the host splices them too) and new ones are appended in the order reported.
+   * @param {string[]} slots @param {any[]} tiles @returns {string[]}
+   */
+  function mergeSlots(slots, tiles) {
+    const shown = new Set(tiles.filter((id) => typeof id === 'string'));
+    const next = slots.filter((id) => shown.has(id));
+    for (const id of shown) if (!next.includes(id)) next.push(id);
+    return next;
+  }
+
   /** @param {HostAdapterOptions} opts */
   function create(opts) {
     if (!opts || !opts.vscode || typeof opts.vscode.postMessage !== 'function') {
@@ -93,7 +107,7 @@
     const surface = opts.surface === 'player' || opts.surface === 'compare' ? opts.surface : 'unified';
     /** @type {((m: any) => void) | null} */
     let listener = null;
-    /** @type {string[]} clip ids by tile index (Compare's host addresses tiles by index) */
+    /** @type {string[]} the host's slot table: clip ids by the tile index Compare's host uses (opening order) */
     let slots = [];
     let disposed = false;
 
@@ -109,6 +123,11 @@
       if (m.boot !== undefined && boot !== undefined && m.boot !== boot) return;
       // The envelope is the adapter's business: the controller sees the host's message alone.
       const { page: _page, boot: _boot, ...msg } = m;
+      // The host swapped a tile's video: the new one takes the old one's slot, as it does on the host.
+      if (msg.type === 'replaceTile' && typeof msg.oldId === 'string' && typeof msg.newId === 'string') {
+        const i = slots.indexOf(msg.oldId);
+        if (i >= 0 && !slots.includes(msg.newId)) slots[i] = msg.newId;
+      }
       toPage(msg.type === 'toast' ? capToast(msg) : msg);
     }
 
@@ -117,7 +136,7 @@
       if (disposed || !msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
       // Shown by the page itself: the host has nothing to add to a toast the page asked for.
       if (msg.type === 'toast') { toPage(capToast(msg)); return; }
-      if (msg.type === 'tiles' && Array.isArray(msg.tiles)) slots = msg.tiles.filter((/** @type {any} */ id) => typeof id === 'string');
+      if (msg.type === 'tiles' && Array.isArray(msg.tiles)) slots = mergeSlots(slots, msg.tiles);
       const out = translate(msg, surface, slots);
       if (!out) return;
       try { vscode.postMessage({ ...out, ...envelope() }); } catch { /* the panel is closing */ }
@@ -151,7 +170,7 @@
     return { post, connect, dispose, storage, surface, slots: () => slots.slice() };
   }
 
-  const api = { create, translate, capToast, MAX_TOAST_MS };
+  const api = { create, translate, capToast, mergeSlots, MAX_TOAST_MS };
   // checkJs: end
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VpeHostAdapter = api;

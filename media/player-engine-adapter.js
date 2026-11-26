@@ -96,11 +96,50 @@
   /** @param {Uint8Array | null} bytes */
   const isPng = (bytes) => !!bytes && bytes.length > 8 && PNG_SIGNATURE.every((b, i) => bytes[i] === b);
 
+  /**
+   * The clock frame in the tile's own frames: a Compare clock may run at another clip's rate, so it is mapped
+   * through time (clockFrame / clockFps seconds). Without a clock rate, or the same rate, the frame is kept as is.
+   * @param {number} clockFrame @param {number} tileFps @param {number} [clockFps]
+   */
+  function clockToTileFrame(clockFrame, tileFps, clockFps) {
+    const f = Number(clockFrame) || 0;
+    const cf = Number(clockFps);
+    if (!(cf > 0) || !Number.isFinite(cf) || !(tileFps > 0) || Math.abs(cf - tileFps) < 1e-9) return Math.round(f);
+    return Math.round((f / cf) * tileFps);
+  }
+
+  const hex2 = (/** @type {number} */ v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+
+  /**
+   * A player's pixel read as the { text } the inspector copies (media/player-ui-tools.js pickAt), keeping the
+   * channels when there are some. Accepts a string, { text }, { r, g, b, a? } or [r, g, b, a?]; else null.
+   * @param {any} v @param {number} x @param {number} y
+   */
+  function formatPixel(v, x, y) {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'string') return v ? { text: v } : null;
+    if (typeof v !== 'object') return null;
+    const arr = Array.isArray(v) || ArrayBuffer.isView(v) ? /** @type {any} */ (v) : null;
+    const [r, g, b, a] = arr ? [arr[0], arr[1], arr[2], arr[3]] : [v.r, v.g, v.b, v.a];
+    const rgb = [r, g, b].every((n) => typeof n === 'number' && Number.isFinite(n));
+    const channels = rgb ? { r, g, b, a: typeof a === 'number' && Number.isFinite(a) ? a : 255 } : {};
+    if (!arr && typeof v.text === 'string' && v.text) return { ...v, ...channels, text: v.text };
+    if (!rgb) return null;
+    // Same wording as the single player's inspector (media/inspect.js).
+    return { ...channels, text: `x=${Math.round(x)} y=${Math.round(y)} rgb=(${r},${g},${b}) #${hex2(r)}${hex2(g)}${hex2(b)}` };
+  }
+
+  const SHOW_FRAME_TIMEOUT_MS = 20000;
+  const SHOW_FRAME_POLL_MS = 16;
+  /** A seek that lands on the picture already shown never counts a new one: settled this long, it is done. */
+  const SHOW_FRAME_SETTLE_MS = 1000;
+
   /** @param {EngineAdapterOptions} opts */
   function create(opts) {
     if (!opts || !Array.isArray(opts.clips) || typeof opts.getPlayer !== 'function') {
       throw new Error('VpeEngineAdapter.create: clips (array) and getPlayer (function) are required');
     }
+    // Live: registerClip / unregisterClip change both in place, so `engine.clips` follows the page's tiles.
     const specs = opts.clips.filter((c) => c && typeof c.id === 'string');
     const byId = new Map(specs.map((c) => [c.id, c]));
     const { compositor, pictureApi, controlsApi } = opts;
@@ -179,12 +218,14 @@
 
     /**
      * The frame a tile shows at the shared clock frame with its sync offset; outside the clip there is no picture.
-     * @param {string} clipId @param {number} clockFrame @param {Offset} [offset]
+     * With `clockFps` (the clock's rate, when it differs from the tile's) the clock frame is mapped through time
+     * first, then the offset in the tile's own frames is added.
+     * @param {string} clipId @param {number} clockFrame @param {Offset} [offset] @param {number} [clockFps]
      */
-    function shownFrame(clipId, clockFrame, offset) {
+    function shownFrame(clipId, clockFrame, offset, clockFps) {
       const c = clipOrFirst(clipId);
       if (!c) return { frame: null, outOfRange: true };
-      const f = Math.round(Number(clockFrame) || 0) + Math.round(offsetFrames(offset, c.fps));
+      const f = clockToTileFrame(clockFrame, c.fps, clockFps) + Math.round(offsetFrames(offset, c.fps));
       if (f < 0 || f >= c.frames) return { frame: null, outOfRange: true };
       return { frame: f, outOfRange: false };
     }
@@ -347,6 +388,86 @@
       } catch { return null; }
     }
 
+    /**
+     * Show `frame` paused and resolve with the frame actually on screen once the player has presented it (VFR or
+     * gapped video can land on a neighbour), or null: unknown clip, no player, aborted, or nothing after 20 s.
+     * A player's own showFrame(frame, opts) wins; otherwise the adapter seeks and watches the player settle
+     * (engine.js: seekTarget / shownT / shownCount; frame-player.js: shown), as media/player.js does.
+     * @param {string} clipId @param {number} frame @param {{ signal?: AbortSignal | null }} [o]
+     * @returns {Promise<number | null>}
+     */
+    async function showFrame(clipId, frame, o = {}) {
+      const signal = (o && o.signal) || null;
+      const aborted = () => !!(signal && signal.aborted);
+      const c = getClip(clipId);
+      const p = c ? playerOf(clipId) : null;
+      if (!c || !p || aborted()) return null;
+      const k = Math.max(0, Math.min(c.frames - 1, Math.round(Number(frame) || 0)));
+      try { if (typeof p.pause === 'function') p.pause(); } catch { /* a closed player */ }
+      if (typeof p.showFrame === 'function') {
+        let r;
+        try { r = await p.showFrame(k, o); } catch { return null; }
+        return !aborted() && typeof r === 'number' && Number.isFinite(r) ? r : null;
+      }
+      if (typeof p.seekFrame !== 'function') return null;
+      const engineLike = 'seekTarget' in p;
+      const current = () => (typeof p.currentFrame === 'function' ? Number(p.currentFrame()) : NaN);
+      const settled = () => p.seekTarget === null && p.shownT !== null && p.shownT !== undefined;
+      if (engineLike ? settled() && current() === k : p.shown === k) return k;
+      const before = Number(p.shownCount) || 0;
+      try { p.seekFrame(k); } catch { return null; }
+      return new Promise((resolve) => {
+        const t0 = Date.now();
+        /** @type {number | null} */
+        let settledAt = null;
+        /** @type {any} */
+        let timer = null;
+        /** @param {number | null} f */
+        const finish = (f) => {
+          if (timer !== null) clearTimeout(timer);
+          timer = null;
+          if (signal) signal.removeEventListener('abort', cancel);
+          resolve(aborted() ? null : f);
+        };
+        const cancel = () => finish(null);
+        const check = () => {
+          timer = null;
+          if (aborted() || playerOf(clipId) !== p) { finish(null); return; }
+          const now = Date.now();
+          if (engineLike) {
+            if (settled()) {
+              if (settledAt === null) settledAt = now;
+              const f = current();
+              if (Number.isFinite(f) && ((Number(p.shownCount) || 0) > before || now - settledAt >= SHOW_FRAME_SETTLE_MS)) {
+                finish(f);
+                return;
+              }
+            } else settledAt = null;
+          } else if (p.shown === k) { finish(k); return; }
+          else if (!('shown' in p) && current() === k) { finish(k); return; }
+          if (now - t0 >= SHOW_FRAME_TIMEOUT_MS) { finish(null); return; }
+          timer = setTimeout(check, SHOW_FRAME_POLL_MS);
+        };
+        if (signal) signal.addEventListener('abort', cancel, { once: true });
+        timer = setTimeout(check, 0);
+      });
+    }
+
+    /**
+     * The pixel under picture point (x, y) as { text } (plus r, g, b, a when known), or null when the clip's
+     * player cannot read pixels. The player's pixelAt wins, else its readPixels.
+     * @param {string} clipId @param {number} x @param {number} y
+     */
+    function pixelAt(clipId, x, y) {
+      const p = playerOf(clipId);
+      if (!p) return null;
+      try {
+        if (typeof p.pixelAt === 'function') return formatPixel(p.pixelAt(x, y), x, y);
+        if (typeof p.readPixels === 'function') return formatPixel(p.readPixels(x, y), x, y);
+      } catch { /* a lost context or a closed player: no pixel */ }
+      return null;
+    }
+
     // ---- sound: one tile is heard, every other is muted ----
     /** @type {string | null} */
     let soundSource = null;
@@ -372,6 +493,40 @@
       applySound();
     }
 
+    // ---- clips opened, replaced or closed after boot ----
+    /**
+     * Add a clip the page opened after boot (or update a known one's spec in place). Its player is found through
+     * getPlayer as for the boot clips. Returns the clip as getClip gives it, or null for a spec without an id.
+     * @param {ClipSpec} clip
+     */
+    function registerClip(clip) {
+      if (!clip || typeof clip.id !== 'string' || !clip.id) return null;
+      const known = byId.get(clip.id);
+      if (known) {
+        const i = specs.indexOf(known);
+        if (i >= 0) specs[i] = clip;
+      } else specs.push(clip);
+      byId.set(clip.id, clip);
+      applySound(); // a new player starts muted unless it is the sound source
+      return getClip(clip.id);
+    }
+    /**
+     * Forget a clip the page closed or replaced. Its player is muted first; if it was the sound source, no tile
+     * is heard until the page picks another (the adapter never moves the sound on its own). True when known.
+     * @param {string} clipId
+     */
+    function unregisterClip(clipId) {
+      const spec = byId.get(clipId);
+      if (!spec) return false;
+      const p = playerOf(clipId);
+      if (p && typeof p.setVolume === 'function') { try { p.setVolume(volume, true); } catch { /* closed */ } }
+      byId.delete(clipId);
+      const i = specs.indexOf(spec);
+      if (i >= 0) specs.splice(i, 1);
+      if (soundSource === clipId) soundSource = null;
+      return true;
+    }
+
     /**
      * An optional pass-through: the player's method, or `fallback` when it has none (or throws).
      * @param {string} name @param {any} fallback
@@ -395,6 +550,10 @@
       thumbnail,
       thumbnailLeave,
       snapshot,
+      showFrame,
+      pixelAt,
+      registerClip,
+      unregisterClip,
       setSoundSource,
       setVolume,
       /** Inspection and subtitles, when the clip's player has them (else null / []). */
@@ -409,7 +568,7 @@
     };
   }
 
-  const api = { create, offsetFrames, plainRect };
+  const api = { create, offsetFrames, plainRect, clockToTileFrame, formatPixel };
   // checkJs: end
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VpeEngineAdapter = api;

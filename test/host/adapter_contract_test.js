@@ -73,6 +73,20 @@ async function runEngineAdapterContract(label, createAdapter) {
   assert.deepStrictEqual(engine.shownFrame(id, clip.frames - 1, 1), { frame: null, outOfRange: true }, at('past the end'));
   assert.deepStrictEqual(engine.shownFrame(id, 0, { unit: 'ms', v: -5000 }), { frame: null, outOfRange: true }, at('-5 s before the start'));
 
+  // ---- shownFrame with a clock at another rate (mixed-fps Compare): mapped through time, then the offset ----
+  {
+    const half = clip.fps / 2; // the clock runs at half the tile's rate: clock frame 10 is the tile's frame 20
+    assert.deepStrictEqual(engine.shownFrame(id, 10, 0, half), { frame: 20, outOfRange: false }, at('clock at half the rate'));
+    assert.deepStrictEqual(engine.shownFrame(id, 10, 3, half), { frame: 23, outOfRange: false }, at('offset in the tile\'s frames after mapping'));
+    assert.deepStrictEqual(engine.shownFrame(id, 10, { unit: 'ms', v: 1000 }, half), { frame: 20 + clip.fps, outOfRange: false }, at('ms offset after mapping'));
+    assert.deepStrictEqual(engine.shownFrame(id, 10, 0, clip.fps), { frame: 10, outOfRange: false }, at('the same rate keeps the frame'));
+    for (const bad of [0, -24, NaN, Infinity, undefined, null, 'x']) {
+      assert.deepStrictEqual(engine.shownFrame(id, 10, 0, bad), { frame: 10, outOfRange: false }, at(`clockFps ${String(bad)} is ignored`));
+    }
+    assert.deepStrictEqual(engine.shownFrame(id, clip.frames, 0, clip.fps * 2), { frame: Math.round(clip.frames / 2), outOfRange: false },
+      at('a faster clock past the tile\'s length in its own frames is still inside the tile'));
+  }
+
   // ---- pictureRect: aspect ratio per Picture mode ----
   {
     const cellW = 800;
@@ -157,6 +171,57 @@ async function runEngineAdapterContract(label, createAdapter) {
   }
   const silent = engine.clips.find((c) => !engine.hasAudio(c.id));
   if (engine.fake) assert.ok(silent, at('the fake has a clip without audio'));
+
+  // ---- showFrame: async, resolves with the frame presented, honours an AbortSignal ----
+  {
+    assert.strictEqual(typeof engine.showFrame, 'function', at('showFrame exists'));
+    const pending = engine.showFrame(id, 5);
+    assert.ok(pending && typeof pending.then === 'function', at('showFrame returns a promise'));
+    assert.strictEqual(await pending, 5, at('showFrame resolves with the frame shown'));
+    assert.strictEqual(engine.snapshot(id).frame, 5, at('a snapshot after showFrame is of that frame'));
+    assert.strictEqual(await engine.showFrame(id, clip.frames + 50), clip.frames - 1, at('showFrame clamps to the last frame'));
+    const ac = new AbortController();
+    ac.abort();
+    assert.strictEqual(await engine.showFrame(id, 3, { signal: ac.signal }), null, at('an aborted signal gives null'));
+    const late = new AbortController();
+    const racing = engine.showFrame(id, 4, { signal: late.signal });
+    late.abort();
+    assert.strictEqual(await racing, null, at('aborting before presentation gives null'));
+    assert.strictEqual(await engine.showFrame('no-such-clip', 1), null, at('showFrame of an unknown clip gives null'));
+  }
+
+  // ---- pixelAt: { text } (or null when this clip cannot read pixels) ----
+  {
+    assert.strictEqual(typeof engine.pixelAt, 'function', at('pixelAt exists'));
+    const px = engine.pixelAt(id, 1, 2);
+    assert.ok(px === null || (typeof px === 'object' && typeof px.text === 'string' && px.text.length > 0), at('pixelAt is null or { text }'));
+    if (engine.fake) assert.ok(px, at('the fake reads pixels'));
+    assert.doesNotThrow(() => engine.pixelAt('no-such-clip', 0, 0), at('pixelAt of an unknown clip does not throw'));
+  }
+
+  // ---- registerClip / unregisterClip: clips opened after boot ----
+  {
+    const newId = `${label}-registered`;
+    const spec = { id: newId, name: 'late.mp4', fps: 30, frames: 90, width: 640, height: 360, hasAudio: true };
+    assert.ok(!engine.clips.some((/** @type {any} */ c) => c.id === newId), at('the new clip is not there at boot'));
+    engine.registerClip(spec);
+    assert.ok(engine.clips.some((/** @type {any} */ c) => c.id === newId), at('registerClip adds to clips'));
+    const m = engine.getClip(newId);
+    assert.deepStrictEqual([m.id, m.fps, m.frames, m.width, m.height, m.hasAudio], [newId, 30, 90, 640, 360, true], at('getClip of a registered clip'));
+    assert.deepStrictEqual(engine.naturalSize(newId), { width: 640, height: 360 }, at('naturalSize of a registered clip'));
+    assert.strictEqual(engine.hasAudio(newId), true, at('hasAudio of a registered clip'));
+    assert.strictEqual(engine.facts(newId).title, 'late.mp4', at('facts of a registered clip'));
+    assert.deepStrictEqual(engine.shownFrame(newId, 89), { frame: 89, outOfRange: false }, at('shownFrame uses the registered length'));
+    assert.deepStrictEqual(engine.shownFrame(newId, 90), { frame: null, outOfRange: true }, at('past the registered end'));
+    engine.setSoundSource(newId);
+    if (engine.fake) assert.strictEqual(engine.fake.soundSource, newId, at('a registered clip can be the sound source'));
+    if (engine.sound) assert.strictEqual(engine.sound().soundSource, newId, at('a registered clip can be the sound source'));
+    assert.strictEqual(engine.unregisterClip(newId), true, at('unregisterClip of a known clip'));
+    assert.ok(!engine.clips.some((/** @type {any} */ c) => c.id === newId), at('unregisterClip removes from clips'));
+    if (engine.fake) assert.strictEqual(engine.fake.soundSource, null, at('the removed sound source is no longer heard'));
+    if (engine.sound) assert.strictEqual(engine.sound().soundSource, null, at('the removed sound source is no longer heard'));
+    assert.strictEqual(engine.unregisterClip(newId), false, at('unregisterClip twice'));
+  }
 }
 
 /**
@@ -283,6 +348,13 @@ if (require.main === module) {
   const { createFakeHost } = require('../../tools/mockup/fake-host');
   (async () => {
     await runEngineAdapterContract('FakeEngine', () => createFakeEngine());
+    // Mixed-fps Compare: a 24 fps clock at frame 24 (1.0 s) is frame 60 of a 60 fps tile, not frame 24.
+    const mixed = createFakeEngine([{ id: 'p60', name: 'p60.mp4', fps: 60, frames: 600, width: 1280, height: 720, hasAudio: true }]);
+    assert.deepStrictEqual(mixed.shownFrame('p60', 24, 0, 24), { frame: 60, outOfRange: false }, 'FakeEngine: 24 fps clock on a 60 fps tile');
+    assert.deepStrictEqual(mixed.shownFrame('p60', 24, { unit: 'ms', v: 500 }, 24), { frame: 90, outOfRange: false }, 'FakeEngine: then +500 ms');
+    const sample = createFakeEngine();
+    sample.registerClip({ id: 'extra', name: 'extra.mp4' });
+    assert.ok(!createFakeEngine().clips.some((c) => c.id === 'extra'), 'FakeEngine: registerClip never changes SAMPLE_CLIPS');
     await runHostAdapterContract('FakeHost', () => createFakeHost({ clips: createFakeEngine().clips }));
     // A host with no subfolder and few clips still passes (the contract does not lean on the fake's tree).
     await runHostAdapterContract('FakeHost (flat)', () => createFakeHost({ clips: createFakeEngine().clips, subfolder: 0 }));
