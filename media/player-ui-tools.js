@@ -985,8 +985,16 @@
       return { track, tracks: tracks.map((_t, i) => nameOf(i)), subs: tracks.map((_t, i) => subOf(i)), delayMs, sizePct, label: nameOf(track) };
     }
 
+    function reset() {
+      tracks = [];
+      track = -1;
+      userOff = false;
+      if (engine && typeof engine.selectSubtitle === 'function') attempt(() => engine.selectSubtitle(clipId(), -1));
+      changed();
+    }
+
     return {
-      ccClick, nextTrack, toggle, select: (/** @type {number} */ i) => select(i), handleKey, onHostMessage, render,
+      ccClick, nextTrack, toggle, select: (/** @type {number} */ i) => select(i), reset, handleKey, onHostMessage, render,
       /** @param {number} deltaMs */
       adjustDelay(deltaMs) { setDelay(delayMs + deltaMs); },
       /** @param {number} deltaPct */

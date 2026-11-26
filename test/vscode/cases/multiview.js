@@ -368,6 +368,20 @@ module.exports = [{
     await until((x) => x.synced === 'true', 15000);
     r = await stepAndWait(1);
     checkFrames(ok, r, pair, '2 tiles, B +250 ms');
+    // Shorter clock (B = 2 s, 24 fps) playing to natural EOF must pause the longer follower (A = 3 s, 30 fps) too,
+    // and seeking backwards while paused must keep both tiles paused.
+    ok = t('pair/short-clock-eof');
+    act({ action: 'offset', tile: 1, v: 0, unit: 'frames' });
+    act({ action: 'clock', tile: 1 });
+    await until((x) => x.clock === '1' && x.synced === 'true', 10000);
+    act({ action: 'seek', t: 1.7 });
+    await until((x) => x.synced === 'true' && nums(x.frames)[1] >= 38, 10000);
+    act({ action: 'play' });
+    r = await until((x) => x.playing === '0,0' && nums(x.frames)[1] >= 46, 15000);
+    ok(r && r.playing === '0,0', `shorter clock EOF left a tile playing: playing=${r && r.playing} frames=${r && r.frames}`);
+    act({ action: 'seek', t: 0.5 });
+    r = await until((x) => x.synced === 'true' && nums(x.frames)[1] <= 15, 10000);
+    ok(r && r.playing === '0,0', `seeking backwards after EOF resumed a tile: playing=${r && r.playing}`);
     await h.closeClip(vs);
     return out;
   },

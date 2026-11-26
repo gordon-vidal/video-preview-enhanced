@@ -281,7 +281,7 @@ body.idle { cursor: none; }
   line-height: 1.45;
   z-index: 2;
 }
-#pxread { display: flex; gap: 8px; align-items: flex-start; padding: 4px; pointer-events: none; white-space: pre; font-variant-numeric: tabular-nums; }
+#pxread { display: flex; gap: 8px; align-items: flex-start; padding: 4px; pointer-events: none; white-space: pre; font-variant-numeric: tabular-nums; z-index: 4; }
 #pxread .loupe { display: block; image-rendering: pixelated; background: transparent; }
 #stats { left: 8px; bottom: 8px; margin: 0; padding: 6px 10px; pointer-events: none; white-space: pre; font-variant-numeric: tabular-nums; max-width: calc(100% - 32px); overflow: hidden; }
 #goto { top: 8px; left: 50%; transform: translateX(-50%); padding: 4px; z-index: 3; }

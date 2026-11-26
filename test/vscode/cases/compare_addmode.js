@@ -211,6 +211,19 @@ module.exports = [{
         const tabs = await tabList();
         assert(tabs.length === 3 && tabs.some(isCompare), `tabs after switching: ${JSON.stringify(tabs)}`);
       });
+
+      await run('preview-tab-capture-keeps-editor', async () => {
+        // Single-clicking a video in VS Code Explorer opens it as an italic preview tab (preview: true).
+        // Turning Capture on must pin the tab (workbench.action.keepEditor) so single-clicking the next video
+        // adds it to Compare instead of replacing the preview tab.
+        const firstOpen = send({ openFile: files[0], preview: true, preserveFocus: false });
+        await wait(/first frame shown/, firstOpen, 'first video opened as preview tab');
+        const on = send({ name: CLIPS[0], action: 'click', sel: '#startCompareBtn' });
+        await wait(hint(true), on, 'Compare button turns Add Mode on');
+        const joined = send({ openFile: files[1], preview: true, preserveFocus: false });
+        await wait(opened(2), joined, 'second preview-click video joins Compare instead of replacing the tab');
+        await onlyCompare();
+      });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

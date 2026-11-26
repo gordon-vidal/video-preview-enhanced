@@ -266,4 +266,30 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.ok(hidden(640).some((s) => /#startCompareBtn > span/.test(s)), 'the Compare toggle drops its label first');
 }
 
+{ // Layering contract across player.css, folder-rail.css and compare.css: floating overlays (context menu, seek tip
+  // and seek thumbnail) paint above an open Folder Rail and its collapse tab; interactive/inspection overlays paint
+  // above a passing toast.
+  const RAIL = read('folder-rail.css');
+  const z = (css, sel) => {
+    const target = norm(sel);
+    const matching = rules(css).filter((x) => !x.at && x.selectors.map(norm).includes(target));
+    const merged = Object.assign({}, ...matching.map((r) => Object.fromEntries(splitTop(r.body, /;/).map((d) => {
+      const k = d.indexOf(':');
+      return [d.slice(0, k).trim(), d.slice(k + 1).trim()];
+    }))));
+    const v = merged['z-index'];
+    assert.ok(v !== undefined && !Number.isNaN(Number(v)), `${sel} has numeric z-index (got ${v})`);
+    return Number(v);
+  };
+  const thumbSel = [...selectorsOf(PLAYER)].find((s) => /canvas\.seek-thumb$/.test(s));
+  assert.ok(z(PLAYER, '#ctxmenu') > z(PLAYER, '#tip'), '#ctxmenu above #tip');
+  assert.ok(z(PLAYER, '#tip') > z(PLAYER, thumbSel), '#tip above seek-thumb');
+  assert.ok(z(PLAYER, '#tip') > z(PLAYER, '#thumb'), '#tip above #thumb');
+  assert.ok(z(PLAYER, thumbSel) > z(RAIL, '.rail-collapse-tab'), 'seek-thumb above .rail-collapse-tab');
+  assert.ok(z(PLAYER, '#thumb') > z(RAIL, '.rail-collapse-tab'), '#thumb above .rail-collapse-tab');
+  assert.ok(z(RAIL, '.rail-collapse-tab') > z(RAIL, '.rail'), '.rail-collapse-tab above .rail');
+  assert.ok(z(PLAYER, '#notice') > z(PLAYER, '#toast'), '#notice above #toast');
+  assert.ok(z(PLAYER, '#pxread') > z(PLAYER, '#toast'), '#pxread above #toast');
+}
+
 console.log('unified_css: ok');

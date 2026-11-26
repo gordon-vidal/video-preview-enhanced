@@ -418,7 +418,7 @@
       if (!p) return;
       const prefs = ui && typeof ui.getPrefs === 'function' ? ui.getPrefs() : null;
       const rate = currentRate !== null ? currentRate : (prefs && Number(prefs.rate) > 0 ? Number(prefs.rate) : 1);
-      const loop = currentLoop !== null ? currentLoop : !!(prefs && prefs.loop);
+      const loop = effectiveLoop(ui ? S.getTab(ui.getState()) : null);
       try {
         if (rate > 0 && typeof p.setRate === 'function') p.setRate(rate);
         if (typeof p.setLoop === 'function') p.setLoop(loop);
@@ -432,6 +432,13 @@
     const prefsNow = () => (ui && typeof ui.getPrefs === 'function' ? ui.getPrefs() || null : null);
     /** Loop on in the controller's prefs: its end policy (onEnd 'loop'); a bare `loop` flag where there is none. */
     const loopPref = (/** @type {any} */ pr) => !!pr && (pr.onEnd !== undefined ? pr.onEnd === 'loop' : !!pr.loop);
+    /**
+     * Decoder-level loop flag: in Compare (2+ tiles) every decoder has loop=false so unequal-length tiles never wrap
+     * independently — the clock's natural EOF triggers one shared wrap through onPlayerEnded -> onDecoderEnded.
+     * @param {any} t
+     */
+    const effectiveLoop = (t) => (t && t.tiles && t.tiles.length >= 2 ? false
+      : (currentLoop !== null ? currentLoop : loopPref(prefsNow())));
     /** The decoder for `id`, made on first need (after 'open': the host serves blocks from then on). @param {string} id */
     function ensurePlayer(id) {
       if (players.has(id) || !opened || disposed || typeof createPlayer !== 'function') return players.get(id) || null;
@@ -451,7 +458,7 @@
           const pr = prefsNow();
           return currentRate !== null ? currentRate : pr && Number(pr.rate) > 0 ? Number(pr.rate) : 1;
         },
-        getLoop: () => (currentLoop !== null ? currentLoop : !!(prefsNow() || {}).loop),
+        getLoop: () => effectiveLoop(ui ? S.getTab(ui.getState()) : null),
         getMuted: () => {
           const s = typeof /** @type {any} */ (adapter).sound === 'function' ? /** @type {any} */ (adapter).sound() : null;
           return s ? s.soundSource !== id || !!s.muted : !!(prefsNow() || {}).muted;
@@ -587,16 +594,20 @@
     const pendingRestore = new Map();
     /** Autoplay on open (setting videoPreviewEnhanced.autoplay, or Autoplay "Play next in folder"): start playing once firstShown. */
     let pendingAutoPlay = !cfg.goto && (!!cfg.fromAutoNext || !!(cfg.prefs && cfg.prefs.autoplay));
-    /** Report the clock clip's position to the host so it can persist resume position across reopen. */
-    function reportPos() {
+    let lastPosAt = 0;
+    /** Report the clock clip's position to the host so it can persist resume position across reopen. @param {boolean} [force] @param {boolean} [atEnd] */
+    function reportPos(force = true, atEnd = false) {
       if (disposed || !ui) return;
+      const now = Date.now();
+      if (!force && now - lastPosAt < 2000) return;
       const t = S.getTab(ui.getState());
       const cid = clockIdOf(t);
       const c = cid ? engine.getClip(cid) : null;
       const fps = (c && c.fps) || t.fps || 0;
       const d = (c && c.duration) || (fps > 0 && t.maxFrame > 0 ? t.maxFrame / fps : 0);
       if (cid && fps > 0 && d > 0) {
-        host.post({ type: 'pos', clipId: cid, t: t.frame / fps, d });
+        lastPosAt = now;
+        host.post({ type: 'pos', clipId: cid, t: atEnd ? d : t.frame / fps, d });
       }
     }
     /** Apply pendingResumeSec once the clock clip has real fps and duration (wins only when no goto link). */
@@ -692,13 +703,19 @@
       if (disposed || !ui) return;
       const t = S.getTab(ui.getState());
       if (id !== clockIdOf(t) || !Number.isFinite(frame)) return;
-      const f = Math.round(frame);
+      // Convert the clock decoder's raw frame back to the shared timeline by removing its own sync offset.
+      const clkOff = S.getOffset ? S.getOffset(t, id) : null;
+      const offFrames = clkOff
+        ? Math.round(clkOff.unit === 'ms' ? ((Number(clkOff.v) || 0) / 1000) * (t.fps || 24) : (Number(clkOff.v) || 0))
+        : 0;
+      const f = Math.max(0, Math.round(frame) - offFrames);
       if (f === t.frame) return;
       fromClock = true;
       try {
         if (typeof ui.onDecoderFrame === 'function') ui.onDecoderFrame(f, id);
         else ui.dispatch('seek', f);
       } finally { fromClock = false; }
+      if (t.playing) reportPos(false);
     }
     /**
      * The clock decoder stopped at its end (or on an error): the controller decides (loop, autoplay, pause).
@@ -710,7 +727,10 @@
       if (id !== clockIdOf(t)) return;
       const natural = !!(info && info.natural);
       const onEnd = (typeof ui.getPrefs === 'function' && ui.getPrefs().onEnd) || 'off';
-      if (natural) log(`end of file: ${onEnd}`);
+      if (natural) {
+        log(`end of file: ${onEnd}`);
+        reportPos(true, true);
+      }
       // Only the clock decoder paused itself at its end; pause every longer follower immediately so none keeps playing.
       for (const cid of t.tiles) {
         if (cid === id) continue;
@@ -769,22 +789,29 @@
         const prev = Number(p.shownCount) || 0;
         try { p.tick(now); } catch (err) { log(`decoder ${id} tick: ${err && /** @type {any} */ (err).message || err}`); }
         if (!firstFrameLogged || !firstPicturesLogged) notePresented(id);
-        if (pendingResumeSec !== null && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) tryApplyResume();
-        if (pendingGoto !== null && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) tryApplyGoto(id, p);
-        if (pendingRestore.has(id) && p.firstShown) {
+        const shownNow = presented(p);
+        if (pendingResumeSec !== null && shownNow && id === clockIdOf(S.getTab(ui.getState()))) tryApplyResume();
+        if (pendingGoto !== null && shownNow && id === clockIdOf(S.getTab(ui.getState()))) tryApplyGoto(id, p);
+        if (pendingRestore.has(id) && shownNow) {
           const r = /** @type {{ frame: number, playing: boolean }} */ (pendingRestore.get(id));
           pendingRestore.delete(id);
           appliedTargets.delete(id);
-          applied = null;
           const cur = S.getTab(ui.getState());
-          let nextWs = S.seekFrame(ui.getState(), r.frame);
-          if (r.playing && !S.getTab(nextWs).playing) nextWs = S.togglePlay(nextWs);
-          else if (!r.playing && S.getTab(nextWs).playing) nextWs = S.togglePlay(nextWs);
-          if (nextWs !== ui.getState()) ui.setState(nextWs);
-          driveDecoders(S.getTab(ui.getState()));
+          if (cur.tiles.length <= 1 || id === clockIdOf(cur)) {
+            applied = null;
+            let nextWs = S.seekFrame(ui.getState(), r.frame);
+            if (r.playing && !S.getTab(nextWs).playing) nextWs = S.togglePlay(nextWs);
+            else if (!r.playing && S.getTab(nextWs).playing) nextWs = S.togglePlay(nextWs);
+            if (nextWs !== ui.getState()) ui.setState(nextWs);
+            driveDecoders(S.getTab(ui.getState()));
+          } else if (cur.tiles.includes(id)) {
+            // A recovering follower in Compare catches up to the live shared frame and play state instead of
+            // rewinding or restarting the whole workspace.
+            applyToDecoders({ ...cur, tiles: [id] }, { seek: true, play: true, force: true });
+          }
           if (cur.tiles.includes(id)) ui.render();
         }
-        if (pendingAutoPlay && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) {
+        if (pendingAutoPlay && shownNow && id === clockIdOf(S.getTab(ui.getState()))) {
           pendingAutoPlay = false;
           const cur = ui.getState();
           if (!S.getTab(cur).playing) ui.setState(S.togglePlay(cur));
@@ -848,10 +875,11 @@
             const changed = !!o.force || !appliedTargets.has(id) || appliedTargets.get(id) !== target;
             appliedTargets.set(id, target);
             if (o.seek && changed && target !== null) {
-              if (o.keepPlaying && typeof p.seekTime === 'function' && typeof p.frameSeekTime === 'function') {
+              if ((o.keepPlaying || playing) && typeof p.seekTime === 'function' && typeof p.frameSeekTime === 'function') {
                 p.seekTime(p.frameSeekTime(target), true);
               } else if (typeof p.seekFrame === 'function') {
                 p.seekFrame(target);
+                if (playing && !o.play && !o.keepPlaying && typeof p.play === 'function') p.play();
               }
             }
           }
@@ -884,7 +912,19 @@
       const prev = applied;
       applied = { playing: t.playing, tiles: tilesKey };
       for (const id of [...appliedTargets.keys()]) if (!t.tiles.includes(id)) appliedTargets.delete(id);
-      const play = !prev || prev.playing !== t.playing || prev.tiles !== tilesKey;
+      const tilesChanged = !prev || prev.tiles !== tilesKey;
+      if (tilesChanged) {
+        const loop = effectiveLoop(t);
+        for (const id of t.tiles) {
+          const p = players.get(id);
+          if (!p) continue;
+          try {
+            if (typeof p.setLoop === 'function') p.setLoop(loop);
+            else p.loop = loop;
+          } catch { /* closing */ }
+        }
+      }
+      const play = !prev || prev.playing !== t.playing || tilesChanged;
       // The clock's own frames are not sent back: the targets follow it, so a later edit is measured from there.
       applyToDecoders(t, { seek: !fromClock, record: fromClock, play });
     }
@@ -899,6 +939,21 @@
       if (disposed || !c || !ui) return;
       const t = S.getTab(ui.getState());
       const tilesKey = t.tiles.join(',');
+      if (c.type === 'rate' || c.type === 'loop') {
+        if (c.type === 'rate' && Number(c.value) > 0) currentRate = Number(c.value);
+        if (c.type === 'loop') currentLoop = !!c.value;
+        const loop = effectiveLoop(t);
+        for (const id of t.tiles) {
+          const p = players.get(id);
+          if (!p) continue;
+          try {
+            if (c.type === 'rate') { if (Number(c.value) > 0 && typeof p.setRate === 'function') p.setRate(Number(c.value)); }
+            else if (typeof p.setLoop === 'function') p.setLoop(loop);
+            else p.loop = loop;
+          } catch (err) { log(`decoder ${id}: ${err && /** @type {any} */ (err).message || err}`); }
+        }
+        return;
+      }
       // New tiles first go through driveDecoders (onChange), which seeks and starts them all.
       if (!applied || applied.tiles !== tilesKey) return;
       switch (c.type) {
@@ -919,19 +974,6 @@
           if (playing && debugProbe) debugProbe.wake();
           return;
         }
-        case 'rate': case 'loop':
-          if (c.type === 'rate' && Number(c.value) > 0) currentRate = Number(c.value);
-          if (c.type === 'loop') currentLoop = !!c.value;
-          for (const id of t.tiles) {
-            const p = players.get(id);
-            if (!p) continue;
-            try {
-              if (c.type === 'rate') { if (Number(c.value) > 0 && typeof p.setRate === 'function') p.setRate(Number(c.value)); }
-              else if (typeof p.setLoop === 'function') p.setLoop(!!c.value);
-              else p.loop = !!c.value;
-            } catch (err) { log(`decoder ${id}: ${err && /** @type {any} */ (err).message || err}`); }
-          }
-          return;
         default: break;
       }
     }
@@ -940,6 +982,8 @@
     let probesReady = false;
     /** media/debug-probe.js once installed (debug pages only). @type {{ dispose: () => void, wake: () => void } | null} */
     let debugProbe = null;
+    /** The clip whose embedded subtitles the controller currently lists (null before the first clip). @type {string | null} */
+    let activeSubClip = null;
     /** @param {any} ws */
     function onChange(ws) {
       if (disposed) return;
@@ -949,7 +993,17 @@
       driveDecoders(t);
       // The shown clip's streams join the subtitle list (a clip whose decoder listed them before it was shown),
       // after this change (the controller is mid-commit); picture subtitles and the pixel grid follow the picture.
-      const shownId = t.tiles[0];
+      const shownId = t.tiles[0] || null;
+      if (shownId !== activeSubClip) {
+        const prevSubClip = activeSubClip;
+        activeSubClip = shownId;
+        if (prevSubClip !== null) {
+          subEntries.length = 0;
+          announced.clear();
+          const ctl = subsCtl();
+          if (ctl && typeof ctl.reset === 'function') ctl.reset();
+        }
+      }
       if (ui && shownId && players.has(shownId) && !announced.has(shownId)) {
         Promise.resolve().then(() => { if (!disposed) announceTracks(shownId); });
       }

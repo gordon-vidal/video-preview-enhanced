@@ -1136,7 +1136,7 @@
           tracks: subsPanel(),
           facts: facts(t.tiles[sel]),
           infoTabs: isMulti ? { keys: t.tiles.map((/** @type {string} */ _id, /** @type {number} */ i) => S.TILE_KEYS[i]), sel, pick: (/** @type {number} */ i) => { infoSel = i; } } : null,
-          canExternal: false,
+          canExternal: !isUrl && (!c0.kind || c0.kind === 'file'),
           canUseOriginal: !!(typeof engine.pictureInfo === 'function' && (engine.pictureInfo(t.tiles[sel]) || {}).remoteStream),
           transcode: (() => {
             const tc = typeof /** @type {any} */ (engine).transcodeInfo === 'function'
