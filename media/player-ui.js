@@ -756,17 +756,22 @@
     };
 
     /**
-     * The clock moved to another video (or another tab): the seek bar, readout and stepping follow that video's frame
-     * rate and length, at the same moment (S.syncClockMeta). Not a seek: the transport keeps its time.
+     * The clock moved to another video (or another tab), or (prev null: ui.syncClockMeta()) its decoder learnt the
+     * real frame rate / length after boot: the seek bar, readout and stepping follow that video's frame rate and
+     * length, at the same moment (S.syncClockMeta). Not a seek: the transport keeps its time. A commit on the same
+     * clock leaves the tab's numbers alone (the page's own maxFrame may be what the host knows better).
      */
     const syncClock = (/** @type {any} */ prev) => {
       const t = tab();
-      if (!t.clockId || (prev.id === t.id && prev.clockId === t.clockId)) return;
+      if (!t.clockId) return;
       const c = /** @type {any} */ (engine.getClip(t.clockId) || {});
       /** @type {{ fps?: number, maxFrame?: number }} */
       const meta = {};
       if (Number(c.fps) > 0) meta.fps = Number(c.fps);
       if (Number(c.frames) > 1) meta.maxFrame = Math.floor(Number(c.frames)) - 1;
+      if (prev && prev.id === t.id && prev.clockId === t.clockId) return;
+      const stale = (meta.fps !== undefined && meta.fps !== t.fps) || (meta.maxFrame !== undefined && meta.maxFrame !== t.maxFrame);
+      if (!prev && !stale) return;
       const before = t.frame;
       ws = S.syncClockMeta(ws, meta);
       if (seen && seen.tabId === t.id && seen.frame === before) seen.frame = tab().frame;
@@ -781,6 +786,18 @@
       render();
     };
     const postHost = (/** @type {any} */ msg) => { if (!disposed) host.post(msg); };
+    /**
+     * Compare capture lives in the host's session too (src/unified-session.js 'capture'): whatever turned it on or
+     * off here (the button, Shift+D, leaving Compare, a video opened into Compare), the host is told once per change.
+     */
+    let lastPostedCapture = !!tab().capture;
+    const postCapture = () => {
+      const t = tab();
+      const on = !!t.capture;
+      if (on === lastPostedCapture) return;
+      lastPostedCapture = on;
+      postHost({ type: 'capture', tabId: t.id, on });
+    };
 
     // ---- the real Folder Rail: its own messages go straight to the host ----
     /** @type {any} */
@@ -2278,6 +2295,7 @@
     let lastSound = '';
     function render() {
       if (disposed) return;
+      postCapture();
       const t = tab();
       const { width, height } = stageSize();
       const ui = S.deriveUi(t, { width, height });
@@ -2473,6 +2491,12 @@
       getState: () => ws,
       setState: (/** @type {any} */ next) => { ws = next; ab.clear(); render(); },
       getPrefs: () => ({ ...prefs, picMode: tab().picMode }),
+      /** The clock video's decoder learnt its real fps / length: the seek bar, readout and stepping follow it. */
+      syncClockMeta: () => {
+        const before = ws;
+        syncClock(null);
+        if (ws !== before) render();
+      },
       /** A decoder clock (tickMs: 0) presented this clock frame: the UI follows without telling onTransport. */
       onDecoderFrame: (/** @type {number} */ frame) => decoderFrame(frame),
       /** A decoder clock reached its end: A-B wrap, Loop, or pause and Autoplay next. */

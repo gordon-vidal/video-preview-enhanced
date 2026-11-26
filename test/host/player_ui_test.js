@@ -1669,6 +1669,50 @@ async function phase34() {
     }, { engine });
   }
 
+  // The clock's decoder learns its real fps / length after boot (Astra #2 High #5): same clockId, new numbers.
+  {
+    const meta = { id: 'a', name: 'a.mp4', fps: 24, frames: 240 };
+    const base = toolEngine(createFakeEngine([meta]));
+    const engine = { ...base, getClip: (id) => (id === 'a' ? { ...base.getClip('a'), fps: meta.fps, frames: meta.frames } : base.getClip(id)) };
+    const initial = S.syncClockMeta(S.createWorkspaceState({ tiles: ['a'], frame: 48 }), { fps: 24, maxFrame: 239 });
+    await mountTools(initial, async ({ ui, tab, $ }) => {
+      assert.deepStrictEqual([tab().clockId, tab().fps, tab().maxFrame], ['a', 24, 239], 'boots with the guessed numbers');
+      assert.strictEqual(typeof ui.syncClockMeta, 'function', 'the controller exposes syncClockMeta');
+      meta.fps = 60;
+      meta.frames = 600;
+      ui.syncClockMeta();
+      assert.deepStrictEqual([tab().clockId, tab().fps, tab().maxFrame, tab().frame], ['a', 60, 599, 120], 'the real numbers: 2 s = frame 120');
+      assert.deepStrictEqual([$('seek').max, $('seek').value], ['599', '120'], 'the seek bar follows');
+      const before = ui.getState();
+      ui.syncClockMeta();
+      assert.strictEqual(ui.getState(), before, 'nothing new: the state is left alone');
+      meta.frames = 900;
+      ui.dispatch('seek', 60);
+      assert.strictEqual(tab().maxFrame, 599, 'an ordinary commit on the same clock leaves the numbers to syncClockMeta');
+      ui.syncClockMeta();
+      assert.deepStrictEqual([tab().fps, tab().maxFrame, tab().frame, $('seek').max], [60, 899, 60, '899'], 'a longer clip: only the length moves');
+    }, { engine });
+  }
+
+  // Compare capture is told to the host on every change (Astra #2 High #4), not kept in the page alone.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, tab }) => {
+    const caps = () => host.log.filter((m) => m.type === 'capture').map((m) => ({ on: m.on, tabId: m.tabId }));
+    assert.deepStrictEqual(caps(), [], 'nothing posted at boot');
+    ui.dispatch('capture');
+    assert.strictEqual(tab().capture, true);
+    assert.deepStrictEqual(caps(), [{ on: true, tabId: tab().id }], 'capture on is posted');
+    ui.render();
+    assert.strictEqual(caps().length, 1, 'a redraw without a change posts nothing');
+    ui.dispatch('capture');
+    assert.deepStrictEqual(caps().map((c) => c.on), [true, false], 'capture off is posted');
+    // A video the host opens into Compare turns capture on in the page (applyHostMessage): the host hears that too.
+    ui.onHostMessage({ type: 'openVideo', clipId: 'clip-1', compare: true });
+    assert.strictEqual(tab().capture, true, 'openVideo with compare turns capture on');
+    assert.deepStrictEqual(caps().map((c) => c.on), [true, false, true], 'and it is posted');
+    ui.dispatch('leaveCompare');
+    assert.strictEqual(caps().pop().on, tab().capture, 'after leaving Compare the host has the same capture flag as the page');
+  });
+
   // Frame export through a decoder (Astra #1): engine.showFrame(id, k, { signal }) is awaited, and the bar shows the
   // frame it really presented.
   {

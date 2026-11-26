@@ -23,7 +23,7 @@
    * @typedef {{ x: number, y: number, w: number, h: number }} Rect
    * @typedef {number | { unit?: string, v?: number } | null | undefined} Offset
    * @typedef {{ clips: ClipSpec[], getPlayer: (id: string) => any, compositor?: any, pictureApi?: any,
-   *   controlsApi?: any, doc?: any }} EngineAdapterOptions
+   *   controlsApi?: any, doc?: any, showFrameTimeoutMs?: number }} EngineAdapterOptions
    */
 
   const FALLBACK = { fps: 24, frames: 240, width: 1920, height: 1080 };
@@ -131,8 +131,6 @@
 
   const SHOW_FRAME_TIMEOUT_MS = 20000;
   const SHOW_FRAME_POLL_MS = 16;
-  /** A seek that lands on the picture already shown never counts a new one: settled this long, it is done. */
-  const SHOW_FRAME_SETTLE_MS = 1000;
 
   /** @param {EngineAdapterOptions} opts */
   function create(opts) {
@@ -144,6 +142,7 @@
     const byId = new Map(specs.map((c) => [c.id, c]));
     const { compositor, pictureApi, controlsApi } = opts;
     const doc = opts.doc || /** @type {any} */ (globalThis).document || null;
+    const showFrameTimeoutMs = Number(opts.showFrameTimeoutMs) > 0 ? Number(opts.showFrameTimeoutMs) : SHOW_FRAME_TIMEOUT_MS;
 
     /** @param {string} id */
     const playerOf = (id) => {
@@ -392,7 +391,10 @@
      * Show `frame` paused and resolve with the frame actually on screen once the player has presented it (VFR or
      * gapped video can land on a neighbour), or null: unknown clip, no player, aborted, or nothing after 20 s.
      * A player's own showFrame(frame, opts) wins; otherwise the adapter seeks and watches the player settle
-     * (engine.js: seekTarget / shownT / shownCount; frame-player.js: shown), as media/player.js does.
+     * (engine.js: seekTarget / shownT / shownCount / shownStale; frame-player.js: shown), as media/player.js does.
+     * An engine.js player counts only on positive evidence: a fresh picture (shownCount past its value at the seek,
+     * not stale, no seek pending), or the exact frame already cleanly on screen. A seek that never presents gives
+     * null, never the previous picture: an export or a still must not silently take the wrong frame.
      * @param {string} clipId @param {number} frame @param {{ signal?: AbortSignal | null }} [o]
      * @returns {Promise<number | null>}
      */
@@ -412,14 +414,13 @@
       if (typeof p.seekFrame !== 'function') return null;
       const engineLike = 'seekTarget' in p;
       const current = () => (typeof p.currentFrame === 'function' ? Number(p.currentFrame()) : NaN);
-      const settled = () => p.seekTarget === null && p.shownT !== null && p.shownT !== undefined;
+      // A stale picture (engine.js: skipped over, or a seek's first picture not shown yet) is never settled.
+      const settled = () => p.seekTarget == null && !p.shownStale && p.shownT !== null && p.shownT !== undefined;
       if (engineLike ? settled() && current() === k : p.shown === k) return k;
       const before = Number(p.shownCount) || 0;
       try { p.seekFrame(k); } catch { return null; }
       return new Promise((resolve) => {
         const t0 = Date.now();
-        /** @type {number | null} */
-        let settledAt = null;
         /** @type {any} */
         let timer = null;
         /** @param {number | null} f */
@@ -433,19 +434,12 @@
         const check = () => {
           timer = null;
           if (aborted() || playerOf(clipId) !== p) { finish(null); return; }
-          const now = Date.now();
           if (engineLike) {
-            if (settled()) {
-              if (settledAt === null) settledAt = now;
-              const f = current();
-              if (Number.isFinite(f) && ((Number(p.shownCount) || 0) > before || now - settledAt >= SHOW_FRAME_SETTLE_MS)) {
-                finish(f);
-                return;
-              }
-            } else settledAt = null;
+            const f = current();
+            if (settled() && (Number(p.shownCount) || 0) > before && Number.isFinite(f)) { finish(f); return; }
           } else if (p.shown === k) { finish(k); return; }
           else if (!('shown' in p) && current() === k) { finish(k); return; }
-          if (now - t0 >= SHOW_FRAME_TIMEOUT_MS) { finish(null); return; }
+          if (Date.now() - t0 >= showFrameTimeoutMs) { finish(null); return; }
           timer = setTimeout(check, SHOW_FRAME_POLL_MS);
         };
         if (signal) signal.addEventListener('abort', cancel, { once: true });
@@ -455,7 +449,9 @@
 
     /**
      * The pixel under picture point (x, y) as { text } (plus r, g, b, a when known), or null when the clip's
-     * player cannot read pixels. The player's pixelAt wins, else its readPixels.
+     * player cannot read pixels. The player's pixelAt wins, else its readPixels, else the presented picture as
+     * media/inspect.js reads it (engine.js has neither): its WebGL renderer (p.gl.gl), its 2D context (p.ctx), or
+     * its canvas (snapshotSource() / canvas) through a 1×1 2D canvas. (x, y) are the canvas's pixels.
      * @param {string} clipId @param {number} x @param {number} y
      */
     function pixelAt(clipId, x, y) {
@@ -464,8 +460,46 @@
       try {
         if (typeof p.pixelAt === 'function') return formatPixel(p.pixelAt(x, y), x, y);
         if (typeof p.readPixels === 'function') return formatPixel(p.readPixels(x, y), x, y);
+        return formatPixel(samplePresented(p, Math.floor(Number(x)), Math.floor(Number(y))), x, y);
       } catch { /* a lost context or a closed player: no pixel */ }
       return null;
+    }
+
+    /**
+     * RGBA of the presented picture at canvas pixel (x, y), or null (outside it, or nothing to read).
+     * @param {any} p @param {number} x @param {number} y
+     */
+    function samplePresented(p, x, y) {
+      if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) return null;
+      let src = null;
+      try { src = typeof p.snapshotSource === 'function' ? p.snapshotSource() : null; } catch { src = null; }
+      src = src || p.canvas || null;
+      const w = Number(src && src.width) || 0;
+      const h = Number(src && src.height) || 0;
+      if (src && w && h && (x >= w || y >= h)) return null;
+      const gl = p.gl && p.gl.gl;
+      if (gl && typeof gl.readPixels === 'function' && h) {
+        // GL rows start at the bottom; read the default framebuffer, as media/inspect.js does.
+        const buf = new Uint8Array(4);
+        const prev = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+        gl.readPixels(x, h - 1 - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prev);
+        return buf;
+      }
+      if (p.ctx && typeof p.ctx.getImageData === 'function') return p.ctx.getImageData(x, y, 1, 1).data;
+      if (!src || !w || !h) return null;
+      // A 2D canvas is read directly; any other source (a WebGL canvas, a bitmap) is drawn into a 1×1 canvas.
+      const own = typeof src.getContext === 'function' && !(p.gl && p.gl.gl) ? src.getContext('2d') : null;
+      if (own && typeof own.getImageData === 'function') return own.getImageData(x, y, 1, 1).data;
+      if (!doc || typeof doc.createElement !== 'function') return null;
+      const one = doc.createElement('canvas');
+      one.width = 1;
+      one.height = 1;
+      const ctx = one.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(src, x, y, 1, 1, 0, 0, 1, 1);
+      return ctx.getImageData(0, 0, 1, 1).data;
     }
 
     // ---- sound: one tile is heard, every other is muted ----
