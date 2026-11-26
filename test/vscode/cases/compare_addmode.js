@@ -6,12 +6,17 @@ const path = require('path');
 const lib = require('../lib');
 
 const CLIPS = ['h264_aac_anim_1080p.mp4', 'vp9_opus_anim_1080p.webm', 'h264_8_1080p.mp4'];
-const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] opened, .* ${n} tiles`);
-const hint = (on) => new RegExp(`\\[compare [^\\]]*\\] webview: addMode ${on ? 'on' : 'off'}`);
+// The unified viewer grows one tab in place: the host logs "tiles: N" (and "opened, ..., N tiles" for a new panel).
+const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] (?:opened, .*, |tiles: )${n}(?: tiles)?\\b`);
+// Add Mode is the session's Capture; any tab title (a single video's too) can carry the line.
+const hint = (on) => new RegExp(`\\[[^\\]]+\\] compare: add from the Explorer ${on ? 'on' : 'off'}`);
 const menuContext = (on) => new RegExp(`compare: videoPreviewEnhanced\\.compareOpen=${on}`);
-const isCompare = (tab) => /compare/i.test(tab.viewType);
-// A compare opened without Add Mode (several files chosen at once): neither the host nor its page ever turned it on.
-const modeOn = /compare: add from the Explorer on|webview: addMode on/;
+// A comparison's tab: a viewer panel made for it, or a player tab grown in place (its title lists the videos).
+const isCompare = (tab) => /compare/i.test(tab.viewType) || /↔| · /.test(tab.label);
+// A compare opened without Add Mode (several files chosen at once): the host never turned it on.
+const modeOn = /compare: add from the Explorer on/;
+// The page shows its pictures (2+ tiles all presented).
+const ready = /webview: first pictures shown/;
 
 module.exports = [{
   name: 'compare_addmode',
@@ -57,51 +62,47 @@ module.exports = [{
       fs.copyFileSync(files[0], first);
       fs.copyFileSync(files[1], second);
       fs.writeFileSync(notes, 'Compare tab switching test\n');
-      await run('toolbar-confirm-stop-and-append', async () => {
+      await run('toolbar-toggle-stop-and-append', async () => {
         const P = await lib.open(vs, h, files[0]);
         P.pause();
-        await P.ask('click', { sel: '#startCompareBtn' });
+        // The Compare button toggles Add Mode directly: no confirmation dialog, the tab stays one tab.
+        const on = send({ name: CLIPS[0], action: 'click', sel: '#startCompareBtn' });
+        await wait(hint(true), on, 'the Compare button turns Add Mode on');
         let state = await P.ask('a11y');
-        assert(!state.startCompare.hidden && state.active === 'cancelCompareBtn', 'Compare opens the confirmation and focuses Cancel');
-        assert(state.controls.startCompareBtn['aria-expanded'] === 'true', 'Compare announces the expanded dialog');
-        P.key('Tab', { target: ':focus' });
+        assert(state.controls.startCompareBtn['aria-pressed'] === 'true', `the Compare button shows Add Mode on: ${JSON.stringify(state.controls.startCompareBtn)}`);
+        let tabs = await tabList();
+        assert(tabs.length === 1 && !isCompare(tabs[0]), `Add Mode on leaves the player tab alone: ${JSON.stringify(tabs)}`);
+        const off = send({ name: CLIPS[0], action: 'click', sel: '#startCompareBtn' });
+        await wait(hint(false), off, 'the Compare button again ends Add Mode');
         state = await P.ask('a11y');
-        assert(state.active === 'confirmCompareBtn', 'Tab moves focus to Start comparison');
-        P.key('Tab', { target: ':focus' });
-        assert((await P.ask('a11y')).active === 'cancelCompareBtn', 'Tab wraps back to Cancel');
-        P.key('Escape', { target: ':focus' });
-        state = await P.ask('a11y');
-        assert(state.startCompare.hidden && state.active === 'startCompareBtn', 'Escape dismisses the dialog and returns focus');
-        await P.ask('click', { sel: '#startCompareBtn' });
-        await P.ask('click', { sel: '#startCompareBackdrop' });
-        assert((await P.ask('a11y')).startCompare.hidden, 'click outside dismisses the dialog');
-        const tabs = await tabList();
-        assert(tabs.length === 1 && !isCompare(tabs[0]), 'dismissing the dialog leaves the player tab open');
+        assert(state.controls.startCompareBtn['aria-pressed'] === 'false', `the button shows Add Mode off: ${JSON.stringify(state.controls.startCompareBtn)}`);
 
-        await P.ask('click', { sel: '#startCompareBtn' });
-        const confirmed = send({ name: CLIPS[0], action: 'click', sel: '#confirmCompareBtn' });
-        await wait(opened(1), confirmed, 'Start comparison opens one tile');
-        await wait(hint(true), confirmed, 'Start comparison enters Add Mode');
+        const again = send({ name: CLIPS[0], action: 'click', sel: '#startCompareBtn' });
+        await wait(hint(true), again, 'the Compare button turns Add Mode on again');
+        const joined = open(files[1]);
+        await wait(opened(2), joined, 'an Explorer open grows the player tab to two tiles');
         await onlyCompare();
 
-        const stopped = act('click', { sel: '#stopAddBtn' });
-        await wait(hint(false), stopped, 'the Stop button ends Add Mode');
-        const other = await lib.open(vs, h, files[1]);
-        state = await other.ask('a11y');
-        assert(state.controls.startCompareBtn['aria-label'] === 'Add to Compare', 'a player detects the open Compare');
-        const appended = send({ name: CLIPS[1], action: 'click', sel: '#startCompareBtn' });
-        await wait(/\[compare [^\]]*\] add vp9_opus_anim_1080p\.webm/, appended, 'the player adds directly to the open Compare');
-        assert((await other.ask('a11y')).startCompare.hidden, 'adding to Compare skips the confirmation');
+        const stopped = act('click', { sel: '#startCompareBtn' });
+        await wait(hint(false), stopped, 'the Compare button ends Add Mode in the comparison');
+        // A player of its own adds to the open Compare from its title action, no confirmation.
+        const other = await lib.open(vs, h, files[2]);
+        const appended = send({ command: 'videoPreviewEnhanced.addToCompareFromPlayer', arg: files[2] });
+        await wait(/\[compare [^\]]*\] add h264_8_1080p\.mp4/, appended, 'the player adds directly to the open Compare');
+        tabs = await tabList();
+        assert(tabs.length === 2 && tabs.filter(isCompare).length === 1, `tabs after adding: ${JSON.stringify(tabs)}`);
+        await other.close();
       });
 
       await run('single-file-start-and-explorer-add', async () => {
         const start = startCompare([files[0]]);
-        await wait(menuContext(true), start, 'Compare menus switch to Add to Compare');
-        await wait(opened(1), start, 'single-tile Compare');
-        await wait(hint(true), start, 'single-tile Add Mode');
+        await wait(hint(true), start, 'single-video Start Compare turns Add Mode on');
         const joined = open(files[1]);
         await wait(opened(2), joined, 'second tile from an Explorer open');
-        await wait(hint(true), joined, 'the hint after adding a tile');
+        await wait(menuContext(true), joined, 'Compare menus switch to Add to Compare');
+        // Add Mode stays on after a tile joins: the next open joins too.
+        const third = open(files[2]);
+        await wait(opened(3), third, 'a third tile from an Explorer open');
         await onlyCompare();
         const closing = vs.mark();
         await h.closeClip(vs);
@@ -111,7 +112,7 @@ module.exports = [{
       await run('multi-select-mixed-and-folder', async () => {
         const start = startCompare(files.slice(0, 2));
         await wait(opened(2), start, 'two selected files');
-        await wait(/webview: begin:/, start, 'Compare ready');
+        await wait(ready, start, 'Compare ready');
         assert(!vs.lines.slice(start).some((l) => modeOn.test(l)), 'a multi-select must open Compare with Add Mode off');
         const append = add([dir, first, files[0]]);
         await wait(opened(4), append, 'mixed selection appends two unique folder files');
@@ -123,16 +124,16 @@ module.exports = [{
         fs.copyFileSync(files[0], path.join(nestedRoot, 'cam1', 'video.mp4'));
         fs.copyFileSync(files[1], path.join(nestedRoot, 'cam2', 'video.webm'));
         const nested = startCompare([nestedRoot]);
-        const nestedLine = await wait(opened(2), nested, 'two videos from subfolders');
+        const nestedLine = await wait(/compare: video\.mp4 <-> video\.webm/, nested, 'two videos from subfolders, in order');
         assert(/video\.mp4.*video\.webm/.test(nestedLine), `subfolder order: ${nestedLine}`);
-        await wait(/webview: begin:/, nested, 'Compare ready for subfolders');
+        await wait(ready, nested, 'Compare ready for subfolders');
         assert(!vs.lines.slice(nested).some((l) => modeOn.test(l)), 'a nested folder must open Compare with Add Mode off');
         await onlyCompare();
         await h.closeClip(vs);
         const folder = startCompare([dir]);
-        const line = await wait(opened(4), folder, 'four files from folder and subfolders');
+        const line = await wait(/compare: clip2\.mp4 <-> clip10\.webm <-> video\.mp4 <-> video\.webm/, folder, 'four files from folder and subfolders, in order');
         assert(/clip2\.mp4.*clip10\.webm.*video\.mp4.*video\.webm/.test(line), `folder order: ${line}`);
-        await wait(/webview: begin:/, folder, 'Compare ready');
+        await wait(ready, folder, 'Compare ready');
         assert(!vs.lines.slice(folder).some((l) => modeOn.test(l)), 'a folder must open Compare with Add Mode off');
         await onlyCompare();
         // With Add Mode off, an Explorer open is a player of its own.
@@ -146,8 +147,8 @@ module.exports = [{
         const player = await h.openClip(vs, files[0]);
         await wait(/first frame shown/, player, 'the player');
         const started = send({ name: CLIPS[0], compareWith: [files[1]] });
+        await wait(opened(2), started, 'the picked file joins the player video in its own tab');
         await wait(menuContext(true), started, 'the title action opens a Compare session');
-        await wait(opened(2), started, 'the picked file and player video are compared');
         await onlyCompare();
 
         // Compare With… picks a whole set, so Compare opens with Add Mode off.
@@ -164,11 +165,10 @@ module.exports = [{
         const player = await h.openClip(vs, files[0]);
         await wait(/first frame shown/, player, 'the player');
         const shift = send({ name: CLIPS[0], action: 'key', key: 'D', shift: true });
-        await wait(/webview: addMode on/, shift, 'the player hint');
+        await wait(hint(true), shift, 'Shift+D turns Add Mode on');
         const joined = open(files[1]);
-        await wait(opened(2), joined, 'Compare replaces the player');
-        await wait(hint(true), joined, 'Add Mode survives the transition');
-        await wait(/webview: begin:/, joined, 'Compare ready to play');
+        await wait(opened(2), joined, 'the player tab grows to two tiles');
+        await wait(ready, joined, 'Compare ready to play');
         const played = act('play');
         act('report');
         await wait(/compare report .* playing=1,1/, played, 'both tiles playing');
@@ -177,8 +177,7 @@ module.exports = [{
         act('report');
         await wait(/compare report .* frame=[1-9][0-9]+ .* playing=0,0/, scrubbed, 'paused after scrubbing');
         const added = open(files[2]);
-        await wait(opened(3), added, 'a video still joins after playback and scrubbing');
-        await wait(hint(true), added, 'the hint after a third tile');
+        await wait(opened(3), added, 'a video still joins after playback and scrubbing (Add Mode survived)');
         await onlyCompare();
 
         const stopped = send({ command: 'videoPreviewEnhanced.stopAddFromExplorer' });
@@ -196,15 +195,15 @@ module.exports = [{
         await wait(/debug done openNotes openFile/, textOpened, 'the text tab is open');
         const start = add(files.slice(0, 2));
         await wait(opened(2), start, 'Compare opens');
-        await wait(/webview: begin:/, start, 'Compare ready');
+        await wait(ready, start, 'Compare ready');
         assert(!vs.lines.slice(start).some((l) => modeOn.test(l)), 'Compare from a multi-select starts with Add Mode off');
         const on = act('key', { key: 'D', shift: true });
         await wait(hint(true), on, 'Shift+D turns Add Mode on');
         const toggle = act('key', { key: 'D', shift: true });
         await wait(hint(false), toggle, 'Shift+D turns Add Mode off');
         act('panel', { view: 'cmp' });
-        const button = act('click', { text: 'Add video' });
-        await wait(hint(true), button, 'Add video turns Add Mode back on');
+        const button = act('click', { text: 'Open new videos here' });
+        await wait(hint(true), button, "the Compare panel's switch turns Add Mode back on");
         const switched = open(notes);
         await wait(/compare: add from the Explorer off \(switched editor\)/, switched, 'switching to a text tab ends Add Mode');
         const separate = open(files[2]);

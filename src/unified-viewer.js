@@ -76,7 +76,7 @@ const NOTICES = new Set(['hideSlowPlaybackNotice', 'hideReducedResNotice']);
  * @typedef {{ handle(m: any): any, dispose(): void, resize?: Function, lossy?: () => boolean, setHidden?: (on: boolean) => void,
  *   setCompareOutput?: Function, setMaxBitrateMbps?: (mbps: number) => void, setResolution?: (h: number) => void,
  *   setQuality?: (pick: 'auto' | number) => any, readBlock?: (pos: number, len: number) => Promise<Uint8Array | null>,
- *   busy?: () => boolean }} HostDecoder
+ *   busy?: () => boolean, w?: number, h?: number, videoSize?: () => { width: number, height: number } }} HostDecoder
  * @typedef {{ post(m: any): void, postRaw(m: any): void, log(m: string): void, onFail(err: any): void, hidden: boolean,
  *   origin?: string | null, transport?: string }} DecoderIo
  */
@@ -300,6 +300,12 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const tag = session && session.clips.length >= 2 ? `compare ${t}` : t;
     deps.log(`[${tag}] ${m}`);
   };
+  /**
+   * A decoder's log line. One video: "[name] native decode from ..." (what the tests and a bug report read); beside
+   * others the clip's name leads, so the lines of a comparison's tiles stay apart.
+   * @param {ViewerClip} c @param {string} m
+   */
+  const clipLog = (c, m) => log(session && session.clips.length >= 2 ? `${c.label}: ${m}` : m);
   /** @param {UriLike} [uri] @param {boolean} [compare] the clip will show beside others (Compare's transcode policy) */
   const prepDeps = (uri, compare = false) => ({
     rotationOf: deps.rotationOf, nativeFor: deps.nativeFor || null, transport: deps.nativeTransport, log,
@@ -427,7 +433,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const size = fitTiles() ? own || session.lastTileSize : null;
     const fit = size ? nativeHeightFor(c, size, !!own) : 0;
     const maxHeight = fit > 0 ? Math.min(d.maxHeight, fit) : d.maxHeight;
-    log(`${c.label}: native ffmpeg (${d.method}) at up to ${maxHeight}p: ${d.reason}`);
+    clipLog(c, `native ffmpeg (${d.method}) at up to ${maxHeight}p: ${d.reason}`);
     /** @type {HostDecoder} */
     let decoder;
     const opts = {
@@ -436,10 +442,10 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       maxQueued: Grid.nativeQueuePerTile(deps.nativeQueue ? deps.nativeQueue() : 8, n), largeGrid: Grid.isLarge(n),
       post: (/** @type {any} */ msg) => { if (natives.get(c.id) === decoder) session.postNativeReply(c.id, msg); },
       postRaw: (/** @type {any} */ msg) => { if (natives.get(c.id) === decoder) postAny({ ...msg, key: c.id, clipId: c.id }); },
-      log: (/** @type {string} */ msg) => log(`${c.label}: ${msg}`),
+      log: (/** @type {string} */ msg) => clipLog(c, msg),
       onFail: (/** @type {any} */ err, /** @type {boolean} */ rejectedMedia) => {
         if (disposed || natives.get(c.id) !== decoder) return;
-        log(`${c.label}: native ffmpeg failed (${errText(err)}); built-in decoder from now on`);
+        clipLog(c, `native ffmpeg failed (${errText(err)}); built-in decoder from now on`);
         if (deps.nativeFailed) {
           try { deps.nativeFailed(c, err, !!rejectedMedia); } catch (e) { log(`${c.label}: ${errText(e)}`); }
         }
@@ -474,7 +480,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   function startStream(c) {
     const d = c.decision;
     const out = streamOutput(c);
-    log(`${c.label}: live transcode (${d.stream && d.stream.encoder || 'stream'})`);
+    clipLog(c, `live transcode (${d.stream && d.stream.encoder || 'stream'})`);
     /** @type {HostDecoder} */
     let stream;
     const current = () => !disposed && natives.get(c.id) === stream;
@@ -487,10 +493,10 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
         if (msg && msg.type === 'remoteNotice') toast(String(msg.text || ''), 6000);
         else session.postNativeReply(c.id, msg);
       },
-      log: (/** @type {string} */ msg) => log(`${c.label}: ${msg}`),
+      log: (/** @type {string} */ msg) => clipLog(c, msg),
       onFail: (/** @type {any} */ err) => {
         if (!current()) return;
-        log(`${c.label}: live transcode failed (${errText(err)}); using the original decoder`);
+        clipLog(c, `live transcode failed (${errText(err)}); using the original decoder`);
         toBuiltIn(c.id, 'Live transcode failed. Using the original video.');
       },
     });
@@ -510,10 +516,10 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       transport: origin && deps.nativeTransport ? deps.nativeTransport() : 'message',
       post: (msg) => { if (current()) session.postNativeReply(c.id, msg); },
       postRaw: (msg) => { if (current()) postAny({ ...msg, key: c.id, clipId: c.id }); },
-      log: (msg) => log(`${c.label}: ${msg}`),
+      log: (msg) => clipLog(c, msg),
       onFail: (err) => {
         if (!current()) return;
-        log(`${c.label}: cannot play (${errText(err)})`);
+        clipLog(c, `cannot play (${errText(err)})`);
         closeNative(c.id);
         toast(`${c.label} cannot be played.`, 4000);
       },
@@ -547,6 +553,19 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     if (m.m.type === 'open' && kinds.get(c.id) === 'stream' && panel.visible === false && decoder.setHidden) decoder.setHidden(true);
     return decoder.handle(m.m);
   }
+  /** @type {Set<string>} native clips whose smaller frame size waits for the next seek (resizeDecoders) */
+  const lazyShrink = new Set();
+  /**
+   * The frame size a native decoder sends now (`pending`: the size it will send once a seek applies the caps).
+   * Null for a decoder that does not say (a test double).
+   * @param {HostDecoder} dec @param {boolean} [pending]
+   * @returns {{ width: number, height: number } | null}
+   */
+  function frameSizeOf(dec, pending = false) {
+    if (typeof dec.videoSize !== 'function' || !(Number(dec.w) > 0) || !(Number(dec.h) > 0)) return null;
+    if (pending) return dec.videoSize();
+    return { width: Number(dec.w), height: Number(dec.h) };
+  }
   /**
    * The page's decode size changed (layout, zoom, rate): every native tile gets its new output size, every Live
    * transcode its new size and bitrate share; a tile that must seek to apply it gets 'resize' (by clip id).
@@ -567,7 +586,27 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       if (kind === 'native' && fit && typeof dec.resize === 'function') {
         const h = nativeHeightFor(c, size, !!own);
         const mmh = c.decision.messageMaxHeight > 0 ? c.decision.messageMaxHeight : h;
-        if (h && dec.resize(h, Math.min(h, mmh))) resized.push(c.id);
+        if (!h) continue;
+        const had = frameSizeOf(dec);
+        let changed = dec.resize(h, Math.min(h, mmh));
+        const now = frameSizeOf(dec, true);
+        // A smaller size waiting for the next seek (below) is not applied again; a larger one meanwhile is.
+        if (!changed && lazyShrink.has(c.id) && had && now) {
+          if (now.height > had.height) changed = true;
+          else if (now.height === had.height) lazyShrink.delete(c.id);
+        }
+        if (!changed) continue;
+        const view = `native: picture ${Math.round(Number(size.w) || 0)}x${Math.round(Number(size.h) || 0)}`;
+        if (had && now && had.height > now.height && session.clips.length < 2) {
+          // One video alone: smaller frames wait for the next seek or loop (a picture resized back and forth across a
+          // step does not restart ffmpeg each time); larger ones apply at once, below.
+          lazyShrink.add(c.id);
+          clipLog(c, `${view}: frames ${had.width}x${had.height} -> ${now.width}x${now.height} at the next seek`);
+          continue;
+        }
+        lazyShrink.delete(c.id);
+        if (had && now && had.height !== now.height) clipLog(c, `${view}: frames ${had.width}x${had.height} -> ${now.width}x${now.height}`);
+        resized.push(c.id);
       } else if (kind === 'stream' && typeof dec.setCompareOutput === 'function') {
         const out = streamOutput(c);
         // A grown picture (zoomed in) is not restarted at once: the page seeks it once ('resize').
@@ -920,7 +959,9 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   async function addUri(uri) {
     if (disposed || !isViewable(uri)) return false;
     const c = await prepareClip(uri, prepDeps(uri, true));
-    return !disposed && session.addClip(c);
+    const added = !disposed && session.addClip(c);
+    if (added) log(`add ${c.label}`);
+    return added;
   }
   /**
    * One video shown: `file` plays in its place. Several: it joins them.
@@ -995,9 +1036,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
           log(`remove ${existing.label}`);
           return session.removeClip(existing.id);
         }
-        const added = await addUri(uri);
-        if (added) log(`add ${path.basename(e.path)}`);
-        return added;
+        return addUri(uri);
       },
       onCompareVideo: (e) => addUri(uriOf(e.path)),
       onCompareFolder: (e) => (deps.compareFolder ? deps.compareFolder(uriOf(e.path), viewer) : undefined),
@@ -1060,6 +1099,8 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   // and (on a ready page) gets its subtitles.
   session.onChange((e) => {
     if (e !== 'clips') return;
+    // The tile count of a comparison, as it grows and shrinks in place (the tests read it; the tab title follows).
+    if (!disposed && session.clips.length >= 2) log(`tiles: ${session.clips.length}`);
     const shown = new Set(session.clips.map((c) => c.id));
     for (const id of [...files.keys()]) if (!shown.has(id)) closeFile(id);
     for (const id of [...natives.keys()]) if (!shown.has(id)) closeNative(id);
