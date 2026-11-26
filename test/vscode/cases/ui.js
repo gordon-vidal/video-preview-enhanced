@@ -295,16 +295,27 @@ module.exports = [{
       P.key('<'); P.key('<'); P.key('<');
       await settle(300);
       ok(await rateNow() === 0.25, 'speed is not clamped to 0.25×');
-      // Wheel over the speed button: +0.05 per notch up.
+      // Wheel over the speed button: the next preset per notch up; Shift+wheel: +0.05.
       P.act({ action: 'dom', ev: 'wheel', target: 'rate', deltaY: -100 });
       await settle(300);
-      ok(Math.abs(await rateNow() - 0.3) < 1e-6, 'wheel up over the speed button is not +0.05');
+      ok(await rateNow() === 0.5, 'wheel up over the speed button is not the next preset (0.5×)');
+      s = await P.state();
+      ok(s.bar.rateReset === true, 'the reset badge is not shown at 0.5×');
+      P.act({ action: 'dom', ev: 'wheel', target: 'rate', deltaY: -100, shift: true });
+      await settle(300);
+      ok(Math.abs(await rateNow() - 0.55) < 1e-6, 'Shift+wheel up over the speed button is not +0.05');
+      await P.ask('click', { sel: '#rateReset' });
+      await settle(300);
+      s = await P.state();
+      ok(await rateNow() === 1 && s.bar.rateReset === false, 'the reset badge did not go back to 1× and hide');
+      P.rate(0.25);
+      await settle(200);
       await P.ask('click', { sel: '#rate' });
       await settle(300);
       s = await P.state();
       ok(s.panel && s.panel.view === 'speed' && JSON.stringify(s.panel.slider) === '["0.25","4"]', `speed panel slider ${JSON.stringify(s.panel && s.panel.slider)}`);
-      ok(['0.5×', '1×', '1.5×', '2×', '3×', '4×'].every((l) => s.panel.rows.some((r) => r.label === `Speed ${l}`)), `presets on the slider: ${JSON.stringify(s.panel.rows.map((r) => r.label))}`);
-      await P.ask('click', { sel: '#panel button.mark', text: '2×' });
+      ok(['0.25×', '0.5×', '0.75×', '1×', '1.25×', '1.5×', '2×', '3×', '4×'].every((l) => s.panel.rows.some((r) => r.label === `Speed ${l}`)), `preset chips: ${JSON.stringify(s.panel.rows.map((r) => r.label))}`);
+      await P.ask('click', { sel: '#panel .speedPresets button', text: '2×' });
       await settle(300);
       ok(await rateNow() === 2, 'the 2× preset did not set 2×');
       await P.ask('click', { sel: '#panel button.big' }); // − (first big button)

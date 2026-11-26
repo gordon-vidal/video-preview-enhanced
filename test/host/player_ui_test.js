@@ -44,6 +44,17 @@ const ROOT = path.join(__dirname, '..', '..');
   assert.deepStrictEqual(PUI.keyCommand({ key: 'ArrowLeft', shiftKey: true }), { action: 'jump', arg: { dir: -1, shift: true } });
   assert.deepStrictEqual(PUI.keyCommand({ key: 'j' }), { action: 'skip', arg: -10 });
   assert.deepStrictEqual(PUI.keyCommand({ key: ']' }), { action: 'rateStep', arg: 1 });
+  // Set speeds by key position: Shift+1…4, Shift+0 (US, German, UK all type a symbol there), \ for 1×.
+  assert.deepStrictEqual(PUI.keyCommand({ key: '!', code: 'Digit1', shiftKey: true }), { action: 'rateSet', arg: 1 });
+  assert.deepStrictEqual(PUI.keyCommand({ key: '"', code: 'Digit2', shiftKey: true }), { action: 'rateSet', arg: 2 }, 'German Shift+2');
+  assert.deepStrictEqual(PUI.keyCommand({ key: '#', code: 'Digit3', shiftKey: true }), { action: 'rateSet', arg: 3 });
+  assert.deepStrictEqual(PUI.keyCommand({ key: '$', code: 'Digit4', shiftKey: true }), { action: 'rateSet', arg: 4 });
+  assert.deepStrictEqual(PUI.keyCommand({ key: '=', code: 'Digit0', shiftKey: true }), { action: 'rateSet', arg: 0.5 }, 'German Shift+0 types =');
+  assert.deepStrictEqual(PUI.keyCommand({ key: '1', code: 'Digit1', shiftKey: true }), { action: 'seekTenth', arg: 1 }, 'AZERTY: Shift types the digit, which seeks');
+  assert.strictEqual(PUI.keyCommand({ key: '%', code: 'Digit5', shiftKey: true }), null, 'Shift+5 is not a speed');
+  assert.deepStrictEqual(PUI.keyCommand({ key: '1', code: 'Digit1' }), { action: 'seekTenth', arg: 1 }, 'without Shift a digit seeks');
+  assert.deepStrictEqual(PUI.keyCommand({ key: '\\' }), { action: 'rateSet', arg: 1 });
+  assert.deepStrictEqual(PUI.keyCommand({ key: '\\', ctrlKey: true, altKey: true }, { altGr: true }), { action: 'rateSet', arg: 1 }, 'AltGr+ß types \\ on German keyboards');
   assert.deepStrictEqual(PUI.keyCommand({ key: 'ArrowDown' }), { action: 'volumeStep', arg: -0.05 });
   assert.deepStrictEqual(PUI.keyCommand({ key: '7' }), { action: 'seekTenth', arg: 7 });
   assert.strictEqual(PUI.keyCommand({ key: '[', ctrlKey: true, altKey: true }), null, 'Ctrl+Alt+[ is not a player key');
@@ -984,12 +995,34 @@ const withGlobals = (dom, fn) => {
         ui.dispatch('setA');
         assert.strictEqual(ui.ab.a, null, 'A twice clears it again');
 
-        // The wheel over the speed button: ±0.05; over the volume: ±5 %.
+        // The wheel over the speed button: the presets; Shift+wheel: ±0.05; over the volume: ±5 %.
         ui.dispatch('volume', 0.5);
+        assert.strictEqual($('rateReset').hidden, true, 'no reset badge at 1×');
         $('rate').fire('wheel', { deltaY: -100 });
-        assert.ok(Math.abs(ui.getPrefs().rate - 1.05) < 1e-9, 'wheel up over the speed button');
+        assert.strictEqual(ui.getPrefs().rate, 1.25, 'wheel up over the speed button: the next preset');
+        assert.ok($('rateTip').classList.contains('on'), 'the wheel shows the compact speed overlay');
+        assert.strictEqual($('rateTip').querySelector('.rval').textContent, '1.25×');
+        assert.strictEqual($('rateReset').hidden, false, 'the reset badge shows off 1×');
         assert.strictEqual($('rate').fire('wheel', { deltaY: 100 }).defaultPrevented, true, 'the page does not scroll');
-        assert.ok(Math.abs(ui.getPrefs().rate - 1) < 1e-9, 'wheel down');
+        assert.strictEqual(ui.getPrefs().rate, 1, 'wheel down: back to 1×');
+        $('rate').fire('wheel', { deltaY: -100, shiftKey: true });
+        assert.ok(Math.abs(ui.getPrefs().rate - 1.05) < 1e-9, 'Shift+wheel up: +0.05');
+        $('rate').fire('wheel', { deltaY: 0, deltaX: -100, shiftKey: true });
+        assert.ok(Math.abs(ui.getPrefs().rate - 1.1) < 1e-9, 'Shift+wheel as Chromium sends it (deltaX): +0.05');
+        $('rate').fire('wheel', { deltaY: -100 });
+        assert.strictEqual(ui.getPrefs().rate, 1.25, 'from between two presets: the next one up');
+        $('rate').fire('wheel', { deltaY: 20, deltaMode: 0 });
+        $('rate').fire('wheel', { deltaY: 20, deltaMode: 0 });
+        assert.strictEqual(ui.getPrefs().rate, 1.25, 'small touchpad deltas add up first');
+        $('rate').fire('wheel', { deltaY: 20, deltaMode: 0 });
+        assert.strictEqual(ui.getPrefs().rate, 1, 'a notch worth of them: one preset');
+        // The reset badge, the set-speed keys.
+        ui.dispatch('rateSet', 3);
+        assert.deepStrictEqual([ui.getPrefs().rate, $('rate').textContent, $('rateReset').hidden], [3, '3×', false]);
+        $('rateReset').focus();
+        $('rateReset').fire('click', { button: 0 });
+        assert.deepStrictEqual([ui.getPrefs().rate, $('rateReset').hidden, dom.doc.activeElement === $('rate')], [1, true, true],
+          'the badge resets to 1×, hides, and leaves the focus on the speed button');
         $('volume').fire('wheel', { deltaY: -100 });
         assert.ok(Math.abs(ui.getPrefs().volume - 0.55) < 1e-9, 'wheel up over the volume');
 

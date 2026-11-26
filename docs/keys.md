@@ -15,6 +15,9 @@ them all, with the jump sizes you chose. In the player and Compare, you can also
 | Ctrl+← / Ctrl+→ (Cmd on macOS) | Back / forward one frame (setting `jump.ctrl`) |
 | , / . | Previous / next frame |
 | Shift+< / Shift+> (or [ / ]) | Speed −0.05 / +0.05 (0.25×–4×) |
+| Shift+1 / 2 / 3 / 4 | Speed 1× / 2× / 3× / 4× (by key position, so it works on any layout where Shift types a symbol there) |
+| Shift+0 | Speed 0.5× |
+| \ | Normal speed (1×; AltGr+ß on German keyboards) |
 | 0–9 | Jump to 0–90 % |
 | Home / End | First / last frame |
 | ↑ / ↓ | Volume ±5 % |
@@ -73,7 +76,9 @@ leaves them alone (`docs/notes/ui-simple.md`).
 | Ctrl+wheel (or pinch) | Zoom around the cursor, in any picture size; drag to pan when the picture is larger than the player (a click without moving still plays or pauses) |
 | Hover the seek bar | Thumbnail and time |
 | Click the time | Time → timecode → frame number |
-| Wheel over the speed button | Speed ±0.05 |
+| Wheel over the speed button | Next / previous preset speed (0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4×); a small speed slider shows above the button while you scroll |
+| Shift+wheel over the speed button | Speed ±0.05 |
+| ↺ above the speed button | Back to 1× (shown while the speed is not 1×) |
 | Wheel over the volume | Volume ±5 % |
 | Drag the seek bar or the volume | Keeps following the mouse while the button is held, also off the slider |
 | X-ray strip | Hover for details, click to go there, wheel to zoom, Shift+wheel to pan, double-click to zoom out |
@@ -118,4 +123,4 @@ The player's keys, for all videos at once, plus:
 | Ctrl+wheel, drag | Zoom and pan all videos together (the same part of every picture) |
 | Ctrl+C | Copy the view (all videos) |
 | I | About these videos (a tab per video) |
-| Shift+< / >, ↑ / ↓, M, R, F, ?, Esc | Speed, volume, mute, loop, fullscreen, shortcuts, close (as in the player) |
+| Shift+< / >, Shift+0…4, \, ↑ / ↓, M, R, F, ?, Esc | Speed, set speeds, volume, mute, loop, fullscreen, shortcuts, close (as in the player) |

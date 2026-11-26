@@ -22,6 +22,8 @@ const SCENARIOS = {
   'grid-4': { tiles: ['clip-0', 'clip-1', 'clip-2', 'clip-3'], capture: true, layout: 'grid', railOpen: false, label: 'Compare 2×2 (4 videos)' },
   spotlight: { tiles: ['clip-0', 'clip-1', 'clip-2'], capture: true, layout: 'spotlight', spotlightId: 'clip-0', railOpen: false, label: 'Spotlight (enlarged tile + strip)' },
   'split-wipe': { tiles: ['clip-0', 'clip-1'], capture: true, layout: 'split', railOpen: false, label: 'Split Wipe (2 videos)' },
+  // The speed off 1×: the reset badge above the speed button; scroll over it for the compact speed overlay.
+  'speed-off-normal': { tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, rate: 1.5, label: 'Single video at 1.5× (speed reset badge)' },
 };
 
 const escapeStyle = (s) => String(s).replace(/<\/style/gi, '<\\/style');
@@ -434,6 +436,7 @@ ${inlinedScripts}
     ui$.setState(S.createWorkspaceState(sc));
     if (sc.railOpen) ui$.rail.show();
     else if (ui$.rail.isOpen()) ui$.rail.close();
+    if ((sc.rate || 1) !== ui$.getPrefs().rate) ui$.dispatch('rateSet', sc.rate || 1);
   }
   scenarioSel.onchange = () => loadScenario(scenarioSel.value);
   $('resetBtn').onclick = () => loadScenario(scenarioSel.value);

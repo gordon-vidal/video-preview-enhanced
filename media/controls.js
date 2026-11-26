@@ -97,9 +97,22 @@ const VpeControls = (() => {
     picture: SVG('<rect x="3" y="5" width="18" height="14" rx="1.5"></rect><rect x="8" y="9" width="8" height="6" rx="0.8"></rect>'),
     quality: SVG('<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 15v-3M11 15V9M15 15v-5M19 15V8" stroke-width="1.4"></path>'),
   };
-  /** Preset labels on the speed slider's track. */
-  const SPEEDS = [0.5, 1, 1.5, 2, 3, 4];
+  /**
+   * The speed ladder: the presets in the speed panel and what the wheel over the speed button walks through
+   * (Shift+wheel and Shift+< / > keep the fine steps of SPEED_STEP).
+   */
+  const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
   const SPEED_MIN = 0.25, SPEED_MAX = 4, SPEED_STEP = 0.05;
+  /**
+   * The next preset above (dir 1) or below (dir -1) a speed: a speed between two presets goes to the nearer one in
+   * that direction; the ends stay where they are.
+   */
+  const presetRate = (r, dir) => {
+    const v = Number(r);
+    if (dir > 0) return SPEEDS.find((p) => p > v + 1e-6) ?? SPEEDS[SPEEDS.length - 1];
+    for (let i = SPEEDS.length - 1; i >= 0; i--) if (SPEEDS[i] < v - 1e-6) return SPEEDS[i];
+    return SPEEDS[0];
+  };
   /** Jump sizes: one frame or seconds (settings videoPreviewEnhanced.jump.arrow / jump.shift / jump.ctrl). */
   const NAV = ['frame', 1, 5, 10, 30];
   const navName = (v) => (v === 'frame' ? '1 frame' : `${v} s`);
@@ -297,7 +310,7 @@ const VpeControls = (() => {
     if (p.compare) {
       // Compare (media/compare.js): one bar for all videos.
       return [
-        { title: 'Playback', rows: [['Play / pause (all)', 'Space', 'K'], ['Click a video', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B']] },
+        { title: 'Playback', rows: [['Play / pause (all)', 'Space', 'K'], ['Click a video', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Speed 1× / 2× / 3× / 4×', 'Shift+1…4'], ['Speed 0.5× / normal 1×', 'Shift+0', '\\'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B']] },
         { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End']] },
         { title: 'Frames', rows: [['Previous / next frame (all videos)', ',', '.'], ['Copy view', `${ctrlName}+C`], ['Time / timecode / frames', 'click the time']] },
         { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M']] },
@@ -306,7 +319,7 @@ const VpeControls = (() => {
       ];
     }
     return [
-      { title: 'Playback', rows: [['Play / pause', 'Space', 'K'], ['Click the picture', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B'], ['Clear the A–B range', 'Backspace']] },
+      { title: 'Playback', rows: [['Play / pause', 'Space', 'K'], ['Click the picture', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Speed 1× / 2× / 3× / 4×', 'Shift+1…4'], ['Speed 0.5× / normal 1×', 'Shift+0', '\\'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B'], ['Clear the A–B range', 'Backspace']] },
       { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End'], ['Jump to 0–90 %', '0…9']] },
       { title: 'Frames', rows: [['Previous / next frame', ',', '.'], ['Copy frame', `${ctrlName}+C`], ['Save frame as PNG', 'S'], ['Copy timestamp', 'T'], ['Go to frame or time', `${ctrlName}+G`], ['Time / timecode / frames', 'click the time']] },
       { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M'], ['Next audio track', 'Shift+A']] },
@@ -518,13 +531,16 @@ const VpeControls = (() => {
       input.setAttribute('aria-label', 'Speed');
       input.setAttribute('aria-valuetext', speedText(s.rate));
       input.dataset.nav = '1';
-      // Presets as labels on the slider's track, each at its speed.
-      const marks = el('div', 'marks');
+      sl.appendChild(input);
+      f.appendChild(sl);
+      // The presets as chips under the slider (the ladder the wheel walks through); 1× is the way back to normal.
+      const presets = el('div', 'speedPresets');
+      presets.setAttribute('role', 'group');
+      presets.setAttribute('aria-label', 'Preset speeds');
       for (const v of SPEEDS) {
-        const b = btn('mark', speedText(v), () => env.act.pickRate(v), { aria: { 'aria-pressed': String(Math.abs(v - s.rate) < 1e-6), 'aria-label': `Speed ${speedText(v)}` } });
-        b.style.left = `${((v - SPEED_MIN) / (SPEED_MAX - SPEED_MIN)) * 100}%`;
-        marks.appendChild(b);
+        presets.appendChild(btn('chip', speedText(v), () => env.act.pickRate(v), { aria: { 'aria-pressed': String(Math.abs(v - s.rate) < 1e-6), 'aria-label': `Speed ${speedText(v)}` } }));
       }
+      f.appendChild(presets);
       // Apply the rate without rebuilding the panel while the slider owns the pointer.
       speedDrag = VpeRangeDrag.bind(input);
       input.addEventListener('input', () => {
@@ -532,14 +548,14 @@ const VpeControls = (() => {
         env.act.setRate(rate);
         read.textContent = speedText(rate);
         input.setAttribute('aria-valuetext', read.textContent);
-        for (const [i, b] of [...marks.children].entries()) {
+        for (const [i, b] of [...presets.children].entries()) {
           b.setAttribute('aria-pressed', String(Math.abs(SPEEDS[i] - rate) < 1e-6));
         }
       });
-      sl.append(input, marks);
-      f.appendChild(sl);
       const note = el('div', 'pnote');
-      note.append(`Steps of ${SPEED_STEP}×. Scroll on the speed button or `, kbd('Shift'), '+', kbd('<'), kbd('>'), '.');
+      note.append('Scroll on the speed button: presets. ', kbd('Shift'), '+scroll, ', kbd('Shift'), '+', kbd('<'), kbd('>'),
+        `: steps of ${SPEED_STEP}×. `, kbd('Shift'), '+', kbd('1'), '…', kbd('4'), ': 1×–4×, ', kbd('Shift'), '+', kbd('0'), ': 0.5×, ',
+        kbd('\\'), ': 1×.');
       f.appendChild(note);
       return f;
     }
@@ -933,7 +949,7 @@ const VpeControls = (() => {
 
   return {
     create, createToast, createPlayFlash, drawRangeMarks, drawRangeButtons, facts, keyGroups, qualityRows, qualityLabel,
-    clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
+    clampRate, presetRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
     STEP_SIZES, stepName, stepBadge, stepSizeOf, stepAmount, drawStepBadges, holdVolumeOpen, remoteChipState, resolutionChoices,
   };
 })();

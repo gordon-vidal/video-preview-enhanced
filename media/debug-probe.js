@@ -488,7 +488,7 @@
               };
             })(),
             sheet: ui.sheet.hidden ? null : (ui.sheet.textContent || '').replace(/\s+/g, ' ').trim(),
-            bar: { rate: ui.rate.textContent, cc: ui.tracks.getAttribute('aria-label'), ccHidden: getComputedStyleFn(ui.tracks).display === 'none', cogExpanded: ui.cog.getAttribute('aria-expanded'), infoExpanded: ui.infoBtn.getAttribute('aria-expanded'), rateExpanded: ui.rate.getAttribute('aria-expanded'), ccExpanded: ui.tracks.getAttribute('aria-expanded') },
+            bar: { rate: ui.rate.textContent, rateReset: !!byId('rateReset') && !byId('rateReset').hidden, cc: ui.tracks.getAttribute('aria-label'), ccHidden: getComputedStyleFn(ui.tracks).display === 'none', cogExpanded: ui.cog.getAttribute('aria-expanded'), infoExpanded: ui.infoBtn.getAttribute('aria-expanded'), rateExpanded: ui.rate.getAttribute('aria-expanded'), ccExpanded: ui.tracks.getAttribute('aria-expanded') },
             prefs: uiState.prefs, volume: uiState.volume, drag: { seek: uiState.seekDragging, volume: uiState.volumeDragging }, volumeRect: rect(ui.volume),
             canvas: [canvas.width, canvas.height], canvasHidden: canvas.hidden, canvasRect: rect(canvas), video: vw,
             stageClass: stage.className, stageRect: rect(stage), picture: { ...insp.picture(), pct: uiState.picturePct, btnMode: ui.picBtn.dataset.mode, btnLabel: ui.picBtn.getAttribute('aria-label'), btnTitle: ui.picBtn.title, need: insp.zoomedSize() }, imageRendering: canvas.style.imageRendering,
@@ -573,7 +573,7 @@
         case 'dom': { // a mouse / pointer / wheel event at client (x, y), or on the element with id `id`
           const target = m.target === 'document' ? doc : m.target ? byId(m.target) : doc.elementFromPoint(m.x, m.y);
           if (!target) { log(`dom ${JSON.stringify({ id: m.id, error: `no element at ${m.x},${m.y}` })}`); break; }
-          const init = { bubbles: true, cancelable: true, clientX: m.x, clientY: m.y, button: m.button || 0, ctrlKey: !!m.ctrl, deltaY: m.deltaY || 0, pointerId: 1, isPrimary: true };
+          const init = { bubbles: true, cancelable: true, clientX: m.x, clientY: m.y, button: m.button || 0, ctrlKey: !!m.ctrl, shiftKey: !!m.shift, deltaY: m.deltaY || 0, pointerId: 1, isPrimary: true };
           const Ctor = /^wheel/.test(m.ev) ? WheelEvent : /^pointer/.test(m.ev) ? PointerEvent : MouseEvent;
           target.dispatchEvent(new Ctor(m.ev, init));
           break;

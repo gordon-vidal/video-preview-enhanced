@@ -104,6 +104,15 @@ assert.strictEqual(C.clampRate(1 + 3 * 0.05), 1.15);
 assert.strictEqual(C.SPEED_STEP, 0.05);
 assert.strictEqual(C.speedText(1.5), '1.5×');
 assert.strictEqual(C.speedText(0.25), '0.25×');
+// The preset ladder the wheel over the speed button walks (Shift+wheel keeps the 0.05 steps).
+assert.deepStrictEqual(C.SPEEDS, [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4]);
+assert.strictEqual(C.presetRate(1, 1), 1.25);
+assert.strictEqual(C.presetRate(1, -1), 0.75);
+assert.strictEqual(C.presetRate(1.1, 1), 1.25, 'between presets: the next one up');
+assert.strictEqual(C.presetRate(1.1, -1), 1, 'between presets: the next one down');
+assert.strictEqual(C.presetRate(4, 1), 4, 'the top stays');
+assert.strictEqual(C.presetRate(0.25, -1), 0.25, 'the bottom stays');
+assert.strictEqual(C.presetRate(2.95, 1), 3);
 assert.deepStrictEqual(C.NAV, ['frame', 1, 5, 10, 30]);
 assert.strictEqual(C.navName('frame'), '1 frame');
 assert.strictEqual(C.navName(30), '30 s');
