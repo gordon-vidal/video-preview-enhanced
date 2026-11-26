@@ -26,9 +26,10 @@
    *   onEnded: (info?: { natural?: boolean }) => void, post: (m: any) => void, log: (...a: any[]) => void,
    *   wake: () => void, showMessage: (msg?: string, hint?: string) => void,
    *   toast: (text: string, ms?: number) => void, getRate: () => number, getLoop: () => boolean,
-   *   getMuted: () => boolean, getVolume: () => number }} PlayerHooks
+   *   getMuted: () => boolean, getVolume: () => number, onTracks: (player: any) => void }} PlayerHooks
    *   getRate / getLoop / getMuted / getVolume: the page's live settings for a decoder that reads them on demand
-   *   (media/frame-player.js); getMuted is true for every clip but the sound source.
+   *   (media/frame-player.js); getMuted is true for every clip but the sound source. onTracks: media/engine.js's
+   *   track list or a track selection changed (the page reads player.tracks()).
    * @typedef {(clip: ClipSpec, host: any, hooks: PlayerHooks) => any} CreatePlayer
    * @typedef {{ doc?: any, win?: any, vscode?: any, cfg?: any, createPlayer?: CreatePlayer | null, compositor?: any,
    *   sync?: any, widgets?: any, stateApi?: any, engineApi?: any, hostApi?: any, uiApi?: any, log?: (...a: any[]) => void }} BootEnv
@@ -185,6 +186,8 @@
         // The decoder's wake (a worker message, a decoded frame) runs the page's shared tick loop.
         onReady: () => hooks.onReady(), onMeta: () => hooks.onMeta(), wake: () => hooks.wake(),
         onEnded: (/** @type {any} */ _p, /** @type {any} */ info) => hooks.onEnded(info),
+        // The sound and subtitle streams (tracks-streams): the page lists them in the CC and Audio track panels.
+        onTracks: (/** @type {any} */ pl) => { if (typeof hooks.onTracks === 'function') hooks.onTracks(pl); },
       });
       const meta = clip.meta && typeof clip.meta === 'object' ? clip.meta
         : { size: clip.size || 0, duration: clip.duration || 0, label: clip.name || '', native: !!clip.native };
@@ -369,11 +372,24 @@
             return res.text;
           };
         }
+        // Page-owned tools over the decoders (the adapter knows none of them): subtitles, the X-ray, chapters.
+        if (typeof k === 'string' && Object.prototype.hasOwnProperty.call(pageEngine, k)) return pageEngine[k];
         const v = adapter[/** @type {any} */ (k)];
         return typeof v === 'function' ? v.bind(adapter) : v;
       },
-      has: (_t, k) => k in adapter,
+      has: (_t, k) => k === 'statsText' || (typeof k === 'string' && Object.prototype.hasOwnProperty.call(pageEngine, k)) || k in adapter,
     });
+    /**
+     * The tool controllers' engine methods only the page can answer (media/player-ui-tools.js reads them once, so
+     * they always exist; each answers null / [] while nothing applies).
+     * @type {Record<string, (...a: any[]) => any>}
+     */
+    const pageEngine = {
+      cueAt: (/** @type {string} */ id, /** @type {number} */ t, /** @type {number} */ track) => cueAt(id, t, track),
+      selectSubtitle: (/** @type {string} */ id, /** @type {number} */ track) => selectSubtitle(id, track),
+      packetIndex: (/** @type {string} */ id) => xrayHost.packetIndex(id),
+      chapters: (/** @type {string} */ id) => chaptersOf(id),
+    };
 
     /** A clip the host named: known from now on (its name and numbers win over the decoder's). @param {any} m */
     function addSpec(m) {
@@ -444,6 +460,7 @@
           const v = s ? Number(s.volume) : Number((prefsNow() || {}).volume);
           return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
         },
+        onTracks: (pl) => onPlayerTracks(id, pl),
       };
       try {
         // Kept (not taken once): a clip closed and opened again, or restarted, opens with the host's meta again.
@@ -451,6 +468,8 @@
         if (p) {
           players.set(id, p);
           applyRateAndLoop(p);
+          // Embedded subtitle cues (media/engine.js emitCue): the text and picture cues of the selected track.
+          if (typeof p === 'object') p.onSubCue = (/** @type {any} */ c) => onSubCue(id, c);
         }
         if (p && isReady(p)) markReady();
         return p || null;
@@ -640,6 +659,8 @@
       players.delete(id);
       const ex = exacts.get(id);
       if (ex) { exacts.delete(id); try { ex.invalidate(); } catch { /* nothing pending */ } }
+      // The cues were this decoder's reads (picture cues carry its worker's gen): a new decoder reads them again.
+      cueStore.delete(id);
       if (p && typeof p.dispose === 'function') { try { p.dispose(); } catch { /* already closed */ } }
     }
     /** Every clip of every tab has a decoder; one no tab shows any more is closed. @param {any} ws */
@@ -738,6 +759,7 @@
         try { p.tick(now); } catch (err) { log(`decoder ${id} tick: ${err && /** @type {any} */ (err).message || err}`); }
         if (!firstFrameLogged || !firstPicturesLogged) notePresented(id);
         if (pendingResumeSec !== null && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) tryApplyResume();
+        if (pendingGoto !== null && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) tryApplyGoto(id, p);
         if (pendingAutoPlay && p.firstShown && id === clockIdOf(S.getTab(ui.getState()))) {
           pendingAutoPlay = false;
           const cur = ui.getState();
@@ -750,7 +772,13 @@
         }
       }
       pump();
-      if (painted && ui && !disposed) ui.render();
+      if (painted && ui && !disposed) {
+        ui.render();
+        // A paused frame change reads the pixel under the pointer again (not every frame while playing: a GPU read).
+        if (!S.getTab(ui.getState()).playing) pixelHost.refresh();
+      }
+      bitmapSubs.update();
+      xrayHost.tick();
       scopesHost.tick(now);
     }
     /** The shared loop's work, for the debug probe's state: animation frames that ticked, and the times it rested. */
@@ -889,10 +917,595 @@
       doc.body.classList.toggle('compare', t.tiles.length >= 2);
       syncPlayers(ws);
       driveDecoders(t);
+      // The shown clip's streams join the subtitle list (a clip whose decoder listed them before it was shown),
+      // after this change (the controller is mid-commit); picture subtitles and the pixel grid follow the picture.
+      const shownId = t.tiles[0];
+      if (ui && shownId && players.has(shownId) && !announced.has(shownId)) {
+        Promise.resolve().then(() => { if (!disposed) announceTracks(shownId); });
+      }
+      bitmapSubs.update();
+      pixelHost.refresh();
       if (probesReady && cfg.debug && ui) {
         installCompareDebug();
         if (debugProbe && t.playing) debugProbe.wake();
       }
+    }
+
+    // ---- the picture on screen ----
+    /** The clock tile's decoder (the one the single-video tools read), or null. */
+    function clockPlayerNow() { return ui ? players.get(clockIdOf(S.getTab(ui.getState()))) || null : null; }
+    /** The first tile's canvas in #cells (what the user sees), or null. */
+    function visibleCellCanvas() {
+      const cellsEl = doc.getElementById('cells');
+      return (cellsEl && typeof cellsEl.querySelector === 'function' && cellsEl.querySelector('.cell canvas')) || null;
+    }
+    /**
+     * The clock clip's picture as shown, in client px: its tile canvas's box with the controller's picture size,
+     * zoom and pan (the adapter's pictureRect). null before a tile is laid out.
+     * @returns {{ left: number, top: number, width: number, height: number } | null}
+     */
+    function pictureClientRect() {
+      if (!ui) return null;
+      const cellCv = visibleCellCanvas();
+      const base = cellCv && typeof cellCv.getBoundingClientRect === 'function' ? cellCv.getBoundingClientRect() : null;
+      if (!base || !(base.width > 0 && base.height > 0) || typeof adapter.pictureRect !== 'function') return null;
+      const t = S.getTab(ui.getState());
+      const r = adapter.pictureRect(clockIdOf(t), base.width, base.height, t.picMode, t.zoom, t.panX, t.panY);
+      if (!r || !(r.w > 0 && r.h > 0)) return null;
+      return { left: base.left + r.x, top: base.top + r.y, width: r.w, height: r.h };
+    }
+    /** @param {number} t seconds */
+    const fmtClock = (t) => {
+      const T = W('VpeTime');
+      return T && typeof T.fmtClock === 'function' ? T.fmtClock(t) : `${(Number(t) || 0).toFixed(2)} s`;
+    };
+
+    // ---- sound and subtitle tracks (media/engine.js tracks, selectAudio, selectSub, onSubCue) ----
+    // The shared subtitle controller (VpePlayerUiTools.createSubtitleController) lists tracks, toggles them and asks
+    // engine.cueAt for the text to show; this page answers for the host's files (parsed here) and the decoders'
+    // embedded streams (their cues kept here), switches the decoders' streams and draws picture subtitles.
+    const SubsApi = () => /** @type {any} */ (W('Subtitles') || null);
+    /** The cues read per clip: track id -> CueIndex (text) or BitmapCueIndex (PGS, DVB, DVD). @type {Map<string, Map<string, any>>} */
+    const cueStore = new Map();
+    /**
+     * What each track of the subtitle controller (in its order) is: a file the host sent (its cues parsed here), an
+     * embedded stream of a clip, or nothing this page can show.
+     * @type {Array<{ kind: 'file', index: any } | { kind: 'embedded', clipId: string, id: any, bitmap: boolean } | { kind: 'none' }>}
+     */
+    const subEntries = [];
+    /** Clips whose embedded subtitle streams the controller lists already (a restarted decoder is not listed again). */
+    const announced = new Set();
+    /** The audio stream the user picked per clip: a restarted decoder plays it again. @type {Map<string, any>} */
+    const audioPrefs = new Map();
+    const subsCtl = () => /** @type {any} */ ((ui && /** @type {any} */ (ui).parts && /** @type {any} */ (ui).parts.subs) || null);
+    /** A decoder's tracks() (media/engine.js), or null. @param {any} p */
+    const tracksOf = (p) => { try { return p && typeof p.tracks === 'function' ? p.tracks() || null : null; } catch { return null; } };
+    const trackErr = (/** @type {string} */ what) => (/** @type {any} */ err) => {
+      if (!err || !err.disposed) log(`${what} failed: ${err && err.message || err}`);
+    };
+
+    /** ISO 639-2 bibliographic codes Intl.DisplayNames does not know (media/tracks-menu.js has the full list). */
+    const ISO3 = /** @type {Record<string, string>} */ ({
+      ger: 'de', fre: 'fr', dut: 'nl', chi: 'zh', cze: 'cs', gre: 'el', per: 'fa', rum: 'ro', slo: 'sk', ice: 'is',
+      baq: 'eu', may: 'ms', arm: 'hy', geo: 'ka', alb: 'sq', wel: 'cy', bur: 'my', tib: 'bo', mac: 'mk', mao: 'mi',
+    });
+    /** @type {any} */
+    let langNames;
+    /** A language code in words in the UI language ('' for none or 'und'). @param {any} code */
+    function langName(code) {
+      if (!code || code === 'und') return '';
+      const c = ISO3[String(code).toLowerCase()] || String(code);
+      if (langNames === undefined) {
+        try {
+          const nav = win && win.navigator;
+          langNames = new Intl.DisplayNames([(nav && nav.language) || 'en'], { type: 'language' });
+        } catch { langNames = null; }
+      }
+      try {
+        const n = langNames && langNames.of(c);
+        return n && n !== c ? n[0].toUpperCase() + n.slice(1) : String(code);
+      } catch { return String(code); }
+    }
+    const CHANNELS = /** @type {Record<number, string>} */ ({ 1: 'mono', 2: 'stereo', 6: '5.1', 8: '7.1' });
+    /** A stream's label as media/tracks-menu.js trackLabel: its title, else its language, plus the details. @param {any} t @param {number} n */
+    function trackLabel(t, n) {
+      const main = t.title || langName(t.lang) || `Track ${n + 1}`;
+      const sub = [t.title && langName(t.lang), t.channels ? CHANNELS[t.channels] || `${t.channels} ch` : '', t.codec]
+        .filter(Boolean).join(' · ');
+      return { main, sub };
+    }
+    /** One line for the subtitle list, which shows a name only (the codec tells PGS, DVD and DVB apart). @param {any} t @param {number} n */
+    const trackName = (t, n) => { const l = trackLabel(t, n); return l.sub ? `${l.main} · ${l.sub}` : l.main; };
+
+    /** The host's subtitle files (sidecars, loaded, HLS renditions), in the controller's order. @param {any} m */
+    function noteSubFiles(m) {
+      if (!subsCtl()) return;
+      const SA = SubsApi();
+      for (const f of Array.isArray(m.tracks) ? m.tracks : []) {
+        /** @type {any} */
+        let entry = { kind: 'none' };
+        if (SA && f && f.data !== undefined && f.data !== null) {
+          try {
+            const parsed = SA.parse(f.data, String(f.name || ''));
+            entry = { kind: 'file', index: new SA.CueIndex(parsed.cues) };
+            log(`subtitles: ${f.name} (${parsed.format}, ${parsed.cues.length} cues)`);
+          } catch (err) { log(`subtitles ${f && f.name}: ${err && /** @type {any} */ (err).message || err}`); }
+        }
+        subEntries.push(entry);
+      }
+    }
+
+    /**
+     * The clip's embedded subtitle streams join the controller's list once it is the shown clip. The stream flagged
+     * default is chosen (text first, as media/tracks-menu.js), unless subtitles are on already; without a default
+     * they stay off. True when listed now.
+     * @param {string} id @param {any} [pl] the decoder (else the clip's)
+     */
+    function announceTracks(id, pl) {
+      const ctl = subsCtl();
+      if (!ctl || !ui || disposed || announced.has(id) || S.getTab(ui.getState()).tiles[0] !== id) return false;
+      const tr = tracksOf(pl || players.get(id));
+      const subs = tr && Array.isArray(tr.sub) ? tr.sub : [];
+      if (!subs.length) return false;
+      announced.add(id);
+      const before = ctl.getState();
+      const wasOn = before.track >= 0;
+      const first = before.tracks.length;
+      for (const t of subs) subEntries.push({ kind: 'embedded', clipId: id, id: t.id, bitmap: t.kind === 'bitmap' });
+      // Off first: the controller would otherwise turn on the first new track by itself.
+      if (!wasOn) ctl.select(-1);
+      ui.onHostMessage(/** @type {any} */ ({ type: 'subs', tracks: subs.map((t, i) => ({ name: trackName(t, i), lang: t.lang || '' })) }));
+      if (!wasOn) {
+        let def = subs.findIndex((t) => t.default && t.kind !== 'bitmap');
+        if (def < 0) def = subs.findIndex((t) => t.default);
+        // Quietly, as media/tracks-menu.js autoChoose: the CC button shows it.
+        if (def >= 0) ctl.select(first + def);
+      }
+      return true;
+    }
+    /**
+     * The controller's subtitle track `track` (-1: off) on the decoders: the stream it names is demuxed by its clip's
+     * decoder, every other decoder demuxes none. media/player-ui-tools.js calls it as engine.selectSubtitle.
+     * @param {any} _id @param {number} track
+     */
+    function selectSubtitle(_id, track) {
+      const e = subEntries[track];
+      for (const [cid, p] of players) {
+        if (!p || typeof p.selectSub !== 'function') continue;
+        const tr = tracksOf(p);
+        if (!tr) continue;
+        const want = e && e.kind === 'embedded' && e.clipId === cid ? e.id : null;
+        if ((tr.subId === undefined ? null : tr.subId) === want) continue;
+        try { Promise.resolve(p.selectSub(want)).catch(trackErr('selectSub')); } catch (err) { trackErr('selectSub')(err); }
+      }
+      bitmapSubs.update();
+    }
+    /** The controller's track again (a restarted decoder demuxes nothing yet). */
+    const syncSubSelection = () => { const ctl = subsCtl(); if (ctl) selectSubtitle(null, ctl.getState().track); };
+    /**
+     * The text of the controller's track `track` at `t` (s, the controller's time less the delay), or null: a file's
+     * cues, or the embedded cues read so far. Picture subtitles are drawn by bitmapSubs instead.
+     * @param {any} _id @param {number} t @param {number} track
+     */
+    function cueAt(_id, t, track) {
+      const e = subEntries[track];
+      const SA = SubsApi();
+      if (!e || !SA || !Number.isFinite(t)) return null;
+      const idx = e.kind === 'file' ? e.index
+        : e.kind === 'embedded' && !e.bitmap ? (cueStore.get(e.clipId) || new Map()).get(String(e.id)) : null;
+      if (!idx || typeof idx.at !== 'function' || (SA.BitmapCueIndex && idx instanceof SA.BitmapCueIndex)) return null;
+      const cues = idx.at(t);
+      return cues.length ? cues.map((/** @type {any} */ c) => SA.cueText(c)).join('\n') : null;
+    }
+    /** A decoder's cue (text, or a picture with its span and gen) into the clip's index. @param {string} id @param {any} c */
+    function onSubCue(id, c) {
+      const SA = SubsApi();
+      if (disposed || !SA || !c || c.track === undefined || c.track === null) return;
+      const key = String(c.track);
+      let byTrack = cueStore.get(id);
+      if (!byTrack) cueStore.set(id, (byTrack = new Map()));
+      let idx = byTrack.get(key);
+      if (c.span !== undefined) {
+        if (!(idx instanceof SA.BitmapCueIndex)) byTrack.set(key, (idx = new SA.BitmapCueIndex()));
+        idx.add(c);
+      } else {
+        const cue = SA.embeddedCue(c);
+        if (!cue) return;
+        if (!idx || idx instanceof SA.BitmapCueIndex) byTrack.set(key, (idx = new SA.CueIndex()));
+        if (!idx.add(cue)) return;
+      }
+      scheduleSubsRender();
+    }
+    let subsRenderQueued = false;
+    /** A cue arrived after its frame (the demuxer reads ahead or catches up after a seek): draw the overlay again, once. */
+    function scheduleSubsRender() {
+      if (subsRenderQueued) return;
+      subsRenderQueued = true;
+      Promise.resolve().then(() => {
+        subsRenderQueued = false;
+        if (disposed || !ui) return;
+        ui.render();
+        bitmapSubs.update();
+      });
+    }
+    /** media/engine.js's onTracks: the streams are known or a selection changed. @param {string} id @param {any} pl */
+    function onPlayerTracks(id, pl) {
+      if (disposed) return;
+      if (!announceTracks(id, pl)) syncSubSelection();
+      const want = audioPrefs.get(id);
+      const tr = tracksOf(pl);
+      if (want !== undefined && tr && tr.audioId !== want && (tr.audio || []).some((/** @type {any} */ a) => a.id === want)
+        && typeof pl.selectAudio === 'function') {
+        try { Promise.resolve(pl.selectAudio(want)).catch(trackErr('selectAudio')); } catch (err) { trackErr('selectAudio')(err); }
+      }
+      if (controlsInst && typeof controlsInst.refresh === 'function') controlsInst.refresh();
+    }
+
+    /**
+     * Picture subtitles (PGS, DVB, DVD) of the selected track: .subs-pic clips to the visible picture, .subs-frame
+     * covers the whole picture (also zoomed past the view), media/subtitles.js BitmapRenderer draws the rects in it.
+     */
+    const bitmapSubs = (() => {
+      /** @type {any} */ let box = null;
+      /** @type {any} */ let frameEl = null;
+      /** @type {any} */ let renderer = null;
+      let placed = '';
+      const ensure = () => {
+        if (box) return true;
+        const SA = SubsApi();
+        const stage = doc.getElementById('stage');
+        if (!SA || typeof SA.BitmapRenderer !== 'function' || !stage) return false;
+        box = doc.createElement('div');
+        box.className = 'subs-pic';
+        box.hidden = true;
+        frameEl = doc.createElement('div');
+        frameEl.className = 'subs-frame';
+        box.appendChild(frameEl);
+        const subsEl = doc.getElementById('subs');
+        if (subsEl && subsEl.parentNode === stage) stage.insertBefore(box, subsEl);
+        else stage.appendChild(box);
+        renderer = new SA.BitmapRenderer(frameEl);
+        return true;
+      };
+      const hide = () => {
+        if (box && !box.hidden) { box.hidden = true; placed = ''; }
+        if (renderer) renderer.clear();
+      };
+      /** At the decoder's time: nothing between a seek and the first picture read after it (its worker's gen). */
+      function update() {
+        if (disposed || !ui) return;
+        const ctl = subsCtl();
+        const st = ctl ? ctl.getState() : null;
+        const e = st ? subEntries[st.track] : null;
+        const t = S.getTab(ui.getState());
+        if (!e || e.kind !== 'embedded' || !e.bitmap || t.tiles.length !== 1 || t.tiles[0] !== e.clipId) { hide(); return; }
+        const p = players.get(e.clipId);
+        const idx = (cueStore.get(e.clipId) || new Map()).get(String(e.id));
+        if (!p || !idx || typeof idx.at !== 'function' || typeof idx.prune !== 'function') { hide(); return; }
+        let now = NaN;
+        try { now = Number(p.currentTime()) - (Number(st.delayMs) || 0) / 1000; } catch { now = NaN; }
+        if (!Number.isFinite(now)) { hide(); return; }
+        idx.prune(now);
+        const cues = typeof p.gen === 'number' && idx.gen < p.gen ? [] : idx.at(now);
+        const r = cues.length ? pictureClientRect() : null;
+        const stage = doc.getElementById('stage');
+        if (!r || !stage) { hide(); return; }
+        const sr = stage.getBoundingClientRect();
+        const left = Math.max(r.left, sr.left);
+        const right = Math.min(r.left + r.width, sr.left + sr.width);
+        const top = Math.max(r.top, sr.top);
+        const bottom = Math.min(r.top + r.height, sr.top + sr.height);
+        if (right - left < 4 || bottom - top < 4 || !ensure()) { hide(); return; }
+        const key = [left, top, right, bottom, r.left, r.top, r.width, r.height].map((n) => n.toFixed(1)).join(',');
+        if (key !== placed) {
+          placed = key;
+          Object.assign(box.style, { left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px` });
+          Object.assign(frameEl.style, {
+            left: `${r.left - left}px`, top: `${r.top - top}px`, width: `${r.width}px`, height: `${r.height}px`,
+          });
+        }
+        box.hidden = false;
+        renderer.render(cues);
+      }
+      return {
+        update: () => { try { update(); } catch (err) { log(`picture subtitles: ${err && /** @type {any} */ (err).message || err}`); } },
+        dispose: () => { hide(); if (box && box.parentNode) box.parentNode.removeChild(box); box = null; },
+      };
+    })();
+
+    // ---- the Audio track page of the settings panel: the clock decoder's sound streams ----
+    /** The settings panel (VpeControls.create) the controller made, for a refresh when the streams change. @type {any} */
+    let controlsInst = null;
+    /** The panel's data with the clock decoder's sound streams (one stream: none to choose). @param {any} s */
+    function audioView(s) {
+      if (!s || typeof s !== 'object' || !s.tracks || typeof s.tracks !== 'object') return s;
+      const tr = tracksOf(clockPlayerNow());
+      const list = tr && Array.isArray(tr.audio) ? tr.audio : [];
+      const audio = list.length > 1 ? list.map((/** @type {any} */ a, /** @type {number} */ i) => ({
+        id: String(a.id), ...trackLabel(a, i), checked: a.id === tr.audioId,
+      })) : [];
+      const cur = Math.max(0, list.findIndex((/** @type {any} */ a) => a.id === tr.audioId));
+      return { ...s, tracks: { ...s.tracks, audio }, audioLabel: list.length ? trackLabel(list[cur], cur).main : 'Default' };
+    }
+    /** The panel picked sound stream `id` of the clock decoder: true when switched here. @param {any} id */
+    function pickAudio(id) {
+      const cid = ui ? clockIdOf(S.getTab(ui.getState())) : null;
+      const p = cid ? players.get(cid) : null;
+      const tr = tracksOf(p);
+      const list = tr && Array.isArray(tr.audio) ? tr.audio : [];
+      const i = list.findIndex((/** @type {any} */ a) => String(a.id) === String(id));
+      if (!cid || i < 0 || typeof p.selectAudio !== 'function') return false;
+      audioPrefs.set(cid, list[i].id);
+      const name = trackLabel(list[i], i).main;
+      const failed = (/** @type {any} */ err) => {
+        if (err && err.disposed) return;
+        log(`selectAudio failed: ${err && err.message || err}`);
+        toast('Could not switch the audio track');
+      };
+      let switching;
+      try { switching = Promise.resolve(p.selectAudio(list[i].id)); } catch (err) { switching = Promise.reject(err); }
+      switching.then(() => {
+        toast(`Audio: ${name}`);
+        if (controlsInst && typeof controlsInst.refresh === 'function') controlsInst.refresh();
+      }, failed);
+      return true;
+    }
+    /**
+     * VpeControls with the real Audio track page: the controller's panel data gets the decoder's streams and its
+     * selectAudio switches them (media/player-ui.js has a demo list for the mockup only).
+     * @param {any} C
+     */
+    function wrapControls(C) {
+      if (!C || typeof C.create !== 'function') return C;
+      return {
+        ...C,
+        create: (/** @type {any} */ o) => {
+          const act = o && o.act ? o.act : {};
+          controlsInst = C.create({
+            ...o,
+            get: () => audioView(o.get()),
+            act: { ...act, selectAudio: (/** @type {any} */ id) => { if (!pickAudio(id) && typeof act.selectAudio === 'function') act.selectAudio(id); } },
+          });
+          return controlsInst;
+        },
+      };
+    }
+
+    // ---- the pixel inspector (X): read-out, loupe, YUV, and the pixel grid at high zoom ----
+    /** A LOUPE² RGBA block around canvas pixel (x, y) of the decoder's picture (transparent outside it), as media/inspect.js. */
+    function readBlock(/** @type {any} */ p, /** @type {any} */ cv, /** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ n) {
+      const h = n >> 1;
+      const gl = p.gl && p.gl.gl;
+      if (gl && typeof gl.readPixels === 'function') {
+        const out = new Uint8ClampedArray(n * n * 4);
+        const x0 = Math.max(0, x - h);
+        const x1 = Math.min(cv.width, x + h + 1);
+        const y0 = Math.max(0, y - h);
+        const y1 = Math.min(cv.height, y + h + 1);
+        if (x1 <= x0 || y1 <= y0) return out;
+        const w = x1 - x0;
+        const hh = y1 - y0;
+        const buf = new Uint8Array(w * hh * 4);
+        const prev = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+        // GL rows start at the bottom.
+        gl.readPixels(x0, cv.height - y1, w, hh, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prev);
+        for (let r = 0; r < hh; r++) {
+          const src = (hh - 1 - r) * w * 4;
+          out.set(buf.subarray(src, src + w * 4), ((y0 + r - (y - h)) * n + (x0 - (x - h))) * 4);
+        }
+        return out;
+      }
+      if (p.ctx && typeof p.ctx.getImageData === 'function') return p.ctx.getImageData(x - h, y - h, n, n).data;
+      // Any other picture (a frame player's canvas, a bitmap): through an n×n scratch canvas.
+      const src = typeof p.snapshotSource === 'function' ? p.snapshotSource() : cv;
+      if (!src || typeof doc.createElement !== 'function') return null;
+      const scratch = doc.createElement('canvas');
+      scratch.width = n;
+      scratch.height = n;
+      const ctx = typeof scratch.getContext === 'function' ? scratch.getContext('2d') : null;
+      if (!ctx || typeof ctx.getImageData !== 'function') return null;
+      ctx.drawImage(src, x - h, y - h, n, n, 0, 0, n, n);
+      return ctx.getImageData(0, 0, n, n).data;
+    }
+    /**
+     * The source's code values under canvas pixel (x, y): CPU frames (the built-in decoder) at once, WebCodecs frames
+     * through copyTo (a promise), as media/inspect.js; null when the decoder keeps neither.
+     * @param {any} p @param {any} cv @param {number} x @param {number} y @param {number} rot
+     */
+    function yuvOf(p, cv, x, y, rot) {
+      const I = W('VpeInspect');
+      const shown = p.lastShown;
+      if (!I || !shown || typeof I.displayToSource !== 'function') return null;
+      try {
+        if (shown.yuv && typeof I.yuvAt === 'function') {
+          const [sx, sy] = I.displayToSource(x, y, cv.width, cv.height, rot, shown.yuv.width, shown.yuv.height);
+          return I.yuvAt(shown.yuv, sx, sy) || null;
+        }
+        const vf = shown.vf;
+        if (!vf || typeof I.vfSample !== 'function' || !vf.format || /^(RGBA|BGRA|RGBX|BGRX)$/.test(vf.format)) return null;
+        const vr = vf.visibleRect || { x: 0, y: 0, width: vf.codedWidth, height: vf.codedHeight };
+        const [sx, sy] = I.displayToSource(x, y, cv.width, cv.height, rot, vr.width, vr.height);
+        const ax = vr.x + (sx & ~1);
+        const ay = vr.y + (sy & ~1);
+        const rect = { x: ax, y: ay, width: Math.min(2, vf.codedWidth - ax), height: Math.min(2, vf.codedHeight - ay) };
+        const buf = new Uint8Array(vf.allocationSize({ rect }));
+        return Promise.resolve(vf.copyTo(buf, { rect }))
+          .then((layouts) => I.vfSample(vf.format, buf, layouts, vr.x + sx - ax, vr.y + sy - ay) || null, () => null);
+      } catch { return null; } // a closed frame
+    }
+    const pixelHost = (() => {
+      /** @type {any} */
+      let inst = null;
+      const ensure = () => {
+        if (inst || disposed) return inst;
+        const Tools = W('VpePlayerUiTools');
+        const stage = doc.getElementById('stage');
+        if (!Tools || typeof Tools.createPixelInspector !== 'function' || !stage) return null;
+        const n = Number(Tools.LOUPE_PX) || 15;
+        inst = Tools.createPixelInspector({
+          doc, win, stageEl: stage,
+          getTarget: () => {
+            const p = clockPlayerNow();
+            const cv = p && (p.cv || p.canvas);
+            const rect = pictureClientRect();
+            return rect && cv && cv.width > 0 && cv.height > 0 ? { rect, width: cv.width, height: cv.height } : null;
+          },
+          read: (/** @type {number} */ x, /** @type {number} */ y) => {
+            const p = clockPlayerNow();
+            const cv = p && (p.cv || p.canvas);
+            if (!p || !cv) return null;
+            let block = null;
+            try { block = readBlock(p, cv, x, y, n); } catch { block = null; }
+            /** @type {number[] | null} */
+            let rgb = null;
+            if (!block) {
+              const px = /** @type {any} */ (adapter).pixelAt(clockIdOf(S.getTab(ui.getState())), x, y);
+              if (px && Number.isFinite(px.r)) rgb = [px.r, px.g, px.b];
+            }
+            const rot = p.gl ? Number(p.gl.rot) || 0 : 0;
+            return { block, rgb, rot, yuv: yuvOf(p, cv, x, y, rot) };
+          },
+          gridAllowed: () => !!ui && S.getTab(ui.getState()).tiles.length === 1,
+        });
+        return inst;
+      };
+      return {
+        /** The inspection controller's inspector widget. @param {string | null} m */
+        setMode: (m) => { const i = m ? ensure() : inst; if (i) i.setMode(m); },
+        /** The picture moved or changed: the grid follows (made once the picture is zoomed), the read-out reads again. */
+        refresh: () => {
+          if (!inst && ui) {
+            const t = S.getTab(ui.getState());
+            if (!(t.zoom > 1 || (t.picMode && t.picMode !== 'fit'))) return;
+            ensure();
+          }
+          if (inst) { try { inst.refresh(); } catch (err) { log(`inspector: ${err && /** @type {any} */ (err).message || err}`); } }
+        },
+        state: () => (inst ? inst.getState() : null),
+        dispose: () => { if (inst) inst.dispose(); inst = null; },
+      };
+    })();
+
+    // ---- Codec X-ray (Shift+X): media/xray.js's strip, its index for the keyframe keys, chapters ----
+    /**
+     * Runs fn with document keydown listeners left out: media/xray.js listens for Shift+X, { } and PageUp / PageDown
+     * itself, which the shared controller routes here already (they would run twice).
+     * @param {() => any} fn
+     */
+    function withoutKeydown(fn) {
+      const d = G.document;
+      if (!d || typeof d.addEventListener !== 'function') return fn();
+      const own = Object.prototype.hasOwnProperty.call(d, 'addEventListener');
+      const orig = d.addEventListener;
+      d.addEventListener = function (/** @type {string} */ type, /** @type {any[]} */ ...rest) {
+        return type === 'keydown' ? undefined : orig.call(this, type, ...rest);
+      };
+      try { return fn(); } finally { if (own) d.addEventListener = orig; else delete d.addEventListener; }
+    }
+    const xrayHost = (() => {
+      /** @type {any} */
+      let xr = null;
+      /** The live keyframe list per clip (the controller keeps the first answer). @type {Map<string, any[]>} */
+      const keyLists = new Map();
+      const make = () => {
+        if (xr || disposed) return xr;
+        const create = W('createXray');
+        const seek = doc.getElementById('seek');
+        if (typeof create !== 'function' || !seek || !seek.parentElement) return null;
+        try {
+          xr = withoutKeydown(() => create({
+            cfg, ui: { seek, tip: elOf('tip'), rate: elOf('rate') }, getPlayer: () => clockPlayerNow(), fmtTime: fmtClock,
+            // The controller says on / off itself.
+            toast: (/** @type {any} */ text, /** @type {any} */ ms) => { if (!/^Codec X-ray (on|off)\b/.test(String(text))) toast(text, ms); },
+            log: (/** @type {any} */ s) => log(s),
+          }));
+        } catch (err) {
+          log(`xray: ${err && /** @type {any} */ (err).message || err}`);
+          xr = null;
+        }
+        return xr;
+      };
+      const state = () => { try { return xr && typeof xr._state === 'function' ? xr._state() : null; } catch { return null; } };
+      return {
+        show: () => { const x = make(); if (x && !x.isShown()) x.toggle(true); },
+        hide: () => { if (xr && xr.isShown()) xr.toggle(false); },
+        /**
+         * The clip's keyframes as { key, t } (s from its start), read from the strip's index whenever the controller
+         * looks (the index grows while the strip is open). null for a decoder without the built-in demuxer.
+         * @param {string} id
+         */
+        packetIndex: (id) => {
+          const p = players.get(id);
+          if (!p || typeof p.onWorkerRead !== 'function' || !make()) return null;
+          let list = keyLists.get(id);
+          if (!list) {
+            /** @type {any[]} */
+            const arr = [];
+            const refresh = () => {
+              arr.length = 0;
+              const st = state();
+              if (!st || !st.n || st.p !== players.get(id)) return;
+              const t0 = st.p.startT !== null && st.p.startT !== undefined ? Number(st.p.startT) : Number(st.base) || 0;
+              for (let i = 0; i < st.n; i++) if (st.key[i]) arr.push({ key: true, t: st.pts[i] - t0 });
+            };
+            const READS = new Set(['filter', 'map', 'forEach', 'find', 'slice', Symbol.iterator]);
+            list = new Proxy(arr, { get: (t, k, r) => { if (READS.has(k)) refresh(); return Reflect.get(t, k, r); } });
+            keyLists.set(id, list);
+          }
+          return list;
+        },
+        /** The chapter ticks on the seek bar follow the clock decoder (media/xray.js chapterTicks). */
+        tick: () => { if (xr && typeof xr.chapterTicks === 'function') { try { xr.chapterTicks(); } catch { /* no player */ } } },
+        state,
+        forget: (/** @type {string} */ id) => { keyLists.delete(id); },
+        dispose: () => { if (xr && xr.isShown()) { try { xr.toggle(false); } catch { /* gone */ } } },
+      };
+    })();
+    /**
+     * The clip's chapters as { start (s from its start), title? }: the decoder's own, else the file's (media/engine.js
+     * info), else what the X-ray index found.
+     * @param {string} id
+     */
+    function chaptersOf(id) {
+      const p = players.get(id);
+      if (!p) return [];
+      try { if (typeof p.chapters === 'function') return p.chapters() || []; } catch { return []; }
+      const st = xrayHost.state();
+      const ch = (p.info && Array.isArray(p.info.chapters) && p.info.chapters.length ? p.info.chapters
+        : st && st.p === p && Array.isArray(st.chapters) ? st.chapters : []);
+      const t0 = p.startT !== null && p.startT !== undefined ? Number(p.startT) || 0 : 0;
+      return ch.map((/** @type {any} */ c) => ({ start: Number(c.start) - t0, ...(c.title ? { title: c.title } : {}) }))
+        .filter((/** @type {any} */ c) => Number.isFinite(c.start));
+    }
+
+    // ---- a frame link (cfg.goto, or the session's): the controller lands on it once the decoder knows its frames ----
+    /** @type {{ frame?: number, t?: number } | null} */
+    let pendingGoto = cfg.goto && typeof cfg.goto === 'object' ? cfg.goto : null;
+    /**
+     * The controller seeked to the link when it was made, before the clip's length was known (its frame may have
+     * been clamped): once the clock decoder showed its first picture, the link's frame is shown, paused, and the
+     * controller's frame is that frame.
+     * @param {string} id @param {any} p
+     */
+    function tryApplyGoto(id, p) {
+      if (pendingGoto === null || disposed || !ui) return;
+      const c = engine.getClip(id);
+      const fps = (c && c.fps) || Number(p.fps) || 0;
+      const frames = (c && c.frames) || Number(p.n) || 0;
+      if (!(fps > 0 && frames > 1)) return;
+      const g = pendingGoto;
+      pendingGoto = null;
+      let f = Number.isFinite(Number(g.frame)) ? Math.round(Number(g.frame)) - 1
+        : Number.isFinite(Number(g.t)) ? Math.floor(Number(g.t) * fps + 1e-6) : NaN;
+      if (!Number.isFinite(f)) return;
+      f = Math.max(0, Math.min(frames - 1, f));
+      if (S.getTab(ui.getState()).playing) ui.setState(S.togglePlay(ui.getState()));
+      if (S.getTab(ui.getState()).frame !== f) { ui.dispatch('seek', f); return; }
+      let shown = NaN;
+      try { shown = typeof p.currentFrame === 'function' ? Number(p.currentFrame()) : NaN; } catch { shown = NaN; }
+      if (shown !== f) applyToDecoders(S.getTab(ui.getState()), { seek: true, frame: f, force: true });
     }
 
     // ---- the initial state: the config's clips in one tab, at the clip's own fps and length ----
@@ -975,11 +1588,13 @@
 
     /** @type {UnifiedControllerApi} the controller; null only until create() below returns */
     let ui = /** @type {any} */ (null);
+    const uiWidgets = W('VpeControls') ? { ...widgets, VpeControls: wrapControls(W('VpeControls')) } : widgets;
     ui = UiApi.create({
-      doc, win, stateApi: S, engine, host, widgets, initial,
+      doc, win, stateApi: S, engine, host, widgets: uiWidgets, initial,
       prefs: cfg.prefs, railCfg: cfg.rail || cfg.railCfg, storage: host.storage, goto: cfg.goto,
       fragment: win && win.location ? win.location.hash : null, railCarry: cfg.railCarry, page: cfg.page,
-      tickMs: 0, onChange, onTransport, inspectWidgets: { scopes: scopesHost },
+      tickMs: 0, onChange, onTransport,
+      inspectWidgets: { scopes: scopesHost, inspector: pixelHost, xray: xrayHost },
     });
     onChange(ui.getState());
 
@@ -1004,6 +1619,8 @@
         const hidden = m.visible === false;
         for (const p of players.values()) if (p && typeof p.setHidden === 'function') p.setHidden(hidden);
       }
+      // Subtitle files join the subtitle controller's list (it shows them through cueAt).
+      if (m.type === 'subs') noteSubFiles(m);
       ui.onHostMessage(m);
       // A message the controller declined (a duplicate, a full view) leaves no decoder behind.
       syncPlayers(ui.getState());
@@ -1153,6 +1770,12 @@
     function onSessionState(m) {
       const rSec = !m.goto && !cfg.goto ? resumeSecOf(m.savedPos) : null;
       if (rSec !== null) pendingResumeSec = rSec;
+      // A frame link the session carries (the page booted without it): it opens paused on that frame.
+      if (!cfg.goto && m.goto && typeof m.goto === 'object' && pendingGoto === null) {
+        pendingGoto = m.goto;
+        pendingResumeSec = null;
+        pendingAutoPlay = false;
+      }
       const ids = sessionIds(m);
       for (const c of Array.isArray(m.clips) ? m.clips : []) {
         const id = c && typeof c === 'object' ? c.clipId || c.id : null;
@@ -1280,29 +1903,22 @@
     }
     /** The page's elements by id, for the probes' `ui.<id>` reads. */
     const uiEls = new Proxy({}, { get: (_t, k) => (typeof k === 'string' ? elOf(k) : undefined) });
-    /** Layout properties read from the visible tile canvas in #cells; pixel buffer props read from the decoder canvas. */
-    const LAYOUT_PROPS = new Set(['getBoundingClientRect', 'offsetWidth', 'offsetHeight', 'clientWidth', 'clientHeight', 'hidden']);
-    const visibleCellCanvas = () => {
-      const cellsEl = doc.getElementById('cells');
-      return (cellsEl && typeof cellsEl.querySelector === 'function' && cellsEl.querySelector('.cell canvas')) || null;
-    };
+    /**
+     * Layout properties read from the visible tile canvas in #cells (its style: the nearest-neighbour drawing at high
+     * zoom); pixel buffer props read from the decoder canvas.
+     */
+    const LAYOUT_PROPS = new Set(['getBoundingClientRect', 'offsetWidth', 'offsetHeight', 'clientWidth', 'clientHeight', 'hidden', 'style']);
     /** The clock tile's canvas (its decoder's own), else the page's #canvas: what the probe measures and reads. */
     const liveCanvas = new Proxy({}, {
       get: (_t, k) => {
         if (k === 'getBoundingClientRect') {
           return () => {
+            const r = pictureClientRect();
+            if (r) return { left: r.left, top: r.top, x: r.left, y: r.top, width: r.width, height: r.height, right: r.left + r.width, bottom: r.top + r.height };
             const cellCv = visibleCellCanvas();
-            const base = cellCv && typeof cellCv.getBoundingClientRect === 'function'
+            return cellCv && typeof cellCv.getBoundingClientRect === 'function'
               ? cellCv.getBoundingClientRect()
               : { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0 };
-            if (!ui || !(base.width > 0 && base.height > 0) || typeof engine.pictureRect !== 'function') return base;
-            const t = tabNow();
-            const cid = clockIdOf(t);
-            const r = engine.pictureRect(cid, base.width, base.height, t.picMode, t.zoom, t.panX, t.panY);
-            if (!r || !(r.w > 0 && r.h > 0)) return base;
-            const left = base.left + r.x;
-            const top = base.top + r.y;
-            return { left, top, x: left, y: top, width: r.w, height: r.h, right: left + r.w, bottom: top + r.h };
           };
         }
         const p = clockPlayer();
@@ -1353,9 +1969,28 @@
         },
       });
       const panelButtons = () => Array.from(elOf('panel').querySelectorAll('button') || []);
+      /**
+       * The seek-bar thumbnail as the probe reads it (`#thumb` holding a canvas, media/player.js): the unified page's
+       * one canvas.seek-thumb in #seekRow (media/player-ui.js), wrapped.
+       */
+      const thumbView = () => {
+        const c = typeof doc.querySelector === 'function' ? doc.querySelector('canvas.seek-thumb') : null;
+        if (!c) return null;
+        return {
+          id: 'thumb', get hidden() { return !!c.hidden; },
+          querySelector: () => c, getBoundingClientRect: () => c.getBoundingClientRect(),
+        };
+      };
+      const probeDoc = new Proxy(doc, {
+        get: (t, k) => {
+          if (k === 'getElementById') return (/** @type {string} */ id) => t.getElementById(id) || (id === 'thumb' ? thumbView() : null);
+          const v = t[k];
+          return typeof v === 'function' ? v.bind(t) : v;
+        },
+      });
       try {
         return Probe.install({
-          log, win: probeWin, doc,
+          log, win: probeWin, doc: probeDoc,
           getPlayer: () => clockPlayer(),
           isLibavPlayer: (/** @type {any} */ p) => !!(p && p.queue),
           stage: elOf('stage'), canvas: liveCanvas, snapshotSource: realCanvas,
@@ -1533,9 +2168,15 @@
       if (raf && win && typeof win.cancelAnimationFrame === 'function') win.cancelAnimationFrame(raf);
       raf = 0;
       tickPending = false;
-      if (win && typeof win.removeEventListener === 'function') win.removeEventListener('pagehide', dispose);
+      if (win && typeof win.removeEventListener === 'function') {
+        win.removeEventListener('pagehide', dispose);
+        win.removeEventListener('resize', onResize);
+      }
       if (debugProbe) { try { debugProbe.dispose(); } catch { /* ignore */ } }
       scopesHost.dispose();
+      pixelHost.dispose();
+      bitmapSubs.dispose();
+      xrayHost.dispose();
       compareDebugGen++; // an installed Compare probe matches no message any more
       for (const id of [...players.keys()]) disposePlayer(id);
       for (const x of [sync, compositor]) if (x && typeof x.dispose === 'function') { try { x.dispose(); } catch { /* ignore */ } }
@@ -1543,6 +2184,9 @@
       host.dispose();
     }
     if (win && typeof win.addEventListener === 'function') win.addEventListener('pagehide', dispose, { once: true });
+    // Picture subtitles and the pixel grid are placed in client px: a resized view places them again.
+    function onResize() { if (!disposed) { bitmapSubs.update(); pixelHost.refresh(); } }
+    if (win && typeof win.addEventListener === 'function') win.addEventListener('resize', onResize);
 
     // The host learns the page is up (src/extension.js answers with 'open').
     const bridge = ui.parts && ui.parts.bridge;
@@ -1572,14 +2216,15 @@
         VpeAutoplay: typeof VpeAutoplay !== 'undefined' ? VpeAutoplay : undefined,
         VpeTime: typeof VpeTime !== 'undefined' ? VpeTime : undefined,
         VpePicture: typeof VpePicture !== 'undefined' ? VpePicture : undefined,
-      VpeInspect: typeof VpeInspect !== 'undefined' ? VpeInspect : undefined,
         VpeModes: typeof VpeModes !== 'undefined' ? VpeModes : undefined,
         VpeRangeDrag: typeof VpeRangeDrag !== 'undefined' ? VpeRangeDrag : undefined,
         VpeReducedResNotice: typeof VpeReducedResNotice !== 'undefined' ? VpeReducedResNotice : undefined,
         VpeSlowNotice: typeof VpeSlowNotice !== 'undefined' ? VpeSlowNotice : undefined,
         VpeScopes: typeof VpeScopes !== 'undefined' ? VpeScopes : undefined,
         VpeInspect: typeof VpeInspect !== 'undefined' ? VpeInspect : undefined,
-        VpeXray: typeof VpeXray !== 'undefined' ? VpeXray : undefined,
+        // media/xray.js's strip (a global function) and media/subtitles.js (globalThis.Subtitles).
+        createXray: typeof createXray !== 'undefined' ? createXray : undefined,
+        Subtitles: typeof Subtitles !== 'undefined' ? Subtitles : undefined,
         VpeHdr: typeof VpeHdr !== 'undefined' ? VpeHdr : undefined,
         VpeExact: typeof VpeExact !== 'undefined' ? VpeExact : undefined,
         VpeFramePlayer: typeof VpeFramePlayer !== 'undefined' ? VpeFramePlayer : undefined,

@@ -34,6 +34,37 @@
 
   const pos = (/** @type {any} */ v) => (Number(v) > 0 ? Number(v) : 0);
   const clamp01 = (/** @type {any} */ v) => Math.max(0, Math.min(1, Number(v) || 0));
+  /** From this many CSS px per video pixel a tile is drawn nearest-neighbour (200 %, as media/inspect.js). */
+  const NEAREST_AT = 2;
+
+  /**
+   * A seek-bar thumbnail into the hover canvas, sized to it: media/thumbs.js's { bmp, w, h, rot } (turned like the
+   * video, as ThumbService.draw), else any drawable with a size. False when there is nothing to draw.
+   * @param {any} cv @param {any} pic
+   */
+  function drawThumbPicture(cv, pic) {
+    const ctx = cv && typeof cv.getContext === 'function' ? cv.getContext('2d') : null;
+    if (!ctx || !pic) return false;
+    if (pic.bmp && pos(pic.w) && pos(pic.h)) {
+      const rot = Number(pic.rot) || 0;
+      const side = rot === 90 || rot === 270;
+      const w = side ? pic.h : pic.w;
+      const h = side ? pic.w : pic.h;
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.translate(w / 2, h / 2);
+      ctx.rotate((rot * Math.PI) / 180);
+      ctx.drawImage(pic.bmp, -pic.w / 2, -pic.h / 2);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      return true;
+    }
+    if (pos(pic.width) && pos(pic.height)) {
+      if (cv.width !== pic.width || cv.height !== pic.height) { cv.width = pic.width; cv.height = pic.height; }
+      ctx.drawImage(pic, 0, 0, cv.width, cv.height);
+      return true;
+    }
+    return false;
+  }
 
   /**
    * An offset in frames of the clip (a plain number is frames; { unit: 'ms', v } is milliseconds).
@@ -299,6 +330,10 @@
         ctx.fillRect(0, 0, w, h);
         if (src && src.width > 0 && src.height > 0) {
           const r = pictureRect(clipId, cssW, cssH, o.picMode || 'fit', o.zoom, o.panX, o.panY);
+          // Zoomed in, every video pixel stays a sharp square (the pixel inspector reads them; media/inspect.js).
+          const nearest = r.w / src.width >= NEAREST_AT;
+          ctx.imageSmoothingEnabled = !nearest;
+          if (canvas.style) canvas.style.imageRendering = nearest ? 'pixelated' : '';
           ctx.drawImage(src, r.x * dpr, r.y * dpr, r.w * dpr, r.h * dpr);
         }
         ctx.restore();
@@ -322,9 +357,9 @@
         if (gen !== thumbGen) return;
         if (typeof q.cb === 'function') q.cb(picture ? { ...base, picture } : base);
         else if (q.cb && typeof q.cb.getContext === 'function') {
-          if (picture && picture.width > 0) {
-            try { q.cb.getContext('2d').drawImage(picture, 0, 0, q.cb.width, q.cb.height); } catch { /* no picture */ }
-          } else draw(q.cb, c.id, frame, {});
+          let drawn = false;
+          try { drawn = drawThumbPicture(q.cb, picture); } catch { drawn = false; }
+          if (!drawn) draw(q.cb, c.id, frame, {});
         }
       };
       let asked = false;
@@ -677,7 +712,7 @@
     return /** @satisfies {EngineAdapter} */ (adapter);
   }
 
-  const api = { create, offsetFrames, plainRect, clockToTileFrame, formatPixel };
+  const api = { create, offsetFrames, plainRect, clockToTileFrame, formatPixel, drawThumbPicture, NEAREST_AT };
   // checkJs: end
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VpeEngineAdapter = api;
