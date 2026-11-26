@@ -10,8 +10,11 @@
 // Zero VS Code, zero decoder coupling. The widget modules come in through `env.widgets` (default: the page globals)
 // so nothing here reaches for a global the caller did not choose. Optional ones switch features on: VpePlayerUiTiles
 // + CompareGrid (tile glide, drag / dock, tile menu, details card, ▲ / ▼, hover) and VpePlayerUiInput (seek tip and
-// thumbnail, wheel step / zoom / pan, idle bar, Zen Esc Esc, auto-pause, live region, go-to box). Pure helpers at the top are exported for the
-// millisecond Node tests (test/host/player_ui_test.js); `create(env)` is the DOM part.
+// thumbnail, wheel step / zoom / pan, idle bar, Zen Esc Esc, auto-pause, live region, go-to box), VpePlayerUiTools
+// (#notice banners, scopes / inspector / stats / X-ray, subtitles, frame save / copy and the A–B export protocol) and
+// VpePlayerUiLifecycle (shared playback prefs and saved state, frame links and resume, Autoplay next and rail
+// handoffs, the #overlay status / error, tile size, pauseForTest, pagehide). Pure helpers at the top are exported for
+// the millisecond Node tests (test/host/player_ui_test.js); `create(env)` is the DOM part.
 //
 // Host -> page messages: { type: 'rail', op, ... }      the folder rail protocol (src/folder-rail.js)
 //                        { type: 'openVideo', clipId, label?, compare?, replace?, forceNewTab? }
@@ -20,6 +23,15 @@
 //                        { type: 'replaceTile', oldId, newId, label? }  the answer to 'replaceVideo'
 //                        { type: 'focusMode', active }    Zen Mode on / off (Esc Esc then posts 'focusModeExited')
 //                        { type: 'setVisible', visible, active? }  the webview panel shown / hidden (auto-pause)
+//                        { type: 'subs', tracks, select? }      subtitle tracks (VpePlayerUiTools)
+//                        { type: 'abQuery' | 'exportGrab' | 'exportEnd', ... }  the A–B export protocol
+//                        { type: 'hideReducedResNotice' | 'hideSlowPlaybackNotice' }  a notice turned off in Settings
+//                        { type: 'slowPlayback', variant, offerSetup?, mb? }  the decoder plays slowly (#notice)
+//                        { type: 'playbackPrefs', prefs } | { type: 'prefs', prefs }  shared prefs / live settings
+//                        { type: 'goto', mode?, frame?, t? }    a frame link opened on this tab
+//                        { type: 'railHandoff' | 'railHandoffCancel', ... }  folder navigation between tabs
+//                        { type: 'status', text } | { type: 'error', message, hint?, action? }  the #overlay
+//                        { type: 'pauseForTest' }               the GPU test waits for playback to stop
 // Page -> host messages: { type: 'rail' | 'neighbour', ... }  posted by VpeFolderRail itself
 //                        { type: 'tiles', tabId, tiles, current }  after any change of the active tab's videos
 //                        { type: 'pickVideo', exclude }            "+ Add video" / "Pick…" / Compare › Add video
@@ -28,6 +40,10 @@
 //                        { type: 'leaveCompare', keepId, t }      Leave compare (keeps the clock tile)
 //                        { type: 'copyFrame', clipId? }           a tile's frame (tile menu) or the view
 //                        { type: 'copyText', text } and the command requests listed in HOST_COMMANDS
+//                        { type: 'saveFrame', frame, data } | { type: 'copyLink', frame, t }  (VpePlayerUiTools)
+//                        { type: 'exportRange' | 'clipRange' | 'ffmpegRange', range } | { type: 'exportFrame', ... }
+//                        { type: 'playbackPrefs', volume, rate, timeMode, stepSize } | { type: 'tileSize', tile }
+//                        { type: 'action', id, ... }              a notice or #overlay button
 'use strict';
 
 (() => {
@@ -54,10 +70,21 @@
    * @property {(immediate?: boolean) => void} [thumbnailLeave]
    * @property {(clipId: string | null) => void} [setSoundSource]
    * @property {(volume: number, muted: boolean) => void} [setVolume]
+   * @property {(clipId: string) => { width: number, height: number }} [naturalSize]
+   * @property {(clipId: string, frame?: number) => any} [snapshot] a still: PNG bytes, or { data } holding them
+   * @property {(clipId: string) => string} [statsText]
+   * @property {(clipId: string) => any} [packetIndex]
+   * @property {(clipId: string) => any[]} [chapters]
+   * @property {(clipId: string, x: number, y: number) => any} [pixelAt]
+   * @property {(clipId: string, t: number, track: number) => any} [cueAt]
+   * @property {(clipId: string, track: number) => void} [selectSubtitle]
+   * @property {(clipId: string) => any} [pictureInfo] { nativeLossy?, transcoded?, video?, stream?, display? }: the
+   *   reduced-resolution offer before an exact pixel tool
    */
   /**
    * @typedef {object} HostAdapter
    * @property {(msg: any) => void} post
+   * @property {{ getState: () => any, setState: (s: any) => void }} [storage] the webview's saved state
    */
   /**
    * @typedef {object} Prefs
@@ -65,7 +92,7 @@
    * @property {number} rate
    * @property {boolean} muted
    * @property {number} volume
-   * @property {string} stepSize
+   * @property {string | null} stepSize  null: the setting stepButtons decides
    * @property {string} picMode     'fit' | 'fill' | 'stretch' | 'actual'
    * @property {number} picZoom
    * @property {string} subKey
@@ -537,7 +564,14 @@
    *   engine: EngineAdapter,
    *   host: HostAdapter,
    *   widgets?: { VpeControls?: any, VpeFolderRail?: any, VpeCtxMenu?: any, VpeAbLoop?: any, VpeAutoplay?: any,
-   *     VpeTime?: any, VpePicture?: any, VpeModes?: any, VpePlayerUiTiles?: any, VpePlayerUiInput?: any, CompareGrid?: any },
+   *     VpeTime?: any, VpePicture?: any, VpeModes?: any, VpePlayerUiTiles?: any, VpePlayerUiInput?: any, CompareGrid?: any,
+   *     VpePlayerUiTools?: any, VpePlayerUiLifecycle?: any, VpeReducedResNotice?: any, VpeSlowNotice?: any },
+   *   inspectWidgets?: { scopes?: any, inspector?: any, stats?: any, xray?: any },
+   *   storage?: { getState: () => any, setState: (s: any) => void },
+   *   goto?: { frame?: number, t?: number, mode?: string } | null,
+   *   fragment?: string | null,
+   *   railCarry?: any,
+   *   page?: any,
    *   initial?: any,
    *   prefs?: Partial<Prefs>,
    *   railCfg?: { layout?: string, width?: number, column?: string, playable?: boolean },
@@ -559,7 +593,8 @@
     const doc = env.doc;
     const win = /** @type {any} */ (env.win || doc.defaultView || globalThis);
     const GLOBAL_WIDGETS = ['VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay', 'VpeTime', 'VpePicture',
-      'VpeModes', 'VpePlayerUiTiles', 'VpePlayerUiInput', 'CompareGrid'];
+      'VpeModes', 'VpePlayerUiTiles', 'VpePlayerUiInput', 'CompareGrid', 'VpePlayerUiTools', 'VpePlayerUiLifecycle',
+      'VpeReducedResNotice', 'VpeSlowNotice'];
     const W = /** @type {any} */ ({ ...Object.fromEntries(GLOBAL_WIDGETS.map((k) => [k, win[k]])), ...(env.widgets || {}) });
     for (const k of ['VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay']) {
       if (!W[k]) throw new Error(`player-ui: widget ${k} is missing`);
@@ -568,6 +603,9 @@
     const Tiles = W.VpePlayerUiTiles && W.CompareGrid ? W.VpePlayerUiTiles : null;
     const Grid = W.CompareGrid || null;
     const Input = W.VpePlayerUiInput || null;
+    /** Optional too: without them the notices, inspection, subtitles, frame export (Tools) or host sync (Life) stay off. */
+    const Tools = W.VpePlayerUiTools || null;
+    const Life = W.VpePlayerUiLifecycle || null;
     const $ = (/** @type {string} */ id) => /** @type {any} */ (doc.getElementById(id));
     const need = (/** @type {string} */ id) => { const x = $(id); if (!x) throw new Error(`player-ui: #${id} is missing`); return x; };
 
@@ -619,8 +657,24 @@
 
     // ---- state ----
     let ws = env.initial && Array.isArray(env.initial.tabs) ? env.initial : S.createWorkspaceState(env.initial || {});
+    /** The webview's saved state (prefs, position, dismissed notices, subtitle settings), when the page has one. */
+    const storage = env.storage || host.storage || null;
+    /** @type {any} */
+    const saved = (() => {
+      try { const s = storage && storage.getState(); return s && typeof s === 'object' ? s : {}; } catch { return {}; }
+    })();
     /** @type {Prefs} */
-    const prefs = { ...defaultPrefs(), ...(env.prefs || {}) };
+    const prefs = { ...defaultPrefs(), ...(env.prefs || {}), ...(Life ? Life.cleanPlaybackPrefs(saved) : {}) };
+    // The tool and lifecycle controllers (media/player-ui-tools.js, media/player-ui-lifecycle.js); null without them.
+    /** @type {any} */ let notices = null;
+    /** @type {any} */ let insp = null;
+    /** @type {any} */ let subs = null;
+    /** @type {any} */ let frameExport = null;
+    /** @type {any} */ let prefsSync = null;
+    /** @type {any} */ let gotoResume = null;
+    /** @type {any} */ let railCtl = null;
+    /** @type {any} */ let overlay = null;
+    /** @type {any} */ let bridge = null;
     const ab = W.VpeAbLoop.create();
     let lastTilesKey = '';
     let disposed = false;
@@ -628,8 +682,13 @@
     const fps = () => tab().fps || 24;
     const fmt = (/** @type {number} */ f) => formatTime(f, fps(), prefs.timeMode, W.VpeTime ? W.VpeTime.fmtTimecode : null);
     const clockText = (/** @type {number} */ sec) => formatTime(Math.round(sec * fps()), fps(), 0);
-    /** The arrow keys' jump sizes (settings videoPreviewEnhanced.jump.*): seconds, or 'frame'. */
+    const single = () => tab().tiles.length === 1;
+    /** The arrow keys' jump sizes (settings videoPreviewEnhanced.jump.*): seconds, or 'frame'. Live settings update it. */
+    /** @type {{ arrow: number | string, shift: number | string, ctrl: number | string }} */
     const JUMP = { arrow: 5, shift: 1, ctrl: 'frame' };
+    /** The setting stepButtons: what the buttons beside Play step until a step size is picked. */
+    let stepButtons = /** @type {'frame' | 'jump'} */ ('frame');
+    const stepPrefs = () => ({ stepSize: prefs.stepSize, stepButtons, jump: JUMP });
     const clipName = (/** @type {string} */ id) => (engine.getClip(id) || { name: id }).name;
     const letterOf = (/** @type {any} */ t, /** @type {string} */ id) => S.TILE_KEYS[Math.max(0, t.tiles.indexOf(id))];
     const hasAudio = (/** @type {string | null} */ id) => !id || typeof engine.hasAudio !== 'function' || !!engine.hasAudio(id);
@@ -820,6 +879,44 @@
       },
     };
 
+    /** ⚙ › Inspection (media/player.js TOOLS): each tool with its key; the inspector is X only with one video. */
+    const inspectTools = (/** @type {boolean} */ isMulti) => {
+      const st = insp.getState();
+      const tool = (/** @type {string} */ label, /** @type {string} */ title, /** @type {string} */ key, /** @type {boolean} */ on,
+        /** @type {() => void} */ run) => ({ label, title, key, group: 'inspect', on, run });
+      return [
+        tool('Scopes', 'Scopes', 'W', !!st.scopes, () => insp.cycleScopes()),
+        ...(isMulti ? [] : [tool('Inspector', 'Pixel inspector', 'X', !!st.inspector, () => insp.cycleInspector())]),
+        tool('Stats', 'Stats', 'Shift+I', st.stats, () => insp.toggleStats()),
+        tool('Codec X-ray', 'Codec X-ray', 'Shift+X', st.xray, () => insp.toggleXray()),
+      ];
+    };
+    /** ⚙ › Subtitles: the subtitle controller's tracks, delay and size (else the mockup's demo list). */
+    const subsPanel = () => {
+      const audio = [
+        { id: 'a0', main: 'English (AAC 2.0)', checked: prefs.audioId === 'a0' },
+        { id: 'a1', main: 'Director Commentary', checked: prefs.audioId === 'a1' },
+      ];
+      if (subs) {
+        const st = subs.getState();
+        return {
+          on: st.track >= 0, label: st.label, sel: st.track < 0 ? 'off' : String(st.track),
+          subs: st.tracks.map((/** @type {string} */ name, /** @type {number} */ i) => ({ key: String(i), main: name, checked: st.track === i })),
+          audio, delay: st.delayMs / 1000, size: st.sizePct / 100,
+        };
+      }
+      return {
+        on: prefs.subKey !== 'off',
+        label: prefs.subKey === 'off' ? 'Off' : 'English (SRT)',
+        sel: prefs.subKey,
+        subs: [
+          { key: 'off', main: 'Off', checked: prefs.subKey === 'off' },
+          { key: 'en', main: 'English (SRT)', sub: 'Sidecar', checked: prefs.subKey === 'en' },
+        ],
+        audio, delay: 0, size: 1,
+      };
+    };
+
     controls = W.VpeControls.create({
       panel: need('panel'),
       sheet: need('sheet'),
@@ -837,7 +934,7 @@
           loop: prefs.onEnd === 'loop',
           autoplay: { mode: prefs.onEnd, label: W.VpeAutoplay.label(prefs.onEnd), next: !isMulti },
           jump: JUMP,
-          stepButtons: 'frame',
+          stepButtons,
           stepSize: prefs.stepSize,
           abLabel: abLabel(),
           picture: { mode: t.picMode, pct: Math.round(t.zoom * 100), zoomed: t.zoom !== 1 },
@@ -846,31 +943,26 @@
               ? { id: 'compare', label: 'Compare', note: `${t.tiles.length} videos`, on: true, keepOpen: true, run: () => controls.show('cmp', cmpBtn) }
               : { id: 'compare', label: t.capture ? 'Pause Compare capture' : 'Start Compare', key: 'Shift+D', on: t.capture, run: () => act.capture() },
             { id: 'rail', label: rail.isOpen() ? 'Close Folder Rail' : 'Open Folder Rail', on: rail.isOpen(), run: () => { rail.toggle(); render(); } },
+            // ⚙ › Inspection (media/player.js TOOLS): each tool with its key; the inspector is X only with one video.
+            ...(insp ? inspectTools(isMulti) : []),
           ],
           ab: {
             items: [
               { label: 'Set Range Start (A)', key: 'A', run: () => act.setA() },
               { label: 'Set Range End (B)', key: 'B', run: () => act.setB() },
               { label: 'Clear A–B Range', key: 'Backspace', run: () => act.clearAB() },
+              // The exports ask the host with the range (media/player.js sendRange): frames, an exact clip, an ffmpeg line.
+              ...(frameExport ? [
+                { label: 'Export frames A–B…', run: () => frameExport.exportAb('exportRange') },
+                { label: 'Export A–B Clip…', run: () => frameExport.exportAb('clipRange') },
+                { label: 'Copy ffmpeg command for A–B', run: () => frameExport.exportAb('ffmpegRange') },
+              ] : []),
             ],
           },
-          subsLabel: prefs.subKey === 'off' ? 'Off' : 'English (SRT)',
+          subsLabel: subs ? subs.getState().label : prefs.subKey === 'off' ? 'Off' : 'English (SRT)',
           audioLabel: prefs.audioId === 'a0' ? 'English (AAC 2.0)' : 'Director Commentary',
           hasSound: hasAudio(t.soundId),
-          tracks: {
-            on: prefs.subKey !== 'off',
-            label: prefs.subKey === 'off' ? 'Off' : 'English (SRT)',
-            subs: [
-              { key: 'off', main: 'Off', checked: prefs.subKey === 'off' },
-              { key: 'en', main: 'English (SRT)', sub: 'Sidecar', checked: prefs.subKey === 'en' },
-            ],
-            audio: [
-              { id: 'a0', main: 'English (AAC 2.0)', checked: prefs.audioId === 'a0' },
-              { id: 'a1', main: 'Director Commentary', checked: prefs.audioId === 'a1' },
-            ],
-            delay: 0,
-            size: 100,
-          },
+          tracks: subsPanel(),
           facts: facts(t.tiles[sel]),
           infoTabs: isMulti ? { keys: t.tiles.map((/** @type {string} */ _id, /** @type {number} */ i) => S.TILE_KEYS[i]), sel, pick: (/** @type {number} */ i) => { infoSel = i; } } : null,
           canExternal: false,
@@ -897,13 +989,22 @@
         setPicture: (/** @type {string} */ m) => setPicture(m),
         zoomPicture: (/** @type {number} */ d) => { commit(S.setZoom(ws, Math.max(0.5, Math.min(4, +(tab().zoom + d * 0.25).toFixed(2))))); controls.refresh(); },
         resetPicture: () => { commit(S.resetView(ws)); setPicture('fit'); },
-        selectSub: (/** @type {string} */ k) => { prefs.subKey = k; drawBar(); controls.refresh(); toast(k === 'off' ? 'Subtitles off' : 'Subtitles: English'); },
+        selectSub: (/** @type {string} */ k) => {
+          if (subs) {
+            subs.select(k === 'off' ? -1 : Number(k));
+            const st = subs.getState();
+            toast(st.track < 0 ? 'Subtitles off' : `Subtitles: ${st.label}`);
+            return;
+          }
+          prefs.subKey = k; drawBar(); controls.refresh(); toast(k === 'off' ? 'Subtitles off' : 'Subtitles: English');
+        },
         selectAudio: (/** @type {string} */ id) => { prefs.audioId = id; controls.refresh(); toast('Audio track switched'); },
         loadSubs: () => postHost({ type: 'loadSubs' }),
-        subDelay: () => {},
-        subSize: () => {},
+        // The panel steps in seconds and fractions (controls.js renderSubs); null resets.
+        subDelay: (/** @type {number | null} */ d) => { if (subs) { if (d === null) subs.resetDelay(); else subs.adjustDelay(d * 1000); } },
+        subSize: (/** @type {number | null} */ d) => { if (subs) { if (d === null) subs.resetSize(); else subs.adjustSize(Math.round(d * 100)); } },
         copyInfo: (/** @type {any} */ d) => { postHost({ type: 'copyText', text: copyInfoText(d) }); toast('Details copied'); },
-        copyLink: () => postHost({ type: 'copyLink' }),
+        copyLink: () => act.copyLink(),
         external: () => postHost({ type: 'external' }),
         extSettings: () => postHost({ type: 'openSettings' }),
         openUrl: () => postHost({ type: 'openUrl' }),
@@ -1044,20 +1145,27 @@
       /** J / L: ten seconds, with the toast the player shows. */
       skipKey: (/** @type {number} */ sec) => { act.skip(sec); toast(`${sec > 0 ? '+' : ''}${sec} s`); },
       jump: (/** @type {{ dir: number, shift?: boolean }} */ o) => jumpBy(o.shift ? JUMP.shift : JUMP.arrow, o.dir),
-      stepButton: (/** @type {number} */ dir) => stepBy(W.VpeControls, prefs, dir, { step: (n) => commit(S.stepFrame(ws, n)), skip: (sec) => act.skip(sec) }),
+      stepButton: (/** @type {number} */ dir) => stepBy(W.VpeControls, stepPrefs(), dir, { step: (n) => commit(S.stepFrame(ws, n)), skip: (sec) => act.skip(sec) }),
       home: () => commit(S.seekFrame(ws, 0)),
       end: () => { const t = tab(); commit(S.seekFrame(t.playing ? S.togglePlay(ws) : ws, t.maxFrame)); },
       seekTenth: (/** @type {number} */ n) => commit(S.seekFrame(ws, (n / 10) * tab().maxFrame)),
       rateStep: (/** @type {number} */ d) => { setRate(prefs.rate + d * W.VpeControls.SPEED_STEP); toast(W.VpeControls.speedText ? W.VpeControls.speedText(prefs.rate) : `${prefs.rate}×`); },
       volumeStep: (/** @type {number} */ d) => { act.volume(prefs.volume + d); toast(`Volume ${Math.round(prefs.volume * 100)}%`); },
-      copyTime: () => { const text = fmt(tab().frame); postHost({ type: 'copyText', text }); toast(`Copied ${text}`); },
+      /** T: the shown time as m:ss.mmm (VpePlayerUiTools copyTimestamp), else in the bar's time format. */
+      copyTime: () => {
+        if (frameExport) { frameExport.copyTimestamp(); return; }
+        const text = fmt(tab().frame); postHost({ type: 'copyText', text }); toast(`Copied ${text}`);
+      },
+      /** Shift+C: a link to this frame (the host turns it into a vscode:// URL). */
+      copyLink: () => { if (frameExport) frameExport.copyLink(); else postHost({ type: 'copyLink' }); },
       copyTileTime: (/** @type {string} */ id) => {
         const t = tab();
         const text = `${letterOf(t, id)} ${fmt(shownOf(t, id).frame)}`;
         postHost({ type: 'copyText', text });
         toast(`Copied ${text}`);
       },
-      saveFrame: () => postHost({ type: 'saveFrame' }),
+      // One video: the page grabs the frame itself (VpePlayerUiTools); Compare's view is the host's to save.
+      saveFrame: () => { if (frameExport && hasSnapshot && single()) void frameExport.saveFrame(); else postHost({ type: 'saveFrame' }); },
       prevFrame: () => commit(S.stepFrame(ws, -1)),
       nextFrame: () => commit(S.stepFrame(ws, 1)),
       seek: (/** @type {number} */ f) => commit(S.seekFrame(ws, f)),
@@ -1073,17 +1181,37 @@
       clearAB: () => { ab.clear(); controls.refresh(); render(); toast('A–B range cleared'); },
       cycleTime: () => { prefs.timeMode = nextTimeMode(prefs.timeMode); render(); toast(TIME_MODE_NAMES[prefs.timeMode]); },
       cyclePicture: () => setPicture(PICTURE_MODES[(PICTURE_MODES.indexOf(/** @type {any} */ (tab().picMode)) + 1) % PICTURE_MODES.length]),
-      copyFrame: () => { postHost({ type: 'copyFrame' }); toast(tab().tiles.length > 1 ? 'View copied' : 'Frame copied'); },
+      copyFrame: () => {
+        // The page copies the PNG itself where the clipboard API is there; else the host copies it.
+        if (frameExport && hasSnapshot && single() && canClip()) { void frameExport.copyFrame(); return; }
+        postHost({ type: 'copyFrame' }); toast(tab().tiles.length > 1 ? 'View copied' : 'Frame copied');
+      },
+      /** C (one video): subtitles on / off; the CC button (ccClick) opens Settings › Subtitles when there are none. */
+      cc: () => {
+        if (!subs || !single()) return false;
+        subs.toggle();
+        return true;
+      },
+      /** W: the scopes (luma waveform, RGB parade, vectorscope, histogram, off). */
+      scopes: () => { if (!insp) return false; insp.cycleScopes(); return true; },
       fullscreen: () => postHost({ type: 'fullscreen' }),
       info: () => controls.toggle('info', infoBtn),
       keys: () => controls.toggleSheet(),
       gotoBox: () => { if (gotoBox) gotoBox.open(); else return false; return true; },
+      /**
+       * Esc closes one thing, innermost first: a tile drag, a pending "Remove?", the tile menu, the panels and the
+       * player menu, the notice banner, the inspection tools (inspector, scopes, X-ray), Sync offsets, the Spotlight.
+       * Nothing left: false, and the key goes on (Zen Mode's Esc Esc, then VS Code).
+       */
       escape: () => {
         const t = tab();
+        if (tileDrag && tileDrag.isDragging()) { tileDrag.cancel(); return true; }
+        if (t.removeConfirmId) { commit(S.setRemoveConfirm(ws, null)); return true; }
+        if (tileMenu && tileMenu.isOpen()) { tileMenu.close(); return true; }
         if (controls.anyOpen()) { controls.closeAll(true); return true; }
         if (ctxMenu.isOpen()) { ctxMenu.close(true); return true; }
-        if (tileMenu && tileMenu.isOpen()) { tileMenu.close(); return true; }
-        if (t.removeConfirmId) { commit(S.setRemoveConfirm(ws, null)); return true; }
+        if (notices && notices.handleEscape()) return true;
+        if (insp && insp.handleEscape()) { controls.refresh(); return true; }
         if (t.syncMode) { commit(S.toggleSyncMode(ws), 'Sync offsets off'); return true; }
         if (t.layout === 'spotlight' && t.spotlightId) { withGlide(() => commit(S.toggleEnlarge(ws, t.spotlightId))); return true; }
         return false;
@@ -1192,7 +1320,7 @@
       [playBtn, act.playPause, true], [prevBtn, () => act.stepButton(-1), true], [nextBtn, () => act.stepButton(1), true],
       [muteBtn, act.mute, true], [timeEl, act.cycleTime, true], [setABtn, act.setA, true], [setBBtn, act.setB, true],
       [cogBtn, () => controls.toggle('main', cogBtn), true], [infoBtn, act.info, true],
-      [rateBtn, () => controls.toggle('speed', rateBtn), true], [tracksBtn, () => controls.toggle('subs', tracksBtn), true],
+      [rateBtn, () => controls.toggle('speed', rateBtn), true], [tracksBtn, () => ccClick(), true],
       [picBtn, act.cyclePicture, true], [fullBtn, act.fullscreen, true],
     ], onClick);
     bindStepBadges([prevSize, nextSize], (b) => controls.toggle('step', b), (el, type, fn) => listen(el, type, fn));
@@ -1452,6 +1580,260 @@
       cleanups.push(() => gotoBox.dispose());
     }
 
+    // ---- tools (media/player-ui-tools.js): the notice banner, inspection, subtitles, frame save / copy / export ----
+    const hostPort = { postMessage: (/** @type {any} */ m) => postHost(m) };
+    const hasSnapshot = typeof engine.snapshot === 'function';
+    const canClip = () => !!(win.navigator && win.navigator.clipboard && typeof win.ClipboardItem === 'function');
+    /** An optional engine method as a plain function (missing ones stay undefined: the tools then say so). */
+    const engineFn = (/** @type {string} */ name) => {
+      const e = /** @type {any} */ (engine);
+      return typeof e[name] === 'function' ? (/** @type {any[]} */ ...a) => e[name](...a) : undefined;
+    };
+    /** The engine as the tool controllers read it: a still of the shown frame as bytes, frame k shown paused. */
+    const toolEngine = {
+      statsText: engineFn('statsText'), packetIndex: engineFn('packetIndex'), chapters: engineFn('chapters'),
+      pixelAt: engineFn('pixelAt'), cueAt: engineFn('cueAt'), selectSubtitle: engineFn('selectSubtitle'),
+      snapshot: hasSnapshot ? (/** @type {string} */ id) => {
+        const s = /** @type {any} */ (engine).snapshot(id, shownOf(tab(), id).frame);
+        return s && s.data !== undefined ? s.data : s;
+      } : undefined,
+      showFrame: (/** @type {string} */ id, /** @type {number} */ k) => {
+        commit(S.seekFrame(tab().playing ? S.togglePlay(ws) : ws, k));
+        return shownOf(tab(), id).frame;
+      },
+    };
+    /** Before an exact pixel tool or a still: offer the full-resolution picture once (media/player.js exactTool). */
+    const exactTool = () => {
+      if (!notices || typeof engine.pictureInfo !== 'function') return;
+      const info = engine.pictureInfo(tab().tiles[0]);
+      if (info) notices.maybeShowReducedRes(info);
+    };
+    /** The saved state: debounced, and only when the page has a store (persist runs on every change). */
+    const snapshotState = () => {
+      const t = tab();
+      return {
+        ...(prefsSync ? prefsSync.loadSaved() : {}), ...playbackPrefsNow(), clipId: t.tiles[0], time: t.frame / fps(),
+        dismissals: notices ? notices.getDismissals() : saved.dismissals || {},
+        subs: subs ? { track: subs.getState().track, delayMs: subs.getState().delayMs, sizePct: subs.getState().sizePct } : saved.subs,
+      };
+    };
+    const persist = () => { if (prefsSync && storage && !disposed) prefsSync.scheduleSave(snapshotState()); };
+    const playbackPrefsNow = () => ({ volume: prefs.volume, rate: prefs.rate, timeMode: prefs.timeMode, stepSize: prefs.stepSize });
+    const stageEls = /** @type {any[]} */ ([]);
+    const ownEl = (/** @type {string} */ tag, /** @type {string} */ cls) => {
+      const x = doc.createElement(tag);
+      x.className = cls;
+      x.hidden = true;
+      stageEl.appendChild(x);
+      stageEls.push(x);
+      return x;
+    };
+    cleanups.push(() => { for (const x of stageEls.splice(0)) if (x.parentNode) x.parentNode.removeChild(x); });
+    if (Tools) {
+      const noticeEl = $('notice');
+      if (noticeEl) {
+        notices = Tools.createNoticeController({
+          // create() routes Esc itself (escape: the banner after the panels), so the banner adds no key listener.
+          doc: {
+            createElement: (/** @type {string} */ t) => doc.createElement(t),
+            get activeElement() { return doc.activeElement; },
+            addEventListener() {}, removeEventListener() {},
+          },
+          win, noticeEl, playBtnEl: playBtn,
+          reducedResHelper: W.VpeReducedResNotice || undefined, slowHelper: W.VpeSlowNotice || undefined,
+          onAction: (/** @type {string} */ id, /** @type {any} */ detail) => postHost({ type: 'action', id, ...(detail || {}) }),
+          onDismiss: () => persist(),
+          onAnnounce: announce,
+          dismissals: saved.dismissals,
+        });
+        cleanups.push(() => notices.dispose());
+      }
+      const iw = env.inspectWidgets || {};
+      insp = Tools.createInspectionController({
+        doc, win, engine: toolEngine, host: hostPort,
+        widgets: { ...iw, stats: iw.stats || $('stats') || ownEl('pre', 'stats') },
+        // Compare: the tile under the pointer, else the one the panel shows.
+        getActiveClip: () => (single() ? tab().tiles[0] : nudgeTarget()),
+        getFrame: () => ({ frame: tab().frame, t: tab().frame / fps() }),
+        onToast: toast,
+        onSeek: (/** @type {number} */ sec) => commit(S.seekFrame(ws, Math.round(sec * fps()))),
+        onBeforeInspect: exactTool,
+        isSingle: single,
+        listen: false, // the page's key handler routes the tool keys (keyCommand has W and X, Esc has an order)
+      });
+      cleanups.push(() => insp.dispose());
+      const subsEl = $('subs');
+      if (subsEl) {
+        subs = Tools.createSubtitleController({
+          doc, win, subsEl, engine: toolEngine, host: hostPort,
+          getClipId: () => tab().tiles[0],
+          getTime: () => tab().frame / fps(),
+          getPictureRect: () => {
+            const t = tab();
+            const { width, height } = stageSize();
+            return typeof engine.pictureRect === 'function'
+              ? engine.pictureRect(t.tiles[0], width, height, t.picMode, t.zoom, t.panX, t.panY) : { x: 0, y: 0, w: width, h: height };
+          },
+          onToast: toast,
+          onUpdate: () => { drawBar(); controls.refresh(); persist(); },
+          onOpenPage: (/** @type {string} */ page) => {
+            if (controls.view() === page) controls.close(true); else controls.show(page, tracksBtn || cogBtn);
+          },
+          saved: saved.subs,
+        });
+        cleanups.push(() => subs.dispose());
+      }
+      frameExport = Tools.createFrameExportController({
+        win, engine: toolEngine, host: hostPort,
+        getContext: (/** @type {any} */ clipId) => {
+          const t = tab();
+          const id = clipId !== undefined && t.tiles.includes(clipId) ? clipId : (t.clockId || t.tiles[0]);
+          if (!id) return null;
+          const f = shownOf(t, id).frame;
+          const r = clipFps(id);
+          return { clipId: id, frame: f, t: f / r, fps: r, compare: t.tiles.length > 1, page: env.page };
+        },
+        onToast: toast,
+        onPause: () => { if (tab().playing) { ws = S.togglePlay(ws); render(); } },
+        onBeforeSnapshot: exactTool,
+        getRange: (/** @type {string} */ kind) => (kind === 'clipRange' ? ab.presentationRange() : ab.exportRange(fps(), tab().maxFrame + 1)),
+        onRefuse: () => { if (notices) notices.showClipRefusal({ syntheticTimes: true }); },
+      });
+      cleanups.push(() => frameExport.dispose());
+    }
+    /** The CC button: subtitles on / off, or Settings › Subtitles when there are none (media/player.js ccClick). */
+    const ccClick = () => { if (subs) subs.ccClick(); else controls.toggle('subs', tracksBtn); };
+    /** A click on the picture with the pixel inspector on copies the pixel under it (picture coordinates). */
+    const pickPixel = (/** @type {any} */ e, /** @type {string} */ id) => {
+      const t = tab();
+      const sr = stageEl.getBoundingClientRect();
+      const { width, height } = stageSize();
+      const pic = typeof engine.pictureRect === 'function'
+        ? engine.pictureRect(id, width, height, t.picMode, t.zoom, t.panX, t.panY) : { x: 0, y: 0, w: width, h: height };
+      const c = /** @type {any} */ (engine.getClip(id) || {});
+      const nat = typeof engine.naturalSize === 'function' ? engine.naturalSize(id) : { width: c.width || pic.w, height: c.height || pic.h };
+      if (!(pic.w > 0 && pic.h > 0)) return false;
+      const x = Math.floor(((e.clientX - sr.left - pic.x) / pic.w) * nat.width);
+      const y = Math.floor(((e.clientY - sr.top - pic.y) / pic.h) * nat.height);
+      return insp.pickAt(x, y);
+    };
+
+    // ---- lifecycle (media/player-ui-lifecycle.js): prefs sync, frame links / resume, rail handoff, overlay ----
+    if (Life) {
+      /** Without a store the prefs still sync between tabs; nothing is written. */
+      let mem = {};
+      const memStore = { getState: () => mem, setState: (/** @type {any} */ s) => { mem = s; } };
+      prefsSync = Life.createPrefsSync({
+        win, host: hostPort, storage: storage || memStore,
+        // Another tab changed a shared pref: apply it quietly (drawBar's publish then finds nothing new).
+        onApplyPlaybackPrefs: (/** @type {any} */ p) => {
+          if (p.volume !== undefined) prefs.volume = p.volume;
+          if (p.rate !== undefined) prefs.rate = W.VpeControls.clampRate(p.rate);
+          if (p.timeMode !== undefined) prefs.timeMode = p.timeMode;
+          if (p.stepSize !== undefined) prefs.stepSize = p.stepSize;
+          render();
+          controls.refresh();
+        },
+        // VS Code's settings changed: the jump sizes, what the step buttons step, Live transcode.
+        onApplyLivePrefs: (/** @type {any} */ p) => {
+          if (p.jump) {
+            for (const k of /** @type {const} */ (['arrow', 'shift', 'ctrl'])) {
+              const v = p.jump[k];
+              if (v === 'frame') JUMP[k] = 'frame';
+              else if (Number(v) > 0) JUMP[k] = Number(v);
+            }
+          }
+          if (p.stepButtons) stepButtons = p.stepButtons;
+          if (p.transcode) prefs.transcodeMode = p.transcode;
+          if (p.transcodeMaxBitrate !== undefined) prefs.transcodeMaxBitrate = p.transcodeMaxBitrate;
+          if (p.transcodeResolution !== undefined) prefs.transcodeRes = p.transcodeResolution;
+          drawBar();
+          controls.refresh();
+        },
+      });
+      prefsSync.seed(playbackPrefsNow());
+      cleanups.push(() => { if (storage) prefsSync.saveNow(snapshotState()); prefsSync.dispose(); });
+      gotoResume = Life.createGotoAndResume({
+        // A frame link opens paused on its frame (1-based in links, 0-based in the state).
+        onSeek: (/** @type {any} */ g) => {
+          const base = tab().playing ? S.togglePlay(ws) : ws;
+          commit(S.seekFrame(base, 'frame' in g ? g.frame - 1 : Math.round(g.time * fps())));
+        },
+        onSetLayout: (/** @type {string} */ m) => { if (!single()) act.layout(m); },
+        onToast: toast,
+      });
+      railCtl = Life.createRailHandoffController({
+        host: hostPort, rail,
+        onSetAutoplay: setOnEnd,
+        onPlayFromStart: () => {
+          const base = S.seekFrame(ws, 0);
+          commit(S.getTab(base).playing ? base : S.togglePlay(base));
+        },
+      });
+      if (env.railCarry) railCtl.adoptCarry(env.railCarry);
+      const overlayEl = $('overlay'), messageEl = $('message'), hintEl = $('hint');
+      if (overlayEl && messageEl && hintEl) {
+        overlay = Life.createOverlayController({
+          doc, overlayEl, messageEl, hintEl, actionEl: $('action') || undefined, host: hostPort, onAnnounce: announce,
+        });
+      }
+      bridge = Life.createLifecycleBridge({
+        win, host: hostPort,
+        onPauseForTest: () => { if (!tab().playing) return false; ws = S.togglePlay(ws); render(); return true; },
+        onToast: toast,
+        onDispose: () => disposeAll(),
+      });
+      cleanups.push(() => bridge.dispose());
+    }
+    /** The tile size the host decodes for (native ffmpeg scales to it): the first cell, in device pixels. */
+    let lastTileSizeKey = /** @type {string | null} */ (null);
+    const tileNow = () => {
+      const t = tab();
+      const ui = S.deriveUi(t, stageSize());
+      const c = ui.cells[0];
+      if (!c) return null;
+      const dpr = win.devicePixelRatio || 1;
+      return { w: Math.round(c.w * dpr), h: Math.round(c.h * dpr), n: ui.n, layout: ui.effectiveLayout, zoom: t.zoom, rate: prefs.rate };
+    };
+    /** Layout, size, zoom or speed changed: tell the host after a quiet spell (the first size is the page's own). */
+    const checkTileSize = () => {
+      if (!bridge) return;
+      const tile = tileNow();
+      const key = tile ? JSON.stringify(tile) : '';
+      if (key === lastTileSizeKey) return;
+      const first = lastTileSizeKey === null;
+      lastTileSizeKey = key;
+      if (!first && tile) bridge.scheduleTileSize(tileNow, prefs.transcodeMode !== 'always');
+    };
+    /** The clip this single page shows: the rail learns its size once, a waiting handoff may apply, X-ray reloads. */
+    let lastSeedId = /** @type {string | null} */ (null);
+    const seedClip = () => {
+      const t = tab();
+      if (t.tiles.length !== 1 || t.tiles[0] === lastSeedId) return;
+      lastSeedId = t.tiles[0];
+      if (insp) insp.refresh({ clipChanged: true });
+      if (!railCtl) return;
+      const c = /** @type {any} */ (engine.getClip(lastSeedId) || {});
+      const r = c.fps || fps();
+      railCtl.resetClip();
+      railCtl.seedSelf({ duration: (c.frames || t.maxFrame + 1) / r, width: c.width, height: c.height, codec: c.codec });
+      railCtl.markReady();
+    };
+
+    /** Keys of the tool controllers: inspection (W, X with one video, Shift+X, Shift+I, { }, PageUp / PageDown) and subtitles. */
+    const INSPECT_KEYS = new Set(['w', 'W', 'x', 'X', 'I', '{', '}', 'PageUp', 'PageDown']);
+    const SUB_KEYS = new Set(['c', 'C', 'v', 'V', 'g', 'G', 'h', 'H']);
+    const toolKey = (/** @type {any} */ e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        // AltGr types { } on many layouts: the inspection controller accepts it.
+        if (!(e.getModifierState && e.getModifierState('AltGraph'))) return false;
+      }
+      if (e.shiftKey && (e.key === 'C' || e.key === 'c') && !e.ctrlKey && !e.altKey) { act.copyLink(); return true; }
+      if (insp && INSPECT_KEYS.has(e.key) && insp.handleKey(e)) { controls.refresh(); return true; }
+      if (subs && single() && SUB_KEYS.has(e.key)) return subs.handleKey(e);
+      return false;
+    };
+
     // ---- keyboard shortcuts ----
     listen(env.keyTarget || doc, 'keydown', (/** @type {KeyboardEvent} */ e) => {
       // Typing in a field (the rail filter), a list box, or Space / Enter on a focused button: not player keys.
@@ -1459,6 +1841,8 @@
         const t = /** @type {any} */ (e.target);
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       }
+      // A tile drag took this Esc itself.
+      if (e.key === 'Escape' && e.defaultPrevented) return;
       // Ctrl / Cmd keys the shared table leaves to VS Code, except the player's own: ←/→ jump, C copy, G go to.
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
         const k = e.key;
@@ -1468,6 +1852,7 @@
         else if (k === 'g' || k === 'G') used = act.gotoBox() !== false;
         if (used) { e.preventDefault(); return; }
       }
+      if (toolKey(e)) { e.preventDefault(); return; }
       const altGr = !!(e.getModifierState && e.getModifierState('AltGraph'));
       if (runKey(e, keyTable, { altGr })) { e.preventDefault(); return; }
       if (zen && e.key === 'Escape') zen.onKey(e);
@@ -1623,6 +2008,7 @@
           if (controls.anyOpen() || ctxMenu.isOpen() || (tileMenu && tileMenu.isOpen())) {
             controls.closeAll(false); ctxMenu.close(false); if (tileMenu) tileMenu.close(); return;
           }
+          if (insp && !ui.isMulti && insp.getState().inspector && pickPixel(e, r.clipId)) return;
           if (!enlargeable) { act.playPause(); return; }
           if (clickTimer) win.clearTimeout(clickTimer);
           clickTimer = win.setTimeout(() => { clickTimer = 0; act.playPause(); }, DBLCLICK_MS);
@@ -1739,7 +2125,12 @@
       }
       if (picBtn && W.VpePicture) pictureButton(picBtn, W.VpePicture, t.picMode, multi ? 'all videos' : '');
       else if (picBtn) picBtn.dataset.mode = t.picMode;
-      if (tracksBtn) tracksBtn.classList.toggle('on', prefs.subKey !== 'off');
+      if (tracksBtn && subs) {
+        const cc = subs.getCcButtonState();
+        tracksBtn.classList.toggle('on', cc.on);
+        tracksBtn.setAttribute('aria-label', cc.label);
+        tracksBtn.title = cc.title;
+      } else if (tracksBtn) tracksBtn.classList.toggle('on', prefs.subKey !== 'off');
       if (muteBtn) {
         const noAudio = !hasAudio(t.soundId);
         muteBtn.disabled = noAudio;
@@ -1758,9 +2149,12 @@
         }
       }
       if (volEl) volEl.value = String(prefs.muted ? 0 : prefs.volume);
-      if (prevSize && nextSize) W.VpeControls.drawStepBadges([prevSize, nextSize], prefs.stepSize);
+      if (prevSize && nextSize) W.VpeControls.drawStepBadges([prevSize, nextSize], W.VpeControls.stepSizeOf(stepPrefs()));
       if (setABtn && setBBtn) W.VpeControls.drawRangeButtons(setABtn, setBBtn, ab);
       if (abMarks && abA && abB) W.VpeControls.drawRangeMarks(abMarks, abA, abB, ab.marks(t.maxFrame / fps()));
+      // The other tabs follow a changed volume, speed, time format or step size (unchanged values post nothing).
+      if (prefsSync) prefsSync.publishPlaybackPrefs(playbackPrefsNow());
+      checkTileSize();
     }
 
     /** The folder capsule is a single-video control: hidden in Compare whatever the host's pos answer said. */
@@ -1869,6 +2263,10 @@
         postHost({ type: 'tiles', tabId: t.id, tiles: t.tiles.slice(), current: t.tiles[0] });
       }
       syncCapsule(ui.isMulti);
+      // Subtitles belong to the single player: the cue of the shown time over the picture.
+      if (subs) { if (ui.isMulti) subs.dispose(); else subs.render(); }
+      seedClip();
+      persist();
       if (controls && controls.view && (controls.view() === 'cmp' || controls.view() === 'cmpVid') && !ui.isMulti) controls.close(false);
       if (tileMenu && !ui.isMulti && tileMenu.isOpen()) tileMenu.close();
       if (env.onChange) env.onChange(ws, ui);
@@ -1880,7 +2278,14 @@
       const timer = win.setInterval(() => {
         const t = tab();
         if (!t.playing) return;
-        if (t.frame >= t.maxFrame && prefs.onEnd !== 'loop') { commit(S.togglePlay(S.seekFrame(ws, t.maxFrame))); return; }
+        if (t.frame >= t.maxFrame && prefs.onEnd !== 'loop') {
+          commit(S.togglePlay(S.seekFrame(ws, t.maxFrame)));
+          // Autoplay "Play next in folder": one video, a visible tab, playing forward.
+          if (railCtl && t.tiles.length === 1) {
+            railCtl.onNaturalEnd({ visible: !doc.hidden, rate: prefs.rate, isFile: true, autoplayMode: prefs.onEnd });
+          }
+          return;
+        }
         commit(S.seekFrame(ws, t.frame >= t.maxFrame ? 0 : t.frame + 1));
       }, tickMs);
       cleanups.push(() => win.clearInterval(timer));
@@ -1899,8 +2304,42 @@
       if (msg.type === 'toast') { toast(String(msg.text || '')); return; }
       if (msg.type === 'focusMode') { if (zen) zen.setActive(!!msg.active); return; }
       if (msg.type === 'setVisible') { if (vis) vis.setVisible(msg.visible !== false, msg.active !== false); return; }
+      // A notice turned off in Settings: remembered, and closed if it shows (media/player.js).
+      if (msg.type === 'hideReducedResNotice' || msg.type === 'hideSlowPlaybackNotice') {
+        const kind = msg.type === 'hideReducedResNotice' ? 'reducedRes' : 'slowPlayback';
+        if (notices) { notices.setDismissals({ ...notices.getDismissals(), [kind]: true }); notices.hide(kind); }
+        persist();
+        return;
+      }
+      if (msg.type === 'slowPlayback') { if (notices) notices.maybeShowSlowPlayback(msg); return; }
+      if (prefsSync && prefsSync.onHostMessage(msg)) return;
+      if (gotoResume && gotoResume.handleGotoMessage(msg)) return;
+      if (railCtl && railCtl.onHostMessage(msg)) return;
+      if (overlay && overlay.onHostMessage(msg, { started: false })) return;
+      if (bridge && bridge.onHostMessage(msg)) return;
+      if (subs && subs.onHostMessage(msg)) return;
+      if (frameExport && frameExport.onHostMessage(msg)) return;
       const r = applyHostMessage(S, ws, msg, engine.getClip);
-      if (r.handled) commit(r.state, r.toast);
+      if (r.handled) {
+        // A video arrived: an error left over from the one before is gone.
+        if (overlay && overlay.isShown()) overlay.hide();
+        commit(r.state, r.toast);
+      }
+    }
+
+    // ---- what a newly opened page shows first: a frame link, else the saved position of this video ----
+    if (gotoResume) {
+      const t0 = tab();
+      gotoResume.applyOpenTarget({
+        gotoCfg: env.goto, fragment: env.fragment,
+        savedTime: saved.clipId === t0.tiles[0] ? saved.time : undefined, duration: t0.maxFrame / fps(),
+      });
+    }
+
+    function disposeAll() {
+      if (disposed) return;
+      disposed = true;
+      for (const c of cleanups.splice(0)) c();
     }
 
     return {
@@ -1921,8 +2360,11 @@
       tileMenu,
       ab,
       /** The tile gesture and input controllers (null without their widget modules), for tests and the harness. */
-      parts: { glide, tileDrag, hover, seekHover, wheelPan, idle, zen, vis, gotoBox },
-      dispose: () => { disposed = true; for (const c of cleanups.splice(0)) c(); },
+      parts: {
+        glide, tileDrag, hover, seekHover, wheelPan, idle, zen, vis, gotoBox,
+        notices, insp, subs, frameExport, prefsSync, gotoResume, railCtl, overlay, bridge,
+      },
+      dispose: () => disposeAll(),
     };
   }
 
