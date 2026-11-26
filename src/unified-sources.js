@@ -94,6 +94,8 @@ function createSequenceDecoder(c, io, o = {}) {
  * @property {() => boolean} [builtinOnly]  the decoder setting is 'builtin'
  * @property {() => string} [why]  why ffmpeg is not offered here (Restricted Mode, a remote window ...), or ''
  * @property {(plan: any, opts: any) => Promise<any>} [firstBytes]  an HLS stream's first bytes (its timeline's start)
+ * @property {(plan: any) => string} [planText]  the log's words for an HLS plan (variants, renditions; src/framelink.js)
+ * @property {string} [libavVariant]  the bundled decoder build's name, for the log
  */
 
 /**
@@ -243,7 +245,7 @@ function createUrlDecoder(c, io, deps) {
       return;
     }
     if (stale()) return;
-    io.log(`url ${red}: ${info.kind}${live ? ' (live)' : ''}`);
+    io.log(`url ${red}: ${info.kind}${live ? ' (live)' : ''}${info.kind === 'media' ? `, ${Number.isFinite(info.size) ? `${info.size} bytes` : 'size unknown'}, ranges ${info.rangeOk ? 'yes' : 'no'}` : ''}${plan && deps.planText ? deps.planText(plan) : ''}`);
     if (plan && plan.drm) {
       fail(new U.Protected(plan.drm), 'DRM-protected video (SAMPLE-AES, FairPlay, Widevine, PlayReady) needs a licence and a content decryption module, which VS Code does not have; ffmpeg can\'t play it either. Streams encrypted with plain AES-128 play.');
       return;
@@ -297,6 +299,7 @@ function createUrlDecoder(c, io, deps) {
       return;
     }
     if (stale()) return;
+    io.log(`decoding with libav.js (${deps.libavVariant || 'vpe'}) over HTTP`);
     postStream();
     io.postRaw({ type: 'libav', meta: { size: net.size, duration: net.duration || 0, label: '', url: true, native: false } });
     sendHlsSubs(signal, U.HlsFile && net instanceof U.HlsFile ? net : null);
@@ -350,6 +353,8 @@ function createUrlDecoder(c, io, deps) {
       if (p !== 'auto' && !(Number.isInteger(p) && p >= 0 && p < plan.variants.length)) return undefined;
       if (p === (plan.auto ? 'auto' : plan.index)) return undefined;
       pick = p;
+      const v = p === 'auto' ? null : plan.variants[p];
+      io.log(`quality: ${v ? `${v.width}x${v.height} ${v.bandwidth} b/s` : 'auto'}, reloading`);
       return open();
     },
     /** @param {boolean} on */

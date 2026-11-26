@@ -441,6 +441,50 @@ const context = { extensionUri: Uri.file(ROOT) };
       handlers.dispose();
     }
 
+    { // One video alone: a smaller picture waits for the next seek (logged), a larger one applies at once.
+      const { panel, posts, handlers } = fakePanel();
+      const clipA = { ...(await prepareClip(a, {})), native: true, decision: nativeDecision };
+      const decoders = [];
+      // A decoder that knows its frame size, as NativeDecoder does: resize() records the caps, the seek applies them.
+      const sizing = () => {
+        const d = fakeDecoder({
+          w: 1280, h: 720, cap: 720,
+          videoSize: () => ({ width: Math.round(d.cap * 16 / 9), height: d.cap }),
+          resize(h) { d.resizes.push([h]); if (d.pending) { d.cap = h; return false; } d.cap = h; d.pending = d.cap !== d.h; return d.pending; },
+        });
+        return d;
+      };
+      const viewer = createUnifiedViewer({ vscode, context, panel, clip: clipA, registry: null,
+        deps: deps({ createNative: (opts) => { const d = sizing(); d.opts = opts; decoders.push(d); return d; } }) });
+      viewer.show();
+      await open(handlers);
+      await handlers.message({ type: 'nd', page: 1, clipId: clipA.id, m: { type: 'open' } });
+      logs.length = 0;
+      posts.length = 0;
+      await handlers.message({ type: 'tileSize', page: 1, tile: { w: 960, h: 540 } });
+      assert.deepStrictEqual(posts.filter((m) => m.type === 'resize'), [], 'smaller frames wait for the next seek');
+      assert.ok(logs.includes('[a.mp4] native: picture 960x540: frames 1280x720 -> 960x540 at the next seek'), `shrink: ${logs}`);
+      await handlers.message({ type: 'tileSize', page: 1, tile: { w: 1920, h: 1080 } });
+      assert.deepStrictEqual(posts.filter((m) => m.type === 'resize').length, 1, 'a larger picture applies at once, even with a smaller size waiting');
+      handlers.dispose();
+    }
+
+    { // The log tells a lone video's decoder lines apart from a comparison's, and the tile count and adds as they happen.
+      const { panel, handlers } = fakePanel();
+      const clipA = { ...(await prepareClip(a, {})), native: true, decision: nativeDecision };
+      const viewer = createUnifiedViewer({ vscode, context, panel, clip: clipA, registry: null,
+        deps: deps({ createNative: () => fakeDecoder() }) });
+      viewer.show();
+      await open(handlers);
+      await handlers.message({ type: 'nd', page: 1, clipId: clipA.id, m: { type: 'open' } });
+      assert.ok(logs.some((l) => l === '[a.mp4] native ffmpeg (cpu) at up to 1080p: test'), 'one video: "[name] native ffmpeg ..."');
+      logs.length = 0;
+      assert.ok(await viewer.addUri(b));
+      assert.ok(logs.includes('[compare a.mp4 ↔ b.mp4] tiles: 2'), `tiles: ${logs}`);
+      assert.ok(logs.includes('[compare a.mp4 ↔ b.mp4] add b.mp4'), `add: ${logs}`);
+      handlers.dispose();
+    }
+
     { // tileSize: native tiles get their new output size; a tile that must seek to apply it gets 'resize'.
       const { panel, posts, handlers } = fakePanel();
       const clipA = { ...(await prepareClip(a, {})), native: true, decision: nativeDecision };

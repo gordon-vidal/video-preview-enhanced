@@ -52,7 +52,7 @@ const urlsource = lazy(() => require('./urlsource')); // Open Video URL… (docs
 const { createSettings, PREFS } = require('./settings'); // settings, player prefs, globalState fallback
 const { createOffers } = require('./offers'); // onboarding, hint, GPU test and remote ffmpeg offers
 const { createAssociations } = require('./associations'); // default viewer for MP4/WebM, file icons
-const { createFrameLink, isLocalVideo } = require('./framelink'); // frame links, native frame sizes
+const { createFrameLink, isLocalVideo, hlsPlanText } = require('./framelink'); // frame links, native frame sizes
 const { createDebugCommands } = require('./debug-cmd'); // the VPE_LOG test hook (<log>.cmd)
 const { linkSimulatorFromEnv, effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VPE_SIMULATE_REMOTE
 const { LinkSessionMemory } = require('./stream-adapt');
@@ -950,6 +950,16 @@ function activate(context) {
     vscode.commands.registerCommand('videoPreviewEnhanced.stopAddFromExplorer', () => {
       for (const v of unifiedViewers) v.session.setCapture(false);
     }),
+    // Switching to a text editor ends Add Mode (docs/PRODUCT.md "Add Mode"); a video opening in a tab of its own does not.
+    ...[vscode.window.onDidChangeActiveTextEditor && vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (!editor) return;
+      for (const v of unifiedViewers) {
+        if (!v.session.capture) continue;
+        captureWhy = 'switched editor';
+        v.session.setCapture(false);
+        captureWhy = '';
+      }
+    })].filter(Boolean), // (test doubles of the vscode API may lack the event)
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('videoPreviewEnhanced.ffmpegPath')) toolsPromise = null;
       if (e.affectsConfiguration('videoPreviewEnhanced.gpuDecoding')) probeChecked = false;
@@ -1224,7 +1234,7 @@ function urlDeps(c, io) {
         post: sink.post, postRaw: sink.postRaw, log: sink.log, onFail,
       });
     },
-    firstBytes,
+    firstBytes, planText: hlsPlanText, libavVariant: 'vpe',
     builtinOnly: () => config().decoder === 'builtin',
     why: () => {
       const remote = remoteName();
@@ -1651,10 +1661,20 @@ const panelClosed = new WeakMap();
 /** The context keys of the editor menus: a comparison is open (2+ videos), a viewer captures (Add from Explorer). */
 function updateContexts() {
   const all = [...unifiedViewers];
-  const set = (key, on) => Promise.resolve(vscode.commands.executeCommand('setContext', key, on)).catch(() => {});
+  const set = (key, on) => {
+    // Tests read the menu context's changes from the log (VPE_LOG).
+    if (logFile && contextLogged.get(key) !== on) log(`compare: ${key}=${on}`);
+    contextLogged.set(key, on);
+    return Promise.resolve(vscode.commands.executeCommand('setContext', key, on)).catch(() => {});
+  };
   set('videoPreviewEnhanced.compareOpen', all.some((v) => v.session.clips.length >= 2));
   set('videoPreviewEnhanced.addMode', all.some((v) => v.session.capture));
 }
+/** The last value each editor-menu context key was set to (the log says when it changes). @type {Map<string, boolean>} */
+const contextLogged = new Map();
+
+/** Why the next Add Mode change happens, for the log line (set just before the session is told). */
+let captureWhy = '';
 
 /**
  * A viewer in `panel` showing `clip` first (and `more` beside it). `openTarget`: a frame link's moment or the saved
@@ -1675,6 +1695,10 @@ async function showViewer(context, panel, clip, openTarget = null, more = []) {
   viewer.session.onChange((e) => {
     if (e === 'active' && viewer.session.active) lastViewer = viewer;
     if (e === 'clips' || e === 'capture') updateContexts();
+    if (e === 'capture' && logFile) {
+      log(`[${viewer.session.title}] compare: add from the Explorer ${viewer.session.capture ? 'on' : 'off'}${captureWhy ? ` (${captureWhy})` : ''}`);
+      captureWhy = '';
+    }
   });
   viewer.onDispose = () => {
     unifiedViewers.delete(viewer);
@@ -1958,7 +1982,10 @@ async function compareSelection(context, uri, uris) {
   if (!videos.length) { vscode.window.showInformationMessage('Video Preview: no videos in the selection.'); return null; }
   const target = activeViewer();
   if (target && target.session.clips.some((c) => c.uri)) return addToViewer(target, videos);
-  return openCompare(context, videos);
+  const viewer = await openCompare(context, videos);
+  // One video starts a Compare of its own with Add Mode on (the next videos opened join it); several are the whole set.
+  if (viewer && viewer.session.clips.length === 1) viewer.session.setCapture(true);
+  return viewer;
 }
 
 /** The internal 'compare' command (tests): a new viewer with the list, or two picked files. */

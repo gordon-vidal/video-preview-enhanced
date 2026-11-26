@@ -127,12 +127,12 @@ const restore = {
     const problems = [];
     if (!tabs.some((t) => t.label === background && !t.active)) problems.push('background tab was not restored');
     const beforeReveal = vs.lines.slice(from, vs.mark()).filter((l) => l.includes(`[${background}]`));
-    if (beforeReveal.some((l) => /early ffprobe started|startup host/.test(l))) problems.push('background tab started decoding before it was shown');
+    if (beforeReveal.some((l) => /player resolve started|viewer opened|startup host/.test(l))) problems.push('background tab started decoding before it was shown');
     const shown = await h.openClip(vs, path.join(h.MEDIA, background));
-    await vs.waitLog(fileLog(background, 'early ffprobe started'), { from: shown });
+    await vs.waitLog(fileLog(background, 'player resolve started'), { from: shown });
     await firstFrame(background, shown);
     return [res('background-probe', problems, {
-      beforeReveal, onReveal: vs.lines.slice(shown).filter((l) => l.includes(`[${background}]`) && /session resolved|early ffprobe started/.test(l)),
+      beforeReveal, onReveal: vs.lines.slice(shown).filter((l) => l.includes(`[${background}]`) && /player resolve started|session resolved|viewer opened/.test(l)),
     })];
   },
 };

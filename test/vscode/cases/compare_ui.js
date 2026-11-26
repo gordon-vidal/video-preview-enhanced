@@ -1,10 +1,10 @@
 'use strict';
 // Compare's UI in a real VS Code (docs/notes/compare-ui.md, the approved mock-up): entering from a player
-// takes its tab in place and starts at its position; the player's bar (no CC, the
+// grows its tab in place (one tab, one page) and starts at its position; the player's bar (no CC, the
 // Compare button); the Compare panel and a video's page (offset in frames / ms, Reset, clock, sound);
 // the hover pills and ‹ offset › nudges, − / + on the video under the pointer; side by side / split with
 // a dragged divider and Swap; the tile's right-click menu; 3 videos in a 2x2 grid with an "Add video" cell;
-// Remove; Leave compare back to the player at the kept video's moment, in the same tab.
+// Remove; Leave compare back to one video at the kept video's moment, in the same tab.
 // Read from the page's `compare report` / `compare ui {json}` lines and the `tabs` hook (VPE_LOG).
 const path = require('path');
 
@@ -13,7 +13,10 @@ const CLIPS = ['h264_aac_anim_1080p.mp4', 'vp9_opus_anim_1080p.webm', 'h264_8_10
 const kv = (line) => Object.fromEntries([...line.matchAll(/(\w+)=(\S+)/g)].map((m) => [m[1], m[2]]));
 const list = (s) => String(s || '').split(',');
 const nums = (s) => list(s).map(Number);
-const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] opened, .* ${n} tiles`);
+// The unified viewer logs "tiles: N" as its tab grows or shrinks in place ("opened, ..., N tiles" for a new panel).
+const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] (?:opened, .*, |tiles: )${n}(?: tiles)?\\b`);
+// A comparison's tab here is the player's tab grown in place: its title lists the videos.
+const isCompareTab = (tab) => /compare/i.test(tab.viewType) || /↔| · /.test(tab.label);
 
 module.exports = [{
   name: 'compare_ui',
@@ -72,7 +75,7 @@ module.exports = [{
     const rows = JSON.parse(/debug comparepick (\[.*\])/.exec(await vs.waitLog(/debug comparepick \[/, { from, timeout: 20000, what: 'the quick pick' }))[1]);
     ok(rows[0] === 'Same folder' && !rows.includes(CLIPS[0]) && rows.includes(CLIPS[1]) && rows[rows.length - 1].includes('Browse'), `quick pick rows: ${rows}`);
     await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened by key D' });
-    await vs.waitLog(new RegExp(`\\[${tagA}\\] session closed`), { from, timeout: 10000, what: 'the player tab closed' });
+    ok(!vs.lines.slice(from).some((l) => l.includes(`[${tagA}] session closed`)), 'the player tab closed instead of growing in place');
     let r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
     ok(r.synced === 'true', `compare after key D: ${JSON.stringify(r)}`);
     vs.send({ command: 'workbench.action.closeActiveEditor' });
@@ -96,12 +99,12 @@ module.exports = [{
     from = vs.mark();
     vs.send({ compareWith: [files[1]], name: CLIPS[0], t: 1.0 });
     await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened from the player' });
-    await vs.waitLog(new RegExp(`\\[${tagA}\\] session closed`), { from, timeout: 10000, what: 'the player tab closed' });
+    ok(!vs.lines.slice(from).some((l) => l.includes(`[${tagA}] session closed`)), 'the player tab closed instead of growing in place');
     r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
     ok(Math.abs(nums(r.frames)[0] - 31) <= 1, `compare started at A #${nums(r.frames)[0]}, expected about #31 (the player's 1.0 s)`);
     const tb = await tabs();
     const all = tb.flat();
-    ok(all.length === 1 && /compare/i.test(all[0].viewType), `tabs after entering: ${JSON.stringify(tb)}`);
+    ok(all.length === 1 && isCompareTab(all[0]), `tabs after entering: ${JSON.stringify(tb)}`);
 
     // ---- the bar: the player's, without CC, plus the grouped Compare capsule ----
     ok = t('bar');
@@ -348,12 +351,15 @@ module.exports = [{
     ok(r.clock === '0', `clock before leaving: ${r.clock}`);
     act({ action: 'panel', view: 'cmp' });
     await h.sleep(200);
-    from = vs.mark();
     await click({ text: 'Leave compare' });
-    await vs.waitLog(new RegExp(`\\[${tagA}\\] webview: first frame shown`), { from, timeout: 45000, what: 'the player after Leave compare' });
+    // The same tab and page shrink back to one video: the tab title is A's name alone again.
+    let tb2 = [];
+    for (const end = Date.now() + 20000; Date.now() < end; await h.sleep(300)) {
+      tb2 = (await tabs()).flat();
+      if (tb2.length === 1 && tb2[0].label === CLIPS[0]) break;
+    }
     await h.sleep(800);
-    const tb2 = (await tabs()).flat();
-    ok(tb2.length === 1 && /videoPreviewEnhanced\.player/.test(tb2[0].viewType), `tabs after leaving: ${JSON.stringify(tb2)}`);
+    ok(tb2.length === 1 && tb2[0].label === CLIPS[0] && /videoPreviewEnhanced\.player/.test(tb2[0].viewType), `tabs after leaving: ${JSON.stringify(tb2)}`);
     const m0 = vs.mark();
     vs.send({ name: CLIPS[0], action: 'state', id: 'leave' });
     const st = JSON.parse(/webview: state (\{.*\})/.exec(await vs.waitLog(/webview: state \{/, { from: m0, timeout: 10000 }))[1]);
