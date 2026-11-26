@@ -681,6 +681,38 @@ test('decoder metadata: the clip learns fps and length, and the clock follows wi
   }, { cfg: { clips: [{ id: 'A', name: 'a.mp4' }] }, engineApi: liveEngineApi() });
 });
 
+test('decoder metadata: the measured rate and length win over a lying container header (AVI 600 fps, 1800 frames)', () => {
+  withPage(({ app, send, made }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    let t = S.getTab(app.ui.getState());
+    assert.strictEqual(t.fps, 600, 'the host\'s probe said 600 fps');
+    assert.strictEqual(t.maxFrame, 1799);
+    // media/engine.js measures 30 fps and 90 frames from the packets' timestamps.
+    Object.assign(p, { fps: 30, n: 90, meta: { duration: 3 } });
+    p.hooks.onMeta();
+    t = S.getTab(app.ui.getState());
+    assert.strictEqual(t.fps, 30, 'the clock runs at the measured rate');
+    assert.strictEqual(t.maxFrame, 89, 'the seek bar counts the decoder\'s frames');
+    assert.strictEqual(app.engine.getClip('A').fps, 30);
+    assert.strictEqual(app.engine.getClip('A').frames, 90);
+  }, { cfg: { clips: [{ id: 'A', name: 'h264_aac.avi', fps: 600, frames: 1800 }] }, engineApi: liveEngineApi() });
+});
+
+test('decoder log lines beside others carry the tile\'s letter, as media/compare.js wrote them', () => {
+  withPage(({ send, made, posted }) => {
+    send({ type: 'open' });
+    made[0].hooks.log('one video: no prefix');
+    send({ type: 'openVideo', clipId: 'clip9', label: 'b.mp4', compare: true, clip: { ...CLIPS[1], id: 'clip9' } });
+    made[0].hooks.log('loop: replaying 12 cached frames');
+    made[1].hooks.log('loop: replaying 3 cached frames');
+    const lines = posted.filter((m) => m.type === 'log').map((m) => m.msg);
+    assert.ok(lines.includes('one video: no prefix'), lines.join('\n'));
+    assert.ok(lines.includes('[A] loop: replaying 12 cached frames'), lines.join('\n'));
+    assert.ok(lines.includes('[B] loop: replaying 3 cached frames'), lines.join('\n'));
+  });
+});
+
 test('natural end: Loop and an A-B range restart the decoder (seek and play), the cached play state does not hide it', () => {
   withPage(({ app, send, made }) => {
     send({ type: 'open' });
@@ -991,6 +1023,59 @@ test('debug: VpeDebugProbe answers with one video, VpeCompareDebug with two; win
     send({ type: 'debug', action: 'offset', tile: 1, v: 3, unit: 'f' });
     assert.deepStrictEqual(S.getOffset(S.getTab(app.ui.getState()), 'B'), { v: 3, unit: 'frames' }, 'offset via the Compare probe');
   }, { cfg: { debug: true }, createPlayer: timedPlayer, extraWidgets: { VpeDebugProbe, VpeCompareDebug } });
+});
+
+test('drop hint: a dragged file shows the page\'s "Drop to compare" frame; the drop hides it and asks the host', () => {
+  withPage(({ doc, posted }) => {
+    const hint = doc.getElementById('dropHint');
+    assert.ok(hint, 'the page has #dropHint (media/player-ui.js shows it while a file is dragged over)');
+    assert.strictEqual(hint.hidden, true, 'hidden until something is dragged');
+    assert.strictEqual(hint.textContent, 'Drop to compare');
+    const uri = 'file:///v/b.mp4';
+    const dataTransfer = { types: ['text/uri-list'], getData: (k) => (k === 'text/uri-list' ? `${uri}\r\n` : '') };
+    doc.fire('dragenter', { dataTransfer, bubbles: true, cancelable: true });
+    assert.strictEqual(hint.hidden, false, 'shown while a video is dragged over the page');
+    doc.fire('drop', { dataTransfer, bubbles: true, cancelable: true });
+    assert.strictEqual(hint.hidden, true, 'hidden again after the drop');
+    assert.deepStrictEqual(posted.filter((m) => m.type === 'compareDrop').map((m) => m.uris), [[uri]]);
+  });
+});
+
+test('debug seek in Compare: the time is the clock video\'s own, its sync offset taken off', () => {
+  const VpeCompareDebug = require('../../media/compare-debug');
+  withPage(({ app, send }) => {
+    send({ type: 'open' });
+    send({ type: 'openVideo', clipId: 'B', compare: true, clip: CLIPS[1] });
+    send({ type: 'debug', action: 'clock', tile: 1 });
+    send({ type: 'debug', action: 'offset', tile: 1, v: -500, unit: 'ms' });
+    send({ type: 'debug', action: 'seek', t: 0.5 });
+    const t = S.getTab(app.ui.getState());
+    assert.strictEqual(t.clockId, 'B');
+    // B (the clock, -500 ms) at its own 0.5 s: the shared timeline, and A (no offset), at about 1.0 s (frame 25 at
+    // 25 fps), not at 0.5 s with B before its start.
+    assert.ok(Math.abs(t.frame - 25) <= 1, `shared frame ${t.frame}, expected about 25`);
+    const EA = require('../../media/player-engine-adapter');
+    assert.strictEqual(EA.tileFrameAt(t.frame, 25, t.fps, S.getOffset(t, 'B')), 12, 'B shows its frame at 0.5 s');
+    // No offset on the clock: plain seconds, as before.
+    send({ type: 'debug', action: 'offset', tile: 1, v: 0, unit: 'ms' });
+    send({ type: 'debug', action: 'seek', t: 1.0 });
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 25);
+  }, { cfg: { debug: true }, extraWidgets: { VpeCompareDebug } });
+});
+
+test('entering Compare in place keeps the player\'s moment: the second video joins at the paused frame', () => {
+  const VpeDebugProbe = require('../../media/debug-probe');
+  const timedPlayer = (clip, host, hooks) => Object.assign(stubPlayer(clip, host, hooks), { currentTime() { return this.frame / 25; } });
+  withPage(({ app, send, made }) => {
+    send({ type: 'open' });
+    send({ type: 'debug', action: 'seek', t: 1.0 });
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 25, 'the player is paused at 1.0 s');
+    send({ type: 'openVideo', clipId: 'B', label: 'b.mp4', compare: true, clip: CLIPS[1] });
+    const t = S.getTab(app.ui.getState());
+    assert.deepStrictEqual(t.tiles, ['A', 'B']);
+    assert.strictEqual(t.frame, 25, 'the comparison starts at the player\'s frame, not at the start');
+    assert.ok(seeksOf(made[1]).length === 0 || seeksOf(made[1]).slice(-1)[0] === 25, `B sought to ${seeksOf(made[1])}`);
+  }, { cfg: { debug: true }, createPlayer: timedPlayer, extraWidgets: { VpeDebugProbe } });
 });
 
 test('debug probe: thumb draws the real decoder canvas, seek moves controller and decoder, state has loop and A-B, W scopes', () => {

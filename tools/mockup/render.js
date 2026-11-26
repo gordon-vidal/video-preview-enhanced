@@ -53,6 +53,7 @@ function stageMarkupHtml() {
       <div id="cells"></div>
       <div id="subs" hidden></div>
       <div id="overlay" hidden><div id="message"></div><div id="hint"></div><button id="action" type="button" hidden></button></div>
+      <div id="dropHint" hidden aria-hidden="true">Drop to compare</div>
       ${playFlashHtml}
       ${capBannerHtml}
       <div class="splitter h" id="splitter" hidden><div class="splitter-bar"></div></div>

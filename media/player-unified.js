@@ -554,15 +554,19 @@
     let firstFrameLogged = false;
     let firstPicturesLogged = false;
     /**
-     * A decoder's log line: as it is with one decoder (media/player.js: "first frame shown at ..."), with the clip's
-     * id in front once several decode.
+     * A decoder's log line: as it is with one decoder (media/player.js: "first frame shown at ..."), with its tile's
+     * letter in front once several decode ("[A] loop: replaying ...", as media/compare.js said it; the clip's id
+     * when it is not in the active tab).
      * @param {string} id @param {any[]} a
      */
     function decoderLog(id, a) {
       const line = a.map(String).join(' ');
       // media/engine.js says it itself: the page does not say it again (notePresented).
       if (/^first frame shown/.test(line)) firstFrameLogged = true;
-      log(players.size >= 2 ? `[${id}] ${line}` : line);
+      if (players.size < 2) { log(line); return; }
+      const i = ui ? S.getTab(ui.getState()).tiles.indexOf(id) : -1;
+      const keys = String(S.TILE_KEYS || '');
+      log(`[${i >= 0 && keys[i] ? keys[i] : id}] ${line}`);
     }
     /** The decoder has a picture on screen (engine.js firstShown, frame-player.js shown, or a counted picture). @param {any} p */
     const presented = (p) => !!p && (p.firstShown === true || (typeof p.shown === 'number' && p.shown >= 0)
@@ -659,6 +663,11 @@
         };
         const next = { ...spec };
         for (const [k, v] of Object.entries(learnt)) if (!(Number(next[k]) > 0) && Number(v) > 0) next[k] = Number(v);
+        // The rate and length the decoder measured (media/engine.js from the packets' timestamps) win over the
+        // host's probe: a container header can lie (an AVI saying 600 fps and 1800 frames for 30 fps and 90), and
+        // the seek bar, stepping and Compare's mapping must count the frames the decoder actually shows.
+        if (Number(p.fps) > 0) next.fps = Number(p.fps);
+        if (Number(p.n) > 0) next.frames = Number(p.n);
         specs.set(id, next);
         learnClip(next);
       }
@@ -2218,6 +2227,19 @@
     /** The controller with its extras (rail, controls, ctxMenu, ab), beyond UnifiedControllerApi. */
     const ux = () => /** @type {any} */ (ui);
     const tabNow = () => S.getTab(ui.getState());
+    /**
+     * The shared timeline frame at which the clock video shows the frame holding its own time `sec` (a decoder's
+     * seekTime picks it: 1.35 s at 30 fps is frame 40). The clock's sync offset is taken off, so a clock shifted by
+     * -500 ms seeked to 0.5 s shows 0.5 s and an unshifted tile 1.0 s, not the other way round.
+     * @param {number} sec
+     */
+    const clockTimeFrame = (sec) => {
+      const t = tabNow();
+      const fps = Number(t.fps) || Number((clockPlayer() || {}).fps) || 30;
+      const own = Math.max(0, Math.floor((Number(sec) || 0) * fps + 1e-6));
+      const max = Number(t.maxFrame) > 0 ? Number(t.maxFrame) : Infinity;
+      return Math.max(0, Math.min(max, t.tiles.length >= 2 ? sharedFrameOf(t, clockIdOf(t), own) : own));
+    };
     const clockPlayer = () => (ui ? players.get(clockIdOf(tabNow())) || null : null);
     const compareActive = () => !!ui && tabNow().tiles.length >= 2;
     /** The adapter with its extras (transcodeInfo, sound), beyond EngineAdapter; read late (it may be rebuilt). */
@@ -2264,8 +2286,8 @@
       tab: () => tabNow(),
       step: stepBy, play: () => playTo(true), pause: () => playTo(false),
       seekFrame: (/** @type {number} */ f) => act('seek', Math.round(Number(f) || 0)),
-      // The frame holding time s (media/compare.js seekClock; the single probe's seek): 1.35 s at 30 fps is frame 40.
-      seekClock: (/** @type {number} */ s) => act('seek', Math.max(0, Math.floor((Number(s) || 0) * tabNow().fps + 1e-6))),
+      // The frame holding time s of the clock video (media/compare.js seekClock): 1.35 s at 30 fps is frame 40.
+      seekClock: (/** @type {number} */ s) => act('seek', clockTimeFrame(s)),
       setRate: setRateTo,
       pictureInfo: (/** @type {string} */ id) => (typeof ax().pictureInfo === 'function'
         ? ax().pictureInfo(id || clockIdOf(tabNow())) : null),
@@ -2449,8 +2471,7 @@
           // Through the controller, so its frame, the seek bar and every decoder move (a decoder seeked alone is put
           // back by the controller's next drive). The frame holding t, as a decoder's seekTime picks it.
           seek: (/** @type {number} */ sec) => {
-            const fps = Number(tabNow().fps) || Number((clockPlayer() || {}).fps) || 30;
-            act('seek', Math.max(0, Math.floor((Number(sec) || 0) * fps + 1e-6)));
+            act('seek', clockTimeFrame(sec));
             scheduleTick();
           },
           play: debugApi.play,

@@ -144,8 +144,8 @@ module.exports = [{
     const from = vs.mark();
     vs.send({ compareFiles: files });
     await vs.waitLog(opened(2), { from, timeout: 30000 });
-    await vs.waitLog(/webview: begin: A \S+ soft, B \S+ soft; clock A/, { from, timeout: 30000 });
-    await until((r) => r.synced === 'true');
+    // Both tiles on the built-in decoder, A the clock, in step (media/compare.js said "begin: A ... soft, B ... soft").
+    await until((r) => r.native === '0,0' && r.clock === '0' && r.synced === 'true', 30000);
     act({ action: 'play' });
 
     const loops = [];
@@ -207,11 +207,11 @@ module.exports = [{
     from = vs.mark();
     vs.send({ compareAdd: [files[3]] });
     await vs.waitLog(opened(4), { from, timeout: 30000, what: 'compare reopened with 4' });
-    let firstCanvas;
+    let firstPic;
     r = await until((x) => {
       if (x.n !== '4') return false;
-      // The grid has a size as soon as its first tile draws, even while the other tiles settle.
-      if (!firstCanvas && Number(list(x.shown)[0]) > 0) firstCanvas = x.canvas;
+      // The grid has its layout as soon as its first tile draws, even while the other tiles settle.
+      if (!firstPic && Number(list(x.shown)[0]) > 0) firstPic = String(x.fulls).split(';')[0];
       return allShown(x);
     }, 45000);
 
@@ -219,11 +219,16 @@ module.exports = [{
     ok = t('grid/four-play');
     ok(allShown(r), `4 tiles: not every tile shows a frame (${r && r.frames})`);
     ok(r.n === '4' && r.mode === 'grid' && r.add === 'false' && r.cells === '4', `n=${r.n} mode=${r.mode} add=${r.add} cells=${r.cells}`);
-    // One canvas covers the picture area at device pixels; each tile is fitted into its quarter.
-    const [cw, ch] = r.canvas.split('x').map(Number);
-    const [sw0, sh0] = r.stage.split('x').map(Number);
-    ok(Math.abs(cw - sw0) <= 1 && Math.abs(ch - sh0) <= 1, `grid canvas ${r.canvas}: expected the stage's ${r.stage}`);
-    ok(firstCanvas === r.canvas, `grid canvas changed from ${firstCanvas} to ${r.canvas} after the first tile drew`);
+    // Each tile draws on its own canvas (the unified page), fitted into its quarter of the picture area: a 2x2 grid of
+    // equal pictures (the four clips are all 1080p) that do not overlap, laid out once the first tile drew.
+    const pics = String(r.fulls).split(';').map((q) => q.split('/').map(Number));
+    const cols = [...new Set(pics.map(([x, , w]) => Math.round(x + w / 2)))].sort((a, b) => a - b);
+    const rows = [...new Set(pics.map(([, y, , h]) => Math.round(y + h / 2)))].sort((a, b) => a - b);
+    ok(r.grid === '2x2' && pics.length === 4 && cols.length === 2 && rows.length === 2, `grid ${r.grid}, tile pictures ${r.fulls}`);
+    ok(pics.every(([, , w, h]) => w > 0 && h > 0 && Math.abs(w - pics[0][2]) <= 1 && Math.abs(h - pics[0][3]) <= 1), `tile pictures differ in size: ${r.fulls}`);
+    ok(pics.every(([x, y, w, h]) => pics.every(([x2, y2, w2, h2]) => (x === x2 && y === y2)
+      || x + w <= x2 + 1 || x2 + w2 <= x + 1 || y + h <= y2 + 1 || y2 + h2 <= y + 1)), `tile pictures overlap: ${r.fulls}`);
+    ok(firstPic === pics[0].join('/'), `A's picture moved from ${firstPic} to ${pics[0].join('/')} after the first tile drew`);
     act({ action: 'seek', t: 0 });
     await until((x) => x.synced === 'true', 15000);
     const s0 = nums((await report()).shown);
@@ -779,8 +784,9 @@ module.exports = [{
           `restored sync, clock, sound and offset: ${JSON.stringify(r)}`);
       });
       // A letterboxed grid (5 tiles, 3x2): each tile's arrows sit on its own picture, not in the black bars of the cell.
+      // Two videos not shown yet (Compare declines a video it shows already): the removed one and a fifth.
       from = vs.mark();
-      vs.send({ compareAdd: [files[2], files[3]] });
+      vs.send({ compareAdd: [files[2], path.join(h.MEDIA, 'av1_8_1080p.mp4')] });
       await vs.waitLog(opened(5), { from, timeout: 30000 });
       act({ action: 'stageSize', w: 1000, h: 700 });
       await until((x) => x.n === '5' && x.grid === '3x2', 20000);

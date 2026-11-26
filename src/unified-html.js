@@ -109,6 +109,7 @@ ${earlyJs}${styles}
   <div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" title="Drag, or ← → (Shift: 10 %), Home / End" hidden><span class="h"></span></div>
   <div id="subs" hidden></div>
   <div id="overlay"><div id="message">Opening…</div><div id="hint"></div><button id="action" hidden></button></div>
+  <div id="dropHint" hidden aria-hidden="true">Drop to compare</div>
   ${playFlashHtml}
   ${capBannerHtml}
   <div id="toast" hidden aria-hidden="true"></div>
