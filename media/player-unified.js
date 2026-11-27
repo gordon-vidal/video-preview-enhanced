@@ -843,10 +843,15 @@
       const t = S.getTab(ui.getState());
       const p = players.get(clockIdOf(t));
       // While paused with a seek/step still in flight, or waiting to restore after a reload, never overwrite t.frame.
-      if (!p || pendingRestore.has(clockIdOf(t)) || (!t.playing && busy(p))) return;
+      // Playing, the same while a seek has not landed: the decoder's frame is still the one from before the seek.
+      if (!p || pendingRestore.has(clockIdOf(t)) || (!t.playing && busy(p)) || seekPending(p)) return;
       if (typeof p.currentFrame === 'function') {
         try { onPlayerFrame(clockIdOf(t), Number(p.currentFrame())); } catch { /* a closing decoder */ }
       }
+    }
+    /** A seek sent to this decoder has not shown its frame yet (media/engine.js seekTarget). @param {any} p */
+    function seekPending(p) {
+      try { return p.seekTarget !== null && p.seekTarget !== undefined; } catch { return false; }
     }
     /**
      * A decoder still has work a frame tick moves on: playing, a seek not yet shown, a first frame not yet presented
