@@ -605,10 +605,8 @@
       timeLetterEl.className = 'who';
       timeLetterEl.setAttribute('aria-hidden', 'true');
     }
+    // The Compare button is the Capture toggle (aria-pressed, set when it renders).
     const tracksBtn = $('tracks'), cmpBtn = need('startCompareBtn');
-    // Here the Compare button is the Capture toggle (aria-pressed, set when it renders), not a start dialog: the
-    // dialog attributes src/bar.js gives it would point at nothing.
-    for (const a of ['aria-haspopup', 'aria-controls', 'aria-expanded']) cmpBtn.removeAttribute(a);
     const playBtn = need('play'), prevBtn = need('prev'), nextBtn = need('next');
     const prevSize = $('prevSize'), nextSize = $('nextSize');
     const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate'), rateReset = $('rateReset');

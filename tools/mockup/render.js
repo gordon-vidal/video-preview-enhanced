@@ -71,7 +71,7 @@ function sanitizeCssForInlineFrame(css) {
  * and #notice banner, so the tool and lifecycle controllers run against the same elements as production.
  */
 function stageMarkupHtml() {
-  const realBarHtml = barHtml({ canCompare: true, compareOpen: false, folder: true });
+  const realBarHtml = barHtml({ canCompare: true, folder: true });
   const realRailHtml = folderRailHtml();
   return `<div id="main">
     <div id="stage" class="fit">

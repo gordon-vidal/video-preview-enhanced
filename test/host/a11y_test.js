@@ -138,8 +138,12 @@ assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: va
   assert.match(html, /<button id="startCompareBtn"[^>]*aria-label="Compare"/);
   assert.match(html, /<button id="startCompareBtn" class="ib" title="Compare"[^>]*><svg[^>]*aria-hidden="true">.*<\/svg><\/button>/);
   assert.doesNotMatch(html, /id="startCompareLabel"/);
-  assert.ok(fs.readFileSync(path.join(__dirname, '../../media/player-ui.js'), 'utf8').includes("for (const a of ['aria-haspopup', 'aria-controls', 'aria-expanded']) cmpBtn.removeAttribute(a);"),
-    'the Capture toggle points at no dialog');
+  // The bar itself carries no dialog attributes (the Start Compare dialog is gone); the controller only sets
+  // aria-pressed, so nothing strips them at runtime.
+  assert.doesNotMatch(html, /<button id="startCompareBtn"[^>]*aria-(haspopup|controls|expanded)=/, 'the Compare toggle points at no dialog');
+  assert.doesNotMatch(html, /startCompareDialog|<button id="startCompareBtn"[^>]*data-open=/, 'no dialog id or dead open state in the bar');
+  assert.ok(!fs.readFileSync(path.join(__dirname, '../../media/player-ui.js'), 'utf8').includes("cmpBtn.removeAttribute(a)"),
+    'no runtime strip of the bar attributes');
   assert.doesNotMatch(html, /id="keysBtn"/);
   // The picture size button sits between the keyboard shortcuts and fullscreen; it names the mode and the next one.
   assert.match(html, /<button id="cog"[\s\S]*?<button id="picBtn" class="ib" data-mode="fit"[^>]*aria-label="Picture size: Fit\. Next: Fill"[^>]*aria-keyshortcuts="Z"[\s\S]*?<button id="full"/);

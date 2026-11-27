@@ -54,14 +54,10 @@ const pictures = [
   svg(frame + '<path d="M9 9h6v6H9Zm3 0v6m-3-3h6"/>', 'i-actual'),
 ].join('');
 
-/** The player's Compare button: starts Compare after a confirmation, or adds to an open one (`open`). */
-const playerCompareButton = (visible, open) => {
-  const label = open ? 'Add to Compare' : 'Compare';
-  const popup = open ? '' : ' aria-haspopup="dialog" aria-controls="startCompareDialog" aria-expanded="false"';
-  return `    <button id="startCompareBtn" class="ib" title="${label}" aria-label="${label}"${popup} data-open="${open ? 1 : 0}"` +
-    `${visible ? '' : ' hidden'}>${icons.compare}</button>
+/** The Compare button: the Capture toggle (media/player-ui.js sets aria-pressed, its title and its label). */
+const playerCompareButton = (visible) => `    <button id="startCompareBtn" class="ib" title="Compare" aria-label="Compare"` +
+  `${visible ? '' : ' hidden'}>${icons.compare}</button>
 `;
-};
 
 // The folder capsule (single player of a file only): previous / next video of the playing file's folder around its
 // place in it ("2/5"), which also opens and closes the folder rail. Hidden until the page knows the folder has more
@@ -88,10 +84,9 @@ ${cmpButton('spotlightBtn', 'Spotlight', ICONS.spotlight)}${cmpButton('gridBtn',
 `;
 
 /**
- * The bar's markup. `compareOpen`: the Compare button adds to an open Compare ("Add to Compare"); `folder`: the player of
- * a file (adds the folder capsule).
+ * The bar's markup. `canCompare`: shows the Compare button; `folder`: the player of a file (adds the folder capsule).
  */
-function barHtml({ canCompare = true, compareOpen = false, folder = false } = {}) {
+function barHtml({ canCompare = true, folder = false } = {}) {
   return `<div id="bar">
   <div id="seekRow">
     <input id="seek" type="range" min="0" max="0" value="0" step="1" aria-label="Position">
@@ -112,7 +107,7 @@ function barHtml({ canCompare = true, compareOpen = false, folder = false } = {}
     <span class="spacer"></span>
     <button id="remoteLiveBtn" class="ib live-chip mono" title="Live transcode settings" aria-label="Live transcode settings" aria-expanded="false" aria-controls="panel" hidden></button>
     <button id="tracks" class="ib" title="Subtitles  C" aria-label="Subtitles" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="C" hidden><span class="ccline">${icons.cc}</span></button>
-${(folder ? folderCapsule : '') + compareCapsule + playerCompareButton(canCompare, compareOpen)}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I">${icons.about}</button>
+${(folder ? folderCapsule : '') + compareCapsule + playerCompareButton(canCompare)}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I">${icons.about}</button>
     ${speedButton()}
     <button id="cog" class="ib" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="panel">${icons.settings}</button>
     <button id="picBtn" class="ib" data-mode="fit" title="Picture size: Fit. Click for Fill  Z" aria-label="Picture size: Fit. Next: Fill" aria-keyshortcuts="Z">${pictures}</button>
