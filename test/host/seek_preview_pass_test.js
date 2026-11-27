@@ -45,7 +45,7 @@ function mk(o = {}) {
   const gop = o.gop || 0;
   const keyAt = (t) => (gop ? Math.floor((t - 10) / gop + 1e-9) * gop + 10 : t);
   const s = new ThumbService({
-    duration: D, startT: 10, size: 1e9, fps: 30, cap: o.cap || 30e6, log: o.log || (() => {}), idleMs: 50,
+    duration: D, startT: 10, size: 1e9, fps: 30, cap: o.cap || 30e6, log: o.log || (() => {}), idleMs: o.idleMs ?? 50,
     busy: () => env.busy, hidden: () => env.hidden, passOn: () => env.on,
     pass: { delayMs: o.delayMs ?? 20, far: !!o.far, ...(o.budgetMs ? { budgetMs: o.budgetMs } : {}) },
     remote: o.remote,
@@ -75,7 +75,7 @@ function mk(o = {}) {
 (async () => {
   // 1. Not before it is armed, not before its delay; then coarse to fine, one at a time, until the bar is complete.
   {
-    const { s, calls, env } = mk({ delayMs: 150 });
+    const { s, calls, env } = mk({ delayMs: 150, idleMs: 20e3 }); // the engine's idle time: closing must not wait for it
     await tick(100);
     assert.strictEqual(calls.length, 0, 'nothing before passArm');
     s.passArm();

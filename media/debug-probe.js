@@ -19,7 +19,7 @@
 
   const DEBUG_PROBES = new Set([
     'state', 'thumb', 'pixels', 'scopesDump', 'dom', 'gotoText', 'track',
-    'click', 'a11y', 'scrub', 'hdrcaps', 'hdrpixels', 'telemetry', 'trace', 'capture',
+    'click', 'a11y', 'scrub', 'hdrcaps', 'hdrpixels', 'telemetry', 'trace', 'capture', 'thumbPass',
   ]);
 
   /**
@@ -503,7 +503,7 @@
             seekRect: rect(ui.seek), quality: uiState.streamQ, onEnd: uiState.onEnd, rail: uiState.rail || null,
             thumb: (() => { const b = byId('thumb'); const c = b && b.querySelector ? b.querySelector('canvas') : null; let sig = ''; if (c && c.width) { const u = c.toDataURL(); let x = 0; for (let i = 0; i < u.length; i += 7) x = (x * 31 + u.charCodeAt(i)) | 0; sig = `${u.length}:${x}`; } return { hidden: !b || b.hidden, w: c ? c.width : 0, sig, rect: b ? rect(b) : null }; })(),
             tip: { hidden: ui.tip.hidden, rect: rect(ui.tip) },
-            strip: p && p.thumbStrip ? p.thumbStrip() : null, seekValue: Number(ui.seek.value), seekMax: Number(ui.seek.max),
+            strip: p && p.thumbStrip ? p.thumbStrip() : null, engineHidden: !!(p && p.hidden), seekValue: Number(ui.seek.value), seekMax: Number(ui.seek.max),
             tracksMenu: (() => { const pn = ui.panel; const on = !pn.hidden && (controls.view() === 'subs' || controls.view() === 'audio' || controls.view() === 'quality'); return { hidden: !on, items: on ? Array.from(pn.querySelectorAll('[role=radio], button.row:not(.head)')).map((/** @type {any} */ x) => `${x.getAttribute('aria-checked') === 'true' ? '*' : ''}${(x.querySelector('.grow') || x).textContent.trim()}`) : [] }; })(),
             xray: (() => { const x = byId('xray'); const lg = byId('xrayLegend'); const tp = byId('xrayTip'); const ch = byId('xrayChapters'); return { shown: !!x && !x.hidden, legend: lg ? lg.textContent : '', tip: tp && !tp.hidden ? tp.textContent : '', ticks: ch ? ch.children.length : -1 }; })(),
             telemetry: snapshotTelemetry(),

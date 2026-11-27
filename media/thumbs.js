@@ -557,7 +557,8 @@ class ThumbService {
       if (this.passKick()) return;
       // Pointer away and no pass work: close the worker after some idle time.
       if (this.o.onIdle) this.o.onIdle();
-      const left = (this.o.idleMs ?? 20e3) - (performance.now() - (this.lastHover || 0));
+      // Never hovered (the pass alone used it): close at once.
+      const left = this.lastHover ? (this.o.idleMs ?? 20e3) - (performance.now() - this.lastHover) : 0;
       if (left <= 0) this.stop();
       else this.idleTimer = setTimeout(() => this.kick(), left);
       return;
