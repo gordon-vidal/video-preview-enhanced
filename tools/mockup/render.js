@@ -298,6 +298,9 @@ html, body {
     <select id="latencySel" aria-label="Simulated seek latency" title="How long a paused seek or step takes to show its frame (the loading spinner shows after 150 ms)">
       <option value="0">Seek: instant</option><option value="600">Seek: 0.6 s (remote)</option><option value="2500" selected>Seek: 2.5 s (slow link)</option>
     </select>
+    <select id="motionSel" aria-label="Motion preference" title="The real CSS's prefers-reduced-motion rules: full motion, reduced, or what this system reports (Windows: Animation effects off = reduced)">
+      <option value="full" selected>Motion: full</option><option value="reduced">Motion: reduced</option><option value="system">Motion: system</option>
+    </select>
   </div>
 </div>
 
@@ -437,6 +440,8 @@ ${inlinedScripts}
 
   // A paused seek or step that takes latencySel ms to show its frame, as on a slow remote link: the controller gets
   // setLoading() every animation frame like media/player-unified.js does, so the real spinner and bar pulse show.
+  // The fake engine keeps drawing each tile's previous frame until then (engine.fake.hold), as a decoder keeps its
+  // last picture until the new one is decoded; when it passes, the new frame is drawn and the spinner goes.
   function simulateSeekLatency(ws) {
     const t = S.getTab(ws);
     const moved = lastFrame !== null && t.frame !== lastFrame;
@@ -445,6 +450,10 @@ ${inlinedScripts}
     if (!moved || t.playing || !ms || !harnessReady) return;
     waitUntil = performance.now() + ms;
     waitTiles = t.tiles.slice();
+    // This runs at the end of the render that already drew the new frame: hold, then repaint the old one before the
+    // browser paints (a microtask, outside the render that called us).
+    engine.fake.hold(waitTiles, waitUntil);
+    queueMicrotask(() => ui$.render());
     if (!waitRaf) waitRaf = requestAnimationFrame(waitFrame);
   }
   function waitFrame(now) {
@@ -452,7 +461,25 @@ ${inlinedScripts}
     const waiting = now < waitUntil;
     ui$.setLoading(waiting ? waitTiles : []);
     if (waiting) waitRaf = requestAnimationFrame(waitFrame);
+    else { engine.fake.release(); ui$.render(); } // the frame "lands"
   }
+
+  // Motion: an embedded preview inherits the OS setting (Windows "Animation effects" off reports
+  // prefers-reduced-motion: reduce, and the real CSS then holds the loading ring still). The picker rewrites the
+  // media lists of those rules so both looks can be reviewed on any machine.
+  const motionRules = [];
+  for (const sheet of document.styleSheets) {
+    let rules;
+    try { rules = sheet.cssRules; } catch { continue; }
+    for (const r of rules) if (r.media && /prefers-reduced-motion/.test(r.media.mediaText)) motionRules.push({ r, text: r.media.mediaText });
+  }
+  const systemReduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  $('motionSel').querySelector('option[value="system"]').textContent = 'Motion: system (' + (systemReduced ? 'reduced' : 'full') + ')';
+  function applyMotion(mode) {
+    for (const m of motionRules) m.r.media.mediaText = mode === 'full' ? 'not all' : mode === 'reduced' ? 'all' : m.text;
+  }
+  $('motionSel').onchange = () => applyMotion($('motionSel').value);
+  applyMotion($('motionSel').value);
 
   function loadScenario(key) {
     const sc = SCENARIOS[key] || SCENARIOS.single;
