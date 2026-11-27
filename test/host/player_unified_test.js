@@ -732,6 +732,21 @@ test('frame steps while a paused seek decodes: one seek on its way, then the new
   }, { createPlayer: enginePlayer, raf: true });
 });
 
+test('a seek held back while the opening seek lands: the landing does not move the bar back', () => {
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    p.settleTicks = 4;
+    p.seekTarget = 0; // the opening seek is still on its way
+    p.wait = 4;
+    app.ui.dispatch('seek', 40);
+    const bar = [];
+    for (let i = 0; i < 20; i++) { frames(1); bar.push(S.getTab(app.ui.getState()).frame); }
+    assert.ok(bar.every((f) => f === 40), `the bar stays on the seek on every frame: ${bar.join(' ')}`);
+    assert.strictEqual(p.frame, 40, 'and the decoder gets there');
+  }, { createPlayer: enginePlayer, raf: true });
+});
+
 test('tick loop: the visible decoders all tick, and a disposed page asks for no frame', () => {
   withPage(({ app, send, made, frames, rafQueue }) => {
     send({ type: 'open' });
