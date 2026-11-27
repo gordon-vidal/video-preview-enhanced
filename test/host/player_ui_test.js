@@ -815,9 +815,9 @@ const withGlobals = (dom, fn) => {
     assert.strictEqual(tab().tiles.length, 1, 'Leave compare keeps A');
     assert.strictEqual($('tracks').hidden, false, 'single-video controls come back');
 
-    // Bar commands the page cannot do itself go to the host.
+    // Without a Fullscreen API (e.g. a host that refuses fullscreen), fullscreen falls back to Zen Mode.
     ui.dispatch('fullscreen');
-    assert.ok(host.log.some((m) => m.type === 'fullscreen'));
+    assert.ok(host.log.some((m) => m.type === 'focusMode'));
 
     ui.onHostMessage({ type: 'toast', text: 'hello' });
     assert.strictEqual($('stage').listenerCount('contextmenu'), 1, 'the stage has one right-click listener (the tile menu)');
@@ -2141,6 +2141,42 @@ async function phase34() {
       assert.strictEqual(neighbours(), 1, 'the natural end plays the next video in the folder');
       assert.deepStrictEqual(tab().tiles, ['clip-1']);
     }, { env: { tickMs: 0, onTransport: (e) => evs.push(e) } });
+  }
+
+  // Fullscreen (F, button, double-click): tries real browser fullscreen first; falls back to Zen Mode only when refused.
+  {
+    let entered = 0;
+    let exited = 0;
+    let refuse = false;
+    await mountTools({ tiles: ['clip-0'] }, async ({ host, key, dom }) => {
+      dom.doc.documentElement.requestFullscreen = async () => {
+        if (refuse) throw new Error('denied');
+        entered++;
+        dom.doc.fullscreenElement = dom.doc.documentElement;
+      };
+      dom.doc.exitFullscreen = async () => {
+        exited++;
+        dom.doc.fullscreenElement = null;
+      };
+      key('f');
+      await Promise.resolve();
+      assert.strictEqual(entered, 1, 'F calls requestFullscreen() first');
+      assert.strictEqual(host.log.filter((m) => m.type === 'focusMode' || m.type === 'fullscreen').length, 0, 'no Zen Mode when fullscreen succeeds');
+      // Repeated F keydown while held is ignored.
+      key('f', { repeat: true });
+      await Promise.resolve();
+      assert.strictEqual(exited, 0, 'repeat F does not toggle back');
+      // Pressing F again exits real fullscreen.
+      key('f');
+      await Promise.resolve();
+      assert.strictEqual(exited, 1, 'second F calls exitFullscreen()');
+      // When the host refuses fullscreen, fall back to Zen Mode (focusMode).
+      refuse = true;
+      key('f');
+      await Promise.resolve();
+      await Promise.resolve();
+      assert.ok(host.log.some((m) => m.type === 'focusMode'), 'refused requestFullscreen falls back to focusMode (Zen Mode)');
+    });
   }
 
   // The rendered harness inlines the tool and lifecycle modules and hands them to create().

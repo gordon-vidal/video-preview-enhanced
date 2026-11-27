@@ -1450,7 +1450,7 @@
       },
       /** W: the scopes (luma waveform, RGB parade, vectorscope, histogram, off). */
       scopes: () => { if (!insp) return false; insp.cycleScopes(); return true; },
-      fullscreen: () => postHost({ type: 'fullscreen' }),
+      fullscreen: () => { toggleFullscreen(); },
       info: () => controls.toggle('info', infoBtn),
       keys: () => controls.toggleSheet(),
       gotoBox: () => { if (gotoBox) gotoBox.open(); else return false; return true; },
@@ -1558,6 +1558,30 @@
       nextVideo: () => goNeighbour(rail, postHost, 1),
       prevVideo: () => goNeighbour(rail, postHost, -1),
     };
+    let fsBusy = false;
+    /**
+     * Fullscreen (F, bar button, double-click): try real browser/monitor fullscreen first (as media/player.js and
+     * media/compare.js did, which also enables the idle-bar auto-hide); fall back to VS Code Zen Mode (`focusMode`)
+     * only when the Fullscreen API is unavailable or refused by the host.
+     */
+    async function toggleFullscreen() {
+      if (fsBusy) return;
+      fsBusy = true;
+      try {
+        const root = doc && doc.documentElement;
+        if (doc && doc.fullscreenElement && typeof doc.exitFullscreen === 'function') {
+          await doc.exitFullscreen();
+        } else if (root && typeof root.requestFullscreen === 'function') {
+          await root.requestFullscreen();
+        } else {
+          postHost({ type: 'focusMode' });
+        }
+      } catch {
+        postHost({ type: 'focusMode' });
+      } finally {
+        fsBusy = false;
+      }
+    }
     /** The capture banner's and the add slot's "pick a video": the Folder Rail, else the host's picker. */
     const openPicker = () => { if (rail) rail.open(); else act.pickVideo(); };
     /** @type {Record<string, (...a: any[]) => any>} */
@@ -1570,6 +1594,7 @@
       keyTable[name] = (/** @type {any} */ arg) => (arg === undefined ? fn() : fn(arg));
     }
     keyTable.skip = (/** @type {number} */ sec) => act.skipKey(sec);
+    keyTable.fullscreen = (/** @type {any} */ _arg, /** @type {any} */ e) => { if (!e || !e.repeat) act.fullscreen(); };
 
     // ---- the real #bar ----
     const onClick = (/** @type {any} */ el, /** @type {(e?: any) => void} */ fn) => listen(el, 'click', fn);
