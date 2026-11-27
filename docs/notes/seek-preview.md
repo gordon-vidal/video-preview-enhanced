@@ -3,36 +3,51 @@
 Goal: a picture over the seek bar on hover and while the seek bar is dragged, in every decode path and in simple mode.
 While dragging, the main picture holds; release lands on the exact frame.
 
-This note has two parts: how previews work today (checked against the code on 2026-11-27) and a plan, not yet
-built, for pictures between keyframes. The plan needs maintainer decisions (see "Decisions").
+This note has two parts: how previews work today (checked against the code on 2026-11-27, after phase 1 of the plan)
+and the plan for pictures between keyframes, with the maintainer's decisions (see "Decisions").
 
 ## How it works today
 
-- **Lazy** ([PRODUCT.md](../PRODUCT.md), "Nothing decodes in the background on its own", 2026-11-20). Nothing is
-  started after open. The first hover or drag creates the `ThumbService` ([thumbs.js](../../media/thumbs.js)) through
-  `engine.thumbService()` ([engine.js](../../media/engine.js), section "seek-bar thumbnails"). There is no worker,
-  request or ffmpeg process before that.
-- **Grid and box.** About 200 slots along the bar (`step = max(duration / 200, 1 / fps)`). Pictures fit a 160 x 120
-  box (160 x 90 for 16:9), turned like the video when drawn.
-- **Keyframes only.** Every backend returns the keyframe at or before the slot's time. A 10 s GOP shows the same
-  picture across 10 s of the bar.
+- **Grid and box** ([thumbs.js](../../media/thumbs.js)). N slots of X seconds along the bar,
+  `X = max(D / 240, min(2 s, D / 20))` and at least one frame (`ThumbService.interval`): at least 20 pictures, 2 s
+  apart up to 8 min, 240 beyond. Pictures fit a 160 x 120 box (160 x 90 for 16:9). One picture per slot is enough;
+  a keyframe request asks for the slot's middle.
+- **Free pictures from shown frames (phase 1).** After each frame is drawn, `engine.captureThumb(t)`
+  ([engine.js](../../media/engine.js), section "seek-bar thumbnails") checks `ThumbService.wants(t)`: is there no
+  picture inside t's slot yet? If so, it scales the WebGL canvas (already turned and tone-mapped) to the box with
+  `createImageBitmap(canvas, {resizeWidth, resizeHeight, resizeQuality: 'low'})` and hands it over with `offer()`.
+  This covers playback, seeks and steps in every decode path (WebCodecs, WASM, native ffmpeg, Live transcode,
+  including its sharp paused frames). At most one capture per slot and one at a time; none while playback is behind
+  (`playbackBehind()`: a status warning or a recent catch-up), while hidden, or for the non-clock tiles of Compare.
+  No worker, request or ffmpeg process is started for it. The service object may therefore exist before the first
+  hover (implied decision A, accepted).
+- **Keyframes at hover.** Nothing is decoded until the pointer is on the bar. When the pointer's slot has no picture
+  of its own, the backend returns the keyframe at or before the slot's middle. A 10 s GOP that was not played shows
+  the same keyframe across 10 s of the bar.
 - **Order of work.** The slot under the pointer comes first, and the newest position wins (40 ms debounce, one
   request in flight). While the pointer stays, up to 4 neighbouring slots on each side are filled. This happens only
-  when playback is not busy (`thumbsBusy()`: a status warning, a recent catch-up, or less than 0.5 s decoded ahead
-  while playing) and the file is local. A drag is meant to skip neighbour filling (`hover(..., scrub = true)`). At the
-  time of writing, the unified viewer's adapter (`media/player-engine-adapter.js`) passes `false`, so drags fill
-  neighbours too. That is being fixed separately.
+  when playback is not busy (`thumbsBusy()`: behind as above, or less than 0.5 s decoded ahead while playing), the
+  file is local, and the pointer is not dragging (`hover(..., scrub = true)`).
 - **Leaving the bar** cancels the running request: a `cancel` to the worker, or an abort of the host job. The WASM
   worker closes 20 s after the last hover (`idleMs`). The pictures stay cached.
-- **Cache.** Pictures are stored as `ImageBitmap`s keyed by the keyframe's time, in LRU order, under `mem.thumbs`
-  ([membudget.js](../../media/membudget.js): 30 / 15 / 8 MB by machine size; Compare divides it by the number of tiles
-  in `compare-grid.js`). Each entry is counted at w x h x 4 bytes, so 160 x 90 is 57.6 KB. Three structures let one
-  decode serve many slots:
-  - `slotKt` maps slot to keyframe time.
-  - `coverage` records that the keyframe at `kt` is the right answer up to the requested time, set when the seek
-    landed cleanly.
-  - `nearest()` answers at once with the closest cached slot while the exact one decodes.
-- **Backends.**
+- **Storage.** One list of entries sorted by source time, `{t, kind: 'key' | 'frame', end, jpeg, bmp}`. Every picture
+  is kept as a JPEG (`OffscreenCanvas.convertToBlob`, quality 0.75, for captures and worker replies; native and Live
+  transcode replies are JPEG already). At most 32 entries near the pointer also keep a ready `ImageBitmap` (`HOT`);
+  a cold entry is decoded again on show, and the two slots on each side of the pointer are warmed. The byte budget
+  counts real sizes (JPEG bytes plus 160 x 90 x 4 per hot bitmap) under `mem.thumbs`
+  ([membudget.js](../../media/membudget.js): 30 / 15 / 8 MB by machine size; Compare divides it by the number of
+  tiles in `compare-grid.js`). Captured JPEGs measured 3.3 KB each (layer 3, synthetic clips; 3-6 KB on real
+  footage), so a full bar of 240 pictures plus 32 hot bitmaps takes about 2.6-3.3 MB and the 8 MB floor holds it.
+  Over budget, bitmaps go first, then whole entries, least recently shown first (captures never shown go first).
+- **Capture cost (measured 2026-11-27, layer 3 `playback` thumbs/capture-4k, 4K H.264 through WebCodecs).** The
+  frame loop pays 0.1-0.2 ms per capture (the `createImageBitmap` call; the scaling finishes off the loop), 15
+  captures in 3.5 s of playback, and the same dropped and late frames (0 and 0) with capture off and on.
+- **Lookup** for the pointer at time T in slot s, all by binary search, so a picture is drawn at once:
+  1. the entry inside slot s closest to T (a captured frame or a keyframe);
+  2. else the keyframe answer for s: the entry a request returned for s, or a key entry whose `end` covers the slot
+     (a key entry at kt answers every time in [kt, end], extended when a clean seek proved it);
+  3. else, as a placeholder while the request runs, the nearest entry anywhere.
+- **Backends for keyframes.**
   - **WASM worker** ([thumbs-worker.js](../../media/thumbs-worker.js)) for every file played through libav.js or
     WebCodecs. It is a second, single-threaded libav.js instance with `skip_frame nokey`, reading through the engine's
     block cache as reader `thumbs`. It seeks to the keyframe at or before t, decodes that one packet, scales it with
@@ -44,22 +59,23 @@ built, for pictures between keyframes. The plan needs maintainer decisions (see 
     timeout and no job while the panel is hidden. The reply is a JPEG of at most 25 KB plus the keyframe's time `kt`
     read from `showinfo`.
   - **None** for URL inputs, MJPEG AVI and image sequences (FramePlayer), and audio-only files.
-- **Drag and release.** The slider and time follow the pointer. The tooltip shows a cached or decoded keyframe. The
-  main picture keeps its last committed frame and audio scheduling pauses. Compare previews the clock tile and holds
-  all tile pictures. Release cancels preview work and commits the exact frame through the usual seek and sync path.
-  A cancelled drag returns to the committed position. Design of the drag:
+- **Drag and release.** The slider and time follow the pointer. The tooltip shows a cached picture or a decoded
+  keyframe. The main picture keeps its last committed frame and audio scheduling pauses. Compare previews the clock
+  tile and holds all tile pictures. Release cancels preview work and commits the exact frame through the usual seek
+  and sync path. A cancelled drag returns to the committed position. Design of the drag:
   [fast-scrubbing-architecture.md](fast-scrubbing-architecture.md).
-- **Tests.** [test/host/seek_preview_test.js](../../test/host/seek_preview_test.js),
-  [test/vscode/cases/seek_preview.js](../../test/vscode/cases/seek_preview.js) (`seek_preview` for WASM,
-  `seek_preview_native`), `inspect` thumbs/seek-bar (no service before the first hover), and the bench
-  [test/thumbs/scrub_bench.js](../../test/thumbs/scrub_bench.js).
+- **Tests.** [test/host/seek_preview_test.js](../../test/host/seek_preview_test.js) (grid, JPEG budget, captures,
+  nearest at once), [test/vscode/cases/seek_preview.js](../../test/vscode/cases/seek_preview.js) (`seek_preview` for
+  WASM, `seek_preview_native`, each with a capture case on a 10 s-GOP clip), `playback` thumbs/capture-4k (same
+  dropped and late frames with capture off and on), `inspect` thumbs/seek-bar (no request before the first hover),
+  and the bench [test/thumbs/scrub_bench.js](../../test/thumbs/scrub_bench.js).
 
 ### Limits that motivate the plan
 
 1. Keyframe granularity: long GOPs (camera files, streaming encodes with 4-10 s GOPs) give a few distinct pictures
    per minute.
-2. Blank until decoded: the first hover over a new region shows a neighbour or nothing.
-3. Frames the player already decoded (every played frame, every exact seek and step) are never reused.
+2. Blank until decoded: the first hover over a region that was not played shows a neighbour or nothing.
+3. (Solved in phase 1: frames the player shows are kept as pictures.)
 4. Native and Live transcode start one process per picture (about 37 ms of process start on Windows, measured
    below).
 5. Each picture is decoded at full resolution and then scaled. For keyframes this is unavoidable in H.264, HEVC, VP9
@@ -151,7 +167,7 @@ What the numbers say:
   short GOPs). When slots are sparse relative to keyframes, one process per slot (37 ms start each) is cheaper than
   decoding every keyframe.
 
-## Plan (decided 2026-11-27, not built)
+## Plan (decided 2026-11-27; phase 1 built)
 
 ### Principles
 
@@ -304,8 +320,8 @@ during playback). Revisit only if measurements show re-opened long files are a r
 
 | Phase | What | Policy change | Tests |
 |---|---|---|---|
-| 0 (this branch) | Docs and comments match the code | no | `verify:fast` |
-| 1 | X/N grid, JPEG storage with a hot bitmap set, sorted entry list replacing `slotKt` / `coverage`, capture of played/seeked/stepped frames | no decoding change. Captured pictures are made before the first hover (implied decision A) | host: `ThumbService` with fake frames and a fake request (public API: `hover`, `offer`, `stats0`); layer 3 `seek_preview`: play 5 s, hover a between-keyframe time, assert the picture's time is within X; layer 3 `playback`: same dropped frames |
+| 0 (done) | Docs and comments match the code | no | `verify:fast` |
+| 1 (built) | X/N grid, JPEG storage with a hot bitmap set, sorted entry list replacing `slotKt` / `coverage`, capture of played/seeked/stepped frames | no decoding change. Captured pictures are made before the first hover (implied decision A) | host: `ThumbService` with fake frames and a fake request (public API: `hover`, `offer`, `stats0`); layer 3 `seek_preview`: play 5 s, hover a between-keyframe time, assert the picture's time is within X; layer 3 `playback`: same dropped frames |
 | 2 | Nearest keyframe on either side (index from the demuxer or `kt`), plus refine while resting (native `noref` + skip loop filter args, worker `between` request, cost budget) | no (work only while the pointer is on the bar) | host: `thumbArgs` exact mode decodes the right frame of a generated 10 s-GOP clip (ffmpeg reference); worker `between` mode via `scrub_bench`'s worker shim; layer 3: rest on a slot 5 s after a keyframe, the picture differs from the keyframe |
 | 3 | Background keyframe pass, coarse to fine, pausing while busy or hidden | **yes** (decision 1) | host: pass order, pauses while `busy()`, stops when hidden; layer 3: full bar without hover (if approved), no work while hidden; `inspect` "no service before first hover" changes with the decision |
 | 4 | Between pass for short or light files | **yes** (decision 2) | as phase 3, plus a budget test with a fake cost |

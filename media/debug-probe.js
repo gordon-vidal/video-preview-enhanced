@@ -19,7 +19,7 @@
 
   const DEBUG_PROBES = new Set([
     'state', 'thumb', 'pixels', 'scopesDump', 'dom', 'gotoText', 'track',
-    'click', 'a11y', 'scrub', 'hdrcaps', 'hdrpixels', 'telemetry', 'trace',
+    'click', 'a11y', 'scrub', 'hdrcaps', 'hdrpixels', 'telemetry', 'trace', 'capture',
   ]);
 
   /**
@@ -510,7 +510,7 @@
           };
           if (p) {
             Object.assign(s, {
-              vmode: p.vmode, amode: p.amode, fps: p.fps, n: p.n, duration: p.meta && p.meta.duration, shownCount: p.shownCount || p.shown || 0, eof: p.eof,
+              vmode: p.vmode, amode: p.amode, fps: p.fps, n: p.n, duration: p.meta && p.meta.duration, shownCount: p.shownCount || p.shown || 0, dropped: p.dropped || 0, late: p.late || 0, eof: p.eof,
               audioMaster: p.audioMaster ? p.audioMaster() : null, ac: p.ac ? p.ac.state : null, sources: p.sources && p.sources.size !== undefined ? p.sources.size : null,
               t: p.currentTime(), frame: p.currentFrame(), label: p.meta && p.meta.label, firstShown: !!p.firstShown, gen: p.gen, playing: p.isPlaying(), rate: p.rate,
               hdr: p.gl ? p.gl.hdr : null, audioChunks: Array.isArray(p.audio) ? p.audio.length : null, audioChannels: Array.isArray(p.audio) && p.audio.length ? p.audio[0].buf.numberOfChannels : null,
@@ -600,6 +600,11 @@
             doc.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: r.left + m.frac * r.width, clientY: m.off ? r.top - 100 : r.top + r.height / 2 }));
           }
           log(`scrub ${JSON.stringify({ id: m.id, value })}`);
+          break;
+        }
+        case 'capture': { // seek-bar previews from shown frames on (default) or off, to compare playback with and without
+          if (player) player.captureOff = !m.on;
+          log(`capture ${JSON.stringify({ id: m.id, on: !!(player && !player.captureOff) })}`);
           break;
         }
         case 'gotoText': { // Ctrl+G, type, Enter

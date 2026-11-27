@@ -1861,6 +1861,7 @@ function createEngine(env) {
           this.gl.drawFrame(show.vf);
           show.vf.close();
         } else this.gl.drawYuv(show.yuv);
+        this.captureThumb(show.t);
         this.shownT = show.t;
         this.shownStale = false;
         this.shownCount = (this.shownCount || 0) + 1;
@@ -2456,6 +2457,7 @@ function createEngine(env) {
         // Tests read the thumbnail and the stats below apart: both name the request (req) and the seek (gen) they show.
         if (this.cfg.debug || env.debug) this.sharpThumb = { ...sharpThumb(vf, r.t), req: r.id, gen: r.gen };
         this.gl.drawFrame(vf);
+        this.captureThumb(r.t);
       } finally { vf.close(); }
       const now = performance.now();
       const st = this.sharpStats;
@@ -3078,15 +3080,13 @@ function createEngine(env) {
     subCues() { return this.startT === null && this.info && this.info.video && this.vmode !== 'none' ? [] : this.cueList(this.subId).map((c) => this.playerCue(c)); }
 
     // ---- seek-bar thumbnails (thumbs.js, thumbs-worker.js) -------------------
-    // A second, keyframe-only libav.js worker. Its file reads share the block cache
-    // above as reader 'thumbs'. Native ffmpeg: the extension host decodes each
-    // thumbnail with a short keyframe-only ffmpeg (src/thumbhost.js). Nothing is
-    // decoded, and no worker or ffmpeg started, until the pointer is on the seek
-    // bar (hover or drag), and decoding stops when it leaves (docs/notes/seek-preview.md).
-    // The Live transcode stream asks the host too (one keyframe-only ffmpeg per thumbnail, never the running
-    // stream); not for URLs or audio-only files; MJPEG/image sequences use FramePlayer and have no thumbnails.
+    // Shown frames become small previews for free (captureThumb). Keyframes are decoded only while the pointer is on
+    // the seek bar: by a second, keyframe-only libav.js worker whose file reads share the block cache above as reader
+    // 'thumbs', or for native ffmpeg and Live transcode by a short keyframe-only ffmpeg on the extension host
+    // (src/thumbhost.js, never the running stream). Not for URLs or audio-only files; MJPEG/image sequences use
+    // FramePlayer and have no thumbnails (docs/notes/seek-preview.md).
 
-    /** The thumbnail service, made on first use; null when this file has none. */
+    /** The thumbnail service, made on first use (a capture or a hover); null when this file has none. */
     thumbService() {
       if (this.thumbs) return this.thumbs;
       const v = this.info && this.info.video;
@@ -3158,7 +3158,32 @@ function createEngine(env) {
       done(m.data ? { rel: m.rel, w: m.w, h: m.h, fmt: m.fmt, data: new Uint8Array(m.data) } : null);
     }
 
-    /** Tests: thumbnail service counters, or null while no hover has made it. */
+    /**
+     * The frame just drawn at `t` as a seek-bar preview, when its slot has none: the canvas (already turned and
+     * tone-mapped) scaled to the 160 x 120 box, at most one per slot, one at a time, never while playback is behind.
+     */
+    captureThumb(t) {
+      if (this.capturing || this.captureOff || this.hidden || this.disposed || typeof createImageBitmap !== 'function') return;
+      const cv = this.gl && this.gl.cv;
+      if (!cv || !(cv.width > 0 && cv.height > 0) || !isClock()) return;
+      const s = this.thumbService();
+      if (!s || !s.wants(t) || this.playbackBehind()) return;
+      const k = Math.min(160 / cv.width, 120 / cv.height);
+      const resizeWidth = Math.max(1, Math.round(cv.width * k));
+      const resizeHeight = Math.max(1, Math.round(cv.height * k));
+      const t0 = performance.now();
+      this.capturing = true;
+      let pending;
+      try {
+        pending = createImageBitmap(cv, { resizeWidth, resizeHeight, resizeQuality: 'low' });
+      } catch { this.capturing = false; return; }
+      const syncMs = performance.now() - t0; // what the frame loop paid; the scaling finishes off it
+      pending.then((b) => {
+        if (this.thumbs === s && !this.disposed) s.offer(t, b, 0, Math.round(syncMs * 100) / 100); else b.close();
+      }, () => {}).finally(() => { this.capturing = false; });
+    }
+
+    /** Tests: thumbnail service counters, or null while nothing has made it. */
     thumbStrip() { return this.thumbs ? this.thumbs.stats0() : null; }
 
     thumbnailLeave(immediate = false) { if (this.thumbs) this.thumbs.leave(immediate); }
@@ -3168,11 +3193,16 @@ function createEngine(env) {
       this.onWorkerRead(pos, len, 'thumbs');
     }
 
-    /** Playback needs the CPU: decoding is behind, or little is decoded ahead while playing. */
-    thumbsBusy() {
+    /** Decoding is behind (a status warning or a recent catch-up). */
+    playbackBehind() {
       const st = this.status();
       if (st && st.level === 'warn') return true;
-      if (this.behindUntil && performance.now() < this.behindUntil) return true;
+      return !!(this.behindUntil && performance.now() < this.behindUntil);
+    }
+
+    /** Playback needs the CPU: decoding is behind, or little is decoded ahead while playing. */
+    thumbsBusy() {
+      if (this.playbackBehind()) return true;
       if (!this.playing || this.vmode === 'none' || this.eof) return false;
       const ahead = this.queue.length ? this.queue[this.queue.length - 1].t - this.now() : 0;
       return ahead < 0.5;

@@ -279,10 +279,10 @@ module.exports = [{
       const P = await lib.open(vs, h, lib.clip('long_20s.mp4'));
       try {
         await P.waitFirstFrame();
-        // Lazy (docs/notes/seek-preview.md): no thumbnail service, request or worker before the first hover.
+        // Lazy (docs/notes/seek-preview.md): no request or worker before the first hover (a shown frame may be a preview).
         await lib.sleep(3000);
         const s0 = await P.state();
-        ok(!s0.strip && !lib.lines(vs, /thumbs:/, P.fromMark).length, `nothing decoded before the first hover (${JSON.stringify(s0.strip)})`);
+        ok((!s0.strip || (s0.strip.requests === 0 && !s0.strip.worker)) && !lib.lines(vs, /thumbs:/, P.fromMark).length, `nothing decoded before the first hover (${JSON.stringify(s0.strip)})`);
         const [sx, sy, sw, sh] = s0.seekRect;
         const hover = async (frac) => {
           const before = (await P.state()).thumb.sig;

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Seek-bar previews between keyframes for what you have watched:** frames shown while playing, seeking or stepping are kept as small previews (one per 1/20 of the video, every 2 s up to 8 min, 240 at most), so hovering a part you have seen shows that moment instead of the keyframe before it. This starts no extra decoding, and all previews of a file now fit in about 3 MB.
 - **FFmpeg setup when ffmpeg is already installed:** the Setup Guide confirms the working ffmpeg and moves on instead of opening a download picker, and **Video Preview: Set up ffmpeg** lists Keep current setup and Re-test above Download. When an NVIDIA driver is too old for the installed ffmpeg's GPU encoder, the picker explains that GPU decoding still works and what NVENC needs.
 - **Holding the previous-frame key or spinning the wheel backwards no longer starts over on every repeat:** while a step is still decoding, further steps only move its target, and the newest one is sought as soon as it lands (often from the frames just decoded). With native ffmpeg a held key used to start one ffmpeg process per repeat.
 - **Setup guide & AI tool video links:** published the `video-preview-links` skill for `npx skills` (hiding repo-internal skills), added a themed **Show instructions** tab with Copy buttons, and added a **Try it out** button on the last walkthrough step that opens the bundled 1080p sample clip.

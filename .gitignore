@@ -28,6 +28,7 @@ test/browser/
 test/media/tracks/
 test/media/cases/startup_*
 test/media/cases/sp_*
+test/media/cases/pb_*
 # 1080p clips looped for the 9- and 16-video grids (test/media/make_cases_media.js)
 test/media/cases/multiview_*
 # Dolby Vision copies of the HDR pattern, made by test/vscode/cases/hdr_output.js (test/zoo/make_dv.js)

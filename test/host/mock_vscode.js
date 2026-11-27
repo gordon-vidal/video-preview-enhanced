@@ -61,7 +61,12 @@ function makeVscode(settings = {}) {
       showInputBox: async (o) => (o && o.value !== undefined ? o.value : undefined),
     },
     commands: {
-      registerCommand: (id, fn) => { commands[id] = fn; return { dispose() {} }; },
+      registerCommand: (id, fn) => {
+        // As VS Code: a second registration of one id throws, and the extension then fails to activate.
+        if (Object.prototype.hasOwnProperty.call(commands, id)) throw new Error(`command '${id}' already exists`);
+        commands[id] = fn;
+        return { dispose() { if (commands[id] === fn) delete commands[id]; } };
+      },
       executeCommand: async (id, ...a) => { (vscode.executed = vscode.executed || []).push([id, ...a]); },
     },
     workspace: {
