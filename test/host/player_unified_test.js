@@ -1424,6 +1424,42 @@ test('pixel inspector (X): the read-out reads the clock decoder\'s picture under
   }, { createPlayer: trackPlayer, raf: true });
 });
 
+testAsync('pixel inspector under Live transcode: paused, it reads the exact full-resolution frame from the host', async () => {
+  const grabs = [];
+  /** The exact picture: 4x the decoded size, every pixel 9 (the decoded picture reads 7). */
+  const exactCtx = { getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4).fill(9) }) };
+  const VpeExact = {
+    available: (p) => !!(p && p.remoteStream),
+    shownTime: (p) => p.frame / 25,
+    failureText: () => 'failed',
+    create: () => ({
+      grab: (key, t, o) => { grabs.push([key, t, o && o.notify]); return Promise.resolve({ img: {}, w: 1280, h: 720, png: 'x', ctx: exactCtx }); },
+      onReply: () => Promise.resolve(),
+      invalidate() {},
+    }),
+  };
+  const livePlayer = (clip, host, hooks) => Object.assign(trackPlayer(clip, host, hooks), { remoteStream: true });
+  await withPage(async ({ doc, app, send, made, setRect, frames, posted }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    p.ctx = { getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4).fill(7) }) };
+    p.frame = 12;
+    app.ui.render();
+    setRect(doc.getElementById('cells').querySelector('.cell canvas'), { left: 0, top: 0, width: 640, height: 360 });
+    doc.body.fire('keydown', { key: 'x' });
+    doc.getElementById('stage').fire('pointermove', { clientX: 100.5, clientY: 50.5, pointerType: 'mouse' });
+    frames(10); // the frame settles (150 ms), then the page asks once, quietly (no "Fetching exact frame…" toast)
+    assert.deepStrictEqual(grabs, [['1|12|0', 12 / 25, false]]);
+    await new Promise((r) => setTimeout(r, 0));
+    frames(2);
+    assert.match(doc.getElementById('pxread').textContent, /^x 201 {2}y 101\nRGB 9 9 9/,
+      'the read-out reads the exact picture at its own size');
+    assert.ok(logsOf(posted).some((l) => l === 'exact frame 1280x720 for frame 13'), 'and says so (layer-3 hook)');
+    frames(10);
+    assert.strictEqual(grabs.length, 1, 'one request per frame');
+  }, { cfg: { debug: true }, createPlayer: livePlayer, raf: true, extraWidgets: { VpeExact } });
+});
+
 test('debug probe: the seek-bar thumbnail (canvas.seek-thumb) is the probe\'s #thumb', () => {
   const VpeDebugProbe = require('../../media/debug-probe');
   withPage(({ send, posted }) => {
