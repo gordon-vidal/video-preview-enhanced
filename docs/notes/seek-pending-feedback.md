@@ -13,6 +13,9 @@ lost the code, so a slow click showed nothing at all until the picture changed a
   a seek or step in flight; playing but still opening or held by an accurate seek (`media/engine.js` playbackPhase);
   playing with no picture to show because a remote stream is buffering (`waitPic`). A tile outside its clip owes nothing.
 - In Compare each tile has its own spinner: the one still loading is the one that shows it.
+- **Seek bar pressed or dragged** (2026-11-27): the seek waits for the release (with seek-bar thumbnails the picture is
+  held while dragging), but the time readout and the slider's value text follow the slider from the press on, like the
+  bar itself; before, they kept the old position until the release (`media/player-ui.js` render, `bindSeek` preview).
 - A wait under 150 ms (a seek from the page's packets or decoded frames lands in a frame or two) shows nothing: no
   flicker on fast seeks and steps.
 
