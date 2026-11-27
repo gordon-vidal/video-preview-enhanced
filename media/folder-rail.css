@@ -11,7 +11,8 @@
   border-radius: 6px; background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle); box-sizing: border-box;
 }
 #row .folder-cap[hidden] { display: none; }
-#row .folder-cap button.cap-btn { height: 22px; min-width: 22px; padding: 0 4px; border-radius: 4px; font-size: 11px; }
+/* On the button scale like Compare's capsule (docs/DESIGN.md, Buttons). */
+#row .folder-cap button.cap-btn { height: var(--vpe-btn-h); min-width: var(--vpe-btn-h); padding: 0 4px; border-radius: var(--vpe-btn-radius); font-size: 11px; }
 #row .folder-cap button.cap-count {
   font-family: var(--vpe-mono); font-variant-numeric: tabular-nums; padding: 0 5px; min-width: 30px;
 }

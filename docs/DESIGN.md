@@ -97,8 +97,11 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
 
 
 - **One button:** `.vpe-btn`, 4 px corners (`--vpe-btn-radius`), 12 px text, **24 px** high on the picture (notices,
-  callouts, error screen, tile buttons) and **28 px** in panels (`--vpe-btn-h`, `--vpe-btn-h-panel`). Chips, steppers
-  and tile buttons follow the same corners and heights.
+  callouts, error screen, tile buttons) and **28 px** in panels (`--vpe-btn-h`, `--vpe-btn-h-panel`). Chips, steppers,
+  tile buttons and the buttons inside the bar's capsules (Compare layouts, folder previous / next) follow the same
+  corners and heights.
+- **Own building blocks, not `.vpe-btn`:** the bar's icon buttons (34 px square, transparent, 6 px corners, hover
+  fill), the ⚙ panel's switch, and a tile pill's stepper (round 19 px buttons inside the pill).
 - **One main action per surface**, `.vpe-btn-main`, in VS Code's button colour; it is the only rule allowed to use
   `--vscode-button-background`. Everything else is outlined; a selected chip uses the "on" fill.
 - **Containers never restyle "all their buttons".** A generic `.x button` rule skips the shared ones
@@ -110,6 +113,11 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
   align), the label, the shortcut or hint on the right (11 px mono, dim). Separators are `menuSep` (`.vpe-msep`).
 - Hover and focus show the row fill (`--vpe-row-hover`); keyboard focus adds the focus ring. No menu uses VS Code's
   blue selection colour or its own row style. Menus have 4 px above and below their rows, rows run edge to edge.
+
+## Spacing
+
+- New or changed rules take paddings, gaps and margins from **2 · 4 · 6 · 8 · 12 · 16 px** (bigger layout distances
+  in multiples of 8). Existing values are not swept; they move onto the scale when their rule is touched anyway.
 
 ## Icons
 
@@ -153,7 +161,7 @@ buttons: `.claude/skills/ui-notices/SKILL.md`.
 
 Known gaps, each to be settled with the maintainer and then written down above:
 
-- **Spacing:** paddings and gaps use many near values (2-7, 9, 10, 12, 14 px); no scale yet.
+- **Spacing:** older rules still use near values (3, 5, 7, 9, 10, 14 px); they move onto the scale when touched.
 - **Corners besides the card and button tokens:** bar buttons 6 px, A–B and range boxes 2-3 px, the switch 9 px.
 - **A layer-3 check of the narrow-pane ladder:** the runner cannot set the window width yet, so nothing checks that
   Fullscreen stays inside the bar at 700 / 760 / 820 px (docs/notes/ui-simple.md, "Narrow bar").

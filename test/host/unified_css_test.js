@@ -428,7 +428,9 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
       }
     }
   }
-  for (const [css, sel, h] of [[PLAYER, '.panel .chip', '--vpe-btn-h-panel'], [PLAYER, '.panel .big', '--vpe-btn-h-panel'], [COMPARE, '.tbtn', '--vpe-btn-h']]) {
+  // The bar's capsules (Compare layouts, folder previous / next) are on the button scale too (maintainer, 2026-11-27).
+  for (const [css, sel, h] of [[PLAYER, '.panel .chip', '--vpe-btn-h-panel'], [PLAYER, '.panel .big', '--vpe-btn-h-panel'], [COMPARE, '.tbtn', '--vpe-btn-h'],
+    [COMPARE, '#row #cmpGroup .ib', '--vpe-btn-h'], [RAIL, '#row .folder-cap button.cap-btn', '--vpe-btn-h']]) {
     const d = merged(css, sel);
     assert.deepStrictEqual([d['border-radius'], d.height], ['var(--vpe-btn-radius)', `var(${h})`], `${sel}: the button scale`);
   }

@@ -279,7 +279,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   border-radius: 6px; background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle); box-sizing: border-box;
 }
 #row #cmpGroup.cmp-group[hidden] { display: none; }
-#row #cmpGroup .ib { height: 24px; min-width: 26px; border-radius: 4px; }
+#row #cmpGroup .ib { height: var(--vpe-btn-h); min-width: 26px; border-radius: var(--vpe-btn-radius); }
 /* The pressed layout / Sync button keeps a crisp outline on the capsule's own fill. */
 #cmpGroup .ib.active { background: var(--vpe-hover); border: 1px solid var(--vpe-bd-active); }
 
