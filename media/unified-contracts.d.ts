@@ -337,6 +337,8 @@ export type HostToPageMessage = PageEnvelope & (
   }
   | ReplaceTileMsg
   | { type: 'removeVideo'; clipId: string }
+  // Capture (Add from the Explorer) changed in the host: a command, Esc in VS Code, an editor switch, Compare full.
+  | { type: 'capture'; on: boolean }
   | { type: 'toast'; text: string; ms?: number }
   | { type: 'focusMode'; active: boolean }
   | { type: 'setVisible' | 'visible'; visible: boolean; active?: boolean }

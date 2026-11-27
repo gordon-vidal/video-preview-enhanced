@@ -547,6 +547,63 @@ test('end to end: src/unified-session.js and the page, from one video to two and
   assert.strictEqual(session.disposed, false, 'the page going away does not end the host session');
 });
 
+test('Capture: the host\'s changes reach the page (no echo back), Esc in the page ends it and tells the host', () => {
+  const { createUnifiedSession } = require('../../src/unified-session');
+  let session = null;
+  const hostSink = (send) => {
+    session = createUnifiedSession({ initialClip: { id: 'A', label: 'clip-a', fsPath: '/videos/clip-a' }, onPost: (m) => send(m) });
+    return (m) => { session.onMessage(m); };
+  };
+  withPage(({ doc, app, posted }) => {
+    const btn = doc.getElementById('startCompareBtn');
+    const banner = doc.getElementById('capBanner');
+    const tab = () => S.getTab(app.ui.getState());
+    const captures = () => posted.filter((m) => m.type === 'capture').length;
+    // The Command Palette's "Add Videos from the Explorer" (or Shift+D's host side): the page shows it at once.
+    session.setCapture(true);
+    assert.strictEqual(tab().capture, true, 'the page follows the host');
+    assert.strictEqual(btn.getAttribute('aria-pressed'), 'true', 'the Compare button pulses');
+    assert.strictEqual(banner.hidden, false, 'the capture banner shows');
+    assert.strictEqual(captures(), 0, 'not posted back');
+    // Esc in VS Code (stopAddFromExplorer), an editor switch, Compare full: off in the page too.
+    session.setCapture(false);
+    assert.strictEqual(tab().capture, false);
+    assert.strictEqual(btn.getAttribute('aria-pressed'), 'false');
+    assert.strictEqual(banner.hidden, true);
+    assert.strictEqual(captures(), 0, 'not posted back');
+    // Shift+D in the page: the host learns it once and does not answer.
+    doc.fire('keydown', { key: 'D', shiftKey: true, bubbles: true, cancelable: true });
+    assert.strictEqual(session.capture, true);
+    assert.strictEqual(captures(), 1);
+    // Esc in the page ends Capture there and in the host.
+    const esc = doc.fire('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    assert.strictEqual(esc.defaultPrevented, true, 'the page used the Esc');
+    assert.strictEqual(tab().capture, false, 'Esc ends Capture in the page');
+    assert.strictEqual(session.capture, false, 'and in the host');
+    assert.deepStrictEqual(posted.filter((m) => m.type === 'capture').pop().on, false);
+    // Plain D (and Caps Lock D) is no longer a key: nothing is asked of the host.
+    const picks = posted.filter((m) => m.type === 'pickVideo').length;
+    doc.fire('keydown', { key: 'd', bubbles: true, cancelable: true });
+    doc.fire('keydown', { key: 'D', bubbles: true, cancelable: true });
+    assert.strictEqual(posted.filter((m) => m.type === 'pickVideo').length, picks, 'plain D picks nothing');
+    assert.strictEqual(tab().capture, false, 'plain D does not toggle Capture either');
+  }, { hostSink });
+});
+
+test('drop: a URL or an image sequence page shows no drop hint and posts no compareDrop', () => {
+  for (const kind of ['url', 'sequence']) {
+    withPage(({ doc, posted }) => {
+      const hint = doc.getElementById('dropHint');
+      const dataTransfer = { types: ['text/uri-list'], getData: (k) => (k === 'text/uri-list' ? 'file:///v/b.mp4\r\n' : '') };
+      const enter = doc.fire('dragenter', { dataTransfer, bubbles: true, cancelable: true });
+      assert.strictEqual(hint.hidden, true, `${kind}: no hint`);
+      assert.strictEqual(enter.defaultPrevented, false, `${kind}: the drag is not taken`);
+      doc.fire('drop', { dataTransfer, bubbles: true, cancelable: true });
+      assert.deepStrictEqual(posted.filter((m) => m.type === 'compareDrop'), [], `${kind}: nothing asked of the host`);
+    }, { cfg: { clips: [{ ...CLIPS[0], sourceKind: kind, kind }] } });
+  }
+});
+
 // ---- the shared tick loop, mixed-fps targets, replay after the end, the clip descriptor, decoder messages ----
 
 /**

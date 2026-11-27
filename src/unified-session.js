@@ -458,10 +458,16 @@ function createUnifiedSession(deps) {
     return true;
   }
 
-  /** @param {boolean} on */
-  function setCapture(on) {
+  /**
+   * @param {boolean} on
+   * @param {{ fromPage?: boolean }} [o] `fromPage`: the page changed it and knows already. Any other change (a
+   *   command, Esc in VS Code, an editor switch, Compare full, a removed tile) is posted so the page's banner and
+   *   Compare button follow; before 'ready' the page learns it from sessionState.
+   */
+  function setCapture(on, { fromPage = false } = {}) {
     if (capture === !!on) return;
     capture = !!on;
+    if (!fromPage && ready) post(/** @type {any} */ ({ type: 'capture', on: capture }));
     emit('capture');
   }
 
@@ -484,7 +490,7 @@ function createUnifiedSession(deps) {
         for (const id of [...tileSizes.keys()]) if (!keep.includes(id)) tileSizes.delete(id);
       }
     }
-    if (typeof m.capture === 'boolean') setCapture(m.capture);
+    if (typeof m.capture === 'boolean') setCapture(m.capture, { fromPage: true });
     changed();
   }
 
@@ -539,7 +545,7 @@ function createUnifiedSession(deps) {
       }
       case 'capture': {
         const on = typeof m.on === 'boolean' ? m.on : m.capture;
-        if (typeof on === 'boolean') setCapture(on);
+        if (typeof on === 'boolean') setCapture(on, { fromPage: true });
         return undefined;
       }
       case 'pickVideo': {
@@ -602,6 +608,8 @@ function createUnifiedSession(deps) {
       case 'openSettings': return deps.onOpenSettings ? deps.onOpenSettings() : undefined;
       case 'openUrl': return deps.onOpenUrl ? deps.onOpenUrl(m) : undefined;
       case 'external': return deps.onExternal ? deps.onExternal(m) : undefined;
+      // F: a webview may not go fullscreen itself, so it is Zen Mode, as the player's fallback was before.
+      case 'fullscreen':
       case 'focusMode': return deps.onFocusMode ? deps.onFocusMode('toggle') : undefined;
       case 'focusModeExited': return deps.onFocusMode ? deps.onFocusMode('exited') : undefined;
       case 'rail':

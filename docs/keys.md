@@ -25,8 +25,7 @@ them all, with the jump sizes you chose. In the player and Compare, you can also
 | T | Copy the current timestamp |
 | F | Fill the editor and switch to zen mode |
 | Shift+N / Shift+P | Next / previous video in the folder (also the bar's `‹ 2/5 ›` capsule, or a right-click on ◀\| / \|▶) |
-| D | Compare with another video: a quick pick of the videos in this folder, then the workspace (**Browse…** opens the file dialog) |
-| Shift+D | Wait for the next video you open from the Explorer. It opens Compare in the player's tab with Add Mode on if there is room. Esc cancels the wait. ⚙ › Tools › Compare does the same |
+| Shift+D | Wait for the next video you open from the Explorer. It opens Compare in the player's tab with Add Mode on if there is room. Esc (in the player or in VS Code) cancels the wait. ⚙ › Tools › Compare does the same |
 | S / Ctrl+C | Save the frame as PNG / copy it |
 | ? | Keyboard shortcuts |
 | Esc | Close a panel, the shortcuts, the **Compare** confirmation, a playback notice, the Pixel Inspector or Scopes |

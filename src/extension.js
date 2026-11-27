@@ -34,13 +34,13 @@ const remoteff = lazy(() => require('./remoteff')); // ffmpeg downloaded on the 
 const walkthrough = lazy(() => require('./walkthrough')); // Setup Guide walkthrough + AI agent snippet
 const proxy = lazy(() => require('./proxy'));
 const { rotationOf } = require('./rotation');
-const { createUnifiedRegistry } = require('./unified-session'); // which viewer takes a newly opened video (capture)
+const { createUnifiedRegistry, sourceKindOf } = require('./unified-session'); // which viewer takes a newly opened video (capture)
 const unifiedViewer = require('./unified-viewer'); // the viewer's host (one panel, 1 to N videos)
 const { createSequenceDecoder, createUrlDecoder, sequenceFacts } = require('./unified-sources'); // URL and sequence clips
 const {
   pickRows, pushRecent, droppedVideos, collectFolderVideos, compareTargets, VIDEO_EXT: COMPARE_VIDEO_EXT, setPickHook, getPickHook,
 } = require('./comparepick'); // Compare's quick pick, selections and the test hook
-const { BURST_WINDOW_MS, createBurst, togetherNotice } = require('./burst'); // Open Together
+const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('./burst'); // Open Together
 const Grid = require('../media/compare-grid');
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
@@ -928,6 +928,7 @@ function activate(context) {
     windowMs: Number(process.env.VPE_BURST_MS) > 0 ? Number(process.env.VPE_BURST_MS) : BURST_WINDOW_MS,
     max: maxVideos, onBurst: (b) => openBurst(context, b),
   });
+  watchTabs(context);
 
   const provider = {
     openCustomDocument: (uri) => ({ uri, dispose() {} }),
@@ -1011,25 +1012,20 @@ function activate(context) {
     vscode.commands.registerCommand('videoPreviewEnhanced.compareFolder', (uri, uris) => compareSelection(context, uri, uris)),
     vscode.commands.registerCommand('videoPreviewEnhanced.compare', (uri, uris) => compareList(context, uri, uris)),
     vscode.commands.registerCommand('videoPreviewEnhanced.compareWith', (uri, opts) => compareWith(context, uri, opts)),
-    vscode.commands.registerCommand('videoPreviewEnhanced.comparePick', (uri) => comparePick(context, uri)),
     vscode.commands.registerCommand('videoPreviewEnhanced.addToCompareFromPlayer', (uri) => addToCompareFromPlayer(uri)),
     // Add from Explorer is the viewer's Capture: the next videos opened join it instead of opening their own tab.
     vscode.commands.registerCommand('videoPreviewEnhanced.addFromExplorer', () => {
       const v = activeViewer();
-      if (v) v.session.setCapture(!v.session.capture);
+      if (isFileViewer(v)) v.session.setCapture(!v.session.capture); // a URL or an image sequence compares with nothing
     }),
-    vscode.commands.registerCommand('videoPreviewEnhanced.stopAddFromExplorer', () => {
-      for (const v of unifiedViewers) v.session.setCapture(false);
-    }),
+    vscode.commands.registerCommand('videoPreviewEnhanced.stopAddFromExplorer', () => stopCapture('stopped')),
     // Switching to a text editor ends Add Mode (docs/PRODUCT.md "Add Mode"); a video opening in a tab of its own does not.
+    // Other editors (a video tab, an image, Settings) end it too: watchTabs. A video opened as text is captured there.
     ...[vscode.window.onDidChangeActiveTextEditor && vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (!editor) return;
-      for (const v of unifiedViewers) {
-        if (!v.session.capture) continue;
-        captureWhy = 'switched editor';
-        v.session.setCapture(false);
-        captureWhy = '';
-      }
+      const doc = editor.document && editor.document.uri;
+      if (doc && FS_SCHEMES.has(doc.scheme) && COMPARE_VIDEO_EXT.test(doc.path) && unifiedRegistry.capturing()) return;
+      stopCapture('switched editor');
     })].filter(Boolean), // (test doubles of the vscode API may lack the event)
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('videoPreviewEnhanced.ffmpegPath')) toolsPromise = null;
@@ -1734,7 +1730,11 @@ function closeWatch(panel) {
 }
 const panelClosed = new WeakMap();
 
-/** The context keys of the editor menus: a comparison is open (2+ videos), a viewer captures (Add from Explorer). */
+/**
+ * The context keys of the editor menus: a comparison is open (2+ videos), a viewer captures (Add from Explorer), and
+ * what the active viewer shows now (a tab grows and shrinks in place, so its editor id no longer tells): one video
+ * file (activeSingle) or a comparison (activeCompare). URLs and image sequences are neither.
+ */
 function updateContexts() {
   const all = [...unifiedViewers];
   const set = (key, on) => {
@@ -1745,6 +1745,10 @@ function updateContexts() {
   };
   set('videoPreviewEnhanced.compareOpen', all.some((v) => v.session.clips.length >= 2));
   set('videoPreviewEnhanced.addMode', all.some((v) => v.session.capture));
+  const active = all.find((v) => !v.disposed && v.panel.active);
+  const files = isFileViewer(active) ? active.session.clips.length : 0;
+  set('videoPreviewEnhanced.activeSingle', files === 1);
+  set('videoPreviewEnhanced.activeCompare', files >= 2);
 }
 /** The last value each editor-menu context key was set to (the log says when it changes). @type {Map<string, boolean>} */
 const contextLogged = new Map();
@@ -1754,12 +1758,39 @@ let captureWhy = '';
 
 /**
  * A viewer in `panel` showing `clip` first (and `more` beside it). `openTarget`: a frame link's moment or the saved
- * position. Resolves the viewer, or null when the panel closed meanwhile.
+ * position. Resolves the viewer, or null when the panel closed meanwhile. One panel never gets two viewers: calls for
+ * the same panel run one after the other, and once it has a viewer a later call resolves null, or with `join` (Open
+ * Together) adds its clips to that viewer and resolves it.
  */
-async function showViewer(context, panel, clip, openTarget = null, more = [], { allowDuplicate = false } = {}) {
+async function showViewer(context, panel, clip, openTarget = null, more = [], { allowDuplicate = false, join = false } = {}) {
+  const before = panelShows.get(panel) || Promise.resolve();
+  let done = () => {};
+  const mine = new Promise((r) => { done = r; });
+  panelShows.set(panel, before.then(() => mine));
+  try {
+    await before;
+    return await showViewerNow(context, panel, clip, openTarget, more, { allowDuplicate, join });
+  } finally {
+    done();
+  }
+}
+/** showViewer calls in progress, per panel (each waits for the one before). */
+const panelShows = new WeakMap();
+
+async function showViewerNow(context, panel, clip, openTarget, more, { allowDuplicate, join }) {
   const closed = closeWatch(panel);
+  const existing = () => { const v = panelViewers.get(panel); return v && !v.disposed ? v : null; };
+  const joinTo = (v) => {
+    if (!join) return null;
+    for (const c of [clip, ...more]) {
+      if (!v.session.clips.some((x) => x.uri && c.uri && fileKey(x.uri) === fileKey(c.uri))) v.session.addClip(c, { compare: true, allowDuplicate });
+    }
+    return v;
+  };
+  if (existing()) return joinTo(existing());
   const framePort = await framePortForPage();
   if (closed()) return null;
+  if (existing()) return joinTo(existing());
   remoteAuthority(panel.webview); // learn the host for frame links arriving later
   const viewer = unifiedViewer.createUnifiedViewer({
     vscode, context, panel, clip, registry: unifiedRegistry, openTarget, deps: { ...unifiedDeps, framePort },
@@ -1770,7 +1801,7 @@ async function showViewer(context, panel, clip, openTarget = null, more = [], { 
   lastViewer = viewer;
   viewer.session.onChange((e) => {
     if (e === 'active' && viewer.session.active) lastViewer = viewer;
-    if (e === 'clips' || e === 'capture') updateContexts();
+    if (e === 'clips' || e === 'capture' || e === 'active') updateContexts();
     // A VS Code preview tab (italic) is replaced by the next single-click in the Explorer before routeOpen() runs:
     // keep the tab permanently as soon as Capture turns on or it grows into a comparison.
     if (((e === 'capture' && viewer.session.capture) || (e === 'clips' && viewer.session.clips.length >= 2))
@@ -1816,9 +1847,13 @@ async function resolveVideo(context, rawUri, panel) {
   // A folder navigation of a single-video tab (Shift+N, the rail, Autoplay) opens this tab in its place: never taken
   // by Open Together or Compare's Add Mode.
   const handoff = railHandoffs.take(fileKey(uri), panel.viewColumn);
+  panelUris.set(panel, key);
   // Opened with others within a moment: the burst takes them into one viewer and this tab waits for its verdict.
-  if (!goto && !handoff && noteOpen(uri, panel) && await holdOpen(uri)) return undefined;
-  if (panelViewers.has(panel) || closed()) return undefined; // the burst made this tab a viewer, or it closed
+  const burstable = !goto && !handoff && noteOpen(uri, { panel });
+  if (burstable && await holdOpen(uri)) return undefined;
+  // The burst made this tab a viewer (or closed it), or another viewer is being shown in it.
+  const taken = () => closed() || panelViewers.has(panel);
+  if (taken()) return undefined;
   let clip;
   try {
     clip = await unifiedViewer.prepareClip(uri, prepDeps(false)); // one video in its own tab
@@ -1828,7 +1863,10 @@ async function resolveVideo(context, rawUri, panel) {
     setTimeout(() => panel.dispose(), 0);
     return undefined;
   }
-  if (closed()) return undefined;
+  // A video that left holdOpen alone can still join a burst while it is probed (the next one arrived meanwhile):
+  // that burst may be making this very tab its viewer. Wait for its verdict; taken means no single viewer here.
+  if (burstable && await burstVerdict(uri)) return undefined;
+  if (taken()) return undefined;
   if (!goto && !handoff) {
     const routed = unifiedRegistry.routeOpen(clip);
     if (routed.captured) {
@@ -1903,10 +1941,14 @@ function openTogether() {
   return vscode.workspace.getConfiguration('videoPreviewEnhanced').get('compare.openTogether', true) !== false;
 }
 
-/** A video our editor is opening: part of a burst? (not while a viewer captures: that one takes them) */
-function noteOpen(uri, panel) {
-  if (!burst || !COMPARE_VIDEO_EXT.test(uri.path) || !openTogether() || unifiedRegistry.capturing()) return false;
-  burst.add(uri.toString(), uri, { panel });
+/**
+ * A video VS Code is opening: part of a burst? (not while a viewer captures: that one takes them). `source`: our
+ * editor's panel (resolveCustomEditor), or its tab ({ tab }; a reused preview tab: { tab, changed: true }).
+ * @param {any} uri @param {{ panel?: any, tab?: any, changed?: boolean }} source
+ */
+function noteOpen(uri, source) {
+  if (!burst || !uri || !unifiedViewer.isViewable(uri) || !COMPARE_VIDEO_EXT.test(uri.path) || !openTogether() || unifiedRegistry.capturing()) return false;
+  burst.add(uri.toString(), uri, source);
   return true;
 }
 
@@ -1917,32 +1959,182 @@ function noteOpen(uri, panel) {
 async function holdOpen(uri) {
   if (!burst.waiting) return false;
   await new Promise((done) => setImmediate(done));
-  const held = burst.wait(uri.toString());
+  return burstVerdict(uri);
+}
+
+/**
+ * A burst taking `uri` right now: resolves its verdict (true: taken, never start a viewer for it), capped at 10 s;
+ * false when no burst has it (pending alone, or none).
+ */
+async function burstVerdict(uri) {
+  const held = burst ? burst.wait(uri.toString()) : false;
   if (!held) return false;
   let timer;
   const cap = new Promise((r) => { timer = setTimeout(() => r(false), 10000); });
   return Promise.race([held, cap]).finally(() => clearTimeout(timer));
 }
 
-/** Open Together: the burst's videos in one viewer (in a tab that already is one, else the first tab). */
-async function openBurst(context, { items, extra }) {
-  const panels = items.flatMap((it) => it.panels);
-  const host = panels.map((p) => panelViewers.get(p)).find((v) => v && !v.disposed) || null;
+/** The file each of our editor's panels was opened for (resolveVideo): its own tab is not a leftover. */
+const panelUris = new WeakMap();
+
+/** Our editor's tabs (the player custom editor; the Compare / URL / sequence webviews have no uri). */
+const isPlayerTab = (tab) => !!(tab && tab.input && tab.input.uri && typeof tab.input.viewType === 'string'
+  && tab.input.viewType.startsWith('videoPreviewEnhanced.'));
+
+/** Closes a tab (the Tab API may be missing in test doubles). */
+function closeTab(tab) {
+  try { Promise.resolve(vscode.window.tabGroups.close(tab)).catch(() => {}); } catch { /* tab API missing, or gone */ }
+}
+
+/** Ends every viewer's Capture; `why` goes to the log line. */
+function stopCapture(why) {
+  for (const v of unifiedViewers) {
+    if (!v.session.capture) continue;
+    captureWhy = why;
+    v.session.setCapture(false);
+    captureWhy = '';
+  }
+}
+
+/** Video tabs opened while a viewer captured: they are about to be taken (and closed), not an editor switch. */
+const capturedTabs = new WeakSet();
+
+/**
+ * A video opened in another editor (VS Code's own preview when this extension is not the default, a text tab) while
+ * `target` captures: once prepared, close its tab only if `target` still owns Capture and accepts it.
+ */
+async function captureOpened(uri, tab, target) {
+  let clip;
+  try { clip = await unifiedViewer.prepareClip(uri, prepDeps(true)); }
+  catch (e) { log(`capture: cannot open ${path.basename(uri.fsPath)}: ${e && e.message || e}`); return; }
+  if (!target || target.disposed || !target.shouldCapture() || unifiedRegistry.capturing() !== target) return;
+  const added = target.addClip(clip);
+  log(`${clip.label} ${added ? 'joined' : 'not added to'} ${target.title} (from another editor)`);
+  closeTab(tab);
+}
+
+/**
+ * The capturing viewer is no longer the active editor (another tab or group, an image, Settings, a walkthrough):
+ * Capture ends (docs/PRODUCT.md "Add Mode"), except while the active tab is a video that is being captured.
+ */
+function checkCaptureEditor() {
+  const capturing = [...unifiedViewers].filter((v) => !v.disposed && v.session.capture);
+  if (!capturing.length) return;
+  const g = vscode.window.tabGroups;
+  const group = g && g.activeTabGroup;
+  const tab = group && group.activeTab;
+  if (!tab || capturedTabs.has(tab)) return;
+  // The viewer's own tab, by identity: its panel's `active` can lag the tab events (a captured tab just closed).
+  const own = (v) => {
+    if (group.viewColumn !== undefined && v.panel.viewColumn !== undefined && group.viewColumn !== v.panel.viewColumn) return false;
+    const inp = tab.input || {};
+    if (inp.uri) return isPlayerTab(tab) && inp.uri.toString() === panelUris.get(v.panel);
+    // Compare / URL / sequence panels: a webview tab (VS Code prefixes its view type) with the panel's title.
+    return typeof inp.viewType === 'string' && inp.viewType.includes('videoPreviewEnhanced.') && tab.label === v.panel.title;
+  };
+  for (const v of capturing) {
+    if (v.panel.active || own(v)) continue;
+    captureWhy = 'switched editor';
+    v.session.setCapture(false);
+    captureWhy = '';
+  }
+}
+let captureCheck = null;
+/** The tab and webview notifications arrive in either order: a new video tab gets first refusal. */
+function scheduleCaptureCheck() {
+  if (captureCheck) return;
+  captureCheck = setImmediate(() => { captureCheck = null; checkCaptureEditor(); });
+}
+
+/**
+ * VS Code's tabs (docs/notes/compare-ui.md): new player tabs and reused preview tabs join Open Together; a video
+ * opened in another editor while a viewer captures goes into that viewer; switching to another editor ends Capture.
+ */
+function watchTabs(context) {
+  const groups = vscode.window.tabGroups;
+  if (!groups || typeof groups.onDidChangeTabs !== 'function') return;
+  const previewState = new WeakMap();
+  for (const group of groups.all || []) for (const tab of group.tabs || []) if (isPlayerTab(tab)) previewState.set(tab, tab.isPreview);
+  context.subscriptions.push(groups.onDidChangeTabs((e) => {
+    for (const tab of e.closed || []) previewState.delete(tab);
+    for (const tab of e.changed || []) {
+      if (!isPlayerTab(tab)) { previewState.delete(tab); continue; }
+      // Enter / Open With on a selection pins the single click's preview tab instead of opening a new one.
+      if (previewState.get(tab) === true && tab.isPreview === false) noteOpen(tab.input.uri, { tab, changed: true });
+      previewState.set(tab, tab.isPreview);
+    }
+    for (const tab of e.opened || []) {
+      const uri = tab.input && tab.input.uri;
+      if (!uri) continue;
+      const video = FS_SCHEMES.has(uri.scheme) && COMPARE_VIDEO_EXT.test(uri.path);
+      const target = video ? unifiedRegistry.capturing() : null;
+      if (target) capturedTabs.add(tab);
+      if (isPlayerTab(tab)) {
+        previewState.set(tab, tab.isPreview);
+        noteOpen(uri, { tab });
+        continue;
+      }
+      // Our editor is not the default for this file: the capturing viewer takes it once prepared.
+      if (target) {
+        captureOpened(uri, tab, target).catch((err) => log(`capture failed: ${err && err.stack || err}`));
+      }
+    }
+    scheduleCaptureCheck();
+  }));
+  if (typeof groups.onDidChangeTabGroups === 'function') context.subscriptions.push(groups.onDidChangeTabGroups(scheduleCaptureCheck));
+}
+
+/**
+ * After Open Together: the burst's other tabs, and player tabs in that group still showing one of its videos (a single
+ * click's preview tab, a tab pinned by Enter), are duplicates now. The viewer's own tab stays.
+ */
+function closeBurstTabs(viewer, items, viewColumn) {
+  const groups = vscode.window.tabGroups;
+  if (!groups) return;
+  const own = panelUris.get(viewer.panel);
+  const ownColumn = viewer.panel.viewColumn;
+  const isOwn = (tab) => !!own && !!tab.input && !!tab.input.uri && tab.input.uri.toString() === own
+    && (!tab.group || tab.group.viewColumn === undefined || ownColumn === undefined || tab.group.viewColumn === ownColumn);
+  const tabs = new Set(items.flatMap((it) => it.tabs));
+  for (const tab of leftoverTabs(groups.all || [], items.map((it) => it.key), viewColumn ?? ownColumn)) tabs.add(tab);
+  for (const tab of tabs) if (!isOwn(tab)) closeTab(tab);
+}
+
+/** Open Together: the burst's videos in one viewer (in a tab that already is one, else the first tab or a new Compare panel). */
+async function openBurst(context, { items, extra, viewColumn }) {
+  const currentPanels = () => items.flatMap((it) => it.panels);
+  const hostOf = () => currentPanels().map((p) => panelViewers.get(p)).find((v) => v && !v.disposed) || null;
+  let host = hostOf();
   const clips = [];
   for (const it of items) {
     if (host && host.session.clips.some((c) => c.uri && c.uri.toString() === it.key)) continue;
     try { clips.push(await unifiedViewer.prepareClip(it.uri, prepDeps(true))); }
     catch (e) { log(`open together: cannot open ${path.basename(it.uri.fsPath)}: ${e && e.message || e}`); }
   }
+  host = host || hostOf();
   if (!host && clips.length < 2) return false;
   // A tab that already became a viewer (it opened alone a moment before) takes the others only while there is room;
   // else they open as usual.
   if (host && (!clips.length || host.session.clips.length + clips.length > host.session.maxVideos)) return false;
+  const panels = currentPanels();
   let viewer = host;
-  if (viewer) for (const c of clips) viewer.session.addClip(c, { compare: true });
-  else viewer = await showViewer(context, panels[0], clips[0], null, clips.slice(1));
+  if (viewer) {
+    for (const c of clips) viewer.session.addClip(c, { compare: true });
+  } else if (panels.length) {
+    // join: a tab that became a single viewer meanwhile takes the others instead of a second viewer in its panel.
+    viewer = await showViewer(context, panels[0], clips[0], null, clips.slice(1), { join: true });
+  } else {
+    // Tab events can fire before VS Code resolves any custom editor (e.g. dropping several videos into the editor area):
+    // open a Compare panel directly and close the opened player tabs below.
+    const panel = vscode.window.createWebviewPanel(
+      COMPARE_VIEW_TYPE, clips.map((c) => c.label).join(' · '), viewColumn ?? vscode.ViewColumn.Active, { retainContextWhenHidden: true },
+    );
+    panel.iconPath = new vscode.ThemeIcon('split-horizontal');
+    viewer = await showViewer(context, panel, clips[0], null, clips.slice(1));
+  }
   if (!viewer) return false;
-  for (const p of panels) if (p !== viewer.panel) { try { p.dispose(); } catch { /* gone already */ } }
+  for (const p of currentPanels()) if (p !== viewer.panel) { try { p.dispose(); } catch { /* gone already */ } }
+  closeBurstTabs(viewer, items, viewColumn);
   log(`${viewer.session.clips.length} videos opened together -> one compare${extra.length ? `, ${extra.length} more stay as tabs` : ''}`);
   noticeTogether(viewer.session.clips.length);
   if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
@@ -2065,8 +2257,10 @@ async function compareSelection(context, uri, uris) {
   const selection = compareTargets(uri, uris, vscode.window.tabGroups && vscode.window.tabGroups.all, (u) => COMPARE_VIDEO_EXT.test(u.path), fileKey);
   const videos = (await Promise.all(selection.map(selectionVideos))).flat();
   if (!videos.length) { vscode.window.showInformationMessage('Video Preview: no videos in the selection.'); return null; }
-  const target = activeViewer();
-  if (target && target.session.clips.some((c) => c.uri)) return addToViewer(target, videos);
+  // An open Compare (most recently active first) before the active single video (src/comparepick.js planAddToCompare).
+  const single = activeViewer();
+  const target = recentCompare() || (single && isFileViewer(single) ? single : null);
+  if (target) return addToViewer(target, videos);
   const viewer = await openCompare(context, videos);
   // One video starts a Compare of its own with Add Mode on (the next videos opened join it); several are the whole set.
   if (viewer && viewer.session.clips.length === 1) viewer.session.setCapture(true);
@@ -2115,21 +2309,6 @@ async function pickItems(a, folderUri) {
       }));
 }
 
-/** Key D's quick pick from a command: other videos (same folder first) beside `uri`. */
-async function comparePick(context, uri) {
-  const a = (uri instanceof vscode.Uri ? uri : null) || activeVideo();
-  if (!a) return null;
-  const items = await pickItems(a);
-  const hook = getPickHook();
-  const chosen = await (hook ? hook(items) : vscode.window.showQuickPick(items, { placeHolder: `Compare ${path.basename(a.fsPath)} with…`, matchOnDescription: true }));
-  if (!chosen) return null;
-  const v = viewerOf(a);
-  if (chosen.explorer) { if (v) v.session.setCapture(true); return v; }
-  if (chosen.browse) return compareWith(context, a);
-  const b = vscode.Uri.parse(chosen.uri);
-  return v ? addToViewer(v, [b]) : openCompare(context, [a, b]);
-}
-
 /**
  * The page's "Add video" / "Replace" dialog (src/unified-viewer.js deps.pick). A test's pick hook
  * (src/comparepick.js setPickHook) answers from the quick pick's rows instead; a test's Start Compare files come next.
@@ -2151,8 +2330,22 @@ async function pickVideos(label, defaultUri, many) {
 async function addToCompareFromPlayer(uri) {
   const video = (uri instanceof vscode.Uri ? uri : null) || activeVideo();
   if (!video || !FS_SCHEMES.has(video.scheme) || !COMPARE_VIDEO_EXT.test(video.path)) return null;
-  const compare = [lastViewer, ...unifiedViewers].find((v) => v && !v.disposed && v.session.clips.length >= 2);
+  const compare = recentCompare();
   return compare ? addToViewer(compare, [video]) : null;
+}
+
+/** A viewer of video files (not a URL or an image sequence): only those compare. */
+function isFileViewer(v) {
+  return !!v && !v.disposed && v.session.clips.length > 0 && v.session.clips.every((c) => sourceKindOf(c) === 'file' && !!c.uri);
+}
+
+/** The open Compare (2+ videos) used most recently (the active one first), or null. */
+function recentCompare() {
+  const compares = [...unifiedViewers].filter((v) => isFileViewer(v) && v.session.clips.length >= 2);
+  if (!compares.length) return null;
+  const order = unifiedRegistry.sessions; // most recently active first
+  const rank = (v) => (v.panel.active ? -1 : order.indexOf(v.session) < 0 ? order.length : order.indexOf(v.session));
+  return compares.sort((a, b) => rank(a) - rank(b))[0];
 }
 
 /**
@@ -2194,8 +2387,9 @@ async function compareFolderRow(viewer, folderUri) {
     : plan.action === 'full' ? `Compare is full (${max} videos)` : `The videos of ${name} are in Compare already`);
 }
 
-/** Videos dropped on a page (uri strings): they join its viewer. */
+/** Videos dropped on a page (uri strings): they join its viewer. Not a URL's or an image sequence's: those compare with nothing. */
 async function addDropped(viewer, dropped) {
+  if (!isFileViewer(viewer)) return undefined;
   const authority = remoteAuthority(viewer.panel.webview);
   const files = droppedVideos(dropped.filter((x) => typeof x === 'string').slice(0, 20)).map((s) => {
     try {

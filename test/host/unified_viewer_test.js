@@ -210,6 +210,8 @@ const context = { extensionUri: Uri.file(ROOT) };
       await handlers.message({ type: 'leaveCompare', page: 1, keepId: clipB.id });
       assert.strictEqual(panel.title, 'b.mp4');
       assert.strictEqual(viewer.session.capture, false);
+      // The page keeps its own capture flag on leaving Compare: the host says it ended.
+      assert.deepStrictEqual(posts.shift(), { type: 'capture', on: false, page: 1 });
       assert.deepStrictEqual(registry.routeOpen(clipA), { captured: false });
       await handlers.message({ type: 'readBlock', page: 1, clipId: clipA.id, pos: 0, len: 4 });
       assert.strictEqual(posts.length, 0);

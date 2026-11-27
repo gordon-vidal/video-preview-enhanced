@@ -91,7 +91,7 @@ splitter drag, Split Wipe divider drag, the `+ Add video` slot.
 
 Keys (`keyCommand`, the same table the pages use): `Space`/`K`, `J`/`L`, arrows (with Shift), `,` `.`, `[` `]`
 `<` `>`, `↑` `↓`, `Home`/`End`, `0`-`9`, `M`, `R`, `A` `B` `Backspace`, `T`, `S`, `Z`, `I`, `?`, `Esc` (panels,
-then menu, then collapse Spotlight), `D` (pick: proposal, see below), `Shift+D` (capture), `Shift+N`/`Shift+P` (folder ‹ / ›), `F`.
+then menu, then collapse Spotlight, last Capture), `Shift+D` (capture; plain `D` is no key since 2026-11-27), `Shift+N`/`Shift+P` (folder ‹ / ›), `F`.
 Keys a focused control owns (`VpeModes.ownsKey`: the rail filter, a list box) are ignored. The splitter and the
 divider take Compare's keys (arrows, Shift / PageUp / PageDown, Home / End); the divider is Compare's own binding
 (`bindSplitDivider`, 0–100 %).
@@ -100,7 +100,7 @@ divider take Compare's keys (arrows, Shift / PageUp / PageDown, Home / End); the
 `test/host/player_ui_test.js` reads both tables from the page source and compares their handler names with expected
 sets the test keeps itself (`EXPECTED_PLAYER_KEYS`, `EXPECTED_COMPARE_KEYS`; deliberately not shipped in
 `player-ui.js`), checks a `PARITY` list of keys one page handles and the other does not, and checks that every
-handler name is an action `keyCommand` produces. `pickVideoMessage(surface)` is the one mapping for `D`: the single player posts
+handler name is an action `keyCommand` produces. `pickVideoMessage(surface)` is the one mapping for "pick another video" (+ Add video): the single player posted
 `{ type: 'comparePick', t }`, production Compare has no plain-`D` key, and `create()` (proposal) posts
 `{ type: 'pickVideo', exclude }` in any N. The tests keep the two kinds of assertions apart.
 
@@ -128,7 +128,7 @@ no `src/`, Node built-in or decoder module.
 
 `test/host/player_ui_test.js` (layer 1B, about 2 s, no video decoded) checks:
 
-- the key table and `runKey`, and `D`'s message (`pickVideo` with `exclude`, in any N);
+- the key table and `runKey`, and + Add video's message (`pickVideo` with `exclude`, in any N);
 - the pure helpers (time readout, Picture size, Copy details, step size, pin position and tip, splitter and
   divider math by dock and key, `bindButtons` stop policy, context-menu and rail creation);
 - the FakeHost protocol;
@@ -197,7 +197,7 @@ its effects (`unifiedDeps`) and routes every video to it:
   and what the decoder rule gives it, else the page's built-in decoder reads blocks over HTTP by clip id (the
   `libav` message restarts the page's player for the decoder chosen); an HLS quality pick restarts the clip in the
   same page. A sequence's frame player asks for pictures (`frames`) and gets them as `frame` messages.
-- **Compare's commands** (Start / Add to Compare, Compare folder, Compare With…, key D's quick pick, compare links,
+- **Compare's commands** (Start / Add to Compare, Compare folder, Compare With…, compare links,
   Add from Explorer = Capture, page drops, the folder rail's Compare rows) add videos to the active viewer or open
   a viewer with them (`videoPreviewEnhanced.compare` panels).
 - **1 → N → 1 in place.** The page is rendered once; `openVideo`, `replaceTile` and the page's `tiles` /
