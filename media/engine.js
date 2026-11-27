@@ -1912,8 +1912,9 @@ function createEngine(env) {
       this.playing = true;
       if (this.remoteStream) this.worker.postMessage({ type: 'playback', playing: true });
       this.endSteps();
-      // A read served from the page's packets has no sound and no producer: the host goes on from the shown frame.
-      if (this.localGen === this.gen) { this.seekAbs(this.shownT ?? this.pauseT, true); return; }
+      // A read served from the page's packets has no sound and no producer: the host goes on from there. From the
+      // seek's target while it is still decoding (play pressed at once): the frame on screen is the one before the seek.
+      if (this.localGen === this.gen) { this.seekAbs(this.seekTarget ?? this.shownT ?? this.pauseT, true); return; }
       // At the end (loop off): play starts over.
       if (this.eof && !this.queue.length && this.seekTarget === null && this.pauseT >= this.endT() - 1e-6) { this.seekAbs(this.startT || 0, true); return; }
       this.runFromT = this.pauseT; // Autoplay: how far playback ran before reaching the end (ended)
