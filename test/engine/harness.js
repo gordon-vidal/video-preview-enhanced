@@ -201,6 +201,19 @@ async function open(file, o = {}) {
   // player.js: the mute button and the speed menu call setVolume(volume, muted) and setRate(rate).
   P.setMuted = (m) => p.setVolume(p.volume === undefined ? 1 : p.volume, !!m);
   P.setRate = (r) => p.setRate(r);
+  /**
+   * The decoder worker throws on every 'more' (read and decode) for which `when(m)` is true: it answers as the real
+   * worker does then (decoder-worker.js: { type: 'error', where: 'more' }) instead of decoding. A fault at the
+   * worker boundary that no small file reproduces on demand (a decoder that fails at one spot every time).
+   */
+  P.failMore = (when) => {
+    const w = p.worker;
+    const real = w.postMessage.bind(w);
+    w.postMessage = (m, tr) => {
+      if (!m || m.type !== 'more' || !when(m)) { real(m, tr); return; }
+      setImmediate(() => { if (!P.closed && w.onmessage) w.onmessage({ data: { type: 'error', where: 'more', message: 'injected: the decoder failed here' } }); });
+    };
+  };
 
   /** ffmpeg's pictures of this file and their slots (frame numbers at the file's rate). */
   P.refs = async () => {

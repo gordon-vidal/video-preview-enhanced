@@ -100,6 +100,21 @@ runJobs('engine frames: Autoplay at the end of the file', [
   }],
   ['onend/early-end-next', CUT, (P) => earlyEnd(P, 'next')],
   ['onend/early-end-loop', CUT, (P) => earlyEnd(P, 'loop')],
+  ['stop/decoder-fails-at-one-spot', CLIP, async (P) => {
+    // The decoder fails at the same spot on every request: playback stops there with a report (the page's notice),
+    // after a few tries, instead of a frozen picture that re-asks and logs on every tick.
+    const acts = page(P, 'loop');
+    P.play();
+    J.assert(await P.until(() => P.time() > 0.5, 'playing', 10000), 'never played');
+    P.failMore(() => true);
+    const errors = () => P.logs.filter((x) => /worker more error/.test(x)).length;
+    J.assert(await P.until(() => acts.length, 'the stop', 8000), `no report after ${errors()} decoder errors`);
+    J.assert(acts.length === 1 && acts[0].stopped && !acts[0].natural, `report: ${JSON.stringify(acts)}`);
+    J.assert(!P.playing(), 'paused');
+    const n = errors();
+    await P.until(() => false, 'settle', 1000);
+    J.assert(n <= 5 && errors() === n, `the decoder is asked again and again (${n} errors, then ${errors()})`);
+  }],
   ['onend/loop', CLIP, async (P) => {
     const acts = page(P, 'loop');
     P.setRate(RATE);
