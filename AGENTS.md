@@ -9,9 +9,8 @@ Video Preview Enhanced is a VS Code extension that plays video in the editor (MP
 WebM, WMV, MXF ...) with frame-exact stepping, compare views, scopes and inspection tools. Three
 decoders, picked per file: VS Code's WebCodecs (H.264/VP8), a built-in FFmpeg-as-WebAssembly
 (libav.js, LGPL) and an optional native ffmpeg the user installs. Node extension host (src/)
-plus a webview viewer (media/, with media/ui/ bundled into media/dist/webview-ui.js via
-
-pm run build:ui, ADR 0004). Works locally, in WSL and over Remote-SSH.
+plus a webview viewer (`media/`, with `media/ui/` bundled into `media/dist/webview-ui.js` via
+`npm run build:ui`, ADR 0004). Works locally, in WSL and over Remote-SSH.
 
 ### Known VS Code platform limits (do not re-propose)
 
@@ -22,6 +21,9 @@ pm run build:ui, ADR 0004). Works locally, in WSL and over Remote-SSH.
 - **WebCodecs audio & WASM threads:** Real VS Code webviews do **not** support `AudioDecoder` for
   AAC or Opus, and webviews are not cross-origin isolated (no `SharedArrayBuffer`, so no pthreads
   in WebAssembly).
+- **Explorer Shift+drop into webviews blocked on VS Code 1.140+:** Upstream regression
+  (`microsoft/vscode#339036`) prevents cross-origin Explorer drags from reaching webview `drop`
+  handlers. Our handler is already wired up; do not re-investigate or build diagnostic branches for it.
 
 ## Repo map
 
@@ -60,10 +62,14 @@ npm test                                # layers 1-3 (before a release, not befo
 ```
 
 **Choose your layer-3 scenarios yourself** (maintainer, 2026-11-21): before a merge run layers 1-2 as CI does
-(`CI=true node test/run.js unit engine`) plus the scenarios that cover what you changed and what depends on it
-(at least those in "Known dependencies" in docs/TESTING.md), about 10 minutes at most, and list each with a
-one-line reason in your report or PR. Do not run the whole layer just to be safe: only a release has to have
-everything working, and the full run before a release catches what a merge missed.
+(`CI=true node test/run.js unit engine`) plus **1–3 targeted layer-3 scenarios** (or specific
+`--grep "^scenario/case$"`) covering the exact behavior you changed — aim for **~5 minutes** on small fixes
+and **10 minutes at most** on larger changes (use the "Known dependencies" table in `docs/TESTING.md` as a
+guide, not a mandatory floor). List each chosen scenario with a one-line reason in your report or PR. Do not
+run the whole layer just to be safe: only a release has to have everything working, and the full run before a
+release catches what a merge missed. When a single layer-3 case fails, re-run **only that case**
+(`--grep "^scenario/case$"`), not the whole scenario, and do not run layer 3 while parallel delegates are
+pegging CPU.
 
 Layer 4 (performance) runs only through `node test/run.js perf` (it holds the lock) and only
 before releases or in performance work.
@@ -88,6 +94,12 @@ before releases or in performance work.
   "Reuses vs. Introduces" check (delegated briefs executing an approved ADR or explicit spec are
   already scoped). If you catch yourself duplicating a helper, adding imperative DOM/CSS
   syncing, or working around an `AGENTS.md` constraint, stop and flag it first.
+- **Handoff & UX checklist**: whenever handing changes to a human to try out, always (1) name the
+  changed files and branch/worktree, (2) give a complete, runnable `review.cmd` / `review.sh`
+  command targeting that exact branch (`--dirty` if uncommitted, plus scenario flags like
+  `--first-run` or `--no-ffmpeg`), and (3) show any open questions and copyable/visual UI inline
+  in chat (never buried in a file). For VS Code / Electron webview quirks, check upstream VS Code
+  issues and "Known VS Code platform limits" above before building diagnostic branches.
 - **Retrospective rule**: whenever a recurring bug class, architectural smell, or workflow
   misalignment surfaces, propose a concrete update to `AGENTS.md`, a skill, or an automated check
   (and prune any obsolete rule).
@@ -131,17 +143,23 @@ before releases or in performance work.
   **version bumps happen only when the maintainer explicitly says so**: never change `version` in
   `package.json` / `package-lock.json` on your own, not even on a branch, and never run the workflow or tag.
 
-## Commits and PRs
+## Commits, worktrees and PRs
 
-Branch `fix/<topic>` or `feat/<topic>` from `main`. Small commits, imperative subject ("Seek bar:
-keep the hover picture on release"), body says why. Fill in `.github/pull_request_template.md`:
-what and why, which tests you ran, checklist. CI (host tests on Linux and Windows, syntax check,
-`vsce package` dry run, personal-data and link checks) must pass. Say in the PR what you did not run
-(layer 3 needs a GPU and runs locally).
-
-- **Clean up after merge**: once a branch is merged into `main` and pushed (so the work is safely
-  online with no open issues), remove its local worktree (`git worktree remove`) and delete the
-  merged local branch (`git branch -d`). Never force-delete (`-D`) unmerged work.
+- **Worktree isolation (keep the root checkout clean on `main`):** never run `git checkout -b` or
+  edit feature/fix code in the root checkout (only small `AGENTS.md`/doc edits may commit straight
+  to `main`). Always use your own fresh worktree (`t3_worktree_handoff` / `delegate_task` with
+  `isolation: "worktree"` in T3 Code, or `git worktree add` when standalone). **Never `cd` into or
+  reuse another task's worktree.**
+- Branch `fix/<topic>` or `feat/<topic>` from `main`. Small commits, imperative subject ("Seek bar:
+  keep the hover picture on release"), body says why. Fill in `.github/pull_request_template.md`:
+  what and why, which tests you ran, checklist. CI (host tests on Linux and Windows, syntax check,
+  `vsce package` dry run, personal-data and link checks) must pass. Say in the PR what you did not run
+  (layer 3 needs a GPU and runs locally).
+- **Clean up worktrees immediately:** as soon as a branch is merged into `main`, discarded (e.g.
+  throwaway `diag/*`), or a delegated child's work is landed, remove its local worktree
+  (`git worktree remove`; use `--force` only after verifying nothing but untracked `.githooks/*`
+  remains), delete the merged local branch (`git branch -d`), and run `git worktree prune`. Never
+  force-delete (`-D`) unmerged work.
 
 ## Private context
 

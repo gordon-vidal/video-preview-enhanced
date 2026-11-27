@@ -12,18 +12,20 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 ## When what runs
 
 - **While working** (everyone): layers 1-2, plus the layer-3 scenarios that cover what you changed. Run only what fails until it passes.
-- **Before a merge:** layers 1-2 (as CI runs them: `CI=true node test/run.js unit engine`) and **the layer-3 scenarios
-  you choose** for what you changed and what depends on it, about 10 minutes at most. Name each chosen scenario with a
-  one-line reason in your report or PR, so a reviewer can see what was left out. For a fast real-editor smoke pass
-  (~3-4 min covering every real-VS-Code boundary: `seeking`, `multiview-native`, `picture-size`, `ui`), run
-  `node test/run.js vscode --smoke` (and pair with affected scenarios or `--changed`); keep the full layer-3 run for
-  releases. `--changed` is only a hint: it selects by file name, and the core player files are in nearly every
-  scenario, so it usually picks the whole layer.
+- **Before a merge:** layers 1-2 (as CI runs them: `CI=true node test/run.js unit engine`) and **1–3 targeted
+  layer-3 scenarios** (or specific `--grep "^scenario/case$"`) covering the exact behavior you changed — aim for
+  **~5 minutes** on small fixes and **10 minutes at most** on larger changes. Name each chosen scenario with a
+  one-line reason in your report or PR, so a reviewer can see what was left out. When a single layer-3 case fails,
+  re-run **only that case** (`--grep "^scenario/case$"`), not the whole scenario, and avoid running layer 3 while
+  parallel delegates are pegging CPU. For a fast real-editor smoke pass (~3-4 min covering every real-VS-Code
+  boundary: `seeking`, `multiview-native`, `picture-size`, `ui`), run `node test/run.js vscode --smoke`; keep the
+  full layer-3 run for releases. `--changed` is only a hint: it selects by file name, and the core player files
+  are in nearly every scenario, so it usually picks the whole layer.
 - **Before a release:** everything, including layer 4 against the last release's numbers. Only a release must have
   everything working (maintainer, 2026-11-21): a side effect missed between releases is acceptable, the full run before
   the release catches it.
 
-**Known dependencies** (the minimum when you touch these; add a line when a miss is found):
+**Known dependencies** (guide for picking 1–3 relevant scenarios when you touch these — not a mandatory floor; add a line when a miss is found):
 
 | You changed | Also run |
 |---|---|

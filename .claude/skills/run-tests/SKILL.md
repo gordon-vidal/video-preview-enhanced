@@ -19,7 +19,8 @@ Read them if a command below fails; if they disagree with this file, they win an
 | Decoder behaviour, seeking, formats | `node test/run.js engine` plus scenario `seeking` / `playback` |
 | Player UI, panels, compare, scopes | the scenario(s) that cover the file, see the table in `test/vscode/README.md` |
 | `test/host/*_test.js` (test-only) | `node test/run.js unit --grep <name>` + `npm run verify:fast` |
-| Anything user-visible before a merge | layers 1-3 (about 10 minutes) |
+| Anything user-visible before a merge | `CI=true node test/run.js unit engine` + 1–3 targeted layer-3 scenarios (~5 min small fixes, ~10 min max) |
+| Before a release | `npm test` (full layers 1–3) + layer 4 (`node test/run.js perf`) |
 
 ## 2. Commands
 
@@ -28,21 +29,22 @@ node test/run.js unit engine                     # layers 1-2 (what CI runs), al
 node test/run.js unit engine --changed           # only what the changed files need
 node test/run.js unit --grep <name>              # one failing host test (guarded with timeout + stall kill; never run bare `node test/host/...`)
 node test/vscode/get_code.js                     # once: pinned portable VS Code into test/vscode/.code
-node test/run.js vscode --changed                # layer 3 scenarios for the changed files
-node test/run.js vscode --grep seeking           # one scenario; see test/vscode/README.md
-npm test                                         # layers 1-3, before a merge
+node test/run.js vscode --smoke                  # fast-merge layer-3 preset (~3-4 min)
+node test/run.js vscode --grep "^seeking/"       # one scenario or case; see test/vscode/README.md
+npm test                                         # full layers 1-3, before a release only (not before every merge)
 node test/run.js perf                            # layer 4 only: holds the lock, run alone
 ```
 
 ## 3. Workflow
 
-1. Run the one failing test until it passes. Run the full layer **once**, at the end.
-2. Layer 3 is Windows only and runs on a hidden desktop. Never start VS Code or a browser visibly.
+1. Run the one failing test until it passes. For layer 3, pick **1–3 targeted scenarios** (or specific `--grep "^scenario/case$"`) covering the exact behavior you changed (~5 min for small fixes, 10 min max) — do **not** run the whole layer 3 before a merge.
+2. When a single layer-3 case fails, re-run **only that case** (`--grep "^scenario/case$"`), not the whole scenario. Avoid running layer 3 while parallel delegates are pegging CPU.
+3. Layer 3 is Windows only and runs on a hidden desktop. Never start VS Code or a browser visibly.
    Where there is no GPU or desktop (CI, Linux), do not run it: say so in the PR instead.
-3. Test videos are Git LFS: if a test fails on a tiny "pointer" file, run `git lfs pull`.
-4. A "WebGL2 is not available" instance is broken, not a failed test: the runner retries it and marks
+4. Test videos are Git LFS: if a test fails on a tiny "pointer" file, run `git lfs pull`.
+5. A "WebGL2 is not available" instance is broken, not a failed test: the runner retries it and marks
    `retried`. Do not paper over real failures with retries; report flaky scenarios.
-5. Report what ran and what did not (layer, counts, failures) in the PR.
+6. Report what ran and what did not (layer, counts, failures) in the PR.
 
 ## 4. Test design & red → green → refactor
 
