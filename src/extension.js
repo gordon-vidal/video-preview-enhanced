@@ -1052,10 +1052,6 @@ function activate(context) {
       const sample = vscode.Uri.joinPath(context.extensionUri, 'media', 'probe', 'h264_8_1080.mkv');
       await vscode.commands.executeCommand('vscode.openWith', sample, 'videoPreviewEnhanced.player');
     }),
-    vscode.commands.registerCommand('videoPreviewEnhanced.openSampleVideo', async () => {
-      const sample = vscode.Uri.joinPath(context.extensionUri, 'media', 'probe', 'h264_8_1080.mkv');
-      await vscode.commands.executeCommand('vscode.openWith', sample, 'videoPreviewEnhanced.player');
-    }),
     vscode.commands.registerCommand('videoPreviewEnhanced.loadSubtitles', () => {
       const v = activeViewer();
       if (v) return v.session.onMessage({ type: 'loadSubs' });
