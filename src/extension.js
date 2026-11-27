@@ -504,7 +504,8 @@ async function confirmDownload(build) {
 
 /**
  * Setup for the optional native decoder: a build matched to this machine, or the user's own.
- * @param {{ driverNotice?: any }} [opts] driverNotice: the NVENC driver mismatch that led here (driver notice)
+ * @param {{ driverNotice?: any, fromGuide?: boolean }} [opts] driverNotice: the NVENC driver mismatch that led here;
+ *   fromGuide: called from the setup walkthrough (confirm an already-working ffmpeg and move on instead of opening the picker).
  */
 async function setupFfmpeg(opts = {}) {
   if (vscode.env.remoteName && vscode.env.remoteName !== 'wsl' && remoteff.supported(hostPlatform(), hostArch())) {
@@ -556,27 +557,50 @@ async function setupFfmpeg(opts = {}) {
   }
   const gpus = info.gpus.map((g) => `${g.name}${g.driver ? ` (driver ${g.driver})` : ''}`).join(', ') || 'no GPU found';
   const now = t ? `${t.version.replace(/ Copyright.*/, '')} [${t.source}]` : 'not installed — the built-in decoder plays everything up to about 1080p';
+  const driverNotice = build ? (opts.driverNotice || transcodeProbe.knownDriverNotice(t, globalState, info.nvidiaDriver)) : null;
+  const dlItem = build ? setup.downloadItem({ build, found: t, nvidiaDriver: info.nvidiaDriver, driverNotice }) : null;
+  // From the walkthrough: when a working ffmpeg is already present and no driver-mismatch download is recommended,
+  // confirm it and let the walkthrough advance instead of opening a download-first picker.
+  if (opts.fromGuide && t && (!dlItem || !dlItem.recommended)) {
+    vscode.window.showInformationMessage(`Video Preview: using ffmpeg already on this computer (${t.version.replace(/ Copyright.*/, '')}).`);
+    return;
+  }
+  const mismatch = dlItem && dlItem.mismatch;
+  const keepItem = {
+    id: 'keep',
+    label: '$(check) Keep current setup',
+    detail: mismatch
+      ? `Keep ffmpeg${mismatch.have ? ` ${mismatch.have}` : ''} [${t.source}] — GPU decoding works; GPU encoding (NVENC) needs ${mismatch.need}`
+      : `Native ffmpeg: ${now}`,
+  };
+  const retestItem = t ? { id: 'retest', label: '$(beaker) Re-test ffmpeg on this computer', detail: 'Measures each GPU decoding method with short test clips (a minute or two, in the background).' } : null;
+  const keepFirst = !!(t && (!dlItem || !dlItem.recommended));
   const items = [];
-  if (build) {
-    // Recommended when the ffmpeg found can't encode on the GPU with this NVIDIA driver and the download matches it.
-    const driverNotice = opts.driverNotice || transcodeProbe.knownDriverNotice(t, globalState, info.nvidiaDriver);
-    items.push(setup.downloadItem({ build, found: t, nvidiaDriver: info.nvidiaDriver, driverNotice }));
+  if (keepFirst) items.push(keepItem, retestItem);
+  if (dlItem) {
+    items.push(dlItem);
   } else {
     const blocked = buildError && proxy.looksBlocked({ message: buildError });
     items.push({ id: 'none', label: '$(warning) No ffmpeg download available', detail: `${buildError}${blocked ? ' (blocked? set http.proxy, or download ffmpeg in a browser and use it below)' : ''}` });
   }
+  // When ffmpeg is already installed but has an NVENC driver mismatch, put Keep right below the recommended download
+  // so both real choices (download matching build vs. keep existing ffmpeg) are visible together.
+  if (mismatch && !keepFirst) items.push(keepItem);
   items.push({
     id: 'pickFile', label: '$(file-binary) Use an ffmpeg I already have…', description: process.platform === 'win32' ? 'ffmpeg.exe, or a downloaded .zip / .7z' : 'ffmpeg, or a downloaded archive',
     detail: 'ffprobe is looked up next to it; an archive is unpacked into the extension\'s folder.',
   });
   items.push({ id: 'pickFolder', label: '$(folder) Use an ffmpeg folder I already have…', detail: 'A folder with ffmpeg and ffprobe in it or in its bin/ folder (an unpacked build).' });
   items.push({ id: 'pm', label: '$(terminal) Install ffmpeg with the package manager', description: setup.packageManagerCommand(), detail: 'Opens a terminal with the command typed in; you press Enter. May need admin rights.' });
-  if (t) items.push({ id: 'retest', label: '$(beaker) Re-test ffmpeg on this computer', detail: 'Measures each GPU decoding method with short test clips (a minute or two, in the background).' });
+  if (retestItem && !keepFirst) items.push(retestItem);
   if (t && t.source === 'downloaded') items.push({ id: 'remove', label: '$(trash) Remove the downloaded ffmpeg' });
-  items.push({ id: 'keep', label: '$(check) Keep current setup', detail: `Native ffmpeg: ${now}` });
+  if (!keepFirst && !mismatch) items.push(keepItem);
+  const placeHolder = mismatch
+    ? `Found ffmpeg${mismatch.have ? ` ${mismatch.have}` : ''} [${t.source}] — GPU decoding works, but NVENC needs ${mismatch.need} or ffmpeg ${mismatch.buildLine}`
+    : `Native ffmpeg now: ${now}`;
   const pick = await vscode.window.showQuickPick(items, {
     title: `Video Preview: optional ffmpeg · ${process.platform} ${process.arch} · ${gpus}`,
-    placeHolder: `Native ffmpeg now: ${now}`, matchOnDetail: true, ignoreFocusOut: true,
+    placeHolder, matchOnDetail: true, ignoreFocusOut: true,
   });
   if (!pick || pick.id === 'keep' || pick.id === 'none') return;
   if (pick.id === 'retest') { retestFfmpeg(); return; }
@@ -984,7 +1008,7 @@ function activate(context) {
     // Setup guide buttons (package.json walkthrough): Next / Got it / Done on every step, and ffmpeg setup that moves on.
     vscode.commands.registerCommand('videoPreviewEnhanced.setupNext', (id) => setupNext(context, id)),
     vscode.commands.registerCommand('videoPreviewEnhanced.setupFfmpegFromGuide', async (id) => {
-      await setupFfmpeg();
+      await setupFfmpeg({ fromGuide: true });
       toolsPromise = null;
       if (await tools()) await setupNext(context, id, { skipped: false }); // set up (or already there): on to the next step
     }),
@@ -1023,6 +1047,10 @@ function activate(context) {
           await vscode.commands.executeCommand('videoPreviewEnhanced.installAgentSkill');
         }
       });
+    }),
+    vscode.commands.registerCommand('videoPreviewEnhanced.openSampleVideo', async () => {
+      const sample = vscode.Uri.joinPath(context.extensionUri, 'media', 'probe', 'h264_8_1080.mkv');
+      await vscode.commands.executeCommand('vscode.openWith', sample, 'videoPreviewEnhanced.player');
     }),
     vscode.commands.registerCommand('videoPreviewEnhanced.openSampleVideo', async () => {
       const sample = vscode.Uri.joinPath(context.extensionUri, 'media', 'probe', 'h264_8_1080.mkv');

@@ -177,10 +177,11 @@ const lineDriver = (l) => (l.major >= 9 ? '610' : l.major >= 8 ? '570' : null);
  * the driver allows) while the download is the line that matches the driver (chooseBuild capped it).
  * @param {{ build: any, found?: { version?: string, source?: string }|null, nvidiaDriver?: string|null,
  *   driverNotice?: { minDriver?: string|null }|null }} o
- * @returns {{ id: 'build', label: string, description: string, detail: string, recommended: boolean }}
+ * @returns {{ id: 'build', label: string, description: string, detail: string, recommended: boolean, mismatch: { have: string, need: string, buildLine: string } | null }}
  */
 function downloadItem({ build, found = null, nvidiaDriver = null, driverNotice = null }) {
   let why = '';
+  let mismatch = null;
   const cap = nvidiaLineMax(nvidiaDriver);
   // An ffmpegPath setting wins over a downloaded build (extension.js tools()), so the download would change nothing.
   if (found && found.source !== 'setting' && cap && build.line && !above(build.line, cap)) {
@@ -191,6 +192,11 @@ function downloadItem({ build, found = null, nvidiaDriver = null, driverNotice =
         : tooNew ? lineDriver(have) : null;
       why = `Matches NVIDIA driver ${nvidiaDriver}, so GPU encoding (NVENC) works. The ffmpeg you have${have ? ` (${have.major}.${have.minor})` : ''} `
         + `needs ${need ? `driver ${need} or newer` : 'a newer driver'} for it. `;
+      mismatch = {
+        have: have ? `${have.major}.${have.minor}` : '',
+        need: need ? `driver ${need}+` : 'a newer driver',
+        buildLine: `${build.line.major}.${build.line.minor}`,
+      };
     }
   }
   const recommended = !found || !!why;
@@ -199,6 +205,7 @@ function downloadItem({ build, found = null, nvidiaDriver = null, driverNotice =
     description: `${build.label}, ~${build.sizeMB} MB from ${build.source}, no admin rights`,
     detail: `${why}Real-time 4K, HEVC 10-bit, AV1 and ProRes. ${build.note ? `${build.note}. ` : ''}Checked against the SHA-256 listed in the same release; stored in the extension's folder.`,
     recommended,
+    mismatch,
   };
 }
 

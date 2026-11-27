@@ -72,6 +72,60 @@ const walkthrough = require('../../src/walkthrough');
   assert.strictEqual(openCalls[0][0], 'vscode.openWith');
   assert.match(openCalls[0][1].fsPath, /media[\\/]probe[\\/]h264_8_1080\.mkv$/);
   assert.strictEqual(openCalls[0][2], 'videoPreviewEnhanced.player');
+
+  // setupFfmpeg / setupFfmpegFromGuide when ffmpeg is already installed on this computer:
+  const ff = require('../../src/ffmpeg');
+  const setup = require('../../src/setup');
+  const hardware = require('../../src/hardware');
+  const origLocate = ff.locateTools;
+  const origChoose = setup.chooseBuild;
+  const origDetect = hardware.detectMachine;
+  const fakeBuild = { source: 'BtbN/FFmpeg-Builds', label: 'ffmpeg 8.1 (win64, LGPL)', sizeMB: 77, note: 'GPU decoding via NVIDIA NVDEC', line: { major: 8, minor: 1 } };
+  try {
+    h.vscode.ProgressLocation = { Notification: 15 };
+    h.vscode.window.withProgress = (_o, fn) => fn({ report() {} });
+    ff.locateTools = async () => ({ ffmpeg: 'ffmpeg', ffprobe: 'ffprobe', version: 'ffmpeg version n8.1 Copyright (c) 2000-2026', legacy: false, gpuFilters: new Set(), stamp: 'x' });
+    setup.chooseBuild = async () => fakeBuild;
+    hardware.detectMachine = async () => ({ gpus: [{ name: 'Test GPU', driver: '581.15' }], nvidiaDriver: '581.15' });
+
+    // From the walkthrough: confirms the existing ffmpeg and advances without opening the download picker.
+    let picked = false;
+    const infos = [];
+    h.vscode.window.showQuickPick = async () => { picked = true; return undefined; };
+    h.vscode.window.showInformationMessage = async (msg) => { infos.push(msg); return undefined; };
+    ran();
+    await cmd('videoPreviewEnhanced.setupFfmpegFromGuide', 'ffmpeg');
+    assert.strictEqual(picked, false, 'walkthrough should not open QuickPick when ffmpeg is already working');
+    assert.ok(infos.some((m) => /using ffmpeg already on this computer/i.test(m)), `expected confirmation message, got: ${infos}`);
+    const guideCalls = ran();
+    assert.deepStrictEqual(guideCalls[0], ['setContext', walkthrough.doneKey('ffmpeg'), true]);
+    assert.strictEqual(guideCalls[1][0], 'workbench.action.openWalkthrough');
+
+    // Direct setupFfmpeg command: Keep current setup & Re-test come before Download when ffmpeg is already fine.
+    let setupItems = null;
+    h.vscode.window.showQuickPick = async (it) => { setupItems = it; return undefined; };
+    await cmd('videoPreviewEnhanced.setupFfmpeg');
+    assert.strictEqual(setupItems[0].id, 'keep', 'Keep current setup should be first');
+    assert.strictEqual(setupItems[1].id, 'retest', 'Re-test should be second');
+    assert.strictEqual(setupItems[2].id, 'build', 'Download should follow Keep and Re-test');
+
+    // When a driver-mismatch download IS recommended (ffmpeg 9.0 on driver 581), Download stays first,
+    // Keep current setup is right below it explaining the NVENC trade-off, and the placeholder explains why.
+    ff.locateTools = async () => ({ ffmpeg: 'ffmpeg', ffprobe: 'ffprobe', version: 'ffmpeg version n9.0-12-gabc Copyright', legacy: false, gpuFilters: new Set(), stamp: 'y' });
+    setupItems = null;
+    let setupOpts = null;
+    h.vscode.window.showQuickPick = async (it, o) => { setupItems = it; setupOpts = o; return undefined; };
+    await cmd('videoPreviewEnhanced.setupFfmpeg');
+    assert.strictEqual(setupItems[0].id, 'build', 'Recommended driver-matched download should stay first');
+    assert.strictEqual(setupItems[1].id, 'keep', 'Keep current setup should be right below the recommended download');
+    assert.match(setupItems[1].detail, /GPU decoding works; GPU encoding \(NVENC\) needs driver 610\+/);
+    assert.match(setupOpts.placeHolder, /Found ffmpeg 9\.0 .*GPU decoding works, but NVENC needs driver 610\+ or ffmpeg 8\.1/);
+  } finally {
+    ff.locateTools = origLocate;
+    setup.chooseBuild = origChoose;
+    hardware.detectMachine = origDetect;
+  }
+
   h.dispose();
   console.log('setup guide commands: ok');
 })().catch((e) => { console.error(e); process.exit(1); });
