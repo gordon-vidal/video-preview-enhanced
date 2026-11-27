@@ -338,6 +338,7 @@ class WarmSegment extends EventEmitter {
     /** @type {any} */
     this.stallTimer = null;
     this.stalled = false; // ended by the stall limit (no picture in time), not by a fault
+    this.postStall = false; // whether the post-target first-picture deadline is armed
     /** @type {TsFeed | null} */
     this.feed = null;
     const seg = this;
@@ -412,6 +413,8 @@ class WarmSegment extends EventEmitter {
     }
     if (this.n === 0) {
       if (!startsDecoder(data)) { this.finish(1, 'the first frame is not an IDR with SPS/PPS'); return; }
+      clearTimeout(this.stallTimer);
+      this.stallTimer = null;
       this.firstMs = Date.now() - this.t0;
     }
     this.n++;
@@ -504,18 +507,20 @@ class WarmDecoder {
       return seg;
     }
     seg.remux = remux;
+    this.armStall(seg, `no progress ${this.stallMs} ms before the target was fed`);
     let rerr = '';
     remux.on('error', (/** @type {any} */ e) => { rerr += String(e && e.message || e); });
     if (remux.stderr) remux.stderr.on('data', (/** @type {any} */ d) => { rerr = (rerr + d).slice(-1000); });
     remux.stdout.on('data', (/** @type {Buffer} */ d) => {
       if (this.seg !== seg || seg.closed || !seg.feed) return;
-      this.write(seg, seg.feed.push(d));
-      if (seg.feed && seg.feed.post > 0 && seg.n === 0 && !seg.stallTimer) {
-        seg.stallTimer = setTimeout(() => {
-          if (seg.closed || seg.n !== 0) return;
-          seg.stalled = true; // slow, perhaps only for now (src/stream.js warmStalled): not a fault of the decoder
-          seg.finish(1, `no picture ${this.stallMs} ms after the target was fed`);
-        }, this.stallMs);
+      const accepted = this.write(seg, seg.feed.push(d));
+      if (seg.feed && seg.feed.post > 0) {
+        if (seg.n === 0 && !seg.postStall) {
+          seg.postStall = true;
+          this.armStall(seg, `no picture ${this.stallMs} ms after the target was fed`);
+        }
+      } else if (accepted && !seg.postStall) {
+        this.armStall(seg, `no progress ${this.stallMs} ms before the target was fed`);
       }
     });
     remux.on('close', (/** @type {number | null} */ code, /** @type {string | null} */ signal) => {
@@ -532,14 +537,35 @@ class WarmDecoder {
     return seg;
   }
 
-  /** @param {WarmSegment} seg @param {Buffer} bytes */
+  /** @param {WarmSegment} seg @param {string} why */
+  armStall(seg, why) {
+    clearTimeout(seg.stallTimer);
+    seg.stallTimer = null;
+    if (seg.closed || seg.n !== 0) return;
+    seg.stallTimer = setTimeout(() => {
+      if (seg.closed || seg.n !== 0) return;
+      seg.stalled = true; // slow, perhaps only for now (src/stream.js warmStalled): not a fault of the decoder
+      seg.finish(1, why);
+    }, this.stallMs);
+  }
+
+  /** @param {WarmSegment} seg @param {Buffer} bytes @returns {boolean} */
   write(seg, bytes) {
     if (seg.feed && seg.feed.maxPts > this.fedUntil) this.fedUntil = seg.feed.maxPts;
-    if (!bytes.length || !this.proc.stdin || this.proc.stdin.destroyed) return;
-    if (!this.proc.stdin.write(bytes) && seg.remux) {
-      seg.remux.stdout.pause();
-      this.proc.stdin.once('drain', () => { if (this.seg === seg && !seg.closed && !seg.stdout.isPaused()) seg.remux.stdout.resume(); });
+    if (!bytes.length || !this.proc.stdin || this.proc.stdin.destroyed) return false;
+    if (!this.proc.stdin.write(bytes)) {
+      if (seg.remux) {
+        seg.remux.stdout.pause();
+        this.proc.stdin.once('drain', () => {
+          if (this.seg === seg && !seg.closed) {
+            if (!seg.postStall && seg.n === 0) this.armStall(seg, `no progress ${this.stallMs} ms before the target was fed`);
+            if (seg.remux && !seg.stdout.isPaused()) seg.remux.stdout.resume();
+          }
+        });
+      }
+      return false;
     }
+    return true;
   }
 
   /** @param {WarmSegment} seg */

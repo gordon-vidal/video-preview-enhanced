@@ -5,12 +5,98 @@ component: a decode-only WebAssembly build of FFmpeg, made with libav.js. Everyt
 else in the package (`src/`, `media/*.js`, `media/*.css`) is this project's own code
 under the MIT licence, with no runtime npm dependencies.
 
-## Webview UI libraries (build-time, bundled into `media/dist/webview-ui.js`)
+## Webview UI libraries (bundled into `media/dist/webview-ui.js`)
 
-`media/dist/webview-ui.js` is built by `npm run build:ui` from `media/ui/` and bundles three MIT-licensed
-libraries: Preact (https://github.com/preactjs/preact), @preact/signals (https://github.com/preactjs/signals)
-and @floating-ui/dom (https://github.com/floating-ui/floating-ui). They are devDependencies only; nothing from
-`node_modules` ships in the package. Each library's MIT licence and copyright notice are in its npm package.
+`media/dist/webview-ui.js` is built by `npm run build:ui` from `media/ui/` and bundles the following
+MIT-licensed libraries (including their bundled transitive dependencies). They are declared as
+`devDependencies` in `package.json` so `node_modules` is not shipped in the VSIX; their full
+upstream copyright notices and MIT licence texts are included below.
+
+| Package | Version | Licence | Source |
+|---|---|---|---|
+| `preact` | 11.2.0 | MIT | https://github.com/preactjs/preact |
+| `@preact/signals` | 2.11.4 | MIT | https://github.com/preactjs/signals |
+| `@preact/signals-core` | 1.14.5 | MIT | https://github.com/preactjs/signals |
+| `@floating-ui/dom` | 1.8.0 | MIT | https://github.com/floating-ui/floating-ui |
+| `@floating-ui/core` | 1.8.0 | MIT | https://github.com/floating-ui/floating-ui |
+| `@floating-ui/utils` | 0.2.12 | MIT | https://github.com/floating-ui/floating-ui |
+
+### Preact (`preact`)
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2015-present Jason Miller
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Preact Signals (`@preact/signals`, `@preact/signals-core`)
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2022-present Preact Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Floating UI (`@floating-ui/dom`, `@floating-ui/core`, `@floating-ui/utils`)
+
+```
+MIT License
+
+Copyright (c) 2021-present Floating UI contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
 
 ## What is bundled
 
@@ -153,6 +239,9 @@ SOFTWARE.
 
 ## Development tools (not shipped)
 
-The extension has no runtime or development npm dependencies. The tests need ffmpeg on PATH for
-reference frames, and the real-VS-Code tests (`test/vscode/`) download a portable VS Code; neither
-is shipped. CI and publishing use `@vscode/vsce` and `ovsx` through `npx`, not as dependencies.
+The extension has no runtime npm dependencies and ships no `node_modules`. Development and the UI
+build (`npm run build:ui`, `npm run verify:fast`) use `devDependencies` declared in `package.json`
+(`esbuild`, `typescript`, static-analysis tools, and the bundled webview UI libraries listed above).
+The tests need ffmpeg on PATH for reference frames, and the real-VS-Code tests (`test/vscode/`)
+download a portable VS Code; neither is shipped. CI and publishing use `@vscode/vsce` and `ovsx`
+through `npx`, not as dependencies.

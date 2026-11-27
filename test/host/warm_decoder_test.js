@@ -364,6 +364,25 @@ const tick = () => new Promise((r) => setImmediate(r));
     h.dispose();
   }
 
+  { // Pre-target stall: if the warm process stops consuming stdin during pre-roll (backpressure before any target
+    // packet is fed), the no-progress deadline still fires, releases the GPU session, and retries the seek via ffmpeg.
+    const gpu = createGpuSessions(8);
+    const { s, logs, launched, warmProcs } = make({ encoder: 'h264_nvenc', gpu });
+    s.warmStallMs = 30;
+    s.handle({ type: 'open', view: { w: 1920, h: 1080 } });
+    assert.deepStrictEqual(gpu.counts(), { warm: 1 }, 'warm process holds a GPU session');
+    // Hold stdin backpressured (returns false, never emits 'drain') and feed only pre-roll packets (pts < S).
+    warmProcs[0].stdin.write = () => false;
+    warmProcs[1].stdout.write(tsPacket(0x100, { pes: { pts: W.firstS(25) - 2 / 25 } }));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.strictEqual(s.warm, null, 'warm process disposed on pre-target stall');
+    assert.deepStrictEqual(gpu.counts(), {}, 'GPU reservation released on pre-target stall');
+    assert.strictEqual(launched.length, 1, 'pending seek retried via per-seek ffmpeg');
+    assert.strictEqual(launched[0].t, 0);
+    assert.ok(logs.some((l) => /kept-running decoder stalled/.test(l)), logs.join('\n'));
+    s.dispose();
+  }
+
   { // HDR: a hardware tone-mapper that never gave a frame fails the warm process (libplacebo without a Vulkan device, seen
     // with a 2024 ffmpeg and NVENC): the tone-mapper is dropped, not the warm process, and no per-seek ffmpeg tries it again.
     // Every stream with the same ffmpeg (one tools object per check) skips it from then on: no second failed start.
