@@ -1233,7 +1233,7 @@ function createStream(c, o) {
   require('./gpu-sessions').sessions.setLimit(config().gpuEncoderSessions);
   const stream = new remotestream.EncodedStream({
     ...d.stream, tools: d.tools, file: c.fsPath, probed: d.probed, hidden: o.hidden, rotation: o.rotation || 0,
-    allowOverlap: false, maxHeight: o.maxHeight, maxKbps: o.maxKbps, fitView: !!o.fitView, allowLinkAdapt: !!d.stream.remote,
+    allowOverlap: false, maxHeight: o.maxHeight, maxKbps: o.maxKbps, fitView: !!o.fitView, allowLinkAdapt: !!d.stream.remote, warm: o.warm !== false,
     resolution: o.resolution !== undefined ? o.resolution : config().transcodeResolution, stats: !!logFile,
     initialLink: d.stream.remote ? sessionLink.read() : undefined,
     onLinkUpdate: (snapshot) => sessionLink.update(snapshot),

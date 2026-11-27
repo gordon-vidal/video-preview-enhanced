@@ -70,6 +70,9 @@ function createEngine(env) {
   const FAST_CODECS = new Set(['hevc', 'h264']); // decoders that honour skip_loop_filter (fast preview)
   const SETUP_NOTICE_RATIO = 0.5; // below this decode speed (x real time), prioritize the ffmpeg setup notice
   const onTracks = env.onTracks || (() => {}); // (player) when the track list or a selection changes
+  // Live transcode: whether this video sets the clock (a single video, Compare's clock tile): only it keeps a decoder
+  // running on the host between seeks (src/warm-decoder.js), sent with each seek.
+  const isClock = env.isClock || (() => true);
   // (player, {natural, ran}) once playback paused at the end of the file with loop off (media/autoplay.js decides what next).
   const onEnded = env.onEnded || (() => {});
   // Something arrived or changed outside the page's input events (a worker or host message, a decoder
@@ -2035,7 +2038,8 @@ function createEngine(env) {
       this.pendingHave = have ? { gen: this.gen, packets: have.packets } : null;
       if (this.fill) this.fill = null; // the host stops its fill on a seek
       this.worker.postMessage({ type: 'seek', gen: this.gen, t, ...(have ? { have: { keyT: have.keyT, lastT: have.lastT } } : {}),
-        ...(this.remoteStream ? { playing: this.playing } : {}), ...(this.remoteStream && this.fastFirstHook !== undefined ? { fastFirst: this.fastFirstHook } : {}),
+        ...(this.remoteStream ? { playing: this.playing, warm: this.warmHook !== undefined ? this.warmHook : !!isClock() } : {}),
+        ...(this.remoteStream && this.fastFirstHook !== undefined ? { fastFirst: this.fastFirstHook } : {}),
         ...(recoverTransport ? { recoverTransport: true } : {}) });
     }
 

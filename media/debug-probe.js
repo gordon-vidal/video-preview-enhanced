@@ -682,6 +682,8 @@
         if (m.sharp !== undefined) { player.sharpOff = !m.sharp; if (!m.sharp && player.cancelSharp) player.cancelSharp(); }
         if (m.fastFirst !== undefined) player.fastFirstHook = !!m.fastFirst; // sent with the next seek (host: on or off)
       }
+      // Tests: Live transcode's kept-running decoder on the host (src/warm-decoder.js) off or on (with the next seek).
+      if (m.action === 'warmDecoder' && player.remoteStream) player.warmHook = m.on === undefined ? undefined : !!m.on;
       // Tests: the last sharp frame's centre crop (media/engine.js sharpThumb), to tell which frame it is.
       if (m.action === 'sharpThumb') log(`sharpThumb ${JSON.stringify({ id: m.id, ...(player.sharpThumb || { error: 'no sharp frame yet' }) })}`);
       // A page with a controller over its decoders (the unified viewer) seeks / plays through it, so its state and

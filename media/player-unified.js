@@ -26,10 +26,11 @@
    *   onEnded: (info?: { natural?: boolean }) => void, post: (m: any) => void, log: (...a: any[]) => void,
    *   wake: () => void, showMessage: (msg?: string, hint?: string) => void,
    *   toast: (text: string, ms?: number) => void, getRate: () => number, getLoop: () => boolean,
-   *   getMuted: () => boolean, getVolume: () => number, onTracks: (player: any) => void }} PlayerHooks
+   *   getMuted: () => boolean, getVolume: () => number, onTracks: (player: any) => void, isClock?: () => boolean }} PlayerHooks
    *   getRate / getLoop / getMuted / getVolume: the page's live settings for a decoder that reads them on demand
    *   (media/frame-player.js); getMuted is true for every clip but the sound source. onTracks: media/engine.js's
-   *   track list or a track selection changed (the page reads player.tracks()).
+   *   track list or a track selection changed (the page reads player.tracks()). isClock: this decoder's video sets the
+   *   clock (a single video, or Compare's clock tile): Live transcode keeps a decoder running on the host only for it.
    * @typedef {(clip: ClipSpec, host: any, hooks: PlayerHooks) => any} CreatePlayer
    * @typedef {{ doc?: any, win?: any, vscode?: any, cfg?: any, createPlayer?: CreatePlayer | null, compositor?: any,
    *   sync?: any, widgets?: any, stateApi?: any, engineApi?: any, hostApi?: any, uiApi?: any, log?: (...a: any[]) => void }} BootEnv
@@ -190,6 +191,7 @@
         onEnded: (/** @type {any} */ _p, /** @type {any} */ info) => hooks.onEnded(info),
         // The sound and subtitle streams (tracks-streams): the page lists them in the CC and Audio track panels.
         onTracks: (/** @type {any} */ pl) => { if (typeof hooks.onTracks === 'function') hooks.onTracks(pl); },
+        isClock: () => (typeof hooks.isClock === 'function' ? hooks.isClock() : true),
       });
       const meta = clip.meta && typeof clip.meta === 'object' ? clip.meta
         : { size: clip.size || 0, duration: clip.duration || 0, label: clip.name || '', native: !!clip.native };
@@ -483,6 +485,10 @@
           return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
         },
         onTracks: (pl) => onPlayerTracks(id, pl),
+        isClock: () => {
+          const t = ui ? S.getTab(ui.getState()) : null;
+          return !t || t.tiles.length < 2 || clockIdOf(t) === id;
+        },
       };
       try {
         // Kept (not taken once): a clip closed and opened again, or restarted, opens with the host's meta again.
