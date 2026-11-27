@@ -992,7 +992,7 @@ const withGlobals = (dom, fn) => {
         assert.strictEqual($('rateReset').hidden, true, 'no reset badge at 1×');
         $('rate').fire('wheel', { deltaY: -100 });
         assert.strictEqual(ui.getPrefs().rate, 1.25, 'wheel up over the speed button: the next preset');
-        assert.deepStrictEqual([$('panel').hidden, $('panel').className], [false, 'panel speed compact'], 'the wheel opens the speed popover');
+        assert.deepStrictEqual([$('panel').hidden, $('panel').className], [false, 'panel speed popover'], 'the wheel opens the speed popover');
         assert.ok(!$('panel').contains(dom.doc.activeElement), 'the wheel peek does not take the focus');
         assert.strictEqual($('rateReset').hidden, false, 'the reset badge shows off 1×');
         assert.strictEqual($('rate').fire('wheel', { deltaY: 100 }).defaultPrevented, true, 'the page does not scroll');

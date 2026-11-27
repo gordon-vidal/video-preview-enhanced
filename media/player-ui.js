@@ -89,8 +89,6 @@
 
   /** Pixels of touchpad scroll that make one preset step over the speed button (a mouse notch is 100-120). */
   const WHEEL_NOTCH = 50;
-  /** How long the speed popover a wheel turn opened stays after the last turn, then how long it fades. */
-  const SPEED_PEEK_MS = 1500, SPEED_FADE_MS = 200;
 
   /**
    * The keyboard shortcuts of the single player (media/player.js), Compare (media/compare.js) and create(), as one
@@ -630,7 +628,7 @@
     for (const a of ['aria-haspopup', 'aria-controls', 'aria-expanded']) cmpBtn.removeAttribute(a);
     const playBtn = need('play'), prevBtn = need('prev'), nextBtn = need('next');
     const prevSize = $('prevSize'), nextSize = $('nextSize');
-    const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate'), rateReset = $('rateReset'), panelEl = $('panel');
+    const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate'), rateReset = $('rateReset');
     const cogBtn = need('cog'), infoBtn = need('infoBtn'), picBtn = $('picBtn'), fullBtn = $('full');
     const setABtn = $('setABtn'), setBBtn = $('setBBtn'), abMarks = $('abMarks'), abA = $('abA'), abB = $('abB');
     /** The tiles' right-click menu (#menu, compare.css); pages without it get one. */
@@ -1317,38 +1315,6 @@
     });
 
     // ---- actions (the bar, the keys, the menus and the panels all land here) ----
-    /**
-     * The wheel over the speed button opens the speed popover without taking focus (a "peek"); it fades out
-     * SPEED_PEEK_MS after the last turn (maintainer, 2026-11-27). Pointing into it, pressing in it or focusing it
-     * keeps it open as a click would; a popover a click opened is left alone.
-     */
-    let peeking = false, peekTimer = 0;
-    const speedOpen = () => !!controls && controls.view() === 'speed';
-    function stopPeekTimer() {
-      if (peekTimer) win.clearTimeout(peekTimer);
-      peekTimer = 0;
-      if (panelEl) panelEl.classList.remove('fading');
-    }
-    function peekSpeed() {
-      if (speedOpen() && !peeking) return;
-      if (!speedOpen()) { controls.show('speed', rateBtn, false); peeking = true; }
-      stopPeekTimer();
-      peekTimer = win.setTimeout(() => {
-        if (!peeking || !speedOpen()) { peeking = false; peekTimer = 0; return; }
-        if (panelEl) panelEl.classList.add('fading');
-        peekTimer = win.setTimeout(() => {
-          peekTimer = 0;
-          if (panelEl) panelEl.classList.remove('fading');
-          if (peeking && speedOpen()) controls.close(false);
-          peeking = false;
-        }, SPEED_FADE_MS);
-      }, SPEED_PEEK_MS);
-    }
-    function keepPeek() {
-      if (!peeking) return;
-      peeking = false;
-      stopPeekTimer();
-    }
     function setRate(/** @type {number} */ r, refresh = true) {
       prefs.rate = W.VpeControls.clampRate(r);
       drawBar();
@@ -1642,7 +1608,7 @@
       [playBtn, act.playPause, true], [prevBtn, () => act.stepButton(-1), true], [nextBtn, () => act.stepButton(1), true],
       [muteBtn, act.mute, true], [timeEl, act.cycleTime, true], [setABtn, act.setA, true], [setBBtn, act.setB, true],
       [cogBtn, () => controls.toggle('main', cogBtn), true], [infoBtn, act.info, true],
-      [rateBtn, () => { if (peeking) { keepPeek(); controls.show('speed', rateBtn); } else controls.toggle('speed', rateBtn); }, true], [tracksBtn, () => ccClick(), true],
+      [rateBtn, () => controls.toggle('speed', rateBtn), true], [tracksBtn, () => ccClick(), true],
       [picBtn, act.cyclePicture, true], [fullBtn, act.fullscreen, true],
       [liveChipEl, () => controls.toggle('transcode', liveChipEl), true],
     ], onClick);
@@ -1670,7 +1636,7 @@
     if (volDrag && W.VpeControls.holdVolumeOpen) W.VpeControls.holdVolumeOpen(volEl);
     cleanups.push(() => { if (seekDrag) seekDrag.stop(); if (volDrag) volDrag.stop(); });
     // The wheel over the speed button walks the presets (Shift: steps of 0.05) and opens the speed popover for a
-    // moment instead of a toast (peekSpeed); over the volume it steps the volume (media/player.js). Chromium turns Shift+wheel into a
+    // moment instead of a toast (controls.peek); over the volume it steps the volume (media/player.js). Chromium turns Shift+wheel into a
     // horizontal scroll, hence deltaX. A touchpad sends many small deltas: a preset needs a notch's worth of them.
     if (rateBtn) {
       let wheelAcc = 0;
@@ -1686,10 +1652,9 @@
           wheelAcc = 0;
           setRate(C.presetRate ? C.presetRate(prefs.rate, d < 0 ? 1 : -1) : prefs.rate + (d < 0 ? 1 : -1) * C.SPEED_STEP);
         }
-        peekSpeed();
+        controls.peek('speed', rateBtn);
       }, { passive: false });
     }
-    if (panelEl) for (const ev of ['pointerenter', 'pointerdown', 'focusin']) listen(panelEl, ev, keepPeek);
     // The reset badge above the speed button: back to 1×; focus moves to the speed button as the badge goes away.
     if (rateReset) {
       listen(rateReset, 'click', (/** @type {MouseEvent} */ e) => {
@@ -1699,13 +1664,11 @@
         if (had && rateBtn) rateBtn.focus();
       });
     }
-    cleanups.push(stopPeekTimer);
-    if (volEl) {
-      listen(volEl, 'wheel', (/** @type {WheelEvent} */ e) => {
-        if (!e.deltaY || !hasAudio(tab().soundId)) return;
-        e.preventDefault();
-        act.volumeStep(e.deltaY < 0 ? 0.05 : -0.05);
-      }, { passive: false });
+    if (volEl && RangeDrag) {
+      cleanups.push(RangeDrag.wheelStep(volEl, (/** @type {number} */ dir) => {
+        if (!hasAudio(tab().soundId)) return false;
+        act.volumeStep(dir * 0.05);
+      }));
     }
     if (capBanner) {
       const stopBtn = capBanner.querySelector('[data-act="pause"]') || $('capStopBtn');

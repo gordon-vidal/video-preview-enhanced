@@ -315,10 +315,10 @@ module.exports = [{
       s = await P.state();
       ok(s.panel && s.panel.view === 'speed' && JSON.stringify(s.panel.slider) === '["0.25","4"]', `speed panel slider ${JSON.stringify(s.panel && s.panel.slider)}`);
       ok(['0.5×', '1×', '1.5×', '2×'].every((l) => s.panel.rows.some((r) => r.label === `Speed ${l}`)), `preset chips: ${JSON.stringify(s.panel.rows.map((r) => r.label))}`);
-      await P.ask('click', { sel: '#panel .speedPresets button', text: '2×' });
+      await P.ask('click', { sel: '#panel [aria-label="Preset speeds"] button', text: '2×' });
       await settle(300);
       ok(await rateNow() === 2, 'the 2× preset did not set 2×');
-      await P.ask('click', { sel: '#panel button.big' }); // − (first big button)
+      await P.ask('click', { sel: '#panel button[aria-label="Slower by 0.05"]' });
       await settle(300);
       ok(Math.abs(await rateNow() - 1.95) < 1e-6, '− in the speed panel is not −0.05');
       P.act({ action: 'panel' });

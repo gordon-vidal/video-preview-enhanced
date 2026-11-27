@@ -83,6 +83,19 @@ const VpeRangeDrag = {
 
     return { dragging: () => pointerId !== null, stop };
   },
+
+  /**
+   * The wheel over a slider steps it: onStep(+1 up / -1 down); return false to leave the event alone (the page
+   * scrolls). Returns the unbind function.
+   */
+  wheelStep(input, onStep) {
+    const on = (e) => {
+      if (!e.deltaY || onStep(e.deltaY < 0 ? 1 : -1) === false) return;
+      e.preventDefault();
+    };
+    input.addEventListener('wheel', on, { passive: false });
+    return () => input.removeEventListener('wheel', on);
+  },
 };
 
 if (typeof module !== 'undefined') module.exports = VpeRangeDrag;

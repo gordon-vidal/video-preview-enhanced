@@ -30,5 +30,10 @@ The speed panel was large: a title, a big readout, a slider and a paragraph of k
 Mock-up: `node tools/mockup/render.js --scenario speed-off-normal --out .tmp/mockup.html` (single video at
 1.5×; scroll over or click the speed button).
 
-Files: `media/controls.js` (ladder, panel), `media/player-ui.js` (wheel, peek, badge), `src/bar.js` (markup),
-`media/player.css`.
+Built from shared blocks (no speed-only styling): the **bar badge** (`.badgew` + `button.badge`, also the step size
+badge), the **popover** (`controls.js` `POPOVERS` and `peek`, also the step size popover), the **stepper**
+(`controls.js` `stepper`, also subtitle delay / size and picture zoom), the **slider** (`.range` and
+`VpeRangeDrag.wheelStep`, also the volume bar) and a **chip row** (`.jbox` > `.jopts.one-row`).
+
+Files: `media/controls.js` (ladder, panel, popover, peek, stepper), `media/player-ui.js` (wheel, badge),
+`media/range-drag.js` (wheelStep), `src/bar.js` (markup), `media/player.css`.

@@ -31,18 +31,18 @@ const icons = {
 // The range buttons show the letters of their keys and of the pins on the seek bar (A, B), not an icon.
 const rangeLabel = (letter) => '<span class="rngl" aria-hidden="true">' + letter + '</span>';
 /** A step button with its step size badge (media/controls.js drawStepBadges fills it; a click opens the size popover). */
-const stepButton = (id, title, label, key, icon) => '<span class="stepw">' +
+const stepButton = (id, title, label, key, icon) => '<span class="badgew stepw">' +
   '<button id="' + id + '" class="ib" title="' + title + '" aria-label="' + label + '" aria-keyshortcuts="' + key + '">' + icon + '</button>' +
-  '<button id="' + id + 'Size" class="stepsz mono" data-default="1" title="Step size: 1 frame. Click to change"' +
+  '<button id="' + id + 'Size" class="badge stepsz mono" data-default="1" title="Step size: 1 frame. Click to change"' +
   ' aria-label="Step size: 1 frame" aria-expanded="false" aria-controls="panel">1f</button></span>';
 /**
  * The speed button with its reset badge (shown while the speed is not 1×; a click goes back to 1×; media/player-ui.js
  * drawBar).
  */
-const speedButton = () => '<span class="ratew">' +
+const speedButton = () => '<span class="badgew ratew">' +
   '<button id="rate" class="ib speed mono" title="Speed: click, or scroll to change (Shift+scroll: fine)" aria-label="Speed 1×"' +
   ' aria-expanded="false" aria-controls="panel">1×</button>' +
-  '<button id="rateReset" class="ratereset" title="Normal speed (1×)" aria-label="Reset speed to 1×" hidden>' +
+  '<button id="rateReset" class="badge ratereset" title="Normal speed (1×)" aria-label="Reset speed to 1×" hidden>' +
   '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"' +
   ' stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 3.5V9h5.5"/></svg></button></span>';
 const playFlashHtml = `<div id="playFlash" aria-hidden="true">${icons.play}${icons.pause}</div>`;
@@ -92,7 +92,7 @@ function barHtml({ canCompare = true, compareOpen = false, folder = false } = {}
     ${stepButton('prev', 'Previous frame  ,', 'Previous frame', ',', icons.prev)}
     <button id="play" class="ib wide" title="Play  Space" aria-label="Play" aria-keyshortcuts="Space K">${icons.play}${icons.pause}</button>
     ${stepButton('next', 'Next frame  .', 'Next frame', '.', icons.next)}
-    <span class="vol-wrap gap"><button id="mute" class="ib" title="Mute  M" aria-label="Mute" aria-pressed="false" aria-keyshortcuts="M">${icons.sound}${icons.muted}</button><span class="vol-slide"><input id="volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume  ↑ ↓" aria-label="Volume"></span></span>
+    <span class="vol-wrap gap"><button id="mute" class="ib" title="Mute  M" aria-label="Mute" aria-pressed="false" aria-keyshortcuts="M">${icons.sound}${icons.muted}</button><span class="vol-slide"><input id="volume" class="range" type="range" min="0" max="1" step="0.05" value="1" title="Volume  ↑ ↓" aria-label="Volume"></span></span>
     <button id="time" class="mono" title="Click: time / timecode / frames" aria-label="Position"><span id="now">0:00.000</span> <span id="dur">/ 0:00.000</span></button>
     <button id="setABtn" class="ib rng" title="Set range start (A)" aria-label="Set range start (A)" aria-pressed="false" aria-keyshortcuts="A">${rangeLabel('A')}</button>
     <button id="setBBtn" class="ib rng" title="Set range end (B)" aria-label="Set range end (B)" aria-pressed="false" aria-keyshortcuts="B">${rangeLabel('B')}</button>
