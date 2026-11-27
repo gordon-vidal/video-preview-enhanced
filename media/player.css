@@ -25,7 +25,8 @@
 .vpe-btn:hover { background: var(--vpe-hover); }
 .vpe-btn:disabled { opacity: 0.6; cursor: default; }
 .vpe-btn-main {
-  background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent;
+  background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-border, transparent);
 }
 .vpe-btn-main:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
 .panel .vpe-btn { height: var(--vpe-btn-h-panel); }
