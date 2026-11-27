@@ -1,13 +1,15 @@
 'use strict';
 // Seek-bar previews (docs/notes/seek-preview.md) in a real VS Code, simple mode (the default). Lazy:
-//   idle:    after open nothing is decoded (no thumbnail service, no request, no worker, no ffmpeg
-//            thumbnail process) until the first hover, also not 4 s after the first frame
+//   idle:    after open nothing is decoded (no request, no worker, no ffmpeg thumbnail process) until the
+//            first hover, also not 4 s after the first frame; the shown frame may already be a preview (capture)
 //   hover:   a thumbnail shows up on hover (the exact keyframe; neighbours fill while the pointer stays)
 //   drag:    while the slider is dragged (synthetic: pointerdown, input events, then pointerup)
 //            the thumbnail follows the slider and changes, and the main picture holds its committed frame
 //   stop:    after the pointer leaves and after the drag ends, no further thumbnail request is made
 //   exact:   on release the picture is exactly the frame under the slider (ffmpeg reference), and
 //            a later seek and frame step stay exact
+//   capture: on a clip with a 10 s GOP, play 5 s, then hover a time between keyframes: the picture is a played
+//            frame within one slot (X) of it, not the keyframe; reports what a capture cost the frame loop
 // Two decode paths: WebAssembly (MPEG-2, built-in decoder) and native ffmpeg (HEVC, ffmpeg: true).
 // The 20 s clips are made from long_20s.mp4 with a keyframe every second.
 const fs = require('fs');
@@ -34,7 +36,7 @@ async function previewChecks(vs, h, file, R, label) {
       // 1. Idle: nothing decodes on its own (longer than the old 2 s strip start).
       await lib.sleep(4000);
       const idle = await P.state();
-      ok(!idle.strip, `no thumbnail service before the first hover (${JSON.stringify(idle.strip)})`);
+      ok(!idle.strip || (idle.strip.requests === 0 && !idle.strip.worker), `no request or worker before the first hover (${JSON.stringify(idle.strip)})`);
       ok(idle.thumb.hidden, 'no thumbnail shown');
       ok(!lib.lines(vs, /thumbs:|thumb ffmpeg/, P.fromMark).length, 'no thumbnail worker or ffmpeg process started');
       const [sx, sy, sw, sh] = idle.seekRect;
@@ -45,9 +47,10 @@ async function previewChecks(vs, h, file, R, label) {
       const hv = await P.waitState((x) => !x.thumb.hidden && x.thumb.w > 0, { timeout: 15000, what: 'hover thumbnail', interval: 50 });
       r.firstPictureMs = Date.now() - th0;
       ok(!hv.tip.hidden, 'time tip shown');
-      const filled = await P.waitState((x) => x.strip && x.strip.slots >= 9 && x.strip.hovering, { timeout: 15000, what: 'neighbours filled while hovering' });
+      // One keyframe can answer several slots, so the neighbourhood may need fewer than 9 requests.
+      const filled = await P.waitState((x) => x.strip && x.strip.filled, { timeout: 15000, what: 'neighbours filled while hovering' });
       r.hover = filled.strip;
-      ok(filled.strip.slots <= 9, `only the neighbourhood is decoded (${filled.strip.slots} places, ${filled.strip.cached} pictures)`);
+      ok(filled.strip.slots >= 3 && filled.strip.slots <= 9, `only the neighbourhood is decoded (${filled.strip.slots} places, ${filled.strip.cached} pictures)`);
       P.dom('mouseleave', sx + sw / 2, sy - 200, { target: 'seek' });
       await lib.sleep(300);
       ok((await P.state()).thumb.hidden, 'leaving hides the thumbnail');
@@ -95,6 +98,32 @@ async function previewChecks(vs, h, file, R, label) {
   });
 }
 
+async function captureChecks(vs, h, file, R, label) {
+  await R.run(`${label}/capture`, async (ok, r) => {
+    const P = await lib.open(vs, h, file);
+    try {
+      await P.waitFirstFrame();
+      P.play();
+      await P.waitState((x) => x.t >= 5.2, { timeout: 20000, what: 'played 5 s' });
+      P.pause();
+      const s0 = await P.state();
+      r.played = s0.strip;
+      ok(s0.strip && s0.strip.requests === 0 && !s0.strip.worker, `playing asked for no thumbnail (${JSON.stringify(s0.strip)})`);
+      ok(s0.strip && s0.strip.frames >= 4, `played frames became previews (${s0.strip && s0.strip.frames})`);
+      const [sx, sy, sw, sh] = s0.seekRect;
+      const at = 3.5; // keyframes at 0 and 10 s
+      P.dom('mousemove', sx + (sw * at) / s0.duration, sy + sh / 2);
+      const hv = await P.waitState((x) => !x.thumb.hidden && x.strip && x.strip.shown, { timeout: 10000, what: 'hover picture', interval: 50 });
+      const shown = hv.strip.shown;
+      r.shown = shown;
+      ok(shown.kind === 'frame' && Math.abs(shown.t - at) <= hv.strip.X + 0.05,
+        `the picture is a played frame within X = ${hv.strip.X} s of ${at} s (${JSON.stringify(shown)})`);
+      r.captureMs = hv.strip.captureMs;
+      P.dom('mouseleave', sx + sw / 2, sy - 200, { target: 'seek' });
+    } finally { await P.close(); }
+  });
+}
+
 module.exports = [{
   name: 'seek_preview',
   settings: SETTINGS,
@@ -103,6 +132,7 @@ module.exports = [{
     if (!h.ffmpeg) return [{ name: 'skipped', ok: true, skipped: 'no ffmpeg (reference frames)', problems: [] }];
     const file = makeClip(h, 'sp_mpeg2_20s.mpg', ['-c:v', 'mpeg2video', '-g', '25', '-q:v', '4']);
     await previewChecks(vs, h, file, R, 'wasm');
+    await captureChecks(vs, h, makeClip(h, 'sp_mpeg2_gop10.mpg', ['-c:v', 'mpeg2video', '-g', '300', '-bf', '0', '-q:v', '4']), R, 'wasm');
     return R.out;
   },
 }, {
@@ -114,6 +144,8 @@ module.exports = [{
     if (!h.ffmpeg) return [{ name: 'skipped', ok: true, skipped: 'no ffmpeg', problems: [] }];
     const file = makeClip(h, 'sp_hevc_20s.mp4', ['-c:v', 'libx265', '-x265-params', 'keyint=25:min-keyint=25:log-level=error', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p']);
     await previewChecks(vs, h, file, R, 'native');
+    const gop = makeClip(h, 'sp_hevc_gop10.mp4', ['-c:v', 'libx265', '-x265-params', 'keyint=300:min-keyint=300:scenecut=0:log-level=error', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p']);
+    await captureChecks(vs, h, gop, R, 'native');
     return R.out;
   },
 }];
