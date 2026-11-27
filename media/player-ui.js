@@ -1950,8 +1950,7 @@
       || (wheelPan && wheelPan.wasRecentPan()) || Date.now() - splitterEndedAt < DRAG_CLICK_MS;
 
     // ---- fullscreen idle bar, Zen Mode Esc Esc, auto-pause hidden tabs, the go-to box ----
-    const isFullscreenOrZen = () => !!(doc.fullscreenElement || (doc.body && doc.body.classList.contains('maxi')));
-    const idle = Input ? Input.createIdleController({ doc, win, isFullscreen: isFullscreenOrZen, isPlaying: () => tab().playing }) : null;
+    const idle = Input ? Input.createIdleController({ doc, win, isPlaying: () => tab().playing }) : null;
     if (idle) cleanups.push(() => idle.dispose());
     const zen = Input ? Input.createZenEscTracker({ win, onExitZen: () => postHost({ type: 'focusModeExited' }) }) : null;
     const vis = Input ? Input.createVisibilityController({
@@ -2956,13 +2955,7 @@
         if (!!tab().capture !== on) { const r = S.toggleCapture(ws); commit(r.state, r.toast); }
         return;
       }
-      if (msg.type === 'focusMode') {
-        const on = !!msg.active;
-        if (doc.body) doc.body.classList.toggle('maxi', on);
-        if (zen) zen.setActive(on);
-        if (idle) idle.wake();
-        return;
-      }
+      if (msg.type === 'focusMode') { if (zen) zen.setActive(!!msg.active); return; }
       if (msg.type === 'setVisible') { if (vis) vis.setVisible(msg.visible !== false, msg.active !== false); return; }
       // A notice turned off in Settings: remembered, and closed if it shows (media/player.js).
       if (msg.type === 'hideReducedResNotice' || msg.type === 'hideSlowPlaybackNotice') {

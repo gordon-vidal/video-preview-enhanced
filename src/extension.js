@@ -21,7 +21,7 @@ const setup = lazy(() => require('./setup'));
 const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
 const { ExactFrameGrabber } = require('./exact_frame');
-const { toggleFocusMode, noteFocusModeExited, isFocusModeActive, resetFocusMode, setFocusModeListener } = require('./focus-mode');
+const { toggleFocusMode, resetFocusMode } = require('./focus-mode');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
 const remotestream = lazy(() => require('./remotestream')); // unified Live transcode stream engine (ADR 0002)
 const transcodePolicy = lazy(() => require('./transcode_policy'));
@@ -146,11 +146,6 @@ const {
 } = createFrameLink({ vscode, config, decide, nativeTransport, probe, urlsource, parseFragment });
 
 const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
-
-function broadcastFocusMode(active) {
-  for (const v of unifiedViewers) v.post({ type: 'focusMode', active: !!active });
-}
-setFocusModeListener(broadcastFocusMode);
 
 /** Native ffmpeg: the setting, then a build downloaded by setup, then PATH. Null when absent. */
 function tools() {
@@ -1073,7 +1068,7 @@ function activate(context) {
     libavBuild: () => libavBuild(context.extensionUri), prefs: () => prefsOf(config()), maxVideos,
     pick: (label, defaultUri, many) => pickVideos(label, defaultUri, many),
     setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
-    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : noteFocusModeExited()),
+    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : undefined),
     rail: {
       cache: railMeta, probe: railProbe, prefs: railPrefs, layout: () => config().railLayout,
       caseless: process.platform === 'win32' || process.platform === 'darwin',
@@ -1819,7 +1814,6 @@ async function showViewerNow(context, panel, clip, openTarget, more, { allowDupl
     updateContexts();
   };
   viewer.show();
-  if (isFocusModeActive()) viewer.post({ type: 'focusMode', active: true });
   updateContexts();
   if (logFile) log(`[${viewer.session.title}] viewer opened (${viewer.session.clips.length} video${viewer.session.clips.length === 1 ? '' : 's'})`);
   return viewer;
@@ -2470,7 +2464,7 @@ async function openLink(context, link) {
 
 function deactivate() {
   for (const v of [...unifiedViewers]) v.dispose();
-  return resetFocusMode(vscode);
+  resetFocusMode();
 }
 
 module.exports = { activate, deactivate };
