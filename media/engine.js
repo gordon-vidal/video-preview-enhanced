@@ -42,6 +42,7 @@ function createEngine(env) {
   // Live transcode, paused: once a frame has stayed shown this long, the host sends it visually lossless (requestSharp).
   // Steps and scrolls faster than this ask for nothing.
   const SHARP_WAIT_MS = 150;
+  const PER_PX_WASM = 3.5e-6; // ms per pixel, cheap decode in the thumbnail worker: measured 1.6e-6 (1080p H.264) to 3.3e-6 (4K HEVC)
   /**
    * Tests (debug only): the luma of the top-left 320x180 of a sharp frame (test clips move there), at full size, for
    * test/vscode to compare with the source's frames (which frame it is). BT.709 limited range, as ffmpeg's gray output.
@@ -3080,10 +3081,10 @@ function createEngine(env) {
     subCues() { return this.startT === null && this.info && this.info.video && this.vmode !== 'none' ? [] : this.cueList(this.subId).map((c) => this.playerCue(c)); }
 
     // ---- seek-bar thumbnails (thumbs.js, thumbs-worker.js) -------------------
-    // Shown frames become small previews for free (captureThumb). Keyframes are decoded only while the pointer is on
-    // the seek bar: by a second, keyframe-only libav.js worker whose file reads share the block cache above as reader
-    // 'thumbs', or for native ffmpeg and Live transcode by a short keyframe-only ffmpeg on the extension host
-    // (src/thumbhost.js, never the running stream). Not for URLs or audio-only files; MJPEG/image sequences use
+    // Shown frames become small previews for free (captureThumb). Keyframes, and exact pictures where the pointer
+    // rests, are decoded only while the pointer is on the seek bar: by a second libav.js worker whose file reads share
+    // the block cache above as reader 'thumbs', or for native ffmpeg and Live transcode by a short ffmpeg on the
+    // extension host (src/thumbhost.js, never the running stream). Not for URLs or audio-only files; MJPEG/image sequences use
     // FramePlayer and have no thumbnails (docs/notes/seek-preview.md).
 
     /** The thumbnail service, made on first use (a capture or a hover); null when this file has none. */
@@ -3101,11 +3102,17 @@ function createEngine(env) {
         onRead: (pos, len) => this.thumbRead(pos, len),
         onIdle: () => this.dropBlockReader('thumbs'),
         busy: () => this.thumbsBusy(),
-        request: this.cfg.native ? async (t, w, h, signal) => {
-          const r = await this.hostThumb(t - startT, w, h, signal);
+        playing: () => !!this.playing,
+        // First guess per frame between keyframes, refined by replies: about 1 ns per pixel for native ffmpeg with
+        // the cheap flags (2 threads), PER_PX_WASM for the single-threaded worker (docs/notes/seek-preview.md).
+        frameMs: (v.width * v.height || 2e6) * (this.cfg.native ? 1e-6 : PER_PX_WASM),
+        request: this.cfg.native ? async (t, w, h, signal, mode) => {
+          const r = await this.hostThumb(t - startT, w, h, signal, mode);
           if (!r) return null;
-          const kt = Number.isFinite(r.rel) ? startT + r.rel : undefined;
-          return { ...r, kt, covered: kt !== undefined };
+          const abs = (rel) => (Number.isFinite(rel) ? startT + rel : undefined);
+          const kt = abs(r.rel);
+          const next = r.next && abs(r.next.rel) !== undefined ? { kt: abs(r.next.rel), data: r.next.data } : undefined;
+          return { ...r, kt, next, covered: kt !== undefined && mode !== 'exact' };
         } : undefined,
       });
       return this.thumbs;
@@ -3123,14 +3130,17 @@ function createEngine(env) {
       return true;
     }
 
-    /** Native and Live transcode backend: one thumbnail from the extension host ({rel, w, h, fmt: 'jpeg', data}, or null). */
-    hostThumb(rel, w, h, signal) {
+    /**
+     * Native and Live transcode backend: one thumbnail from the extension host ({rel, w, h, fmt: 'jpeg', data, next?}, or null).
+     * @param {'key' | 'near' | 'exact'} [mode]
+     */
+    hostThumb(rel, w, h, signal, mode = 'key') {
       const id = (this.hostThumbId = (this.hostThumbId || 0) + 1);
       this.hostThumbWait = this.hostThumbWait || new Map();
       return new Promise((resolve) => {
         // checkJs: start
         const request = /** @satisfies {ThumbRequest} */ ({
-          type: 'thumb', page: env.page, id, t: Math.max(0, rel), w, h,
+          type: 'thumb', page: env.page, id, t: Math.max(0, rel), w, h, mode,
         });
         // checkJs: end
         const cancel = () => {
@@ -3155,7 +3165,8 @@ function createEngine(env) {
       if (m.page !== env.page) return;
       const done = this.hostThumbWait && this.hostThumbWait.get(m.id);
       if (!done) return;
-      done(m.data ? { rel: m.rel, w: m.w, h: m.h, fmt: m.fmt, data: new Uint8Array(m.data) } : null);
+      const next = m.next && m.next.data ? { rel: m.next.rel, data: new Uint8Array(m.next.data) } : undefined;
+      done(m.data ? { rel: m.rel, w: m.w, h: m.h, fmt: m.fmt, data: new Uint8Array(m.data), next, kn: m.kn === null ? null : undefined } : null);
     }
 
     /**

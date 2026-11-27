@@ -10,7 +10,9 @@
 // - thumbhost decodes one keyframe to RGBA of the asked box (real ffmpeg, when on PATH);
 // - the bar is a grid of N slots of X s (at least 20, at most 240); pictures are kept as JPEG with a few hot
 //   bitmaps, within the smallest memory budget; frames the player showed (offer) are served on hover without a
-//   request, one per slot, and the nearest picture comes at once.
+//   request, one per slot, and the nearest picture comes at once;
+// - the nearer keyframe on either side is shown; after a rest the exact picture is asked for (cancelled by movement,
+//   not while dragging, busy or over budget); thumbhost's exact mode decodes the right frame of a 10 s-GOP clip.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -314,6 +316,162 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
     assert.strictEqual(await th.decodeThumb({ ffmpeg: 'ffmpeg' }, path.join(root, 'missing.mp4'), { w: 1920, h: 1080 }, 0, 160, 120), null, 'missing file: null');
     console.log(`native thumbnails (long_20s.mp4): ${ms.join(', ')} ms`);
   } else console.log('skip: ffmpeg or test/media/cases/long_20s.mp4 missing (native thumbnail decode)');
+
+  // Exact mode (refine): the frame at T, decoded cheaply from the keyframe; 'near' brings the next keyframe too.
+  {
+    const ex = th.thumbArgs('a.mp4', 5, 160, 90, false, 'v:0', 'jpeg', 'exact');
+    const before = ex.slice(0, ex.indexOf('-i'));
+    for (const [k, v] of [['-skip_frame', 'noref'], ['-skip_loop_filter', 'all'], ['-flags2', 'fast'], ['-threads', '2']]) {
+      assert.strictEqual(before[before.indexOf(k) + 1], v, `exact: ${k} ${v} before the input`);
+    }
+    assert.ok(!ex.includes('-noaccurate_seek') && !ex.includes('bidir') && !ex.includes('-hwaccel'), 'exact: accurate seek, no bidir, no hwaccel');
+    assert.ok(ex.some((a) => /flags=fast_bilinear/.test(a)), 'exact: fast_bilinear scaling');
+    assert.strictEqual(th.thumbArgs('a.mp4', 5, 160, 90, false, 'v:0', 'jpeg', 'near')[th.thumbArgs('a.mp4', 5, 160, 90, false, 'v:0', 'jpeg', 'near').indexOf('-frames:v') + 1], '2', 'near: two keyframes');
+    const gop = require('../lib/gop_clip');
+    const gopFile = ff.status === 0 ? gop.make() : null;
+    if (gopFile) {
+      const tools = { ffmpeg: 'ffmpeg' };
+      const ms = [];
+      for (const T of [1, 5, 9]) {
+        const t0 = Date.now();
+        const r = await th.decodeThumb(tools, gopFile, { w: 320, h: 180 }, T, 160, 120, undefined, undefined, 'rgba', 'exact');
+        ms.push(Date.now() - t0);
+        const k = Math.round(T * gop.FPS);
+        assert.ok(r && r.kt >= T - 1e-6 && r.kt <= T + 2 / gop.FPS + 1e-6, `exact at ${T} s: picture time ${r && r.kt}`);
+        const slot = await gop.frameOf(r.data, r.w, r.h, k, gopFile);
+        assert.ok(slot >= k && slot <= k + 2, `exact at ${T} s shows frame ${slot} (ffmpeg reference), want ${k}..${k + 2}`);
+        const key = await th.decodeThumb(tools, gopFile, { w: 320, h: 180 }, T, 160, 120);
+        assert.strictEqual(key.kt, 0, 'the keyframe mode still gives the keyframe');
+        assert.notDeepStrictEqual(Buffer.from(key.data), Buffer.from(r.data), `exact at ${T} s differs from the keyframe`);
+      }
+      const v = { pr: { video: { width: 320, height: 180, index: 0, startTime: 0 } }, file: gopFile, tools };
+      const near = await th.nativeThumb(v, { t: 7, w: 160, h: 120, mode: 'near' });
+      assert.ok(near.kt === 0 && near.next && near.next.kt === 10 && near.next.rel === 10, `near at 7 s: keyframes 0 and 10 (${near.kt}, ${near.next && near.next.kt})`);
+      assert.deepStrictEqual([near.next.data[0], near.next.data[1]], [0xff, 0xd8], 'the next keyframe is a JPEG too');
+      const last = await th.nativeThumb(v, { t: 11, w: 160, h: 120, mode: 'near' });
+      assert.ok(last.kt === 10 && !last.next && last.kn === null, 'near in the last GOP: no keyframe after');
+      console.log(`native exact pictures at 1/5/9 s after a keyframe (320x180): ${ms.join(', ')} ms`);
+    } else console.log('skip: ffmpeg missing (exact-mode decode)');
+  }
+
+  // The nearer keyframe on either side, and refining while the pointer rests (fake host with the three modes).
+  {
+    const calls = [];
+    let playing = false;
+    let busyNow = false;
+    let exactDelay = 2;
+    const keyBefore = (t) => Math.floor(t / 10 + 1e-9) * 10; // keyframes every 10 s
+    const mkR = (extra) => new ThumbService({
+      duration: 60, startT: 0, size: 1e9, fps: 30, cap: 30e6, log: () => {}, idleMs: 5000, radius: 0, restMs: 60,
+      frameMs: 1, playing: () => playing, busy: () => busyNow,
+      request: async (t, w, h, signal, mode) => {
+        const call = { t, mode, signal };
+        calls.push(call);
+        // Like engine.js hostThumb: an abort answers null at once.
+        await new Promise((r) => { setTimeout(r, mode === 'exact' ? exactDelay : 2); signal.addEventListener('abort', r); });
+        if (signal.aborted) return null;
+        const data = new Uint8Array(w * h * 4);
+        if (mode === 'exact') return { kt: Math.round(t * 30) / 30, w, h, data };
+        const kp = keyBefore(t);
+        return { kt: kp, w, h, data, covered: true, ...(mode === 'near' ? { next: { kt: kp + 10, data } } : {}) };
+      },
+      ...extra,
+    });
+    const last = (a) => a[a.length - 1];
+    const exacts = () => calls.filter((c) => c.mode === 'exact');
+
+    // 8 s: keyframes 0 and 10 are both learnt from one 'near' reply; 10 is closer.
+    let s1 = mkR();
+    const pics = [];
+    s1.hover(8, (p) => pics.push(p));
+    await tick(30);
+    assert.strictEqual(calls[0].mode, 'near', 'unknown keyframes: a near request');
+    assert.strictEqual(last(pics).t, 10, 'the keyframe after the pointer is closer than the one before');
+    // 3 s: the keyframe before is closer and already there: at once, no request.
+    const n0 = calls.length;
+    const at3 = [];
+    s1.hover(3, (p) => at3.push(p));
+    assert.ok(at3.length === 1 && at3[0].t === 0, 'known GOP: the closer keyframe at once');
+    await tick(30);
+    assert.strictEqual(calls.length, n0, 'no request inside a known GOP whose pictures are there');
+    s1.dispose();
+
+    // Rest at 5 s (both keyframes 5 s away, X = 2 s): after the rest, one exact request; the frame is shown.
+    calls.length = 0;
+    s1 = mkR();
+    const rp = [];
+    s1.hover(5, (p) => rp.push(p));
+    await tick(30);
+    assert.strictEqual(exacts().length, 0, 'no refine before the pointer rested');
+    await tick(120);
+    assert.strictEqual(exacts().length, 1, 'one refine after the rest');
+    assert.strictEqual(exacts()[0].t, 5, 'the refine asks for the slot time');
+    assert.strictEqual(last(rp).t, 5, 'the exact picture replaces the keyframe');
+    assert.ok(s1.stats0().refines === 1 && s1.stats0().shown.refined, 'counted and shown as refined');
+    await tick(150);
+    assert.strictEqual(exacts().length, 1, 'a refined slot is not refined again');
+    // 9 s: the keyframe at 10 is within X: nothing to refine.
+    s1.hover(9, () => {});
+    await tick(150);
+    assert.strictEqual(exacts().length, 1, 'a keyframe within X needs no refine');
+    s1.dispose();
+
+    // Movement cancels a running refine; the slot is refined when the pointer rests there again.
+    calls.length = 0;
+    exactDelay = 300;
+    s1 = mkR();
+    s1.hover(5, () => {});
+    await tick(120);
+    assert.strictEqual(exacts().length, 1, 'refine running');
+    s1.hover(25, () => {});
+    assert.ok(exacts()[0].signal.aborted, 'moving to another slot cancels the refine');
+    await tick(20);
+    assert.strictEqual(s1.stats0().refines, 0, 'a cancelled refine adds nothing');
+    exactDelay = 2;
+    s1.hover(5, () => {});
+    await tick(200);
+    assert.ok(exacts().filter((c) => c.t === 5).length === 2 && s1.stats0().refines >= 1, 'back on the slot: refined');
+    s1.dispose();
+
+    // Never while dragging.
+    calls.length = 0;
+    s1 = mkR();
+    s1.hover(5, () => {}, true);
+    await tick(200);
+    assert.strictEqual(exacts().length, 0, 'no refine during a drag');
+    s1.dispose();
+
+    // Over budget: skipped (and counted once); the smaller budget applies while playing.
+    calls.length = 0;
+    s1 = mkR({ frameMs: 50 }); // 150 frames x 50 ms: 7.5 s
+    s1.hover(5, () => {});
+    await tick(200);
+    assert.ok(exacts().length === 0 && s1.stats0().skipped === 1, `over budget: skipped (${s1.stats0().skipped})`);
+    s1.dispose();
+    playing = true;
+    s1 = mkR({ frameMs: 5 }); // 150 frames x 5 ms: 0.75 s, over 0.5 s while playing, under 2 s paused
+    s1.hover(5, () => {});
+    await tick(200);
+    assert.strictEqual(exacts().length, 0, 'over the playing budget: skipped');
+    playing = false;
+    s1.hover(25, () => {});
+    s1.hover(5, () => {});
+    await tick(200);
+    assert.strictEqual(exacts().length, 1, 'paused: the same refine fits');
+    s1.dispose();
+
+    // Nothing while playback is busy; it comes once playback has room again.
+    calls.length = 0;
+    busyNow = true;
+    s1 = mkR();
+    s1.hover(5, () => {});
+    await tick(200);
+    assert.strictEqual(exacts().length, 0, 'no refine while playback is busy');
+    busyNow = false;
+    await tick(700);
+    assert.strictEqual(exacts().length, 1, 'refined when playback has room');
+    s1.dispose();
+  }
 
   // Live transcode: the page asks the host like native ffmpeg (no remoteStream exclusion), URLs stay out.
   const engineSrc = fs.readFileSync(path.join(root, 'media', 'engine.js'), 'utf8');
