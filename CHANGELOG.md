@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **FFmpeg setup when ffmpeg is already installed:** the Setup Guide confirms the working ffmpeg and moves on instead of opening a download picker, and **Video Preview: Set up ffmpeg** lists Keep current setup and Re-test above Download. When an NVIDIA driver is too old for the installed ffmpeg's GPU encoder, the picker explains that GPU decoding still works and what NVENC needs.
 - **Holding the previous-frame key or spinning the wheel backwards no longer starts over on every repeat:** while a step is still decoding, further steps only move its target, and the newest one is sought as soon as it lands (often from the frames just decoded). With native ffmpeg a held key used to start one ffmpeg process per repeat.
 - **Setup guide & AI tool video links:** published the `video-preview-links` skill for `npx skills` (hiding repo-internal skills), added a themed **Show instructions** tab with Copy buttons, and added a **Try it out** button on the last walkthrough step that opens the bundled 1080p sample clip.
 - **Split Wipe fixes:** dragging the split divider right now clears side B's previous pixels cleanly on the left, the divider spans the full picture height instead of collapsing to 0 px, the clipped image stays aligned with the divider on pillarboxed videos, and hovering or clicking side A's top-left pill works again.
