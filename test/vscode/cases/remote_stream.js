@@ -227,6 +227,67 @@ module.exports = [{
     return out;
   },
 }, {
+  // The page keeps the H.264 packets it received (media/packet-cache.js): on a slow link, a paused seek back to a
+  // place already seen and a step back across a keyframe decode from them, frame-exact, sending nothing over the link.
+  // The same seeks with the cache off go to the host for comparison (times reported, not asserted).
+  name: 'remote_stream_packets',
+  ffmpeg: true,
+  settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.loop': false, 'videoPreviewEnhanced.sizeFramesToView': false, 'workbench.editorAssociations': ASSOC },
+  async run(vs, h) {
+    const { out, run } = lib.recorder();
+    await run('slow-link-seek-back', async (ok, r) => {
+      const file = makeLinkClip(h.ffmpeg);
+      const p = await lib.open(vs, h, file);
+      const fps = 25;
+      const timed = async (fn, frame, what) => {
+        const t0 = Date.now();
+        const from = vs.mark();
+        fn();
+        const s = await p.waitState((x) => !x.playing && x.frame === frame, { timeout: 30000, interval: 50, what });
+        const local = vs.lines.slice(from).some((l) => l.includes(`[${p.name}] webview: seek to`) && l.includes("from the page's packets"));
+        const memory = vs.lines.slice(from).some((l) => l.includes(`[${p.name}] webview: step back from memory`));
+        const hostSeeks = vs.lines.slice(from).filter((l) => l.includes(`[${p.name}] remote stream`) && /seek to|remote stream from /.test(l)).length;
+        // The page's own time from the seek to its frame decoded (the harness round trips add ~0.5 s to ms).
+        const landed = vs.lines.slice(from).map((l) => /\] webview: seek landed in (\d+) ms/.exec(l)).filter(Boolean).map((x) => Number(x[1]));
+        return { ms: Date.now() - t0, pageMs: landed.length ? landed[landed.length - 1] : 0, frame: s.frame, local, memory, hostSeeks };
+      };
+      try {
+        await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown);
+        p.pause();
+        // Visit 10..~14 s (played: paused read-ahead fetches only about a second), then go far away.
+        r.visit = await timed(() => p.seek(10.0 + 0.5 / fps), 250, 'frame 250');
+        p.play();
+        await h.sleep(4000);
+        p.pause();
+        await h.sleep(500);
+        r.away = await timed(() => p.seek(30.0 + 0.5 / fps), 750, 'frame 750');
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 250000 }); // 2 Mb/s
+        r.back = await timed(() => p.seek(11.0 + 0.5 / fps), 275, 'frame 275 (seek back)');
+        ok(r.back.local, 'the seek back to a place already received went to the host');
+        r.steps = [];
+        for (let i = 1; i <= 3; i++) r.steps.push(await timed(() => p.step(-1), 275 - i, `frame ${275 - i}`));
+        // The seek decoded its GOP up to the target: the frames before it are kept, steps back show them at once.
+        ok(r.steps.every((x) => x.hostSeeks === 0), 'a step back went to the host');
+        ok(r.steps.slice(1).some((x) => x.memory), 'no step back came from the decoded frames kept');
+        // Across a keyframe: on frame 300 (a GOP's first frame when the stream started at 10 s), one back is 299.
+        r.atKey = await timed(() => p.seek(12.0 + 0.5 / fps), 300, 'frame 300');
+        r.acrossKey = await timed(() => p.step(-1), 299, 'frame 299');
+        ok(r.acrossKey.local || r.acrossKey.hostSeeks === 0, 'the step back across a keyframe went to the host');
+        // The same seek back with the cache off: the host sends the GOP again over the 2 Mb/s link.
+        p.act({ action: 'packetCache', mb: 0 });
+        await timed(() => p.seek(30.0 + 0.5 / fps), 750, 'frame 750');
+        r.backHost = await timed(() => p.seek(11.4 + 0.5 / fps), 285, 'frame 285 (seek back, no cache)');
+        ok(!r.backHost.local, 'the cache was off but served the seek');
+      } finally {
+        r.notes = vs.lines.filter((l) => l.includes(`[${p.name}]`) && /frames stay on the GPU|frame copy failed|step back from memory|page's packets/.test(l))
+          .map((l) => l.replace(/^.*webview: /, '')).slice(-14);
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
+        await h.closeClip(vs);
+      }
+    });
+    return out;
+  },
+}, {
   name: 'remote_stream_fallback',
   ffmpeg: true,
   env: { VPE_RS_ENCODER: 'libx264' },

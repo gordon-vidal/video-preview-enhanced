@@ -19,7 +19,7 @@ const MACHINERY = ['test/vscode/scenarios.js', 'test/vscode/scenario_list.js', '
 // The "Known dependencies" table of docs/TESTING.md: [what changed (files or folders), why, scenarios to also run].
 // A test (test/host/scenario_map_test.js) checks every scenario named here exists and the doc still names it.
 const DEPENDENCIES = [
-  { when: ['media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/pool.js'], why: 'stepping, seeking, decoder pool, end of file', run: ['seeking', 'playback'] },
+  { when: ['media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/packet-cache.js', 'media/gl-renderer.js', 'media/pool.js'], why: 'stepping, seeking, decoder pool, end of file', run: ['seeking', 'playback'] },
   { when: ['src/native.js', 'src/frameserver.js'], why: 'native ffmpeg transport and frame sizes', run: ['native', 'picture-size-native'] },
   { when: ['media/picture.js', 'media/inspect.js'], why: 'drawn picture size, zoom, pan', run: ['picture-size', 'compare', 'inspect'] },
   { when: ['media/player-unified.js', 'media/player-ui-tiles.js', 'media/compare-compositor.js', 'media/compare-grid.js', 'src/unified-viewer.js', 'src/unified-session.js', 'src/unified-html.js'], why: 'compare / multi-view', run: ['compare', 'multiview'] },

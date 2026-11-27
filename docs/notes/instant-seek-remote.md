@@ -214,11 +214,67 @@ Spike to run on an idle machine before any implementation (existing harnesses, n
 
 ### Not proposed
 
-- **A persistent seekable decoder on the host** (a libav helper or a Python/PyAV process) would remove the ~250 ms
-  restart floor without caching, but adds a native binary or a runtime to install (PRODUCT and licensing decision).
-  Revisit only if levels 1-4 leave misses that matter.
+- **A persistent seekable decoder as a new binary** (a libav helper or a Python/PyAV process) adds a native binary or
+  a runtime to install (PRODUCT and licensing decision). Not needed: stock ffmpeg kept running behind a pipe does the
+  same (see "Prototypes" below).
 - **Sending raw or lossless frames** over SSH: 4K NV12 is 12 MB per frame; VS Code's tunnel cannot carry that quickly.
   Exact pixels stay with `grabExactFrame` for the pixel tools, as today.
+
+## Prototypes (2026-11-27, on the unified viewer)
+
+Indicative numbers: one Windows machine (RTX 4070, i7-9700K), other work running at times.
+
+### Level 2 wired end to end: the page keeps the packets it received
+
+`media/packet-cache.js` (pure, Node-tested in `test/unit/packet_cache_test.js`) keeps the H.264 packets of a remote
+Live transcode by GOP: from each IDR on, in decode order, per read; a GOP read on into the next keyframe covers the
+time up to it. `media/engine.js` `seekFromPackets`: a **paused** seek whose target lies in a kept GOP decodes from
+those packets (keyframe to target, plus the rest of the GOP for steps forward, then a flush so a hardware decoder
+gives up the frames it holds). The host is not told; play, or a target outside the kept packets, seeks the host as
+before. Default 64 MB (about a minute of 1080p at 8 Mb/s, compressed). Frames are found by the host's frame times, so
+it is frame-exact like a host seek.
+
+Found on the way: the unified viewer steps its decoders with frame seeks (`player-unified.js` `seekTo`), never
+`engine.stepFrame`, so the decoded frames kept for steps back (`this.back`, level 1) were no longer used: every paused
+step back decoded its GOP again (over SSH: the host sent it again). `seekTime` now serves a paused seek onto a kept
+frame from them (no seek), like the forward case next to it.
+
+Layer 3 `remote-stream-packets` (1080p, 25 fps, link throttled to 2 Mb/s with the test hook, page-measured time from
+the seek to its frame decoded; every landing checked frame-exact):
+
+| | before (host over the link) | now |
+| --- | --- | --- |
+| Seek back to a place already received | 2651 ms | 158 ms (from packets, 0 bytes sent) |
+| Then 3 steps back | a GOP re-sent per step | no seek (decoded frames kept) |
+| Step back across a keyframe | ~3.7 s | 269 ms (from packets: a 50-frame GOP decoded) |
+
+A miss (a place never received) is unchanged: today's host seek. Paused read-ahead fetches only about a second, so
+level 3 (pushing the GOPs around the playhead while paused, within a share of the link) is what makes the first step
+back after a jump hit.
+
+### A decoder kept running behind a pipe (stock ffmpeg, host)
+
+Scratch prototype (not in the extension): one ffmpeg reads MPEG-TS on stdin (`-hwaccel cuda`, `-copyts`); a jump
+writes the TS bytes from the target's keyframe on (offsets from the container index) and identifies the target by its
+source PTS (`showinfo`). 4K HEVC, 15 fps, keyframe every 50 frames, B-frames:
+
+- Frame-exact on all 16 random jumps (forward and back), every one with the right source PTS.
+- ffmpeg holds about 8-12 frames (the TS demuxer completes a PES only when the next begins, decoder reordering, the
+  CLI's pipeline): feeding only up to the target misses. **Pumping** one more packet every ~2 ms until the target
+  comes out fixes it.
+- Jump = (frames from keyframe to target + the ~12 held) x 3.3 ms (NVDEC decodes this clip at ~300 fps; scaling and
+  download do not matter): **median 134 ms (47-200)** vs 340-470 ms for a fresh `ffmpeg -ss` each time (spawn, probe,
+  CUDA init). The ~250 ms start-up is paid once per file (first frame 450 ms).
+- Marking the frames before the target (PTS shifted, dropped by `select` right after the decoder) saves nothing: the
+  cost is the decode itself.
+
+So the miss path of Live transcode can lose its restart floor without new binaries; the GOP decode remains (level 3/4
+remove it).
+
+### Display mode encoder (measured 2026-11-26, see above)
+
+A persistent encoder fed raw frames: 3-5 ms per frame on NVENC / Media Foundation / x264, back steps the same size as
+forward ones; needs the duplicate-frame trick (ffmpeg holds one frame) and an SPS with `bitstream_restriction`.
 
 ## Setting (draft)
 
@@ -244,7 +300,8 @@ beyond today's budget must come from the user's setting.
 1. **Measure first**: a Layer 4 case "remote step back / seek latency" under `VPE_SIMULATE_LINK` presets (fast-ssh,
    typical-ssh) on a 4K HEVC long-GOP clip: p50/p95 of step-back and random seek to the right picture, single and 2×2
    Compare. This is the before/after yardstick (run on an idle machine).
-2. Level 2 (page packet cache) + Level 1 budget from the setting. Page-only, no host change.
+2. Level 2 (page packet cache) + Level 1 budget from the setting. Page-only, no host change. **Prototype done**
+   (fixed 64 MB, no setting yet; see "Prototypes").
 3. Miss path: exact-target start + parallel lead; no throttle for discrete steps.
 4. Level 3 rendition around the playhead with link-share push.
 5. Level 4 whole-file proxy, host GPU queue, ⓘ status.

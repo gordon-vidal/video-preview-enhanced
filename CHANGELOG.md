@@ -13,6 +13,8 @@
 - **One viewer, Compare and AVI fixes:** dragging a video over the player shows the dashed "Drop to compare" frame again; a video whose container header states a wrong frame rate or length (an AVI saying 600 fps for a 30 fps video) now gets the rate and frame count the decoder measures, so the seek bar, stepping and Compare count its real frames.
 - **Compare:** the bar's time shows the letter of the video that sets the clock (`A 0:01.000 / 0:03.000`); Swap in Split Wipe no longer leaves the new left video drawn over the whole picture (the right side showed the wrong video); ⚙ › Inspection names only the tools Compare has (no pixel inspector, X swaps sides there).
 
+- **Faster steps back and seeks back over Remote-SSH (Live transcode):** the player keeps the compressed video it already received (up to 64 MB), so a paused seek back to a place you have seen, or a step back across a keyframe, decodes on your machine instead of waiting for the remote host to send it again (about 0.15-0.3 s instead of seconds on a slow link). Paused steps back in the one viewer show the frames already decoded at once again, as the single player did.
+
 ## 0.12.0 (2026-11-25)
 
 Compact Folder Rail in both single-video and Compare views, new Autoplay modes (Off / Play next in folder / Loop), Compare deep links (`vscode://.../compare`), per-video Live transcode resolution picker, seek-bar keyframe previews and cached seeks during Live transcode, major slow-SSH responsiveness upgrades (128 KB bounded pipe, ~3 KB JPEG host thumbnails, session link memory, deeper remote buffer, GOP step-back caching), plus recovery fixes for damaged H.264 streams, open-GOP Direct Stream seeks, long-recording timestamps, exact-frame timeouts, and Windows folder-watch cleanup.

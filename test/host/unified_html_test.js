@@ -9,7 +9,7 @@ const { unifiedHtml, UNIFIED_CSS, UNIFIED_SCRIPTS } = require('../../src/unified
 // The decoder and media utilities in the order their globals need (the single player's page had this order before
 // the unified page replaced it; engine.js reads the four modules before it, controls.js the panels' helpers).
 const BASE_ORDER = [
-  'membudget.js', 'timestretch.js', 'pool.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js',
+  'membudget.js', 'timestretch.js', 'pool.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js', 'packet-cache.js',
   'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js', 'engine.js', 'picture.js', 'inspect.js', 'scopes.js', 'exactframe.js',
   'reduced-res-notice.js', 'slow-notice.js', 'subtitles.js', 'tracks-menu.js', 'xray.js', 'modes.js', 'range-drag.js', 'controls.js',
   'ctxmenu.js', 'timefmt.js', 'abloop.js', 'autoplay.js', 'folder-rail.js', 'debug-probe.js', 'frame-player.js',

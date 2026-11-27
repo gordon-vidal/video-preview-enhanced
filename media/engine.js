@@ -1,4 +1,4 @@
-/* global VpeCodecUtils, VpeDecoderBoot, ThumbService, FrameStream, VpeHdr, VpeBlockCache, VpeGlRenderer */
+/* global VpeCodecUtils, VpeDecoderBoot, ThumbService, FrameStream, VpeHdr, VpeBlockCache, VpeGlRenderer, VpePacketCache */
 // @ts-check
 // Decode-only playback engine for the webview. Demuxing and software decoding
 // run in decoder-worker.js (libav.js / WebAssembly); H.264 and VP8 go to the
@@ -336,6 +336,10 @@ function createEngine(env) {
         this.meta.label = `${s.sourceCodec} ${s.sourcePixFmt} ${s.sourceWidth}×${s.sourceHeight} · streamed from the remote host as H.264, decoded by WebCodecs`;
         this.nativeLossy = !(info.transcode && info.transcode.lossy === false);
         this.remoteStream = true;
+        // The packets received, for paused seeks and steps back without the link (seekFromPackets).
+        if (typeof VpePacketCache !== 'undefined' && !(this.cfg.packetCacheMB === 0)) {
+          this.packetCache = VpePacketCache.create({ cap: (this.cfg.packetCacheMB || 64) * 1e6 });
+        }
         if (this.playing) this.worker.postMessage({ type: 'playback', playing: true });
       }
       log(`streams: ${JSON.stringify({ v: v && { c: v.codec, w: v.width, h: v.height, fmt: v.format }, a: a && { c: a.codec, sr: a.sampleRate, ch: a.channels }, dur: info.duration })} -> video ${video}, audio ${audio}`);
@@ -733,8 +737,10 @@ function createEngine(env) {
         const hi = items.reduce((x, it) => (it.t !== null && it.t > x ? it.t : x), -Infinity);
         if (m.eof || hi >= this.now() + 1) this.catchUp = false;
       }
+      const keep = this.packetCache && !m.local ? this.packetCache : null;
       for (const it of m.video) {
         if (it.t !== null && it.t !== undefined && !(it.t <= this.readVT)) this.readVT = it.t;
+        if (keep && it.kind === 'packet') keep.add(m.gen, it);
         if (it.kind === 'packet') {
           if (!this.vdec || this.vdec.state !== 'configured') continue;
           // Read before the worker rewound the picture after a decoder error: it comes again.
@@ -1137,6 +1143,7 @@ function createEngine(env) {
 
     pump() {
       if (this.scrubHeldT !== undefined || this.requesting || this.eof || !this.worker || this.vmode === undefined) return;
+      if (this.localGen === this.gen) return; // served from the page's packets (seekFromPackets): no producer to ask
       if (this.vReread === this.gen) return; // the worker is rewinding the picture after a decoder error (onVideoReread reads on)
       const now = this.now();
       // A paused remote stream can fill its decode cache far past the shown frame and evict
@@ -1892,6 +1899,8 @@ function createEngine(env) {
       this.playing = true;
       if (this.remoteStream) this.worker.postMessage({ type: 'playback', playing: true });
       this.endSteps();
+      // A read served from the page's packets has no sound and no producer: the host goes on from the shown frame.
+      if (this.localGen === this.gen) { this.seekAbs(this.shownT ?? this.pauseT, true); return; }
       // At the end (loop off): play starts over.
       if (this.eof && !this.queue.length && this.seekTarget === null && this.pauseT >= this.endT() - 1e-6) { this.seekAbs(this.startT || 0, true); return; }
       this.runFromT = this.pauseT; // Autoplay: how far playback ran before reaching the end (ended)
@@ -1975,8 +1984,39 @@ function createEngine(env) {
       this.playing = wasPlaying;
       this.anchor(t);
       log(`seek to ${this.rel(t).toFixed(3)} s (gen ${this.gen})`);
+      if (this.remoteStream && !wasPlaying && !recoverTransport && this.seekFromPackets(t)) return;
       this.worker.postMessage({ type: 'seek', gen: this.gen, t,
         ...(this.remoteStream ? { playing: this.playing } : {}), ...(recoverTransport ? { recoverTransport: true } : {}) });
+    }
+
+    /**
+     * Live transcode, paused: a seek into a GOP the page already received decodes from the packets kept here
+     * (media/packet-cache.js) instead of asking the host to send that GOP over the link again. The host is not told:
+     * this read (localGen) has no producer, and play or a target outside the kept packets seeks the host as before.
+     * The packets after the target in its GOP go in too (steps forward from memory), then a flush: a hardware decoder
+     * can hold its last frames until more input comes, and none will.
+     */
+    seekFromPackets(t) {
+      const cache = this.packetCache;
+      if (!cache || this.vmode !== 'webcodecs' || !this.vdec || this.vdec.state !== 'configured') return false;
+      const hit = cache.find(t);
+      if (!hit) return false;
+      const gen = this.gen;
+      const ahead = cache.after(hit.keyT, hit.frameT);
+      this.localGen = gen;
+      this.seekTarget = this.pauseT = hit.frameT; // what the host's 'seeked' would say: the frame at or before t
+      this.anchor(hit.frameT);
+      const packets = hit.packets.concat(ahead).map((p) => ({ kind: 'packet', ...p }));
+      const bytes = packets.reduce((n, p) => n + p.data.byteLength, 0);
+      log(`seek to ${this.rel(hit.frameT).toFixed(3)} s from the page's packets: ${hit.packets.length} to the target + ${ahead.length} after, `
+        + `${(bytes / 1024).toFixed(0)} KiB, keyframe ${this.rel(hit.keyT).toFixed(3)} s, nothing sent over the link`);
+      queueMicrotask(() => {
+        if (this.disposed || this.gen !== gen) return;
+        this.onBatch({ gen, video: packets, audio: [], local: true });
+        const dec = this.vdec;
+        if (dec && dec.state === 'configured') dec.flush().catch(() => {});
+      });
+      return true;
     }
 
     /** Real-time catch-up: continue from the first keyframe at or after t, clock untouched. */
@@ -2023,6 +2063,16 @@ function createEngine(env) {
         this.stopAudio();
         this.anchor(t);
         return;
+      }
+      // Back onto a frame kept for steps back (keepBack: consecutive frames ending just before the shown one): no
+      // seek. The unified viewer steps its decoders with frame seeks (player-unified.js seekTo), not stepFrame, so
+      // without this every paused step back decoded its GOP again (over a remote link: the host sent it again).
+      const back = this.back;
+      if (!force && !this.playing && back && back.length && this.shownT !== null && this.seekTarget === null
+        && t < this.shownT - 1e-4 && t >= back[0].t - 1e-4) {
+        let j = back.length - 1;
+        while (j >= 0 && back[j].t > t + 1e-4) j--;
+        if (j >= 0 && this.stepBack(back.length - j, this.shownT) !== null) return;
       }
       this.seekAbs(t);
     }
@@ -2338,7 +2388,7 @@ function createEngine(env) {
         moved.push(restore);
       }
       for (const x of moved) this.insert(x);
-      if (this.cfg.debug || env.debug) log(`step back from memory to ${this.rel(moved[0].t).toFixed(3)} s (${back.length} more kept)`);
+      log(`step back from memory to ${this.rel(moved[0].t).toFixed(3)} s (${back.length} more kept)`);
       this.pauseT = moved[0].t;
       this.stopAudio();
       this.anchor(this.pauseT);

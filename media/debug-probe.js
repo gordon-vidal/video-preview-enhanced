@@ -666,6 +666,11 @@
       const player = getPlayer();
       if (!player) return;
       if (m.action === 'remoteStreamRate' && player.remoteStream) player.debugRemoteRate = m.bytesPerSecond;
+      // Tests: the page's packet cache for paused seeks (media/packet-cache.js) off (mb 0) or at this size.
+      if (m.action === 'packetCache' && player.remoteStream) {
+        const PC = /** @type {any} */ (globalThis).VpePacketCache;
+        player.packetCache = m.mb > 0 && PC ? PC.create({ cap: m.mb * 1e6 }) : null;
+      }
       // A page with a controller over its decoders (the unified viewer) seeks / plays through it, so its state and
       // every decoder follow; a bare player is told directly.
       if (m.action === 'seek') { if (deps.seek) deps.seek(Number(m.t) || 0); else player.seekTime(m.t); wake(); }
