@@ -8,16 +8,17 @@ const CPU_ENCODERS = ['libx264', 'libopenh264'];
 const GPU_ENCODERS = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'h264_mf', 'h264_videotoolbox', 'h264_vaapi'];
 
 /**
- * Low-latency H.264 encoder arguments, no B-frames, 2 s GOP, High profile.
+ * Low-latency H.264 encoder arguments, no B-frames, 2 s GOP (gopS), High profile.
  * Uses best quality (capped VBR / CQ) with strict maxrate = bufsize = cap so the stream
  * never exceeds maxKbps while staying compact on easy or low-fps scenes.
  * @param {string} enc
  * @param {number} fps
  * @param {number} [maxKbps] Strict ceiling in kb/s (0 or omitted -> default 20000 kb/s).
+ * @param {number} [gopS] seconds between keyframes (an encode started paused uses PAUSED_GOP_S: src/stream.js)
  * @returns {string[]}
  */
-function encoderArgs(enc, fps, maxKbps) {
-  const g = String(Math.max(1, Math.round((fps || 30) * 2)));
+function encoderArgs(enc, fps, maxKbps, gopS = 2) {
+  const g = String(Math.max(1, Math.round((fps || 30) * (gopS > 0 ? gopS : 2))));
   const cap = maxKbps > 0 ? Math.round(maxKbps) : 20000;
   const capStr = `${cap}k`;
   const bufStr = `${Math.max(1, Math.round(cap))}k`;
@@ -210,13 +211,14 @@ function buildHdrPipeline(o, encArgs, isCpu, wantGpuDec) {
  *   h: number,
  *   fps: number,
  *   maxKbps?: number,
+ *   gopS?: number,
  *   badTonemap?: Set<string>,
  * }} o
  * @returns {{ pre: string[], vf: string, encArgs: string[], mode: 'gpu-full'|'gpu-encode'|'cpu', tonemap: string|null }}
  */
 function buildVideoPipeline(o) {
   const { encoder, device, decodeMethod, gpuFilters, video, w, h, fps, maxKbps } = o;
-  const encArgs = encoderArgs(encoder, fps, maxKbps);
+  const encArgs = encoderArgs(encoder, fps, maxKbps, o.gopS);
   const isCpu = CPU_ENCODERS.includes(encoder);
   const wantGpuDec = decodeMethod && decodeMethod !== 'none';
 

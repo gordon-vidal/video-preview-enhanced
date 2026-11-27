@@ -260,8 +260,34 @@ module.exports = [{
         await h.sleep(4000);
         p.pause();
         await h.sleep(500);
+        const fillFrom = vs.mark();
         r.away = await timed(() => p.seek(30.0 + 0.5 / fps), 750, 'frame 750');
+        // Paused on a fresh jump: the host fills in the 2 s behind it (src/stream.js fill), so steps back stay on the
+        // page even over the slow link. Its encode started paused: keyframes every 0.5 s.
+        const filled = await vs.waitLog(new RegExp(`\\[${p.name}\\] webview: fill behind the paused frame: \\d+ frames`), { from: fillFrom, timeout: 15000, what: 'fill behind' }).catch(() => '');
+        r.fill = filled.replace(/^.*webview: /, '');
+        ok(!!filled, 'no fill behind the paused frame');
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 250000 }); // 2 Mb/s
+        r.stepsAfterJump = [];
+        for (let i = 1; i <= 3; i++) r.stepsAfterJump.push(await timed(() => p.step(-1), 750 - i, `frame ${750 - i}`));
+        ok(r.stepsAfterJump.every((x) => x.hostSeeks === 0), `a step back after the jump went to the host: ${JSON.stringify(r.stepsAfterJump)}`);
+        // A fast scroll back over the 2 Mb/s link (a wheel): 30 steps 40 ms apart. Measured, not asserted: the fills
+        // race the user here, and a slow link can fall behind.
+        {
+          const from = vs.mark();
+          const t0 = Date.now();
+          for (let i = 0; i < 30; i++) { p.step(-1); await h.sleep(40); }
+          const s = await p.waitState((x) => !x.playing && x.frame === 717, { timeout: 30000, interval: 50, what: 'frame 717 after the scroll' }).catch(() => null);
+          const lines = vs.lines.slice(from);
+          r.scroll = {
+            settledMs: Date.now() - t0, frame: s && s.frame,
+            hostSeeks: lines.filter((l) => l.includes(`[${p.name}] remote stream`) && /seek to|remote stream from /.test(l)).length,
+            fromPackets: lines.filter((l) => l.includes(`[${p.name}] webview: seek to`) && l.includes("from the page's packets")).length,
+            fromMemory: lines.filter((l) => l.includes(`[${p.name}] webview: step back from memory`)).length,
+            fills: lines.filter((l) => l.includes(`[${p.name}] webview: fill behind the paused frame:`) && /frames from/.test(l)).length,
+          };
+          ok(s !== null, 'the scroll back never settled on frame 717');
+        }
         r.back = await timed(() => p.seek(11.0 + 0.5 / fps), 275, 'frame 275 (seek back)');
         ok(r.back.local, 'the seek back to a place already received went to the host');
         r.steps = [];

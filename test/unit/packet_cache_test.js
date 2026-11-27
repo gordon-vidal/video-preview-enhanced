@@ -143,4 +143,32 @@ test('the host changed the stream (new size or encoder: other SPS): the GOPs of 
   assert.equal(c.find(at(95)).keyT, at(90));
 });
 
+test('a fill closed at the start of the next packets covers the step back into it', () => {
+  const c = create();
+  read(c, 1, 30, 40); // the paused jump landed at frame 30 (its own keyframe)
+  read(c, 2, 0, 30, 6); // the fill behind it: frames 0..29, keyframes every 6
+  assert.equal(c.find(at(30) - 0.5 / FPS), null, 'without close: frame 29 holds no time after it');
+  c.close(2, at(30));
+  const hit = c.find(at(30) - 0.5 / FPS);
+  assert.equal(hit.frameT, at(29));
+  assert.equal(hit.keyT, at(24));
+  assert.equal(hit.packets.length, 6, 'a short GOP: six frames to decode');
+  c.close(2, at(99)); // a read already closed: nothing changes
+  assert.equal(c.find(at(31)).keyT, at(30));
+});
+
+test('a fill and the read-ahead arriving in turns each keep their own GOP', () => {
+  const c = create();
+  const pk = (i, key) => ({ t: at(i), key, idr: key, data: new Uint8Array(10) });
+  // Read-ahead from 30 (key) and a fill from 20 (keys every 5), interleaved packet by packet.
+  for (let k = 0; k < 10; k++) {
+    c.add(7, pk(30 + k, k === 0));
+    c.add('fill:1', pk(20 + k, k % 5 === 0));
+  }
+  c.close('fill:1', at(30));
+  assert.equal(c.find(at(39)).keyT, at(30), 'the read-ahead GOP grew through the fill packets');
+  assert.equal(c.find(at(29) + 0.01).keyT, at(25), 'the fill GOP too');
+  assert.equal(c.find(at(30) - 0.5 / FPS).frameT, at(29));
+});
+
 console.log(`packet_cache: ${n} passed`);
