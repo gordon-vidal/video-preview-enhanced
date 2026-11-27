@@ -617,6 +617,10 @@ kbd {
 /* Page-level layers (player.css, folder-rail.css, compare.css): Folder Rail 5 (its collapse tab 8 inside it) < panel 7
    < seek thumbnail 9 < seek tip 10 < popovers (rail hover card 12, rail menus 14, tile menu 16) < context menu 20
    < #sheet 40 (modal: above everything, also the stage's drag and split overlays, which reach 30). */
+/* Top layer (media/ui/floating.ts showTopLayer sets popover="manual"): the UA's [popover] rules centre the box
+   (inset 0, margin auto, fit-content) and add a border and padding. Reset what the surfaces below do not set themselves,
+   at zero specificity so every rule of theirs still wins. In the top layer the order of opening replaces z-index. */
+:where(#ctxmenu, #menu, .vpe-pop, .panel)[popover] { inset: auto; margin: 0; width: auto; height: auto; overflow: visible; }
 .panel {
   position: fixed; right: 16px; z-index: 7; width: 316px; box-sizing: border-box; overflow-y: auto;
   display: flex; flex-direction: column; padding: 6px 0;

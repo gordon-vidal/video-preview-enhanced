@@ -275,8 +275,20 @@
     playableBtn.setAttribute('aria-checked', String(playable));
 
     // ---- menus: the column (left-click on DURATION ▾ or right-click on the header) and Autoplay ----
+    /** The webview UI bundle's overlay engine (media/ui/floating.ts), when the page loaded it. */
+    const overlay = () => /** @type {any} */ (globalThis).VpeWebviewUi?.showTopLayer ? /** @type {any} */ (globalThis).VpeWebviewUi : null;
+    /** @type {Map<HTMLElement, () => void>} stops following the button of each open menu */
+    const followers = new Map();
+    function hideMenu(/** @type {HTMLElement} */ m, /** @type {HTMLElement} */ b) {
+      followers.get(m)?.();
+      followers.delete(m);
+      overlay()?.hideTopLayer(m);
+      m.hidden = true;
+      b.setAttribute('aria-expanded', 'false');
+    }
     function closeMenus() {
-      for (const [m, b] of [[colMenu, colBtn], [endMenu, endBtn]]) { m.hidden = true; b.setAttribute('aria-expanded', 'false'); }
+      hideMenu(colMenu, colBtn);
+      hideMenu(endMenu, endBtn);
     }
     function showMenu(/** @type {HTMLElement} */ menu, /** @type {HTMLElement} */ btn, /** @type {string} */ attr, /** @type {string} */ value, /** @type {{x: number, y: number}|null} */ at) {
       const was = !menu.hidden;
@@ -288,6 +300,7 @@
         b.querySelector('.chk').textContent = on ? '✓' : '';
       }
       menu.hidden = false;
+      overlay()?.showTopLayer(menu);
       btn.setAttribute('aria-expanded', 'true');
       const r = btn.getBoundingClientRect();
       const w = menu.offsetWidth, h = menu.offsetHeight;
@@ -296,6 +309,11 @@
       const y = at ? at.y : (menu === endMenu ? r.top - h - 4 : r.bottom + 4);
       menu.style.left = `${Math.max(4, Math.min(x, vw - w - 4))}px`;
       menu.style.top = `${Math.max(4, Math.min(y, vh - h - 4))}px`;
+      const engine = overlay();
+      if (engine) {
+        if (at) engine.positionAtPoint(menu, at.x, at.y, { padding: 4 });
+        else followers.set(menu, engine.positionAnchored(btn, menu, { placement: menu === endMenu ? 'top-end' : 'bottom-end', offset: 4, padding: 4 }));
+      }
       const first = menu.querySelector('[aria-checked="true"]') || menu.querySelector('button');
       if (first) /** @type {HTMLElement} */ (first).focus();
     }
@@ -336,8 +354,8 @@
     }
     doc.addEventListener('pointerdown', (/** @type {PointerEvent} */ e) => {
       const t = /** @type {any} */ (e.target);
-      if (!colMenu.hidden && !colMenu.contains(t) && t !== colBtn) { colMenu.hidden = true; colBtn.setAttribute('aria-expanded', 'false'); }
-      if (!endMenu.hidden && !endMenu.contains(t) && !(t && t.closest && t.closest('#railEndBtn'))) { endMenu.hidden = true; endBtn.setAttribute('aria-expanded', 'false'); }
+      if (!colMenu.hidden && !colMenu.contains(t) && t !== colBtn) hideMenu(colMenu, colBtn);
+      if (!endMenu.hidden && !endMenu.contains(t) && !(t && t.closest && t.closest('#railEndBtn'))) hideMenu(endMenu, endBtn);
     }, true);
 
     // ---- the list ----

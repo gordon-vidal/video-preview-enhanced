@@ -834,8 +834,15 @@ const VpeControls = (() => {
         const w = panel.offsetWidth;
         panel.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, o.left + o.width / 2 - w / 2)))}px`;
         panel.style.right = 'auto';
-      } else { panel.style.left = ''; panel.style.right = ''; }
+        // Floating UI follows the button from here (the bar's bottom edge keeps the vertical position).
+        if (engine() && !follow) follow = engine().positionAnchored(opener, panel, { placement: 'top', padding: 8, axis: 'x' });
+      } else { unfollow(); panel.style.left = ''; panel.style.right = ''; }
     }
+    /** The webview UI bundle's overlay engine (media/ui/floating.ts), when the page loaded it. */
+    const engine = () => /** @type {any} */ (globalThis).VpeWebviewUi?.showTopLayer ? /** @type {any} */ (globalThis).VpeWebviewUi : null;
+    /** Stops following the opener button (a popover only). */
+    let follow = null;
+    function unfollow() { if (follow) follow(); follow = null; }
     /** Bar buttons show which panel is open. */
     function sync() {
       const set = (b, on) => { if (b) { b.setAttribute('aria-expanded', String(on)); b.classList.toggle('open', on); } };
@@ -851,11 +858,12 @@ const VpeControls = (() => {
     }
     /** Opens (or switches to) a page; focus moves into it unless `focus` is false (peek). */
     function show(v, from, focus = true) {
-      if (from !== undefined) opener = from;
+      if (from !== undefined) { opener = from; unfollow(); }
       if (onShow) onShow();
       closeSheet(false);
       view = v;
       panel.hidden = false;
+      engine()?.showTopLayer(panel);
       render();
       const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' || v === 'step' || v === 'autoplay' ? panel.querySelector('[aria-checked="true"]') : v === 'speed' && popover() ? panel.querySelector('#speedSlider') : null) || panel.querySelector('[data-nav]'));
       if (first && focus) first.focus();
@@ -873,6 +881,8 @@ const VpeControls = (() => {
       view = null;
       speedDrag?.stop();
       speedDrag = null;
+      unfollow();
+      engine()?.hideTopLayer(panel);
       panel.hidden = true;
       panel.textContent = '';
       sync();

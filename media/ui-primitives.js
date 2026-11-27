@@ -76,6 +76,8 @@
     let opener = null;
 
     const isOpen = () => !menuEl.hidden;
+    /** The webview UI bundle's overlay engine (media/ui/floating.ts), when the page loaded it. */
+    const overlay = () => /** @type {any} */ (globalThis).VpeWebviewUi?.showTopLayer ? /** @type {any} */ (globalThis).VpeWebviewUi : null;
     const items = () => /** @type {HTMLElement[]} */ ([...menuEl.querySelectorAll(itemSelector)]);
 
     /**
@@ -84,6 +86,7 @@
      */
     function close(reason = 'api', opts = {}) {
       if (!isOpen()) return;
+      overlay()?.hideTopLayer(menuEl);
       menuEl.hidden = true;
       menuEl.textContent = '';
       const back = opener;
@@ -99,8 +102,17 @@
     function openAt(x, y, opts = {}) {
       if (!isOpen()) opener = /** @type {HTMLElement | null} */ (doc.activeElement);
       menuEl.hidden = false;
+      const engine = overlay();
+      engine?.showTopLayer(menuEl);
       menuEl.style.left = '0px';
       menuEl.style.top = '0px';
+      if (engine) {
+        engine.positionAtPoint(menuEl, x, y, { padding: margin });
+        const first = items()[0];
+        if (opts.focusFirst !== false && first && first.focus) first.focus();
+        else if (menuEl.focus) menuEl.focus();
+        return;
+      }
       const rect = typeof menuEl.getBoundingClientRect === 'function' ? menuEl.getBoundingClientRect() : { width: 0, height: 0 };
       const w = menuEl.offsetWidth || rect.width || 0;
       const h = menuEl.offsetHeight || rect.height || 0;

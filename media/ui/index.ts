@@ -6,6 +6,7 @@ import { computed, effect, signal } from '@preact/signals';
 import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom';
 
 export { h, render, signal, computed, effect, computePosition, flip, shift, offset, autoUpdate };
+export { showTopLayer, hideTopLayer, positionAtPoint, positionAnchored } from './floating';
 
 /** Set once the bundle has run: page scripts check it before using the rest. */
 export const ready = true;
