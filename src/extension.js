@@ -2100,10 +2100,10 @@ function closeBurstTabs(viewer, items, viewColumn) {
   for (const tab of tabs) if (!isOwn(tab)) closeTab(tab);
 }
 
-/** Open Together: the burst's videos in one viewer (in a tab that already is one, else the first tab). */
+/** Open Together: the burst's videos in one viewer (in a tab that already is one, else the first tab or a new Compare panel). */
 async function openBurst(context, { items, extra, viewColumn }) {
-  const panels = items.flatMap((it) => it.panels);
-  const hostOf = () => panels.map((p) => panelViewers.get(p)).find((v) => v && !v.disposed) || null;
+  const currentPanels = () => items.flatMap((it) => it.panels);
+  const hostOf = () => currentPanels().map((p) => panelViewers.get(p)).find((v) => v && !v.disposed) || null;
   let host = hostOf();
   const clips = [];
   for (const it of items) {
@@ -2111,17 +2111,29 @@ async function openBurst(context, { items, extra, viewColumn }) {
     try { clips.push(await unifiedViewer.prepareClip(it.uri, prepDeps(true))); }
     catch (e) { log(`open together: cannot open ${path.basename(it.uri.fsPath)}: ${e && e.message || e}`); }
   }
+  host = host || hostOf();
   if (!host && clips.length < 2) return false;
-  if (!panels.length) return false; // only reused tabs: no new tab to show the viewer in
   // A tab that already became a viewer (it opened alone a moment before) takes the others only while there is room;
   // else they open as usual.
   if (host && (!clips.length || host.session.clips.length + clips.length > host.session.maxVideos)) return false;
+  const panels = currentPanels();
   let viewer = host;
-  if (viewer) for (const c of clips) viewer.session.addClip(c, { compare: true });
-  // join: a tab that became a single viewer meanwhile takes the others instead of a second viewer in its panel.
-  else viewer = await showViewer(context, panels[0], clips[0], null, clips.slice(1), { join: true });
+  if (viewer) {
+    for (const c of clips) viewer.session.addClip(c, { compare: true });
+  } else if (panels.length) {
+    // join: a tab that became a single viewer meanwhile takes the others instead of a second viewer in its panel.
+    viewer = await showViewer(context, panels[0], clips[0], null, clips.slice(1), { join: true });
+  } else {
+    // Tab events can fire before VS Code resolves any custom editor (e.g. dropping several videos into the editor area):
+    // open a Compare panel directly and close the opened player tabs below.
+    const panel = vscode.window.createWebviewPanel(
+      COMPARE_VIEW_TYPE, clips.map((c) => c.label).join(' · '), viewColumn ?? vscode.ViewColumn.Active, { retainContextWhenHidden: true },
+    );
+    panel.iconPath = new vscode.ThemeIcon('split-horizontal');
+    viewer = await showViewer(context, panel, clips[0], null, clips.slice(1));
+  }
   if (!viewer) return false;
-  for (const p of panels) if (p !== viewer.panel) { try { p.dispose(); } catch { /* gone already */ } }
+  for (const p of currentPanels()) if (p !== viewer.panel) { try { p.dispose(); } catch { /* gone already */ } }
   closeBurstTabs(viewer, items, viewColumn);
   log(`${viewer.session.clips.length} videos opened together -> one compare${extra.length ? `, ${extra.length} more stay as tabs` : ''}`);
   noticeTogether(viewer.session.clips.length);

@@ -211,6 +211,21 @@ function slowProbe(delays) {
       closeAll();
     }
 
+    // ---- Open Together: tabs opened together before any resolveCustomEditor arrives still become one Compare ----
+    {
+      const cmpPanels = h.autoPanels();
+      const t1 = tabs.open(U(a), PLAYER);
+      const t2 = tabs.open(U(b), PLAYER);
+      const t3 = tabs.open(U(c), PLAYER);
+      const t4 = tabs.open(U(d), PLAYER);
+      await sleep(200);
+      assert.strictEqual(cmpPanels.length, 1, 'opens a Compare panel even when no custom editor panel resolved in time');
+      assert.deepStrictEqual(shown(cmpPanels[0]), ['s_h264.mp4', 'rotated.mp4', 'third.mp4', 'fourth.mp4'], 'all four videos in one Compare');
+      for (const tb of [t1, t2, t3, t4]) assert.ok(tabs.closed.includes(tb), 'the opened player tabs close');
+      cmpPanels[0].panel.dispose();
+      closeAll();
+    }
+
     // ---- Explorer "Add to Compare": an open Compare comes before the active single video ----
     {
       const cmpPanels = h.autoPanels();
