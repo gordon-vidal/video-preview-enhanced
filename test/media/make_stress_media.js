@@ -23,12 +23,13 @@ const DEFAULT_OUT = path.join(__dirname, '.stress');
  * enc: the encoder family; mbps; gop: frames between keyframes; bf: B-frames; grain: noise strength (more: more bits).
  */
 const CLIPS = [
-  { name: 'hevc10_2160p25_100mbps_gop250.mp4', w: 3840, h: 2160, fps: 25, dur: 120, quick: 20, enc: 'hevc10', mbps: 100,
-    gop: 250, bf: 0, grain: 24, audio: true,
-    what: '4K 10-bit HEVC at 100 Mb/s, a keyframe every 10 s: a seek decodes up to 250 frames; 64 MB of packets hold ~5 s' },
-  { name: 'hevc10_2160p25_gop1500.mp4', w: 3840, h: 2160, fps: 25, dur: 120, quick: 30, enc: 'hevc10', mbps: 60,
-    gop: 1500, bf: 0, grain: 20,
-    what: 'one keyframe a minute: the worst case for a jump and for a step back across a keyframe' },
+  { name: 'hevc10_pq_2160p25_100mbps_gop250.mp4', w: 3840, h: 2160, fps: 25, dur: 120, quick: 20, enc: 'hevc10', mbps: 100,
+    gop: 250, bf: 0, grain: 24, audio: true, pq: true,
+    what: '4K HDR (PQ) 10-bit HEVC at 100 Mb/s, a keyframe every 10 s: tone-mapped on the host; a seek decodes up to 250 '
+      + 'frames; 64 MB of packets hold ~5 s' },
+  { name: 'hevc10_pq_2160p25_gop1500.mp4', w: 3840, h: 2160, fps: 25, dur: 120, quick: 30, enc: 'hevc10', mbps: 60,
+    gop: 1500, bf: 0, grain: 20, pq: true,
+    what: 'HDR (PQ), one keyframe a minute: the worst case for a jump and for a step back across a keyframe' },
   { name: 'h264_2160p25_80mbps_bframes_gop300.mp4', w: 3840, h: 2160, fps: 25, dur: 120, quick: 20, enc: 'h264', mbps: 80,
     gop: 300, bf: 3, grain: 24,
     what: '4K H.264 with B-frames, 80 Mb/s, a keyframe every 12 s: host decode cost on every seek' },
@@ -151,6 +152,8 @@ function clipArgs(clip, enc, seconds, out, font) {
   args.push('-vf', filters.join(','));
   if (clip.vfr) args.push('-fps_mode', 'passthrough');
   args.push(...encoderArgs(enc, { ...clip, ten: tenBit(clip), open: clip.enc === 'x265open' }));
+  // HDR tags (PQ, BT.2020): the picture is the same test pattern, but the host now tone-maps it like real HDR footage.
+  if (clip.pq) args.push('-color_primaries', 'bt2020', '-color_trc', 'smpte2084', '-colorspace', 'bt2020nc', '-color_range', 'tv');
   if (clip.audio) args.push('-c:a', clip.name.endsWith('.mov') ? 'pcm_s16le' : 'aac', ...(clip.name.endsWith('.mov') ? [] : ['-b:a', '192k']));
   if (clip.name.endsWith('.mp4') || clip.name.endsWith('.mov')) args.push('-movflags', '+faststart');
   args.push(out);

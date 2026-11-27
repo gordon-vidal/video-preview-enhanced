@@ -46,6 +46,8 @@ Usage: node tools/review.js [target] [flags]      (no arguments in a terminal: i
   --stress              add the stress clips (4K at 60-120 Mb/s, long GOPs, B-frames, ProRes, VFR, 10 min; ~10 GB,
                         made once into test/media/.stress/ by test/media/make_stress_media.js; VPE_FFMPEG picks ffmpeg)
   --stress-quick        the same clips, shorter (~2.5 GB)
+  --ffmpeg <exe>        seed videoPreviewEnhanced.ffmpegPath with this ffmpeg (ffprobe next to it): every review uses
+                        it, no setup popup or download (for example a build whose NVENC matches your GPU driver)
   --no-ffmpeg-on-path   hide ffmpeg on PATH only
   --first-run           open the setup guide on start, as after a fresh install (needs a fresh profile: always here)
   --no-ffmpeg           no ffmpeg at all (PATH hidden and the lookup in the usual places off)
@@ -63,14 +65,14 @@ const SWITCHES = {
   noffmpeg: 'noFfmpeg', noffmpegonpath: 'noFfmpegOnPath', firstrun: 'firstRun', ui: 'ui', help: 'help', h: 'help',
   stress: 'stress', stressquick: 'stressQuick',
 };
-const VALUES = { code: 'code', media: 'media', checklist: 'checklist', link: 'link', transcode: 'transcode' };
+const VALUES = { code: 'code', media: 'media', checklist: 'checklist', link: 'link', transcode: 'transcode', ffmpeg: 'ffmpeg' };
 
 /** argv -> options. Throws ReviewError on an unknown flag or a bad value. */
 function parseArgs(argv) {
   const o = {
     target: 'main', dirty: false, dev: false, installed: false, code: '', media: '', checklist: '',
     link: 'off', transcode: '', dryRun: false, noWait: false, keep: false, noFfmpeg: false, noFfmpegOnPath: false, firstRun: false,
-    ui: false, help: false, stress: false, stressQuick: false,
+    ui: false, help: false, stress: false, stressQuick: false, ffmpeg: '',
   };
   let haveTarget = false;
   for (let i = 0; i < argv.length; i++) {
@@ -93,6 +95,7 @@ function parseArgs(argv) {
   o.link = o.link.toLowerCase(); o.transcode = o.transcode.toLowerCase();
   if (!LINKS[o.link]) fail(`--link must be one of: ${Object.keys(LINKS).join(', ')}`);
   if (o.transcode && !TRANSCODES.includes(o.transcode)) fail(`--transcode must be one of: ${TRANSCODES.join(', ')}`);
+  if (o.ffmpeg && (o.noFfmpeg || o.noFfmpegOnPath)) fail('--ffmpeg cannot be combined with --no-ffmpeg / --no-ffmpeg-on-path');
   return o;
 }
 
@@ -586,6 +589,7 @@ async function launch(o) {
   const srt = [toolRoot, main].map((r) => path.join(r, 'test', 'subtitles', 'fixtures', 'overlap.srt'))
     .find(isFile) || '';
   if (o.media && !isDir(o.media)) fail(`--media folder not found: ${o.media}`);
+  if (o.ffmpeg && !isFile(o.ffmpeg)) fail(`--ffmpeg file not found: ${o.ffmpeg}`);
   if (o.checklist && !isFile(o.checklist)) fail(`--checklist file not found: ${o.checklist}`);
 
   // The run's own temp folder, made only now that nothing can be refused any more (a dry run just names one).
@@ -614,6 +618,7 @@ async function launch(o) {
   say(`  folder       : ${openFolder}${o.media ? '  (your own folder)' : ''}`);
   if (o.link !== 'off') say(`  ssh link     : ${LINKS[o.link]}  [${o.link}]`);
   if (o.transcode) say(`  transcode    : ${o.transcode}  (seeded in settings.json)`);
+  if (o.ffmpeg) say(`  ffmpeg       : ${path.resolve(o.ffmpeg)}  (videoPreviewEnhanced.ffmpegPath)`);
   if (o.firstRun) say('  first run    : the setup guide opens on start, as after a fresh install');
   if (missing.length) {
     say(`  missing media: ${missing.join(', ')}  (made by test/media/make_media.js, test/tracks/make_media.js)`);
@@ -622,6 +627,7 @@ async function launch(o) {
 
   const settings = { ...BASE_SETTINGS };
   if (o.transcode) settings['videoPreviewEnhanced.transcode'] = o.transcode;
+  if (o.ffmpeg) settings['videoPreviewEnhanced.ffmpegPath'] = path.resolve(o.ffmpeg);
   // VS Code's default; the extension then opens its setup guide on the first start (src/walkthrough.js shouldOpenGuide)
   if (o.firstRun) settings['workbench.welcomePage.walkthroughs.openOnInstall'] = true;
   const settingsFile = path.join(userData, 'User', 'settings.json');
@@ -647,7 +653,7 @@ async function launch(o) {
     if (needWorktree) cmd(wtCmd);
     if (needBuild) cmd(buildCmd);
     cmd(`write ${q(settingsFile)}  (no welcome page, no trust prompt, no updates, telemetry off${
-      o.transcode ? `, transcode ${o.transcode}` : ''})`);
+      o.transcode ? `, transcode ${o.transcode}` : ''}${o.ffmpeg ? `, ffmpegPath ${path.resolve(o.ffmpeg)}` : ''})`);
     if (!o.dev) cmd(installCmd);
     if (!o.media) {
       for (const i of items) cmd(`hardlink-or-copy ${q(i[1])} -> ${q(path.join(videos, i[0], i[2]))}`);
@@ -815,7 +821,7 @@ function defaultChecklist({ o, describe, version, sha, vs, items, missing, sidec
  *  (--dry-run, --media, --checklist, --code, --no-wait). */
 function mergeMenuArgs(original, picked) {
   const o = parseArgs(picked);
-  for (const k of ['media', 'checklist', 'code', 'noWait']) o[k] = original[k];
+  for (const k of ['media', 'checklist', 'code', 'noWait', 'ffmpeg']) o[k] = original[k];
   o.dryRun = o.dryRun || original.dryRun;
   return o;
 }

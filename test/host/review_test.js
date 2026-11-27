@@ -101,10 +101,22 @@ for (const [flag, quick] of [['--stress', false], ['--stress-quick', true]]) {
   const gen = cmds(out).find((x) => /make_stress_media\.js/.test(x));
   assert(gen && /--out ".*[\\/]test[\\/]media[\\/]\.stress"/.test(gen), `${flag}: generator into test/media/.stress`);
   assert.strictEqual(/ --quick/.test(gen), quick, `${flag}: quick or full`);
-  assert(cmds(out).some((x) => /hardlink-or-copy .*hevc10_2160p25_100mbps_gop250\.mp4" -> ".*[\\/]stress[\\/]/.test(x)),
+  assert(cmds(out).some((x) => /hardlink-or-copy .*hevc10_pq_2160p25_100mbps_gop250\.mp4" -> ".*[\\/]stress[\\/]/.test(x)),
     `${flag}: stress clips linked into the stress group`);
 }
 assert(!cmds(dry('HEAD', '--dev')).some((x) => /make_stress_media/.test(x)), 'no stress clips unless asked');
+
+// --ffmpeg: seeds videoPreviewEnhanced.ffmpegPath; a missing file or --no-ffmpeg alongside is refused.
+{
+  const exe = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-review-ff-')), 'ffmpeg.exe');
+  fs.writeFileSync(exe, '');
+  out = dry('HEAD', '--dev', '--ffmpeg', exe);
+  assert(cmds(out).some((x) => /settings\.json.*ffmpegPath .*ffmpeg\.exe/.test(x)), 'ffmpegPath seeded');
+  assert(/ffmpeg\s+: .*ffmpeg\.exe/.test(out), 'ffmpeg in summary');
+  assert.notStrictEqual(node('--dry-run', 'HEAD', '--ffmpeg', `${exe}.missing`).status, 0, 'missing --ffmpeg refused');
+  assert.throws(() => review.parseArgs(['--ffmpeg', exe, '--no-ffmpeg']), /cannot be combined/);
+  fs.rmSync(path.dirname(exe), { recursive: true, force: true });
+}
 
 // --transcode: seeded into the throwaway profile's settings.json
 for (const flags of [['--transcode', 'always'], ['-Transcode', 'always']]) {

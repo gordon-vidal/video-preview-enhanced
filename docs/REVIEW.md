@@ -61,6 +61,7 @@ Both spellings work, in any case: `--dry-run` and `-DryRun`, `--no-ffmpeg-on-pat
 | `--checklist <file.md>` | copy it into the folder as `REVIEW.md` and open it (for example one checklist per change) |
 | `--link <preset>` | simulate a Remote-SSH link: `off`, `fast-ssh`, `typical-ssh`, `slow-ssh`, `very-slow-ssh`, `flaky-ssh` or `remote` (below) |
 | `--stress` | add a `stress` group of generated clips (below); `--stress-quick`: the same, shorter |
+| `--ffmpeg <exe>` | seed `videoPreviewEnhanced.ffmpegPath` with this ffmpeg (ffprobe next to it): every review uses it, with no setup popup or download. Useful when the ffmpeg on PATH has an NVENC newer than your NVIDIA driver (the extension then encodes on the CPU and says so) |
 | `--transcode <mode>` | `auto`, `always` or `off`: seeds `videoPreviewEnhanced.transcode` in the throwaway profile (default: not set) |
 | `--ui` | open the menu |
 | `--dry-run` | print every command and path; create and launch nothing |
