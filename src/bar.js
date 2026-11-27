@@ -36,17 +36,15 @@ const stepButton = (id, title, label, key, icon) => '<span class="stepw">' +
   '<button id="' + id + 'Size" class="stepsz mono" data-default="1" title="Step size: 1 frame. Click to change"' +
   ' aria-label="Step size: 1 frame" aria-expanded="false" aria-controls="panel">1f</button></span>';
 /**
- * The speed button with its reset badge (shown while the speed is not 1×; a click goes back to 1×) and the compact
- * speed overlay the wheel shows above it (media/player-ui.js drawBar / showRateTip).
+ * The speed button with its reset badge (shown while the speed is not 1×; a click goes back to 1×; media/player-ui.js
+ * drawBar).
  */
 const speedButton = () => '<span class="ratew">' +
   '<button id="rate" class="ib speed mono" title="Speed: click, or scroll to change (Shift+scroll: fine)" aria-label="Speed 1×"' +
   ' aria-expanded="false" aria-controls="panel">1×</button>' +
-  '<button id="rateReset" class="ratereset" title="Normal speed (1×)  \\" aria-label="Reset speed to 1×" aria-keyshortcuts="\\" hidden>' +
+  '<button id="rateReset" class="ratereset" title="Normal speed (1×)" aria-label="Reset speed to 1×" hidden>' +
   '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"' +
-  ' stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 3.5V9h5.5"/></svg></button>' +
-  '<span id="rateTip" class="ratetip" aria-hidden="true"><span class="rtrack"><span class="rfill"></span><span class="rthumb"></span></span>' +
-  '<span class="rval">1×</span></span></span>';
+  ' stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 3.5V9h5.5"/></svg></button></span>';
 const playFlashHtml = `<div id="playFlash" aria-hidden="true">${icons.play}${icons.pause}</div>`;
 const pictures = [
   svg(frame + '<rect x="8" y="8" width="8" height="8" rx="1"/>', 'i-fit'),

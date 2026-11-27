@@ -87,19 +87,17 @@
     };
   }
 
-  /** Set speeds on Shift + a digit key (keyCommand), by KeyboardEvent.code. @type {Record<string, number>} */
-  const SPEED_KEYS = { Digit1: 1, Digit2: 2, Digit3: 3, Digit4: 4, Digit0: 0.5 };
   /** Pixels of touchpad scroll that make one preset step over the speed button (a mouse notch is 100-120). */
   const WHEEL_NOTCH = 50;
-  /** How long the compact speed overlay stays after the last wheel turn. */
-  const RATE_TIP_MS = 1100;
+  /** How long the speed popover a wheel turn opened stays after the last turn, then how long it fades. */
+  const SPEED_PEEK_MS = 1500, SPEED_FADE_MS = 200;
 
   /**
    * The keyboard shortcuts of the single player (media/player.js), Compare (media/compare.js) and create(), as one
    * table. Each page maps the action names it supports to its own functions (runKey); a name a page lacks, or a
    * handler that returns false, is "not handled" and the key goes on to VS Code. Ctrl / Cmd / Alt keys are not player
    * keys, except with AltGr (Ctrl+Alt on Windows), which types [ ] { } # on many layouts.
-   * @param {{ key: string, code?: string, shiftKey?: boolean, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean }} e
+   * @param {{ key: string, shiftKey?: boolean, ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean }} e
    * @param {{ altGr?: boolean }} [o]
    * @returns {{ action: string, arg?: any } | null}
    */
@@ -107,12 +105,7 @@
     if (e.metaKey || (!o.altGr && (e.ctrlKey || e.altKey))) return null;
     const a = (/** @type {string} */ action, /** @type {any} */ arg) => (arg === undefined ? { action } : { action, arg });
     const shift = !!e.shiftKey;
-    // Shift+1…4 and Shift+0: set speeds, by key position (e.code), so the symbol the layout types does not matter.
-    // Where Shift types the digit itself (AZERTY), the digit keeps seeking.
-    const code = e.code;
-    if (shift && typeof code === 'string' && SPEED_KEYS[code] && !/^[0-9]$/.test(e.key)) return a('rateSet', SPEED_KEYS[code]);
     switch (e.key) {
-      case '\\': return a('rateSet', 1);
       case ' ': case 'k': case 'K': return a('playPause');
       case 'j': case 'J': return a('skip', -10);
       case 'l': case 'L': return a('skip', 10);
@@ -637,7 +630,7 @@
     for (const a of ['aria-haspopup', 'aria-controls', 'aria-expanded']) cmpBtn.removeAttribute(a);
     const playBtn = need('play'), prevBtn = need('prev'), nextBtn = need('next');
     const prevSize = $('prevSize'), nextSize = $('nextSize');
-    const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate'), rateReset = $('rateReset'), rateTip = $('rateTip');
+    const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate'), rateReset = $('rateReset'), panelEl = $('panel');
     const cogBtn = need('cog'), infoBtn = need('infoBtn'), picBtn = $('picBtn'), fullBtn = $('full');
     const setABtn = $('setABtn'), setBBtn = $('setBBtn'), abMarks = $('abMarks'), abA = $('abA'), abB = $('abB');
     /** The tiles' right-click menu (#menu, compare.css); pages without it get one. */
@@ -1324,42 +1317,37 @@
     });
 
     // ---- actions (the bar, the keys, the menus and the panels all land here) ----
-    /** The compact speed overlay above the speed button (src/bar.js #rateTip): shown while the wheel turns. */
-    let rateTipTimer = 0;
-    function showRateTip() {
-      if (!rateTip) return;
-      // The open speed popover already shows the speed: one representation at a time.
-      if (controls && controls.view() === 'speed') { hideRateTip(); return; }
-      drawRateTip();
-      rateTip.classList.add('on');
-      if (rateTipTimer) win.clearTimeout(rateTipTimer);
-      rateTipTimer = win.setTimeout(() => { rateTipTimer = 0; rateTip.classList.remove('on'); }, RATE_TIP_MS);
+    /**
+     * The wheel over the speed button opens the speed popover without taking focus (a "peek"); it fades out
+     * SPEED_PEEK_MS after the last turn (maintainer, 2026-11-27). Pointing into it, pressing in it or focusing it
+     * keeps it open as a click would; a popover a click opened is left alone.
+     */
+    let peeking = false, peekTimer = 0;
+    const speedOpen = () => !!controls && controls.view() === 'speed';
+    function stopPeekTimer() {
+      if (peekTimer) win.clearTimeout(peekTimer);
+      peekTimer = 0;
+      if (panelEl) panelEl.classList.remove('fading');
     }
-    function hideRateTip() {
-      if (rateTipTimer) win.clearTimeout(rateTipTimer);
-      rateTipTimer = 0;
-      if (rateTip) rateTip.classList.remove('on');
+    function peekSpeed() {
+      if (speedOpen() && !peeking) return;
+      if (!speedOpen()) { controls.show('speed', rateBtn, false); peeking = true; }
+      stopPeekTimer();
+      peekTimer = win.setTimeout(() => {
+        if (!peeking || !speedOpen()) { peeking = false; peekTimer = 0; return; }
+        if (panelEl) panelEl.classList.add('fading');
+        peekTimer = win.setTimeout(() => {
+          peekTimer = 0;
+          if (panelEl) panelEl.classList.remove('fading');
+          if (peeking && speedOpen()) controls.close(false);
+          peeking = false;
+        }, SPEED_FADE_MS);
+      }, SPEED_PEEK_MS);
     }
-    function drawRateTip() {
-      if (!rateTip) return;
-      const C = W.VpeControls;
-      const track = rateTip.querySelector('.rtrack');
-      // The preset ticks, once: 1× stands out as the way home.
-      if (track && !track.querySelector('.rtick') && C.SPEEDS) {
-        for (const v of C.SPEEDS) {
-          const t = doc.createElement('span');
-          t.className = v === 1 ? 'rtick one' : 'rtick';
-          t.style.left = `${((v - C.SPEED_MIN) / (C.SPEED_MAX - C.SPEED_MIN)) * 100}%`;
-          track.appendChild(t);
-        }
-      }
-      const pct = `${((prefs.rate - C.SPEED_MIN) / (C.SPEED_MAX - C.SPEED_MIN)) * 100}%`;
-      const fill = /** @type {HTMLElement | null} */ (rateTip.querySelector('.rfill'));
-      const thumb = /** @type {HTMLElement | null} */ (rateTip.querySelector('.rthumb'));
-      const val = rateTip.querySelector('.rval');
-      if (fill) fill.style.width = pct;
-      if (thumb) thumb.style.left = pct;
-      if (val) val.textContent = C.speedText ? C.speedText(prefs.rate) : `${prefs.rate}×`;
+    function keepPeek() {
+      if (!peeking) return;
+      peeking = false;
+      stopPeekTimer();
     }
     function setRate(/** @type {number} */ r, refresh = true) {
       prefs.rate = W.VpeControls.clampRate(r);
@@ -1466,7 +1454,7 @@
       end: () => { const t = tab(); commit(S.seekFrame(t.playing ? S.togglePlay(ws) : ws, t.maxFrame)); },
       seekTenth: (/** @type {number} */ n) => commit(S.seekFrame(ws, (n / 10) * tab().maxFrame)),
       rateStep: (/** @type {number} */ d) => { setRate(prefs.rate + d * W.VpeControls.SPEED_STEP); toast(W.VpeControls.speedText ? W.VpeControls.speedText(prefs.rate) : `${prefs.rate}×`); },
-      /** Shift+1…4, Shift+0, \ and the reset badge: one set speed. */
+      /** The reset badge: back to one set speed. */
       rateSet: (/** @type {number} */ r) => { setRate(r); toast(W.VpeControls.speedText ? W.VpeControls.speedText(prefs.rate) : `${prefs.rate}×`); },
       volumeStep: (/** @type {number} */ d) => { act.volume(prefs.volume + d); toast(`Volume ${Math.round(prefs.volume * 100)}%`); },
       /** T: the shown time as m:ss.mmm (VpePlayerUiTools copyTimestamp), else in the bar's time format. */
@@ -1654,7 +1642,7 @@
       [playBtn, act.playPause, true], [prevBtn, () => act.stepButton(-1), true], [nextBtn, () => act.stepButton(1), true],
       [muteBtn, act.mute, true], [timeEl, act.cycleTime, true], [setABtn, act.setA, true], [setBBtn, act.setB, true],
       [cogBtn, () => controls.toggle('main', cogBtn), true], [infoBtn, act.info, true],
-      [rateBtn, () => { hideRateTip(); controls.toggle('speed', rateBtn); }, true], [tracksBtn, () => ccClick(), true],
+      [rateBtn, () => { if (peeking) { keepPeek(); controls.show('speed', rateBtn); } else controls.toggle('speed', rateBtn); }, true], [tracksBtn, () => ccClick(), true],
       [picBtn, act.cyclePicture, true], [fullBtn, act.fullscreen, true],
       [liveChipEl, () => controls.toggle('transcode', liveChipEl), true],
     ], onClick);
@@ -1681,8 +1669,8 @@
     volDrag = RangeDrag && volEl ? RangeDrag.bind(volEl) : null;
     if (volDrag && W.VpeControls.holdVolumeOpen) W.VpeControls.holdVolumeOpen(volEl);
     cleanups.push(() => { if (seekDrag) seekDrag.stop(); if (volDrag) volDrag.stop(); });
-    // The wheel over the speed button walks the presets (Shift: steps of 0.05) and shows the compact speed overlay
-    // instead of a toast; over the volume it steps the volume (media/player.js). Chromium turns Shift+wheel into a
+    // The wheel over the speed button walks the presets (Shift: steps of 0.05) and opens the speed popover for a
+    // moment instead of a toast (peekSpeed); over the volume it steps the volume (media/player.js). Chromium turns Shift+wheel into a
     // horizontal scroll, hence deltaX. A touchpad sends many small deltas: a preset needs a notch's worth of them.
     if (rateBtn) {
       let wheelAcc = 0;
@@ -1698,9 +1686,10 @@
           wheelAcc = 0;
           setRate(C.presetRate ? C.presetRate(prefs.rate, d < 0 ? 1 : -1) : prefs.rate + (d < 0 ? 1 : -1) * C.SPEED_STEP);
         }
-        showRateTip();
+        peekSpeed();
       }, { passive: false });
     }
+    if (panelEl) for (const ev of ['pointerenter', 'pointerdown', 'focusin']) listen(panelEl, ev, keepPeek);
     // The reset badge above the speed button: back to 1×; focus moves to the speed button as the badge goes away.
     if (rateReset) {
       listen(rateReset, 'click', (/** @type {MouseEvent} */ e) => {
@@ -1710,7 +1699,7 @@
         if (had && rateBtn) rateBtn.focus();
       });
     }
-    cleanups.push(() => { if (rateTipTimer) win.clearTimeout(rateTipTimer); });
+    cleanups.push(stopPeekTimer);
     if (volEl) {
       listen(volEl, 'wheel', (/** @type {WheelEvent} */ e) => {
         if (!e.deltaY || !hasAudio(tab().soundId)) return;
@@ -2658,7 +2647,6 @@
       }
       // The reset badge only while the speed is not 1× (always visible then, so an off-normal speed is never missed).
       if (rateReset) rateReset.hidden = Math.abs(prefs.rate - 1) < 1e-6;
-      if (rateTip && rateTip.classList.contains('on')) drawRateTip();
       if (picBtn && W.VpePicture) pictureButton(picBtn, W.VpePicture, t.picMode, multi ? 'all videos' : '');
       else if (picBtn) picBtn.dataset.mode = t.picMode;
       // CC: one video only, and (with the subtitle controller) only once the clip has a track; until then C and

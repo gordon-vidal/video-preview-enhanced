@@ -524,26 +524,6 @@ body.idle { cursor: none; }
   color: var(--vpe-dim); background: var(--vscode-editor-background, #1e1e1e);
 }
 #row button.ratereset:hover, #row button.ratereset:focus-visible { color: var(--vscode-foreground); background: var(--vscode-editor-background, #1e1e1e); border-color: var(--vpe-accent); }
-/* The compact speed overlay while the wheel turns over the speed button: a mini slider with the preset ticks. */
-.ratetip {
-  position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%); z-index: 10;
-  display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-radius: 8px; white-space: nowrap;
-  color: var(--vpe-panel-fg); background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--vpe-panel-border); box-shadow: 0 6px 18px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.4));
-  pointer-events: none; opacity: 0; visibility: hidden; transition: opacity 120ms ease-out, visibility 0s linear 120ms;
-}
-.ratetip.on { opacity: 1; visibility: visible; transition: opacity 120ms ease-out; }
-.ratetip .rtrack { position: relative; width: 104px; height: 4px; border-radius: 2px; background: var(--vpe-fill-subtle); }
-.ratetip .rfill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--vpe-accent); }
-.ratetip .rtick { position: absolute; top: -3px; width: 1px; height: 10px; margin-left: -0.5px; background: var(--vpe-dim); opacity: 0.45; }
-.ratetip .rtick.one { opacity: 1; }
-.ratetip .rthumb {
-  position: absolute; top: 50%; width: 10px; height: 10px; border-radius: 50%; transform: translate(-50%, -50%);
-  background: var(--vpe-accent); box-shadow: 0 0 0 2px var(--vpe-surface-float);
-}
-.ratetip .rval { min-width: 40px; text-align: right; font: 500 11.5px var(--vpe-mono); font-variant-numeric: tabular-nums; }
-@media (prefers-reduced-motion: reduce) { .ratetip, .ratetip.on { transition: none; } }
 #tracks .ccline { position: relative; display: flex; }
 #tracks.on .ccline::after {
   content: ''; position: absolute; inset: auto 0 -3px; border-bottom: 2px solid var(--vpe-accent);
@@ -645,6 +625,9 @@ kbd {
 .panel.speed { width: 220px; gap: 8px; padding-bottom: 10px; }
 /* From the speed button: a popover right above it, without the title row. */
 .panel.speed.compact { padding-top: 10px; }
+/* A popover the wheel opened fades out after the last turn (player-ui.js peekSpeed). */
+.panel.fading { opacity: 0; transition: opacity 200ms ease-out; }
+@media (prefers-reduced-motion: reduce) { .panel.fading { transition: none; } }
 .panel.info { width: 360px; padding: 14px 16px; gap: 10px; }
 .panel button { font: inherit; color: inherit; cursor: pointer; }
 .panel .row {

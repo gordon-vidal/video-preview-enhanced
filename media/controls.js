@@ -312,7 +312,7 @@ const VpeControls = (() => {
     if (p.compare) {
       // Compare (media/compare.js): one bar for all videos.
       return [
-        { title: 'Playback', rows: [['Play / pause (all)', 'Space', 'K'], ['Click a video', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Speed 1× / 2× / 3× / 4×', 'Shift+1…4'], ['Speed 0.5× / normal 1×', 'Shift+0', '\\'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B']] },
+        { title: 'Playback', rows: [['Play / pause (all)', 'Space', 'K'], ['Click a video', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B']] },
         { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End']] },
         { title: 'Frames', rows: [['Previous / next frame (all videos)', ',', '.'], ['Copy view', `${ctrlName}+C`], ['Time / timecode / frames', 'click the time']] },
         { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M']] },
@@ -321,7 +321,7 @@ const VpeControls = (() => {
       ];
     }
     return [
-      { title: 'Playback', rows: [['Play / pause', 'Space', 'K'], ['Click the picture', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Speed 1× / 2× / 3× / 4×', 'Shift+1…4'], ['Speed 0.5× / normal 1×', 'Shift+0', '\\'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B'], ['Clear the A–B range', 'Backspace']] },
+      { title: 'Playback', rows: [['Play / pause', 'Space', 'K'], ['Click the picture', 'Play / pause'], [`Speed −/+ ${SPEED_STEP}`, 'Shift+<', 'Shift+>'], ['Loop', 'R'], ['A–B range start / end', 'A', 'B'], ['Clear the A–B range', 'Backspace']] },
       { title: 'Seek', rows: [[`Back / forward ${navName(p.jump.arrow)}`, '←', '→'], [`Back / forward ${navName(p.jump.shift)}`, 'Shift+←', 'Shift+→'], [`Back / forward ${navName(p.jump.ctrl)}`, `${ctrlName}+←`, `${ctrlName}+→`], ['Back / forward 10 s', 'J', 'L'], ['Start / end', 'Home', 'End'], ['Jump to 0–90 %', '0…9']] },
       { title: 'Frames', rows: [['Previous / next frame', ',', '.'], ['Copy frame', `${ctrlName}+C`], ['Save frame as PNG', 'S'], ['Copy timestamp', 'T'], ['Go to frame or time', `${ctrlName}+G`], ['Time / timecode / frames', 'click the time']] },
       { title: 'Sound', rows: [['Volume ±5 %', '↑', '↓'], ['Mute', 'M'], ['Next audio track', 'Shift+A']] },
@@ -824,8 +824,8 @@ const VpeControls = (() => {
       set(buttons.rate, view === 'speed' && opener === buttons.rate);
       set(buttons.tracks, view === 'subs' && opener === buttons.tracks);
     }
-    /** Opens (or switches to) a page; focus moves into it. */
-    function show(v, from) {
+    /** Opens (or switches to) a page; focus moves into it unless `focus` is false (the wheel's speed peek). */
+    function show(v, from, focus = true) {
       if (from !== undefined) opener = from;
       if (onShow) onShow();
       closeSheet(false);
@@ -833,7 +833,7 @@ const VpeControls = (() => {
       panel.hidden = false;
       render();
       const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' || v === 'step' || v === 'autoplay' ? panel.querySelector('[aria-checked="true"]') : v === 'speed' && speedCompact() ? panel.querySelector('#speedSlider') : null) || panel.querySelector('[data-nav]'));
-      if (first) first.focus();
+      if (first && focus) first.focus();
     }
     /** A bar button: opens its page, or closes it when it is the page shown. */
     function toggle(v, from) {
