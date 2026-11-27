@@ -513,17 +513,21 @@ const VpeControls = (() => {
       return f;
     }
 
+    /**
+     * The speed page. From the speed button it is a compact popover above the button (maintainer, 2026-11-27): no
+     * title (the button below shows the speed) and no key list (the shortcut sheet has them); from ⚙ it is a page
+     * with a title to go back.
+     */
     function renderSpeed(s) {
       const f = document.createDocumentFragment();
-      f.appendChild(head('Speed'));
+      const compact = speedCompact();
+      if (!compact) f.appendChild(head('Speed'));
       const top = el('div', 'speedTop');
       const read = el('div', 'readout', speedText(s.rate));
       const minus = btn('big', null, () => { env.act.stepRate(-1); render(); }, { aria: { 'aria-label': `Slower by ${SPEED_STEP}` } });
       const plus = btn('big', null, () => { env.act.stepRate(1); render(); }, { aria: { 'aria-label': `Faster by ${SPEED_STEP}` } });
       minus.textContent = '−';
       plus.textContent = '+';
-      top.append(minus, read, plus);
-      f.appendChild(top);
       const sl = el('div', 'slider');
       const input = /** @type {HTMLInputElement} */ (el('input'));
       input.type = 'range'; input.min = String(SPEED_MIN); input.max = String(SPEED_MAX); input.step = String(SPEED_STEP); input.value = String(s.rate);
@@ -532,7 +536,7 @@ const VpeControls = (() => {
       input.setAttribute('aria-valuetext', speedText(s.rate));
       input.dataset.nav = '1';
       sl.appendChild(input);
-      f.appendChild(sl);
+      if (compact) { top.append(minus, sl, plus); f.appendChild(top); } else { top.append(minus, read, plus); f.append(top, sl); }
       // The presets as chips under the slider (the ladder the wheel walks through); 1× is the way back to normal.
       const presets = el('div', 'speedPresets');
       presets.setAttribute('role', 'group');
@@ -552,11 +556,11 @@ const VpeControls = (() => {
           b.setAttribute('aria-pressed', String(Math.abs(SPEEDS[i] - rate) < 1e-6));
         }
       });
-      const note = el('div', 'pnote');
-      note.append('Scroll on the speed button: presets. ', kbd('Shift'), '+scroll, ', kbd('Shift'), '+', kbd('<'), kbd('>'),
-        `: steps of ${SPEED_STEP}×. `, kbd('Shift'), '+', kbd('1'), '…', kbd('4'), ': 1×–4×, ', kbd('Shift'), '+', kbd('0'), ': 0.5×, ',
-        kbd('\\'), ': 1×.');
-      f.appendChild(note);
+      if (!compact) {
+        const note = el('div', 'pnote');
+        note.append('Scroll on the speed button for the presets, ', kbd('Shift'), '+scroll for steps of ', `${SPEED_STEP}×.`);
+        f.appendChild(note);
+      }
       return f;
     }
 
@@ -763,6 +767,7 @@ const VpeControls = (() => {
       return f;
     }
 
+    const speedCompact = () => !!opener && opener === buttons.rate;
     const LABEL = { main: 'Player settings', autoplay: 'Autoplay', speed: 'Speed', ab: 'A–B Range', inspect: 'Inspection', picture: 'Picture size', transcode: 'Live transcode', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video', step: 'Step size' };
     /**
      * Pages a page adds (compare's panel and its per-video page): { label, render(s, kit), parent?, button? }.
@@ -779,7 +784,7 @@ const VpeControls = (() => {
       const nav = [...panel.querySelectorAll('[data-nav]')];
       const fi = nav.indexOf(/** @type {any} */ (document.activeElement));
       panel.textContent = '';
-      panel.className = `panel ${view}`;
+      panel.className = `panel ${view}${view === 'speed' && speedCompact() ? ' compact' : ''}`;
       const custom = VIEWS[view];
       panel.setAttribute('aria-label', custom ? (typeof custom.label === 'function' ? custom.label(s) : custom.label) : view === 'info' && s.infoTabs ? 'About these videos' : LABEL[view]);
       const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'autoplay' ? renderAutoplay(s) : view === 'speed' ? renderSpeed(s) : view === 'ab' ? renderAB(s) : view === 'inspect' ? renderInspect(s) : view === 'picture' ? renderPicture(s) : view === 'transcode' ? renderTranscode(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : view === 'step' ? renderStep(s) : renderInfo(s);
@@ -794,7 +799,7 @@ const VpeControls = (() => {
       panel.style.bottom = `${Math.max(8, window.innerHeight - r.top + 8)}px`;
       panel.style.maxHeight = `${Math.max(120, r.top - 16)}px`;
       // The step size popover sits right above the step button it was opened from; the other pages at the bar's right end.
-      if (view === 'step' && opener) {
+      if ((view === 'step' || (view === 'speed' && speedCompact())) && opener) {
         const o = opener.getBoundingClientRect();
         const w = panel.offsetWidth;
         panel.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, o.left + o.width / 2 - w / 2)))}px`;
@@ -822,7 +827,7 @@ const VpeControls = (() => {
       view = v;
       panel.hidden = false;
       render();
-      const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' || v === 'step' || v === 'autoplay' ? panel.querySelector('[aria-checked="true"]') : null) || panel.querySelector('[data-nav]'));
+      const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' || v === 'step' || v === 'autoplay' ? panel.querySelector('[aria-checked="true"]') : v === 'speed' && speedCompact() ? panel.querySelector('#speedSlider') : null) || panel.querySelector('[data-nav]'));
       if (first) first.focus();
     }
     /** A bar button: opens its page, or closes it when it is the page shown. */

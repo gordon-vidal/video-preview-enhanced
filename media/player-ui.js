@@ -1328,10 +1328,17 @@
     let rateTipTimer = 0;
     function showRateTip() {
       if (!rateTip) return;
+      // The open speed popover already shows the speed: one representation at a time.
+      if (controls && controls.view() === 'speed') { hideRateTip(); return; }
       drawRateTip();
       rateTip.classList.add('on');
       if (rateTipTimer) win.clearTimeout(rateTipTimer);
       rateTipTimer = win.setTimeout(() => { rateTipTimer = 0; rateTip.classList.remove('on'); }, RATE_TIP_MS);
+    }
+    function hideRateTip() {
+      if (rateTipTimer) win.clearTimeout(rateTipTimer);
+      rateTipTimer = 0;
+      if (rateTip) rateTip.classList.remove('on');
     }
     function drawRateTip() {
       if (!rateTip) return;
@@ -1647,7 +1654,7 @@
       [playBtn, act.playPause, true], [prevBtn, () => act.stepButton(-1), true], [nextBtn, () => act.stepButton(1), true],
       [muteBtn, act.mute, true], [timeEl, act.cycleTime, true], [setABtn, act.setA, true], [setBBtn, act.setB, true],
       [cogBtn, () => controls.toggle('main', cogBtn), true], [infoBtn, act.info, true],
-      [rateBtn, () => controls.toggle('speed', rateBtn), true], [tracksBtn, () => ccClick(), true],
+      [rateBtn, () => { hideRateTip(); controls.toggle('speed', rateBtn); }, true], [tracksBtn, () => ccClick(), true],
       [picBtn, act.cyclePicture, true], [fullBtn, act.fullscreen, true],
       [liveChipEl, () => controls.toggle('transcode', liveChipEl), true],
     ], onClick);

@@ -21,6 +21,10 @@ from 1× to 2× took 20 notches, and there was no quick way back to 1×. An off-
   leaves keyboard focus on the speed button. Name: "Reset speed to 1×"; tooltip names `\`.
 - **Speed panel:** the slider stays. The track labels became a 5 + 4 grid of preset chips (the jump-size chip
   style) with `aria-pressed` on the current one.
+- **Compact popover** (maintainer, 2026-11-27): a click on the speed button opens a small popover right above it,
+  like the step-size popover: `− slider +` over the preset chips, no title (the button shows the speed) and no key
+  list (the shortcut sheet has them). Focus goes to the slider. ⚙ › Speed keeps the page with a title and a one-line
+  hint. While the popover is open the wheel overlay stays hidden: one view of the speed at a time.
 - **Wider badges** (maintainer, 2026-11-27): the reset badge spans nearly the speed button's width, and the
   step-size badges on ◀| / |▶ are at least the button's width minus 8 px, so both are easier to hit.
 
