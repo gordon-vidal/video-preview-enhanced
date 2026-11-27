@@ -24,6 +24,11 @@ const SCENARIOS = {
   'split-wipe': { tiles: ['clip-0', 'clip-1'], capture: true, layout: 'split', railOpen: false, label: 'Split Wipe (2 videos)' },
   // The speed off 1×: the reset badge above the speed button; scroll over it for the compact speed overlay.
   'speed-off-normal': { tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, rate: 1.5, label: 'Single video at 1.5× (speed reset badge)' },
+  // The #notice banner as the host opens it (F fell back to Zen Mode): layout, buttons, Esc, × (docs/notes/notifications.md).
+  notice: {
+    tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, hostMessage: { type: 'zenLayoutOffer' },
+    label: 'Notice banner (Zen Mode full width offer)',
+  },
 };
 
 const escapeStyle = (s) => String(s).replace(/<\/style/gi, '<\\/style');
@@ -437,6 +442,10 @@ ${inlinedScripts}
     if (sc.railOpen) ui$.rail.show();
     else if (ui$.rail.isOpen()) ui$.rail.close();
     if ((sc.rate || 1) !== ui$.getPrefs().rate) ui$.dispatch('rateSet', sc.rate || 1);
+    // A scenario's host message (e.g. a notice) arrives as production delivers it; switching away clears the banner.
+    const notices = ui$.parts && ui$.parts.notices;
+    if (notices) notices.hide();
+    if (sc.hostMessage) ui$.onHostMessage(sc.hostMessage);
   }
   scenarioSel.onchange = () => loadScenario(scenarioSel.value);
   $('resetBtn').onclick = () => loadScenario(scenarioSel.value);

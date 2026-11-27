@@ -19,6 +19,23 @@ tested in milliseconds by `test/host/player_ui_tools_test.js`.
 | `#toast` pill | the page's `toast()` | a short confirmation of what the user just did (key, menu, click): "Frame copied", "Volume 80%", "Live transcode: auto" | anything that needs an action or must survive a glance away |
 | Bar `Live` chip | `media/controls.js` | Live transcode / streaming state, resolution and rate | (it is the owner: toasts and notices do not repeat it) |
 
+## Banner layout
+
+![The #notice banner: info icon, text on its own line, buttons below](img/notice-banner.png)
+
+The banner is a card so it reads as a message rather than a strip of buttons (`#notice` in `media/player.css`):
+
+- an **icon and accent edge** in `--vpe-notice-accent`: VS Code's focus blue for information, the error colour for
+  `data-kind="error"` and the warning colour for `clipRefusal` (both with a `!` icon instead of `i`);
+- the **text on its own line**, the **buttons on a row below it**, starting where the text starts, in DOM order: the
+  main action (filled with VS Code's button colour), then **Settings**, then the "don't show again" answer;
+- **×** in the top-right corner. Keys and accessible names are unchanged: Tab order is text → action → Settings →
+  hide → ×, Esc closes it (after any open panel), the text goes to the polite live region.
+- Centered at the top, `min(460px, 100% - 32px)` wide; on a narrow editor the buttons wrap onto another row.
+
+Try it in the mockup harness: `node tools/mockup/render.js --scenario notice --out .tmp/notice.html` (the scenario
+sends the host's `zenLayoutOffer`, so the real notice controller opens it).
+
 ## Banner priority queue
 
 `NOTICE_PRIORITY`: `error` = `clipRefusal` (3) > `reducedRes` (2) > `slowPlayback` (1) > `info` (0, also unknown kinds).

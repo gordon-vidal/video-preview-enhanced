@@ -303,4 +303,22 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.strictEqual(pxRules.length, 1, '#pxread z-index is set once');
 }
 
+{ // The #notice banner reads as a message (docs/notes/notifications.md, "Banner layout"): an info icon and an accent
+  // edge, the text on its own line with the buttons on a row below it, the main action filled, × in the corner;
+  // errors and refused clips take the error / warning colour instead of the info blue.
+  const notice = declsOf(PLAYER, '#notice');
+  assert.match(notice['border-left'] || '', /var\(--vpe-notice-accent\)/, 'accent edge');
+  assert.ok(/var\(--vscode-focusBorder\b/.test(notice['--vpe-notice-accent'] || ''), 'info accent by default');
+  const icon = declsOf(PLAYER, '#notice::before');
+  assert.ok(icon.content && icon.position === 'absolute', 'icon drawn by the banner itself');
+  const text = declsOf(PLAYER, '#noticeText');
+  assert.match(text.flex || '', /100%/, 'the text takes a whole line');
+  assert.strictEqual(text['box-sizing'], 'border-box', 'and never spills out of the card');
+  assert.strictEqual(declsOf(PLAYER, '#notice #noticeClose').position, 'absolute', '× in the corner');
+  assert.match(declsOf(PLAYER, '#notice #noticeAction').background || '', /--vscode-button-background/, 'main action filled');
+  for (const kind of ['error', 'clipRefusal']) {
+    assert.ok(anySelector(PLAYER, (s) => s.includes(`#notice[data-kind="${kind}"]`)), `${kind} has its own accent`);
+  }
+}
+
 console.log('unified_css: ok');
