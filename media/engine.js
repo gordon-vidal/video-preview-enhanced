@@ -1744,7 +1744,9 @@ function createEngine(env) {
       }
       const end = this.startT !== null && this.meta.duration ? this.startT + this.meta.duration : Infinity;
       if (this.playing && this.eof && !this.queue.length && now >= this.endT() && this.seekTarget === null) {
-        if (this.loop && this.loopAgain()) now = this.restartLoop(now, this.endT()); else this.ended(this.endT());
+        // The data ran out well before the length the file declares (a cut-off recording, a lost tail): not its end.
+        if (this.shortOfEnd(this.endT())) this.stopped(this.endT(), 'the data ends before the length the file declares');
+        else if (this.loop && this.loopAgain()) now = this.restartLoop(now, this.endT()); else this.ended(this.endT());
       } else if (this.playing && now > end + 0.5 && !this.queue.length && (this.eof || now > end + 1.5)) {
         // Past the end with nothing left to show (also when a skip overshot the last keyframe).
         // Without the decoder's or transport's end of file (a stalled native or remote feed) it pauses all the same, but
@@ -1916,6 +1918,29 @@ function createEngine(env) {
       this.pause();
       const ranIn = typeof VpeAutoplay !== 'undefined' ? VpeAutoplay.natural({ playing: true, ran, hidden }) : !hidden && ran >= 0.25;
       onEnded(this, { natural: ranIn && terminal, ran, terminal });
+    }
+
+    /**
+     * The file declares more after `at` than a rounding of its last frame (2 frames, at least 0.5 s): its data ended
+     * early. An unknown or zero length says nothing, so that end counts as the end.
+     */
+    shortOfEnd(at) {
+      const d = this.meta.duration;
+      if (!(d > 0)) return false;
+      return at < (this.startT || 0) + d - Math.max(2 / (this.fps || 30), 0.5);
+    }
+
+    /**
+     * Decoding stopped before the end of the file (its data ends early, or the decoder fails at one spot): pause on
+     * the last picture and tell the page, which says so and offers to try again. Not an end: Loop and Autoplay do
+     * not act on it.
+     */
+    stopped(at, why) {
+      const ran = Number.isFinite(this.runFromT) ? at - this.runFromT : Infinity;
+      this.pause();
+      const t = Math.max(0, at - (this.startT || 0));
+      log(`decoding stopped at ${t.toFixed(3)} s${this.meta.duration ? ` of ${this.meta.duration.toFixed(3)} s` : ''}: ${why}`);
+      onEnded(this, { natural: false, stopped: true, ran, terminal: false, t });
     }
 
     /** End of what was decoded: the last frame's end or the end of the sound, whichever is later. */
