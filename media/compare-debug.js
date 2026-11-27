@@ -137,7 +137,7 @@
         // The folder rail (media/folder-rail.js snapshot), when the page has one.
         rail: /** @type {any} */ (window).vpeCompare?.railState?.() ?? null,
         active: document.activeElement?.id || document.activeElement?.getAttribute('aria-label'),
-        menu: ui.menu.hidden ? null : { tile: Number(ui.menu.dataset.tile), items: [...ui.menu.querySelectorAll('.mi')].map((b) => text(b)) },
+        menu: ui.menu.hidden ? null : { tile: Number(ui.menu.dataset.tile), items: [...ui.menu.querySelectorAll('.vpe-mi')].map((b) => text(b)) },
         addPop: addPop && !addPop.hidden ? text(addPop) : null,
         cells: groups.map((g, gi) => {
           const d = g[0];
@@ -211,7 +211,7 @@
           break;
         }
         case 'menuPick': { // the menu item whose text starts with `label`
-          const b = [...ui.menu.querySelectorAll('.mi')].find((x) => (x.textContent || '').trim().startsWith(m.label));
+          const b = [...ui.menu.querySelectorAll('.vpe-mi')].find((x) => (x.querySelector('.vpe-mi-label')?.textContent || '').trim().startsWith(m.label));
           if (b) /** @type {any} */ (b).click(); else log(`menuPick: no item ${m.label}`);
           break;
         }

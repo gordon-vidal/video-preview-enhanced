@@ -55,21 +55,10 @@ streamlined right-click menu). This branch builds it. Simple mode is the player 
 (icon and label; the label hides below 600 px, the icon, tooltip and accessible name stay). It shows for video
 files only (not URLs or image sequences), between CC and About.
 
-- **No Compare open:** a click opens a small confirmation above the button ("Start Compare with this video, then
-  click videos in the Explorer to add them." · **Cancel** · **Start comparison**). Nothing happens until
-  **Start comparison**: one stray click must never leave the user in Add Mode, which takes Esc to leave. Focus
-  starts on **Cancel**; Tab moves between the two buttons; Esc, **Cancel** or a click outside closes it and focus
-  returns to **Compare**. The button has `aria-haspopup="dialog"` and `aria-expanded`; the confirmation is a
-  modal `dialog` named "Start comparison", described by its text.
-- **Start comparison:** Compare takes the player's tab at its position with this one video, with Add Mode on.
-- **A Compare open:** the button reads **Add to Compare** (label, tooltip, accessible name) and a click adds the
-  video at once to the most recently active Compare (no confirmation); a toast says "Added to Compare (n videos)"
-  or "Already in Compare". It uses the Explorer's Add to Compare logic (`src/compare.js` `addSelection`).
-- **State:** the host renders the bar with the current state (`src/bar.js`, `data-open`) and posts
-  `{ type: 'compareOpen', open }` when a Compare opens or closes, when the player becomes visible and after the
-  video opened. The branch that adds the `videoPreviewEnhanced.compareOpen` context key can feed the same hook.
-
-![The Compare confirmation above the bar](img/toolbar-compare-confirm.png)
+- **Superseded (2026-11):** the confirmation dialog and the "Add to Compare" state are gone. In the unified viewer
+  the button is the **Capture toggle** (`aria-pressed`; on: "Open videos to add to comparison (click to stop)"),
+  explained once by the Add mode callout (docs/DESIGN.md, Callout); see
+  [player-ui-controller.md](player-ui-controller.md). `src/bar.js` gives it no dialog attributes.
 
 **CC.** The CC button shows only when the video has a subtitle track (embedded, a sidecar file next to it, or a
 file loaded with **Load subtitle file…**); it appears as soon as one loads. ⚙ › **Subtitles** is always there
@@ -116,13 +105,17 @@ time, ⚙ and fullscreen stay longest; everything shed is still reachable anothe
 
 | Width | Hidden (in addition) | Still reachable |
 |---|---|---|
+| ≤ 750 px | the folder capsule | Shift+N / Shift+P, right-click on ◀| / |▶ |
 | ≤ 640 px | A / B buttons, ⓘ, the total duration | right-click, keys A / B / I |
 | ≤ 500 px | CC, Compare | ⚙ › Subtitles, right-click, keys C / Shift+D |
 | ≤ 400 px | speed, picture size; tighter padding | ⚙ › Speed / Picture size, keys Z and Shift+< / > |
 | ≤ 320 px | Mute and volume | keys M, ↑ / ↓ |
 | ≤ 250 px | ◀| / |▶ | keys , . and the arrows |
 
-Compare's own Reorder and Compare buttons are not in the ladder (Compare opens at desktop widths).
+Compare's bar is wider (about 824 px with every button, measured in the mock-up harness) and sheds earlier
+(`media/compare.css`, maintainer 2026-11-27): ≤ 840 px the Compare toggle's words, Swap and Sync; ≤ 680 px the A / B
+buttons, ⓘ and the duration; ≤ 560 px Split; ≤ 440 px Spotlight and Grid. Picture size and fullscreen are never
+clipped.
 
 ## Keyboard shortcuts in Settings
 

@@ -605,10 +605,8 @@
       timeLetterEl.className = 'who';
       timeLetterEl.setAttribute('aria-hidden', 'true');
     }
+    // The Compare button is the Capture toggle (aria-pressed, set when it renders).
     const tracksBtn = $('tracks'), cmpBtn = need('startCompareBtn');
-    // Here the Compare button is the Capture toggle (aria-pressed, set when it renders), not a start dialog: the
-    // dialog attributes src/bar.js gives it would point at nothing.
-    for (const a of ['aria-haspopup', 'aria-controls', 'aria-expanded']) cmpBtn.removeAttribute(a);
     const playBtn = need('play'), prevBtn = need('prev'), nextBtn = need('next');
     const prevSize = $('prevSize'), nextSize = $('nextSize');
     const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate'), rateReset = $('rateReset');
@@ -2511,7 +2509,7 @@
       return [-1, 1].map((d) => {
         const label = `Move ${esc(clipName(id))} ${d < 0 ? 'earlier' : 'later'}`;
         const dis = pos + d < 0 || pos + d >= t.tiles.length ? ' disabled' : '';
-        return `<button type="button" data-act="move" data-i="${v}" data-d="${d}" aria-label="${label}" title="${label}"${dis}>${d < 0 ? ICONS.up : ICONS.down}</button>`;
+        return `<button type="button" class="tbtn" data-act="move" data-i="${v}" data-d="${d}" aria-label="${label}" title="${label}"${dis}>${d < 0 ? ICONS.up : ICONS.down}</button>`;
       }).join('');
     }
 

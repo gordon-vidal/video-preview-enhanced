@@ -67,12 +67,11 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 }
 .tbtn {
   height: var(--vpe-btn-h); min-width: var(--vpe-btn-h); padding: 0 5px; border-radius: var(--vpe-btn-radius);
-  color: var(--vscode-foreground, #e4e4e7);
   font: 600 11px/1 var(--vscode-font-family, system-ui, sans-serif);
   cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
   transition: background 120ms, color 120ms, border-color 120ms;
 }
-.tbtn:hover { background: var(--vpe-hover); color: var(--vscode-foreground); border-color: var(--vpe-bd-active); }
+.tbtn:hover { background: var(--vpe-hover); border-color: var(--vpe-bd-active); }
 .tbtn.spot svg rect { transition: opacity 120ms ease; }
 .tbtn.spot:hover svg rect, .tbtn.spot:focus-visible svg rect { opacity: 1; }
 .tbtn.rm:hover, .tbtn.rm.confirm {
@@ -87,8 +86,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: inline-flex; align-items: center; gap: 5px;
   max-width: calc(100% - 70px); height: 26px; padding: 0 5px 0 4px; box-sizing: border-box;
   border-radius: 999px;
-  color: var(--vscode-foreground, #f4f4f5);
-  font: inherit; font-size: 11.5px;
+  font: inherit; font-size: 11px;
 }
 .cell.split .pill { max-width: calc(50% - 14px); }
 .pill.right { left: auto; right: 7px; }
@@ -97,9 +95,9 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   border: 0; padding: 0 2px 0 0; margin: 0; background: none; color: inherit; font: inherit; cursor: inherit;
 }
 .pill .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.pill .fr { color: var(--vpe-dim); font-size: 10.5px; flex: none; }
+.pill .fr { color: var(--vpe-dim); font-size: 11px; flex: none; }
 .zoom-grip {
-  display: none; color: rgba(255, 255, 255, 0.65); font-size: 11px; letter-spacing: -1px;
+  display: none; color: var(--vpe-dim); font-size: 11px; letter-spacing: -1px;
   padding: 0 2px; line-height: 1; flex: none;
 }
 #stage.zoomed .zoom-grip { display: inline-flex; }
@@ -146,11 +144,11 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 .tile-stats-close:hover { background: var(--vpe-hover); color: var(--vscode-foreground, #fff); }
 .tile-stats-close:focus-visible { outline: 1px solid var(--vscode-focusBorder, #fff); outline-offset: 1px; }
 .tile-stats .iname { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
-.tile-stats .isub { color: var(--vpe-dim); font-size: 11.5px; }
+.tile-stats .isub { color: var(--vpe-dim); font-size: 11px; }
 .tile-stats .igrid { display: grid; grid-template-columns: 74px minmax(0, 1fr); row-gap: 5px; column-gap: 10px; margin: 0; font-size: 12px; line-height: 1.35; }
 .tile-stats .igrid dt { color: var(--vpe-dim); }
 .tile-stats .igrid dd { margin: 0; overflow-wrap: anywhere; }
-.tile-stats .igrid dd.diff { color: #fbbf24; font-weight: 600; }
+.tile-stats .igrid dd.diff { color: var(--vscode-editorWarning-foreground, #cca700); font-weight: 600; }
 
 /* On-demand Sync mode per-tile offset stepper (bottom-right, hidden unless #stage.sync-mode). */
 .sync-pill, .nudge {
@@ -158,7 +156,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: none; align-items: center; gap: 3px; height: 24px; padding: 0 4px;
   border-radius: 999px;
   border: 1px solid var(--vpe-bd-active);
-  font-family: var(--vpe-mono, monospace); font-size: 11px; color: var(--vscode-foreground, #e4e4e7);
+  font-family: var(--vpe-mono, monospace); font-size: 11px;
 }
 .nudge.left { left: 7px; right: auto; top: 38px; bottom: auto; }
 .nudge.right.below { top: 38px; bottom: auto; }
@@ -171,7 +169,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 }
 .sync-pill button:hover, .nudge button:hover { background: var(--vpe-hover); color: var(--vscode-foreground, #fff); }
 .sync-pill .offv, .nudge .offv { background: transparent; min-width: 30px; padding: 0 4px; font-family: var(--vpe-mono, monospace); font-size: 11px; }
-.sync-pill .offv:hover, .nudge .offv:hover { background: rgba(255, 255, 255, 0.12); color: inherit; }
+.sync-pill .offv:hover, .nudge .offv:hover { background: var(--vpe-hover); color: inherit; }
 
 /* Dense cells (5+ tiles): compact pills and buttons so small tiles stay readable. */
 #cells.dense .cell { isolation: isolate; }
@@ -180,12 +178,12 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 }
 #cells.dense .tile-top-acts { top: 4px; right: 4px; }
 #cells.dense .tbtn { height: 20px; min-width: 20px; }
-#cells.dense .ltr { width: 15px; height: 15px; font-size: 9.5px; }
+#cells.dense .ltr { width: 15px; height: 15px; font-size: 10px; }
 #cells.dense .mute-mini { width: 18px; height: 18px; }
 #cells.dense .sync-pill, #cells.dense .nudge { bottom: 4px; right: 4px; height: 21px; padding: 0 2px; gap: 1px; font-size: 10px; max-width: calc(100% - 8px); box-sizing: border-box; }
 #cells.dense .sync-pill button, #cells.dense .nudge button { min-width: 15px; height: 17px; padding: 0 2px; }
-#cells.dense .sync-pill .offv, #cells.dense .nudge .offv { min-width: 20px; padding: 0 2px; font-size: 9.5px; }
-#cells.dense .tile-stats { top: 30px; left: 4px; padding: 4px 6px; font-size: 9.5px; }
+#cells.dense .sync-pill .offv, #cells.dense .nudge .offv { min-width: 20px; padding: 0 2px; font-size: 10px; }
+#cells.dense .tile-stats { top: 30px; left: 4px; padding: 4px 6px; font-size: 10px; }
 #cells.dense .tile-stats-close { top: 2px; right: 2px; width: 18px; height: 18px; font-size: 13px; }
 #cells.dense .pill:focus-visible { outline-color: var(--vscode-focusBorder); }
 
@@ -195,12 +193,8 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   z-index: 5; display: flex; gap: 2px; opacity: 0; pointer-events: none;
 }
 .cell:focus-within .move { opacity: 1; pointer-events: auto; }
-.move button {
-  display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px;
-  background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-editorWidget-foreground, #e8e8e8); cursor: pointer;
-}
-.move button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, #454545); }
-.move button:disabled { color: var(--vscode-disabledForeground, #999); cursor: default; }
+/* The arrows are tile buttons (.tbtn); the end that cannot move further rests dimmed, without a hover. */
+.move .tbtn:disabled { opacity: 0.5; cursor: default; pointer-events: none; }
 
 /* Out-of-range / Ended clip overlay: quiet dark matte with subtle diagonal hatch. */
 .ended-ov {
@@ -213,11 +207,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: none; align-items: center; justify-content: center;
 }
 .cell.ended .ended-ov { display: flex; }
-.ended-badge {
-  font-size: 11px; color: #8a8a93;
-  background: rgba(0, 0, 0, 0.48); border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 3px 9px; border-radius: 999px;
-}
+.ended-badge { font-size: 11px; padding: 3px 9px; border-radius: 999px; }
 .oor {
   position: absolute; left: 0; right: 0; top: 12px; text-align: center; pointer-events: none;
   color: #8a8a8a; font-size: 13px; z-index: 3;
@@ -252,17 +242,8 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
               width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
 }
 .skeleton-label {
-  color: var(--vscode-foreground, #f4f4f5);
   border: 1px solid var(--vpe-bd-active);
   padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
-}
-.skeleton-sub {
-  position: absolute; border-radius: 6px;
-  border: 1.5px dashed rgba(148, 163, 184, 0.45);
-  background: rgba(148, 163, 184, 0.08);
-  pointer-events: none; z-index: 25;
-  transition: left 140ms cubic-bezier(0.2, 0, 0, 1), top 140ms cubic-bezier(0.2, 0, 0, 1),
-              width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
 }
 
 /* The first unused slot in Equal Grid has a centered Add video button (quiet at rest, full on hover or focus, so an empty
@@ -273,11 +254,11 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 .addcell {
   display: inline-flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 10px 16px;
-  color: var(--vscode-foreground, #d4d4d8); font: inherit; font-size: 12px; cursor: pointer;
+  font: inherit; font-size: 12px; cursor: pointer;
   opacity: 0.6; transition: opacity 120ms, background 120ms, border-color 120ms, color 120ms;
 }
 .cell.add:hover .addcell, .addcell:hover, .addcell:focus-visible { opacity: 1; }
-.addcell:hover { background: rgba(255, 255, 255, 0.14); color: #fff; border-color: rgba(255, 255, 255, 0.28); }
+.addcell:hover { background: var(--vpe-hover); border-color: var(--vpe-bd-active); }
 #cells.dense .addcell {
   box-sizing: border-box; max-width: 100%; gap: 3px; padding: 4px 8px; border-radius: 6px; font-size: 11px;
 }
@@ -291,24 +272,6 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   background: rgba(20, 20, 20, 0.86); border: 2px solid rgba(255, 255, 255, 0.85);
 }
 
-/* Add popover anchored above the Compare capsule in the player bar (the shared card surface, docs/DESIGN.md). */
-.add-pop {
-  position: fixed; bottom: 52px; right: 120px; z-index: 15; width: 240px; box-sizing: border-box;
-  color: var(--vpe-panel-fg, var(--vscode-foreground, #e4e4e7)); padding: 5px;
-  box-shadow: var(--vpe-shadow-high);
-}
-.add-pop button {
-  width: 100%; text-align: left; background: transparent; border: 0; color: inherit;
-  padding: 7px 9px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer;
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
-}
-.add-pop button:hover, .add-pop button:focus-visible { background: var(--vpe-row-hover, rgba(255, 255, 255, 0.09)); }
-.add-pop .kbd { font-size: 10.5px; color: var(--vpe-dim, #94a3b8); font-family: var(--vpe-mono, monospace); }
-.add-pop .note {
-  font-size: 11px; color: var(--vpe-dim, #94a3b8); padding: 6px 9px 4px;
-  border-top: 1px solid var(--vpe-sep, rgba(255, 255, 255, 0.08)); margin-top: 4px; line-height: 1.35;
-}
-
 /* The Compare capsule (src/bar.js #cmpGroup, shown with two videos or more): the layouts, Swap, Sync and the panel button
    in the same quiet monochrome pill as the folder capsule (media/folder-rail.css). */
 #row #cmpGroup.cmp-group {
@@ -316,19 +279,23 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   border-radius: 6px; background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle); box-sizing: border-box;
 }
 #row #cmpGroup.cmp-group[hidden] { display: none; }
-#row #cmpGroup .ib { height: 24px; min-width: 26px; border-radius: 4px; }
+#row #cmpGroup .ib { height: var(--vpe-btn-h); min-width: 26px; border-radius: var(--vpe-btn-radius); }
 /* The pressed layout / Sync button keeps a crisp outline on the capsule's own fill. */
 #cmpGroup .ib.active { background: var(--vpe-hover); border: 1px solid var(--vpe-bd-active); }
 
-/* Narrow panes shed Compare's bar buttons in this order, after player.css has dropped the range pins, the info button
-   and the duration (640 px): the Compare toggle's words, Swap and Sync, Split, then Spotlight and Grid. The layouts, Swap
-   and the offsets stay in the Compare panel (#cmpBtn), Swap also on X, so Picture size and Fullscreen at the bar's right
-   edge are never clipped. #spotlightBtn ... #cmpBtn are the buttons of the #cmpGroup capsule (src/bar.js). */
-@media (max-width: 640px) {
+/* Narrow panes shed Compare's bar buttons in this order (docs/notes/ui-simple.md, "Narrow bar"): the Compare toggle's
+   words, Swap and Sync (840 px: the bar needs about 824 px with every button), then the range buttons, ⓘ and the duration
+   (680 px, earlier than player.css's 640 px), Split, then Spotlight and Grid. The layouts, Swap and the offsets stay in
+   the Compare panel (#cmpBtn), Swap also on X, so Picture size and Fullscreen at the bar's right edge are never clipped.
+   #spotlightBtn ... #cmpBtn are the buttons of the #cmpGroup capsule (src/bar.js). */
+@media (max-width: 840px) {
   /* The Compare / capture toggle keeps its icon and its name (title, aria-label) but loses its words. */
-  #row #startCompareBtn > span:not(.cap-pulse) { display: none; }
-  #row #startCompareBtn { gap: 0; }
+  body.compare #row #startCompareBtn > span:not(.cap-pulse) { display: none; }
+  body.compare #row #startCompareBtn { gap: 0; }
   #row #swapBtn, #row #syncBtn { display: none; }
+}
+@media (max-width: 680px) {
+  body.compare #row button.rng, body.compare #row #infoBtn, body.compare #row #time #dur { display: none; }
 }
 @media (max-width: 560px) {
   #row #splitBtn { display: none; }
@@ -343,7 +310,6 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 
 /* Leave room above the shared toast for Compare's mode hint. */
 body.compare #toast { --toast-top: 36px; z-index: 12; }
-body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 
 /* The Compare panel and its per-video page (media/controls.js pages added by media/compare.js). */
 .panel.cmp, .panel.cmpVid { width: 340px; }
@@ -352,7 +318,7 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 .panel .row.static:hover { background: none; }
 .panel .row.tall { height: 44px; }
 .panel .row .two { display: flex; flex-direction: column; line-height: 1.25; }
-.panel .row .two .sub { font-size: 11.5px; color: var(--vpe-dim); overflow: hidden; text-overflow: ellipsis; }
+.panel .row .two .sub { font-size: 11px; color: var(--vpe-dim); overflow: hidden; text-overflow: ellipsis; }
 .panel .row .val.mono { font-size: 12px; min-width: 34px; text-align: right; }
 .panel .row.head .ltr { margin-right: 4px; }
 .panel .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
@@ -363,24 +329,14 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
   background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border);
 }
 .panel.info .seg button[aria-pressed="true"] { background: var(--vpe-on-bg); color: var(--vpe-on-fg); border-color: var(--vpe-accent); }
-.panel .unitrow { display: flex; align-items: center; gap: 10px; padding: 8px 12px 0; }
-.panel .unitrow .seg { flex: 1; }
 .panel .readout.off { font-size: 18px; }
 
 /* A tile's right-click menu (the shared card surface, docs/DESIGN.md). */
 #menu {
   position: fixed; z-index: 16; min-width: 250px; padding: 4px 0; display: flex; flex-direction: column;
-  color: var(--vpe-panel-fg, var(--vscode-foreground)); box-shadow: var(--vpe-shadow-high);
+  box-shadow: var(--vpe-shadow-high);
   font-size: 13px;
 }
-#menu .mi {
-  height: 26px; padding: 0 12px 0 26px; display: flex; align-items: center; gap: 16px; border: 0; background: none; cursor: pointer;
-  text-align: left; font: inherit; color: inherit;
-}
-#menu .mi:hover, #menu .mi:focus { background: var(--vscode-menu-selectionBackground, #04395e); color: var(--vscode-menu-selectionForeground, #fff); outline: none; }
-#menu .mi .h { color: var(--vpe-dim); font-size: 12px; }
-#menu .mi:hover .h, #menu .mi:focus .h { color: inherit; }
-#menu .msep { height: 1px; margin: 4px 10px; background: var(--vscode-menu-separatorBackground, #454545); }
 
 body.vscode-high-contrast .pill,
 body.vscode-high-contrast .tbtn,
@@ -392,7 +348,7 @@ body.vscode-high-contrast-light #cells.dense :is(.pill, .sync-pill) {
   outline: 1px solid var(--vscode-contrastBorder, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
-  .ov, .addcell, .skeleton, .skeleton-sub { transition: none; }
+  .ov, .addcell, .skeleton, .tbtn, .tbtn.spot svg rect, .mute-mini, .splitter-bar { transition: none; }
 }
 
 /* ---- The folder rail in Compare (media/folder-rail.css has the rail; docs/notes/folder-rail.md): beside or over the

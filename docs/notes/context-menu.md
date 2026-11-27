@@ -41,8 +41,10 @@ Start / End" always sets at this moment; the A / B keys toggle.
 ## Look
 
 Same tokens as `.panel`: `--vpe-panel-bg`, `--vpe-panel-fg`, `--vpe-panel-border`, `--vpe-row-hover`, `--vpe-sep`,
-`--vpe-dim`, `--vpe-mono`. Per row: a 22 px check column (✓ for Loop when on, empty otherwise, so labels align), the label
-(`flex: 1`), the shortcut (`.ctx-key`: `--vpe-mono`, 11 px, `--vpe-dim`, 24 px from the label). `position: fixed`, clamped to the
+`--vpe-dim`, `--vpe-mono`. The rows are the shared menu row (`VpeUi.menuItem`, `.vpe-mi`, docs/DESIGN.md "Menus"), the same
+as the tile menu and the rail's menus: a 22 px check column (✓ for Loop when on, empty otherwise, so labels align), the
+label (`flex: 1`), the shortcut (`.vpe-mi-key`: `--vpe-mono`, 11 px, `--vpe-dim`, 24 px from the label); 28 px high, the
+row fill on hover and focus, the focus ring on keyboard focus. `position: fixed`, clamped to the
 window with a 4 px margin (right and bottom edges; `max-height` scrolls on a very small window). Fullscreen is
 `document.documentElement`, so the menu is inside it.
 

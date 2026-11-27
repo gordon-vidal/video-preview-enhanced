@@ -32,15 +32,19 @@ What exists today; build new UI from these first.
 | Notice (`#notice`) | `createNoticeController`, `media/player-ui-tools.js` | A decision or a lasting state: text, buttons below, × |
 | Toast (`#toast`) | `toast()` in `media/player-ui.js` | A short confirmation of what the user just did |
 | ⚙ panel (`.panel`) | `media/controls.js` | Settings pages, rows, chips, switches, steppers |
-| Menus (`#ctxmenu`, `#menu`) | `media/ctxmenu.js`, Compare tile menu | Right-click and tile menus |
+| Menus (`#ctxmenu`, `#menu`, rail `.vpe-pop[role=menu]`) | `media/ctxmenu.js`, `media/player-ui-tiles.js`, `src/folder-rail-html.js` | Right-click, tile and rail menus |
+| Menu row (`.vpe-mi`, `.vpe-msep`) | `VpeUi.menuItem` / `menuSep`, `media/ui-primitives.js` | Every row of every menu: check column, label, shortcut |
 | Popover (`.vpe-pop`) | `media/folder-rail.js` and others | A small menu anchored to a button |
 | Callout (`.vpe-pop.callout`) | `createCalloutController`, `media/player-ui-tools.js` | Explains a mode once, next to the control that shows it (Add mode) |
 | Button (`.vpe-btn`, `.vpe-btn-main`) | `media/player.css` | Every text button in a notice, callout, panel or the error screen |
 | Close (`.vpe-close`) | `media/player.css` | × of a notice or callout |
 | Overlay engine | `media/ui/floating.ts` (`showTopLayer`, `positionAnchored`, `positionAtPoint`) | Putting a menu, panel or callout above everything and next to its button |
 | Error screen (`#overlay.error`) | `createOverlayController`, `media/player-ui-lifecycle.js` | A video that cannot play: a centered card, one main action |
-| Bar buttons (`#bar .ib`) | `src/bar.js` | Icon buttons in the control bar; `.active` / `aria-pressed` for on |
-| Pills (`.pill`, `.sync-pill`) | `media/compare.css` | Compact labels and steppers on a tile |
+| Bar buttons (`#bar .ib`) | `src/bar.js` | Icon buttons in the control bar: 34 px square, transparent, hover fill; `.active` / `aria-pressed` for on. Their own block, not `.vpe-btn` |
+| Capsules (`#cmpGroup`, `#folderCap`) | `src/bar.js` | A quiet pill holding related bar buttons (Compare layouts, folder previous / next) |
+| Switch (`.panel .switch`) | `media/controls.js` | An on / off setting in the ⚙ panel |
+| Pills (`.pill`, `.sync-pill`) | `media/compare.css` | Compact labels and steppers on a tile (the stepper's round 19 px buttons are part of the pill) |
+| Tile buttons (`.tbtn`) | `media/compare.css` | Square icon buttons on a tile (Spotlight, remove, the keyboard reorder arrows) |
 
 ## Tokens (`:root` in `media/player.css`)
 
@@ -54,7 +58,8 @@ What exists today; build new UI from these first.
 | `--vpe-panel-border` | VS Code menu / widget border | The 1 px border of every card |
 | `--vpe-panel-fg` | VS Code menu foreground | Text on cards |
 
-Change a value here, never per surface. The one exception is the overlay Folder Rail's side shadow (it falls to one
+Change a value here, never per surface. Every class and id in the style sheets must still be made by the page's code
+(`unified_css_test.js` fails on a dead rule). The one exception is the overlay Folder Rail's side shadow (it falls to one
 side only).
 
 **The card rule.** One rule near the top of `player.css` lists every card (`#notice, #toast, #overlay.error, .panel,
@@ -66,15 +71,24 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
 
 - **12 px** for messages (notice, toast, Add mode prompt), line height 1.45.
 - **13 px** for menus and panels, as VS Code's own menus.
-- **11 px** for dense data (pixel readout, stats, Go to, scopes, tile pills).
+- **11 px** for dense data (pixel readout, stats, Go to, scopes, tile pills, panel notes, column heads).
+- **12 px** for the bar's time and speed readouts and the Folder Rail's list.
+- Outside the scale only: **9-10 px** inside a badge or letter mark (A–B pins, step badges, tile letters) and in a
+  dense grid's pills and info card (5+ tiles, 10 px); **14 / 16 px** for a panel or sheet title; glyph buttons (×, ±)
+  and the big offset readout; em sizes for the status text over the picture. `unified_css_test.js` fails on any
+  other size.
 - Normal weight. Bold only for a label inside a card, never for a whole message.
 
 ## Colour
 
 - **Accent blue only from VS Code:** `--vscode-button-background` for the one main action of a notice or dialog,
   `--vscode-focusBorder` for focus rings and "a mode is on" marks (the Add mode dot, the drop frame).
-- No hard-coded colours on cards. Exceptions that sit on the picture itself: the drop frame and the shortcut sheet's
-  backdrop (dimmers, not cards), the Compare divider and the A–B pins.
+- No hard-coded colours on cards or the bar, and a card's text colour comes only from the card rule
+  (`--vpe-panel-fg`; a member does not repaint it). Fixed black and white are allowed only on the picture itself:
+  the picture's own black (video, tile canvases, seek thumbnails, scope plots), dimmers over it (drop frame, shortcut
+  sheet backdrop, play flash, the ended-clip matte) and marks drawn on it (Compare divider, Spotlight splitter, tile
+  edges, a lifted tile's shadow, the loading ring, A–B pins, pixel grid, subtitles, status text). `unified_css_test.js` holds that list.
+- A mismatch or warning highlight inside a card uses VS Code's token (`--vscode-editorWarning-foreground`).
 - Warnings and errors are said in words; a notice has no accent colour or icon.
 
 ## Buttons
@@ -83,12 +97,55 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
 
 
 - **One button:** `.vpe-btn`, 4 px corners (`--vpe-btn-radius`), 12 px text, **24 px** high on the picture (notices,
-  callouts, error screen, tile buttons) and **28 px** in panels (`--vpe-btn-h`, `--vpe-btn-h-panel`). Chips, steppers
-  and tile buttons follow the same corners and heights.
+  callouts, error screen, tile buttons) and **28 px** in panels (`--vpe-btn-h`, `--vpe-btn-h-panel`). Chips, steppers,
+  tile buttons and the buttons inside the bar's capsules (Compare layouts, folder previous / next) follow the same
+  corners and heights.
+- **Own building blocks, not `.vpe-btn`:** the bar's icon buttons (34 px square, transparent, 6 px corners, hover
+  fill), the ⚙ panel's switch, and a tile pill's stepper (round 19 px buttons inside the pill).
 - **One main action per surface**, `.vpe-btn-main`, in VS Code's button colour; it is the only rule allowed to use
   `--vscode-button-background`. Everything else is outlined; a selected chip uses the "on" fill.
 - **Containers never restyle "all their buttons".** A generic `.x button` rule skips the shared ones
   (`:not(.vpe-btn)`); `unified_css_test.js` checks it. (The rail's menu rows once turned a callout's buttons into rows.)
+
+## Menus
+
+- Every menu row is `VpeUi.menuItem` (`.vpe-mi`): **28 px** high, 13 px, a 22 px check column (✓ or empty, so labels
+  align), the label, the shortcut or hint on the right (11 px mono, dim). Separators are `menuSep` (`.vpe-msep`).
+- Hover and focus show the row fill (`--vpe-row-hover`); keyboard focus adds the focus ring. No menu uses VS Code's
+  blue selection colour or its own row style. Menus have 4 px above and below their rows, rows run edge to edge.
+
+## Spacing
+
+- New or changed rules take paddings, gaps and margins from **2 · 4 · 6 · 8 · 12 · 16 px** (bigger layout distances
+  in multiples of 8). Existing values are not swept; they move onto the scale when their rule is touched anyway.
+
+## Icons
+
+- Bar icons are inline SVG in `src/bar.js` (shared ones in `media/ui-primitives.js` `ICONS`): an **18 px** box on a
+  24-unit grid, `stroke="currentColor"`, stroke width **1.6**, round caps and joins, no fill (except a mode's tint),
+  `aria-hidden="true"`; the button carries the name. Smaller marks (chevrons 14 px, badges 9 px) keep the same
+  stroke style. Colour comes from the button's text colour, never from the icon.
+
+## Focus
+
+- Every focusable control shows keyboard focus as a **1 px `--vscode-focusBorder` outline** (`:focus-visible`, one
+  rule near the top of `player.css`); a mouse click shows none. Sliders keep 2 px of offset so the ring clears the
+  thumb. A rule may hide the outline only where it draws the focus some other way (a list's cursor row).
+
+## Motion
+
+- Short and quiet: hover and fade transitions 120–260 ms, ease-out. Every `transition` and `animation` has a
+  `prefers-reduced-motion: reduce` rule: off, or slower where a mark standing still would read as broken (the
+  loading ring turns slowly). `unified_css_test.js` checks it.
+
+## Layering (z-index)
+
+Inside the page, lowest first (`player.css` keeps the same list as a comment, `unified_css_test.js` checks the order):
+subtitles 1 · inspection readouts 2 · toast 3 (12 in Compare, above the tile controls) · notice, pixel readout, tile overlays 4 · error card, drop frame 5 ·
+Folder Rail 5 (its collapse tab 8) · ⚙ panel 7 · seek thumbnail 9 · seek tip 10 · popovers (rail hover card 12, rail
+menus 14, tile menu 16) · context menu 20 · drag and split overlays up to 30 · shortcut sheet 40 (modal). Menus,
+popovers, panels and callouts opened through the overlay engine (`showTopLayer`) go to the browser's top layer, where
+the order of opening replaces z-index.
 
 ## Messages
 
@@ -104,9 +161,10 @@ buttons: `.claude/skills/ui-notices/SKILL.md`.
 
 Known gaps, each to be settled with the maintainer and then written down above:
 
-- **Type:** sizes still drift (10.5 and 11.5 px next to the 11 / 12 / 13 scale), including the bar's time readout.
-- **Spacing, icons, focus rings, motion and layering (z-index):** in use but not written down; the z-index order is
-  only checked in `unified_css_test.js`.
+- **Spacing:** older rules still use near values (3, 5, 7, 9, 10, 14 px); they move onto the scale when touched.
+- **Corners besides the card and button tokens:** bar buttons 6 px, A–B and range boxes 2-3 px, the switch 9 px.
+- **A layer-3 check of the narrow-pane ladder:** the runner cannot set the window width yet, so nothing checks that
+  Fullscreen stays inside the bar at 700 / 760 / 820 px (docs/notes/ui-simple.md, "Narrow bar").
 
 ## Adding or changing a surface
 

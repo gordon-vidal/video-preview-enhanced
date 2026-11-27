@@ -90,7 +90,9 @@ export function positionAtPoint(el: HTMLElement, x: number, y: number, opts: Poi
   computePosition(reference, el, {
     strategy: 'fixed',
     placement: 'bottom-start',
-    middleware: [flip({ padding }), shift({ padding })],
+    // crossAxis: for a bottom/top placement shift() moves only sideways by default, so a menu that fits neither below
+    // nor above the point (a short pane, a point outside the page) kept flip's off-screen top (ctxmenu "clamped").
+    middleware: [flip({ padding }), shift({ padding, crossAxis: true })],
   }).then((r) => {
     if (pointTokens.get(el) !== token || el.hidden) return;
     el.style.left = `${r.x}px`;

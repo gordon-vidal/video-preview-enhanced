@@ -347,7 +347,7 @@ function menuSetup() {
   return { dom, doc, win, $, setRect, menuEl, m, acts, closes };
 }
 const ctx = (over = {}) => ({ tile: 1, letter: 'B', playing: false, isClock: true, isSound: false, offsetHint: '+0.20 s', timeHint: '0:01.500', dense: false, canAdd: true, ...over });
-const labels = (menuEl) => [...menuEl.querySelectorAll('.mi')].map((b) => b.textContent);
+const labels = (menuEl) => [...menuEl.querySelectorAll('.vpe-mi')].map((b) => b.textContent);
 
 test('menu items, hints and checkmarks', () => {
   const s = menuSetup();
@@ -357,15 +357,15 @@ test('menu items, hints and checkmarks', () => {
   assert.strictEqual(s.menuEl.dataset.tile, '1');
   assert.strictEqual(s.menuEl.getAttribute('role'), 'menu');
   assert.deepStrictEqual(labels(s.menuEl), [
-    'PlaySpace', '✓ B sets the clock', 'Sound from B', 'Offset of B…+0.20 s', 'Copy frame (B)', 'Copy timestamp (B)0:01.500',
+    'PlaySpace', '✓B sets the clock', 'Sound from B', 'Offset of B…+0.20 s', 'Copy frame (B)', 'Copy timestamp (B)0:01.500',
     'Replace B…', 'Remove B', 'Add video…', 'Leave compare', 'Keyboard shortcuts?', 'Settings…',
   ]);
   const clockItem = s.menuEl.querySelector('[data-action="setClock"]');
   assert.strictEqual(clockItem.getAttribute('role'), 'menuitemcheckbox');
   assert.strictEqual(clockItem.getAttribute('aria-checked'), 'true');
   assert.strictEqual(s.menuEl.querySelector('[data-action="setSound"]').getAttribute('aria-checked'), 'false');
-  assert.strictEqual(s.menuEl.querySelectorAll('.msep').length, 4);
-  assert.strictEqual(s.doc.activeElement, s.menuEl.querySelector('.mi'), 'the first item has focus');
+  assert.strictEqual(s.menuEl.querySelectorAll('.vpe-msep').length, 4);
+  assert.strictEqual(s.doc.activeElement, s.menuEl.querySelector('.vpe-mi'), 'the first item has focus');
 });
 
 test('menu variants: playing, dense copy, sound, no add', () => {
@@ -375,7 +375,7 @@ test('menu variants: playing, dense copy, sound, no add', () => {
   assert.strictEqual(l[0], 'PauseSpace');
   assert.ok(l.includes('Copy tile as shown (B)'));
   assert.ok(l.includes('B sets the clock'));
-  assert.ok(l.includes('✓ Sound from B'));
+  assert.ok(l.includes('✓Sound from B'));
   assert.ok(!l.includes('Add video…'));
   assert.strictEqual(T.tileMenuItems(ctx({ canAdd: false })).filter(Boolean).length, 11);
 });
@@ -396,7 +396,7 @@ test('menu position is clamped 4 px inside the viewport', () => {
 test('menu keyboard: arrows wrap, Home / End, Enter activates without leaking', () => {
   const s = menuSetup();
   s.m.open(10, 10, ctx());
-  const items = [...s.menuEl.querySelectorAll('.mi')];
+  const items = [...s.menuEl.querySelectorAll('.vpe-mi')];
   const key = (k) => s.doc.activeElement.fire('keydown', { key: k });
   let e = key('ArrowUp');
   assert.strictEqual(s.doc.activeElement, items[items.length - 1], '↑ from the first wraps to the last');
@@ -446,7 +446,7 @@ test('menu click on an item runs it; a click inside does not reach the page', ()
   s.menuEl.querySelector('[data-action="remove"]').click();
   assert.deepStrictEqual(s.acts, [['remove', 1]]);
   s.m.open(10, 10, ctx());
-  s.menuEl.querySelector('.msep').click();
+  s.menuEl.querySelector('.vpe-msep').click();
   assert.ok(s.m.isOpen(), 'a separator is not an item');
   assert.strictEqual(pageClicks, 0);
 });
@@ -454,7 +454,7 @@ test('menu click on an item runs it; a click inside does not reach the page', ()
 test('menu outside pointerdown and window blur close it', () => {
   const s = menuSetup();
   s.m.open(10, 10, ctx());
-  s.menuEl.querySelector('.mi').fire('pointerdown', {});
+  s.menuEl.querySelector('.vpe-mi').fire('pointerdown', {});
   assert.ok(s.m.isOpen(), 'a press inside keeps it');
   s.$('stage').fire('pointerdown', {});
   assert.ok(!s.m.isOpen());

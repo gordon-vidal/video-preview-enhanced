@@ -71,7 +71,7 @@ function sanitizeCssForInlineFrame(css) {
  * and #notice banner, so the tool and lifecycle controllers run against the same elements as production.
  */
 function stageMarkupHtml() {
-  const realBarHtml = barHtml({ canCompare: true, compareOpen: false, folder: true });
+  const realBarHtml = barHtml({ canCompare: true, folder: true });
   const realRailHtml = folderRailHtml();
   return `<div id="main">
     <div id="stage" class="fit">
@@ -105,12 +105,12 @@ function stageMarkupHtml() {
 /**
  * Build a self-contained HTML mockup using the real production CSS, bar/rail markup, controls,
  * context menu, folder rail, and pure state modules.
- * @param {{ scenario?: string, theme?: 'dark' | 'light', height?: number }} [opts]
+ * @param {{ scenario?: string, theme?: 'dark' | 'light' | 'hc', height?: number }} [opts]
  * @returns {string}
  */
 function buildMockupHtml(opts = {}) {
   const scenarioKey = SCENARIOS[opts.scenario] ? opts.scenario : 'single';
-  const theme = opts.theme === 'light' ? 'light' : 'dark';
+  const theme = ['light', 'hc'].includes(String(opts.theme)) ? opts.theme : 'dark';
   const wbHeight = Math.max(380, Math.min(900, Math.round(Number(opts.height) || 510)));
 
   const playerCss = sanitizeCssForInlineFrame(readRepoFile('media/player.css'));
@@ -146,8 +146,10 @@ function buildMockupHtml(opts = {}) {
     .map((rel) => `<script data-src="${rel}">\n${escapeScript(readRepoFile(rel))}\n</script>`)
     .join('\n');
 
-  const vscodeVars = theme === 'light'
-    ? `--vscode-editor-background:#ffffff; --vscode-foreground:#1f2328; --vscode-editorWidget-background:#f3f3f3;
+  // VS Code's theme colours only (the player derives its --vpe-* tokens from them in player.css). 'hc' is High
+  // Contrast Dark: no button fill (VS Code leaves it unset), borders in the contrast colours, body.vscode-high-contrast.
+  const THEME_VARS = {
+    light: `--vscode-editor-background:#ffffff; --vscode-foreground:#1f2328; --vscode-editorWidget-background:#f3f3f3;
        --vscode-editorWidget-foreground:#1f2328; --vscode-editorWidget-border:rgba(0,0,0,0.14);
        --vscode-editorHoverWidget-background:#f8f8fa; --vscode-editorHoverWidget-border:rgba(0,0,0,0.14);
        --vscode-sideBar-background:#f3f3f3; --vscode-input-background:#ffffff; --vscode-input-border:rgba(0,0,0,0.18);
@@ -160,14 +162,8 @@ function buildMockupHtml(opts = {}) {
        --vscode-button-background:#005fb8; --vscode-button-foreground:#fff; --vscode-button-hoverBackground:#0258a8;
        --vscode-widget-shadow:rgba(0,0,0,0.18); --vscode-descriptionForeground:#57606a;
        --vscode-disabledForeground:#8c959f; --vscode-editor-font-family:ui-monospace,Consolas,monospace;
-       --vscode-font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --vscode-font-size:13px;
-       --vpe-dim:#57606a; --vpe-mono:ui-monospace,Consolas,monospace; --vpe-seek-fill:#005fb8;
-       --vpe-fill-subtle:rgba(0,0,0,0.05); --vpe-bd-subtle:rgba(0,0,0,0.12); --vpe-bd-active:rgba(0,0,0,0.38);
-       --vpe-hover:rgba(0,0,0,0.09); --vpe-surface-float:rgba(248,248,250,0.94); --vpe-panel-bg:rgba(248,248,250,0.96);
-       --vpe-panel-border:rgba(0,0,0,0.15); --vpe-panel-fg:#1f2328; --vpe-row-hover:rgba(0,0,0,0.06);
-       --vpe-sep:rgba(0,0,0,0.1); --vpe-chip-bg:rgba(0,0,0,0.05); --vpe-chip-fg:#1f2328;
-       --vpe-on-bg:rgba(0,95,184,0.14); --vpe-on-fg:#005fb8; --vpe-accent:#005fb8;`
-    : `--vscode-editor-background:#1e1e1e; --vscode-foreground:#e4e4e7; --vscode-editorWidget-background:#1b1b1f;
+       --vscode-font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --vscode-font-size:13px;`,
+    dark: `--vscode-editor-background:#1e1e1e; --vscode-foreground:#e4e4e7; --vscode-editorWidget-background:#1b1b1f;
        --vscode-editorWidget-foreground:#e4e4e7; --vscode-editorWidget-border:rgba(255,255,255,0.12);
        --vscode-editorHoverWidget-background:#232329; --vscode-editorHoverWidget-border:rgba(255,255,255,0.14);
        --vscode-sideBar-background:#18181c; --vscode-input-background:#25252b; --vscode-input-border:rgba(255,255,255,0.14);
@@ -180,14 +176,21 @@ function buildMockupHtml(opts = {}) {
        --vscode-button-background:#0e639c; --vscode-button-foreground:#fff; --vscode-button-hoverBackground:#1177bb;
        --vscode-widget-shadow:rgba(0,0,0,0.55); --vscode-descriptionForeground:#a1a1aa;
        --vscode-disabledForeground:#71717a; --vscode-editor-font-family:ui-monospace,Consolas,monospace;
-       --vscode-font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --vscode-font-size:13px;
-       --vpe-dim:#a1a1aa; --vpe-mono:ui-monospace,Consolas,monospace; --vpe-seek-fill:#38bdf8;
-       --vpe-fill-subtle:rgba(255,255,255,0.06); --vpe-bd-subtle:rgba(255,255,255,0.12);
-       --vpe-bd-active:rgba(255,255,255,0.36); --vpe-hover:rgba(255,255,255,0.12);
-       --vpe-surface-float:rgba(20,22,28,0.92); --vpe-panel-bg:rgba(22,24,30,0.95);
-       --vpe-panel-border:rgba(255,255,255,0.14); --vpe-panel-fg:#e4e4e7; --vpe-row-hover:rgba(255,255,255,0.08);
-       --vpe-sep:rgba(255,255,255,0.1); --vpe-chip-bg:rgba(255,255,255,0.07); --vpe-chip-fg:#e4e4e7;
-       --vpe-on-bg:rgba(56,189,248,0.16); --vpe-on-fg:#e0f2fe; --vpe-accent:#38bdf8;`;
+       --vscode-font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --vscode-font-size:13px;`,
+    hc: `--vscode-editor-background:#000000; --vscode-foreground:#ffffff; --vscode-editorWidget-background:#0c141f;
+       --vscode-editorWidget-foreground:#ffffff; --vscode-editorWidget-border:#6fc3df;
+       --vscode-editorHoverWidget-background:#0c141f; --vscode-editorHoverWidget-border:#6fc3df;
+       --vscode-sideBar-background:#000000; --vscode-input-background:#000000; --vscode-input-border:#6fc3df;
+       --vscode-list-activeSelectionForeground:#ffffff; --vscode-menu-background:#000000;
+       --vscode-menu-foreground:#ffffff; --vscode-menu-border:#6fc3df; --vscode-menu-selectionBorder:#f38518;
+       --vscode-menu-separatorBackground:#6fc3df; --vscode-panel-border:#6fc3df;
+       --vscode-focusBorder:#f38518; --vscode-contrastBorder:#6fc3df; --vscode-contrastActiveBorder:#f38518;
+       --vscode-button-foreground:#ffffff; --vscode-button-border:#6fc3df;
+       --vscode-widget-shadow:transparent; --vscode-descriptionForeground:rgba(255,255,255,0.7);
+       --vscode-disabledForeground:#a5a5a5; --vscode-editor-font-family:ui-monospace,Consolas,monospace;
+       --vscode-font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; --vscode-font-size:13px;`,
+  };
+  const vscodeVars = THEME_VARS[theme];
 
   const scenarioOptions = Object.entries(SCENARIOS)
     .map(([k, v]) => `<option value="${k}"${k === scenarioKey ? ' selected' : ''}>${v.label}</option>`)
@@ -300,7 +303,7 @@ html, body {
 }
 </style>
 </head>
-<body class="compare">
+<body class="compare${theme === 'hc' ? ' vscode-high-contrast' : (theme === 'light' ? ' vscode-light' : ' vscode-dark')}">
 <div class="wb" id="wb">
   <div class="exp-strip" aria-label="Simulated Explorer">
     <span class="exp-lbl">Explorer:</span>

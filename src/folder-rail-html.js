@@ -20,7 +20,7 @@ const COLUMN_ITEMS = [['duration', 'Duration'], ['size', 'Size'], ['modified', '
 const ON_END_ITEMS = [['off', 'Off'], ['next', 'Play next in folder'], ['loop', 'Loop']];
 
 const menu = (id, label, attr, items) => `<div id="${id}" class="vpe-pop" role="menu" aria-label="${label}" hidden>` +
-  items.map(([v, l]) => `<button type="button" role="menuitemradio" aria-checked="false" data-${attr}="${v}"><span>${l}</span><span class="chk" aria-hidden="true"></span></button>`).join('') +
+  items.map(([v, l]) => `<button type="button" role="menuitemradio" aria-checked="false" data-${attr}="${v}" class="vpe-mi"><span class="vpe-mi-check" aria-hidden="true"></span><span class="vpe-mi-label">${l}</span></button>`).join('') +
   '</div>';
 
 /** The rail's markup (inside #main, after #stage). */

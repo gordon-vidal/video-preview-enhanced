@@ -107,6 +107,54 @@ test('positionAtPoint sets the clamped viewport position at once', () => {
   assert.equal(el.style.top, '10px');
 });
 
+/**
+ * The bundle in a context with just enough DOM for Floating UI's platform (instanceof checks, computed styles, the
+ * viewport), and a fixed-position surface of `size` in a `viewport`: Floating UI's answer really arrives.
+ */
+function domSurface({ size, viewport }) {
+  class Node {}
+  class Element extends Node {}
+  class HTMLElement extends Element {}
+  class ShadowRoot {}
+  const base = { position: 'fixed', display: 'block', transform: 'none', translate: 'none', scale: 'none', rotate: 'none',
+    perspective: 'none', containerType: 'normal', backdropFilter: 'none', filter: 'none', willChange: 'auto', contain: 'none',
+    direction: 'ltr' };
+  const win = { innerWidth: viewport.width, innerHeight: viewport.height, devicePixelRatio: 1,
+    getComputedStyle: (e) => ({ ...base, ...(e && e.cs) }), CSS: { supports: () => false }, HTMLElement, Element, Node, ShadowRoot };
+  const context = vm.createContext({ console, window: win, getComputedStyle: win.getComputedStyle, CSS: win.CSS,
+    HTMLElement, Element, Node, ShadowRoot });
+  vm.runInContext(fs.readFileSync(BUNDLE, 'utf8'), context, { filename: 'webview-ui.js' });
+  const page = { x: 0, y: 0, left: 0, top: 0, right: viewport.width, bottom: viewport.height, ...viewport };
+  const box = (props) => Object.assign(new HTMLElement(), props);
+  const html = box({ nodeName: 'HTML', cs: { position: 'static' }, clientWidth: viewport.width, clientHeight: viewport.height,
+    scrollWidth: viewport.width, scrollHeight: viewport.height, scrollLeft: 0, scrollTop: 0, clientLeft: 0, clientTop: 0,
+    getBoundingClientRect: () => page });
+  const body = box({ nodeName: 'BODY', cs: { position: 'static' }, parentNode: html, getBoundingClientRect: () => page });
+  const doc = { documentElement: html, body, defaultView: win };
+  html.ownerDocument = doc;
+  body.ownerDocument = doc;
+  const el = box({ nodeName: 'DIV', hidden: false, style: {}, offsetWidth: size.width, offsetHeight: size.height,
+    clientWidth: size.width, clientHeight: size.height, ownerDocument: doc, parentNode: body, offsetParent: null,
+    getClientRects: () => [], getBoundingClientRect: () => ({ x: 0, y: 0, left: 0, top: 0, right: size.width, bottom: size.height, ...size }) });
+  return { ui: context.VpeWebviewUi, el };
+}
+
+test('positionAtPoint: Floating UI\'s refinement keeps the menu inside the viewport', async () => {
+  // A click far outside (the test hook's corner click), and a right-click in a short pane where the menu fits neither
+  // below nor above the point: the refined position must stay inside, as the synchronous clamp does.
+  for (const [x, y, size, viewport] of [
+    [99999, 99999, { width: 240, height: 330 }, { width: 800, height: 600 }],
+    [300, 150, { width: 240, height: 292 }, { width: 800, height: 300 }],
+  ]) {
+    const { ui, el } = domSurface({ size, viewport });
+    ui.positionAtPoint(el, x, y);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const left = parseFloat(el.style.left), top = parseFloat(el.style.top);
+    assert.ok(left >= 0 && left + size.width <= viewport.width, `left ${left} at (${x}, ${y})`);
+    assert.ok(top >= 0 && top + size.height <= viewport.height, `top ${top} at (${x}, ${y})`);
+  }
+});
+
 test('positionAnchored returns a cleanup that is safe to call twice and drops late answers', async () => {
   const ui = load();
   const el = surface();

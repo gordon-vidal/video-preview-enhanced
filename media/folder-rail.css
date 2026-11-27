@@ -11,7 +11,8 @@
   border-radius: 6px; background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle); box-sizing: border-box;
 }
 #row .folder-cap[hidden] { display: none; }
-#row .folder-cap button.cap-btn { height: 22px; min-width: 22px; padding: 0 4px; border-radius: 4px; font-size: 11px; }
+/* On the button scale like Compare's capsule (docs/DESIGN.md, Buttons). */
+#row .folder-cap button.cap-btn { height: var(--vpe-btn-h); min-width: var(--vpe-btn-h); padding: 0 4px; border-radius: var(--vpe-btn-radius); font-size: 11px; }
 #row .folder-cap button.cap-count {
   font-family: var(--vpe-mono); font-variant-numeric: tabular-nums; padding: 0 5px; min-width: 30px;
 }
@@ -28,7 +29,6 @@
   appearance: none; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
   height: 84px; width: 20px; padding: 0; border-radius: var(--vpe-card-radius) 0 0 var(--vpe-card-radius);
   border-right: none;
-  color: var(--vscode-foreground);
   box-shadow: var(--vpe-shadow-low);
   cursor: pointer;
   opacity: 0; pointer-events: none;
@@ -70,7 +70,7 @@
 
 /* Zone 1: header (hairline 1 below it) */
 .r-head { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--vpe-sep); }
-.r-crumb { flex: 1; min-width: 0; font-size: 11.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-crumb { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .r-btn {
   appearance: none; border: 1px solid transparent; background: transparent;
   color: var(--vscode-foreground); border-radius: 4px; height: 22px; min-width: 22px;
@@ -106,7 +106,7 @@
 .r-playable.on .r-chk-box svg { opacity: 1; }
 .col-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 2px 8px 4px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 8px 4px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--vpe-dim); cursor: context-menu;
 }
 .col-pick {
@@ -123,7 +123,7 @@
 .r-row {
   position: relative; flex: none;
   display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px;
-  border-radius: 4px; cursor: pointer; font-size: 11.5px;
+  border-radius: 4px; cursor: pointer; font-size: 12px;
 }
 .r-row:hover, .r-row.cur { background: var(--vpe-row-hover); }
 /* The playing video: soft fill and a 2 px bar on the left, no outline box. */
@@ -144,7 +144,7 @@
 .r-ico { width: 14px; display: inline-flex; align-items: center; justify-content: center; flex: none; opacity: 0.8; }
 .r-row.active .r-ico { opacity: 1; }
 .r-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.r-col { font-family: var(--vpe-mono); font-size: 10.5px; color: var(--vpe-dim); font-variant-numeric: tabular-nums; flex: none; }
+.r-col { font-family: var(--vpe-mono); font-size: 11px; color: var(--vpe-dim); font-variant-numeric: tabular-nums; flex: none; }
 .r-cmp {
   display: none; appearance: none; border: 1px solid var(--vpe-bd-subtle); background: transparent;
   color: var(--vscode-foreground); border-radius: 4px; height: 18px; width: 18px; padding: 0;
@@ -166,7 +166,7 @@
 }
 .end-btn:hover, .end-btn[aria-expanded="true"] { background: var(--vpe-hover); }
 .end-btn .lbl { color: var(--vpe-dim); }
-.r-pos { font-family: var(--vpe-mono); font-size: 10.5px; font-variant-numeric: tabular-nums; padding-right: 2px; flex: none; }
+.r-pos { font-family: var(--vpe-mono); font-size: 11px; font-variant-numeric: tabular-nums; padding-right: 2px; flex: none; }
 
 /* The column and Autoplay menus: the shared card surface (docs/DESIGN.md), as #ctxmenu and the ⚙ panel */
 .vpe-pop {
@@ -174,15 +174,8 @@
   box-shadow: var(--vpe-shadow-high);
 }
 .vpe-pop[hidden] { display: none; }
-/* Menu rows; a callout in a .vpe-pop keeps the shared buttons (docs/DESIGN.md). */
-.vpe-pop button:not(.vpe-btn):not(.vpe-close) {
-  width: 100%; appearance: none; border: none; background: transparent;
-  color: var(--vscode-foreground); text-align: left; padding: 5px 8px;
-  border-radius: 4px; font: inherit; font-size: 11px; cursor: pointer;
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-}
-.vpe-pop button:not(.vpe-btn):not(.vpe-close):hover,
-.vpe-pop button:not(.vpe-btn):not(.vpe-close):focus-visible { background: var(--vpe-row-hover); outline: none; }
+/* Its menu rows are the shared .vpe-mi (media/player.css), edge to edge like the other menus. */
+.vpe-pop[role="menu"] { padding: 4px 0; }
 
 /* The hover card, left of the rail (outside the picture's hit-testing: it never takes the pointer) */
 .hover-pop {
@@ -191,9 +184,9 @@
   pointer-events: none;
 }
 .hover-pop[hidden] { display: none; }
-.hover-body { padding: 5px 7px; font-size: 10.5px; display: flex; flex-direction: column; gap: 2px; }
+.hover-body { padding: 5px 7px; font-size: 11px; display: flex; flex-direction: column; gap: 2px; }
 .hover-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-foreground); }
-.hover-meta { font-family: var(--vpe-mono); font-size: 10px; color: var(--vpe-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hover-meta { font-family: var(--vpe-mono); font-size: 11px; color: var(--vpe-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hover-meta:empty { display: none; }
 
 /* Fullscreen with the bar hidden: so are both edge tabs. */

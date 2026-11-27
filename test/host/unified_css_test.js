@@ -172,7 +172,7 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   // scoped to Compare (body.compare, a high-contrast body, a Compare-only ancestor, or a #stage state Compare sets).
   const PLAYER_OWNED = /^(html|body|:root|\*|video|canvas|\[hidden\]|#stage|#canvas|#bar|#row|#toast|#overlay|#message|#hint|#action|#seekRow|#seek|#tip|#notice|#subs|#main|#panel|#sheet|#ctxmenu)(?![\w-])/;
   const COMPARE_STATE = /#stage\.(tile-dragging|pannable|panning|zoomed|sync-mode)\b/;
-  const COMPARE_ANCESTOR = /(^|[\s>+~])(\.(cell|ov|pill|tile-[\w-]+|sync-pill|nudge|splitter|skeleton|add-pop|cmp-group)\b|#(cells|divider|splitter|menu|cmpGroup)\b)/;
+  const COMPARE_ANCESTOR = /(^|[\s>+~])(\.(cell|ov|pill|tile-[\w-]+|sync-pill|nudge|splitter|skeleton|cmp-group)\b|#(cells|divider|splitter|menu|cmpGroup)\b)/;
   const scoped = (sel) => /body\.(compare|vscode-high-contrast(-light)?)\b/.test(sel) || COMPARE_STATE.test(sel)
     || COMPARE_ANCESTOR.test(splitTop(sel, /[\s>+~]/).slice(0, -1).join(' '));
   const leaks = [];
@@ -257,6 +257,10 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   for (const dup of ['.cap-banner {', '.cap-pulse {', '#startCompareBtn {', '#bar .ib.active {', '.cell.add .addcell {']) {
     assert.ok(!render.includes(dup), `render.js no longer restyles ${dup}`);
   }
+  // The harness stands in for VS Code only (--vscode-* theme colours); the player's own tokens (--vpe-*) come from
+  // player.css, or a mock-up shows a look the product does not have (a blue accent, another card background).
+  const ownTokens = [...render.matchAll(/(--vpe-[\w-]+)\s*:/g)].map((m) => m[1]);
+  assert.deepStrictEqual(ownTokens, [], 'render.js sets no --vpe-* token');
 }
 
 { // The narrow-pane collapse names the buttons of the #cmpGroup capsule (src/bar.js), in order, and
@@ -264,12 +268,19 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   const bar = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bar.js'), 'utf8');
   const hidden = (maxW) => rules(COMPARE).filter((r) => r.at.includes(`max-width: ${maxW}px`) && /display:\s*none/.test(r.body))
     .flatMap((r) => r.selectors.map(norm));
-  const all = [...hidden(640), ...hidden(560), ...hidden(440)].join(' ');
+  // Compare's bar needs about 824 px with every button: its words, Swap and Sync go at 840 px and the range buttons,
+  // ⓘ and the duration at 680 px, scoped to Compare so the single player keeps them (maintainer, 2026-11-27).
+  const all = [...hidden(840), ...hidden(560), ...hidden(440)].join(' ');
+  for (const sel of [...hidden(840), ...hidden(680)].filter((x) => /#startCompareBtn|button\.rng|#infoBtn|#dur/.test(x))) {
+    assert.match(sel, /^body\.compare /, `${sel}: only in Compare`);
+  }
+  const at680 = hidden(680).join(' ');
+  for (const id of ['button.rng', '#infoBtn', '#dur']) assert.ok(at680.includes(id), `${id} goes at 680 px in Compare`);
   for (const id of ['swapBtn', 'syncBtn', 'splitBtn', 'spotlightBtn', 'gridBtn']) {
     assert.ok(all.includes(`#row #${id}`), `#${id} collapses`);
     assert.ok(bar.includes(`cmpButton('${id}'`), `src/bar.js declares #${id}`);
   }
-  assert.ok(hidden(640).some((s) => /#startCompareBtn > span/.test(s)), 'the Compare toggle drops its label first');
+  assert.ok(hidden(840).some((s) => /#startCompareBtn > span/.test(s)), 'the Compare toggle drops its label first');
 }
 
 { // Layering contract across player.css, folder-rail.css and compare.css: floating overlays (context menu, seek tip
@@ -301,7 +312,7 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.ok(z(PLAYER, '.panel') > z(RAIL, '.rail'), '.panel above .rail');
   assert.ok(z(PLAYER, '.panel') > z(RAIL, '.edge-zone'), '.panel above the rail edge tab');
   const overlays = [[PLAYER, '.panel'], [PLAYER, '#ctxmenu'], [COMPARE, '#menu'], [RAIL, '.rail'], [RAIL, '.rail-collapse-tab'],
-    [RAIL, '.vpe-pop'], [RAIL, '.hover-pop'], [COMPARE, '.add-pop'], [COMPARE, '.cell.lifted'], [COMPARE, '.splitter']];
+    [RAIL, '.vpe-pop'], [RAIL, '.hover-pop'], [COMPARE, '.cell.lifted'], [COMPARE, '.splitter']];
   for (const [css, sel] of overlays) assert.ok(z(PLAYER, '#sheet') > z(css, sel), `#sheet above ${sel}`);
   // One #pxread-only layer rule (besides the shared #pxread, #stats, #goto base): a duplicate drifted out of sync before.
   const pxRules = rules(PLAYER).filter((x) => !x.at && x.selectors.length === 1 && norm(x.selectors[0]) === '#pxread'
@@ -328,6 +339,12 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   const toast = merged(PLAYER, '#toast');
   assert.strictEqual(toast['font-size'], merged(PLAYER, '#notice')['font-size'], 'the notice text size');
   assert.ok(!toast['font-weight'] || Number(toast['font-weight']) < 600, 'not bold');
+  // ... in every layout: no scoped rule (a dense Compare) gives it another size.
+  for (const r of rules(COMPARE).concat(rules(PLAYER))) {
+    if (r.selectors.some((x) => /#toast$/.test(norm(x))) && /font-size/.test(r.body)) {
+      assert.match(r.body, /font-size:\s*12px/, `${r.selectors.join(', ')}: the toast stays 12 px`);
+    }
+  }
   assert.ok(!anySelector(PLAYER, (s) => /\.cap-banner|#addHint/.test(s)), 'no capture pill or #addHint rules left');
 }
 
@@ -341,8 +358,8 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.strictEqual(root['--vpe-card-radius'], '8px');
   for (const k of ['--vpe-shadow-low', '--vpe-shadow-high']) assert.match(root[k] || '', /var\(--vscode-widget-shadow\b/, k);
   const MEMBERS = ['#notice', '#toast', '#overlay.error', '#pxread', '#stats', '#goto', '#scopes', '.panel', '#sheet .sheet',
-    '#ctxmenu', '#menu', '.vpe-pop', '.hover-pop', '.add-pop', '.tile-stats', '.sync-pill', '.nudge', '.pill',
-    '.tile-bottom-pill', '.tbtn', '.addcell', '.skeleton-label', '.edge-shelf', '.rail-collapse-tab'];
+    '#ctxmenu', '#menu', '.vpe-pop', '.hover-pop', '.tile-stats', '.sync-pill', '.nudge', '.pill',
+    '.tile-bottom-pill', '.tbtn', '.addcell', '.skeleton-label', '.ended-badge', '.edge-shelf', '.rail-collapse-tab'];
   // Side panels share the card background but are not cards (full height, no corners): their own rule.
   const SIDE_PANELS = new Set(['.rail.overlay', '.rail.dock']);
   const SHADOW_EXCEPTIONS = new Set(['.rail.overlay']); // a side panel: its shadow falls to one side only
@@ -389,6 +406,10 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.deepStrictEqual([btn['border-radius'], btn.height, btn['font-size']], ['var(--vpe-btn-radius)', 'var(--vpe-btn-h)', '12px']);
   assert.strictEqual(merged(PLAYER, '.panel .vpe-btn').height, 'var(--vpe-btn-h-panel)');
   assert.match(merged(PLAYER, '.vpe-btn-main').background || '', /^var\(--vscode-button-background\b/);
+  // High Contrast leaves the button fill unset and draws buttons with --vscode-button-border: without it the main
+  // action is bare text on the card.
+  assert.match(merged(PLAYER, '.vpe-btn-main')['border-color'] || '', /^var\(--vscode-button-border\b/,
+    "the main action keeps VS Code's button border");
   const RAIL = read('folder-rail.css');
   for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
     for (const r of rules(css)) {
@@ -407,7 +428,9 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
       }
     }
   }
-  for (const [css, sel, h] of [[PLAYER, '.panel .chip', '--vpe-btn-h-panel'], [PLAYER, '.panel .big', '--vpe-btn-h-panel'], [COMPARE, '.tbtn', '--vpe-btn-h']]) {
+  // The bar's capsules (Compare layouts, folder previous / next) are on the button scale too (maintainer, 2026-11-27).
+  for (const [css, sel, h] of [[PLAYER, '.panel .chip', '--vpe-btn-h-panel'], [PLAYER, '.panel .big', '--vpe-btn-h-panel'], [COMPARE, '.tbtn', '--vpe-btn-h'],
+    [COMPARE, '#row #cmpGroup .ib', '--vpe-btn-h'], [RAIL, '#row .folder-cap button.cap-btn', '--vpe-btn-h']]) {
     const d = merged(css, sel);
     assert.deepStrictEqual([d['border-radius'], d.height], ['var(--vpe-btn-radius)', `var(${h})`], `${sel}: the button scale`);
   }
@@ -425,6 +448,148 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
     assert.ok(!/#[0-9a-f]{3,6}|rgba?\(/i.test(`${d.background} ${d['border-color'] || ''} ${d.color || ''}`.replace(/var\([^)]*\)/g, '')),
       `${sel}: no fixed colours outside a var() fallback`);
   }
+}
+
+{ // No dead rules: every class and id the three style sheets name is still made by the page's code (media/, src/).
+  // The Start Compare dialog, the Add popover and the Add mode Stop button lingered in the CSS after their markup went.
+  const RAIL = read('folder-rail.css');
+  const files = [];
+  const walk = (d) => {
+    for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, f.name);
+      if (f.isDirectory()) { if (!/^(dist|libav-vpe|probe|vendor)$/.test(f.name)) walk(p); } else if (/\.(js|ts|tsx)$/.test(f.name)) files.push(p);
+    }
+  };
+  walk(MEDIA);
+  walk(path.join(__dirname, '..', '..', 'src'));
+  const code = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  const FROM_VS_CODE = new Set(['vscode-high-contrast', 'vscode-high-contrast-light', 'vscode-light', 'vscode-dark']);
+  const dead = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    const names = new Set(rules(css).flatMap((r) => r.selectors).flatMap((sel) => [...sel.replace(/\[[^\]]*\]/g, '')
+      .matchAll(/[.#]([a-zA-Z][\w-]*)/g)].map((m) => m[1])));
+    for (const n of names) {
+      if (FROM_VS_CODE.has(n)) continue;
+      if (!new RegExp(`(^|[^\w-])${n.replace(/-/g, '\-')}(?![\w-])`).test(code)) dead.push(`${name}: ${n}`);
+    }
+  }
+  assert.deepStrictEqual(dead, [], `selectors no code makes:\n${dead.join('\n')}`);
+}
+
+{ // Card text colour comes from the card rule only (--vpe-panel-fg): a member's own rule does not repaint it with
+  // --vscode-foreground or a fixed colour (docs/DESIGN.md, The card rule).
+  const RAIL = read('folder-rail.css');
+  const card = rules(PLAYER).find((r) => !r.at && /var\(--vpe-surface-float\)/.test(r.body));
+  const members = new Set(card.selectors.map(norm));
+  const own = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    for (const r of rules(css)) {
+      if ((css === PLAYER && r.body === card.body) || r.at) continue;
+      const hit = r.selectors.map(norm).filter((x) => members.has(x));
+      if (hit.length && /(^|;)\s*color\s*:/.test(r.body)) own.push(`${name}: ${hit.join(', ')}`);
+    }
+  }
+  assert.deepStrictEqual(own, [], `card members that set their own text colour:\n${own.join('\n')}`);
+}
+
+{ // Fixed colours (outside a var() fallback) only on the picture itself, never on a card or the bar (docs/DESIGN.md,
+  // Colour): the picture's black, dimmers over it, and marks drawn on it.
+  const RAIL = read('folder-rail.css');
+  const stripVars = (s) => {
+    let out = '', i = 0;
+    while (i < s.length) {
+      if (s.startsWith('var(', i)) {
+        let depth = 0, j = i + 3;
+        for (; j < s.length; j++) { if (s[j] === '(') depth++; else if (s[j] === ')' && --depth === 0) break; }
+        i = j + 1;
+      } else out += s[i++];
+    }
+    return out;
+  };
+  const ON_PICTURE = /^(video|canvas|:root:fullscreen body|body:fullscreen|body\.maxi|body\.compare #stage|#playFlash|#overlay|#stage:has\(.*\) #overlay:not\(\.error\)|#dropHint|\.ab-pin\b.*|#ab[AB] span|#pxgrid|#subs|#thumb\b.*|#seekRow canvas\.seek-thumb|#stage #scopes canvas|#sheet|\.cell-border|\.cell\.lifted|\.cell\.loading::after|\.ended-ov|\.oor|\.splitter-bar|#divider\b.*)$/;
+  const fixed = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    for (const r of rules(css)) {
+      if (!/#[0-9a-f]{3,8}\b|rgba?\(/i.test(stripVars(r.body))) continue;
+      const off = r.selectors.map(norm).filter((x) => !ON_PICTURE.test(x));
+      if (off.length) fixed.push(`${name}: ${off.join(', ')}`);
+    }
+  }
+  assert.deepStrictEqual(fixed, [], `fixed colours off the picture:\n${fixed.join('\n')}`);
+}
+
+{ // The tiles' keyboard reorder arrows are tile buttons (.tbtn), not a look-alike with its own colours and size.
+  const ui = fs.readFileSync(path.join(MEDIA, 'player-ui.js'), 'utf8');
+  assert.match(ui, /<button type="button" class="tbtn" data-act="move"/, 'the arrows are .tbtn');
+  for (const r of rules(COMPARE)) {
+    if (r.selectors.some((x) => /^\.move button\b/.test(norm(x)))) {
+      assert.ok(!/(^|;)\s*(background|color|border-radius|height|width)\s*:/.test(r.body), `${r.selectors.join(', ')}: no own button look`);
+    }
+  }
+}
+
+{ // Motion (docs/DESIGN.md): every transition and animation has a prefers-reduced-motion rule: off, or slower where a
+  // mark standing still would read as broken (the loading ring).
+  const RAIL = read('folder-rail.css');
+  const missing = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    const all = rules(css);
+    const off = new Set(all.filter((r) => /prefers-reduced-motion:\s*reduce/.test(r.at)
+      && /(transition|animation)\s*:/.test(r.body)).flatMap((r) => r.selectors.map(norm)));
+    for (const r of all) {
+      if (r.at || !/(^|;)\s*(transition|animation)\s*:\s*(?!none)/.test(r.body)) continue;
+      for (const x of r.selectors.map(norm)) if (!off.has(x)) missing.push(`${name}: ${x}`);
+    }
+  }
+  assert.deepStrictEqual(missing, [], `moves without a reduced-motion off switch:\n${missing.join('\n')}`);
+}
+
+{ // One menu row (docs/DESIGN.md, Menus): the right-click menu, the tile menu and the rail's menus are built from
+  // VpeUi.menuItem (media/ui-primitives.js) and styled by the .vpe-mi rules only: 13 px, a check column, the shortcut
+  // on the right, the row fill on hover and focus, the focus ring on keyboard focus.
+  const RAIL = read('folder-rail.css');
+  const row = merged(PLAYER, '.vpe-mi');
+  assert.strictEqual(row.display, 'flex');
+  assert.strictEqual(row['font-size'], '13px');
+  assert.match(declsOf(PLAYER, '.vpe-mi:hover').background || '', /^var\(--vpe-row-hover\)$/);
+  assert.match(merged(PLAYER, '.vpe-mi:focus-visible').outline || '', /var\(--vscode-focusBorder\)/);
+  for (const sel of ['.vpe-mi-check', '.vpe-mi-key', '.vpe-msep']) assert.ok(anySelector(PLAYER, (x) => x === sel), `${sel} is styled`);
+  const old = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    for (const x of rules(css).flatMap((r) => r.selectors.map(norm))) {
+      if (/\.ctx-(item|check|label|key|sep)\b|#menu \.(mi|msep)\b|^\.vpe-pop button\b/.test(x)) old.push(`${name}: ${x}`);
+    }
+  }
+  assert.deepStrictEqual(old, [], `menu rows styled outside .vpe-mi:\n${old.join('\n')}`);
+  for (const f of ['ctxmenu.js', 'player-ui-tiles.js']) {
+    assert.match(fs.readFileSync(path.join(MEDIA, f), 'utf8'), /\.menuItem\(/, `${f} builds its rows with VpeUi.menuItem`);
+  }
+}
+
+{ // Type scale (docs/DESIGN.md, Type): 11 / 12 / 13 px. Outside it only: 9-10 px inside a badge or letter mark (and a
+  // dense grid's pills and card, 10 px), 14 / 16 px titles, glyph buttons (×, ±) and the big offset readout, and em
+  // sizes on the picture's own overlay text.
+  const RAIL = read('folder-rail.css');
+  const MARKS = /^(\.ab-pin span|#row button\.badge|\.rngl|\.panel \.row \.mark|\.panel \.abicon|\.ltr|#cells\.dense \.ltr|#cells\.dense \.sync-pill|#cells\.dense \.nudge|#cells\.dense \.sync-pill \.offv|#cells\.dense \.nudge \.offv|#cells\.dense \.tile-stats)$/;
+  const TITLES = /^(\.panel \.iname|#sheet \.stitle)$/;
+  const GLYPHS = /^(\.vpe-close|\.tile-stats-close|#cells\.dense \.tile-stats-close|\.scopesHeader button|\.panel \.big|\.panel \.readout\.off)$/;
+  const off = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    for (const r of rules(css)) {
+      const m = /(?:^|;)\s*font-size:\s*([^;]+)/.exec(r.body) || /(?:^|;)\s*font:\s*(?:\d+\s+)?(\d+(?:\.\d+)?px)/.exec(r.body);
+      if (!m) continue;
+      const v = m[1].trim();
+      if (/^(11|12|13)px$/.test(v) || /^var\(--vscode-font-size\)$|em$/.test(v)) continue;
+      for (const x of r.selectors.map(norm)) {
+        const ok = (/^(9|10)px$/.test(v) && MARKS.test(x)) || (/^(14|16)px$/.test(v) && TITLES.test(x)) || GLYPHS.test(x);
+        if (!ok) off.push(`${name}: ${x} ${v}`);
+      }
+    }
+  }
+  assert.deepStrictEqual(off, [], `font sizes off the scale:\n${off.join('\n')}`);
+  // The bar's readouts are on it too (12 px, maintainer 2026-11-27).
+  assert.strictEqual(merged(PLAYER, '#row #time')['font-size'], '12px');
+  assert.strictEqual(merged(PLAYER, '#row #rate')['font-size'], '12px');
 }
 
 console.log('unified_css: ok');

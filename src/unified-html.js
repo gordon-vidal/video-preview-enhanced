@@ -23,7 +23,6 @@ const { folderRailHtml } = require('./folder-rail-html');
  * @property {string} [transport] 'http' | 'ws' | 'message' (src/extension.js nativeTransport)
  * @property {boolean} [debug] VPE_LOG set: tests may use either frame transport
  * @property {boolean} [canCompare]
- * @property {boolean} [compareOpen]
  * @property {boolean} [folder] the folder capsule and rail (not URLs or image sequences)
  * @property {string} [bodyClass] a class on <body> (media/compare.css scopes its stage rules to body.compare)
  * @property {string} [entryScript] the boot script under media/, loaded last (media/player-unified.js)
@@ -115,7 +114,7 @@ ${earlyJs}${styles}
 </div>
 ${p.folder ? folderRailHtml() : ''}
 </div>
-${barHtml({ canCompare: p.canCompare !== false, compareOpen: !!p.compareOpen, folder: !!p.folder })}
+${barHtml({ canCompare: p.canCompare !== false, folder: !!p.folder })}
 <div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
 <div id="sheet" hidden></div>
 <div id="ctxmenu" class="ctxmenu" role="menu" aria-label="Player menu" tabindex="-1" hidden></div>

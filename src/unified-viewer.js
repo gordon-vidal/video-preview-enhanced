@@ -359,7 +359,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       cspSource: webview.cspSource, uri, base: webview.asWebviewUri(build.dir).toString(), loader: build.loader,
       nonce: crypto.randomBytes(16).toString('base64'), cfg,
       framePort: deps.framePort, transport: deps.nativeTransport ? deps.nativeTransport() : 'message', debug: !!deps.debug,
-      canCompare: true, compareOpen: false, folder, inlineCss, inlineScripts,
+      canCompare: true, folder, inlineCss, inlineScripts,
     };
   }
 
