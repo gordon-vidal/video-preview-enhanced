@@ -60,27 +60,19 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
     await s.send({ type: 'focusMode' });
     assert.deepEqual(h.vscode.executed, [zen]);
     assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, false);
-    assert.deepEqual(
-      h.vscode._updates,
-      centerLayout ? [['zenMode.centerLayout', true]] : [],
-      'restores zenMode.centerLayout when leaving Zen Mode',
-    );
+    // Never restores zenMode.centerLayout mid-session (prevents shrinking Zen Mode if zenActive ever desyncs);
+    // restored only when the extension deactivates.
+    assert.deepEqual(h.vscode._updates, [], 'does not flip zenMode.centerLayout back mid-session');
     if (centerLayout) {
-      // Exiting Zen Mode outside the button (Esc Esc) restores zenMode.centerLayout and resets zenActive.
+      // Exiting Zen Mode outside the button (Esc Esc) resets zenActive without flipping zenMode.centerLayout mid-session.
       h.vscode.executed = [];
       h.vscode._updates.length = 0;
       await s.send({ type: 'focusMode' });
       assert.deepEqual(h.vscode.executed, [zen]);
-      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', false]]);
-      h.vscode._updates.length = 0;
       await s.send({ type: 'focusModeExited' });
       assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, false);
-      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', true]], 'Esc Esc restores zenMode.centerLayout');
-      h.vscode.executed = [];
-      h.vscode._updates.length = 0;
+      assert.deepEqual(h.vscode._updates, [], 'Esc Esc does not flip zenMode.centerLayout mid-session');
       await s.send({ type: 'focusMode' });
-      assert.deepEqual(h.vscode.executed, [zen]);
-      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', false]]);
       await s.send({ type: 'focusMode' });
     }
 
@@ -102,7 +94,14 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
       next.panel.dispose();
     }
     s.panel.dispose();
+    h.vscode._updates.length = 0;
+    await h.ext.deactivate();
     h.dispose();
+    assert.deepEqual(
+      h.vscode._updates,
+      centerLayout ? [['zenMode.centerLayout', true]] : [],
+      'deactivate restores zenMode.centerLayout',
+    );
   }
   console.log('player polish: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

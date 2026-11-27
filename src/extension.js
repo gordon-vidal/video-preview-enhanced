@@ -1073,7 +1073,7 @@ function activate(context) {
     libavBuild: () => libavBuild(context.extensionUri), prefs: () => prefsOf(config()), maxVideos,
     pick: (label, defaultUri, many) => pickVideos(label, defaultUri, many),
     setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
-    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : noteFocusModeExited(vscode)),
+    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : noteFocusModeExited()),
     rail: {
       cache: railMeta, probe: railProbe, prefs: railPrefs, layout: () => config().railLayout,
       caseless: process.platform === 'win32' || process.platform === 'darwin',
@@ -2470,7 +2470,7 @@ async function openLink(context, link) {
 
 function deactivate() {
   for (const v of [...unifiedViewers]) v.dispose();
-  resetFocusMode(vscode);
+  return resetFocusMode(vscode);
 }
 
 module.exports = { activate, deactivate };

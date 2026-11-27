@@ -36,17 +36,17 @@ async function restoreCenterLayout(vscode) {
 
 /**
  * Toggles VS Code Zen Mode without letting Zen Mode's default `zenMode.centerLayout` shrink the video:
- * sets `zenMode.centerLayout` to false while Zen Mode is active and restores the user's previous global
- * value only when leaving Zen Mode (VS Code live-reacts to `zenMode.centerLayout` changes while inside
- * Zen Mode, so restoring it immediately after entering would shrink the video back into Centered Layout).
- * Never calls `toggleCenteredLayout` blindly (which would corrupt normal VS Code layout on desync).
+ * sets `zenMode.centerLayout` to false once per session and restores the user's previous global value
+ * only on `deactivate()` (`resetFocusMode`). Never flips `zenMode.centerLayout` back mid-session or
+ * calls `toggleCenteredLayout` blindly — because VS Code has no API to query Zen Mode state, any
+ * mid-session restore based on a local `zenActive` guess would shrink Zen Mode back into Centered
+ * Layout whenever the user previously exited Zen Mode outside the webview.
  */
 async function toggleFocusMode(vscode, { settleMs = DEFAULT_SETTLE_MS } = {}) {
   if (toggling) return undefined;
   toggling = true;
   try {
-    const entering = !zenActive;
-    if (entering) {
+    if (!savedCenterLayout) {
       const zenCfg = vscode.workspace.getConfiguration('zenMode');
       if (zenCfg.get('centerLayout', true) === true && typeof zenCfg.update === 'function') {
         const prevGlobal = typeof zenCfg.inspect === 'function'
@@ -54,13 +54,12 @@ async function toggleFocusMode(vscode, { settleMs = DEFAULT_SETTLE_MS } = {}) {
           : undefined;
         try {
           await zenCfg.update('centerLayout', false, vscode.ConfigurationTarget.Global);
-          if (!savedCenterLayout) savedCenterLayout = { value: prevGlobal };
+          savedCenterLayout = { value: prevGlobal };
         } catch { /* read-only settings: proceed with toggleZenMode anyway */ }
       }
     }
     await vscode.commands.executeCommand('workbench.action.toggleZenMode');
     zenActive = !zenActive;
-    if (!zenActive) await restoreCenterLayout(vscode);
     notify(zenActive);
     if (settleMs > 0) await new Promise((resolve) => setTimeout(resolve, settleMs));
     return zenActive;
@@ -70,10 +69,9 @@ async function toggleFocusMode(vscode, { settleMs = DEFAULT_SETTLE_MS } = {}) {
 }
 
 /** Called when the user exits Zen Mode outside the button (e.g. Esc Esc), so the next click stays in sync. */
-function noteFocusModeExited(vscode) {
+function noteFocusModeExited() {
   if (!zenActive) return false;
   zenActive = false;
-  restoreCenterLayout(vscode);
   notify(false);
   return true;
 }
@@ -85,7 +83,7 @@ function isFocusModeActive() {
 function resetFocusMode(vscode) {
   zenActive = false;
   toggling = false;
-  restoreCenterLayout(vscode);
+  return restoreCenterLayout(vscode);
 }
 
 module.exports = {
