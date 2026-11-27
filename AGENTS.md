@@ -102,8 +102,10 @@ before releases or in performance work.
 - `docs/PRODUCT.md` is the product source of truth. A change that contradicts it needs the
   maintainer's decision first.
 - **One look ([docs/DESIGN.md](docs/DESIGN.md))**: every floating surface uses the card tokens in `media/player.css`
-  (background, blur, radius, shadow); no per-surface values, no new look-alike surfaces. A new message is a toast or
-  a notice. `test/host/unified_css_test.js` fails on a card that sets its own values; change the token instead.
+  (background, blur, radius, shadow); no per-surface values, no new look-alike surfaces. Build new UI from the
+  guide's building blocks first; a new message is a toast or a notice. `test/host/unified_css_test.js` fails on a card
+  that sets its own values; change the token instead. The guide grows: when you find a drift it does not cover, settle
+  it with the maintainer and add the rule (and a check where possible).
 - **UI changes & 3-way separation**: keep **UI shell** (`src/bar.js`, `media/player.css`,
   `media/compare.css`), **pure state** (`media/player-state.js`), and **decoder/host engine**
   cleanly separated (see [docs/TESTING.md](docs/TESTING.md)). Do not restyle or rearrange the

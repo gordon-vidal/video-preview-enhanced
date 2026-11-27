@@ -334,10 +334,9 @@
     const target = getTab(ws, tabId);
     const nextOn = !target.capture;
     const tabs = ws.tabs.map((t) => ({ ...t, capture: t.id === target.id ? nextOn : false }));
+    // One video: Add mode's own prompt explains it (deriveUi showCaptureBanner), so no toast says it a second time.
     const toast = nextOn
-      ? (target.tiles.length === 1
-        ? 'Compare ready — open another video to add it'
-        : 'New videos will open in this compare view')
+      ? (target.tiles.length === 1 ? '' : 'New videos will open in this compare view')
       : 'Paused — new videos open in their own tab';
     return { state: { ...ws, tabs }, toast };
   }

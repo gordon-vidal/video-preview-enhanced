@@ -359,4 +359,18 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   }
 }
 
+{ // No dead surfaces (the unified page never builds the old Start Compare dialog), and the Compare tile buttons take
+  // the theme's hover and error colours instead of fixed white / red (docs/DESIGN.md, Colour).
+  for (const dead of ['#startCompareDialog', '#startCompareBackdrop', '#confirmCompareBtn', '.compare-actions']) {
+    assert.ok(!anySelector(PLAYER, (s) => s.includes(dead)), `${dead} is gone from player.css`);
+  }
+  assert.strictEqual(declsOf(COMPARE, '.tbtn:hover').background, 'var(--vpe-hover)');
+  for (const sel of ['.tbtn.rm:hover', '.tbtn.rm.confirm']) {
+    const d = declsOf(COMPARE, sel);
+    assert.match(d.background, /^var\(--vscode-/, `${sel}: a VS Code colour`);
+    assert.ok(!/#[0-9a-f]{3,6}|rgba?\(/i.test(`${d.background} ${d['border-color'] || ''} ${d.color || ''}`.replace(/var\([^)]*\)/g, '')),
+      `${sel}: no fixed colours outside a var() fallback`);
+  }
+}
+
 console.log('unified_css: ok');

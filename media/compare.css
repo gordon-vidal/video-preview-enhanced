@@ -61,11 +61,14 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
   transition: background 120ms, color 120ms, border-color 120ms;
 }
-.tbtn:hover { background: rgba(255, 255, 255, 0.18); color: #fff; border-color: rgba(255, 255, 255, 0.28); }
+.tbtn:hover { background: var(--vpe-hover); color: var(--vscode-foreground); border-color: var(--vpe-bd-active); }
 .tbtn.spot svg rect { transition: opacity 120ms ease; }
 .tbtn.spot:hover svg rect, .tbtn.spot:focus-visible svg rect { opacity: 1; }
-.tbtn.rm:hover { background: rgba(220, 38, 38, 0.88); border-color: transparent; color: #fff; }
-.tbtn.rm.confirm { background: #dc2626; border-color: #f87171; color: #fff; padding: 0 8px; }
+.tbtn.rm:hover, .tbtn.rm.confirm {
+  background: var(--vscode-statusBarItem-errorBackground, #c72e0f); border-color: transparent;
+  color: var(--vscode-statusBarItem-errorForeground, #fff);
+}
+.tbtn.rm.confirm { padding: 0 8px; }
 
 /* Floating top-left identity + drag-grip + monochrome info & mute pill (no heavy shaded bar). */
 .tile-bottom-pill, .pill {
