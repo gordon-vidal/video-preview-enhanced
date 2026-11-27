@@ -479,4 +479,14 @@ console.log('stream transition tests passed');
   assert.deepStrictEqual(sound({ keyT: 2, lastT: 71 / fps, audioUntil: 1 }), { ok: true, vNext: 72, aNext: 96000 }, 'never back');
   assert.deepStrictEqual(sound({ keyT: 2, lastT: 71 / fps, audioUntil: 3.5 }, { hasAudio: false }), { ok: true, vNext: 72, aNext: 96000 });
   assert.deepStrictEqual(sound({ keyT: 2, lastT: 60.5 / fps, audioUntil: 3.5 }), { ok: false, vNext: 50, aNext: 96000 }, 'picture not skipped: sound neither');
+  // The page's GOP from another encode (a fill behind the paused frame, an earlier run) on the same times: its reference
+  // frames are not this history's, so the history's frames after them would decode corrupt. Sent from the keyframe.
+  const encoded = Array.from({ length: 100 }, (_, i) => ({ t: i / fps, key: i % 50 === 0, data: Buffer.alloc(10), enc: 4 }));
+  const fromEncode = (have) => {
+    const s = { vAll: encoded, vNext: 50, log: () => {} };
+    return { ok: EncodedStream.prototype.skipHeld.call(s, have), vNext: s.vNext };
+  };
+  assert.deepStrictEqual(fromEncode({ keyT: 2, lastT: 71 / fps, enc: 4 }), { ok: true, vNext: 72 }, 'the same encode');
+  assert.deepStrictEqual(fromEncode({ keyT: 2, lastT: 71 / fps, enc: 9 }), { ok: false, vNext: 50 }, 'another encode');
+  assert.deepStrictEqual(fromEncode({ keyT: 2, lastT: 71 / fps }), { ok: false, vNext: 50 }, 'an offer without its encode');
 }

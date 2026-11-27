@@ -522,6 +522,10 @@
               sharp: p.sharpStats ? { ...p.sharpStats, pending: !!p.sharp } : null,
               quick: p.quickStats ? { ...p.quickStats } : null,
               play: p.playStats || null,
+              // A seek or step not landed yet (its target pending), and what the page's packet cache holds (Live transcode):
+              // tests wait for these conditions instead of sleeping.
+              seekPending: p.seekTarget !== null && p.seekTarget !== undefined,
+              packets: p.packetCache ? { video: p.packetCache.spans(), sound: p.packetCache.soundSpans() } : null,
             });
             if (p.gl && p.gl.gl && p.gl.prog) { try { s.tf = p.gl.gl.getUniform(p.gl.prog, p.gl.uTf); } catch { /* not WebGL */ } }
           }

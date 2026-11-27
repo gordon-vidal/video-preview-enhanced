@@ -9,9 +9,11 @@
 
 (function (root) {
   /**
-   * @typedef {{ t: number, key: boolean, idr?: boolean, data: Uint8Array, discard?: boolean }} Packet
+   * enc: the host's encode it came from (src/stream.js stamps each ffmpeg run and fill): two encodes of the same frames
+   * have different reference pictures, so one encode's packets never continue another's.
+   * @typedef {{ t: number, key: boolean, idr?: boolean, data: Uint8Array, discard?: boolean, enc?: any }} Packet
    * @typedef {{ keyT: number, lastT: number, endT?: number, packets: Packet[], bytes: number, used: number, open: boolean,
-   *   params: string, older: Gop[] }} Gop
+   *   params: string, older: Gop[], enc?: any }} Gop
    * A remote stream's sound item as src/stream-buffer.js takeAudio sends it: Opus (packets with 80 ms of preroll; skip
    * and samples trim the decoded output) or interleaved 16-bit stereo PCM.
    * @typedef {{ kind: 'opus', t: number, sampleRate: number, head: Uint8Array, packets: Uint8Array[], skip: number,
@@ -181,7 +183,7 @@
           // next seek often cuts that read off part way, and dropping the whole copy at its keyframe lost them.
           else if (Math.abs(g.keyT - p.t) < 1e-4) older.push(g);
         }
-        cur = { keyT: p.t, lastT: p.t, packets: [], bytes: 0, used: ++clock, open: true, params, older };
+        cur = { keyT: p.t, lastT: p.t, packets: [], bytes: 0, used: ++clock, open: true, params, older, enc: p.enc };
         gops.push(cur);
         runs.set(gen, cur);
       }
@@ -189,7 +191,9 @@
       // Out of order: B-frames (a Direct Stream copy of the source). Decode order then differs from frame order, so
       // "the packets up to t" would not be the frames up to t: the GOP is not kept at all (the host is asked).
       if (!p.key && !(p.t > cur.lastT - 1e-6) && cur.packets.length) { drop(cur); return; }
-      cur.packets.push({ t: p.t, key: p.key, idr: p.idr, data: p.data, discard: p.discard });
+      // Another encode's frame in this run (never expected: the host splices encodes at keyframes): the run ends here.
+      if (p.enc !== cur.enc) { cur.open = false; runs.set(gen, null); return; }
+      cur.packets.push({ t: p.t, key: p.key, idr: p.idr, data: p.data, discard: p.discard, enc: p.enc });
       if (p.t > cur.lastT) cur.lastT = p.t;
       if (cur.older.length) {
         for (const g of cur.older.filter((x) => cur.lastT >= x.lastT - 1e-6)) drop(g);
@@ -205,7 +209,7 @@
      * The GOP must reach t (its last frame at or after t, or read on into the next keyframe after t), so no frame
      * between the found one and t is missing.
      * @param {number} t @param {number} [eps]
-     * @returns {{ frameT: number, packets: Packet[], keyT: number } | null}
+     * @returns {{ frameT: number, packets: Packet[], keyT: number, enc?: any } | null}
      */
     function find(t, eps = 1e-4) {
       let best = null;
@@ -222,7 +226,7 @@
       hits++;
       const packets = best.packets.slice(0, end);
       const frameT = packets.reduce((x, p) => (p.discard ? x : Math.max(x, p.t)), -Infinity);
-      return { frameT, packets, keyT: best.keyT };
+      return { frameT, packets, keyT: best.keyT, enc: best.enc };
     }
 
     /**
@@ -255,6 +259,16 @@
       stats: () => ({ gops: gops.length, sound: sound.length, bytes, cap, hits, misses }),
       /** Covered spans [keyT, lastT], for the debug probe and tests. */
       spans: () => gops.map((g) => [g.keyT, g.lastT, g.packets.length]).sort((a, b) => a[0] - b[0]),
+      /** The sound held, as [t, end] spans in time order (joined where they meet), for the debug probe and tests. */
+      soundSpans: () => {
+        /** @type {[number, number][]} */
+        const out = [];
+        for (const c of sound) {
+          const prev = out[out.length - 1];
+          if (prev && c.t <= prev[1] + 0.002) prev[1] = Math.max(prev[1], c.end); else out.push([c.t, c.end]);
+        }
+        return out;
+      },
     };
   }
 
