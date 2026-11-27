@@ -182,6 +182,17 @@ function makeBridge(/** @type {{ page?: string, boot?: string }} */ env = { page
     assert.deepStrictEqual(got[0].picture, { width: 160, height: 90 }, 'the player\'s picture is passed on');
     engine.thumbnailLeave(true);
     assert.ok(players.A.leaves === 1 && players.C.leaves === 1);
+    // A player with no thumbnails (a URL ...): the shown picture in the seek-bar canvas at a fixed small size, never
+    // sized from the canvas' own clientWidth (which grew it on every hover on HiDPI screens).
+    players.C.thumbnail = () => false;
+    const cv = { width: 300, height: 150, clientWidth: 2400, clientHeight: 1200, style: { width: '', height: '' }, getContext: () => null };
+    engine.thumbnail('C', 1, cv);
+    assert.deepStrictEqual([cv.style.width, cv.style.height, cv.width, cv.height], ['68px', '120px', 68, 120], 'fallback preview fits 160 x 120');
+    players.C.thumbnail = (/** @type {number} */ _t, /** @type {any} */ cb) => { cb({ width: 160, height: 90 }); return true; };
+    const ctx = { drawImage() {} };
+    cv.getContext = () => /** @type {any} */ (ctx);
+    engine.thumbnail('C', 1, cv);
+    assert.deepStrictEqual([cv.style.width, cv.style.height], ['', ''], 'a real thumbnail takes its own size again');
   }
 
   // ---- engine: snapshot from an exact-frame grabber, else the shown picture ----

@@ -358,8 +358,10 @@ body.idle { cursor: none; }
   position: absolute;
   bottom: 42px;
   transform: translateX(-50%);
-  max-width: none;
-  max-height: none;
+  /* Never larger than a thumbnail (media/thumbs.js and src/thumbhost.js make them at most 160 px): a canvas sized
+     from its own layout must not grow over the picture. */
+  max-width: 160px;
+  max-height: 160px;
   border-radius: 6px;
   background: #000;
   border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-editorWidget-border, transparent));
