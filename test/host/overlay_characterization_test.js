@@ -258,6 +258,10 @@ test('folder rail column and autoplay menus toggle, update choices and dismiss',
 
   col.click();
   expect(true, false);
+  // Placed in the same task that shows it, before Floating UI answers: no frame in the page's top-left corner (the
+  // Add mode callout had that flash before it got the same immediate position).
+  assert.match(colMenu.style.left, /^\d+(\.\d+)?px$/);
+  assert.match(colMenu.style.top, /^\d+(\.\d+)?px$/);
   assert.equal(doc.activeElement, colMenu.querySelector('[data-col="duration"][aria-checked="true"]'));
   col.click();
   expect(false, false);
@@ -274,6 +278,8 @@ test('folder rail column and autoplay menus toggle, update choices and dismiss',
   assert.equal(doc.activeElement, colMenu.querySelector('[data-col="size"][aria-checked="true"]'));
   end.click();
   expect(false, true);
+  assert.match(endMenu.style.left, /^\d+(\.\d+)?px$/);
+  assert.match(endMenu.style.top, /^\d+(\.\d+)?px$/);
   assert.equal(doc.activeElement, endMenu.querySelector('[data-end="off"][aria-checked="true"]'));
   endMenu.querySelector('[data-end="next"]').click();
   expect(false, false);
