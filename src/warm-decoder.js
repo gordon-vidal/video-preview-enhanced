@@ -31,8 +31,9 @@ const WARM_CODECS = ['h264', 'hevc'];
 const WARM_ENCODERS = ['libx264', 'h264_nvenc'];
 // Containers whose packets carry their own presentation times (not AVI, not raw streams).
 const WARM_CONTAINERS = /(^|,)(mov|mp4|m4a|3gp|3g2|mj2|matroska|webm|mpegts)(,|$)/;
-// The warm clock (seconds): the first segment starts here (room for a long source GOP before it), each next one this
-// far past the latest time fed, and a new process starts before MPEG-TS's 33-bit 90 kHz clock wraps.
+// The warm clock (seconds): the first segment starts about here (room for a long source GOP before it), each next one
+// this far past the latest time fed, and a new process starts before MPEG-TS's 33-bit 90 kHz clock wraps. Every
+// segment starts on the frame grid (firstS): 600 s is 0.386 of a frame off it at 23.976 fps.
 const FIRST_S = 600;
 const GAP_S = 2;
 const WRAP_S = 2 ** 33 / 90000 - 600;
@@ -59,6 +60,9 @@ function warmSourceRefusal(probed) {
   if (!Number.isFinite(off) || Math.abs(off - Math.round(off)) > 0.01) return 'frames off the file\'s time grid';
   return '';
 }
+
+/** Where the first segment starts at fps: FIRST_S moved onto the frame grid. @param {number} fps */
+const firstS = (fps) => Math.ceil(FIRST_S * fps - 1e-6) / fps;
 
 /** Keeps a decoded frame only on the warm clock's grid (frames before a target are half a frame off it). */
 function warmSelect(fps) {
@@ -483,7 +487,7 @@ class WarmDecoder {
   segment(t) {
     if (!this.usable) return null;
     if (this.seg) this.seg.kill();
-    const S = this.segments === 0 ? FIRST_S : Math.ceil((Math.max(this.fedUntil, FIRST_S) + GAP_S) * this.fps) / this.fps;
+    const S = this.segments === 0 ? firstS(this.fps) : Math.ceil((Math.max(this.fedUntil, FIRST_S) + GAP_S) * this.fps) / this.fps;
     if (S + Math.max(0, this.duration - t) + GAP_S > WRAP_S) return null;
     clearTimeout(this.idleTimer);
     this.idleTimer = null;
@@ -593,6 +597,6 @@ class WarmDecoder {
 
 module.exports = {
   WarmDecoder, WarmSegment, TsFeed, TsFrames,
-  warmSourceRefusal, warmSelect, warmKeyArgs, remuxArgs, eosPacket, startsDecoder, readPts,
+  warmSourceRefusal, firstS, warmSelect, warmKeyArgs, remuxArgs, eosPacket, startsDecoder, readPts,
   WARM_INPUT, WARM_OUTPUT, WARM_ENCODERS, WARM_CODECS, WARM_IDLE_MS, FIRST_S, GAP_S, WRAP_S, STALL_MS,
 };
