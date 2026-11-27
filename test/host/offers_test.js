@@ -12,7 +12,7 @@ function make({ remote, trusted = true, tools = null, config = {}, answers = [],
   const store = new Map();
   const globalState = { get: (k) => store.get(k), update: async (k, v) => { store.set(k, v); } };
   const shown = [];
-  const calls = { off: 0, setup: 0, download: 0, probeUi: [], toolsCalls: 0, settings: [] };
+  const calls = { setup: 0, download: 0, probeUi: [], toolsCalls: 0, settings: [] };
   const queue = [...answers];
   const gates = []; // resolvers of messages left hanging (popup "showing")
   const env = { remote, trusted, hang: false };
@@ -41,7 +41,6 @@ function make({ remote, trusted = true, tools = null, config = {}, answers = [],
     machine: async () => ({ gpus: [] }),
     runProbeUi: async (t, hw, o) => { calls.probeUi.push(o); return 'rec'; },
     setupFfmpeg: () => { calls.setup++; },
-    turnOffTranscode: async () => { calls.off++; },
     downloadRemoteFfmpeg: async () => { calls.download++; },
     openSettings: (id) => { calls.settings.push(id); },
     hostPlatform: () => 'linux', hostArch: () => 'x64', hostname: () => 'devbox', sessions,
@@ -260,48 +259,8 @@ const sample = { ratio: 0.4, native: false };
   assert.strictEqual(t.shown.length, 1);
   assert.strictEqual(t.offers.popupPending(), false);
 
-  // ---- Live transcode: one non-blocking notice the first time it starts, never again ----
-  const informed = require('../../src/transcode_policy');
-  let used = 0;
-  const tab = { name: 'a.mp4', disposed: false, useOriginalVideo: () => { used++; } };
-  t = make({ answers: [undefined] });
-  await t.offers.maybeInformTranscode(tab);
-  assert.strictEqual(t.shown.length, 1);
-  assert.deepStrictEqual(t.shown[0], [informed.informText(), 'Got it', 'Use original (this tab)', 'Turn off (all videos)', 'Settings']);
-  assert.ok(t.store.get(informed.INFORM_KEY), 'remembered in globalState');
-  await t.offers.maybeInformTranscode(tab);
-  assert.strictEqual(t.shown.length, 1, 'not a second time');
-  assert.strictEqual(used + t.calls.off, 0, 'dismissing changes nothing');
-  // A new session (flag already stored) shows nothing.
-  t = make({ answers: ['Turn off (all videos)'] });
-  t.store.set(informed.INFORM_KEY, 1);
-  await t.offers.maybeInformTranscode(tab);
-  assert.strictEqual(t.shown.length, 0);
-  // Two tiles starting at once show it once; the buttons act.
-  t = make({ answers: ['Use original (this tab)'] });
-  await Promise.all([t.offers.maybeInformTranscode(tab), t.offers.maybeInformTranscode(tab)]);
-  assert.strictEqual(t.shown.length, 1);
-  assert.strictEqual(used, 1, '"Use original (this tab)" is this tab only');
-  assert.strictEqual(t.calls.off, 0);
-  t = make({ answers: ['Turn off (all videos)'] });
-  await t.offers.maybeInformTranscode(tab);
-  assert.strictEqual(t.calls.off, 1, '"Turn off (all videos)" sets transcode to off');
-  t = make({ answers: ['Settings'] });
-  await t.offers.maybeInformTranscode(tab);
-  assert.deepStrictEqual(t.calls.settings, ['videoPreviewEnhanced.transcode'], '"Settings" opens transcode setting');
-
-  // A rejected globalState.update must clear the in-flight guard so a later start can still show the notice.
-  t = make({ answers: [undefined] });
-  const origUpdate = t.state.update;
-  let failOnce = true;
-  t.state.update = async (k, v) => {
-    if (failOnce) { failOnce = false; throw new Error('disk full'); }
-    return origUpdate(k, v);
-  };
-  await assert.rejects(() => t.offers.maybeInformTranscode(tab), /disk full/);
-  assert.strictEqual(t.shown.length, 0);
-  await t.offers.maybeInformTranscode(tab);
-  assert.strictEqual(t.shown.length, 1, 'notice recovers after a failed state write');
+  // ---- Live transcode: no pop-up (it is automatic; the player's own UI says so) ----
+  assert.strictEqual(t.offers.maybeInformTranscode, undefined, 'the one-time Live transcode notice is gone');
 
   console.log('offers tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

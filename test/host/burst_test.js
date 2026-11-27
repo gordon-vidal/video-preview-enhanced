@@ -5,7 +5,7 @@
 // a moment apart, are untouched; a capturing viewer takes them instead; the setting turns it off.
 const assert = require('assert');
 const path = require('path');
-const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('../../src/burst');
+const { BURST_WINDOW_MS, createBurst, leftoverTabs } = require('../../src/burst');
 
 // ---- leftover tabs: a preview tab still showing a compared video is a duplicate ----
 {
@@ -17,7 +17,6 @@ const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('
   assert.deepStrictEqual(leftoverTabs(groups, ['file:///v/a.mp4', 'file:///v/b.mp4'], 1), [a], 'one editor group only');
   assert.deepStrictEqual(leftoverTabs(groups, ['file:///v/q.mp4']), [], 'others stay');
   assert.deepStrictEqual(leftoverTabs(undefined, ['x']), []);
-  assert.ok(/3 videos together.*compare\.openTogether/.test(togetherNotice(3)), 'notice names the setting');
 }
 
 // ---- the rules ----
@@ -195,15 +194,14 @@ const { make } = require('../media/make_cases_media');
     await sleep(100);
     assert.deepStrictEqual(names(p1), ['s_h264.mp4', 'rotated.mp4'], 'both videos, in order');
     assert.ok(p2Closed() && !p2.panel.webview.html, 'the burst\'s other tab closes unused');
-    assert.strictEqual(infos.length, 1, 'first time: one notice');
-    assert.ok(/2 videos together/.test(infos[0][0]) && infos[0].slice(1).join() === 'Got it,Open Settings', 'notice text and buttons');
-    assert.strictEqual(h2.context.globalState.get('videoPreviewEnhanced.openTogetherNoticed'), true, 'noticed is remembered');
-    // Again: no second notice.
+    assert.strictEqual(infos.length, 0, 'no notice popup, not even the first time');
+    assert.strictEqual(h2.context.globalState.get('videoPreviewEnhanced.openTogetherNoticed'), undefined, 'nothing remembered');
+    // Again: still no notice.
     const r1 = h2.open(a);
     const r2 = h2.open(b);
     await Promise.all([r1.shown, r2.shown]);
     await sleep(100);
-    assert.strictEqual(infos.length, 1, 'the notice never repeats');
+    assert.strictEqual(infos.length, 0, 'still no notice');
 
     // A viewer that captures takes the opens instead (Add from the Explorer): no burst.
     await one.send({ type: 'ready' });

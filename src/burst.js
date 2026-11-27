@@ -125,9 +125,4 @@ function leftoverTabs(groups, uris, viewColumn) {
   return out;
 }
 
-/** The one-time message after the first "open together". */
-function togetherNotice(n) {
-  return `Video Preview: opened ${n} videos together in Compare. You can turn this off in Settings (compare.openTogether).`;
-}
-
-module.exports = { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice };
+module.exports = { BURST_WINDOW_MS, createBurst, leftoverTabs };

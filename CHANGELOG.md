@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Fewer pop-ups:** the one-time "Live transcode is on" and "opened N videos together" VS Code notices are gone; both features work as before.
+
 ## 0.13.0 (2026-11-27)
 
 One unified viewer that grows seamlessly between single-video playback and multi-video Compare in the same tab, a cohesive visual language across every menu, button, notice, toast, and bar control, a one-click Setup Guide, a Speed popover with wheel presets, and a major Remote-SSH / Live transcode responsiveness overhaul (kept-running warm decoder, 64 MB video + audio packet cache for instant seeks and backward steps, fast-then-sharp paused frames, quick half-size first pictures, GPU encoder session budgeting, faster NVIDIA HDR tone-mapping, and smarter driver warnings).

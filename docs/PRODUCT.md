@@ -151,7 +151,7 @@ One feature: compare becomes multi-view. The difference view is dropped.
   While any Compare is open, **Video Preview Enhanced: Add to Compare** appends to the most recently active one.
   Folders contribute their direct video files in natural name order. Skip duplicates, add up to `compare.maxVideos`
   and report how many unique videos did not fit. **Open Together** (`compare.openTogether`) also groups several
-  videos opened at once (a drop or Open With… on a selection), with a one-time notice. Opening them is quick: the
+  videos opened at once (a drop or Open With… on a selection). Opening them is quick: the
   videos are taken in a moment and their players never start.
 - **Player editor title and Command Palette:** **Video Preview Enhanced: Start Compare** opens the file picker.
   While any Compare is open, the player offers **Video Preview Enhanced: Add to Compare** to append its video to

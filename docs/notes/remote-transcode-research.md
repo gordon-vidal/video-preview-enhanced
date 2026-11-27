@@ -146,6 +146,6 @@ Ranked by **user-visible impact per unit of effort and risk** for Remote-SSH and
 
 ## 5. Implied decisions for maintainer sign-off
 
-1. **Remote HDR policy (Rank 2):** Should Live transcode automatically tone-map HDR (PQ, HLG, Dolby Vision 8.1/8.4) to 8-bit SDR over Remote-SSH when `transcode` is `auto`, or require explicit opt-in? (Recommendation: automatic on remote links with a clear `HDR → SDR tone-mapped` label in ⓘ and the existing one-time Live transcode notice; local HDR stays on the exact WebGPU HDR path.)
+1. **Remote HDR policy (Rank 2):** Should Live transcode automatically tone-map HDR (PQ, HLG, Dolby Vision 8.1/8.4) to 8-bit SDR over Remote-SSH when `transcode` is `auto`, or require explicit opt-in? (Recommendation: automatic on remote links with a clear `HDR → SDR tone-mapped` label in ⓘ; local HDR stays on the exact WebGPU HDR path.)
 2. **Direct Stream visibility (Rank 4):** When host-side video copy + Opus audio is active, should it still be grouped under Live transcode in ⚙ / ⓘ (showing `Direct stream (video copy)`), and skip the lossy-video notice since video pixels are untouched? (Recommendation: yes — no lossy notice when video is copied losslessly.)
 3. **Overlap session budget (Rank 3):** Should dual-overlap splice be enabled only for single-player (or when active GPU encodes < 2) to stay safely under consumer NVIDIA NVENC concurrent-session limits? (Recommendation: yes — single-player by default, with automatic hard-restart fallback on open failure.)

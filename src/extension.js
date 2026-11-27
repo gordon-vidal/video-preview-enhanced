@@ -41,7 +41,7 @@ const { createSequenceDecoder, createUrlDecoder, sequenceFacts } = require('./un
 const {
   pickRows, pushRecent, droppedVideos, collectFolderVideos, compareTargets, VIDEO_EXT: COMPARE_VIDEO_EXT, setPickHook, getPickHook,
 } = require('./comparepick'); // Compare's quick pick, selections and the test hook
-const { BURST_WINDOW_MS, createBurst, leftoverTabs, togetherNotice } = require('./burst'); // Open Together
+const { BURST_WINDOW_MS, createBurst, leftoverTabs } = require('./burst'); // Open Together
 const Grid = require('../media/compare-grid');
 const { parseFragment } = require('../media/inspect.js');
 const { findSidecars, MAX_BYTES: MAX_SUB_BYTES } = require('./sidecars');
@@ -913,10 +913,6 @@ function activate(context) {
   offers = createOffers({
     vscode, globalState, log, decide, probe, remoteff, setup, tools, config, probeRecordFor, probeRunning: () => !!probeRun, machine, runProbeUi,
     setupFfmpeg,
-    turnOffTranscode: async () => {
-      await setSetting('transcode', 'off', vscode.ConfigurationTarget.Global);
-      for (const v of unifiedViewers) if (!v.disposed) v.useOriginalVideo();
-    },
     downloadRemoteFfmpeg,
     openSettings: (id) => vscode.commands.executeCommand('workbench.action.openSettings', id),
     hostPlatform, hostArch, hostname: () => os.hostname(),
@@ -1197,7 +1193,7 @@ async function nativeFor(file, transport, tile, o = {}) {
       // Policy chose it; whether it runs depends on an encoder being available.
       log(stream ? `[${name}] decoder: remote stream (${stream.encoder}): ${decision.reason}`
         : `[${name}] live transcode chosen (${decision.reason}) but no encoder is available: falling back`);
-      if (stream) return { tools: t, probed: pr, maxHeight: maxStreamHeight, stream, informTranscode: c.transcode !== 'always' };
+      if (stream) return { tools: t, probed: pr, maxHeight: maxStreamHeight, stream };
     }
   }
   if (!rawAllowed) return null;
@@ -1246,13 +1242,6 @@ function createStream(c, o) {
     onLinkUpdate: (snapshot) => sessionLink.update(snapshot),
     post: o.post, log: o.log, onFail: o.onFail,
   });
-  // The one-time "Live transcode is on" notice; not when the user chose Always, nor for a lossless Direct Stream.
-  if (d.informTranscode && stream.lossy()) {
-    const viewer = () => [...unifiedViewers].find((v) => v.session.clipOf(c.id));
-    offers.maybeInformTranscode({
-      name: c.label, get disposed() { return !viewer(); }, useOriginalVideo: () => { const v = viewer(); if (v) v.useOriginalVideo(); },
-    }).catch((e) => log(`live transcode notice failed: ${e && e.message || e}`));
-  }
   return stream;
 }
 
@@ -2162,19 +2151,8 @@ async function openBurst(context, { items, extra, viewColumn }) {
   for (const p of currentPanels()) if (p !== viewer.panel) { try { p.dispose(); } catch { /* gone already */ } }
   closeBurstTabs(viewer, items, viewColumn);
   log(`${viewer.session.clips.length} videos opened together -> one compare${extra.length ? `, ${extra.length} more stay as tabs` : ''}`);
-  noticeTogether(viewer.session.clips.length);
   if (extra.length) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${maxVideos()} videos; the other ${extra.length} stay open as they are.`);
   return true;
-}
-
-/** The one-time notice after the first Open Together, with the way to turn it off. */
-function noticeTogether(n) {
-  const key = 'videoPreviewEnhanced.openTogetherNoticed';
-  if (globalState.get(key)) return;
-  Promise.resolve(globalState.update(key, true)).catch(() => {});
-  Promise.resolve(vscode.window.showInformationMessage(togetherNotice(n), 'Got it', 'Open Settings')).then((c) => (
-    c === 'Open Settings' ? vscode.commands.executeCommand('workbench.action.openSettings', 'videoPreviewEnhanced.compare.openTogether') : undefined
-  )).catch(() => {});
 }
 
 // ---- Compare: more videos into a viewer ----

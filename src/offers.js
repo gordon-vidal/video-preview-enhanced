@@ -1,8 +1,7 @@
 'use strict';
-const transcodePolicy = require('./transcode_policy');
 const { effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VPE_SIMULATE_REMOTE pretend a window is SSH
 // The popups that offer ffmpeg: first-open onboarding, the slow-playback hint, the GPU test offer and the
-// remote download offer, plus the one-time notice that Live transcode is on. This holds their per-session state (shown / pending flags) so at most one is up at a
+// remote download offer. This holds their per-session state (shown / pending flags) so at most one is up at a
 // time; the rules for whether to ask live in src/decide.js and src/remoteff.js. Everything VS Code-shaped and
 // every action (set up, download, run the test) is injected: test/host/offers_test.js drives it in plain Node.
 
@@ -23,7 +22,6 @@ const { effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VP
  * @param {() => Promise<any>} deps.machine  detected GPUs
  * @param {(t: any, hw: any, o: any) => Promise<any>} deps.runProbeUi
  * @param {() => void} deps.setupFfmpeg
- * @param {() => Promise<void>} deps.turnOffTranscode  sets videoPreviewEnhanced.transcode to "off"
  * @param {() => Promise<void>} deps.downloadRemoteFfmpeg
  * @param {(settingId: string) => void} [deps.openSettings]
  * @param {() => string} deps.hostPlatform
@@ -33,7 +31,7 @@ const { effectiveRemoteName } = require('./link-sim'); // VPE_SIMULATE_LINK / VP
  */
 function createOffers(deps) {
   const { vscode, globalState, log, decide, probe, remoteff, setup, tools, config, probeRecordFor, probeRunning, machine, runProbeUi,
-    setupFfmpeg, turnOffTranscode, downloadRemoteFfmpeg, openSettings, hostPlatform, hostArch, hostname, sessions } = deps;
+    setupFfmpeg, downloadRemoteFfmpeg, openSettings, hostPlatform, hostArch, hostname, sessions } = deps;
   let hintShown = false; // the "set up ffmpeg" hint, at most once per session
   let onboardPending = false; // the first-open popup is showing (no other popup meanwhile)
   let onboardShown = false; // the first-open popup was shown in this session
@@ -42,11 +40,10 @@ function createOffers(deps) {
   let probeOfferPending = false; // that offer is showing
   const remoteOfferAsked = new Set(); // remotes asked about an ffmpeg download in this session
   let remoteOfferPending = false; // that question is showing
-  let informing = false; // the Live transcode notice is being stored or showing
 
-  /** Another popup of ours is showing (onboarding, the setup hint, the remote download offer, the GPU test offer, or Live transcode). */
+  /** Another popup of ours is showing (onboarding, the setup hint, the remote download offer, or the GPU test offer). */
   function popupPending() {
-    return onboardPending || hintPending || remoteOfferPending || probeOfferPending || informing;
+    return onboardPending || hintPending || remoteOfferPending || probeOfferPending;
   }
 
   /**
@@ -160,32 +157,7 @@ function createOffers(deps) {
     if (answer === remoteff.OFFER_DOWNLOAD) await downloadRemoteFfmpeg();
   }
 
-  /**
-   * The first time Live transcode starts (2026-11-23, ADR 0002: Live transcode is automatic, nothing asks first):
-   * one non-blocking notice says it is on and how to leave it. Remembered in globalState, never shown again.
-   * `sess.useOriginalVideo()` is this tab's "Use original (this tab)".
-   */
-  async function maybeInformTranscode(/** @type {{ name?: string, disposed?: boolean, useOriginalVideo?: () => void }} */ sess) {
-    if (popupPending() || globalState.get(transcodePolicy.INFORM_KEY)) return;
-    informing = true;
-    let answer;
-    try {
-      await globalState.update(transcodePolicy.INFORM_KEY, Date.now());
-      log(`[${sess.name || 'video'}] live transcode started for the first time: showing the one-time notice`);
-      answer = await vscode.window.showInformationMessage(
-        transcodePolicy.informText(),
-        transcodePolicy.INFORM_GOT_IT,
-        transcodePolicy.INFORM_ORIGINAL,
-        transcodePolicy.INFORM_OFF,
-        transcodePolicy.INFORM_SETTINGS,
-      );
-    } finally { informing = false; }
-    if (answer === transcodePolicy.INFORM_ORIGINAL) { if (!sess.disposed && sess.useOriginalVideo) sess.useOriginalVideo(); }
-    else if (answer === transcodePolicy.INFORM_OFF) await turnOffTranscode();
-    else if (answer === transcodePolicy.INFORM_SETTINGS) { if (openSettings) openSettings('videoPreviewEnhanced.transcode'); }
-  }
-
-  return { maybeInformTranscode, maybeOnboard, maybeHint, maybeOfferProbe, maybeOfferRemoteFfmpeg, popupPending };
+  return { maybeOnboard, maybeHint, maybeOfferProbe, maybeOfferRemoteFfmpeg, popupPending };
 }
 // checkJs: end
 

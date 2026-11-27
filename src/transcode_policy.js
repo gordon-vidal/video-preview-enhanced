@@ -243,19 +243,6 @@ function evaluateLocalStall(o) {
   return 'switch';
 }
 
-// The one-time, non-blocking notice the first time Live transcode starts (2026-11-23: replaces the 'ask' prompts).
-const INFORM_KEY = 'videoPreviewEnhanced.transcodeInformed';
-const INFORM_GOT_IT = 'Got it';
-const INFORM_ORIGINAL = 'Use original (this tab)';
-const INFORM_OFF = 'Turn off (all videos)';
-const INFORM_SETTINGS = 'Settings';
-
-function informText() {
-  return 'Live transcode is on for smooth playback. Video Preview streams a lighter version of this video as you watch '
-    + 'so it plays smoothly instead of stuttering. Switching to the original file gives exact pixels, but playback may be slower.';
-}
-
-
 module.exports = {
   MODES,
   BITRATE_PRESETS,
@@ -278,10 +265,4 @@ module.exports = {
   compareTileSize,
   shouldTranscodeOnOpen,
   evaluateLocalStall,
-  INFORM_KEY,
-  INFORM_GOT_IT,
-  INFORM_ORIGINAL,
-  INFORM_OFF,
-  INFORM_SETTINGS,
-  informText,
 };

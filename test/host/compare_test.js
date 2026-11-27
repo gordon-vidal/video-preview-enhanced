@@ -148,7 +148,7 @@ function fakeProc() {
     assert.deepStrictEqual(streams().map((x) => x.pipelineMode), ['direct-stream', 'direct-stream']);
     assert.deepStrictEqual(streams().map((x) => x.lossy()), [false, false]);
     assert.ok(runs.length >= 2 && runs.every((r) => r.direct && r.argv[r.argv.indexOf('-c:v') + 1] === 'copy'), 'tiles open copying');
-    // The transcode setting is 'always' here: the one-time lossy notice is not shown either way.
+    // No Live transcode pop-up is ever shown.
     assert.ok(!informed.some((t) => /Live transcode/.test(t)));
     await s.send({ type: 'tileSize', tile: { w: 1280, h: 720, cols: 2, rows: 1 } });
     assert.deepStrictEqual(streams().map((x) => x.lossy()), [true, true], 'downscaled tiles leave Direct Stream');
