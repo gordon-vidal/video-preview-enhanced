@@ -431,7 +431,7 @@ const withGlobals = (dom, fn) => {
 {
   const dom = fixtureDom();
   assert.strictEqual(dom.$('no-such-control'), null, 'unknown ids are null (no auto-created elements)');
-  assert.strictEqual(dom.$('splitBtn'), null, 'src/bar.js has no Split button yet: create() must add it itself');
+  assert.ok(dom.$('splitBtn') && dom.$('cmpGroup'), 'src/bar.js declares the Compare capsule and its buttons');
   for (const id of ['bar', 'seek', 'play', 'prev', 'next', 'cog', 'infoBtn', 'startCompareBtn', 'rail', 'folderCap', 'railFilter']) {
     assert.ok(dom.$(id), `#${id} is in the production markup`);
   }
@@ -517,7 +517,9 @@ const withGlobals = (dom, fn) => {
     assert.deepStrictEqual(host.log.find((m) => m.type === 'tiles'), { type: 'tiles', tabId: 1, tiles: ['clip-0'], current: 'clip-0' },
       'the page tells the host which videos it shows');
     assert.strictEqual(drawn[drawn.length - 1].id, 'clip-0', 'the engine adapter draws the tile');
-    assert.strictEqual($('splitBtn').parentNode, $('startCompareBtn').parentNode, 'Split sits in the real bar row, beside Compare');
+    assert.strictEqual($('splitBtn').parentNode, $('cmpGroup'), 'Split sits in the Compare capsule');
+    assert.strictEqual($('cmpGroup').parentNode, $('startCompareBtn').parentNode, 'the capsule sits in the real bar row, beside Compare');
+    assert.strictEqual($('cmpGroup').hidden, true, 'the capsule is hidden with one video');
     assert.strictEqual($('splitBtn').hidden, true, 'Split only at N = 2');
     assert.ok($('cmpBtn').innerHTML.includes('<circle') && !$('cmpBtn').innerHTML.includes('M12 4.5v15'),
       'the Compare panel button is the list icon, not the Split Wipe rectangle with a divider');
@@ -665,6 +667,7 @@ const withGlobals = (dom, fn) => {
     assert.strictEqual(tab().capture, true, 'Shift+D toggles capture');
     host.post({ type: 'rail', op: 'compare', gen: host.snapshot().gen, id: 'clip-0' });
     assert.deepStrictEqual(tab().tiles, ['clip-2', 'clip-0'], '+ compare joins the view');
+    assert.strictEqual($('cmpGroup').hidden, false, 'the Compare capsule appears at N >= 2');
     assert.strictEqual($('splitBtn').hidden, false, 'Split appears at N = 2');
     assert.strictEqual($('syncBtn').hidden, false, 'Sync appears at N >= 2');
     assert.strictEqual($('tracks').hidden, true, 'CC hides in Compare');

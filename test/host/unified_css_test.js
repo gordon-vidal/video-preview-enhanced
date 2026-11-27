@@ -253,15 +253,15 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   }
 }
 
-{ // The narrow-pane collapse names the buttons the controller injects (media/player-ui.js barButton), in order, and
-  // the Compare toggle loses its words first. Every id it names is one barButton / src/bar.js really creates.
-  const ui = fs.readFileSync(path.join(MEDIA, 'player-ui.js'), 'utf8');
+{ // The narrow-pane collapse names the buttons of the #cmpGroup capsule (src/bar.js), in order, and
+  // the Compare toggle loses its words first. Every id it names is one src/bar.js really declares.
+  const bar = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bar.js'), 'utf8');
   const hidden = (maxW) => rules(COMPARE).filter((r) => r.at.includes(`max-width: ${maxW}px`) && /display:\s*none/.test(r.body))
     .flatMap((r) => r.selectors.map(norm));
   const all = [...hidden(640), ...hidden(560), ...hidden(440)].join(' ');
   for (const id of ['swapBtn', 'syncBtn', 'splitBtn', 'spotlightBtn', 'gridBtn']) {
     assert.ok(all.includes(`#row #${id}`), `#${id} collapses`);
-    assert.ok(ui.includes(`barButton('${id}'`), `media/player-ui.js creates #${id}`);
+    assert.ok(bar.includes(`cmpButton('${id}'`), `src/bar.js declares #${id}`);
   }
   assert.ok(hidden(640).some((s) => /#startCompareBtn > span/.test(s)), 'the Compare toggle drops its label first');
 }

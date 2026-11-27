@@ -7,6 +7,8 @@ import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/d
 
 export { h, render, signal, computed, effect, computePosition, flip, shift, offset, autoUpdate };
 export { showTopLayer, hideTopLayer, positionAtPoint, positionAnchored } from './floating';
+export { renderComparePanel, renderCompareVideoPanel } from './ComparePanels';
+export type { ComparePanelProps, CompareVideoPanelProps, CompareRowData, OffsetUnit } from './ComparePanels';
 
 /** Set once the bundle has run: page scripts check it before using the rest. */
 export const ready = true;

@@ -615,35 +615,20 @@
     /** The tiles' right-click menu (#menu, compare.css); pages without it get one. */
     const tileMenuEl = $('menu') || doc.body.appendChild(Object.assign(doc.createElement('div'), { id: 'menu', hidden: true }));
 
-    /** Compare's layout and Swap buttons sit beside Compare; src/bar.js does not draw them yet. */
-    const barButton = (/** @type {string} */ id, /** @type {string} */ title, /** @type {string} */ icon) => {
+    // Compare's capsule (#cmpGroup, src/bar.js): the layout, Swap, Sync and panel buttons are declarative markup. A
+    // minimal fixture without them gets detached stand-ins so the controller never null-checks.
+    const cmpGroupEl = $('cmpGroup');
+    const barButton = (/** @type {string} */ id) => {
       let b = $(id);
-      if (!b) {
-        b = doc.createElement('button');
-        b.id = id; b.type = 'button'; b.className = 'ib'; b.hidden = true; b.title = title;
-        b.setAttribute('aria-label', title);
-        b.innerHTML = icon;
-        cmpBtn.parentNode.insertBefore(b, cmpBtn);
-      }
+      if (!b) { b = doc.createElement('button'); b.id = id; b.hidden = true; }
       return b;
     };
-    const spotBtn = barButton('spotlightBtn', 'Spotlight', ICONS.spotlight);
-    const gridBtn = barButton('gridBtn', 'Equal Grid', ICONS.grid);
-    const splitBtn = barButton('splitBtn', 'Split Wipe (2 videos)', ICONS.split);
-    const swapBtn = barButton('swapBtn', 'Swap sides  X', ICONS.swap);
-    const syncBtn = barButton('syncBtn', 'Sync frame offsets', ICONS.sync);
-    // Compare's own panel button (the bar of src/bar.js does not have it): videos, offsets,
-    // clock and sound. Shown with two videos or more; the Compare / capture toggle beside it stays what it is.
-    const cmpPanelBtn = (() => {
-      let b = $('cmpBtn');
-      if (!b) {
-        b = barButton('cmpBtn', 'Compare: videos, offsets, clock, sound', ICONS.cmpPanel);
-        b.setAttribute('aria-label', 'Compare');
-        b.setAttribute('aria-expanded', 'false');
-        b.setAttribute('aria-controls', 'panel');
-      }
-      return b;
-    })();
+    const spotBtn = barButton('spotlightBtn');
+    const gridBtn = barButton('gridBtn');
+    const splitBtn = barButton('splitBtn');
+    const swapBtn = barButton('swapBtn');
+    const syncBtn = barButton('syncBtn');
+    const cmpPanelBtn = barButton('cmpBtn');
 
     /** @type {(() => void)[]} */
     const cleanups = [];
@@ -983,11 +968,57 @@
     const selected = () => { const t = tab(); return selId && t.tiles.includes(selId) ? selId : (t.clockId || t.tiles[0]); };
     const switchRow = UI_PRIM.switchRow;
     const segmentedRow = UI_PRIM.segmentedRow;
+    /** The Preact panel components (media/ui/ComparePanels.tsx) once the UI bundle has run; Node's fake-DOM tests have none. */
+    const preactPanels = () => {
+      const ui = /** @type {any} */ (globalThis).VpeWebviewUi;
+      return ui && typeof ui.renderComparePanel === 'function' ? ui : null;
+    };
+    /**
+     * Render a Preact page into a fragment (what VpeControls pages return): the same nodes the imperative pages build,
+     * with no wrapper element. The page is re-created on every render, so the nodes may leave their container.
+     */
+    const mountPanel = (/** @type {(c: Element, p: any) => void} */ renderFn, /** @type {any} */ props) => {
+      const host = doc.createElement('div');
+      renderFn(host, props);
+      const f = doc.createDocumentFragment();
+      while (host.firstChild) f.appendChild(host.firstChild);
+      return f;
+    };
     const cmpViews = {
       cmp: {
         label: 'Compare', button: 'cmp',
         render: (/** @type {any} */ _s, /** @type {any} */ k) => {
           const t = tab();
+          const preact = preactPanels();
+          if (preact) {
+            const multi = t.tiles.length >= 2;
+            const ui = multi ? S.deriveUi(t) : null;
+            return mountPanel(preact.renderComparePanel, {
+              rows: compareRows(S, t, engine.getClip).map((r) => {
+                const marks = [r.clock ? 'clock' : '', r.sound ? 'sound' : ''].filter(Boolean);
+                return {
+                  id: r.id, letter: r.letter, name: r.name,
+                  value: `${r.clock ? '⏱ ' : ''}${r.sound && !prefs.muted ? '🔊 ' : ''}${r.offText}`,
+                  ariaLabel: `${r.letter}: ${r.name}, offset ${r.offLong}${marks.length ? `, ${marks.map((m) => (m === 'clock' ? 'sets the clock' : 'sound on')).join(', ')}` : ''}`,
+                };
+              }),
+              addValue: t.tiles.length < t.maxVideos ? `${t.tiles.length} of ${t.maxVideos}` : null,
+              capture: t.capture,
+              multi,
+              layoutModes: t.tiles.length === 2 ? [['spotlight', 'Spotlight'], ['grid', 'Grid'], ['split', 'Split']] : [['spotlight', 'Spotlight'], ['grid', 'Equal Grid']],
+              layout: ui ? ui.effectiveLayout : '',
+              showSwap: t.tiles.length === 2,
+              syncMode: t.syncMode,
+              keepLetter: letterOf(t, t.clockId || t.tiles[0]),
+              onOpenVideo: (/** @type {string} */ id) => { selId = id; k.show('cmpVid'); },
+              onAdd: () => { k.close(false); act.pickVideo(); },
+              onCapture: () => { act.capture(); k.render(); },
+              onLayout: (/** @type {string} */ m) => { act.layout(m); k.render(); },
+              onSwap: () => { act.swap(); k.render(); },
+              onSync: () => { act.sync(); k.render(); },
+              onLeave: () => { k.close(false); act.leaveCompare(); },
+            });
+          }
           const f = doc.createDocumentFragment();
           f.appendChild(k.heading('Videos'));
           for (const r of compareRows(S, t, engine.getClip)) {
@@ -1026,6 +1057,25 @@
           const t = tab();
           const id = selected();
           const r = compareRows(S, t, engine.getClip).find((x) => x.id === id) || compareRows(S, t, engine.getClip)[0];
+          const preact = preactPanels();
+          if (preact) {
+            return mountPanel(preact.renderCompareVideoPanel, {
+              letter: r.letter, name: r.name, offText: r.offText, offLong: r.offLong, unit: r.offset.unit,
+              hasOffset: !!r.offset.v, clock: r.clock, sound: r.sound, hasAudio: hasAudio(r.id),
+              showSwap: t.tiles.length === 2,
+              enlargeLabel: t.layout === 'spotlight' && t.spotlightId === r.id ? 'Back to grid' : 'Enlarge tile',
+              onBack: () => k.show('cmp'),
+              onNudge: (/** @type {number} */ dir) => { act.nudge(r.id, dir); k.render(); },
+              onUnit: (/** @type {string} */ u) => { commit(S.setOffsetUnit(ws, r.id, u, clipFps(r.id))); k.render(); },
+              onReset: () => { commit(S.resetOffset(ws, r.id), `${r.letter} in step`); k.render(); },
+              onClock: () => { act.setClock(r.id); k.render(); },
+              onSound: () => { act.setSound(r.id); k.render(); },
+              onSwap: () => { act.swap(); k.render(); },
+              onEnlarge: () => { act.enlarge(r.id); k.render(); },
+              onReplace: () => { k.close(false); act.replace(r.id); },
+              onRemove: () => { k.show('cmp'); act.removeTile(r.id); },
+            });
+          }
           const f = doc.createDocumentFragment();
           f.appendChild(k.head(`${r.letter} ${r.name}`, 'cmp'));
           f.appendChild(k.heading('Offset'));
@@ -2742,6 +2792,7 @@
       layoutBtn(splitBtn, ui.showSplitBtn, ui.effectiveLayout === 'split');
       swapBtn.hidden = ui.n !== 2;
       cmpPanelBtn.hidden = !ui.isMulti;
+      if (cmpGroupEl) cmpGroupEl.hidden = !ui.isMulti;
       layoutBtn(syncBtn, ui.showSyncBtn, t.syncMode);
       cmpBtn.classList.toggle('cap-on', t.capture);
       cmpBtn.title = ui.captureTitle;
