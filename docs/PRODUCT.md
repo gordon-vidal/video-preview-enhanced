@@ -76,8 +76,10 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
   offered (a popup with "Run test" / "Not now" / "Don't Show Again") when a video plays slower than real time and this
   ffmpeg/GPU has no test result, and runs from "Video Preview: Re-test ffmpeg". ffmpeg stays the recommended setup: the
   first video recommends setting it up, and it is used whenever it plays a file better than the built-in decoder.
-  Seek-bar thumbnails follow the same rule: they decode only while the pointer hovers or drags on the seek bar (picture under the
-  pointer first, a few neighbours), never as a strip after open; no ffmpeg thumbnail process or thumbnail worker exists before the first hover.
+  Exception, seek-bar previews (2026-11-27, replaces the lazy rule of 2026-11-20): after open a low-priority pass fills the
+  bar with small keyframe pictures (and, for short or light files, pictures between keyframes under ~3 s of CPU per
+  file). It must stay unnoticeable: one picture at a time, below-normal priority, software decoding, paused while
+  playback is behind or the tab is hidden. No preview pictures are stored on disk (docs/notes/seek-preview.md).
 
 ## Onboarding
 

@@ -151,7 +151,7 @@ What the numbers say:
   short GOPs). When slots are sparse relative to keyframes, one process per slot (37 ms start each) is cheaper than
   decoding every keyframe.
 
-## Plan (proposal, not built)
+## Plan (decided 2026-11-27, not built)
 
 ### Principles
 
@@ -319,29 +319,17 @@ during playback). Revisit only if measurements show re-opened long files are a r
   60 s, keyframe every 10 s, H.264 1080p and HEVC 10-bit 4K), so no new LFS media is needed.
 - Layer 4 (before release only): `playback` on 4K HEVC with a pass running vs. not, compared on dropped frames and CPU.
 
-## Decisions for the maintainer
+## Decisions (maintainer, 2026-11-27)
 
-1. **Background keyframe pass (changes the lazy policy of 2026-11-20 and PRODUCT.md "Nothing decodes in the
-   background on its own").** Options:
-   - (a) keep lazy: nothing beyond the pointer and its neighbours;
-   - (b) start the pass at the first hover of a file, then fill the whole bar at low priority;
-   - (c) start the pass after open, like before 2026-11-20.
-
-   *Recommendation: (b).* It keeps "nothing before the user touches the seek bar", costs 10-50 s of one core spread
-   over idle time for a long 4K file (estimate), and makes the second hover instant everywhere. PRODUCT.md would need
-   its seek-bar sentence changed.
-2. **Background between pass for short or light files** (decodes every frame of the file once, at low priority).
-   *Recommendation: yes, but only with (b), and only under a budget of about 3 s of CPU per file:* in practice files
-   up to about 1 min of 1080p H.264, and never 4K HEVC.
-3. **Disk cache.** *Recommendation: no.* If ever: last 10 videos, 16 MB hard cap, in global storage, with a clear
-   command (sizes above).
-4. **Interval rule.** `X = max(D / 240, min(2 s, D / 20))` (20 pictures at least, 2 s up to 8 min, 240 at most).
-   *Recommendation: accept;* it is one constant pair to tune later.
-5. **Size and storage.** Keep 160 px, and store JPEG with a hot bitmap set. *Recommendation: accept.* The
-   alternative, lower-resolution between pictures (for example 80x45), saves little once stored as JPEG and makes
-   the tooltip blurry.
-6. **Show the keyframe after the target** when it is nearer than the one before (a hover can show a picture from
-   up to X/2 later). *Recommendation: yes,* as YouTube does with its nearest storyboard picture; release stays exact.
+1. **Background keyframe pass: starts after open (c).** The 2026-11-20 lazy rule came from the old strip, which spiked
+   the CPU. The new pass must stay unnoticeable: one picture at a time, low priority (below-normal process priority,
+   1-2 decoder threads, software only), paused while playback is behind or the tab is hidden, coarse to fine. Phase 3
+   proves it with a layer 4 run (`playback` on 4K HEVC with and without the pass: same dropped frames, CPU stated).
+2. **Between pass for short or light files: yes,** after open too, under a budget of about 3 s of CPU per file.
+3. **Disk cache: no,** not now.
+4. **Interval rule:** `X = max(D / 240, min(2 s, D / 20))`, accepted.
+5. **160 px, stored as JPEG with a hot bitmap set:** accepted.
+6. **The nearer keyframe, also one after the target:** yes; release stays exact.
 
 ## History
 
