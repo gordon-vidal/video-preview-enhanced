@@ -89,6 +89,23 @@ test('the same GOP read again replaces the older copy', () => {
   assert.equal(c.stats().bytes, 4000 + 29 * 1000);
 });
 
+test('a read of a held GOP cut off part way keeps the whole older copy for the frames it did not reach', () => {
+  // Play after a seek served from the page: the host sends the next GOPs again, and the next seek cuts that read off.
+  const c = create();
+  read(c, 1, 0, 60); // GOPs 0 and 30, whole
+  read(c, 2, 30, 35); // GOP 30 again, cut off after 5 frames
+  const hit = c.find(at(40));
+  assert.ok(hit, 'a frame past the cut-off read is still held');
+  assert.equal(hit.keyT, at(30));
+  assert.equal(hit.frameT, at(40));
+  assert.equal(c.after(hit.keyT, hit.frameT).length, 19); // 41..59, from the same copy
+  assert.equal(c.find(at(32)).packets.length, 3);
+  // Once the new copy reaches as far, it replaces the old one.
+  read(c, 3, 30, 60);
+  assert.equal(c.stats().gops, 2);
+  assert.equal(c.stats().bytes, 2 * (4000 + 29 * 1000));
+});
+
 test('the closest keyframe wins when reads overlap (fewest packets to decode)', () => {
   const c = create();
   read(c, 1, 0, 60, 60); // one long GOP from 0

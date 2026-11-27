@@ -522,10 +522,12 @@ module.exports = [{
         for (const sec of [8.6, 7, 5.4]) r.after.push(await playFrom(sec));
         // The page path: the seek served from the page's packets and the host still holding that GOP (it skips the
         // packets the page offers: src/stream.js skipHeld). Otherwise the host restarts there and sends everything.
+        // Each place was received whole before (the 6 s of play), so every seek is served from the page: a read of a
+        // held GOP that the next seek cut off part way must not lose the frames it did not reach (packet-cache add).
         const paged = (a) => a.filter((x) => x.local && x.hostSkipped);
         ok(r.before.every((x) => !x.pageSound), 'before: the held sound was used');
-        ok(paged(r.after).length > 0, `after: no play took the page path: ${JSON.stringify(r.after)}`);
-        ok(paged(r.after).every((x) => x.pageSound && x.hostSkippedSound), `after: the held sound was not used: ${JSON.stringify(r.after)}`);
+        ok([...r.before, ...r.after].every((x) => x.local), `a seek was not served from the page's packets: ${JSON.stringify([...r.before, ...r.after])}`);
+        ok(r.after.every((x) => !x.local || (x.hostSkipped && x.pageSound && x.hostSkippedSound)), `after: a play after a seek served from the page did not take the page path: ${JSON.stringify(r.after)}`);
         // Sound ready from the play position at once (the hidden desktop gives no user gesture, so the AudioContext
         // stays suspended and nothing is heard: where it is running, heard from the play position too).
         ok(paged(r.after).every((x) => x.soundReadyMs !== null && x.soundReadyMs < 300), `after: the sound was not ready at once: ${JSON.stringify(r.after)}`);

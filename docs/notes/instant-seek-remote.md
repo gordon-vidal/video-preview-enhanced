@@ -456,6 +456,11 @@ sound still came from the host, so on a slow link the clock ran on the timer and
   where the page's ends (`audioKeepUntil`, now for PCM too). Video-only files: nothing changes.
 - **A/V sync**: the held sound starts at the play position on the same timeline as the host's (its own times); the
   clock anchors on it when the seek lands, as with the host's sound.
+- **A GOP read again** (`media/packet-cache.js` add): play from a place served here has the host send the following
+  GOPs, which the page already holds; the next seek usually cuts that read off part way. The new copy replaces the
+  old one only once it reaches as far; until then the old one serves the frames the new read did not reach. (Before,
+  the new copy replaced it at its keyframe, so a later seek past the cut went to the host and play took no page path:
+  layer-3 `play-cached-sound` took the page path 0-3 of 3 times, by timing.)
 - **Limits**: only plays that take the page path (the seek served from the page's packets and the host still holding
   that GOP). A seek served from the decoded frames kept, or a host that restarts there, sends everything as before.
 

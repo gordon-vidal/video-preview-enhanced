@@ -11,7 +11,7 @@
   /**
    * @typedef {{ t: number, key: boolean, idr?: boolean, data: Uint8Array, discard?: boolean }} Packet
    * @typedef {{ keyT: number, lastT: number, endT?: number, packets: Packet[], bytes: number, used: number, open: boolean,
-   *   params: string }} Gop
+   *   params: string, older: Gop[] }} Gop
    * A remote stream's sound item as src/stream-buffer.js takeAudio sends it: Opus (packets with 80 ms of preroll; skip
    * and samples trim the decoded output) or interleaved 16-bit stereo PCM.
    * @typedef {{ kind: 'opus', t: number, sampleRate: number, head: Uint8Array, packets: Uint8Array[], skip: number,
@@ -171,13 +171,17 @@
         // Read on into the next keyframe: nothing lies between this GOP's last frame and it.
         if (cur) { cur.open = false; cur.endT = p.t; }
         const params = paramSets(p.data);
+        /** @type {Gop[]} */
+        const older = [];
         for (const g of gops.slice()) {
-          // The same GOP read again (a later seek, another tier): the newer copy replaces it.
-          if (Math.abs(g.keyT - p.t) < 1e-4) drop(g);
           // The host changed the stream (picture size, encoder, profile): what it sends now is what a seek would get.
-          else if (params && g.params && g.params !== params) drop(g);
+          if (params && g.params && g.params !== params) drop(g);
+          // The same GOP read again (play after a seek served from here, another tier): the newer copy replaces it
+          // once it reaches as far. Until then the older one serves the frames the new read has not got to: the
+          // next seek often cuts that read off part way, and dropping the whole copy at its keyframe lost them.
+          else if (Math.abs(g.keyT - p.t) < 1e-4) older.push(g);
         }
-        cur = { keyT: p.t, lastT: p.t, packets: [], bytes: 0, used: ++clock, open: true, params };
+        cur = { keyT: p.t, lastT: p.t, packets: [], bytes: 0, used: ++clock, open: true, params, older };
         gops.push(cur);
         runs.set(gen, cur);
       }
@@ -187,6 +191,10 @@
       if (!p.key && !(p.t > cur.lastT - 1e-6) && cur.packets.length) { drop(cur); return; }
       cur.packets.push({ t: p.t, key: p.key, idr: p.idr, data: p.data, discard: p.discard });
       if (p.t > cur.lastT) cur.lastT = p.t;
+      if (cur.older.length) {
+        for (const g of cur.older.filter((x) => cur.lastT >= x.lastT - 1e-6)) drop(g);
+        cur.older = cur.older.filter((x) => gops.includes(x));
+      }
       cur.bytes += p.data.byteLength;
       bytes += p.data.byteLength;
       evict();
@@ -203,7 +211,8 @@
       let best = null;
       for (const g of gops) {
         if (g.keyT > t + eps || (g.lastT < t - eps && !(g.endT > t + eps))) continue;
-        if (!best || g.keyT > best.keyT) best = g; // fewest packets to decode
+        // Fewest packets to decode; of two copies of a GOP that both reach t, the newer (added later).
+        if (!best || g.keyT >= best.keyT - 1e-6) best = g;
       }
       if (!best) { misses++; return null; }
       let end = 0;
@@ -229,9 +238,13 @@
       runs.set(gen, null);
     }
 
-    /** The packets after `t` in the same GOP (read ahead after the target, for a step forward). */
+    /**
+     * The packets after `t` in the same GOP (read ahead after the target, for a step forward): of two copies of it
+     * (add), the one find just served (the last used).
+     */
     function after(keyT, t, eps = 1e-4) {
-      const g = gops.find((x) => Math.abs(x.keyT - keyT) < eps);
+      let g = null;
+      for (const x of gops) if (Math.abs(x.keyT - keyT) < eps && (!g || x.used > g.used)) g = x;
       return g ? g.packets.filter((p) => p.t > t + eps) : [];
     }
 
