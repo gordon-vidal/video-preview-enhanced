@@ -210,3 +210,26 @@ Phases 1-5 and 6-7 are independent tracks.
    repeated failure (recommended), or persist it as bad at once? And the kept-running decoder: one retry before off
    for the video (recommended), or off at the first failure as today?
 5. Compare: the seek-bar pulse and "Compare landed" wait for every visible tile (recommended), or only the clock tile?
+
+## 10. Queued with this plan (maintainer, 2026-11-27)
+
+Agreed in discussion and queued behind phases 1-7, so the work merged now stays as it is:
+
+- **Scroll back keeps up** (the fill behind the paused frame runs dry on a long, continuous scroll back; on a 1 Mb/s link
+  full-quality 1080p carries about 0.25-0.5 s of video per second, the user scrolls about 1 s per second):
+  1. Keep the link busy and follow the direction: ask for the next fill before the current one ends, run fills through
+     the kept-running decoder (no ffmpeg start each), hold the forward read-ahead while scrolling back, and when idle go
+     on filling further back (a budget of seconds, within the packet cache).
+  2. A scrub tier on slow links: while scrolling fast, fill at a quarter size and lower quality (about 4x the video per
+     byte); the frame the user stops on comes sharp (existing sharp frame). Needs the packet cache and the page to hold
+     two sizes side by side (today a GOP of another size drops the others).
+  3. Never a wall: when the fill still falls behind, show the nearest held frame (or skip frames) while the scroll goes
+     on, and land exactly when it stops. Bar and frame number stay exact. Fits the request model: `superseded` steps
+     need no picture, only the last one `lands`.
+- **Bigger, more configurable packet cache:** default 64 MB -> 128 MB per video, and say in the setting how much
+  that holds (about two minutes of 1080p); consider a total budget across Compare tiles and a separate budget for
+  the cached sound.
+- **Synchronized playback in Compare over SSH:** every tile's frame on screen in step with the others while playing
+  on a remote link (today each tile's stream buffers and stalls on its own). Needs its own design note: a shared
+  clock that holds all tiles until each has the next frame, per-tile buffering targets so the slowest link sets the
+  pace, and how the link budget is split among tiles.
