@@ -7,7 +7,10 @@
 // - the native request path (o.request) works without the libav.js worker;
 // - Live transcode (EncodedStream) answers seek-bar thumbnails through the same host path with the real source
 //   keyframe time, cancels on abort, and a page for a URL never asks (engine.js net);
-// - thumbhost decodes one keyframe to RGBA of the asked box (real ffmpeg, when on PATH).
+// - thumbhost decodes one keyframe to RGBA of the asked box (real ffmpeg, when on PATH);
+// - the bar is a grid of N slots of X s (at least 20, at most 240); pictures are kept as JPEG with a few hot
+//   bitmaps, within the smallest memory budget; frames the player showed (offer) are served on hover without a
+//   request, one per slot, and the nearest picture comes at once.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -19,8 +22,20 @@ const src = fs.readFileSync(path.join(root, 'media', 'thumbs.js'), 'utf8');
 const ctx = {
   performance, setTimeout, clearTimeout, console, Uint8ClampedArray, Uint8Array, Map, Promise, Math, AbortController,
   ImageData: class { constructor(d, w, h) { this.data = d; this.width = w; this.height = h; } },
-  createImageBitmap: async (img) => ({ w: img.width, h: img.height, close() { this.closed = true; } }),
+  Blob,
+  // A bitmap from RGBA (ImageData) has its size; one from a JPEG (Blob) is the fake encoder's 160 x 90.
+  createImageBitmap: async (img) => {
+    ctx.decodes++;
+    return { width: img.width || 160, height: img.height || 90, close() { this.closed = true; } };
+  },
+  decodes: 0,
 };
+// The page's JPEG encoder (OffscreenCanvas.convertToBlob): 2.5 KB per 160 x 90 picture, as measured.
+class FakeOffscreen {
+  constructor(w, h) { this.width = w; this.height = h; }
+  getContext() { return { drawImage() {} }; }
+  async convertToBlob(o) { return new Blob([new Uint8Array(2500)], { type: o.type }); }
+}
 vm.createContext(ctx);
 vm.runInContext(`${src}\nthis.ThumbService = ThumbService;`, ctx);
 const { ThumbService } = ctx;
@@ -35,6 +50,101 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
   }
   const first4 = [...ThumbService.coarseToFine(100).slice(0, 4)];
   assert.deepStrictEqual(first4, [50, 25, 75, 12], 'middle, then quarters');
+
+  // The grid: X = max(D / 240, min(2 s, D / 20)), at least one frame; N = ceil(D / X).
+  const grid = (duration, fps = 30) => {
+    const g = new ThumbService({ duration, startT: 0, size: 1, fps, request: async () => null }).stats0();
+    return [Math.round(g.X * 1000) / 1000, g.n];
+  };
+  assert.deepStrictEqual(grid(10), [0.5, 20], '10 s: 20 pictures');
+  assert.deepStrictEqual(grid(20), [1, 20], '20 s: one per second');
+  assert.deepStrictEqual(grid(60), [2, 30], '1 min: every 2 s');
+  assert.deepStrictEqual(grid(300), [2, 150], '5 min: every 2 s');
+  assert.deepStrictEqual(grid(600), [2.5, 240], '10 min: 240 pictures');
+  assert.deepStrictEqual(grid(3600), [15, 240], '1 h: 240 pictures');
+  assert.deepStrictEqual(grid(7200), [30, 240], '2 h: 240 pictures');
+  assert.deepStrictEqual(grid(0.5, 30), [0.033, 15], 'half a second: one picture per frame');
+
+  // Frames the player showed (offer): one per slot, kept as JPEG, served on hover without a request.
+  {
+    ctx.OffscreenCanvas = FakeOffscreen;
+    const reqs = [];
+    const floor = require('../../media/membudget.js').budgets(1).thumbs; // the smallest mem.thumbs
+    const mkCap = (duration, cap, extra) => new ThumbService({
+      duration, startT: 10, size: 1e9, fps: 30, cap, log: () => {}, idleMs: 50,
+      request: async (t, w, h) => {
+        reqs.push(t);
+        await tick(2);
+        return { kt: t, covered: true, w, h, data: new Uint8Array(w * h * 4) };
+      },
+      ...extra,
+    });
+    const bmp = () => ({ width: 160, height: 90, close() { this.closed = true; } });
+    // Playback over a 20 s file at 30 fps: the engine offers a shown frame when wants() says so.
+    const c = mkCap(20, floor);
+    let offered = 0;
+    for (let f = 0; f < 600; f++) {
+      const t = 10 + f / 30;
+      if (c.wants(t)) { c.offer(t, bmp(), 0, 1); offered++; }
+    }
+    assert.strictEqual(offered, 20, 'one capture per slot of playback (20 s: 20)');
+    const extra = bmp();
+    assert.strictEqual(c.offer(10.5, extra), false, 'a slot with a picture takes no second one');
+    assert.ok(extra.closed, 'a refused bitmap is closed');
+    await tick(5);
+    let st = c.stats0();
+    assert.strictEqual(st.frames, 20);
+    assert.strictEqual(st.jpegs, 20, 'every capture is stored as JPEG');
+    assert.ok(st.bytes <= floor, `within the smallest budget (${st.bytes} B)`);
+    // Hover between two captured frames: the slot's own picture at once, no request.
+    const got = [];
+    c.hover(7.5, (p) => got.push(p));
+    assert.strictEqual(got.length, 1, 'the captured picture is drawn at once');
+    assert.ok(Math.abs(got[0].t - 10 - 7.5) <= st.X, `its time is within X of the pointer (${got[0].t - 10})`);
+    assert.strictEqual(c.stats0().shown.kind, 'frame');
+    await tick(60);
+    assert.strictEqual(reqs.length, 0, 'every slot near the pointer has a captured picture: no request');
+    c.leave(true);
+    c.dispose();
+
+    // A 2 h file under the smallest budget: all 240 slots fit as JPEG, at most 32 hot bitmaps.
+    const long = mkCap(7200, floor);
+    for (let i = 0; i < 240; i++) { long.offer(10 + (i + 0.5) * 30, bmp()); await tick(); } // one per X of playback
+    await tick(5);
+    st = long.stats0();
+    assert.strictEqual(st.cached, 240, `all 240 pictures kept (${st.cached})`);
+    assert.ok(st.hot <= 32, `at most 32 ready bitmaps (${st.hot})`);
+    assert.ok(st.bytes <= floor && st.bytes < 2.5e6, `bytes count real sizes (${st.bytes} B)`);
+    // A cold picture (JPEG only) is decoded on show.
+    const cold = [];
+    const d0 = ctx.decodes;
+    long.hover(15, (p) => cold.push(p));
+    await tick(5);
+    const last = cold[cold.length - 1];
+    assert.ok(ctx.decodes > d0 && last && Math.abs(last.t - 25) < 1e-6, 'a JPEG-only picture is decoded and shown');
+    long.leave(true);
+    long.dispose();
+
+    // A Compare tile's share of the floor (16 tiles): still within it.
+    const tile = mkCap(7200, floor / 16);
+    for (let i = 0; i < 240; i++) { tile.offer(10 + (i + 0.5) * 30, bmp()); await tick(); }
+    await tick(5);
+    assert.ok(tile.stats0().bytes <= floor / 16, `a 16-tile share holds (${tile.stats0().bytes} B of ${floor / 16})`);
+    assert.ok(tile.stats0().cached >= 100, `and keeps most pictures (${tile.stats0().cached})`);
+    tile.dispose();
+
+    // Nothing cached near the pointer: the nearest picture at once, the slot's keyframe later.
+    const near = mkCap(600, floor, { remote: true });
+    near.offer(10 + 2.2, bmp());
+    const ng = [];
+    near.hover(300, (p) => ng.push(p));
+    assert.strictEqual(ng.length, 1, 'the nearest picture is drawn at once');
+    assert.ok(Math.abs(ng[0].t - 12.2) < 1e-6, 'the nearest is the captured one');
+    await tick(80);
+    assert.ok(ng.length >= 2 && Math.abs(ng[ng.length - 1].t - 311.25) < 1e-6, "then the slot's own keyframe");
+    near.dispose();
+    delete ctx.OffscreenCanvas;
+  }
 
   // Lazy: nothing is requested until the first hover; one request at a time (request path = native backend).
   let busy = false;
@@ -134,10 +244,10 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
   preview(126);
   preview(180);
   preview(210);
-  assert.deepStrictEqual(requests.map((r) => r.t), [136], 'one active request during a sweep');
+  assert.deepStrictEqual(requests.map((r) => r.t), [136.25], 'one active request during a sweep');
   requests[0].complete(130);
   await tick();
-  assert.deepStrictEqual(requests.map((r) => r.t), [136, 220], 'only the latest pending target dispatches');
+  assert.deepStrictEqual(requests.map((r) => r.t), [136.25, 221.25], 'only the latest pending target dispatches');
   requests[1].complete(190);
   await tick();
   assert.ok(pictures.length, 'latest picture publishes');

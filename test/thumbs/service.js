@@ -86,7 +86,7 @@ async function main() {
 
   // 2. The pointer stays: the neighbouring places (radius 4) are filled, then the worker rests.
   for (let i = 0; i < 1000 && (svc.nextNear() !== null || svc.inflight); i++) await sleep(10);
-  check('neighbours filled while the pointer stays', svc.nextNear() === null, `${svc.cache.size} pictures cached`);
+  check('neighbours filled while the pointer stays', svc.nextNear() === null, `${svc.list.length} pictures cached`);
 
   // 3. Same slot again: from the cache, synchronously, and no new request (picture and neighbours there).
   got = [];
@@ -116,14 +116,17 @@ async function main() {
   svc.dispose();
   svc = new globalThis.ThumbService({ ...svc.o });
   svc.hover(duration * 0.6, () => {}, true);
-  for (let i = 0; i < 400 && !svc.coverage.size; i++) await sleep(10);
-  const [anchor, end] = svc.coverage.entries().next().value || [];
-  const revisit = Math.ceil(anchor / svc.step);
-  check('observed range contains an unrequested slot', revisit * svc.step < end && !svc.slotKt.has(revisit));
+  // A keyframe answer covers [its time, the asked time]: a slot inside that range needs no request.
+  const covering = () => svc.list.find((e) => e.kind === 'key' && e.end > e.t);
+  for (let i = 0; i < 400 && !covering(); i++) await sleep(10);
+  const key = covering() || { t: 0, end: 0 };
+  let revisit = 0;
+  while (revisit < svc.n && !(svc.target(revisit) > key.t)) revisit++;
+  check('observed range contains an unrequested slot', svc.target(revisit) <= key.end && !svc.asked.has(revisit));
   svc.leave(true);
   const readsBefore = reads.length;
   let immediate = false;
-  svc.hover(revisit * svc.step, () => { immediate = true; }, true);
+  svc.hover(svc.target(revisit), () => { immediate = true; }, true);
   await sleep(100);
   check('cached random-access range needs no reads or worker restart',
     immediate && svc.stats.requests === 1 && reads.length === readsBefore && !svc.worker);

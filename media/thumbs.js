@@ -1,20 +1,24 @@
 // @ts-check
-// Seek-bar hover thumbnails. One low-priority worker (thumbs-worker.js, a second
-// keyframe-only libav.js instance) is started on the first hover and decodes one
-// keyframe at a time; it is idle when nobody hovers and is closed 20 s (o.idleMs)
-// after the pointer leaves (the cache stays). Engine side: the "seek-bar thumbnails" section
-// of engine.js. Not used for MJPEG AVI/image sequences (FramePlayer, no libav)
-// or audio-only files.
-//
-// Lazy (docs/notes/seek-preview.md): nothing decodes until the pointer is on the seek bar
-// (hover or drag). The picture under the pointer comes first (newest position wins), then,
-// while the pointer stays, a few neighbouring places so moving along the bar is quick.
-// When the pointer leaves, requests stop (a running worker request is cancelled) and the
-// worker is closed after some idle time. Decoded pictures stay cached (memory budget).
-// Native ffmpeg and Live transcode backend: o.request(t, w, h, signal) replaces the worker; the extension host runs
-//   ffmpeg -skip_frame nokey -noaccurate_seek -ss T -i FILE -frames:v 1 -vf scale=W:H,showinfo -c:v mjpeg -f image2pipe -
-// and answers with a small JPEG plus the decoded keyframe's time (src/thumbhost.js).
+// Seek-bar hover pictures (docs/notes/seek-preview.md). Two sources fill one sorted list of pictures:
+// - keyframes asked for while the pointer is on the bar: a second, keyframe-only libav.js worker
+//   (thumbs-worker.js, started on the first hover, closed o.idleMs after the pointer left) or, for native
+//   ffmpeg and Live transcode, o.request(t, w, h, signal) answered by the extension host (src/thumbhost.js);
+// - frames the player already shows (playback, seeks, steps), handed over by engine.js through offer().
+// The bar is a grid of N slots of X seconds (interval()); one picture per slot is enough. Pictures are kept
+// as small JPEGs; a few near the pointer also as ready-to-draw ImageBitmaps (HOT). Not used for MJPEG
+// AVI/image sequences (FramePlayer, no libav) or audio-only files.
 'use strict';
+
+/** Ready-to-draw bitmaps kept at most (the rest stay as JPEG and are decoded again on show). */
+const HOT = 32;
+const JPEG_QUALITY = 0.75;
+
+/**
+ * @typedef {{ t: number, kind: 'key' | 'frame', end: number, jpeg: Blob | null, bmp: ImageBitmap | null,
+ *   w: number, h: number, rot: number, used: number, warming?: Promise<void> | null, gone?: boolean }} Entry
+ *   t: source time (absolute seconds); a key entry answers every time in [t, end] (its keyframe is the latest
+ *   keyframe there); rot: how the bitmap is turned when drawn (captures come from the canvas, already turned).
+ */
 
 /* exported ThumbService */
 // eslint-disable-next-line no-unused-vars
@@ -34,9 +38,9 @@ class ThumbService {
    * @param {boolean} [o.remote] the file is on another machine (SSH/WSL): no neighbour filling,
    *   since every thumbnail costs at least one 4 MB block over the connection
    * @param {number} [o.idleMs] ms after the pointer left until the worker is closed (default 20 s)
-   * @param {number} [o.radius] neighbouring places filled each side of the pointer (default 4)
+   * @param {number} [o.radius] neighbouring slots filled each side of the pointer (default 4)
    * @param {(msg: string) => void} [o.log]
-   * @param {number} [o.cap] bytes of thumbnails kept
+   * @param {number} [o.cap] bytes of pictures kept (JPEGs plus hot bitmaps)
    * @param {(t: number, w: number, h: number, signal: AbortSignal) => Promise<any>} [o.request]
    *   decodes one thumbnail elsewhere (native ffmpeg in the extension host) instead of the libav.js
    *   worker; resolves {kt, w, h, data, fmt} (data is a JPEG when fmt is 'jpeg', else RGBA) or null
@@ -44,69 +48,177 @@ class ThumbService {
   constructor(o) {
     this.o = o;
     this.rot = [90, 180, 270].includes(o.rotation || 0) ? o.rotation || 0 : 0;
-    // Grid: about 200 places along the bar, so nearby hovers share requests and cache entries.
-    this.step = Math.max(o.duration / 200, 1 / (o.fps || 30));
+    this.X = ThumbService.interval(o.duration, o.fps);
+    this.n = Math.max(1, Math.ceil(o.duration / this.X - 1e-9));
     this.box = this.rot === 90 || this.rot === 270 ? { w: 120, h: 160 } : { w: 160, h: 120 };
-    this.cap = o.cap > 0 ? o.cap : 30e6; // bytes of thumbnails kept (less on small machines: media/membudget.js)
-    /** @type {Map<number|string, {bmp: ImageBitmap, w: number, h: number, bytes: number}>} keyframe time -> picture (LRU order) */
-    this.cache = new Map();
+    this.cap = o.cap > 0 ? o.cap : 30e6; // less on small machines: media/membudget.js
+    /** @type {Entry[]} sorted by t */
+    this.list = [];
     this.bytes = 0;
-    /** @type {Map<number, number|string|null>} grid slot -> keyframe time (null: none found) */
-    this.slotKt = new Map();
-    this.coverage = new Map();
+    /** @type {Map<number, Entry | null>} slot -> the keyframe a request answered (null: none found) */
+    this.asked = new Map();
     this.epoch = 0;
     this.worker = null;
     this.state = 'off'; // off | starting | ready | failed
     this.id = 0;
     this.inflight = null; // {id, slot, prefetch}
     this.want = null; // slot the pointer is on
+    this.wantT = 0; // the pointer's time (absolute)
     this.cb = null;
     this.debounce = 0;
     this.idleTimer = 0;
-    this.stats = { requests: 0, decoded: 0, ms: [] };
+    this.stats = { requests: 0, decoded: 0, ms: [], captured: 0, captureMs: [] };
+    /** @type {{t: number, kind: string} | null} the last picture handed to a hover callback */
+    this.shown = null;
   }
 
-  /** Counters (tests, notes): requests made, pictures decoded and cached, worker state. */
+  /**
+   * Seconds per slot: at least 20 pictures, at most 240, 2 s in between (docs/notes/seek-preview.md).
+   * @param {number} d duration @param {number} [fps]
+   */
+  static interval(d, fps) {
+    return Math.max(d / 240, Math.min(2, d / 20), 1 / (fps || 30));
+  }
+
+  /** Counters (tests, notes). */
   stats0() {
-    return { requests: this.stats.requests, decoded: this.stats.decoded, cached: this.cache.size, slots: this.slotKt.size, bytes: this.bytes, state: this.state, worker: !!this.worker, hovering: this.want !== null };
-  }
-
-  /** The cached picture nearest to `slot` (shown while the exact one decodes). */
-  nearest(slot) {
-    let best = null;
-    let bd = Infinity;
-    for (const [s, kt] of this.slotKt) {
-      if (kt === null || kt === undefined || !this.cache.has(kt)) continue;
-      const d = Math.abs(s - slot);
-      if (d < bd) { bd = d; best = s; }
-    }
-    return best === null ? null : this.lookup(best);
+    let hot = 0;
+    let jpegs = 0;
+    let frames = 0;
+    for (const e of this.list) { if (e.bmp) hot++; if (e.jpeg) jpegs++; if (e.kind === 'frame') frames++; }
+    let slots = 0;
+    for (const e of this.asked.values()) if (e && !e.gone) slots++;
+    const cm = this.stats.captureMs.slice().sort((a, b) => a - b);
+    return {
+      requests: this.stats.requests, decoded: this.stats.decoded, cached: this.list.length, slots, bytes: this.bytes,
+      cap: this.cap, hot, jpegs, frames, captured: this.stats.captured, X: this.X, n: this.n,
+      captureMs: cm.length ? { median: cm[cm.length >> 1], max: cm[cm.length - 1], n: cm.length } : null,
+      shown: this.shown && { t: this.shown.t - this.o.startT, kind: this.shown.kind },
+      state: this.state, worker: !!this.worker, hovering: this.want !== null,
+      // The pointer's slot and its neighbourhood have their pictures (nothing left to ask for there).
+      filled: this.want !== null && !this.inflight && !this.need(this.want) && this.nextNear() === null,
+    };
   }
 
   log(m) { if (this.o.log) this.o.log(`thumbs: ${m}`); }
+
+  /** @param {number} rel seconds from the start */
+  slotOf(rel) { return Math.max(0, Math.min(this.n - 1, Math.floor(rel / this.X))); }
+
+  /** The time a request for `slot` asks for (absolute): the slot's middle, inside the file. */
+  target(slot) {
+    const d = this.o.duration;
+    return this.o.startT + Math.max(0, Math.min((slot + 0.5) * this.X, d - 1 / (this.o.fps || 30)));
+  }
+
+  /** Index of the first entry with t >= time. */
+  index(time) {
+    let lo = 0;
+    let hi = this.list.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (this.list[mid].t < time) lo = mid + 1; else hi = mid; }
+    return lo;
+  }
+
+  /** The entry closest to `time` inside `slot`, or null. */
+  inSlot(slot, time) {
+    const a = this.o.startT + slot * this.X;
+    const b = a + this.X;
+    let best = null;
+    for (let i = this.index(a); i < this.list.length && this.list[i].t < b; i++) {
+      if (!best || Math.abs(this.list[i].t - time) < Math.abs(best.t - time)) best = this.list[i];
+    }
+    return best;
+  }
+
+  /** The keyframe answer for `slot`: a request's answer, or a key entry whose range covers the slot's target. */
+  keyFor(slot) {
+    const a = this.asked.get(slot);
+    if (a && !a.gone) return a;
+    const T = this.target(slot);
+    for (let i = this.index(T + 1e-9) - 1; i >= 0; i--) {
+      const e = this.list[i];
+      if (e.kind === 'key') return e.end >= T ? e : null;
+    }
+    return null;
+  }
+
+  /** The best picture for the pointer at `time` in `slot`; `exact`: no request would give a better one. */
+  best(slot, time) {
+    const own = this.inSlot(slot, time) || this.keyFor(slot);
+    if (own) return { e: own, exact: true };
+    // Placeholder while the slot's own picture decodes: the nearest picture anywhere.
+    const i = this.index(time);
+    const l = this.list[i - 1];
+    const r = this.list[i];
+    const e = !l ? r : !r ? l : time - l.t <= r.t - time ? l : r;
+    return e ? { e, exact: false } : null;
+  }
+
+  /** Whether `slot` still needs a request. */
+  need(slot) {
+    if (this.asked.get(slot) === null) return false; // asked, nothing found
+    return !this.inSlot(slot, this.target(slot)) && !this.keyFor(slot);
+  }
 
   /**
    * Pointer at `rel` seconds on the bar. cb(picture | null) is called with the
    * cached picture at once, or later when it is decoded (only if still wanted).
    */
   hover(rel, cb, scrub = false) {
-    if (this.state === 'failed') return;
-    const slot = Math.max(0, Math.min(Math.floor(this.o.duration / this.step), Math.round(rel / this.step)));
+    if (this.disposed) return;
+    const slot = this.slotOf(rel);
     this.scrub = scrub;
     this.cb = cb;
     this.want = slot;
+    this.wantT = this.o.startT + Math.max(0, rel);
     this.lastHover = performance.now();
-    const hit = this.lookup(slot);
-    if (hit) cb(hit);
-    else {
-      const near = this.nearest(slot);
-      if (near) cb(near); // at once; replaced when the exact keyframe arrives
-    }
-    if (hit && this.nextNear() === null) return; // exact picture and neighbours cached: no work, no worker
+    const b = this.best(slot, this.wantT);
+    if (b) this.give(b.e);
+    this.warmAround(slot);
+    if (b && b.exact && this.nextNear() === null) return; // the slot's picture and neighbours are there: no work
     this.start();
     // Let the active decode finish. Only the latest pending position gets dispatched.
     if (this.inflight) { this.kick(); return; }
     if (!this.debounce) this.debounce = setTimeout(() => { this.debounce = 0; this.kick(); }, 40);
+  }
+
+  /** Hands `e` to the hover callback, at once when its bitmap is ready, else after decoding its JPEG. */
+  give(e) {
+    const cb = this.cb;
+    if (!cb) return;
+    e.used = performance.now();
+    if (e.bmp) { this.shown = { t: e.t, kind: e.kind }; cb({ bmp: e.bmp, w: e.w, h: e.h, rot: e.rot, t: e.t }); return; }
+    this.warm(e).then(() => {
+      if (this.cb !== cb || !e.bmp) return;
+      const b = this.want === null ? null : this.best(this.want, this.wantT);
+      if (b && b.e === e) this.give(e);
+    });
+  }
+
+  /** Decodes a cold entry's JPEG into its bitmap. */
+  warm(e) {
+    if (e.bmp || !e.jpeg) return Promise.resolve();
+    if (!e.warming) {
+      e.warming = createImageBitmap(e.jpeg).then((bmp) => {
+        e.warming = null;
+        if (e.gone || e.bmp) { bmp.close(); return; }
+        e.bmp = bmp;
+        this.bytes += e.w * e.h * 4;
+        this.trim();
+      }, (err) => { e.warming = null; this.log(`jpeg decode failed: ${err}`); });
+    }
+    return e.warming;
+  }
+
+  /** Warms the pictures of the slots next to the pointer, so moving along the bar draws at once. */
+  warmAround(slot) {
+    for (let d = 1; d <= 2; d++) {
+      for (const s of [slot - d, slot + d]) {
+        if (s < 0 || s >= this.n) continue;
+        const e = this.inSlot(s, this.target(s)) || this.keyFor(s);
+        if (e && !e.bmp) { e.used = performance.now(); this.warm(e); }
+      }
+    }
   }
 
   /** Pointer left the bar. */
@@ -124,22 +236,91 @@ class ThumbService {
     if (!this.inflight) this.kick();
   }
 
-  /** @returns {{bmp: ImageBitmap, w: number, h: number, rot: number} | null} */
-  lookup(slot) {
-    let kt = this.slotKt.get(slot);
-    if (kt === undefined || kt === null || !this.cache.has(kt)) {
-      const target = this.o.startT + slot * this.step;
-      for (const [anchor, end] of this.coverage) {
-        if (anchor <= target && target <= end && (kt == null || !this.cache.has(kt) || anchor > kt)) kt = anchor;
-      }
-      if (kt !== null && kt !== undefined && this.cache.has(kt)) this.slotKt.set(slot, kt);
+  /** Whether a frame shown at `t` (absolute) would fill a slot that has no picture of its own yet. */
+  wants(t) {
+    if (this.disposed) return false;
+    const rel = t - this.o.startT;
+    if (!(rel >= 0 && rel <= this.o.duration)) return false;
+    return !this.inSlot(this.slotOf(rel), t);
+  }
+
+  /**
+   * engine.js: a frame the player showed at `t` (absolute), scaled to fit the 160 x 120 box. The service owns `bmp`.
+   * @param {number} t @param {ImageBitmap} bmp @param {number} [rot] how it is turned when drawn
+   * @param {number} [ms] what making it cost (stats)
+   */
+  offer(t, bmp, rot = 0, ms) {
+    if (!this.wants(t) || !(bmp.width > 0 && bmp.height > 0)) { bmp.close(); return false; }
+    /** @type {Entry} */
+    const e = { t, kind: 'frame', end: t, jpeg: null, bmp, w: bmp.width, h: bmp.height, rot, used: 0 };
+    this.insert(e);
+    this.stats.captured++;
+    if (Number.isFinite(ms)) {
+      if (this.stats.captureMs.length === 200) this.stats.captureMs.shift();
+      this.stats.captureMs.push(/** @type {number} */ (ms));
     }
-    const e = kt === null || kt === undefined ? null : this.cache.get(kt);
-    if (!e) return null;
-    // Recently used last.
-    this.cache.delete(/** @type {number|string} */ (kt));
-    this.cache.set(/** @type {number|string} */ (kt), e);
-    return { bmp: e.bmp, w: e.w, h: e.h, rot: this.rot };
+    this.encode(e);
+    if (this.want !== null && this.cb) {
+      const b = this.best(this.want, this.wantT);
+      if (b && b.e === e) this.give(e);
+    }
+    return true;
+  }
+
+  /** Adds `e` in time order (replacing an entry at the same time) and keeps the budget. */
+  insert(e) {
+    const i = this.index(e.t);
+    const old = this.list[i];
+    if (old && old.t === e.t) { this.drop(old, i); }
+    this.list.splice(this.index(e.t), 0, e);
+    this.bytes += (e.bmp ? e.w * e.h * 4 : 0) + (e.jpeg ? e.jpeg.size : 0);
+    this.trim();
+  }
+
+  /** Stores a bitmap-only entry as JPEG too, so its bitmap can be let go. */
+  async encode(e) {
+    if (e.jpeg || !e.bmp) return;
+    let blob = null;
+    try { blob = await ThumbService.toJpeg(e.bmp); } catch (err) { this.log(`jpeg encode failed: ${err}`); }
+    if (!blob || e.gone || e.jpeg) return;
+    e.jpeg = blob;
+    this.bytes += blob.size;
+    this.trim();
+  }
+
+  /** @param {ImageBitmap} bmp @returns {Promise<Blob | null>} */
+  static async toJpeg(bmp) {
+    if (typeof OffscreenCanvas !== 'function') return null;
+    const c = new OffscreenCanvas(bmp.width, bmp.height);
+    const ctx = c.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(bmp, 0, 0);
+    return c.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY });
+  }
+
+  /** Removes an entry (and tells the worker it may decode that keyframe again). */
+  drop(e, i = this.list.indexOf(e)) {
+    if (i >= 0) this.list.splice(i, 1);
+    e.gone = true;
+    this.bytes -= (e.bmp ? e.w * e.h * 4 : 0) + (e.jpeg ? e.jpeg.size : 0);
+    if (e.bmp) e.bmp.close();
+    e.bmp = null;
+    if (e.kind === 'key' && this.worker) this.worker.postMessage({ type: 'forget', kt: e.t });
+  }
+
+  /** Keeps at most HOT bitmaps and the bytes under the cap: cold bitmaps first, then whole entries, least used first. */
+  trim() {
+    const byUse = this.list.slice().sort((a, b) => a.used - b.used);
+    let hot = 0;
+    for (const e of this.list) if (e.bmp) hot++;
+    for (const e of byUse) {
+      if (hot <= HOT && this.bytes <= this.cap) break;
+      if (e.bmp && e.jpeg) { this.bytes -= e.w * e.h * 4; e.bmp.close(); e.bmp = null; hot--; }
+    }
+    for (const e of byUse) {
+      if (this.bytes <= this.cap) break;
+      this.drop(e);
+    }
   }
 
   async start() {
@@ -185,12 +366,11 @@ class ThumbService {
   }
 
   dispose() {
+    this.disposed = true;
     this.state = 'failed';
     this.leave(true);
-    for (const e of this.cache.values()) e.bmp.close();
-    this.cache.clear();
-    this.coverage.clear();
-    this.slotKt.clear();
+    for (const e of this.list.slice()) this.drop(e);
+    this.asked.clear();
     this.bytes = 0;
   }
 
@@ -212,7 +392,7 @@ class ThumbService {
       case 'error':
         this.log(`${m.where}: ${m.message}`);
         if (m.where !== 'thumb') { this.fail(m.message); return; }
-        if (this.inflight && this.inflight.id === m.id) { this.slotKt.set(this.inflight.slot, null); this.inflight = null; }
+        if (this.inflight && this.inflight.id === m.id) { this.asked.set(this.inflight.slot, null); this.inflight = null; }
         this.kick();
         break;
     }
@@ -233,7 +413,7 @@ class ThumbService {
       else this.idleTimer = setTimeout(() => this.kick(), left);
       return;
     }
-    if (!this.lookup(this.want) && !(this.slotKt.has(this.want) && this.slotKt.get(this.want) === null)) slot = this.want;
+    if (this.need(this.want)) slot = this.want;
     else if (!(this.o.busy && this.o.busy())) {
       slot = this.nextNear();
       prefetch = slot !== null;
@@ -251,7 +431,7 @@ class ThumbService {
       this.requestHost(this.inflight);
       return;
     }
-    this.worker.postMessage({ type: 'thumb', id: this.id, t: this.o.startT + slot * this.step, w: this.box.w, h: this.box.h });
+    this.worker.postMessage({ type: 'thumb', id: this.id, t: this.target(slot), w: this.box.w, h: this.box.h });
   }
 
   /** 0..n-1 ordered so every prefix covers the range evenly (n/2, n/4, 3n/4, ...). */
@@ -272,84 +452,72 @@ class ThumbService {
   async requestHost(req) {
     let r = null;
     try {
-      r = await this.o.request(this.o.startT + req.slot * this.step, this.box.w, this.box.h, req.abort.signal);
+      r = await this.o.request(this.target(req.slot), this.box.w, this.box.h, req.abort.signal);
     } catch (e) { this.log(`host: ${e}`); }
     this.onThumb({ ...r, id: req.id, ms: Math.round(performance.now() - req.t) });
   }
 
-  /** The nearest place around the pointer without a picture (within the radius), or null. */
+  /** The nearest slot around the pointer without a picture (within the radius), or null. */
   nextNear() {
     if (this.scrub || this.o.remote || this.want === null) return null;
-    const last = Math.floor(this.o.duration / this.step);
     const rad = this.o.radius ?? 4;
     for (let d = 1; d <= rad; d++) {
       for (const s of [this.want + d, this.want - d]) {
-        if (s >= 0 && s <= last && !this.lookup(s) && this.slotKt.get(s) !== null) return s;
+        if (s >= 0 && s < this.n && this.need(s)) return s;
       }
     }
     return null;
+  }
+
+  /** A keyframe entry already in the list at time `kt`. */
+  keyAt(kt) {
+    const e = this.list[this.index(kt)];
+    return e && e.t === kt && e.kind === 'key' ? e : null;
   }
 
   async onThumb(m) {
     const req = this.inflight;
     if (!req || req.id !== m.id) return;
     if (!m.cancelled && !req.cancelSent) {
-      const wantedHit = this.want !== null && this.lookup(this.want);
-      const target = this.o.startT + req.slot * this.step;
-      // A timestamp-less picture is reusable at this slot only.
-      const kt = Number.isFinite(m.kt) ? m.kt : `slot:${req.slot}`;
-      const bytes = m.w * m.h * 4;
+      const target = this.target(req.slot);
+      // A timestamp-less picture stands for the asked time (this slot only).
+      const kt = Number.isFinite(m.kt) ? m.kt : target;
+      let e = this.keyAt(kt);
       const jpeg = m.fmt === 'jpeg';
-      // A JPEG reply (native ffmpeg) is a few KB on the wire; the cache still holds the decoded w*h*4 bitmap.
-      if (m.data && Number.isInteger(m.w) && Number.isInteger(m.h) &&
+      if (!e && m.data && Number.isInteger(m.w) && Number.isInteger(m.h) &&
           m.w > 0 && m.w <= this.box.w && m.h > 0 && m.h <= this.box.h &&
-          bytes <= this.cap && (jpeg ? m.data.byteLength > 0 : m.data.byteLength === bytes)) {
+          (jpeg ? m.data.byteLength > 0 : m.data.byteLength === m.w * m.h * 4)) {
         try {
-          const bmp = await createImageBitmap(jpeg ? new Blob([m.data], { type: 'image/jpeg' })
-            : new ImageData(new Uint8ClampedArray(m.data.buffer, m.data.byteOffset, bytes), m.w, m.h));
-          if (this.inflight !== req) { bmp.close(); return; }
-          if (req.cancelSent) bmp.close();
-          else {
-            this.add(kt, { bmp, w: m.w, h: m.h, bytes });
+          const blob = jpeg ? new Blob([m.data], { type: 'image/jpeg' }) : null;
+          const bmp = await createImageBitmap(blob
+            || new ImageData(new Uint8ClampedArray(m.data.buffer, m.data.byteOffset, m.w * m.h * 4), m.w, m.h));
+          if (this.inflight !== req || req.cancelSent) { bmp.close(); if (this.inflight !== req) return; } else {
+            e = { t: kt, kind: 'key', end: kt, jpeg: blob, bmp, w: m.w, h: m.h, rot: this.rot, used: performance.now() };
+            this.insert(e);
+            if (!blob) this.encode(e);
             this.stats.decoded++;
             if (this.stats.ms.length === 200) this.stats.ms.shift();
             this.stats.ms.push(Math.round(performance.now() - req.t));
           }
-        } catch (e) { this.log(`bitmap failed: ${e}`); }
+        } catch (err) { this.log(`bitmap failed: ${err}`); }
       }
-      if (!req.cancelSent && this.cache.has(kt)) {
-        this.slotKt.set(req.slot, kt);
-        if (m.covered && Number.isFinite(m.kt) && kt <= target) {
-          this.coverage.set(kt, Math.max(target, this.coverage.get(kt) ?? kt));
-        }
-        if (this.want !== null && this.cb && (!wantedHit || this.want === req.slot)) {
-          const hit = this.lookup(this.want);
-          if (hit) this.cb(hit);
+      if (!req.cancelSent && e && !e.gone) {
+        this.asked.set(req.slot, e);
+        if (m.covered && Number.isFinite(m.kt) && kt <= target) e.end = Math.max(e.end, target);
+        e.used = performance.now();
+        if (this.want !== null && this.cb) {
+          const b = this.best(this.want, this.wantT);
+          if (b && (b.e === e || req.slot === this.want)) this.give(b.e);
         }
       } else if (!req.cancelSent) {
-        this.slotKt.set(req.slot, null);
+        this.asked.set(req.slot, null);
+        if (Number.isFinite(m.kt)) this.post({ type: 'forget', kt: m.kt });
       }
-      if (!this.cache.has(kt) && Number.isFinite(m.kt)) this.post({ type: 'forget', kt });
-    } else if (Number.isFinite(m.kt) && !this.cache.has(m.kt)) {
+    } else if (Number.isFinite(m.kt) && !this.keyAt(m.kt)) {
       this.post({ type: 'forget', kt: m.kt });
     }
     if (this.inflight === req) this.inflight = null;
     this.kick();
-  }
-
-  add(kt, e) {
-    const old = this.cache.get(kt);
-    if (old) { this.bytes -= old.bytes; old.bmp.close(); this.cache.delete(kt); }
-    this.cache.set(kt, e);
-    this.bytes += e.bytes;
-    for (const [k, v] of this.cache) {
-      if (this.bytes <= this.cap) break;
-      this.cache.delete(k);
-      this.coverage.delete(k);
-      this.bytes -= v.bytes;
-      v.bmp.close();
-      if (this.worker) this.worker.postMessage({ type: 'forget', kt: k });
-    }
   }
 
   /**
