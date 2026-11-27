@@ -25,6 +25,7 @@ const { toggleFocusMode, noteFocusModeExited, resetFocusMode, setFocusModeListen
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
 const remotestream = lazy(() => require('./remotestream')); // unified Live transcode stream engine (ADR 0002)
 const transcodePolicy = lazy(() => require('./transcode_policy'));
+const driverNoticeUi = lazy(() => require('./driver_notice'));
 const transcodeProbe = lazy(() => require('./transcode_probe'));
 const transcodeArgs = lazy(() => require('./transcode_args'));
 const probe = lazy(() => require('./probe')); // ffmpeg's GPU decoding tested on this machine
@@ -437,19 +438,23 @@ async function downloadRemoteFfmpeg() {
 const DRIVER_NOTICE_KEY = 'videoPreviewEnhanced.nvencDriverNotice';
 
 /** Shows a one-time notice per ffmpeg binary + NVIDIA driver when NVENC refuses an older driver. */
-function maybeShowDriverNotice(t, notice, nvidiaDriver) {
+function maybeShowDriverNotice(t, enc, nvidiaDriver) {
+  const notice = enc.driverNotice;
   if (!notice || !globalState) return;
   const key = `${t.ffmpeg}|${t.version || ''}|${nvidiaDriver || ''}`;
   const seen = globalState.get(DRIVER_NOTICE_KEY) || {};
   if (seen[key]) return;
   if (offers && offers.popupPending()) return;
+  // Recorded before it shows: every answer, closing included, means "not again for this ffmpeg + driver".
   seen[key] = Date.now();
   globalState.update(DRIVER_NOTICE_KEY, seen).then(undefined, () => {});
-  const text = transcodePolicy.driverNoticeText(notice);
-  log(`[live transcode] ${text}${notice.requiredApi && notice.foundApi ? ` (NVENC API ${notice.requiredApi} vs ${notice.foundApi})` : ''}`);
-  vscode.window.showInformationMessage(text, 'Got it', 'Set up ffmpeg').then((ans) => {
-    if (ans === 'Set up ffmpeg') setupFfmpeg();
-  }, () => {});
+  // In a Remote-SSH / container window this extension host, its ffmpeg and the driver are on the remote machine.
+  const remote = vscode.env.remoteName && vscode.env.remoteName !== 'wsl';
+  const model = driverNoticeUi.driverNotice({
+    notice, installedDriver: nvidiaDriver, host: remote ? os.hostname() : null, otherGpuEncoder: !!enc.hw,
+  });
+  log(`[live transcode] ${model.text}${notice.requiredApi && notice.foundApi ? ` (NVENC API ${notice.requiredApi} vs ${notice.foundApi})` : ''}`);
+  driverNoticeUi.showDriverNotice(vscode, model, { setupFfmpeg }).catch((e) => log(`driver notice: ${e.stack || e}`));
 }
 
 /** Shared hardware-first stream selection for the player and Compare. */
@@ -460,7 +465,7 @@ async function transcodeOptions(t, pr, c, remote, reprobe = true) {
     transcodeProbe.encoderFor(t, ff.run, globalState, log, { nvidiaDriver }),
     remote && pr.audio ? remotestream.audioEncoderFor(t) : null,
   ]);
-  if (enc.driverNotice) maybeShowDriverNotice(t, enc.driverNotice, nvidiaDriver);
+  if (enc.driverNotice) maybeShowDriverNotice(t, enc, nvidiaDriver);
   if (!enc.encoder) return null;
   const decodeMethod = c.gpuDecoding === false ? 'none'
     : decide.nativeMethod(remote ? null : probeRecordFor(t), pr.video, true, hw).method;
