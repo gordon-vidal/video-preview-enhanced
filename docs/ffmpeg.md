@@ -49,7 +49,7 @@ The 60 fps HEVC fixture also showed about 60 fps over VS Code messages at 1080p 
 | A-B frame export | Choose **Switch to Full Resolution (This Tab)** or **Export Anyway** to save the playback picture. |
 | HDR (PQ/HLG) | Tone-mapped as usual, but from 8-bit frames, so gradients can band. With HDR output (an HDR display) ffmpeg sends 10-bit frames instead, at 1/√2 of the height above (the same bytes per frame: 4K at 1526p over the local connection). |
 | Sidecar subtitles, codec X-ray, chapters | Same. |
-| Embedded subtitles, switching audio tracks, seek-bar thumbnails | Built-in decoder only (native plays the first audio track). |
+| Embedded subtitles, switching audio tracks | Built-in decoder only (native plays the first audio track). |
 | Compare | Each video uses native ffmpeg by the same rule as the player, with frames at its cell's size. |
 
 If native ffmpeg can't decode a file with the GPU method, it retries on the CPU. If that fails too, the file plays with the built-in decoder. If ffmpeg itself fails to start, reopen the video after restoring ffmpeg to try it again.

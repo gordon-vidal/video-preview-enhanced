@@ -1,4 +1,8 @@
 'use strict';
+// Seek-bar preview latency, WASM worker vs native ffmpeg (docs/notes/seek-preview.md).
+//   node test/thumbs/scrub_bench.js            key: 20 keyframe misses on the 2 s 4K clips (p50 / p95)
+//   node test/thumbs/scrub_bench.js between    refine: the exact picture 1, 5 and 9 s after a keyframe on generated
+//                                              10 s-GOP clips (1080p H.264, 4K HEVC 10-bit), median of 3
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -47,8 +51,8 @@ function openWorker(file) {
       type: 'init', loader: libfile('-vpe.js'), toImport: libfile('-vpe.wasm.js'),
       wasmurl: libfile('-vpe.wasm.wasm'), variant: 'vpe',
     }),
-    async decode(t) {
-      const result = await wait({ type: 'thumb', id: ++id, t, w: 160, h: 120 });
+    async decode(t, mode = 'key') {
+      const result = await wait({ type: 'thumb', id: ++id, t, w: 160, h: 120, mode });
       assert.ok(result.data?.length, `WASM picture missing at ${t}`);
       // Measure a decode miss with a warm demuxer and decoder for every sample.
       w.postMessage({ type: 'forget', kt: result.kt });
@@ -94,7 +98,43 @@ async function bench(name) {
   console.log(`${name} (${samples} seeks): warm WASM ${percentiles(wasm)} ms, native ${percentiles(native)} ms (p50 / p95)`);
 }
 
+const median = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1];
+
+async function between(label, file, w, h) {
+  const worker = openWorker(file);
+  const rows = [];
+  try {
+    const info = await worker.ready;
+    assert.ok(info.ok, info.why);
+    await worker.decode(1, 'between');
+    for (const t of [1, 5, 9]) {
+      const wasm = [];
+      const native = [];
+      let frames = 0;
+      for (let i = 0; i < 3; i++) {
+        let start = performance.now();
+        const r = await worker.decode(t, 'between');
+        wasm.push(performance.now() - start);
+        frames = r.frames;
+        start = performance.now();
+        assert.ok(await decodeThumb({ ffmpeg }, file, { w, h }, t, 160, 120, undefined, undefined, 'jpeg', 'exact'), `native picture missing at ${t}`);
+        native.push(performance.now() - start);
+      }
+      rows.push(`${t} s: WASM ${median(wasm).toFixed(0)} ms (${(median(wasm) / frames).toFixed(2)} ms/frame), native ${median(native).toFixed(0)} ms`);
+    }
+  } finally {
+    await worker.close();
+  }
+  console.log(`${label} between keyframes (median of 3): ${rows.join('; ')}`);
+}
+
 (async () => {
+  if (process.argv[2] === 'between') {
+    const gop = require('../lib/gop_clip');
+    await between('H.264 1080p', gop.make({ size: '1920x1080' }), 1920, 1080);
+    await between('HEVC 10-bit 2160p', gop.make({ size: '3840x2160', codec: 'hevc10' }), 3840, 2160);
+    return;
+  }
   for (const codec of ['hevc', 'av1']) await bench(`${codec}_10_2160p.mp4`);
 })().catch((error) => {
   console.error(error.message);

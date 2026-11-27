@@ -3,7 +3,7 @@
 Goal: a picture over the seek bar on hover and while the seek bar is dragged, in every decode path and in simple mode.
 While dragging, the main picture holds; release lands on the exact frame.
 
-This note has two parts: how previews work today (checked against the code on 2026-11-27, after phase 1 of the plan)
+This note has two parts: how previews work today (checked against the code on 2026-11-27, after phase 2 of the plan)
 and the plan for pictures between keyframes, with the maintainer's decisions (see "Decisions").
 
 ## How it works today
@@ -22,12 +22,27 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   No worker, request or ffmpeg process is started for it. The service object may therefore exist before the first
   hover (implied decision A, accepted).
 - **Keyframes at hover.** Nothing is decoded until the pointer is on the bar. When the pointer's slot has no picture
-  of its own, the backend returns the keyframe at or before the slot's middle. A 10 s GOP that was not played shows
-  the same keyframe across 10 s of the bar.
-- **Order of work.** The slot under the pointer comes first, and the newest position wins (40 ms debounce, one
-  request in flight). While the pointer stays, up to 4 neighbouring slots on each side are filled. This happens only
+  of its own, the backend returns the **nearer keyframe on either side** of the slot's middle (phase 2). A request
+  whose keyframes are unknown is a `near` request: the worker finds the keyframe after through the demuxer index
+  (`avformat_seek_file` to the first keyframe after T, one packet read, nothing decoded) and decodes the nearer one;
+  native ffmpeg decodes both (`-frames:v 2`) and returns both pictures. Each reply teaches the service the two
+  keyframe times around T (`keys`, with the next keyframe, or none to the end); a later slot inside a known GOP asks
+  for the nearer keyframe by its time (`key` mode, one picture) or needs no request when that picture is there.
+  A 10 s GOP that was not played errs by at most 5 s, not 10 s.
+- **Refine while the pointer rests (phase 2, the thumbfast pattern).** When the pointer has stayed REST_MS = 250 ms in
+  a slot whose best picture is more than X from the slot's middle, one `exact` request decodes that picture cheaply
+  (worker `between` mode; native `-skip_frame noref -skip_loop_filter all -flags2 fast`, accurate seek,
+  `fast_bilinear`), and the frame becomes a picture of its own. Only when the estimate fits the budget:
+  cost = median keyframe request + frames from the keyframe to the target x `frameMs`; budget 0.5 s while playing,
+  2 s paused (estimated decoder wall time). `frameMs` starts at about 1 ns per pixel for native ffmpeg and 3.5 ns for
+  the worker (engine.js `PER_PX_WASM`) and follows each refine's measured cost. Moving to another slot cancels a
+  running refine; none while dragging, while `thumbsBusy()`, for slots refined before, or for a remote file read by
+  the worker (a GOP of blocks over the link). Skips are counted (`stats0().skipped`).
+- **Order of work.** The slot under the pointer comes first (its keyframe), then its refine, then up to 4 neighbouring
+  slots on each side; the newest position wins (40 ms debounce, one request in flight). Neighbours are filled only
   when playback is not busy (`thumbsBusy()`: behind as above, or less than 0.5 s decoded ahead while playing), the
-  file is local, and the pointer is not dragging (`hover(..., scrub = true)`).
+  file is local, and the pointer is not dragging (`hover(..., scrub = true)`). While busy the service looks again
+  every 500 ms.
 - **Leaving the bar** cancels the running request: a `cancel` to the worker, or an abort of the host job. The WASM
   worker closes 20 s after the last hover (`idleMs`). The pictures stay cached.
 - **Storage.** One list of entries sorted by source time, `{t, kind: 'key' | 'frame', end, jpeg, bmp}`. Every picture
@@ -43,37 +58,58 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   frame loop pays 0.1-0.2 ms per capture (the `createImageBitmap` call; the scaling finishes off the loop), 15
   captures in 3.5 s of playback, and the same dropped and late frames (0 and 0) with capture off and on.
 - **Lookup** for the pointer at time T in slot s, all by binary search, so a picture is drawn at once:
-  1. the entry inside slot s closest to T (a captured frame or a keyframe);
-  2. else the keyframe answer for s: the entry a request returned for s, or a key entry whose `end` covers the slot
-     (a key entry at kt answers every time in [kt, end], extended when a clean seek proved it);
-  3. else, as a placeholder while the request runs, the nearest entry anywhere.
-- **Backends for keyframes.**
+  1. the slot's own picture: the entry inside slot s closest to T (a captured or refined frame, or a keyframe), else
+     the keyframe answer for s: the entry a request returned for s, the nearer known keyframe's picture, or a key
+     entry whose `end` covers the slot (a key entry at kt answers every time in [kt, end]);
+  2. if the entry just before or just after T is closer to T than that, the closer one;
+  3. without an own picture, the nearest entry anywhere, as a placeholder while the request runs.
+- **Backends.**
   - **WASM worker** ([thumbs-worker.js](../../media/thumbs-worker.js)) for every file played through libav.js or
-    WebCodecs. It is a second, single-threaded libav.js instance with `skip_frame nokey`, reading through the engine's
-    block cache as reader `thumbs`. It seeks to the keyframe at or before t, decodes that one packet, scales it with
-    swscale bilinear and posts RGBA. For formats without an index it steps back 2, 6, 14 ... s.
+    WebCodecs. It is a second, single-threaded libav.js instance (`skip_frame nokey` between requests), reading
+    through the engine's block cache as reader `thumbs`. `key` / `near` decode one keyframe packet, scale it with
+    swscale bilinear and post RGBA. For formats without an index (MPEG-PS/TS), where a seek can land past the
+    keyframe, it steps back 2, 6, 14 ... s (a keyframe after T counts as a miss), in all modes. `between` switches
+    to `skip_frame noref`, `skip_loop_filter all`, `flags2 +fast`, decodes from the keyframe and keeps the last
+    frame at or before T (with `noref`, a non-reference frame at T gives the reference frame before it, within a
+    frame or two).
   - **Native ffmpeg and Live transcode (local or remote host)** ([thumbhost.js](../../src/thumbhost.js) through
-    `unified-viewer.js` `onThumb`). One short ffmpeg per picture, on the source file, never the running stream:
-    `-skip_frame nokey -noaccurate_seek -threads 2 -ss T -i FILE ... -vf scale=W:H:flags=bilinear,showinfo -c:v mjpeg
-    -q:v 6`. It runs at below-normal priority, with one job per viewer (a new request aborts the old one), an 8 s
-    timeout and no job while the panel is hidden. The reply is a JPEG of at most 25 KB plus the keyframe's time `kt`
-    read from `showinfo`.
+    `unified-viewer.js` `onThumb`). One short ffmpeg per picture, on the source file, never the running stream; key
+    modes: `-skip_frame nokey -noaccurate_seek -threads 2 -ss T -i FILE ... -vf scale=W:H:flags=bilinear,showinfo
+    -c:v mjpeg -q:v 6` (`near`: `-frames:v 2`), exact mode as above. It runs at below-normal priority, with one job
+    per viewer (a new request aborts the old one), an 8 s timeout and no job while the panel is hidden. The reply is a
+    JPEG of at most 25 KB with its time read from `showinfo`, plus the next keyframe's JPEG and time for `near`
+    (`kn: null` when there is none).
   - **None** for URL inputs, MJPEG AVI and image sequences (FramePlayer), and audio-only files.
 - **Drag and release.** The slider and time follow the pointer. The tooltip shows a cached picture or a decoded
   keyframe. The main picture keeps its last committed frame and audio scheduling pauses. Compare previews the clock
   tile and holds all tile pictures. Release cancels preview work and commits the exact frame through the usual seek
   and sync path. A cancelled drag returns to the committed position. Design of the drag:
   [fast-scrubbing-architecture.md](fast-scrubbing-architecture.md).
-- **Tests.** [test/host/seek_preview_test.js](../../test/host/seek_preview_test.js) (grid, JPEG budget, captures,
-  nearest at once), [test/vscode/cases/seek_preview.js](../../test/vscode/cases/seek_preview.js) (`seek_preview` for
-  WASM, `seek_preview_native`, each with a capture case on a 10 s-GOP clip), `playback` thumbs/capture-4k (same
-  dropped and late frames with capture off and on), `inspect` thumbs/seek-bar (no request before the first hover),
-  and the bench [test/thumbs/scrub_bench.js](../../test/thumbs/scrub_bench.js).
+- **Refine cost (measured 2026-11-27, `node test/thumbs/scrub_bench.js between`, i7-9700K, generated 12 s clips
+  with keyframes at 0 and 10 s, median of 3).** Wall time of one exact picture 1 / 5 / 9 s after a keyframe:
 
+  | Clip | Native ffmpeg | WASM worker |
+  |---|---|---|
+  | H.264 1080p30 | 0.10 / 0.26 / 0.41 s | 0.15 / 0.55 / 0.93 s (3.4 ms per frame) |
+  | HEVC 10-bit 2160p30 | 0.41 / 1.36 / 2.30 s | 0.94 / 4.29 / 7.56 s (27.5 ms per frame) |
+
+  So paused, native refines 1080p everywhere and 4K HEVC up to about 7-8 s after a keyframe; the worker refines 1080p
+  H.264 everywhere and 4K HEVC within about 2 s of a keyframe. While playing (0.5 s), native 1080p still fits, 4K
+  HEVC only within about 1 s. Past those points the nearer keyframe stays; slots within X of the next keyframe need no
+  refine anyway.
+- **Tests.** [test/host/seek_preview_test.js](../../test/host/seek_preview_test.js) (grid, JPEG budget, captures,
+  nearest at once, the nearer keyframe, refine after rest / cancelled by movement / not while dragging, busy or over
+  budget, exact-mode ffmpeg pictures against ffmpeg's reference on a generated 10 s-GOP clip from
+  [test/lib/gop_clip.js](../../test/lib/gop_clip.js)), [test/thumbs/service.js](../../test/thumbs/service.js) (the
+  real worker: sweep, neighbours, cache; `near` and `between` on the 10 s-GOP clip against the reference),
+  [test/vscode/cases/seek_preview.js](../../test/vscode/cases/seek_preview.js) (`seek_preview` for WASM,
+  `seek_preview_native`, each with a capture and a refine case on a 10 s-GOP clip), `playback` thumbs/capture-4k
+  (same dropped and late frames with capture off and on), `inspect` thumbs/seek-bar (no request before the first
+  hover), and the bench [test/thumbs/scrub_bench.js](../../test/thumbs/scrub_bench.js) (`key` and `between`).
 ### Limits that motivate the plan
 
 1. Keyframe granularity: long GOPs (camera files, streaming encodes with 4-10 s GOPs) give a few distinct pictures
-   per minute.
+   per minute. (Phase 2 shows the nearer keyframe and refines where the pointer rests, within a budget.)
 2. Blank until decoded: the first hover over a region that was not played shows a neighbour or nothing.
 3. (Solved in phase 1: frames the player shows are kept as pictures.)
 4. Native and Live transcode start one process per picture (about 37 ms of process start on Windows, measured
@@ -167,7 +203,7 @@ What the numbers say:
   short GOPs). When slots are sparse relative to keyframes, one process per slot (37 ms start each) is cheaper than
   decoding every keyframe.
 
-## Plan (decided 2026-11-27; phase 1 built)
+## Plan (decided 2026-11-27; phases 1 and 2 built)
 
 ### Principles
 
@@ -322,7 +358,7 @@ during playback). Revisit only if measurements show re-opened long files are a r
 |---|---|---|---|
 | 0 (done) | Docs and comments match the code | no | `verify:fast` |
 | 1 (built) | X/N grid, JPEG storage with a hot bitmap set, sorted entry list replacing `slotKt` / `coverage`, capture of played/seeked/stepped frames | no decoding change. Captured pictures are made before the first hover (implied decision A) | host: `ThumbService` with fake frames and a fake request (public API: `hover`, `offer`, `stats0`); layer 3 `seek_preview`: play 5 s, hover a between-keyframe time, assert the picture's time is within X; layer 3 `playback`: same dropped frames |
-| 2 | Nearest keyframe on either side (index from the demuxer or `kt`), plus refine while resting (native `noref` + skip loop filter args, worker `between` request, cost budget) | no (work only while the pointer is on the bar) | host: `thumbArgs` exact mode decodes the right frame of a generated 10 s-GOP clip (ffmpeg reference); worker `between` mode via `scrub_bench`'s worker shim; layer 3: rest on a slot 5 s after a keyframe, the picture differs from the keyframe |
+| 2 (built) | Nearest keyframe on either side (index from the demuxer or `kt`), plus refine while resting (native `noref` + skip loop filter args, worker `between` request, cost budget) | no (work only while the pointer is on the bar) | host: `thumbArgs` exact mode decodes the right frame of a generated 10 s-GOP clip (ffmpeg reference); worker `between` mode via `scrub_bench`'s worker shim; layer 3: rest on a slot 5 s after a keyframe, the picture differs from the keyframe |
 | 3 | Background keyframe pass, coarse to fine, pausing while busy or hidden | **yes** (decision 1) | host: pass order, pauses while `busy()`, stops when hidden; layer 3: full bar without hover (if approved), no work while hidden; `inspect` "no service before first hover" changes with the decision |
 | 4 | Between pass for short or light files | **yes** (decision 2) | as phase 3, plus a budget test with a fake cost |
 | 5 (optional) | WebCodecs GOP decode for H.264 between pictures while paused; disk cache only if decided | maybe | measure first |
