@@ -182,7 +182,7 @@ function playingAt(p, t) { ctx.perfNow = 0; p.playing = true; if (p.shownT === n
 const audioItem = (t, dur) => ({ t, dur, buf: null, src: null });
 
 test('#8a sound that outlasts the picture is not cut', () => {
-  const p = player({ eof: true, lastT: 2, loop: false, shownCount: 60 });
+  const p = player({ eof: true, lastT: 2, loop: false, shownCount: 60, meta: { duration: 5 } }); // the sound's 5 s
   p.audio.push(audioItem(4.5, 0.5));
   playingAt(p, 2.5);
   P.tick.call(p);
@@ -193,7 +193,7 @@ test('#8a sound that outlasts the picture is not cut', () => {
 });
 
 test('#8b sound only: the loop comes at the end of the sound', () => {
-  const p = player({ vmode: 'none', eof: true, startT: null });
+  const p = player({ vmode: 'none', eof: true, startT: null, meta: { duration: 5 } }); // declares the 5 s it has
   p.audio.push(audioItem(4.5, 0.5));
   playingAt(p, 3.5); // eof arrives ~1.5 s before the sound is played
   P.tick.call(p);
@@ -204,7 +204,7 @@ test('#8b sound only: the loop comes at the end of the sound', () => {
 });
 
 test('#8c play after the end starts over (loop off)', () => {
-  const p = player({ eof: true, lastT: 2, loop: false, startT: 0, shownCount: 60, shownT: 2 });
+  const p = player({ eof: true, lastT: 2, loop: false, startT: 0, shownCount: 60, shownT: 2, meta: { duration: 2.033 } });
   playingAt(p, 2.1);
   P.tick.call(p);
   assert.ok(!p.playing);
