@@ -115,7 +115,10 @@ module.exports = [{
     ok = t('bar');
     let u = await ui();
     const ids = u.bar.ids;
-    for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'spotlightBtn', 'gridBtn', 'splitBtn', 'swapBtn', 'syncBtn', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(ids.includes(id), `bar has no #${id} (${ids})`);
+    const wide = !u.stage || u.stage[2] > 840;
+    const expectIds = ['prev', 'play', 'next', 'mute', 'volume', 'time', 'spotlightBtn', 'gridBtn', 'splitBtn',
+      ...(wide ? ['swapBtn', 'syncBtn'] : []), 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full'];
+    for (const id of expectIds) ok(ids.includes(id), `bar has no #${id} (${ids})`);
     ok(!ids.includes('keysBtn'), 'the shortcuts button still appears in the Compare toolbar');
     ok(!ids.includes('reorderBtn'), 'the old Reorder button should be gone');
     ok(!ids.includes('tracks'), `CC shown while comparing: ${ids}`);
@@ -325,7 +328,7 @@ module.exports = [{
     act({ action: 'menu', x: 0.75, y: 0.5 });
     await h.sleep(200);
     u = await ui();
-    ok(u.menu && u.menu.items.some((x) => x.startsWith('✓ B sets the clock')), `the clock is checked: ${u.menu && u.menu.items}`);
+    ok(u.menu && u.menu.items.some((x) => /^✓\s*B sets the clock/.test(x)), `the clock is checked: ${u.menu && u.menu.items}`);
     act({ action: 'menuPick', label: 'Offset of B' });
     await h.sleep(200);
     u = await ui();

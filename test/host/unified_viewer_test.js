@@ -959,6 +959,51 @@ const context = { extensionUri: Uri.file(ROOT) };
       assert.strictEqual(seq.posts.pop().text, 'Links work for video files only');
       seq.handlers.dispose();
     }
+
+    { // Native Compare transfer budget: at 2× speed on a 4×1080p grid, tiles scale down together to stay within 400 MB/s.
+      const { panel, posts, handlers } = fakePanel();
+      const dec1080 = {
+        ...nativeDecision,
+        maxHeight: 1080,
+        messageMaxHeight: 720,
+        probed: { video: { width: 1920, height: 1080, fps: 30, duration: 5 }, audio: [] },
+      };
+      const nativeFor = async () => dec1080;
+      const clips = await Promise.all([a, b, write('c.mp4', [3]), write('d.mp4', [4])].map((u) => prepareClip(u, { nativeFor })));
+      const created = [];
+      const viewer = createUnifiedViewer({
+        vscode, context, panel, clip: clips[0], registry: null,
+        deps: deps({
+          nativeFor,
+          createNative: (opts) => {
+            const d = fakeDecoder();
+            d.w = Math.round(opts.maxHeight * 16 / 9);
+            d.h = opts.maxHeight;
+            d.resize = (h, mh) => {
+              d.resizes.push([h, mh]);
+              if (d.h === h) return false;
+              d.h = h;
+              d.w = Math.round(h * 16 / 9);
+              return true;
+            };
+            created.push(d);
+            return d;
+          },
+        }),
+      });
+      viewer.show();
+      await open(handlers);
+      for (const c of clips.slice(1)) await viewer.session.addClip(c);
+      for (const c of clips) await handlers.message({ type: 'nd', page: 1, clipId: c.id, m: { type: 'open' } });
+      await handlers.message({
+        type: 'tileSize', page: 1,
+        tile: { w: 1920, h: 1080, n: 4, rate: 2, tiles: clips.map((c) => ({ clipId: c.id, w: 1920, h: 1080 })) },
+      });
+      const bytes = created.reduce((sum, d) => sum + d.h * (d.h * 16 / 9) * 30 * 1.5 * 2, 0);
+      assert.ok(created.every((d) => d.h > 0 && d.h < 1080), `expected scaled heights <1080 at 2×, got ${created.map((d) => d.h)}`);
+      assert.ok(bytes >= 380e6 && bytes <= 400e6, `expected 2× grid within 400 MB/s budget, got ${(bytes / 1e6).toFixed(1)} MB/s`);
+      handlers.dispose();
+    }
   } finally {
     await tick(); // the file handles close
     fs.rmSync(dir, { recursive: true, force: true });

@@ -21,6 +21,7 @@ const { serveBlock, readFileBlock } = require('./read-block');
 const { NativeDecoder } = require('./native');
 const thumbhost = require('./thumbhost'); // through the module: a test can stand in for nativeThumb
 const { compareCapsKbps, compareTileSize, resolutionOf } = require('./transcode_policy');
+const { FRAME_SERVER_BPS, TRANSPORT_BPS } = require('./decide');
 const Grid = require('../media/compare-grid');
 const folderRail = require('./folder-rail');
 
@@ -173,6 +174,39 @@ function nativeHeightFor(c, size, perTile) {
   const [w, h] = c.rotation % 180 !== 0 ? [th, tw] : [tw, th];
   const height = Math.min(v.height, d.maxHeight > 0 ? d.maxHeight : Infinity, h, w * v.height / v.width);
   return Math.max(2, Math.round(height));
+}
+
+/**
+ * Scales native ffmpeg Compare tile heights down together so their combined raw YUV420p transfer rate stays within
+ * the frame-server (FRAME_SERVER_BPS) or postMessage (TRANSPORT_BPS) budget at playback speed `rate`.
+ * @param {Array<{ clip: ViewerClip, height: number }>} entries
+ * @param {{ rate?: number, onMessages?: boolean, large?: boolean }} [opts]
+ * @returns {Map<string, number>}
+ */
+function applyNativeBudget(entries, opts = {}) {
+  /** @type {Map<string, number>} */
+  const out = new Map();
+  let bytes = 0;
+  let rounding = 0;
+  const large = !!opts.large;
+  for (const { clip, height } of entries) {
+    out.set(clip.id, height);
+    const v = clip.decision && clip.decision.probed && clip.decision.probed.video;
+    if (!v || !v.width || !v.height || !(height > 0)) continue;
+    const fps = v.fps || 30;
+    bytes += 1.5 * height * height * v.width / v.height * fps;
+    // ffmpeg rounds each width up to even: at 16 small tiles that adds up, so leave room for it.
+    if (large) rounding += 0.75 * height * fps;
+  }
+  if (!(bytes > 0)) return out;
+  const speed = Number.isFinite(opts.rate) ? Math.max(1, Number(opts.rate)) : 1;
+  const budget = (opts.onMessages ? TRANSPORT_BPS : FRAME_SERVER_BPS) / speed;
+  if (bytes <= budget - rounding) return out;
+  const scale = Math.min(1, Math.sqrt(Math.max(0, budget - rounding) / bytes));
+  for (const { clip, height } of entries) {
+    if (height > 0) out.set(clip.id, Math.max(2, Math.floor(height * scale / 2) * 2));
+  }
+  return out;
 }
 
 /**
@@ -592,6 +626,29 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   function resizeDecoders() {
     if (disposed) return;
     const fit = fitTiles();
+    /** @type {Array<{ clip: ViewerClip, height: number }>} */
+    const nativeEntries = [];
+    if (fit && session.clips.length >= 2) {
+      for (const x of session.clips) {
+        const c = /** @type {ViewerClip} */ (/** @type {any} */ (x));
+        const dec = natives.get(c.id);
+        if (!dec || !c.decision || kinds.get(c.id) !== 'native' || typeof dec.resize !== 'function') continue;
+        const own = session.tileSize(c.id);
+        const size = /** @type {any} */ (own || session.lastTileSize);
+        if (!size) continue;
+        const h = nativeHeightFor(c, size, !!own);
+        if (h > 0) nativeEntries.push({ clip: c, height: h });
+      }
+    }
+    const onMessages = (deps.nativeTransport ? deps.nativeTransport() : '') === 'message'
+      || [...natives.values()].some((d) => d && /** @type {any} */ (d).link === 'message');
+    const budgeted = nativeEntries.length
+      ? applyNativeBudget(nativeEntries, {
+          rate: session.lastTileSize ? session.lastTileSize.rate : 1,
+          onMessages,
+          large: Grid.isLarge(session.clips.length),
+        })
+      : null;
     /** @type {string[]} */
     const resized = [];
     for (const x of session.clips) {
@@ -605,7 +662,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       if (kind === 'native' && fit && session.clips.length < 2 && typeof dec.setView === 'function') {
         dec.setView({ w: size.actual ? 16384 : size.w, h: size.actual ? 16384 : size.h });
       } else if (kind === 'native' && fit && typeof dec.resize === 'function') {
-        const h = nativeHeightFor(c, size, !!own);
+        const h = (budgeted && budgeted.has(c.id) ? budgeted.get(c.id) : nativeHeightFor(c, size, !!own)) || 0;
         const mmh = c.decision.messageMaxHeight > 0 ? c.decision.messageMaxHeight : h;
         if (!h) continue;
         const had = frameSizeOf(dec);

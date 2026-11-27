@@ -123,7 +123,8 @@ module.exports = [{
         s = await pic((q) => Math.abs(q.canvasRect[0] - r0[0]) > 40 || Math.abs(q.canvasRect[1] - r0[1]) > 30);
         ok(Math.abs(s.canvasRect[0] - r0[0]) > 40 || Math.abs(s.canvasRect[1] - r0[1]) > 30, `the drag moved the picture: ${r0} -> ${s.canvasRect}`);
         ok(s.playing === playing0, `a drag does not play or pause (${playing0} -> ${s.playing})`);
-        // A click without movement still toggles play / pause.
+        // A click without movement still toggles play / pause (after the 300 ms pan-click guard expires).
+        await lib.sleep(350);
         P.dom('pointerdown', x, y); P.dom('pointerup', x, y); P.dom('click', x, y);
         s = await pic((q) => q.playing !== playing0);
         ok(s.playing !== playing0, `a click without movement toggles play / pause (${playing0} -> ${s.playing})`);

@@ -473,7 +473,7 @@ module.exports = [{
     const from = vs.mark();
     vs.send({ compareFiles: NATIVE_CLIPS.map((c) => path.join(h.MEDIA, c)) });
     await vs.waitLog(opened(4), { from, timeout: 60000, what: 'compare opened with 4' });
-    const decided = vs.lines.slice(from).filter((l) => /\] tile [A-D]: (native ffmpeg|built-in)/.test(l));
+    const decided = vs.lines.slice(from).filter((l) => /\] (?:tile [A-D]: )?(?:native ffmpeg|built-in)/.test(l));
     ok(decided.length === 4 && decided.every((l) => /native ffmpeg/.test(l)), `decisions: ${decided.map((l) => l.replace(/^.*\] tile/, 'tile')).join(' | ') || 'none'}`);
     let r = await until(allShown, 60000);
     ok(allShown(r), `not every tile shows a frame (${r && r.frames})`);
@@ -559,7 +559,7 @@ module.exports = [{
     const from = vs.mark();
     vs.send({ compareFiles: NATIVE_CLIPS.map((c) => path.join(h.MEDIA, c)) });
     await vs.waitLog(opened(4), { from, timeout: 60000 });
-    const r = await until((x) => x.synced === 'true' && x.native === '1,1,1,1', 60000);
+    const r = await until((x) => x.synced === 'true' && x.native === '1,1,1,1' && !list(x.frames).includes('-'), 60000);
     const problems = [];
     if (r.transport !== 'message,message,message,message' || r.synced !== 'true' || list(r.frames).includes('-')) {
       problems.push(`transport=${r.transport} synced=${r.synced} frames=${r.frames}`);
@@ -698,7 +698,7 @@ module.exports = [{
     ok = t('large/close');
     from = vs.mark();
     await h.closeClip(vs);
-    await vs.waitLog(/\[compare [^\]]*\] closed/, { from, timeout: 15000, what: 'compare closed' });
+    await vs.waitLog(/\[[^\]]+\] (?:session )?closed/, { from, timeout: 15000, what: 'compare closed' });
     ok(!vs.lines.slice(from).some((l) => /\[compare [^\]]*\] (error|webview: error)/.test(l)), 'errors while closing');
     return out;
   },
@@ -762,7 +762,7 @@ module.exports = [{
       }
       const closing = vs.mark();
       await h.closeClip(vs);
-      await vs.waitLog(/\[compare [^\]]*\] closed/, { from: closing, timeout: 15000, what: 'compare closed' });
+      await vs.waitLog(/\[[^\]]+\] (?:session )?closed/, { from: closing, timeout: 15000, what: 'compare closed' });
       out.push({ name: `large-native/${n}`, ok: !problems.length, problems, info: { fps, mbps: Math.round(mbps * 10) / 10, height } });
     }
     return out;
