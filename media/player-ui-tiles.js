@@ -361,19 +361,17 @@
    * @param {HTMLElement} o.menuEl
    * @param {(id: string, ctx: TileMenuContext) => void} o.onAction
    * @param {(info: { reason: string, target?: any }) => void} [o.onClose]
+   * @param {any} [o.ui]
    */
-  function createTileMenu({ doc, win, menuEl, onAction, onClose }) {
-    /** @type {HTMLElement | null} */
-    let opener = null;
-    /** @param {string} reason @param {any} [target] */
-    function close(reason = 'api', target) {
-      if (menuEl.hidden) return;
-      menuEl.hidden = true;
-      menuEl.textContent = '';
-      delete menuEl.dataset.tile;
-      onClose?.({ reason, target });
-    }
-    const items = () => /** @type {HTMLElement[]} */ ([...menuEl.querySelectorAll('.mi')]);
+  function createTileMenu({ doc, win, menuEl, onAction, onClose, ui }) {
+    const prim = ui || /** @type {any} */ (globalThis).VpeUi;
+    const fm = prim.createFloatingMenu({
+      doc, win, menuEl, itemSelector: '.mi',
+      onClose: (/** @type {{ reason: string, target?: any }} */ info) => {
+        delete menuEl.dataset.tile;
+        onClose?.(info);
+      },
+    });
 
     /** @param {number} x @param {number} y @param {TileMenuContext} ctx */
     function open(x, y, ctx) {
@@ -407,68 +405,21 @@
         }
         b.addEventListener('click', (e) => {
           e.stopPropagation();
-          close('action');
+          fm.close('action');
           onAction(it.id, ctx);
         });
         menuEl.appendChild(b);
       }
       menuEl.setAttribute('role', 'menu');
-      menuEl.hidden = false;
       menuEl.dataset.tile = String(ctx.tile);
-      const r = menuEl.getBoundingClientRect();
-      menuEl.style.left = `${Math.max(4, Math.min(x, win.innerWidth - r.width - 4))}px`;
-      menuEl.style.top = `${Math.max(4, Math.min(y, win.innerHeight - r.height - 4))}px`;
-      opener = /** @type {HTMLElement | null} */ (doc.activeElement);
-      items()[0]?.focus();
+      fm.openAt(x, y, { focusFirst: true });
     }
-
-    /** @param {KeyboardEvent} e */
-    function onKey(e) {
-      if (menuEl.hidden) return;
-      const list = items();
-      const i = list.indexOf(/** @type {any} */ (doc.activeElement));
-      let handled = true;
-      switch (e.key) {
-        case 'ArrowDown': list[(i + 1) % list.length].focus(); break;
-        case 'ArrowUp': list[(i - 1 + list.length) % list.length].focus(); break;
-        case 'Home': list[0].focus(); break;
-        case 'End': list[list.length - 1].focus(); break;
-        case 'Escape': case 'Tab': {
-          const back = opener;
-          close(e.key === 'Tab' ? 'tab' : 'escape');
-          if (back && back.focus && back.isConnected) back.focus();
-          break;
-        }
-        // Activate here (not by the button's default) so it runs once and the key never reaches the page's keys.
-        case 'Enter': case ' ': if (i >= 0) list[i].click(); break;
-        default: handled = false;
-      }
-      if (handled) { e.preventDefault(); e.stopPropagation(); }
-    }
-    /** @param {Event} e */
-    const onMenuClick = (e) => e.stopPropagation();
-    /** @param {Event} e */
-    function onDocDown(e) {
-      if (!menuEl.hidden && !menuEl.contains(/** @type {any} */ (e.target))) close('outside', e.target);
-    }
-    const onBlur = () => close('blur');
-
-    menuEl.addEventListener('keydown', onKey);
-    menuEl.addEventListener('click', onMenuClick);
-    doc.addEventListener('pointerdown', onDocDown, true);
-    win.addEventListener('blur', onBlur);
 
     return {
       open,
-      close: () => close('api'),
-      isOpen: () => !menuEl.hidden,
-      dispose() {
-        close('dispose');
-        menuEl.removeEventListener('keydown', onKey);
-        menuEl.removeEventListener('click', onMenuClick);
-        doc.removeEventListener('pointerdown', onDocDown, true);
-        win.removeEventListener('blur', onBlur);
-      },
+      close: () => fm.close('api'),
+      isOpen: () => fm.isOpen(),
+      dispose: () => fm.dispose(),
     };
   }
 

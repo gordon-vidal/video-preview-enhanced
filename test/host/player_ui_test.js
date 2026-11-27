@@ -399,6 +399,7 @@ const fixtureDom = (html = FIXTURE) => {
   return dom;
 };
 const realWidgets = () => ({
+  VpeUi: require('../../media/ui-primitives'),
   VpeControls: require('../../media/controls'),
   VpeFolderRail: require('../../media/folder-rail'),
   VpeCtxMenu: require('../../media/ctxmenu'),

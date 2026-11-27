@@ -2779,6 +2779,7 @@
     if (typeof G.acquireVsCodeApi === 'function' && root.document && root.document.getElementById('cfg')) {
       // Classic <script> top-level `const` widgets live in the global lexical scope, not on `window`.
       const browserWidgets = {
+        VpeUi: typeof VpeUi !== 'undefined' ? VpeUi : undefined,
         VpeControls: typeof VpeControls !== 'undefined' ? VpeControls : undefined,
         VpeFolderRail: typeof VpeFolderRail !== 'undefined' ? VpeFolderRail : undefined,
         VpeCtxMenu: typeof VpeCtxMenu !== 'undefined' ? VpeCtxMenu : undefined,

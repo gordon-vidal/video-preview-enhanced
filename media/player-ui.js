@@ -521,28 +521,6 @@
     });
   }
 
-  const SVG = (/** @type {string} */ body, size = 18, sw = 1.6) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
-  const ICONS = {
-    split: SVG('<rect x="4" y="5" width="16" height="14" rx="1.6"/><path d="M12 3v18"/>'),
-    sync: SVG('<rect x="4" y="6" width="11.5" height="4.2" rx="1.1"/><rect x="8.5" y="13.8" width="11.5" height="4.2" rx="1.1"/><path d="M12 3.5v17" stroke-dasharray="1.8 2.2"/>'),
-    spotlight: SVG('<rect x="3" y="4" width="18" height="10" rx="1.4"/><rect x="3" y="16" width="5" height="4" rx="0.8"/><rect x="9.5" y="16" width="5" height="4" rx="0.8"/><rect x="16" y="16" width="5" height="4" rx="0.8"/>'),
-    grid: SVG('<rect x="3.5" y="4" width="7.5" height="7" rx="1.2"/><rect x="13" y="4" width="7.5" height="7" rx="1.2"/><rect x="3.5" y="13" width="7.5" height="7" rx="1.2"/><rect x="13" y="13" width="7.5" height="7" rx="1.2"/>'),
-    swap: SVG('<path d="M7 7h12l-3-3M17 17H5l3 3"/>'),
-    compare: SVG('<rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/><path d="M12 4.5v15"/>', 16),
-    // The Compare panel's button (src/bar.js icons.cmpPanel): a list, so it is not taken for Split Wipe's rectangle.
-    cmpPanel: SVG('<path d="M9.5 6.5h10M9.5 12h10M9.5 17.5h10"/><circle cx="5.2" cy="6.5" r="0.9" fill="currentColor" stroke="none"/><circle cx="5.2" cy="12" r="0.9" fill="currentColor" stroke="none"/><circle cx="5.2" cy="17.5" r="0.9" fill="currentColor" stroke="none"/>'),
-    expand: SVG('<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>', 13, 2),
-    collapse: SVG('<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7"/>', 13, 2),
-    close: SVG('<path d="M6 6l12 12M18 6L6 18"/>', 12, 2.1),
-    plus: SVG('<path d="M12 5v14M5 12h14"/>'),
-    leave: SVG('<path d="M10 17l-5-5 5-5M5 12h11a4 4 0 0 1 4 4v3"/>'),
-    info: SVG('<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.2"/>', 13, 2),
-    sound: SVG('<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>', 13, 1.9),
-    muted: SVG('<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>', 13, 1.9),
-    noAudio: SVG('<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M3 3l18 18"/>', 13, 1.9),
-    up: SVG('<path d="M6 14l6-6 6 6"/>', 14, 2),
-    down: SVG('<path d="M6 10l6 6 6-6"/>', 14, 2),
-  };
   const esc = (/** @type {string} */ s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] || c);
   /** Compare's dense grid: from this many videos the tile chrome shrinks (media/compare-grid.js LARGE). */
   const DENSE_FROM = 5;
@@ -592,13 +570,15 @@
 
     const doc = env.doc;
     const win = /** @type {any} */ (env.win || doc.defaultView || globalThis);
-    const GLOBAL_WIDGETS = ['VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay', 'VpeTime', 'VpePicture',
+    const GLOBAL_WIDGETS = ['VpeUi', 'VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay', 'VpeTime', 'VpePicture',
       'VpeModes', 'VpePlayerUiTiles', 'VpePlayerUiInput', 'CompareGrid', 'VpePlayerUiTools', 'VpePlayerUiLifecycle',
       'VpeReducedResNotice', 'VpeSlowNotice', 'VpeRangeDrag'];
     const W = /** @type {any} */ ({ ...Object.fromEntries(GLOBAL_WIDGETS.map((k) => [k, win[k]])), ...(env.widgets || {}) });
-    for (const k of ['VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay']) {
+    for (const k of ['VpeUi', 'VpeControls', 'VpeFolderRail', 'VpeCtxMenu', 'VpeAbLoop', 'VpeAutoplay']) {
       if (!W[k]) throw new Error(`player-ui: widget ${k} is missing`);
     }
+    const UI_PRIM = W.VpeUi;
+    const ICONS = UI_PRIM.ICONS;
     /** Optional widgets: without them the tile gestures (Tiles + CompareGrid) or the input extras (Input) stay off. */
     const Tiles = W.VpePlayerUiTiles && W.CompareGrid ? W.VpePlayerUiTiles : null;
     const Grid = W.CompareGrid || null;
@@ -1001,11 +981,8 @@
     /** The tile the Compare › video page shows (a clip id; falls back to the clock tile). */
     let selId = /** @type {string | null} */ (null);
     const selected = () => { const t = tab(); return selId && t.tiles.includes(selId) ? selId : (t.clockId || t.tiles[0]); };
-    const switchRow = (/** @type {any} */ k, /** @type {string} */ label, /** @type {boolean} */ on, /** @type {() => void} */ run, /** @type {any} */ extra = {}) => {
-      const b = k.btn('row', label, run, { ...extra, aria: { role: 'switch', 'aria-checked': String(on), ...(extra.aria || {}) } });
-      b.appendChild(k.sw(on));
-      return b;
-    };
+    const switchRow = UI_PRIM.switchRow;
+    const segmentedRow = UI_PRIM.segmentedRow;
     const cmpViews = {
       cmp: {
         label: 'Compare', button: 'cmp',
@@ -1030,18 +1007,9 @@
           f.appendChild(switchRow(k, 'Open new videos here', t.capture, () => { act.capture(); k.render(); }, { icon: ICONS.plus, kbd: 'Shift+D' }));
           f.appendChild(k.el('div', 'sep'));
           if (t.tiles.length >= 2) {
-            const row = k.el('div', 'row static');
-            row.appendChild(k.el('span', 'grow', 'Layout'));
-            const seg = k.el('div', 'seg');
-            seg.setAttribute('role', 'group');
-            seg.setAttribute('aria-label', 'Layout');
             const ui = S.deriveUi(t);
             const modes = t.tiles.length === 2 ? [['spotlight', 'Spotlight'], ['grid', 'Grid'], ['split', 'Split']] : [['spotlight', 'Spotlight'], ['grid', 'Equal Grid']];
-            for (const [m, label] of modes) {
-              seg.appendChild(k.btn('chip', label, () => { act.layout(m); k.render(); }, { aria: { 'aria-pressed': String(ui.effectiveLayout === m) } }));
-            }
-            row.appendChild(seg);
-            f.appendChild(row);
+            f.appendChild(segmentedRow(k, 'Layout', modes, ui.effectiveLayout, (/** @type {string} */ m) => { act.layout(m); k.render(); }, 'Layout'));
             if (t.tiles.length === 2) f.appendChild(k.btn('row', 'Swap sides', () => { act.swap(); k.render(); }, { icon: ICONS.swap, kbd: 'X' }));
             f.appendChild(switchRow(k, 'Sync offsets on tiles', t.syncMode, () => { act.sync(); k.render(); }));
             f.appendChild(k.el('div', 'sep'));
@@ -1266,7 +1234,7 @@
     // ---- the tiles' right-click menu (media/player-ui-tiles.js createTileMenu), N >= 2 ----
     if (Tiles) {
       tileMenu = Tiles.createTileMenu({
-        doc, win, menuEl: tileMenuEl,
+        doc, win, menuEl: tileMenuEl, ui: UI_PRIM,
         onAction: (/** @type {string} */ a, /** @type {any} */ c) => {
           const id = idOfVid.get(c.tile);
           if (!id || !tab().tiles.includes(id)) return;

@@ -5,6 +5,7 @@
 // menu, the ⓘ details card and the move-arrow / hover helpers. Nothing decodes video; there is no layout, so every
 // rect comes from setRect.
 const assert = require('assert');
+globalThis.VpeUi = require('../../media/ui-primitives');
 const T = require('../../media/player-ui-tiles');
 const Grid = require('../../media/compare-grid');
 const { createDom } = require('./fake-dom');

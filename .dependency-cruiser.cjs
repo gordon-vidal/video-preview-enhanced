@@ -56,7 +56,7 @@ module.exports = {
       comment: 'media/player-ui.js and its tile / input / tools / lifecycle modules reach the decoders and the host only '
         + 'through the adapters.',
       severity: 'error',
-      from: { path: '^media/player-ui(?:-tiles|-input|-tools|-lifecycle)?\\.js$' },
+      from: { path: '^media/(?:ui-primitives|player-ui(?:-tiles|-input|-tools|-lifecycle)?)\\.js$' },
       to: {
         path: '^(?:src/|media/(?:engine|frame-player|gl-renderer|compare-compositor|decoder-[^/]*)\\.js$|media/libav-vpe/)',
       },
@@ -64,7 +64,7 @@ module.exports = {
     {
       name: 'player-ui-no-core',
       severity: 'error',
-      from: { path: '^media/player-ui(?:-tiles|-input|-tools|-lifecycle)?\\.js$' },
+      from: { path: '^media/(?:ui-primitives|player-ui(?:-tiles|-input|-tools|-lifecycle)?)\\.js$' },
       to: { dependencyTypes: ['core'] },
     },
   ],

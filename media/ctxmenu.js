@@ -54,21 +54,24 @@ const VpeCtxMenu = (() => {
    */
   function create(env) {
     const { menu } = env;
-    /** @type {HTMLElement|null} */
-    let returnFocus = null;
+    const ui = /** @type {any} */ (globalThis).VpeUi || (typeof require === 'function' ? require('./ui-primitives') : null);
     let dismissedAtPress = false;
 
-    const isOpen = () => !menu.hidden;
-    const entries = () => /** @type {HTMLElement[]} */ ([...menu.querySelectorAll('[role^="menuitem"]')]);
+    // Reset the picture-dismiss flag before the floating menu's outside-press handler runs.
+    document.addEventListener('pointerdown', () => { dismissedAtPress = false; }, true);
 
-    function close(refocus = false) {
-      if (!isOpen()) return;
-      menu.hidden = true;
-      menu.textContent = '';
-      const back = returnFocus;
-      returnFocus = null;
-      if (refocus && back && back.isConnected) back.focus();
-    }
+    const fm = ui.createFloatingMenu({
+      doc: document, win: window, menuEl: menu, itemSelector: '[role^="menuitem"]',
+      passThroughKeys: true, closeOnResize: true,
+      onOutsideDown: (/** @type {any} */ e) => {
+        const t = /** @type {Node|null} */ (e.target);
+        const bar = document.getElementById('bar');
+        dismissedAtPress = !(bar && t && bar.contains(t));
+      },
+    });
+    const isOpen = () => fm.isOpen();
+    const entries = () => fm.items();
+    const close = (refocus = false) => fm.close('api', { refocus });
 
     function build() {
       menu.textContent = '';
@@ -115,19 +118,8 @@ const VpeCtxMenu = (() => {
     /** Opens at a point in the page (clamped so the whole menu stays visible). `focusFirst`: opened from the keyboard. */
     function open(x, y, focusFirst = false) {
       if (env.beforeOpen) env.beforeOpen();
-      if (!isOpen()) returnFocus = /** @type {HTMLElement|null} */ (document.activeElement);
       build();
-      menu.hidden = false;
-      menu.style.left = '0px';
-      menu.style.top = '0px';
-      const margin = 4;
-      const w = menu.offsetWidth, h = menu.offsetHeight;
-      const vw = document.documentElement.clientWidth || innerWidth, vh = document.documentElement.clientHeight || innerHeight;
-      menu.style.left = `${Math.max(margin, Math.min(x, vw - w - margin))}px`;
-      menu.style.top = `${Math.max(margin, Math.min(y, vh - h - margin))}px`;
-      const first = entries()[0];
-      if (focusFirst && first) first.focus();
-      else menu.focus();
+      fm.openAt(x, y, { focusFirst });
     }
 
     // The page's own menu replaces VS Code's; text fields keep the native Cut / Copy / Paste.
@@ -141,39 +133,6 @@ const VpeCtxMenu = (() => {
         open(r.left + r.width / 2, r.top + r.height / 2, true);
       } else open(e.clientX, e.clientY, kb);
     });
-
-    // Click outside closes it. A press in the picture area only dismisses (consumeDismiss, like media/controls.js),
-    // so the click that follows does not play / pause; a press on the bar still reaches its control.
-    document.addEventListener('pointerdown', (e) => {
-      dismissedAtPress = false;
-      if (!isOpen()) return;
-      const t = /** @type {Node|null} */ (e.target);
-      if (t && menu.contains(t)) return;
-      const bar = document.getElementById('bar');
-      dismissedAtPress = !(bar && t && bar.contains(t));
-      close(false);
-    }, true);
-
-    menu.addEventListener('keydown', (e) => {
-      const list = entries();
-      const i = list.indexOf(/** @type {HTMLElement} */ (document.activeElement));
-      let handled = true;
-      switch (e.key) {
-        case 'ArrowDown': list[i < 0 ? 0 : (i + 1) % list.length]?.focus(); break;
-        case 'ArrowUp': list[i < 0 ? list.length - 1 : (i - 1 + list.length) % list.length]?.focus(); break;
-        case 'Home': list[0]?.focus(); break;
-        case 'End': list[list.length - 1]?.focus(); break;
-        case 'Escape': close(true); break;
-        case 'Enter': case ' ': if (i >= 0) list[i].click(); break;
-        case 'Tab': close(true); break;
-        default: handled = false;
-      }
-      if (handled) { e.preventDefault(); e.stopPropagation(); return; }
-      // Any other key is the player's own key (R, S, ...): the menu gets out of the way and the key still works.
-      close(false);
-    });
-
-    for (const ev of ['blur', 'resize']) window.addEventListener(ev, () => close(false));
 
     return {
       open, close, isOpen,

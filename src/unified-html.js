@@ -45,8 +45,8 @@ const UNIFIED_SCRIPTS = [
   // ... plus Compare's tiles (stepgoal.js: VpeStepGoal, read by player-unified.js).
   'stepgoal.js', 'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js',
   'compare-debug.js',
-  // Pure state and the shared UI controller: the player-ui-*.js modules before player-ui.js, which reads them.
-  'player-state.js', 'player-ui-tiles.js', 'player-ui-input.js', 'player-ui-tools.js', 'player-ui-lifecycle.js',
+  // Reusable UI primitives, pure state and the shared UI controller: loaded before player-ui.js.
+  'ui-primitives.js', 'player-state.js', 'player-ui-tiles.js', 'player-ui-input.js', 'player-ui-tools.js', 'player-ui-lifecycle.js',
   'player-ui.js',
   // Production adapters: the decoders and the extension host behind the controller's contracts.
   'player-engine-adapter.js', 'player-host-adapter.js',

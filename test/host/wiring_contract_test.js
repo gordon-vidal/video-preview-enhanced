@@ -80,6 +80,7 @@ const mediaJs = fs.readdirSync(MEDIA)
     const ui = PUI.create({
       doc: dom.doc, win: dom.win, stateApi: S, engine: { ...engine, draw() {} }, host, tickMs: 0,
       widgets: {
+        VpeUi: require('../../media/ui-primitives'),
         VpeControls: recording, VpeFolderRail: require('../../media/folder-rail'), VpeCtxMenu: require('../../media/ctxmenu'),
         VpeAbLoop: require('../../media/abloop'), VpeAutoplay: require('../../media/autoplay'), VpeTime: require('../../media/timefmt'),
       },

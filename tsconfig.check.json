@@ -50,6 +50,7 @@
     "media/frame-player.js",
     "media/unified-contracts.d.ts",
     "media/player-state.js",
+    "media/ui-primitives.js",
     "media/player-ui.js",
     "media/player-ui-tiles.js",
     "media/player-ui-input.js",
