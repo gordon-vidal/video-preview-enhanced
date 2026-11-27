@@ -209,6 +209,12 @@ module.exports = [
     steps: [{ case: 'remote_stream_packets' }],
   },
   {
+    name: 'remote-stream-hdr',
+    journey: 'HDR over Live transcode: tone-mapped on the host (NVDEC in front on NVIDIA), a seek and a step land exactly',
+    sources: ['src/stream.js', 'src/transcode_args.js', ...ENGINE_CORE],
+    steps: [{ case: 'remote_stream_hdr' }],
+  },
+  {
     name: 'file-icons',
     journey: 'Explorer icons for the formats VS Code has none for, as Seti draws .mp4 / .avi (dark, light, zoom -1..2); .mkv still opens in the player',
     sources: ['src/extension.js', 'media/icons', 'package.json'],

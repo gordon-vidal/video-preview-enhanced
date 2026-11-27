@@ -273,6 +273,22 @@ module.exports = [{
         r.atKey = await timed(() => p.seek(12.0 + 0.5 / fps), 300, 'frame 300');
         r.acrossKey = await timed(() => p.step(-1), 299, 'frame 299');
         ok(r.acrossKey.local || r.acrossKey.hostSeeks === 0, 'the step back across a keyframe went to the host');
+        // Play from there: the page offers the GOP it holds, the host (its history has it) sends only what follows.
+        {
+          const from = vs.mark();
+          const t0 = Date.now();
+          p.play();
+          const s = await p.waitState((x) => x.playing && x.frame >= 310, { timeout: 30000, interval: 50, what: 'playing past 310' });
+          const lines = vs.lines.slice(from);
+          r.play = {
+            ms: Date.now() - t0, frame: s.frame,
+            pageHeld: lines.some((l) => l.includes(`[${p.name}] webview: seek to`) && l.includes('from the page, the host sends what follows')),
+            hostSkipped: lines.some((l) => l.includes(`[${p.name}] remote stream: the page holds`)),
+          };
+          p.pause();
+          await h.sleep(300);
+          ok(r.play.pageHeld && r.play.hostSkipped, `play after the step back sent the held GOP again (${JSON.stringify(r.play)})`);
+        }
         // The same seek back with the cache off: the host sends the GOP again over the 2 Mb/s link.
         p.act({ action: 'packetCache', mb: 0 });
         await timed(() => p.seek(30.0 + 0.5 / fps), 750, 'frame 750');
@@ -282,6 +298,39 @@ module.exports = [{
         r.notes = vs.lines.filter((l) => l.includes(`[${p.name}]`) && /frames stay on the GPU|frame copy failed|step back from memory|page's packets/.test(l))
           .map((l) => l.replace(/^.*webview: /, '')).slice(-14);
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
+        await h.closeClip(vs);
+      }
+    });
+    return out;
+  },
+}, {
+  // HDR over Live transcode: tone-mapped on the host; on an NVIDIA host NVDEC decodes and scales before the tone-mapper
+  // (src/transcode_args.js cudaDecodeDownload), also when the encoder is the CPU one. Seeks and a step land exactly.
+  name: 'remote_stream_hdr',
+  ffmpeg: true,
+  settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.loop': false, 'videoPreviewEnhanced.sizeFramesToView': false, 'workbench.editorAssociations': ASSOC },
+  async run(vs, h) {
+    const { out, run } = lib.recorder();
+    await run('hdr-seek-step', async (ok, r) => {
+      const from = vs.mark();
+      const p = await lib.open(vs, h, path.join(h.MEDIA, 'hevc_10_pq_2160p.mp4'));
+      try {
+        await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown, { timeout: 45000, what: 'first frame' });
+        p.pause();
+        const at = async (fn, frame) => {
+          const t0 = Date.now();
+          fn();
+          const s = await p.waitState((x) => !x.playing && x.frame === frame, { timeout: 30000, interval: 50, what: `frame ${frame}` });
+          return { ms: Date.now() - t0, frame: s.frame };
+        };
+        r.seek = await at(() => p.seek(40.5 / 30), 40); // 30 fps, 60 frames
+        r.step = await at(() => p.step(-1), 39);
+        const starts = vs.lines.slice(from).filter((l) => l.includes(`[${p.name}] remote stream from`)).map((l) => l.replace(/^.*remote stream /, ''));
+        r.pipeline = starts.slice(-1)[0] || '';
+        ok(starts.length > 0, 'no Live transcode start logged');
+        ok(/tone-mapping/.test(r.pipeline), `HDR not tone-mapped on the host: ${r.pipeline}`);
+        r.gpuDecode = /GPU decode/.test(r.pipeline);
+      } finally {
         await h.closeClip(vs);
       }
     });

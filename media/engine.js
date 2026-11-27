@@ -238,6 +238,7 @@ function createEngine(env) {
               this.seekTarget = this.pauseT = m.t;
               this.anchor(m.t);
             }
+            if (this.pendingHave) this.takeHeld(m);
             this.requesting = false;
             this.skipping = false;
             this.pump();
@@ -1987,7 +1988,11 @@ function createEngine(env) {
       this.anchor(t);
       log(`seek to ${this.rel(t).toFixed(3)} s (gen ${this.gen})`);
       if (this.remoteStream && !wasPlaying && !recoverTransport && this.seekFromPackets(t)) return;
-      this.worker.postMessage({ type: 'seek', gen: this.gen, t,
+      // Playing (play after a seek served from the packets, or a seek while playing): offer the host what the page
+      // holds of the target's GOP, so it sends only what follows (seeked.have, then onSeeked feeds them).
+      const have = this.remoteStream && wasPlaying && !recoverTransport ? this.packetsHeld(t) : null;
+      this.pendingHave = have ? { gen: this.gen, packets: have.packets } : null;
+      this.worker.postMessage({ type: 'seek', gen: this.gen, t, ...(have ? { have: { keyT: have.keyT, lastT: have.lastT } } : {}),
         ...(this.remoteStream ? { playing: this.playing } : {}), ...(recoverTransport ? { recoverTransport: true } : {}) });
     }
 
@@ -2019,6 +2024,27 @@ function createEngine(env) {
         if (dec && dec.state === 'configured') dec.flush().catch(() => {});
       });
       return true;
+    }
+
+    /** The kept packets of the GOP holding t, from its keyframe to the last one held (null: none, or not WebCodecs). */
+    packetsHeld(t) {
+      const cache = this.packetCache;
+      if (!cache || this.vmode !== 'webcodecs') return null;
+      const hit = cache.find(t);
+      if (!hit) return null;
+      const packets = hit.packets.concat(cache.after(hit.keyT, hit.frameT));
+      return { keyT: hit.keyT, lastT: packets[packets.length - 1].t, packets: packets.map((p) => ({ kind: 'packet', ...p })) };
+    }
+
+    /** The host's answer to a seek that offered packets (seekAbs): it skipped them, so they decode from here. */
+    takeHeld(m) {
+      const held = this.pendingHave;
+      this.pendingHave = null;
+      if (!held || held.gen !== m.gen || !m.have) return;
+      const bytes = held.packets.reduce((n, p) => n + p.data.byteLength, 0);
+      log(`seek to ${this.rel(m.t).toFixed(3)} s: ${held.packets.length} packets (${(bytes / 1024).toFixed(0)} KiB) from the page, `
+        + 'the host sends what follows');
+      this.onBatch({ gen: m.gen, video: held.packets, audio: [], local: true });
     }
 
     /** Real-time catch-up: continue from the first keyframe at or after t, clock untouched. */

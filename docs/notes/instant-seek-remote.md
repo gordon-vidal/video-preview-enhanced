@@ -297,6 +297,66 @@ remove it).
 A persistent encoder fed raw frames: 3-5 ms per frame on NVENC / Media Foundation / x264, back steps the same size as
 forward ones; needs the duplicate-frame trick (ffmpeg holds one frame) and an SPS with `bitstream_restriction`.
 
+## Bottlenecks measured (2026-11-27, RTX 4070, driver 581)
+
+Host side, 4K HEVC 10-bit HDR (PQ) at 100 Mb/s with a keyframe every 250 frames, tone-mapped to 1080p:
+
+| | CPU decode (before) | NVDEC, every frame copied to RAM | NVDEC + scale_cuda, small frames copied |
+| --- | --- | --- | --- |
+| Seek to the frame 248 into its GOP (first frame out) | 6.4 s | 3.3 s | 1.9 s |
+| Seek onto a keyframe | | 0.5 s | |
+| Playback (CPU tone-mapping + x264) | 34 fps | 42 fps | 57 fps |
+| 4K PQ, OpenCL tone-mapping + NVENC | 51 fps | | 70 fps |
+
+Pure NVDEC decode of that stream is about 140 fps, so a seek deep into a long source GOP costs ~2 s on the host
+whatever else is done; only a cache (levels 2-4) or a host-side seek proxy hides it. At 1080p the CPU tone-mapper
+(zscale + tonemap, float RGB) is the next limit (~57 fps). The 2.5 Mb/s link then adds the size of the first
+keyframe (~100-300 KB at the view size: 0.3-1 s) plus a round trip, and a GOP sent again costs its whole size (a
+50-frame 1080p GOP, ~500 KB: ~2 s).
+
+Two environment findings: ffmpeg 9.x needs NVIDIA driver 610+ for NVENC (API 13.1). With an older driver the
+extension encodes with libx264 and shows its driver notice; "Set up ffmpeg" picks a build line matching the driver
+(src/setup.js nvidiaLineMax), and the downloaded ffmpeg is preferred over PATH. NVDEC works with either. libplacebo
+needs a Vulkan device the pipeline does not create (`-init_hw_device vulkan`); it fails once and drops to OpenCL.
+
+Done (cheap): NVDEC + scale_cuda in front of the CPU and OpenCL tone-mappers and of a CPU encoder
+(`transcode_args.js` cudaDecodeDownload; on failure the GPU decode is dropped as for the full-GPU path); a seek while
+playing offers the host the packets the page holds of the target's GOP (`seek.have`), and the host's history skips
+them (`stream.js` skipHeld), so play after a page-served seek does not send the GOP again;
+`videoPreviewEnhanced.liveTranscodeCacheMB` (default 64, 0 = off).
+
+## How others do it (research, 2026-11-27)
+
+- **Jellyfin / Plex** restart ffmpeg on a seek outside what was transcoded, force keyframes on segment boundaries,
+  and throttle the encoder ahead of the client; Plex restarts even on a 10 s seek back
+  (github.com/jellyfin/jellyfin DynamicHlsController.cs, TranscodingThrottler.cs). Our host history already does
+  better than that for seeks back.
+- **mpv** keeps a seekable demuxer cache (150 MiB ahead, 50 MiB back), and a precise seek decodes from the keyframe
+  with frames before the target dropped; frame-back-step is a precise seek (mpv.io/manual). Level 2 here is that
+  back buffer on the page.
+- **Pro review tools** (Frame.io, Resolve, Premiere, OpenRV) make scrubbing fast with all-intra or short-GOP proxies
+  and a RAM frame cache over the in/out range; Frame.io serves 4K at ~14 Mb/s H.264 proxies.
+- **Remote desktops** (PCoIP, Amazon DCV, Citrix): a changed screen goes out at a capped quality first, then a still
+  picture is refined up to lossless: the model for a paused frame on a slow link.
+- **HLS** (Apple authoring spec): keyframes every 2 s and a 1-fps I-frame playlist for scrubbing; hls.js starts with
+  the lowest level to measure the link.
+
+## With more resources (proposed, not built)
+
+1. **A seek proxy on the host** (level 4): an all-intra or 1-s-GOP copy at view size made in the background on the
+   GPU, kept on the host's disk. A seek or step anywhere then costs one small keyframe instead of ~2 s of source
+   decode. Disk: ~2-4 GB per hour at 1080p. The pro-tool approach.
+2. **Paused frame: fast then sharp** (display mode): after a paused seek, send the target as a small low-QP-capped
+   keyframe at once and a sharper one after; the remote-desktop model. Halves the first picture on a slow link.
+3. **Host pushes the GOPs around the playhead while paused** (level 3), within a share of the link, so the first step
+   back after a jump hits the page's packets.
+4. **A kept-running decoder on the host** (prototype above): ~134 ms instead of 340-470 ms per jump, no ffmpeg start.
+5. **GPU tone-mapping on NVIDIA** (libplacebo with a Vulkan device and CUDA interop, or a CUDA tone-mapper): removes
+   the ~57 fps CPU tone-mapping limit for 4K60 HDR.
+6. **Play from the page's packets with sound**: keep audio packets too, so play after a page-served seek starts at once
+   while the host catches up.
+7. **Scrub stream**: while dragging, show keyframes only (I-frame trick play) and seek exactly on release.
+
 ## Setting (draft)
 
 `videoPreviewEnhanced.seekCache`: `off | balanced | maximum`, default `balanced`.

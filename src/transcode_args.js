@@ -112,6 +112,24 @@ function hdrTransfer(v) {
 }
 
 /** CPU tone-map chain: explicit BT.2020 input tags (untagged files still convert), hable, BT.709 limited range out. */
+/**
+ * NVDEC decode and scale_cuda on the GPU, then only the scaled frames come down (hwdownload) to a CPU stage: the
+ * CPU tone-mapper, or an encoder that is not NVENC (libx264 after an NVENC/driver mismatch). A seek decodes every frame
+ * from the source keyframe to the target, and copying each 4K frame to RAM cost more than decoding it: RTX 4070, 4K
+ * HEVC 10-bit at 100 Mb/s, target 248 frames into its GOP, HDR to 1080p: 6.4 s with CPU decode, 3.3 s with NVDEC
+ * copying every frame, 1.9 s this way; playing, 34 fps -> 57 fps (docs/notes/instant-seek-remote.md).
+ * null when CUDA decode is not the method here or the filters are missing. `fmt` is what comes down (p010le, nv12).
+ */
+function cudaDecodeDownload(o, fmt) {
+  const { decodeMethod, gpuFilters, video, w, h, encoder } = o;
+  if (!(decodeMethod === 'cuda' || (decodeMethod === 'auto' && encoder === 'h264_nvenc'))) return null;
+  if (!canCudaFullGpu(video, gpuFilters) || !gpuFilters.has('hwdownload')) return null;
+  return {
+    pre: ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
+    vf: `scale_cuda=w=${w}:h=${h}:format=${fmt}:interp_algo=bilinear,hwdownload,format=${fmt}`,
+  };
+}
+
 function cpuToneMap(v, fmt) {
   return `zscale=tin=${hdrTransfer(v)}:min=bt2020nc:pin=bt2020:rin=tv:t=linear:npl=100,format=gbrpf32le,`
     + `zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=${fmt}`;
@@ -154,13 +172,22 @@ function buildHdrPipeline(o, encArgs, isCpu, wantGpuDec) {
   }
   // -vaapi_device already is the filter device, so OpenCL (needs its own) only runs beside the other encoders.
   if (!isCpu && encoder !== 'h264_vaapi' && gf.has('tonemap_opencl') && gf.has('hwupload') && gf.has('hwdownload') && !bad.has('opencl')) {
+    // NVDEC + scale_cuda in front when it can (4K PQ to 1080p, NVENC: 51 -> 70 fps; seeks decode on the GPU too).
+    const down = wantGpuDec && !fr.pre.length ? cudaDecodeDownload(o, 'p010le') : null;
     return {
-      pre: [...fr.pre, '-init_hw_device', 'opencl=ocl', '-filter_hw_device', 'ocl'], mode, tonemap: 'opencl', encArgs,
-      vf: `scale=${w}:${h}:flags=bilinear,format=p010le,hwupload,tonemap_opencl=tonemap=hable:desat=0:t=bt709:m=bt709:p=bt709:format=nv12,`
+      pre: [...(down ? down.pre : fr.pre), '-init_hw_device', 'opencl=ocl', '-filter_hw_device', 'ocl'], mode, tonemap: 'opencl', encArgs,
+      vf: `${down ? down.vf : `scale=${w}:${h}:flags=bilinear,format=p010le`},hwupload,`
+        + `tonemap_opencl=tonemap=hable:desat=0:t=bt709:m=bt709:p=bt709:format=nv12,`
         + `hwdownload,format=nv12${fmt === 'nv12' ? '' : ',format=yuv420p'}`,
+      ...(down ? { gpuDecode: true } : {}),
     };
   }
   if (sup.cpu && !bad.has('cpu')) {
+    // Decoded and scaled on the GPU when it can be (the tone-mapper then works on the small frames only).
+    const down = wantGpuDec && !fr.pre.length ? cudaDecodeDownload(o, 'p010le') : null;
+    if (down) {
+      return { pre: down.pre, vf: `${down.vf},${cpuToneMap(video, fmt)}${tail}`, encArgs, mode, tonemap: 'cpu', gpuDecode: true };
+    }
     return { pre: fr.pre, vf: `scale=${w}:${h}:flags=bilinear,${cpuToneMap(video, fmt)}${tail}`, encArgs, mode, tonemap: 'cpu' };
   }
   return null;
@@ -243,6 +270,9 @@ function buildVideoPipeline(o) {
 
   // CPU decode (or hwaccel auto-download) -> scale -> GPU or CPU encoder.
   const fr = encoderFrame(encoder, device);
+  // A CPU encoder (NVENC unusable, e.g. a driver older than the ffmpeg's NVENC API) can still decode on NVDEC.
+  const down = isCpu && wantGpuDec && !fr.pre.length ? cudaDecodeDownload(o, 'nv12') : null;
+  if (down) return { pre: down.pre, vf: `${down.vf},${fr.vf}`, encArgs, mode: 'cpu', tonemap: null, gpuDecode: true };
   return {
     pre: fr.pre,
     vf: `scale=${w}:${h}:flags=bilinear,${fr.vf}`,

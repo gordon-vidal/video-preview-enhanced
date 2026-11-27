@@ -653,6 +653,14 @@
           "scope": "machine",
           "markdownDescription": "Upper limit for Live transcode, in Mb/s. `0` = Auto: follows your connection. Set a limit when you share a slow connection. Also in ⚙ › Live transcode."
         },
+        "videoPreviewEnhanced.liveTranscodeCacheMB": {
+          "type": "number",
+          "default": 64,
+          "minimum": 0,
+          "maximum": 2048,
+          "scope": "machine",
+          "markdownDescription": "Live transcode over a remote link: how much of the received video each video keeps, in MB (compressed; 64 MB is about a minute of 1080p). Seeking back or stepping back into it then needs nothing from the remote host. Compare keeps this much per video. `0` = off."
+        },
         "videoPreviewEnhanced.transcodeResolution": {
           "type": "number",
           "enum": [

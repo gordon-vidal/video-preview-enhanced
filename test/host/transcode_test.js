@@ -72,6 +72,38 @@ assert.deepStrictEqual(setup.nvidiaLineMax('566.36'), { major: 7, minor: 1 });
   assert.deepStrictEqual(prores.pre, []);
   assert.match(prores.vf, /^scale=1920:1080:flags=bilinear,format=yuv420p$/);
 
+  // NVDEC + scale_cuda, then only the scaled frames come down: for a CPU encoder (NVENC unusable) and the CPU or
+  // OpenCL HDR tone-mappers. Without hwdownload, or with another decode method, CPU decode as before.
+  const gf = new Set(['scale_cuda', 'hwdownload', 'hwupload', 'zscale', 'tonemap']);
+  const hevc10 = { codec: 'hevc', pixFmt: 'yuv420p10le' };
+  const x264 = args.buildVideoPipeline({ encoder: 'libx264', decodeMethod: 'cuda', gpuFilters: gf, video: hevc10,
+    w: 1920, h: 1080, fps: 25, maxKbps: 4000 });
+  assert.strictEqual(x264.mode, 'cpu');
+  assert.strictEqual(x264.gpuDecode, true);
+  assert.deepStrictEqual(x264.pre, ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda']);
+  assert.strictEqual(x264.vf, 'scale_cuda=w=1920:h=1080:format=nv12:interp_algo=bilinear,hwdownload,format=nv12,format=yuv420p');
+  for (const [decodeMethod, filters] of [['d3d11va', gf], ['none', gf], ['cuda', new Set(['scale_cuda'])]]) {
+    const p = args.buildVideoPipeline({ encoder: 'libx264', decodeMethod, gpuFilters: filters, video: hevc10,
+      w: 1920, h: 1080, fps: 25, maxKbps: 4000 });
+    assert.deepStrictEqual(p.pre, [], `${decodeMethod}: CPU decode`);
+    assert(!p.gpuDecode);
+  }
+  const pq = { codec: 'hevc', pixFmt: 'yuv420p10le', colorTransfer: 'smpte2084', colorPrimaries: 'bt2020' };
+  const hdrCpu = args.buildVideoPipeline({ encoder: 'h264_nvenc', decodeMethod: 'cuda', gpuFilters: gf, video: pq,
+    w: 1920, h: 1080, fps: 25, maxKbps: 4000 });
+  assert.strictEqual(hdrCpu.tonemap, 'cpu');
+  assert.strictEqual(hdrCpu.gpuDecode, true);
+  assert.match(hdrCpu.vf, /^scale_cuda=w=1920:h=1080:format=p010le:interp_algo=bilinear,hwdownload,format=p010le,zscale=tin=smpte2084/);
+  const hdrOcl = args.buildVideoPipeline({ encoder: 'h264_nvenc', decodeMethod: 'cuda',
+    gpuFilters: new Set([...gf, 'tonemap_opencl']), video: pq, w: 1920, h: 1080, fps: 25, maxKbps: 4000 });
+  assert.strictEqual(hdrOcl.tonemap, 'opencl');
+  assert.deepStrictEqual(hdrOcl.pre, ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-init_hw_device', 'opencl=ocl', '-filter_hw_device', 'ocl']);
+  assert.match(hdrOcl.vf, /^scale_cuda=.*,hwdownload,format=p010le,hwupload,tonemap_opencl=/);
+  const hdrOclCpuDec = args.buildVideoPipeline({ encoder: 'h264_nvenc', decodeMethod: 'none',
+    gpuFilters: new Set([...gf, 'tonemap_opencl']), video: pq, w: 1920, h: 1080, fps: 25, maxKbps: 4000 });
+  assert.match(hdrOclCpuDec.vf, /^scale=1920:1080:flags=bilinear,format=p010le,hwupload,tonemap_opencl=/);
+  assert(!hdrOclCpuDec.gpuDecode);
+
   // Software fallback
   const sw = args.buildVideoPipeline({
     encoder: 'libopenh264', decodeMethod: 'none', gpuFilters: null,

@@ -476,7 +476,7 @@ class EncodedStream {
       maxKbps: cap,
       badTonemap: this.badTonemap,
     });
-    if (!audio) { this.pipelineMode = pipe.mode; this.tonemapKind = pipe.tonemap; }
+    if (!audio) { this.pipelineMode = pipe.mode; this.tonemapKind = pipe.tonemap; this.gpuDecode = !!pipe.gpuDecode; }
     const args = ['-hide_banner', '-nostdin', '-v', 'error', ...pipe.pre];
     if (t > 0) args.push('-ss', (audio && exactAudio ? t : Math.max(0, t - 0.0005)).toFixed(audio && exactAudio ? 6 : 4));
     args.push('-noautorotate', '-protocol_whitelist', 'file', '-i', this.file);
@@ -590,7 +590,7 @@ class EncodedStream {
     this.lastSpawnAt = Date.now();
     this.watchVideo(proc);
     const cap = this.activeCapKbps();
-    this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${cap ? `, ${cap} kb/s cap` : ''})`);
+    this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${this.gpuDecode ? ', GPU decode' : ''}${this.hdr && this.tonemapKind ? `, ${this.tonemapKind} tone-mapping` : ''}${cap ? `, ${cap} kb/s cap` : ''})`);
     return true;
   }
 
@@ -665,7 +665,7 @@ class EncodedStream {
           return;
         }
         // Step 1: if full GPU decode->scale->encode failed, drop GPU decode and retry CPU decode -> GPU encode.
-        if (this.pipelineMode === 'gpu-full' && this.decodeMethod !== 'none') {
+        if ((this.pipelineMode === 'gpu-full' || this.gpuDecode) && this.decodeMethod !== 'none') {
           this.log(`live transcode: GPU decode pipeline failed (${why}); retrying with CPU decode -> ${this.videoEncoder}`);
           this.decodeMethod = 'none';
           this.restartVideo();
@@ -1026,7 +1026,8 @@ class EncodedStream {
       && !this.gotOutput && this.aNext === 0 && t === this.base && t === this.vBase;
     if (!interruptedOverlap && !this.resizePending && (startingHere || this.reuseHistory(t))) {
       this.waiting = null;
-      this.post({ type: 'seeked', gen: m.gen, t });
+      const have = !startingHere && this.skipHeld(m.have);
+      this.post({ type: 'seeked', gen: m.gen, t, ...(have ? { have: true } : {}) });
       return;
     }
     const from = this.vAll.length ? this.vAll[0].t : this.base;
@@ -1046,6 +1047,26 @@ class EncodedStream {
     if (this.deferredSince === null) this.deferredSince = now;
     const at = Math.min(Math.max(due, now + SEEK_QUIET_MS), this.deferredSince + SEEK_MAX_DEFER_MS);
     this.startTimer = setTimeout(() => { this.startTimer = null; if (!this.disposed && !this.proc) this.spawnNow(); }, Math.max(0, at - now));
+  }
+
+  /**
+   * After reuseHistory: the page offered the packets it holds of this GOP ({ keyT, lastT }, media/engine.js
+   * packetsHeld). They are the ones this history sent it (same encode: the page drops packets of another stream
+   * configuration), so the reply starts after them and the link does not carry the GOP again. True when skipped;
+   * false (send from the keyframe as usual) unless the history's GOP is that one and holds every packet up to lastT.
+   */
+  skipHeld(have) {
+    if (!have || !Number.isFinite(have.keyT) || !Number.isFinite(have.lastT)) return false;
+    const eps = 1e-4;
+    const k = this.vNext;
+    const first = this.vAll[k];
+    if (!first || !first.key || Math.abs(first.t - have.keyT) > eps) return false;
+    let j = k + 1;
+    while (j < this.vAll.length && !this.vAll[j].key && this.vAll[j].t <= have.lastT + eps) j++;
+    if (Math.abs(this.vAll[j - 1].t - have.lastT) > eps) return false;
+    this.vNext = j;
+    this.log(`remote stream: the page holds ${j - k} packets (${have.keyT.toFixed(3)}-${have.lastT.toFixed(3)} s); sending from the next`);
+    return true;
   }
 
   /** A seek served from the packets held: no ffmpeg restart. */

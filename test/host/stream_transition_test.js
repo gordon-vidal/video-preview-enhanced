@@ -448,3 +448,24 @@ for (const trigger of ['seek timer', 'video close']) {
 }
 
 console.log('stream transition tests passed');
+
+// ---- skipHeld: a seek while playing whose GOP the page already holds (media/engine.js packetsHeld) ----
+{
+  const fps = 25;
+  // Two GOPs in the history: keyframes at 0 and 2 s, 50 frames each.
+  const vAll = Array.from({ length: 100 }, (_, i) => ({ t: i / fps, key: i % 50 === 0, data: Buffer.alloc(10) }));
+  const held = (vNext, have) => {
+    const s = { vAll, vNext, log: () => {} };
+    return { ok: EncodedStream.prototype.skipHeld.call(s, have), vNext: s.vNext };
+  };
+  // The page holds frames 50..71 of the GOP at 2 s: the reply starts at frame 72.
+  assert.deepStrictEqual(held(50, { keyT: 2, lastT: 71 / fps }), { ok: true, vNext: 72 });
+  // The whole GOP: the reply starts at the next keyframe.
+  assert.deepStrictEqual(held(0, { keyT: 0, lastT: 49 / fps }), { ok: true, vNext: 50 });
+  // Another GOP than the history's, nothing offered, or more than the history holds: sent from the keyframe as usual.
+  assert.deepStrictEqual(held(0, { keyT: 2, lastT: 60 / fps }), { ok: false, vNext: 0 });
+  assert.deepStrictEqual(held(50, undefined), { ok: false, vNext: 50 });
+  assert.deepStrictEqual(held(50, { keyT: 2, lastT: 120 / fps }), { ok: false, vNext: 50 });
+  // A lastT between frames (not a packet the history sent): not skipped.
+  assert.deepStrictEqual(held(50, { keyT: 2, lastT: 60.5 / fps }), { ok: false, vNext: 50 });
+}
