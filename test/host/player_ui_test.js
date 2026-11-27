@@ -1667,13 +1667,33 @@ async function phase34() {
   }, { engine: switchEngine });
   const liveEngine = toolEngine();
   liveEngine.pictureInfo = (id) => ({ clipId: id, nativeLossy: false, transcoded: true, streaming: false, video: null });
-  await mountTools({ tiles: ['clip-0'] }, async ({ ui, $ }) => {
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, $ }) => {
     const n = ui.parts.notices;
     n.setDismissals({});
     ui.onHostMessage({ type: 'slowPlayback', variant: 'every' });
     assert.deepStrictEqual([n.isOpen(), $('notice').hidden], [false, true],
       'pictureInfo says Live transcode: the local slow-playback notice stays away');
+    // About offers to leave Live transcode for the original video (the adapter's pictureInfo says `transcoded`).
+    ui.controls.show('info', $('infoBtn'));
+    const original = [...$('panel').querySelectorAll('button')].find((b) => b.textContent === 'Use original video');
+    assert.ok(original, 'About under Live transcode offers "Use original video"');
+    original.click();
+    assert.deepStrictEqual(host.log.filter((m) => m.type === 'originalTile').map((m) => m.clipId), ['clip-0'],
+      'and asks the host to play that clip with the built-in decoder');
   }, { engine: liveEngine });
+  // The page fetches exact frames for the inspector (engine.exactFrames): X keeps Live transcode and offers no
+  // "Use full resolution"; W (scopes, still on the transcoded picture) does.
+  const exactEngine = toolEngine();
+  exactEngine.pictureInfo = liveEngine.pictureInfo;
+  exactEngine.exactFrames = (id, tool) => id === 'clip-0' && tool === 'inspector';
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, key }) => {
+    const n = ui.parts.notices;
+    n.setDismissals({});
+    key('x');
+    assert.strictEqual(n.kind(), null, 'X: exact frames from the host, no reduced-picture offer');
+    key('w');
+    assert.strictEqual(n.kind(), 'reducedRes', 'W: the scopes read the transcoded picture, so the offer shows');
+  }, { engine: exactEngine });
 
   // Inspection: W, X (one video), Shift+I, Shift+X, { }, PageUp / PageDown, a click with the inspector on, ⚙ › Inspection, Esc order.
   await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, tab, key, $, dom }) => {

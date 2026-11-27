@@ -624,8 +624,10 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
         if (had && now && had.height !== now.height) clipLog(c, `${view}: frames ${had.width}x${had.height} -> ${now.width}x${now.height}`);
         resized.push(c.id);
       } else if (kind === 'stream') {
-        if (session.clips.length < 2 && fit && typeof dec.setView === 'function') {
-          dec.setView({ w: size.w, h: size.h });
+        if (session.clips.length < 2) {
+          // One video: its frames follow the picture only with sizeFramesToView; otherwise it keeps the size and
+          // bitrate cap it started with (never Compare's per-tile output and share).
+          if (fit && typeof dec.setView === 'function') dec.setView({ w: size.w, h: size.h });
         } else if (typeof dec.setCompareOutput === 'function') {
           const out = streamOutput(c);
           // A grown picture (zoomed in) is not restarted at once: the page seeks it once ('resize').

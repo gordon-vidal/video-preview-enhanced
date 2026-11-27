@@ -206,11 +206,20 @@ module.exports = [{
       try {
         await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown);
         p.pause();
+        // A large picture first: the hidden window's own picture (786 px wide) already fits 540p frames. Then a
+        // position past the start, so each seek below goes back (a seek forward within decoded frames, or to the
+        // frame already shown, does not ask the host and so applies no pending size).
+        p.act({ action: 'stageSize', w: 1920, h: 1080 });
+        await p.waitState((s) => !s.playing && s.canvas[1] === 1080, { what: '1080p frames for a 1920x1080 picture' });
+        p.seek(1.5);
+        const big = await p.waitState((s) => !s.playing && s.canvas[1] === 1080 && Math.abs(s.t - 1.5) < 0.1, { what: 'the frame at 1.5 s' });
         const from = vs.mark();
         p.act({ action: 'stageSize', w: 640, h: 360 });
         await vs.waitLog(/remote stream: picture .* -> 960x540 at the next seek/, { from });
-        p.seek(0);
-        const small = await p.waitState((s) => !s.playing && s.canvas[1] === 540);
+        const kept = await p.state();
+        ok(kept.canvas[1] === 1080 && Math.abs(kept.t - big.t) <= 1 / kept.fps, 'shrinking restarted the picture before a seek');
+        p.seek(0.5);
+        const small = await p.waitState((s) => !s.playing && s.canvas[1] === 540 && Math.abs(s.t - 0.5) < 0.1, { what: '540p frames at 0.5 s' });
         p.act({ action: 'stageSize', w: 1920, h: 1080 });
         const large = await p.waitState((s) => !s.playing && s.canvas[1] === 1080);
         ok(Math.abs(large.t - small.t) <= 1 / large.fps, 'enlarging moved the paused playhead');
@@ -219,9 +228,8 @@ module.exports = [{
         await vs.waitLog(/remote stream: picture .* -> 960x540 at the next seek/, { from: shrink });
         const held = await p.state();
         ok(held.canvas[1] === 1080, 'shrinking restarted the picture before a seek');
-        // Forward within decoded frames does not ask the host to seek; go back to the start.
         p.seek(0);
-        await p.waitState((s) => s.canvas[1] === 540 && s.t < 0.1);
+        await p.waitState((s) => s.canvas[1] === 540 && s.t < 0.1, { what: '540p frames at the start' });
       } finally { await h.closeClip(vs); }
     });
     return out;
