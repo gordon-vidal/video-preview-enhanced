@@ -156,13 +156,17 @@ function drawnFrame(y, w, h) {
  * @param {number[][] | undefined} spans @param {number} from @param {number} to @param {number} gap
  */
 function covers(spans, from, to, gap) {
+  // Runs of spans joined within `gap`; one run must hold all of [from, to] (runs before or after it do not matter).
+  let start = Infinity;
   let reach = -Infinity;
   for (const [a, b] of [...(spans || [])].sort((x, y) => x[0] - y[0])) {
-    if (reach === -Infinity) { if (a > from + 1e-3) return false; reach = b; continue; }
-    if (a > reach + gap) break;
-    reach = Math.max(reach, b);
+    if (a > reach + gap) {
+      if (start <= from + 1e-3 && reach >= to - 1e-3) return true;
+      start = a;
+      reach = b;
+    } else reach = Math.max(reach, b);
   }
-  return reach >= to - 1e-3;
+  return start <= from + 1e-3 && reach >= to - 1e-3;
 }
 
 /**
@@ -520,13 +524,13 @@ module.exports = [{
         await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown);
         p.pause();
         await h.sleep(1500);
-        // Receive 4..10 s with sound: a paused seek there, then play until the page holds the picture and the sound of
-        // that whole range (the places measured below lie in it).
+        // Receive 4..10 s with sound: a paused seek there, then play until the playhead is past 10 s (every place
+        // measured below is behind it, not in the decoded queue ahead) and the page holds that range's picture and sound.
         p.seek(4 + 0.5 / fps);
         await p.waitState((x) => !x.playing && x.frame === 100, { timeout: 30000, interval: 50, what: 'frame 100' });
         p.play();
-        const held = await p.waitState((x) => !!x.packets && covers(x.packets.video, 4, 10, 1.5 / fps) && covers(x.packets.sound, 4, 10, 0.01),
-          { timeout: 30000, interval: 100, what: 'the picture and sound of 4-10 s held by the page' });
+        const held = await p.waitState((x) => x.t >= 10 && !!x.packets && covers(x.packets.video, 4, 10, 1.5 / fps)
+          && covers(x.packets.sound, 4, 10, 0.01), { timeout: 30000, interval: 100, what: 'played past 10 s, 4-10 s held by the page' });
         r.ac = held.ac;
         p.pause();
         await h.sleep(500);
