@@ -82,6 +82,27 @@ still on and the user has not chosen **Keep centered**. The banner (kind `zenLay
 - **Settings** opens `@id:zenMode.centerLayout`. **Keep centered** is stored in `globalState`
   (`hideZenLayoutNotice`) and broadcast like the other "Don't show again" answers. **×** / Esc: this window only.
 
+## Playback stopped before the end
+
+When decoding stops before the end of the file, the controller (`decoderEnded({ stopped: true })` in
+`media/player-ui.js`) pauses the bar on the last picture shown and shows one banner (kind `error`, key
+`decodeStopped`, priority `error`):
+
+> Playback stopped at 0:04: the video could not be played past this point. The file may be damaged or incomplete.
+> **Retry** · ×
+
+- **When.** The built-in decoder's data ends more than max(2 frames, 0.5 s) before the length the file declares (a
+  cut-off recording), or its decoder fails 3 times in a row at one spot (`media/engine.js` `stopped()`). Native ffmpeg
+  that dies mid-file is first restarted from the last picture (`src/native.js`); a second loss at the same spot falls
+  over to another method or the built-in decoder, which then reports as above. An unknown or zero declared length
+  counts as a normal end.
+- **Not an end.** Loop does not start over, Autoplay "Play next in folder" does not move on, an A–B range does not
+  wrap and the bar does not jump to the last frame.
+- **Retry** (tooltip *Try again to play from 0:04*) seeks back to that frame and plays; the banner closes. A file
+  whose data really ends there stops again and says so again. Play on its own also tries again from the picture shown.
+- No Settings or "Don't show again": it reports a failure of this file, not advice. **×** / Esc close it for this tab.
+- Mockup: `node tools/mockup/render.js --scenario notice-decode-stopped --out .tmp/notice.html`.
+
 ## Suppression rules
 
 - **Slow playback never during Live transcode or streaming.** `maybeShowSlowPlayback({ transcoded | streaming })`

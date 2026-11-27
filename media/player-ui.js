@@ -2972,12 +2972,19 @@
     /**
      * The decoder reached its end (natural: it played there; false when it stopped short, e.g. an error). An A-B range
      * wraps to A, Loop starts again, else the page pauses on the last frame and Autoplay "Play next in folder" goes on
-     * (one video, a visible tab, playing forward). Returns what it did: 'ab' | 'loop' | 'end' | 'none'.
-     * @param {{ natural?: boolean }} [o]
+     * (one video, a visible tab, playing forward). Returns what it did: 'ab' | 'loop' | 'end' | 'stopped' | 'none'.
+     * stopped: decoding stopped before the end of the file (the data ends early, or the decoder keeps failing there):
+     * no wrap, Loop or Autoplay; the bar pauses where it is and a notice offers to try again from there.
+     * @param {{ natural?: boolean, stopped?: boolean }} [o]
      */
-    function decoderEnded({ natural = true } = {}) {
+    function decoderEnded({ natural = true, stopped = false } = {}) {
       if (disposed) return 'none';
       const t = tab();
+      if (stopped) {
+        if (t.playing) quietly(() => commit(S.togglePlay(ws)));
+        showStopped(t.frame);
+        return 'stopped';
+      }
       const wrap = ab.wrapTarget(Infinity, true);
       if (wrap !== null) { restartAt(Math.round(wrap * fps())); return 'ab'; }
       if (prefs.onEnd === 'loop') { restartAt(0); return 'loop'; }
@@ -2987,6 +2994,17 @@
         else if (rail && prefs.onEnd === 'next' && !doc.hidden && prefs.rate > 0) rail.go(1, true);
       }
       return 'end';
+    }
+    /** The notice for decoding that stopped at clock frame `f` (docs/notes/notifications.md); Retry plays on from there. */
+    function showStopped(/** @type {number} */ f) {
+      if (!notices) return;
+      const sec = f / fps();
+      const at = W.VpeTime && W.VpeTime.fmtClock ? W.VpeTime.fmtClock(sec, false) : clockFallback(sec);
+      notices.show({
+        kind: 'error', key: 'decodeStopped',
+        text: `Playback stopped at ${at}: the video could not be played past this point. The file may be damaged or incomplete.`,
+        action: { label: 'Retry', run: () => restartAt(f), close: true, title: `Try again to play from ${at}` },
+      });
     }
     const tickMs = env.tickMs === undefined ? 0 : env.tickMs;
     if (tickMs > 0) {
@@ -3141,7 +3159,7 @@
       /** A decoder clock (tickMs: 0) presented this clock frame: the UI follows without telling onTransport. */
       onDecoderFrame: (/** @type {number} */ frame) => decoderFrame(frame),
       /** A decoder clock reached its end: A-B wrap, Loop, or pause and Autoplay next. */
-      onDecoderEnded: (/** @type {{ natural?: boolean }} */ o) => decoderEnded(o),
+      onDecoderEnded: (/** @type {{ natural?: boolean, stopped?: boolean }} */ o) => decoderEnded(o),
       rail,
       controls,
       ctxMenu,

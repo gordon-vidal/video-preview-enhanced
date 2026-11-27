@@ -47,6 +47,11 @@ const SCENARIOS = {
     tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, notice: { clipRefusal: { transcoded: true } },
     label: 'Notice: A–B clip refused (Live transcode)',
   },
+  // The decoder stopped before the end of the file (media/engine.js stopped()), reported as the engine reports it.
+  'notice-decode-stopped': {
+    tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, notice: { decoderStopped: 0.6 },
+    label: 'Notice: playback stopped before the end (damaged or cut-off file)',
+  },
 };
 
 const escapeStyle = (s) => String(s).replace(/<\/style/gi, '<\\/style');
@@ -524,6 +529,12 @@ ${inlinedScripts}
       else if (n.slow) notices.show({ kind: 'slowPlayback', ...globalThis.VpeSlowNotice(n.slow) });
       else if (n.reducedRes) notices.show({ kind: 'reducedRes', ...globalThis.VpeReducedResNotice(n.reducedRes) });
       else if (n.clipRefusal) notices.showClipRefusal(n.clipRefusal);
+      else if (n.decoderStopped) {
+        // Stopped at that share of the clip, as the decoder clock reports it.
+        const t = S.getTab(ui$.getState());
+        ui$.dispatch('seek', Math.round(t.maxFrame * n.decoderStopped));
+        ui$.onDecoderEnded({ natural: false, stopped: true });
+      }
     }
   }
   scenarioSel.onchange = () => loadScenario(scenarioSel.value);

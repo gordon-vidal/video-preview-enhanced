@@ -23,7 +23,7 @@
    * @typedef {import('./unified-contracts').TransportCommand} TransportCommand
    * @typedef {import('./unified-contracts').ClipSpec & { [k: string]: any }} ClipSpec
    * @typedef {{ onFrame: (frame: number) => void, onReady: () => void, onMeta: () => void,
-   *   onEnded: (info?: { natural?: boolean }) => void, post: (m: any) => void, log: (...a: any[]) => void,
+   *   onEnded: (info?: { natural?: boolean, stopped?: boolean }) => void, post: (m: any) => void, log: (...a: any[]) => void,
    *   wake: () => void, showMessage: (msg?: string, hint?: string) => void,
    *   toast: (text: string, ms?: number) => void, getRate: () => number, getLoop: () => boolean,
    *   getMuted: () => boolean, getVolume: () => number, onTracks: (player: any) => void, isClock?: () => boolean }} PlayerHooks
@@ -833,7 +833,10 @@
       // never restarts it from 0 by playing it at its end).
       const ep = players.get(id);
       const at = ep ? frameOf(ep) : NaN;
-      if (Number.isFinite(at) && at > 0) endedAt.set(id, at);
+      // Stopped before its end (media/engine.js stopped(): data ran out early, or the decoder kept failing): not an
+      // end, so a play or Retry there decodes again instead of staying on that picture.
+      const stopped = !!(info && info.stopped);
+      if (Number.isFinite(at) && at > 0 && !stopped) endedAt.set(id, at);
       if (id !== clockIdOf(t)) return;
       const natural = !!(info && info.natural);
       const onEnd = (typeof ui.getPrefs === 'function' && ui.getPrefs().onEnd) || 'off';
@@ -855,7 +858,7 @@
         // a seek that would take the decoder there and lose its end. Loop and A-B restarts are explicit transport
         // seeks (playing: true), which pass.
         fromClock = true;
-        try { ui.onDecoderEnded({ natural }); } finally { fromClock = false; }
+        try { ui.onDecoderEnded(stopped ? { natural: false, stopped: true } : { natural }); } finally { fromClock = false; }
         return;
       }
       // A controller without onDecoderEnded: the bar stops playing (its decoders are paused already).

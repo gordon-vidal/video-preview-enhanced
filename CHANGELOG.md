@@ -5,6 +5,7 @@
 - **Setup guide & AI tool video links:** published the `video-preview-links` skill for `npx skills` (hiding repo-internal skills), added a themed **Show instructions** tab with Copy buttons, and added a **Try it out** button on the last walkthrough step that opens the bundled 1080p sample clip.
 - **Split Wipe fixes:** dragging the split divider right now clears side B's previous pixels cleanly on the left, the divider spans the full picture height instead of collapsing to 0 px, the clipped image stays aligned with the divider on pillarboxed videos, and hovering or clicking side A's top-left pill works again.
 - **Fewer pop-ups:** the one-time "Live transcode is on" and "opened N videos together" VS Code notices are gone; both features work as before.
+- **Playback that stops before the end is no longer treated as the end:** a cut-off or damaged file whose picture stops early, a decoder that keeps failing at one spot, or native ffmpeg that crashes mid-video used to look like the end of the file, so Loop started over, Autoplay moved to the next video, or the picture froze with nothing said. Native ffmpeg now picks up again where it stopped; otherwise the player pauses on the last picture and a notice says *Playback stopped at 0:04: the video could not be played past this point. The file may be damaged or incomplete.* with **Retry** (plays again from there).
 
 ## 0.13.0 (2026-11-27)
 

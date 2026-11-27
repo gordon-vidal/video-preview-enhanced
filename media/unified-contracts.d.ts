@@ -425,8 +425,8 @@ export interface UnifiedControllerApi {
    * clock's clip; the controller knows its clock tile and does not need it.
    */
   onDecoderFrame(frame: number, clipId?: string): void;
-  /** A decoder clock reached its end: A-B wrap, Loop, or pause and Autoplay next. */
-  onDecoderEnded(info?: { natural?: boolean }): void;
+  /** A decoder clock reached its end: A-B wrap, Loop, or pause and Autoplay next; stopped before it: pause and a notice. */
+  onDecoderEnded(info?: { natural?: boolean; stopped?: boolean }): void;
   /** The clock video's decoder learnt its real fps / length. */
   syncClockMeta(): void;
   /**
