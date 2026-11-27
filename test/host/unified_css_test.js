@@ -497,7 +497,7 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
     }
     return out;
   };
-  const ON_PICTURE = /^(video|canvas|:root:fullscreen body|body:fullscreen|body\.maxi|body\.compare #stage|#playFlash|#overlay|#stage:has\(.*\) #overlay:not\(\.error\)|#dropHint|\.ab-pin\b.*|#ab[AB] span|#pxgrid|#subs|#thumb\b.*|#seekRow canvas\.seek-thumb|#stage #scopes canvas|#sheet|\.cell-border|\.cell\.lifted|\.ended-ov|\.oor|\.splitter-bar|#divider\b.*)$/;
+  const ON_PICTURE = /^(video|canvas|:root:fullscreen body|body:fullscreen|body\.maxi|body\.compare #stage|#playFlash|#overlay|#stage:has\(.*\) #overlay:not\(\.error\)|#dropHint|\.ab-pin\b.*|#ab[AB] span|#pxgrid|#subs|#thumb\b.*|#seekRow canvas\.seek-thumb|#stage #scopes canvas|#sheet|\.cell-border|\.cell\.lifted|\.cell\.loading::after|\.ended-ov|\.oor|\.splitter-bar|#divider\b.*)$/;
   const fixed = [];
   for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
     for (const r of rules(css)) {
@@ -519,13 +519,14 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   }
 }
 
-{ // Motion (docs/DESIGN.md): every transition and animation has an off switch under prefers-reduced-motion.
+{ // Motion (docs/DESIGN.md): every transition and animation has a prefers-reduced-motion rule: off, or slower where a
+  // mark standing still would read as broken (the loading ring).
   const RAIL = read('folder-rail.css');
   const missing = [];
   for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
     const all = rules(css);
     const off = new Set(all.filter((r) => /prefers-reduced-motion:\s*reduce/.test(r.at)
-      && /(transition|animation)\s*:\s*none/.test(r.body)).flatMap((r) => r.selectors.map(norm)));
+      && /(transition|animation)\s*:/.test(r.body)).flatMap((r) => r.selectors.map(norm)));
     for (const r of all) {
       if (r.at || !/(^|;)\s*(transition|animation)\s*:\s*(?!none)/.test(r.body)) continue;
       for (const x of r.selectors.map(norm)) if (!off.has(x)) missing.push(`${name}: ${x}`);

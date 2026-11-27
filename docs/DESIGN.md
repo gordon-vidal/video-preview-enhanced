@@ -81,7 +81,7 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
   (`--vpe-panel-fg`; a member does not repaint it). Fixed black and white are allowed only on the picture itself:
   the picture's own black (video, tile canvases, seek thumbnails, scope plots), dimmers over it (drop frame, shortcut
   sheet backdrop, play flash, the ended-clip matte) and marks drawn on it (Compare divider, Spotlight splitter, tile
-  edges, a lifted tile's shadow, A–B pins, pixel grid, subtitles, status text). `unified_css_test.js` holds that list.
+  edges, a lifted tile's shadow, the loading ring, A–B pins, pixel grid, subtitles, status text). `unified_css_test.js` holds that list.
 - A mismatch or warning highlight inside a card uses VS Code's token (`--vscode-editorWarning-foreground`).
 - Warnings and errors are said in words; a notice has no accent colour or icon.
 
@@ -113,8 +113,9 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
 
 ## Motion
 
-- Short and quiet: hover and fade transitions 120–260 ms, ease-out. Every `transition` and `animation` has an off
-  switch under `prefers-reduced-motion: reduce` (`unified_css_test.js` checks it).
+- Short and quiet: hover and fade transitions 120–260 ms, ease-out. Every `transition` and `animation` has a
+  `prefers-reduced-motion: reduce` rule: off, or slower where a mark standing still would read as broken (the
+  loading ring turns slowly). `unified_css_test.js` checks it.
 
 ## Layering (z-index)
 
