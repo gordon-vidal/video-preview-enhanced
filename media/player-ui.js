@@ -2457,6 +2457,23 @@
       void ui;
       return top + pill + nudge;
     }
+    /** The facts overlayHtml() reads, as the Preact overlay's props. */
+    function overlayProps(/** @type {any} */ t, /** @type {any} */ r) {
+      const id = r.clipId;
+      const audio = hasAudio(id);
+      const off = S.formatOffset(S.getOffset(t, id));
+      return {
+        vid: vid(id), letter: r.letter, name: clipName(id), tileCount: t.tiles.length,
+        side: r.role === 'split-a' ? 'L' : r.role === 'split-b' ? 'R' : '',
+        isHero: r.role === 'hero', confirming: t.removeConfirmId === id, statsOn: t.statsOpen.includes(id),
+        hasAudio: audio, heard: audio && t.soundId === id && !prefs.muted, isClock: t.clockId === id,
+        offsetShort: off.short, offsetLong: off.long,
+        icons: {
+          close: ICONS.close, expand: ICONS.expand, collapse: ICONS.collapse, info: ICONS.info,
+          sound: ICONS.sound, muted: ICONS.muted, noAudio: ICONS.noAudio,
+        },
+      };
+    }
     function moveHtml(/** @type {any} */ t, /** @type {string} */ id) {
       const v = vid(id);
       const pos = t.tiles.indexOf(id);
@@ -2611,7 +2628,10 @@
             t.soundId === r.clipId, prefs.muted, t.clockId === r.clipId, JSON.stringify(S.getOffset(t, r.clipId)), t.tiles.indexOf(r.clipId)].join('|');
           if (ovKey !== entry.ovKey) {
             entry.ovKey = ovKey;
-            entry.ov.innerHTML = overlayHtml(t, real, ui);
+            const tileUi = /** @type {any} */ (globalThis).VpeWebviewUi;
+            // The Preact overlay (media/ui/TileOverlay.tsx) once the UI bundle has run; Node's fake-DOM tests build the string.
+            if (tileUi && typeof tileUi.renderTileOverlay === 'function') tileUi.renderTileOverlay(entry.ov, overlayProps(t, real));
+            else entry.ov.innerHTML = overlayHtml(t, real, ui);
             if (entry.move) entry.move.innerHTML = moveHtml(t, r.clipId);
             entry.frEl = entry.ov.querySelector('.fr');
             entry.offEl = entry.ov.querySelector('.offv');

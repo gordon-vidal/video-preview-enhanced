@@ -367,6 +367,46 @@
       list.textContent = '';
       rows = new Map();
       const shown = filterEntries(snap.entries, { q: filter.value, playable });
+      const ui = /** @type {any} */ (globalThis).VpeWebviewUi;
+      // The Preact list (media/ui/FolderRailList.tsx) once the UI bundle has run; Node's fake-DOM tests build the rows here.
+      if (ui && typeof ui.renderFolderRailList === 'function') renderRowsPreact(ui, shown);
+      else renderRowsDom(shown);
+      if (cur && !rows.has(cur)) cur = null;
+      if (cur) setCursor(cur);
+      reportVisible();
+    }
+    /** @param {any} ui @param {any[]} shown */
+    function renderRowsPreact(ui, shown) {
+      ui.renderFolderRailList(list, {
+        empty: snap.error || !shown.length ? (snap.error || (snap.entries.length ? 'No matching files' : snap.gen ? 'Empty folder' : 'Loading…')) : null,
+        rows: shown.map((/** @type {any} */ e) => {
+          const active = e.id === snap.current;
+          const folder = e.kind === 'dir';
+          return {
+            id: e.id, domId: `rail-${e.id.replace('.', '-')}`, name: e.name, isUp: e.kind === 'up', active,
+            inCompare: members.has(e.id), dim: e.kind === 'file',
+            iconHtml: e.kind === 'up' ? ICO.up : folder ? ICO.dir : e.kind === 'video' ? (active ? ICO.playing : ICO.video) : ICO.file,
+            colText: column !== 'none' && e.kind !== 'up' ? colText(e, metas.get(e.id), column) : null,
+            canCompare: (e.kind === 'video' && !active && !compare) || folder, cmpIconHtml: ICO.cmp,
+            compareTitle: folder ? 'Compare all videos in folder' : 'Compare with the playing video',
+            compareLabel: folder ? `Compare all videos in folder ${e.name}` : `Compare with ${e.name}`,
+          };
+        }),
+        onRow: (/** @type {string} */ id) => { setCursor(id); activate(id); },
+        onEnter: (/** @type {string} */ id) => { send({ op: 'hover', gen: snap.gen, id }); showHover(id); },
+        onLeave: () => { send({ op: 'hover', gen: snap.gen, id: null }); hideHover(); },
+        onCompare: (/** @type {string} */ id) => {
+          const e = shown.find((/** @type {any} */ x) => x.id === id);
+          if (e && e.kind === 'dir') send({ op: 'compareFolder', gen: snap.gen, id }); else compareRow(id);
+        },
+      });
+      for (const e of shown) {
+        const row = /** @type {any} */ ([...list.children].find((n) => /** @type {any} */ (n).dataset && /** @type {any} */ (n).dataset.id === e.id));
+        if (row) rows.set(e.id, { row, col: row.querySelector('.r-col'), e });
+      }
+    }
+    /** The same rows built by hand (no UI bundle). @param {any[]} shown */
+    function renderRowsDom(shown) {
       if (snap.error || !shown.length) {
         const empty = doc.createElement('div');
         empty.className = 'r-empty';
@@ -424,9 +464,6 @@
         list.appendChild(row);
         rows.set(e.id, { row, col, e });
       }
-      if (cur && !rows.has(cur)) cur = null;
-      if (cur) setCursor(cur);
-      reportVisible();
     }
     function activate(/** @type {string} */ id) {
       const r = rows.get(id);
