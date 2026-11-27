@@ -187,8 +187,8 @@ test('single-video picture size, speed reset, capture banner and folder capsule'
   assert.equal($('rate').textContent, '1×');
   assert.equal($('rateReset').hidden, true);
   pressed($('startCompareBtn'), false, 'cap-on');
-  // Add mode's prompt is a #notice now (docs/notes/notifications.md).
-  const prompt = () => !$('notice').hidden && $('notice').dataset.kind === 'capture';
+  // Add mode's prompt is the callout at the "Adding videos" button (docs/notes/notifications.md).
+  const prompt = () => !$('capCallout').hidden;
   assert.equal(prompt(), false);
   click('startCompareBtn');
   pressed($('startCompareBtn'), true, 'cap-on');

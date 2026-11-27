@@ -641,7 +641,7 @@ const VpeControls = (() => {
       const t = s.tracks;
       if (!t.subs.length) {
         f.appendChild(el('div', 'ptext', 'This file has no subtitle tracks, and there is no .srt, .vtt or .ass file with the same name next to it.'));
-        f.appendChild(btn('primary', 'Load subtitle file…', () => { close(false); env.act.loadSubs(); }));
+        f.appendChild(btn('primary vpe-btn vpe-btn-main', 'Load subtitle file…', () => { close(false); env.act.loadSubs(); }));
         return f;
       }
       f.appendChild(radios('Subtitles', [{ label: 'Off', checked: t.sel === 'off', pick: () => env.act.selectSub('off') },
@@ -704,7 +704,7 @@ const VpeControls = (() => {
         if (cur !== saved && env.act.saveTranscodeResolution) {
           const name = cur ? `${cur}p` : 'Auto';
           const row = el('div', 'ibtns');
-          row.appendChild(btn('secondary', `Save ${name} as default`, () => { env.act.saveTranscodeResolution(cur); render(); }, {
+          row.appendChild(btn('secondary vpe-btn', `Save ${name} as default`, () => { env.act.saveTranscodeResolution(cur); render(); }, {
             aria: { 'aria-label': `Save ${name} as the default Live transcode resolution for new videos` },
           }));
           const pad = el('div', 'jbox'); // (the panel's side padding)
@@ -761,9 +761,9 @@ const VpeControls = (() => {
       for (const [k, v] of d.rows) grid.append(el('dt', '', k), el('dd', '', v));
       f.appendChild(grid);
       const row = el('div', 'ibtns');
-      row.append(btn('secondary', 'Copy details', () => env.act.copyInfo(d)));
-      if (s.canUseOriginal && env.act.useOriginal) row.append(btn('secondary', 'Use original video', () => { close(false); env.act.useOriginal(); }));
-      if (env.act.copyLink) row.append(btn('secondary', 'Copy link to this frame', () => { close(false); env.act.copyLink(); }, { aria: { 'aria-keyshortcuts': 'Shift+C' } }));
+      row.append(btn('secondary vpe-btn', 'Copy details', () => env.act.copyInfo(d)));
+      if (s.canUseOriginal && env.act.useOriginal) row.append(btn('secondary vpe-btn', 'Use original video', () => { close(false); env.act.useOriginal(); }));
+      if (env.act.copyLink) row.append(btn('secondary vpe-btn', 'Copy link to this frame', () => { close(false); env.act.copyLink(); }, { aria: { 'aria-keyshortcuts': 'Shift+C' } }));
       f.appendChild(row);
       return f;
     }

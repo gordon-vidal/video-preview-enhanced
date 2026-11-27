@@ -102,7 +102,8 @@ assert.match(ladder[4][1], /\.vol-wrap \{ display: none; \}/, 'below 320 px Mute
   assert.match(cap, /id="capPrev"[^>]*aria-label="Previous video in folder" aria-keyshortcuts="Shift\+P"/);
   assert.match(cap, /id="capNext"[^>]*aria-label="Next video in folder" aria-keyshortcuts="Shift\+N"/);
 }
-assert.match(playerStyles, /#notice \{[^}]*background: var\(--vpe-surface-float\)/);
+// The notice takes the theme surface through the one card rule (docs/DESIGN.md), so it follows every theme.
+assert.match(playerStyles, /#notice, #toast[^{]*\{[^}]*background: var\(--vpe-surface-float\)/);
 
 // Dense styling uses the same buttons and focus reveal as the regular tiles.
 const cmpScript = fs.readFileSync(path.join(__dirname, '../../media/player-ui.js'), 'utf8');

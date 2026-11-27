@@ -428,7 +428,7 @@
       if (!btn) {
         btn = doc.createElement('button');
         btn.setAttribute('type', 'button');
-        btn.className = 'overlay-action';
+        btn.className = 'overlay-action vpe-btn vpe-btn-main';
         overlayEl.appendChild(btn);
       }
       if (!wired) {

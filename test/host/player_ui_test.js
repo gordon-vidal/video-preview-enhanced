@@ -1654,40 +1654,60 @@ async function phase34() {
     assert.strictEqual($('notice').hidden, true, 'Esc closes it');
   });
 
-  // Add mode with one video: the prompt is a #notice (docs/notes/notifications.md). Browse folder opens the Folder
-  // Rail, Stop adding ends Add mode, × hides only the prompt until Add mode starts again; it beats the other notices.
-  await mountTools({ tiles: ['clip-0'] }, async ({ ui, tab, key, $ }) => {
+  // Add mode with one video: a callout at the bar's "Adding videos" button (docs/DESIGN.md, Building blocks: the
+  // .vpe-pop card and shared buttons). It shows once when Add mode starts; Browse folder (Folder Rail), Stop adding,
+  // × and a press outside close it; it stays closed until Add mode starts again; Esc still ends Add mode.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, tab, key, $, dom }) => {
     const n = ui.parts.notices;
-    assert.strictEqual($('capBanner'), null, 'no separate capture banner any more');
+    const co = $('capCallout');
+    const shown = () => !co.hidden;
+    assert.ok(co && co.classList.contains('vpe-pop'), 'the callout is a .vpe-pop card');
+    assert.strictEqual(shown(), false);
     key('D', { shiftKey: true });
     assert.strictEqual(tab().capture, true);
-    assert.strictEqual(n.kind(), 'capture', 'Add mode shows its prompt as a notice');
-    assert.match($('noticeText').textContent, /^Adding videos to Compare\. Open a video from the Explorer/);
-    assert.deepStrictEqual([$('noticeAction').textContent, $('noticeHide').textContent, $('noticeSettings').hidden],
-      ['Browse folder', 'Stop adding', true]);
-    $('noticeAction').fire('click');
-    assert.strictEqual(ui.rail.isOpen(), true, 'Browse folder opens the Folder Rail');
-    assert.strictEqual(n.kind(), 'capture', 'and the prompt stays');
-    ui.onHostMessage({ type: 'slowPlayback', variant: 'every' });
-    assert.strictEqual(n.kind(), 'capture', 'a lower notice waits behind the prompt');
-    $('noticeClose').fire('click');
-    assert.strictEqual(tab().capture, true, '× keeps Add mode on');
-    assert.strictEqual(n.kind(), 'slowPlayback', 'the waiting notice shows next');
-    n.hide();
+    assert.strictEqual(shown(), true, 'Add mode shows its callout');
+    assert.notStrictEqual(n.kind(), 'capture', 'not a notice');
+    assert.match(co.textContent, /Adding videos.*Open a video from the Explorer/);
+    const [browse, stop] = co.querySelectorAll('.vpe-btn');
+    assert.deepStrictEqual([browse.textContent, stop.textContent], ['Browse folder', 'Stop adding']);
+    assert.ok(browse.classList.contains('vpe-btn-main') && !stop.classList.contains('vpe-btn-main'), 'one main action');
+    assert.strictEqual(co.getAttribute('role'), 'dialog');
+    browse.fire('click');
+    assert.deepStrictEqual([ui.rail.isOpen(), shown(), tab().capture], [true, false, true],
+      'Browse folder opens the Folder Rail and closes the callout; Add mode stays on');
     ui.render();
-    assert.strictEqual($('notice').hidden, true, 'a hidden prompt stays hidden while Add mode lasts');
+    assert.strictEqual(shown(), false, 'closed stays closed while Add mode lasts');
     key('D', { shiftKey: true });
     key('D', { shiftKey: true });
-    assert.strictEqual(n.kind(), 'capture', 'Add mode again: the prompt is back');
-    $('noticeHide').fire('click');
-    assert.strictEqual(tab().capture, false, 'Stop adding ends Add mode');
-    assert.strictEqual($('notice').hidden, true);
+    assert.strictEqual(shown(), true, 'Add mode again: the callout is back');
+    co.querySelector('.callout-close').fire('click');
+    assert.deepStrictEqual([shown(), tab().capture], [false, true], '× closes only the callout');
     key('D', { shiftKey: true });
-    ui.onHostMessage({ type: 'capture', on: false });
-    assert.strictEqual($('notice').hidden, true, 'Add mode ended elsewhere: the prompt goes');
+    key('D', { shiftKey: true });
+    dom.$('stage').fire('pointerdown', { bubbles: true });
+    assert.deepStrictEqual([shown(), tab().capture], [false, true], 'a press outside closes it');
+    key('D', { shiftKey: true });
+    key('D', { shiftKey: true });
+    co.querySelectorAll('.vpe-btn')[1].fire('click');
+    assert.deepStrictEqual([shown(), tab().capture], [false, false], 'Stop adding ends Add mode');
     key('D', { shiftKey: true });
     key('Escape');
-    assert.deepStrictEqual([tab().capture, $('notice').hidden], [false, true], 'one Esc still ends Add mode (PRODUCT.md)');
+    assert.deepStrictEqual([tab().capture, shown()], [false, false], 'one Esc still ends Add mode (PRODUCT.md)');
+    key('D', { shiftKey: true });
+    ui.onHostMessage({ type: 'capture', on: false });
+    assert.strictEqual(shown(), false, 'Add mode ended elsewhere: the callout goes');
+  });
+
+  // Buttons come from one shared style (docs/DESIGN.md): the notice's, the ⚙ panel's and the error screen's.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, $ }) => {
+    ui.onHostMessage({ type: 'slowPlayback', variant: 'every' });
+    assert.ok($('noticeAction').classList.contains('vpe-btn') && $('noticeAction').classList.contains('vpe-btn-main'));
+    for (const id of ['noticeSettings', 'noticeHide']) {
+      assert.ok($(id).classList.contains('vpe-btn') && !$(id).classList.contains('vpe-btn-main'), `#${id}: a plain shared button`);
+    }
+    ui.onHostMessage({ type: 'error', message: 'Boom', action: { id: 'setupFfmpeg', label: 'Set up ffmpeg' } });
+    const act = $('overlay').querySelector('.overlay-action') || $('action');
+    assert.ok(act.classList.contains('vpe-btn') && act.classList.contains('vpe-btn-main'), 'the error screen action');
   });
 
   // Story C: a toast that repeats the open banner is dropped; Live transcode / streaming keeps the slow hint away.

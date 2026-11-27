@@ -100,17 +100,18 @@ ${earlyJs}${styles}
   <div id="splitter" class="splitter" role="separator" tabindex="0" aria-label="Spotlight split" aria-valuemin="10" aria-valuemax="90" hidden><div class="splitter-bar"></div></div>
   <div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" title="Drag, or ← → (Shift: 10 %), Home / End" hidden><span class="h"></span></div>
   <div id="subs" hidden></div>
-  <div id="overlay"><div id="message">Opening…</div><div id="hint"></div><button id="action" hidden></button></div>
+  <div id="overlay"><div id="message">Opening…</div><div id="hint"></div><button id="action" class="vpe-btn vpe-btn-main" hidden></button></div>
   <div id="dropHint" hidden aria-hidden="true">Drop to compare</div>
   ${playFlashHtml}
   <div id="toast" hidden aria-hidden="true"></div>
   <div id="notice" hidden>
     <span id="noticeText"></span>
-    <button id="noticeAction"></button>
-    <button id="noticeSettings" class="noticeSecondary" hidden></button>
-    <button id="noticeHide" class="noticeSecondary" hidden></button>
-    <button id="noticeClose" title="Dismiss" aria-label="Dismiss">×</button>
+    <button id="noticeAction" class="vpe-btn vpe-btn-main"></button>
+    <button id="noticeSettings" class="vpe-btn noticeSecondary" hidden></button>
+    <button id="noticeHide" class="vpe-btn noticeSecondary" hidden></button>
+    <button id="noticeClose" class="vpe-close" title="Dismiss" aria-label="Dismiss">×</button>
   </div>
+  <div id="capCallout" class="vpe-pop callout" role="dialog" hidden></div>
 </div>
 ${p.folder ? folderRailHtml() : ''}
 </div>

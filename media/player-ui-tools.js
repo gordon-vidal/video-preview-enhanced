@@ -54,16 +54,38 @@
   /** The ids inside #notice (src/unified-html.js); missing ones are created so a bare container also works. */
   const NOTICE_PARTS = [['text', 'noticeText', 'span'], ['action', 'noticeAction', 'button'],
     ['settings', 'noticeSettings', 'button'], ['hide', 'noticeHide', 'button'], ['close', 'noticeClose', 'button']];
+  /** The shared button classes (docs/DESIGN.md, Buttons) of each part; the main action is the filled one. */
+  const NOTICE_PART_CLASS = /** @type {Record<string, string>} */ ({
+    action: 'vpe-btn vpe-btn-main', settings: 'vpe-btn noticeSecondary', hide: 'vpe-btn noticeSecondary', close: 'vpe-close',
+  });
+
+  /**
+   * Wire one button to a NoticeButton: its label, tooltip and click (run, else the host action), closing after it when
+   * asked. Shared by the notice banner and the callout so both behave the same.
+   * @param {any} button @param {NoticeButton | null | undefined} a @param {(id: string) => void} onAction
+   * @param {() => void} close
+   */
+  function bindNoticeButton(button, a, onAction, close) {
+    button.hidden = !a;
+    button.title = (a && a.title) || '';
+    button.onclick = null;
+    if (!a) return;
+    button.textContent = a.label;
+    button.onclick = () => {
+      if (a.run) a.run();
+      else if (a.id) onAction(a.id);
+      if (a.close) close();
+    };
+  }
   /** Pointer events on the banner must not reach the stage (a click there toggles play). */
   const NOTICE_SWALLOW = ['click', 'dblclick', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'wheel'];
   /**
-   * One banner at a time: a notice the user must act on (an error, a refused A-B clip, the Add mode prompt of what
-   * they are doing right now) beats the pixel-accuracy offer,
+   * One banner at a time: a notice the user must act on (an error, a refused A-B clip) beats the pixel-accuracy offer,
    * which beats the decoder's speed advice, which beats plain information. Higher preempts lower (the lower one waits
    * in the queue); lower waits behind higher; equal replaces (the replaced one waits).
    * @type {Readonly<Record<string, number>>}
    */
-  const NOTICE_PRIORITY = Object.freeze({ error: 3, clipRefusal: 3, capture: 3, reducedRes: 2, slowPlayback: 1, info: 0 });
+  const NOTICE_PRIORITY = Object.freeze({ error: 3, clipRefusal: 3, reducedRes: 2, slowPlayback: 1, info: 0 });
   /** @param {Notice | null | undefined} n */
   const priorityOf = (n) => (n && n.kind && NOTICE_PRIORITY[n.kind] !== undefined ? NOTICE_PRIORITY[n.kind] : 0);
   /** @param {Notice} n */
@@ -98,6 +120,7 @@
       if (!el) {
         el = doc.createElement(tag);
         el.id = id;
+        if (NOTICE_PART_CLASS[key]) el.className = NOTICE_PART_CLASS[key];
         if (key === 'close') { el.textContent = '×'; el.title = 'Dismiss'; el.setAttribute('aria-label', 'Dismiss'); }
         noticeEl.appendChild(el);
       }
@@ -204,19 +227,7 @@
       parts.text.textContent = n.text;
       onAnnounce(n.text);
       for (const key of ['action', 'settings', 'hide']) {
-        const button = parts[key];
-        /** @type {NoticeButton | null | undefined} */
-        const a = /** @type {any} */ (n)[key];
-        button.hidden = !a;
-        button.title = (a && a.title) || '';
-        button.onclick = null;
-        if (!a) continue;
-        button.textContent = a.label;
-        button.onclick = () => {
-          if (a.run) a.run();
-          else if (a.id) onAction(a.id);
-          if (a.close) close();
-        };
+        bindNoticeButton(parts[key], /** @type {any} */ (n)[key], onAction, () => close());
       }
       noticeEl.dataset.kind = n.kind || '';
       setOpen(true);
@@ -373,6 +384,85 @@
       if (t === n || (t.length >= 12 && n.includes(t))) return true;
     }
     return false;
+  }
+
+  // ---- 1b. the callout: a short explanation anchored to the control it is about ---------------------------------
+
+  /**
+   * A callout (docs/DESIGN.md, Building blocks): the .vpe-pop card next to a button, with a title, a line of text, the
+   * shared buttons (one main action) and ×. It is not a notice: it explains a mode that started, once, and goes on any
+   * answer, × or a press outside. Placement comes from the caller (the overlay engine's positionAnchored), so this
+   * module stays free of layout code.
+   * @param {object} env
+   * @param {any} env.doc
+   * @param {any} env.el the .vpe-pop element (src/unified-html.js #capCallout)
+   * @param {(id: string) => void} [env.onAction] host actions for buttons that have an id instead of run
+   * @param {(el: any) => (() => void) | void} [env.place] position it next to its anchor; returns a stop function
+   * @param {(text: string) => void} [env.onAnnounce]
+   */
+  function createCalloutController(env) {
+    const { doc, el } = env;
+    const onAction = env.onAction || noop;
+    const onAnnounce = env.onAnnounce || noop;
+    /** @type {(() => void) | null} */
+    let unplace = null;
+    /** @type {(() => void) | null} */
+    let onClosed = null;
+    const swallow = (/** @type {any} */ e) => e.stopPropagation();
+    for (const t of NOTICE_SWALLOW) el.addEventListener(t, swallow);
+    const onOutside = (/** @type {any} */ e) => { if (!el.hidden && !el.contains(e.target)) close(); };
+
+    function close() {
+      if (el.hidden) return;
+      el.hidden = true;
+      doc.removeEventListener('pointerdown', onOutside, true);
+      if (unplace) { unplace(); unplace = null; }
+      const done = onClosed;
+      onClosed = null;
+      if (done) done();
+    }
+    /**
+     * @param {{ title: string, text: string, action?: NoticeButton | null, secondary?: NoticeButton | null,
+     *   onClose?: () => void }} c
+     */
+    function show(c) {
+      el.textContent = '';
+      const make = (/** @type {string} */ tag, /** @type {string} */ cls, /** @type {string} */ text) => {
+        const x = doc.createElement(tag);
+        x.className = cls;
+        if (text) x.textContent = text;
+        el.appendChild(x);
+        return x;
+      };
+      const title = make('div', 'callout-title', c.title);
+      title.id = `${el.id || 'callout'}Title`;
+      el.setAttribute('aria-labelledby', title.id);
+      make('div', 'callout-text', c.text);
+      const row = make('div', 'callout-actions', '');
+      for (const [a, cls] of [[c.action, 'vpe-btn vpe-btn-main'], [c.secondary, 'vpe-btn']]) {
+        if (!a) continue;
+        const b = doc.createElement('button');
+        b.type = 'button';
+        b.className = /** @type {string} */ (cls);
+        row.appendChild(b);
+        bindNoticeButton(b, /** @type {NoticeButton} */ (a), onAction, close);
+      }
+      const x = make('button', 'vpe-close callout-close', '×');
+      x.type = 'button';
+      x.title = 'Close';
+      x.setAttribute('aria-label', 'Close');
+      x.onclick = () => close();
+      onClosed = c.onClose || null;
+      el.hidden = false;
+      doc.addEventListener('pointerdown', onOutside, true);
+      if (env.place) unplace = env.place(el) || null;
+      onAnnounce(`${c.title}. ${c.text}`);
+    }
+    return {
+      show, close,
+      isOpen: () => !el.hidden,
+      dispose() { close(); for (const t of NOTICE_SWALLOW) el.removeEventListener(t, swallow); },
+    };
   }
 
   // ---- 2. inspection: scopes, pixel inspector, stats, Codec X-ray ---------------------------------------------------
@@ -1301,7 +1391,7 @@
   const api = {
     SCOPE_MODES, SCOPE_NAMES, INSPECTOR_MODES, STATS_MS, DELAY_STEP_MS, EXPORT_FRAME_TIMEOUT_MS,
     NOTICE_PRIORITY, NOTICE_OPEN_CLASS, LOUPE_PX, GRID_AT,
-    createNoticeController, shouldSuppressToast, createInspectionController, createPixelInspector,
+    createNoticeController, createCalloutController, shouldSuppressToast, createInspectionController, createPixelInspector,
     createSubtitleController, createFrameExportController, fmtStamp, captureAbMark, compareClipRanges,
   };
   // checkJs: end
