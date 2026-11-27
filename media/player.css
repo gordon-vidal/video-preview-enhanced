@@ -518,7 +518,8 @@ body.idle { cursor: none; }
   background: var(--vpe-hover); border-color: var(--vpe-bd-active); color: var(--vscode-foreground);
 }
 #row #remoteLiveBtn.adapting { border-color: var(--vpe-bd-active); }
-#row #rate { font-family: var(--vpe-mono); font-size: 11.5px; font-weight: 500; min-width: 40px; }
+/* One width for every speed (the longest is five characters, "1.25×"), so the bar does not shift while it changes. */
+#row #rate { font-family: var(--vpe-mono); font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums; width: calc(5ch + 14px); min-width: 40px; }
 /* Speed reset badge (src/bar.js speedButton): a bar badge shown whenever the speed is not 1×, so an off-normal
    speed is never missed; a click goes back to 1×. */
 #row button.ratereset { display: grid; place-items: center; }
