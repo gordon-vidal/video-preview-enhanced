@@ -9,7 +9,6 @@ const fs = require('fs');
 const path = require('path');
 const { barHtml, playFlashHtml } = require('../../src/bar');
 const { folderRailHtml } = require('../../src/folder-rail-html');
-const { capBannerHtml } = require('../../src/unified-html');
 
 const ROOT = path.join(__dirname, '..', '..');
 
@@ -81,7 +80,6 @@ function stageMarkupHtml() {
       <div id="overlay" hidden><div id="message"></div><div id="hint"></div><button id="action" type="button" hidden></button></div>
       <div id="dropHint" hidden aria-hidden="true">Drop to compare</div>
       ${playFlashHtml}
-      ${capBannerHtml}
       <div class="splitter h" id="splitter" hidden><div class="splitter-bar"></div></div>
       <div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" hidden><div class="h">⇄</div></div>
       <div id="toast" hidden aria-hidden="true"></div>

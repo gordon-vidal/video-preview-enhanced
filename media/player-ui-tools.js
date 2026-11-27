@@ -57,12 +57,13 @@
   /** Pointer events on the banner must not reach the stage (a click there toggles play). */
   const NOTICE_SWALLOW = ['click', 'dblclick', 'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'wheel'];
   /**
-   * One banner at a time: a notice the user must act on (an error, a refused A-B clip) beats the pixel-accuracy offer,
+   * One banner at a time: a notice the user must act on (an error, a refused A-B clip, the Add mode prompt of what
+   * they are doing right now) beats the pixel-accuracy offer,
    * which beats the decoder's speed advice, which beats plain information. Higher preempts lower (the lower one waits
    * in the queue); lower waits behind higher; equal replaces (the replaced one waits).
    * @type {Readonly<Record<string, number>>}
    */
-  const NOTICE_PRIORITY = Object.freeze({ error: 3, clipRefusal: 3, reducedRes: 2, slowPlayback: 1, info: 0 });
+  const NOTICE_PRIORITY = Object.freeze({ error: 3, clipRefusal: 3, capture: 3, reducedRes: 2, slowPlayback: 1, info: 0 });
   /** @param {Notice | null | undefined} n */
   const priorityOf = (n) => (n && n.kind && NOTICE_PRIORITY[n.kind] !== undefined ? NOTICE_PRIORITY[n.kind] : 0);
   /** @param {Notice} n */

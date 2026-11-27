@@ -178,7 +178,7 @@ test('notice: hide(kind), handleEscape, dispose; missing children are created', 
 
 test('notice priority: lower waits behind higher, higher preempts and restores the lower on close', () => {
   const { $, n, log } = noticeSetup();
-  assert.deepStrictEqual(T.NOTICE_PRIORITY, { error: 3, clipRefusal: 3, reducedRes: 2, slowPlayback: 1, info: 0 });
+  assert.deepStrictEqual(T.NOTICE_PRIORITY, { error: 3, clipRefusal: 3, capture: 3, reducedRes: 2, slowPlayback: 1, info: 0 });
   assert.strictEqual(n.maybeShowReducedRes({ nativeLossy: true }), true);
   const reducedText = $('noticeText').textContent;
   // Lower (slowPlayback) while reducedRes shows: queued, the banner text never changes.

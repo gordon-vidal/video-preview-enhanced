@@ -16,7 +16,7 @@ tested in milliseconds by `test/host/player_ui_tools_test.js`.
 |---|---|---|---|
 | VS Code notification (`showInformationMessage` / `showWarningMessage` / `showErrorMessage`) | extension host (`src/`) | things outside the player tab: ffmpeg setup and downloads, file associations, clip export results, offers | anything about the picture now playing in a tab (the user is looking at the tab, not the corner) |
 | `#notice` banner | `createNoticeController` | a lasting state of this tab the user may want to change: reduced picture, slow playback, refused A-B clip, errors with an action | one-off confirmations; status the bar already shows |
-| `#toast` pill | the page's `toast()` | a short confirmation of what the user just did (key, menu, click): "Frame copied", "Volume 80%", "Live transcode: auto" | anything that needs an action or must survive a glance away |
+| `#toast` card | the page's `toast()` | a short confirmation of what the user just did (key, menu, click): "Frame copied", "Volume 80%", "Live transcode: auto" | anything that needs an action or must survive a glance away |
 | Bar `Live` chip | `media/controls.js` | Live transcode / streaming state, resolution and rate | (it is the owner: toasts and notices do not repeat it) |
 
 ## Banner layout
@@ -36,9 +36,24 @@ Every banner has a mockup scenario built by its production helper: `notice` (Zen
 `notice-reduced-res`, `notice-slow`, `notice-ffmpeg` and `notice-clip-refusal`, e.g.
 `node tools/mockup/render.js --scenario notice-slow --out .tmp/notice.html`.
 
+## Add mode prompt and toast
+
+![Add mode's prompt as a notice, a toast under it](img/add-mode-notice.png)
+
+- **Add mode's prompt is a notice** (kind `capture`, `syncCapturePrompt` in `media/player-ui.js`), shown while Add
+  mode is on with one video (`deriveUi().showCaptureBanner`): *Adding videos to Compare. Open a video from the Explorer,
+  or browse this folder to pick one.* **Browse folder** opens the Folder Rail (no rail: **Choose video…**, the host's
+  picker); **Stop adding** ends Add mode; **×** hides only the prompt until Add mode starts again (the bar's
+  **Adding videos** button still shows the mode). **Esc** skips the prompt and ends Add mode in one press, as before
+  (`docs/PRODUCT.md`, Add Mode). It replaces the separate `#capBanner` pill.
+- **The toast is the notice card without buttons**: the same surface, border, corners, shadow and 12 px text (no
+  longer a fixed black box with bold white text), so it follows the VS Code theme. It moves below an open notice as
+  before, which also covers the Add mode prompt now.
+
 ## Banner priority queue
 
-`NOTICE_PRIORITY`: `error` = `clipRefusal` (3) > `reducedRes` (2) > `slowPlayback` (1) > `info` (0, also unknown kinds).
+`NOTICE_PRIORITY`: `error` = `clipRefusal` = `capture` (3) > `reducedRes` (2) > `slowPlayback` (1) > `info` (0, also
+unknown kinds). The Add mode prompt ranks with the errors because it is about what the user is doing right now.
 
 - **Higher preempts lower.** The lower notice goes into a pending queue, is *not* dismissed (its "remember the
   dismissal" hook does not run) and shows again when the higher one closes.
