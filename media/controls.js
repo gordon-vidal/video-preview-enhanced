@@ -102,6 +102,8 @@ const VpeControls = (() => {
    * (Shift+wheel and Shift+< / > keep the fine steps of SPEED_STEP).
    */
   const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+  /** The preset chips in the speed popover: the most used speeds, one row (maintainer, 2026-11-27). */
+  const PANEL_SPEEDS = [0.5, 1, 1.5, 2];
   const SPEED_MIN = 0.25, SPEED_MAX = 4, SPEED_STEP = 0.05;
   /**
    * The next preset above (dir 1) or below (dir -1) a speed: a speed between two presets goes to the nearer one in
@@ -514,9 +516,9 @@ const VpeControls = (() => {
     }
 
     /**
-     * The speed page. From the speed button it is a compact popover above the button (maintainer, 2026-11-27): no
-     * title (the button below shows the speed) and no key list (the shortcut sheet has them); from ⚙ it is a page
-     * with a title to go back.
+     * The speed page (maintainer's pick "A2", 2026-11-27): − speed +, the slider (the volume bar's look), one row of
+     * preset chips. From the speed button it is a popover right above the button, without a title; from ⚙ it is a
+     * page with a title to go back. The keys are in the shortcut sheet, not here.
      */
     function renderSpeed(s) {
       const f = document.createDocumentFragment();
@@ -536,31 +538,34 @@ const VpeControls = (() => {
       input.setAttribute('aria-valuetext', speedText(s.rate));
       input.dataset.nav = '1';
       sl.appendChild(input);
-      if (compact) { top.append(minus, sl, plus); f.appendChild(top); } else { top.append(minus, read, plus); f.append(top, sl); }
-      // The presets as chips under the slider (the ladder the wheel walks through); 1× is the way back to normal.
+      top.append(minus, read, plus);
+      f.append(top, sl);
+      // The most used speeds as one row of chips; 1× is the way back to normal.
       const presets = el('div', 'speedPresets');
       presets.setAttribute('role', 'group');
       presets.setAttribute('aria-label', 'Preset speeds');
-      for (const v of SPEEDS) {
+      for (const v of PANEL_SPEEDS) {
         presets.appendChild(btn('chip', speedText(v), () => env.act.pickRate(v), { aria: { 'aria-pressed': String(Math.abs(v - s.rate) < 1e-6), 'aria-label': `Speed ${speedText(v)}` } }));
       }
       f.appendChild(presets);
       // Apply the rate without rebuilding the panel while the slider owns the pointer.
       speedDrag = VpeRangeDrag.bind(input);
+      // Like the volume bar: the wheel over the slider steps it.
+      input.addEventListener('wheel', (e) => {
+        if (!e.deltaY) return;
+        e.preventDefault();
+        env.act.stepRate(e.deltaY < 0 ? 1 : -1);
+        render();
+      }, { passive: false });
       input.addEventListener('input', () => {
         const rate = clampRate(Number(input.value));
         env.act.setRate(rate);
         read.textContent = speedText(rate);
         input.setAttribute('aria-valuetext', read.textContent);
         for (const [i, b] of [...presets.children].entries()) {
-          b.setAttribute('aria-pressed', String(Math.abs(SPEEDS[i] - rate) < 1e-6));
+          b.setAttribute('aria-pressed', String(Math.abs(PANEL_SPEEDS[i] - rate) < 1e-6));
         }
       });
-      if (!compact) {
-        const note = el('div', 'pnote');
-        note.append('Scroll on the speed button for the presets, ', kbd('Shift'), '+scroll for steps of ', `${SPEED_STEP}×.`);
-        f.appendChild(note);
-      }
       return f;
     }
 
@@ -954,7 +959,7 @@ const VpeControls = (() => {
 
   return {
     create, createToast, createPlayFlash, drawRangeMarks, drawRangeButtons, facts, keyGroups, qualityRows, qualityLabel,
-    clampRate, presetRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
+    clampRate, presetRate, speedText, navName, stepTips, SPEEDS, PANEL_SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
     STEP_SIZES, stepName, stepBadge, stepSizeOf, stepAmount, drawStepBadges, holdVolumeOpen, remoteChipState, resolutionChoices,
   };
 })();

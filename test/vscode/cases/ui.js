@@ -314,7 +314,7 @@ module.exports = [{
       await settle(300);
       s = await P.state();
       ok(s.panel && s.panel.view === 'speed' && JSON.stringify(s.panel.slider) === '["0.25","4"]', `speed panel slider ${JSON.stringify(s.panel && s.panel.slider)}`);
-      ok(['0.25×', '0.5×', '0.75×', '1×', '1.25×', '1.5×', '2×', '3×', '4×'].every((l) => s.panel.rows.some((r) => r.label === `Speed ${l}`)), `preset chips: ${JSON.stringify(s.panel.rows.map((r) => r.label))}`);
+      ok(['0.5×', '1×', '1.5×', '2×'].every((l) => s.panel.rows.some((r) => r.label === `Speed ${l}`)), `preset chips: ${JSON.stringify(s.panel.rows.map((r) => r.label))}`);
       await P.ask('click', { sel: '#panel .speedPresets button', text: '2×' });
       await settle(300);
       ok(await rateNow() === 2, 'the 2× preset did not set 2×');

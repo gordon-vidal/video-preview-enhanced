@@ -106,6 +106,7 @@ assert.strictEqual(C.speedText(1.5), '1.5×');
 assert.strictEqual(C.speedText(0.25), '0.25×');
 // The preset ladder the wheel over the speed button walks (Shift+wheel keeps the 0.05 steps).
 assert.deepStrictEqual(C.SPEEDS, [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4]);
+assert.deepStrictEqual(C.PANEL_SPEEDS, [0.5, 1, 1.5, 2]);
 assert.strictEqual(C.presetRate(1, 1), 1.25);
 assert.strictEqual(C.presetRate(1, -1), 0.75);
 assert.strictEqual(C.presetRate(1.1, 1), 1.25, 'between presets: the next one up');

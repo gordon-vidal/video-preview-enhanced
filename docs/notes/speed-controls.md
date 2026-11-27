@@ -19,12 +19,12 @@ from 1× to 2× took 20 notches, and there was no quick way back to 1×. An off-
 - **Reset badge (↺)** above the speed button, in the step-size badge's style. It is visible whenever the
   speed is not 1× (not only on hover), so an off-normal speed is never missed. A click goes back to 1× and
   leaves keyboard focus on the speed button. Name: "Reset speed to 1×"; tooltip names `\`.
-- **Speed panel:** the slider stays. The track labels became a 5 + 4 grid of preset chips (the jump-size chip
-  style) with `aria-pressed` on the current one.
-- **Compact popover** (maintainer, 2026-11-27): a click on the speed button opens a small popover right above it,
-  like the step-size popover: `− slider +` over the preset chips, no title (the button shows the speed) and no key
-  list (the shortcut sheet has them). Focus goes to the slider. ⚙ › Speed keeps the page with a title and a one-line
-  hint. While the popover is open the wheel overlay stays hidden: one view of the speed at a time.
+- **Speed panel** (maintainer's pick "A2" of four sketches, 2026-11-27): `− speed +` on top, the slider in the
+  volume bar's look (and, like it, the wheel over it steps it), then one row of the most used speeds as chips:
+  0.5 · 1 · 1.5 · 2× (`PANEL_SPEEDS`, `aria-pressed` on the current one). A click on the speed button opens it as a
+  popover right above the button without a title; ⚙ › Speed shows it as a page with a title to go back. No key list
+  in the panel: the shortcut sheet has them. Focus goes to the slider. While it is open the wheel overlay stays
+  hidden: one view of the speed at a time.
 - **Wider badges** (maintainer, 2026-11-27): the reset badge spans nearly the speed button's width, and the
   step-size badges on ◀| / |▶ are at least the button's width minus 8 px, so both are easier to hit.
 
