@@ -465,7 +465,7 @@ ${inlinedScripts}
   }
 
   // Motion: an embedded preview inherits the OS setting (Windows "Animation effects" off reports
-  // prefers-reduced-motion: reduce, and the real CSS then holds the loading ring still). The picker rewrites the
+  // prefers-reduced-motion: reduce, and the real CSS then turns the loading ring slowly). The picker rewrites the
   // media lists of those rules so both looks can be reviewed on any machine.
   const motionRules = [];
   for (const sheet of document.styleSheets) {

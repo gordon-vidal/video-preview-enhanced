@@ -28,7 +28,8 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 }
 @keyframes vpeLoadingSpin { to { transform: rotate(360deg); } }
 @keyframes vpeLoadingIn { from { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .cell.loading::after { animation: none; border-top-color: rgba(255, 255, 255, 0.6); } }
+/* Reduced motion: a slow turn, no fade-in. A ring standing still reads as broken (maintainer, 2026-11-27). */
+@media (prefers-reduced-motion: reduce) { .cell.loading::after { animation: vpeLoadingSpin 2.4s linear infinite; } }
 .cell:not(.add):not(.split) { touch-action: none; }
 /* Tiles drag to reorder only in Compare: one video in the unified page (#cells holds a single cell) keeps the player's
    pointer, as media/player.js does. */

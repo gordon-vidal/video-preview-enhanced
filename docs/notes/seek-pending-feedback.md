@@ -20,14 +20,15 @@ lost the code, so a slow click showed nothing at all until the picture changed a
 fades in over 150 ms. No layout shift, no new element in the bar, no focus stop, no colour.
 
 **Accessibility.** The waiting tile gets `aria-busy="true"` (removed when it lands); nothing is announced, so fast
-stepping is not read out frame by frame. Under `prefers-reduced-motion` the ring does not spin (static, dimmer arc)
-and the bar is held at 0.7 opacity instead of breathing. Keys are unchanged.
+stepping is not read out frame by frame. Under `prefers-reduced-motion` the ring turns slowly (2.4 s per turn,
+linear, no fade-in) rather than standing still, which reads as broken; the bar is held at 0.7 opacity instead of
+breathing. Keys are unchanged.
 
 **Mock-up.** `node tools/mockup/render.js --scenario grid-2`: the harness foot has a "Seek" latency picker (instant,
 0.6 s, 2.5 s); with a latency, a paused seek or step keeps each tile's previous picture and shows the spinner until it
 passes, then the new frame draws (the harness calls the controller's `setLoading` like the page does). A "Motion"
 picker (full, reduced, system) shows both looks: an embedded preview inherits the OS setting, and with Windows
-"Animation effects" off it reports reduced motion, so the ring holds still there as it would in VS Code.
+"Animation effects" off it reports reduced motion, so the ring turns slowly there as it would in VS Code.
 
 **Where.** `media/player-ui.js` setLoading / loadingAfter (controller, Node-tested in `test/host/player_ui_test.js`),
 `media/compare.css` `.cell.loading::after`, `media/player.css` `#seekRow.seeking`, `media/player-unified.js`
