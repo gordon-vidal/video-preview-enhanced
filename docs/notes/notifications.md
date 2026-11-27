@@ -32,6 +32,23 @@ tested in milliseconds by `test/host/player_ui_tools_test.js`.
   equals. Entries the user dismissed meanwhile (persisted dismissals) or that no longer apply are dropped.
 - `hide(kind)` withdraws a kind from the banner and the queue; `hide()` clears both.
 
+## Zen Mode layout offer
+
+F in a webview falls back to VS Code Zen Mode, which centers the editor by default (`zenMode.centerLayout: true`), so
+the video does not fill the screen. VS Code has no API to ask whether Zen Mode is on, so the extension never guesses
+and never writes the setting by itself. After a toggle, the host (`toggleZen` in `src/extension.js`,
+`takeZenLayoutOffer` in `src/focus-mode.js`) sends `zenLayoutOffer` at most once per window, only while the setting is
+still on and the user has not chosen **Keep centered**. The banner (kind `zenLayout`, priority `info`):
+
+> Fullscreen uses VS Code's Zen Mode, which shows the video in a centered column. Fill the whole screen instead? This
+> turns off Zen Mode's centered layout for all of VS Code.
+> **Fill the screen (all of VS Code)** · **Settings** · **Keep centered** · ×
+
+- **Fill the screen** writes `zenMode.centerLayout: false` to user settings; VS Code re-lays out Zen Mode live, so the
+  video widens at once, and the setting itself remembers the answer. Every open tab closes the banner.
+- **Settings** opens `@id:zenMode.centerLayout`. **Keep centered** is stored in `globalState`
+  (`hideZenLayoutNotice`) and broadcast like the other "Don't show again" answers. **×** / Esc: this window only.
+
 ## Suppression rules
 
 - **Slow playback never during Live transcode or streaming.** `maybeShowSlowPlayback({ transcoded | streaming })`

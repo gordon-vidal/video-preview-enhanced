@@ -46,8 +46,9 @@ const SETTING_ACTIONS = /** @type {Record<string, string>} */ ({
   transcodeSettings: '@id:videoPreviewEnhanced.transcode',
   whenSlowSettings: '@id:videoPreviewEnhanced.whenSlow',
   fastPreviewSettings: '@id:videoPreviewEnhanced.fastPreviewWhenBehind',
+  zenLayoutSettings: '@id:zenMode.centerLayout',
 });
-const NOTICES = new Set(['hideSlowPlaybackNotice', 'hideReducedResNotice']);
+const NOTICES = new Set(['hideSlowPlaybackNotice', 'hideReducedResNotice', 'hideZenLayoutNotice']);
 
 /**
  * @typedef {import('./unified-session').UnifiedSession} UnifiedSession
@@ -207,7 +208,8 @@ function nativeHeightFor(c, size, perTile) {
  * @param {(file: string) => Promise<number>} [o.deps.rotationOf]
  * @param {(label: string, defaultUri: any, many: boolean) => Promise<any[] | undefined>} [o.deps.pick]
  * @param {(m: any, from: any) => any} [o.deps.setPlaybackPrefs]
- * @param {(what: 'toggle' | 'exited') => any} [o.deps.focusMode]
+ * @param {(what: 'toggle' | 'exited', viewer: any) => any} [o.deps.focusMode]
+ * @param {() => any} [o.deps.zenFullWidth]  "Fill the screen": turns Zen Mode's centered layout off
  * @param {(uri: UriLike, log: (m: string) => void) => Promise<any[]>} [o.deps.findSidecars]  sidecar subtitles
  * @param {(c: ViewerClip | null, viewer: any) => Promise<any[] | undefined>} [o.deps.loadSubtitles]
  *   "Load subtitles…": the picked files as { id, name, data }
@@ -858,6 +860,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   async function onAction(id, m) {
     if (id === 'fullRes') return useFullRes();
     if (id === 'setupFfmpeg') return deps.setupFfmpeg ? deps.setupFfmpeg() : undefined;
+    if (id === 'zenFullWidth') return deps.zenFullWidth ? deps.zenFullWidth() : undefined;
     if (id === 'whenSlow') {
       return (m.value === 'every' || m.value === 'skip') && deps.setSetting ? deps.setSetting('whenSlow', m.value) : undefined;
     }
@@ -1110,7 +1113,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     onTileSize: () => resizeDecoders(),
     onCopyText: (text) => vscode.env.clipboard.writeText(text),
     onOpenSettings: () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:gordon-vidal.video-preview-enhanced'),
-    onFocusMode: (what) => (deps.focusMode ? deps.focusMode(what) : undefined),
+    onFocusMode: (what) => (deps.focusMode ? deps.focusMode(what, viewer) : undefined),
     onPlaybackPrefs: (m) => (deps.setPlaybackPrefs ? deps.setPlaybackPrefs(m, viewer) : undefined),
     onRailMessage,
     onLoadSubs: (c) => loadSubs(/** @type {any} */ (c)),
