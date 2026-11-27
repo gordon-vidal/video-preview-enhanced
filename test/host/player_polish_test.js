@@ -46,6 +46,25 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
     await s.send({ type: 'focusMode' });
     assert.deepEqual(h.vscode.executed, [zen], 'second click toggles Zen Mode again');
     assert.deepEqual(h.vscode._updates, [], 'still never mutates settings');
+    // Zen Mode's centered column: asked once per window (never written without the user's click).
+    const offers = s.posted.filter((message) => message.type === 'zenLayoutOffer');
+    assert.equal(offers.length, centerLayout ? 1 : 0, 'offers full width once, only while Zen Mode centers');
+
+    if (centerLayout) {
+      h.vscode.executed = [];
+      await s.send({ type: 'action', id: 'zenLayoutSettings' });
+      assert.deepEqual(h.vscode.executed, [['workbench.action.openSettings', '@id:zenMode.centerLayout']]);
+      await s.send({ type: 'action', id: 'zenFullWidth' });
+      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', false]], 'Fill the screen turns the centered layout off');
+      assert.ok(s.posted.some((message) => message.type === 'hideZenLayoutNotice'), 'every page closes the offer');
+      // Keep centered: remembered, so a later window does not ask again.
+      await s.send({ type: 'action', id: 'hideZenLayoutNotice' });
+      assert.equal(h.context.globalState.get('videoPreviewEnhanced.hideZenLayoutNotice'), true);
+      const { resetFocusMode } = require('../../src/focus-mode');
+      resetFocusMode(); // a new window
+      await s.send({ type: 'focusMode' });
+      assert.equal(s.posted.filter((message) => message.type === 'zenLayoutOffer').length, 1, 'kept centered: not asked again');
+    }
 
     if (centerLayout) {
       assert.ok(!s.posted.some((message) => message.type === 'hideReducedResNotice'), 'shown until hidden');

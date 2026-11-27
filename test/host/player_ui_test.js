@@ -1630,6 +1630,30 @@ async function phase34() {
     assert.deepStrictEqual([$('notice').hidden, n.getDismissals().slowPlayback], [true, true], 'turned off in Settings: closed and remembered');
   });
 
+  // Zen Mode's centered column: the host asks once whether to fill the screen; every answer is the host's.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, key, $ }) => {
+    const n = ui.parts.notices;
+    ui.onHostMessage({ type: 'zenLayoutOffer' });
+    assert.strictEqual(n.kind(), 'zenLayout');
+    assert.match($('noticeText').textContent, /Zen Mode.*centered.*Fill the whole screen.*all of VS Code/);
+    assert.deepStrictEqual([$('noticeAction').textContent, $('noticeSettings').textContent, $('noticeHide').textContent],
+      ['Fill the screen (all of VS Code)', 'Settings', 'Keep centered']);
+    $('noticeAction').fire('click');
+    assert.deepStrictEqual(host.log.filter((m) => m.type === 'action').pop(), { type: 'action', id: 'zenFullWidth' });
+    assert.strictEqual($('notice').hidden, true, 'the click closes it');
+    ui.onHostMessage({ type: 'zenLayoutOffer' });
+    $('noticeSettings').fire('click');
+    assert.deepStrictEqual(host.log.filter((m) => m.type === 'action').pop(), { type: 'action', id: 'zenLayoutSettings' });
+    $('noticeHide').fire('click');
+    assert.deepStrictEqual(host.log.filter((m) => m.type === 'action').pop(), { type: 'action', id: 'hideZenLayoutNotice' });
+    ui.onHostMessage({ type: 'zenLayoutOffer' });
+    ui.onHostMessage({ type: 'hideZenLayoutNotice' });
+    assert.strictEqual($('notice').hidden, true, 'answered in another tab: closed here too');
+    ui.onHostMessage({ type: 'zenLayoutOffer' });
+    key('Escape');
+    assert.strictEqual($('notice').hidden, true, 'Esc closes it');
+  });
+
   // Story C: a toast that repeats the open banner is dropped; Live transcode / streaming keeps the slow hint away.
   await mountTools({ tiles: ['clip-0'] }, async ({ ui, $ }) => {
     const n = ui.parts.notices;

@@ -25,7 +25,9 @@
 //                        { type: 'setVisible', visible, active? }  the webview panel shown / hidden (auto-pause)
 //                        { type: 'subs', tracks, select? }      subtitle tracks (VpePlayerUiTools)
 //                        { type: 'abQuery' | 'exportGrab' | 'exportEnd', ... }  the A–B export protocol
-//                        { type: 'hideReducedResNotice' | 'hideSlowPlaybackNotice' }  a notice turned off in Settings
+//                        { type: 'hideReducedResNotice' | 'hideSlowPlaybackNotice' | 'hideZenLayoutNotice' }  a notice
+//                          turned off (Settings, "Don't show again", or Zen full width chosen in any tab)
+//                        { type: 'zenLayoutOffer' }  F fell back to Zen Mode, which centers: offer full width (#notice)
 //                        { type: 'slowPlayback', variant, offerSetup?, mb? }  the decoder plays slowly (#notice)
 //                        { type: 'playbackPrefs', prefs } | { type: 'prefs', prefs }  shared prefs / live settings
 //                        { type: 'goto', mode?, frame?, t? }    a frame link opened on this tab
@@ -2956,6 +2958,22 @@
         return;
       }
       if (msg.type === 'focusMode') { if (zen) zen.setActive(!!msg.active); return; }
+      // F fell back to Zen Mode, which centers the video: the host asks once per window (docs/keys.md).
+      if (msg.type === 'zenLayoutOffer') {
+        if (notices) {
+          notices.show({
+            kind: 'zenLayout',
+            text: 'Fullscreen uses VS Code\'s Zen Mode, which shows the video in a centered column. Fill the whole '
+              + 'screen instead? This turns off Zen Mode\'s centered layout for all of VS Code.',
+            action: { label: 'Fill the screen (all of VS Code)', id: 'zenFullWidth', close: true,
+              title: 'Sets zenMode.centerLayout to false in your user settings' },
+            settings: { label: 'Settings', id: 'zenLayoutSettings', title: 'Open the Zen Mode: Center Layout setting' },
+            hide: { label: 'Keep centered', id: 'hideZenLayoutNotice', close: true, title: 'Keep the centered column and stop asking' },
+          });
+        }
+        return;
+      }
+      if (msg.type === 'hideZenLayoutNotice') { if (notices) notices.hide('zenLayout'); return; }
       if (msg.type === 'setVisible') { if (vis) vis.setVisible(msg.visible !== false, msg.active !== false); return; }
       // A notice turned off in Settings: remembered, and closed if it shows (media/player.js).
       if (msg.type === 'hideReducedResNotice' || msg.type === 'hideSlowPlaybackNotice') {

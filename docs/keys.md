@@ -23,7 +23,7 @@ them all, with the jump sizes you chose. In the player and Compare, you can also
 | A / B | Set the start / end of the A–B range for looping and export (press again to clear) |
 | Backspace | Clear the A–B range |
 | T | Copy the current timestamp |
-| F | Fullscreen (falls back to VS Code Zen Mode in desktop webviews; set `"zenMode.centerLayout": false` in VS Code Settings for full-width Zen Mode) |
+| F | Fullscreen (VS Code Zen Mode in desktop webviews). Zen Mode shows the video in a centered column by default: the first time, a notice offers **Fill the screen (all of VS Code)**, which sets `"zenMode.centerLayout": false` in your user settings, or **Keep centered**, which stops asking |
 | Shift+N / Shift+P | Next / previous video in the folder (also the bar's `‹ 2/5 ›` capsule, or a right-click on ◀\| / \|▶) |
 | Shift+D | Wait for the next video you open from the Explorer. It opens Compare in the player's tab with Add Mode on if there is room. Esc (in the player or in VS Code) cancels the wait. ⚙ › Tools › Compare does the same |
 | S / Ctrl+C | Save the frame as PNG / copy it |

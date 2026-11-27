@@ -9,6 +9,19 @@
 const DEFAULT_SETTLE_MS = 450;
 
 let toggling = false;
+/** The "fill the screen?" offer shows at most once per window (the × answers for this window only). */
+let offered = false;
+
+/**
+ * Whether to offer full width after a Zen toggle: only while Zen Mode would center the editor (VS Code's default)
+ * and the user has not chosen "Keep centered". The user's click writes the setting, never this module.
+ * @param {{ centerLayout: any, keepCentered: any }} o
+ */
+function takeZenLayoutOffer({ centerLayout, keepCentered }) {
+  if (offered || centerLayout === false || keepCentered) return false;
+  offered = true;
+  return true;
+}
 
 async function toggleFocusMode(vscode, { settleMs = DEFAULT_SETTLE_MS } = {}) {
   if (toggling) return undefined;
@@ -24,10 +37,12 @@ async function toggleFocusMode(vscode, { settleMs = DEFAULT_SETTLE_MS } = {}) {
 
 function resetFocusMode() {
   toggling = false;
+  offered = false;
 }
 
 module.exports = {
   toggleFocusMode,
   resetFocusMode,
+  takeZenLayoutOffer,
   DEFAULT_SETTLE_MS,
 };
