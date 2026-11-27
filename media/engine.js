@@ -1,4 +1,4 @@
-/* global VpeCodecUtils, VpeDecoderBoot, ThumbService, FrameStream, VpeHdr, VpeBlockCache, VpeGlRenderer */
+/* global VpeCodecUtils, VpeDecoderBoot, ThumbService, FrameStream, VpeHdr, VpeBlockCache, VpeGlRenderer, VpePacketCache */
 // @ts-check
 // Decode-only playback engine for the webview. Demuxing and software decoding
 // run in decoder-worker.js (libav.js / WebAssembly); H.264 and VP8 go to the
@@ -33,11 +33,46 @@ function createEngine(env) {
     };
   };
   const { bootDecoder, preload, takePreload, dropPreload } = VpeDecoderBoot.create(env);
+  // Live transcode, paused: the host fills in this much video behind the shown frame (fillBehind), looked at no more
+  // than every FILL_CHECK_MS (also during a fast wheel scroll back), when less than FILL_AHEAD_S behind it is held.
+  // Steps back then decode on the page.
+  const FILL_SPAN_S = 2;
+  const FILL_AHEAD_S = 1.5;
+  const FILL_CHECK_MS = 250;
+  // Live transcode, paused: once a frame has stayed shown this long, the host sends it visually lossless (requestSharp).
+  // Steps and scrolls faster than this ask for nothing.
+  const SHARP_WAIT_MS = 150;
+  /**
+   * Tests (debug only): the luma of the top-left 320x180 of a sharp frame (test clips move there), at full size, for
+   * test/vscode to compare with the source's frames (which frame it is). BT.709 limited range, as ffmpeg's gray output.
+   */
+  const sharpThumb = (vf, t) => {
+    try {
+      const w = Math.min(320, vf.displayWidth);
+      const h = Math.min(180, vf.displayHeight);
+      const cv = new OffscreenCanvas(w, h);
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      const sx = 0;
+      const sy = 0;
+      cx.drawImage(vf, sx, sy, w, h, 0, 0, w, h);
+      const px = cx.getImageData(0, 0, w, h).data;
+      const y = new Uint8Array(w * h);
+      for (let i = 0; i < y.length; i++) {
+        y[i] = Math.round(16 + (0.2126 * px[i * 4] + 0.7152 * px[i * 4 + 1] + 0.0722 * px[i * 4 + 2]) * 219 / 255);
+      }
+      let bin = '';
+      for (let i = 0; i < y.length; i++) bin += String.fromCharCode(y[i]);
+      return { t, w, h, x: sx, y: sy, size: [vf.displayWidth, vf.displayHeight], luma: btoa(bin) };
+    } catch (e) { return { t, error: String(e && e.message || e) }; }
+  };
   const SPEED_WARMUP_MS = 1500; // decode speed samples (sampleSpeed): ignore the start
   const SPEED_SAMPLE_MS = 3000;
   const FAST_CODECS = new Set(['hevc', 'h264']); // decoders that honour skip_loop_filter (fast preview)
   const SETUP_NOTICE_RATIO = 0.5; // below this decode speed (x real time), prioritize the ffmpeg setup notice
   const onTracks = env.onTracks || (() => {}); // (player) when the track list or a selection changes
+  // Live transcode: whether this video sets the clock (a single video, Compare's clock tile): only it keeps a decoder
+  // running on the host between seeks (src/warm-decoder.js), sent with each seek.
+  const isClock = env.isClock || (() => true);
   // (player, {natural, ran}) once playback paused at the end of the file with loop off (media/autoplay.js decides what next).
   const onEnded = env.onEnded || (() => {});
   // Something arrived or changed outside the page's input events (a worker or host message, a decoder
@@ -227,6 +262,9 @@ function createEngine(env) {
           }
           break;
         case 'configured': mark('configured'); this.onConfigured(m); break;
+        case 'fillBatch': this.onFillBatch(m); break;
+        case 'sharpFrame': this.onSharpFrame(m); break;
+        case 'quickFrame': if (this.remoteStream) this.onQuickFrame(m); break;
         case 'batch':
           if (this.remoteStream) this.receiveRemoteBatch(m);
           else this.onBatch(m);
@@ -238,6 +276,7 @@ function createEngine(env) {
               this.seekTarget = this.pauseT = m.t;
               this.anchor(m.t);
             }
+            if (this.pendingHave) this.takeHeld(m);
             this.requesting = false;
             this.skipping = false;
             this.pump();
@@ -336,6 +375,10 @@ function createEngine(env) {
         this.meta.label = `${s.sourceCodec} ${s.sourcePixFmt} ${s.sourceWidth}×${s.sourceHeight} · streamed from the remote host as H.264, decoded by WebCodecs`;
         this.nativeLossy = !(info.transcode && info.transcode.lossy === false);
         this.remoteStream = true;
+        // The packets received, for paused seeks and steps back without the link (seekFromPackets).
+        if (typeof VpePacketCache !== 'undefined' && !(this.cfg.packetCacheMB === 0)) {
+          this.packetCache = VpePacketCache.create({ cap: (this.cfg.packetCacheMB || 64) * 1e6 });
+        }
         if (this.playing) this.worker.postMessage({ type: 'playback', playing: true });
       }
       log(`streams: ${JSON.stringify({ v: v && { c: v.codec, w: v.width, h: v.height, fmt: v.format }, a: a && { c: a.codec, sr: a.sampleRate, ch: a.channels }, dur: info.duration })} -> video ${video}, audio ${audio}`);
@@ -672,7 +715,11 @@ function createEngine(env) {
             return;
           }
         } else this.remoteFragment = null;
+        // The sound as received goes into the packet cache too (takeHeld: play after a seek served from there).
+        if (this.packetCache) for (const it of m.audio) this.packetCache.addSound(it);
         try {
+          // Sound held by the page goes first (takeHeld): what the host sends follows it.
+          if (this.soundGate) { await this.soundGate; if (this.disposed || m.gen !== this.gen) return; }
           if (m.audio.some((it) => it.kind === 'opus')) m.audio = await this.decodeRemoteAudio(m.audio);
           if (this.disposed || m.gen !== this.gen) return;
           this.remoteVideoEnd = m.eof || m.videoEnd;
@@ -733,8 +780,10 @@ function createEngine(env) {
         const hi = items.reduce((x, it) => (it.t !== null && it.t > x ? it.t : x), -Infinity);
         if (m.eof || hi >= this.now() + 1) this.catchUp = false;
       }
+      const keep = this.packetCache && !m.local ? this.packetCache : null;
       for (const it of m.video) {
         if (it.t !== null && it.t !== undefined && !(it.t <= this.readVT)) this.readVT = it.t;
+        if (keep && it.kind === 'packet') keep.add(m.gen, it);
         if (it.kind === 'packet') {
           if (!this.vdec || this.vdec.state !== 'configured') continue;
           // Read before the worker rewound the picture after a decoder error: it comes again.
@@ -770,7 +819,7 @@ function createEngine(env) {
           this.addFrame({ t, yuv: it, bytes: it.data.byteLength });
         }
       }
-      for (const it of m.audio) {
+      for (let it of m.audio) {
         if (it.aid !== undefined && it.aid !== this.audioId) continue; // a track switched away from
         if (it.kind === 'packet') {
           if (!this.adec || this.adec.state !== 'configured' || it.t === null) continue;
@@ -780,6 +829,12 @@ function createEngine(env) {
             this.aSubmitT = Math.max(this.aSubmitT === undefined ? -Infinity : this.aSubmitT, it.t);
           } catch (e) { log(`audio decode: ${e.message}`); }
         } else if (it.kind === 's16') {
+          // After takeHeld: sound the page already holds may come again from the host; keep only what follows it.
+          if (this.audioKeepUntil !== undefined && it.t < this.audioKeepUntil - 1e-4) {
+            const cut = typeof VpePacketCache !== 'undefined' ? VpePacketCache.trimSound(it, this.audioKeepUntil) : null;
+            if (!cut) continue;
+            it = cut;
+          }
           const samples = new DataView(it.data.buffer, it.data.byteOffset, it.data.byteLength);
           const planes = [new Float32Array(it.data.byteLength / 4), new Float32Array(it.data.byteLength / 4)];
           for (let i = 0; i < planes[0].length; i++) {
@@ -907,6 +962,8 @@ function createEngine(env) {
     }
 
     refreshNativeFrame(recoverTransport = false, rel) {
+      // The host's output changed (a new picture size): the kept packets are of the old one.
+      if (this.packetCache) this.packetCache.clear();
       const start = this.startT || 0;
       const end = this.meta.duration ? start + this.meta.duration - 0.5 / (this.fps || 30) : Infinity;
       const playhead = this.startT === null ? this.pauseT : this.now();
@@ -1009,6 +1066,7 @@ function createEngine(env) {
           this.lastSeekMs = performance.now() - this.seekStartMs; // seek to its frame decoded
           log(`seek landed in ${Math.round(this.lastSeekMs)} ms (gen ${this.gen})`);
         }
+        if (!this.playing) this.scheduleFill();
         // The clock waited for the seek (now()); start it at the target.
         if (this.playing) { this.stopAudio(); this.anchor(this.pauseT); }
       }
@@ -1116,6 +1174,12 @@ function createEngine(env) {
       // Container times are often rounded to the ms: a chunk within 5 ms of the previous one's end continues it exactly.
       const prev = this.audio[this.audio.length - 1];
       if (prev && Math.abs(t - (prev.t + prev.dur)) < 0.005) t = prev.t + prev.dur;
+      // Play's sound is ready once decoded sound covers the play position (notePlayStart), whatever the AudioContext.
+      const ps = this.playStart;
+      if (ps && ps.soundReadyMs === undefined && t <= ps.from + 0.02 && t + planes[0].length / sampleRate > ps.from + 0.02) {
+        ps.soundReadyMs = Math.round(performance.now() - ps.t0);
+        this.notePlayStart();
+      }
       // Tiny chunks (TrueHD: 40 samples, under a millisecond) join the previous one while it is short
       // and not playing yet: a source node per chunk was 1200 nodes a second.
       if (prev && !prev.src && t === prev.t + prev.dur && prev.dur < 0.05 && prev.buf.sampleRate === sampleRate && prev.buf.numberOfChannels === planes.length) {
@@ -1137,6 +1201,7 @@ function createEngine(env) {
 
     pump() {
       if (this.scrubHeldT !== undefined || this.requesting || this.eof || !this.worker || this.vmode === undefined) return;
+      if (this.localGen === this.gen) return; // served from the page's packets (seekFromPackets): no producer to ask
       if (this.vReread === this.gen) return; // the worker is rewinding the picture after a decoder error (onVideoReread reads on)
       const now = this.now();
       // A paused remote stream can fill its decode cache far past the shown frame and evict
@@ -1273,6 +1338,7 @@ function createEngine(env) {
       wake();
       if (h === !!this.hidden || this.vmode === undefined) return;
       this.hidden = h;
+      if (h) { this.cancelFill(); this.cancelSharp(); }
       if (h) this.thumbnailLeave(true);
       if (h && this.ac && !this.playing) this.restAudioLater(0);
       // A live stream (Open Video URL…) can't seek back to where it was: its ffmpeg keeps running.
@@ -1584,7 +1650,32 @@ function createEngine(env) {
         src.onended = () => this.sources.delete(src);
         this.sources.add(src);
         a.src = src;
+        const ps = this.playStart;
+        if (ps && this.playing && ps.soundMs === undefined) {
+          ps.soundMs = Math.round(performance.now() - ps.t0);
+          ps.soundFromS = Math.max(a.t, now) - ps.from; // sound before this was never heard
+          this.notePlayStart();
+        }
       }
+    }
+
+    /** Play got going: the picture moves and (with sound) the sound plays. Logged once, kept for the debug probe. */
+    notePlayStart() {
+      const ps = this.playStart;
+      if (!ps || ps.pictureMs === undefined) return;
+      // Waits for the sound to be ready from the play position; heard (soundMs) only with a running AudioContext.
+      // No sound 3 s after the picture moved (sound that never came): logged without it.
+      if (ps.sound && (ps.soundReadyMs === undefined || (ps.soundMs === undefined && this.ac.state === 'running')) && !ps.late) {
+        if (!ps.timer) ps.timer = setTimeout(() => { if (this.playStart === ps) { ps.late = true; this.notePlayStart(); } }, 3000);
+        return;
+      }
+      clearTimeout(ps.timer);
+      this.playStart = null;
+      this.playStats = { from: ps.from, pictureMs: ps.pictureMs, soundReadyMs: ps.soundReadyMs, soundMs: ps.soundMs, soundFromS: ps.soundFromS };
+      const ready = ps.soundReadyMs !== undefined ? `, sound ready after ${ps.soundReadyMs} ms` : ps.sound ? ', no sound from the start' : '';
+      log(`play from ${this.rel(ps.from).toFixed(3)} s: picture moving after ${ps.pictureMs} ms${ready}`
+        + `${ps.soundMs !== undefined ? `, heard after ${ps.soundMs} ms from ${ps.soundFromS.toFixed(3)} s past the start`
+          : ps.sound ? ` (AudioContext ${this.ac ? this.ac.state : 'none'})` : ''}`);
     }
 
     /** Rates other than 1x: decoded chunks go through one TimeStretch, output plays back to back. */
@@ -1760,6 +1851,13 @@ function createEngine(env) {
         this.shownT = show.t;
         this.shownStale = false;
         this.shownCount = (this.shownCount || 0) + 1;
+        const ps = this.playStart;
+        if (ps && this.playing && ps.pictureMs === undefined && show.t > ps.from + 0.5 / (this.fps || 30)) {
+          ps.pictureMs = Math.round(performance.now() - ps.t0);
+          this.notePlayStart();
+        }
+        // Another picture: a sharp one asked for the last is no longer wanted; paused, this one may become sharp.
+        if (this.remoteStream) { if (this.playing) this.cancelSharp(); else this.scheduleSharp(); }
         // The clock held for this first picture (now()): it runs from here, not from when playback was asked for.
         if (firstPending) { this.stopAudio(); this.anchor(now); }
         if (!this.firstShown) {
@@ -1879,6 +1977,8 @@ function createEngine(env) {
       wake();
       this.seekGoalFrame = null;
       if (this.playing) return;
+      this.cancelFill();
+      this.cancelSharp();
       clearTimeout(this.acTimer);
       if (this.ac && (this.acRest || (this.acUnlocked && this.ac.state === 'suspended'))) this.wakeAudio();
       else if (this.ac && this.ac.state === 'suspended') {
@@ -1891,7 +1991,11 @@ function createEngine(env) {
       }
       this.playing = true;
       if (this.remoteStream) this.worker.postMessage({ type: 'playback', playing: true });
+      // How long play takes to get going (notePlayStart): the picture moving, and the sound.
+      this.playStart = { t0: performance.now(), from: this.shownT ?? this.pauseT, sound: this.amode !== 'none' && !!this.ac };
       this.endSteps();
+      // A read served from the page's packets has no sound and no producer: the host goes on from the shown frame.
+      if (this.localGen === this.gen) { this.seekAbs(this.shownT ?? this.pauseT, true); return; }
       // At the end (loop off): play starts over.
       if (this.eof && !this.queue.length && this.seekTarget === null && this.pauseT >= this.endT() - 1e-6) { this.seekAbs(this.startT || 0, true); return; }
       this.runFromT = this.pauseT; // Autoplay: how far playback ran before reaching the end (ended)
@@ -1974,9 +2078,357 @@ function createEngine(env) {
       if (this.adec) { try { this.adec.close(); } catch { /* closed */ } this.makeAudioDecoder(); }
       this.playing = wasPlaying;
       this.anchor(t);
+      this.cancelSharp(); // the host stops it on the seek too
       log(`seek to ${this.rel(t).toFixed(3)} s (gen ${this.gen})`);
+      if (this.remoteStream && !wasPlaying && !recoverTransport && this.seekFromPackets(t)) return;
+      // Playing (play after a seek served from the packets, or a seek while playing): offer the host what the page
+      // holds of the target's GOP, so it sends only what follows (seeked.have, then onSeeked feeds them).
+      const have = this.remoteStream && wasPlaying && !recoverTransport ? this.packetsHeld(t) : null;
+      // ...and the sound it holds from t on (a second past those packets at most), so play starts with it at once.
+      const sound = have && !this.soundCacheOff && this.amode !== 'none' ? this.packetCache.soundFrom(t, have.lastT + 1) : null;
+      if (have && sound) have.audioUntil = sound.end;
+      this.pendingHave = have ? { gen: this.gen, packets: have.packets, sound: sound ? sound.items : [], audioUntil: sound ? sound.end : undefined } : null;
+      if (this.fill) this.fill = null; // the host stops its fill on a seek
       this.worker.postMessage({ type: 'seek', gen: this.gen, t,
-        ...(this.remoteStream ? { playing: this.playing } : {}), ...(recoverTransport ? { recoverTransport: true } : {}) });
+        ...(have ? { have: { keyT: have.keyT, lastT: have.lastT, ...(have.audioUntil !== undefined ? { audioUntil: have.audioUntil } : {}) } } : {}),
+        ...(this.remoteStream ? { playing: this.playing, warm: this.warmHook !== undefined ? this.warmHook : !!isClock() } : {}),
+        ...(this.remoteStream && this.fastFirstHook !== undefined ? { fastFirst: this.fastFirstHook } : {}),
+        ...(this.remoteStream && this.quickHook !== undefined ? { quick: this.quickHook } : {}),
+        ...(recoverTransport ? { recoverTransport: true } : {}) });
+    }
+
+    /**
+     * Live transcode, paused: a seek into a GOP the page already received decodes from the packets kept here
+     * (media/packet-cache.js) instead of asking the host to send that GOP over the link again. The host is not told:
+     * this read (localGen) has no producer, and play or a target outside the kept packets seeks the host as before.
+     * The packets after the target in its GOP go in too (steps forward from memory), then a flush: a hardware decoder
+     * can hold its last frames until more input comes, and none will.
+     */
+    seekFromPackets(t) {
+      const cache = this.packetCache;
+      if (!cache || this.vmode !== 'webcodecs' || !this.vdec || this.vdec.state !== 'configured') return false;
+      const hit = cache.find(t);
+      if (!hit) return false;
+      const gen = this.gen;
+      const ahead = cache.after(hit.keyT, hit.frameT);
+      this.localGen = gen;
+      this.seekTarget = this.pauseT = hit.frameT; // what the host's 'seeked' would say: the frame at or before t
+      this.anchor(hit.frameT);
+      const packets = hit.packets.concat(ahead).map((p) => ({ kind: 'packet', ...p }));
+      const bytes = packets.reduce((n, p) => n + p.data.byteLength, 0);
+      log(`seek to ${this.rel(hit.frameT).toFixed(3)} s from the page's packets: ${hit.packets.length} to the target + ${ahead.length} after, `
+        + `${(bytes / 1024).toFixed(0)} KiB, keyframe ${this.rel(hit.keyT).toFixed(3)} s, nothing sent over the link`);
+      queueMicrotask(() => {
+        if (this.disposed || this.gen !== gen) return;
+        this.onBatch({ gen, video: packets, audio: [], local: true });
+        const dec = this.vdec;
+        if (dec && dec.state === 'configured') dec.flush().catch(() => {});
+      });
+      return true;
+    }
+
+    /**
+     * Paused, a frame shown: see within FILL_CHECK_MS whether the host should fill in behind it (fillBehind). A check
+     * already due is not pushed back, so a run of steps (a wheel scroll back) keeps the fill ahead of it.
+     */
+    scheduleFill() {
+      if (!this.remoteStream || !this.packetCache || this.fillTimer) return;
+      this.fillTimer = setTimeout(() => { this.fillTimer = 0; this.fillBehind(); }, FILL_CHECK_MS);
+    }
+
+    /**
+     * Live transcode, paused: steps back from a fresh jump need the frames before it, which the page never received
+     * (the host's encode started at the target). Ask the host to encode FILL_SPAN_S behind the packets held here,
+     * ending where they begin, for the packet cache only (nothing is shown or decoded now): the next steps back then
+     * decode on the page (media/packet-cache.js find) instead of a seek each over the link. Pulled a piece at a time
+     * (onFillBatch); a seek or play stops it. Again once the frame is within FILL_AHEAD_S of what is held.
+     */
+    fillBehind() {
+      const cache = this.packetCache;
+      if (this.disposed || !cache || !this.remoteStream || this.playing || this.hidden || this.fill) return;
+      if (this.vmode !== 'webcodecs' || this.seekTarget !== null || this.shownT === null) return;
+      if (this.fillRetryAt && performance.now() < this.fillRetryAt) return;
+      const f = 1 / (this.fps || 30);
+      const start = this.startT || 0;
+      const need = this.shownT - FILL_AHEAD_S;
+      if (need <= start + f / 2 || cache.find(need)) return; // held far enough behind, or the file starts there
+      // Back along the GOPs held without a gap: the fill ends where the first of them begins.
+      let to = this.shownT;
+      for (let i = 0; i < 64; i++) {
+        const h = cache.find(to - 0.5 * f);
+        if (!h || !(h.keyT < to - f / 4)) break;
+        to = h.keyT;
+      }
+      const from = Math.max(start, to - FILL_SPAN_S);
+      if (to - from < f / 2) return;
+      const id = (this.fillSeq = (this.fillSeq || 0) + 1);
+      this.fill = { id, gen: `fill:${id}`, from, to, t0: performance.now(), n: 0 };
+      log(`fill behind the paused frame: ${this.rel(from).toFixed(3)}-${this.rel(to).toFixed(3)} s asked from the host`);
+      this.worker.postMessage({ type: 'fill', id, from, to });
+    }
+
+    /** A piece of the fill (fillBehind): into the packet cache; the next piece is asked while still paused. */
+    onFillBatch(m) {
+      const fl = this.fill;
+      if (!fl || m.id !== fl.id || !this.packetCache) return;
+      for (const p of m.video) this.packetCache.add(fl.gen, p);
+      fl.n += m.video.length;
+      if (!m.done) {
+        if (!this.playing) this.worker.postMessage({ type: 'fillMore', id: fl.id });
+        return;
+      }
+      this.fill = null;
+      if (m.error || !fl.n) {
+        log(`fill behind the paused frame: none (${m.error || 'no frames'})`);
+        this.fillRetryAt = performance.now() + (m.error === 'busy' ? 2000 : 30000);
+        return;
+      }
+      this.packetCache.close(fl.gen, fl.to);
+      log(`fill behind the paused frame: ${fl.n} frames from ${this.rel(fl.from).toFixed(3)} s held in ${Math.round(performance.now() - fl.t0)} ms`);
+      this.scheduleFill();
+    }
+
+    /** Stop a fill in flight (play, hide): the host kills its encode. */
+    cancelFill() {
+      clearTimeout(this.fillTimer);
+      this.fillTimer = 0;
+      if (!this.fill) return;
+      this.fill = null;
+      this.worker.postMessage({ type: 'fillStop' });
+    }
+
+    /**
+     * Live transcode, paused: a frame just drawn (tick). Once it has stayed shown SHARP_WAIT_MS, ask the host for it
+     * visually lossless (requestSharp); every new picture, seek, play or hide before that cancels the wait, so steps and
+     * scrolls ask for nothing until they rest. The frames from the page's packets and decoded memory count the same.
+     */
+    scheduleSharp() {
+      this.cancelSharp();
+      if (!this.sharpWanted()) return;
+      const r = { t: this.shownT, shown: this.shownCount || 0, gen: this.gen };
+      this.sharpTimer = setTimeout(() => { this.sharpTimer = 0; this.requestSharp(r); }, SHARP_WAIT_MS);
+    }
+
+    /** A lossy Live transcode picture (not Direct Stream), paused and visible, decoded by WebCodecs. */
+    sharpWanted() {
+      return !!this.remoteStream && !!this.nativeLossy && !this.sharpOff && !this.playing && !this.hidden && !this.disposed
+        && this.vmode === 'webcodecs' && !!this.vconf && typeof VideoDecoder !== 'undefined';
+    }
+
+    /** Still paused on the frame the sharp one was asked for: nothing else shown, sought or stepped since. */
+    sharpStill(r) {
+      return this.sharpWanted() && this.seekTarget === null && this.gen === r.gen && (this.shownCount || 0) === r.shown
+        && this.shownT === r.t && !this.pendingStep();
+    }
+
+    requestSharp(r) {
+      if (!this.sharpStill(r)) return;
+      r.id = (this.sharpSeq = (this.sharpSeq || 0) + 1);
+      r.t0 = performance.now();
+      r.pieces = [];
+      r.bytes = 0;
+      this.sharp = r;
+      const st = this.sharpStats || (this.sharpStats = { asked: 0, shown: 0, dropped: 0, failed: 0 });
+      st.asked++;
+      this.worker.postMessage({ type: 'sharp', id: r.id, t: r.t });
+    }
+
+    /**
+     * A piece of the sharp frame (requestSharp; src/stream.js sharp). The whole picture decodes in a VideoDecoder of its
+     * own (sharpDecoder): an IDR fed to the main decoder would break the references of the P-frames after it. It is
+     * drawn only while the page is still paused on that frame, and kept nowhere (not the packets, the frames kept for
+     * steps back, nor the queue): the next picture shown replaces it as usual.
+     */
+    onSharpFrame(m) {
+      const r = this.sharp;
+      if (!r || m.id !== r.id) return;
+      const st = this.sharpStats;
+      if (m.error) {
+        this.sharp = null;
+        st.failed++;
+        log(`sharp frame: none (${m.error})`);
+        return;
+      }
+      const receive = () => {
+        if (this.sharp !== r) return;
+        if (!this.sharpStill(r)) { this.cancelSharp(); st.dropped++; return; }
+        r.pieces.push(m.data);
+        r.bytes += m.data.byteLength;
+        if (!m.done) { this.worker.postMessage({ type: 'sharpMore', id: r.id }); return; }
+        const data = new Uint8Array(r.bytes);
+        let at = 0;
+        for (const x of r.pieces) { data.set(x, at); at += x.byteLength; }
+        r.pieces = [];
+        r.arrivedMs = performance.now();
+        const dec = this.sharpDecoder();
+        if (!dec) { this.sharp = null; st.failed++; return; }
+        try {
+          dec.decode(new EncodedVideoChunk({ type: 'key', timestamp: Math.round(r.t * 1e6), data }));
+          this.sideJobs.push('sharp');
+          dec.flush().catch(() => {});
+        } catch (e) {
+          this.sharp = null;
+          st.failed++;
+          log(`sharp frame: decode failed (${e && e.message || e})`);
+        }
+      };
+      // The VS Code test hook paces delivery at its fixed rate, as for the stream's batches (receiveRemoteBatch).
+      if (this.debugRemoteRate > 0) setTimeout(receive, m.data.byteLength * 1000 / this.debugRemoteRate);
+      else receive();
+    }
+
+    /**
+     * The quick first picture of a paused host seek on a slow link (src/stream.js startQuick): the target frame alone at
+     * half the stream's width and height, one IDR, sent before the stream's own frames. It decodes in the sharp frames'
+     * decoder (never the main one: its P-frames' references would break) and is drawn scaled up to the stream's size
+     * only while that seek has shown nothing yet; the seek's own frame (or a sharp frame after it) replaces it as usual.
+     * It is kept nowhere: not the packets, the frames kept for steps back, nor the queue.
+     */
+    onQuickFrame(m) {
+      if (m.gen !== this.gen || !m.data) return;
+      const r = { gen: m.gen, t: m.t, w: m.w, h: m.h, bytes: m.data.byteLength };
+      const st = this.quickStats || (this.quickStats = { got: 0, shown: 0, dropped: 0, failed: 0 });
+      st.got++;
+      const receive = () => {
+        if (!this.quickStill(r)) { st.dropped++; return; }
+        const dec = this.sharpDecoder();
+        if (!dec) { st.failed++; return; }
+        r.arrivedMs = performance.now();
+        this.quick = r;
+        try {
+          dec.decode(new EncodedVideoChunk({ type: 'key', timestamp: Math.round(r.t * 1e6), data: m.data }));
+          this.sideJobs.push('quick');
+          dec.flush().catch(() => {});
+        } catch (e) {
+          this.quick = null;
+          st.failed++;
+          log(`quick picture: decode failed (${e && e.message || e})`);
+        }
+      };
+      // The VS Code test hook paces delivery at its fixed rate, as for the stream's batches (receiveRemoteBatch).
+      if (this.debugRemoteRate > 0) setTimeout(receive, m.data.byteLength * 1000 / this.debugRemoteRate);
+      else receive();
+    }
+
+    /** That seek is still waiting for its first picture (paused, visible, nothing shown or sought since). */
+    quickStill(r) {
+      return !!this.remoteStream && !this.playing && !this.hidden && !this.disposed && this.vmode === 'webcodecs'
+        && this.gen === r.gen && this.seekTarget !== null && !!this.vconf && typeof VideoDecoder !== 'undefined';
+    }
+
+    showQuick(vf) {
+      const r = this.quick;
+      this.quick = null;
+      wake();
+      const st = this.quickStats;
+      if (!r || Math.round(r.t * 1e6) !== vf.timestamp || !this.quickStill(r)) { vf.close(); if (st) st.dropped++; return; }
+      let big = null;
+      try {
+        // Scaled up: the renderer sizes its canvas by the frame's display size, which is the stream's.
+        big = r.w > 0 && r.h > 0 ? new VideoFrame(vf, { displayWidth: r.w, displayHeight: r.h }) : null;
+        this.gl.drawFrame(big || vf);
+      } catch (e) {
+        st.failed++;
+        log(`quick picture: draw failed (${e && e.message || e})`);
+        return;
+      } finally { if (big) big.close(); vf.close(); }
+      const now = performance.now();
+      st.shown++;
+      st.last = {
+        t: r.t, frame: this.frameAt(r.t), bytes: r.bytes, size: [vf.codedWidth, vf.codedHeight],
+        sinceSeekMs: this.seekStartMs !== undefined ? Math.round(now - this.seekStartMs) : null,
+        decodeMs: Math.round(now - r.arrivedMs),
+      };
+      log(`quick picture shown at ${this.rel(r.t).toFixed(3)} s: ${(r.bytes / 1024).toFixed(0)} KiB, `
+        + `${st.last.sinceSeekMs} ms after the seek`);
+    }
+
+    /** The sharp frames' own decoder (onSharpFrame, and the quick picture: onQuickFrame), made once and kept. */
+    sharpDecoder() {
+      const d = this.sharpDec;
+      if (d && d.state === 'configured') return d;
+      this.sideJobs = []; // which picture each output is, in decode order (each is one IDR: no reordering)
+      try {
+        const dec = new VideoDecoder({
+          output: (vf) => { if (this.sideJobs.shift() === 'quick') this.showQuick(vf); else this.showSharp(vf); },
+          error: (e) => { log(`sharp frame decoder: ${e && e.message || e}`); if (this.sharpDec === dec) this.sharpDec = null; },
+        });
+        dec.configure(this.vconf);
+        this.sharpDec = dec;
+        return dec;
+      } catch (e) {
+        log(`sharp frame decoder unavailable: ${e && e.message || e}`);
+        this.sharpOff = true;
+        return null;
+      }
+    }
+
+    showSharp(vf) {
+      const r = this.sharp;
+      wake();
+      if (!r || Math.round(r.t * 1e6) !== vf.timestamp || !this.sharpStill(r)) {
+        vf.close();
+        if (r && this.sharp === r) { this.sharp = null; this.sharpStats.dropped++; }
+        return;
+      }
+      this.sharp = null;
+      try {
+        if (this.cfg.debug || env.debug) this.sharpThumb = sharpThumb(vf, r.t);
+        this.gl.drawFrame(vf);
+      } finally { vf.close(); }
+      const now = performance.now();
+      const st = this.sharpStats;
+      st.shown++;
+      st.last = {
+        t: r.t, frame: this.frameAt(r.t), bytes: r.bytes,
+        ms: Math.round(now - r.t0), linkMs: Math.round(r.arrivedMs - r.t0), decodeMs: Math.round(now - r.arrivedMs),
+        // From the seek that started the paused frame (its first picture is lastSeekMs after it): a seek's whole story.
+        sinceSeekMs: this.seekStartMs !== undefined ? Math.round(now - this.seekStartMs) : null,
+      };
+      log(`sharp frame shown at ${this.rel(r.t).toFixed(3)} s: ${(r.bytes / 1024).toFixed(0)} KiB, ${st.last.ms} ms after asking `
+        + `(${st.last.linkMs} ms to arrive)`);
+    }
+
+    /** Drop a sharp frame waited for or on its way (a new picture, seek, play, hide): the host kills its encode. */
+    cancelSharp() {
+      if (this.sharpTimer) clearTimeout(this.sharpTimer);
+      this.sharpTimer = 0;
+      const r = this.sharp;
+      if (!r) return;
+      this.sharp = null;
+      this.worker.postMessage({ type: 'sharpStop' });
+    }
+
+    /** The kept packets of the GOP holding t, from its keyframe to the last one held (null: none, or not WebCodecs). */
+    packetsHeld(t) {
+      const cache = this.packetCache;
+      if (!cache || this.vmode !== 'webcodecs') return null;
+      const hit = cache.find(t);
+      if (!hit) return null;
+      const packets = hit.packets.concat(cache.after(hit.keyT, hit.frameT));
+      return { keyT: hit.keyT, lastT: packets[packets.length - 1].t, packets: packets.map((p) => ({ kind: 'packet', ...p })) };
+    }
+
+    /** The host's answer to a seek that offered packets (seekAbs): it skipped them, so they decode from here. */
+    takeHeld(m) {
+      const held = this.pendingHave;
+      this.pendingHave = null;
+      if (!held || held.gen !== m.gen || !m.have) return;
+      const bytes = held.packets.reduce((n, p) => n + p.data.byteLength, 0);
+      log(`seek to ${this.rel(m.t).toFixed(3)} s: ${held.packets.length} packets (${(bytes / 1024).toFixed(0)} KiB) from the page`
+        + `${held.sound.length ? ` and sound to ${this.rel(held.audioUntil).toFixed(3)} s` : ''}, the host sends what follows`);
+      // PCM goes in with the picture; Opus decodes first, and the host's next batches wait for it (soundGate). Sound the
+      // host sends again anyway (it did not hold that far) is cut where the page's ends (audioKeepUntil, onBatch).
+      const opus = held.sound.filter((it) => it.kind === 'opus');
+      const keep = () => { if (held.sound.length && this.gen === m.gen) this.audioKeepUntil = held.audioUntil; };
+      this.onBatch({ gen: m.gen, video: held.packets, audio: held.sound.filter((it) => it.kind !== 'opus'), local: true });
+      if (!opus.length) { keep(); return; }
+      const gate = this.decodeRemoteAudio(opus).then((audio) => {
+        if (this.disposed || this.gen !== m.gen) return;
+        this.onBatch({ gen: m.gen, video: [], audio, local: true });
+        keep();
+      }, (e) => log(`held sound decode failed: ${e && e.message || e}`)).finally(() => { if (this.soundGate === gate) this.soundGate = null; });
+      this.soundGate = gate;
     }
 
     /** Real-time catch-up: continue from the first keyframe at or after t, clock untouched. */
@@ -1984,6 +2436,7 @@ function createEngine(env) {
       const end = this.startT !== null && this.meta.duration ? this.startT + this.meta.duration : Infinity;
       if (t > end - 0.5) { this.autoEvery = true; return; } // nothing left to skip to
       this.skipping = true;
+      this.cancelSharp();
       this.gen++;
       this.loopCache = null;
       this.resetRate();
@@ -2023,6 +2476,16 @@ function createEngine(env) {
         this.stopAudio();
         this.anchor(t);
         return;
+      }
+      // Back onto a frame kept for steps back (keepBack: consecutive frames ending just before the shown one): no
+      // seek. The unified viewer steps its decoders with frame seeks (player-unified.js seekTo), not stepFrame, so
+      // without this every paused step back decoded its GOP again (over a remote link: the host sent it again).
+      const back = this.back;
+      if (!force && !this.playing && back && back.length && this.shownT !== null && this.seekTarget === null
+        && t < this.shownT - 1e-4 && t >= back[0].t - 1e-4) {
+        let j = back.length - 1;
+        while (j >= 0 && back[j].t > t + 1e-4) j--;
+        if (j >= 0 && this.stepBack(back.length - j, this.shownT) !== null) return;
       }
       this.seekAbs(t);
     }
@@ -2338,7 +2801,8 @@ function createEngine(env) {
         moved.push(restore);
       }
       for (const x of moved) this.insert(x);
-      if (this.cfg.debug || env.debug) log(`step back from memory to ${this.rel(moved[0].t).toFixed(3)} s (${back.length} more kept)`);
+      log(`step back from memory to ${this.rel(moved[0].t).toFixed(3)} s (${back.length} more kept)`);
+      this.scheduleFill();
       this.pauseT = moved[0].t;
       this.stopAudio();
       this.anchor(this.pauseT);
@@ -2701,6 +3165,10 @@ function createEngine(env) {
 
     dispose() {
       if (this.disposed) return;
+      clearTimeout(this.fillTimer);
+      if (this.sharpTimer) clearTimeout(this.sharpTimer);
+      this.sharp = null;
+      if (this.sharpDec) { try { this.sharpDec.close(); } catch { /* closed */ } this.sharpDec = null; }
       this.disposed = true;
       this.remoteFragment = null;
       this.loopCache = null;

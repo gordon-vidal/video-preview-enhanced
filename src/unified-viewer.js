@@ -502,6 +502,9 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       maxKbps: out ? out.kbps : undefined,
       fitView: !multi && fitTiles(),
       resolution: resolutions.get(c.id), rotation: c.rotation || 0, hidden: panel.visible === false,
+      // A kept-running decoder on the host (src/warm-decoder.js) for a single video; in Compare the page's seeks say
+      // which tile sets the clock (only that one keeps one).
+      warm: !multi,
       post: (/** @type {any} */ msg) => {
         if (!current()) return;
         if (msg && msg.type === 'remoteNotice') toast(String(msg.text || ''), 6000);

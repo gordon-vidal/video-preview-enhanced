@@ -37,7 +37,7 @@ const UNIFIED_CSS = ['player.css', 'compare.css', 'folder-rail.css'];
 /** The page's scripts in load order (each reads globals the ones before it define). */
 const UNIFIED_SCRIPTS = [
   // Decoders and media utilities, each after the globals it reads ...
-  'membudget.js', 'timestretch.js', 'pool.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js',
+  'membudget.js', 'timestretch.js', 'pool.js', 'thumbs.js', 'framestream.js', 'hdr.js', 'block-cache.js', 'packet-cache.js',
   'gl-renderer.js', 'codec-utils.js', 'decoder-boot.js', 'engine.js', 'picture.js', 'inspect.js', 'scopes.js',
   'exactframe.js', 'reduced-res-notice.js', 'slow-notice.js', 'subtitles.js', 'tracks-menu.js', 'xray.js', 'modes.js',
   'range-drag.js', 'controls.js', 'ctxmenu.js', 'timefmt.js', 'abloop.js', 'autoplay.js', 'folder-rail.js',

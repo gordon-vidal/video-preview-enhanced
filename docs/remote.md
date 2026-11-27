@@ -17,6 +17,13 @@ If the Opus sound process fails, Live transcode retries sound in PCM. If the PCM
 
 Live transcode keeps recently played regions in host memory. Jumping back to a cached region can reuse its picture and sound without starting ffmpeg. Playback resumes transcoding as it runs past the cached data. If a Direct Stream seek lands where the video decoder cannot start, Live transcode re-encodes the picture so playback can resume.
 
+A paused jump to a place the host does not hold yet does not start a new ffmpeg either: the host keeps one ffmpeg
+running for the video (in Compare, for the video that sets the clock) and feeds it the source from the jump's keyframe,
+so the jump skips ffmpeg's start-up (opening the file and the GPU), about 0.1-0.3 s per jump on a 4K HEVC source. It
+lands on the same frame as before. It applies to H.264 and HEVC sources with a constant frame rate, encoded with x264
+or NVENC; it stops after 60 s unused, when the video is hidden or reaches its end, and it counts as one of the
+`gpuEncoderSessions` (with none free, jumps start ffmpeg as before). A seek while playing starts ffmpeg as before.
+
 In Auto resolution, a new single-video tab can start at the quality recently used on the same remote connection. That memory expires after ten minutes and clears when the extension host restarts. Remote playback buffers further ahead when memory allows and waits for sustained recovery before raising quality after a drop.
 
 When the link runs out of buffered picture, the playback clock holds near the last frame until picture data

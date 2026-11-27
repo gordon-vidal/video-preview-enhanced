@@ -30,10 +30,111 @@
       soundSource: /** @type {string | null} */ (null), volume: 1, muted: false, thumbnails: 0, thumbHover: false,
       /** @type {Record<string, number>} the frame each clip last showed through showFrame */
       shown: /** @type {Record<string, number>} */ ({}),
+      /**
+       * Simulated seek latency (tools/mockup/render.js): until `until` (performance.now() ms) each clip keeps
+       * drawing the frame it showed before the seek, as a real decoder keeps its last picture until the new one lands.
+       * Call it right after the render that asked for the new frame. @param {string[]} clipIds @param {number} until
+       */
+      hold(clipIds, until) {
+        const t = clock();
+        for (const id of clipIds) {
+          const h = holds.get(id);
+          if (h && t < h.until) { h.until = Math.max(h.until, until); continue; }
+          const d = drawn.get(id);
+          if (!d) continue;
+          // The render just before this call drew the new frame: the one to keep is the one before it.
+          holds.set(id, { frame: t - d.changedAt < 50 ? d.prev : d.cur, until });
+        }
+      },
+      /** The frame a held clip keeps showing, or null when it is not held. @param {string} clipId */
+      held(clipId) {
+        const h = holds.get(clipId);
+        return h && clock() < h.until ? h.frame : null;
+      },
+      /** End every hold now (the next draw shows the frame asked for). */
+      release() { holds.clear(); },
     };
+    const clock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    /** @type {Map<string, { frame: number, until: number }>} clips whose new frame has not "landed" yet */
+    const holds = new Map();
+    /** @type {Map<string, { cur: number, prev: number, changedAt: number }>} the last frames each clip drew */
+    const drawn = new Map();
+    /** The frame to paint for `frame` asked of `clipId`: the held one while a hold lasts. */
+    function heldFrame(/** @type {string} */ clipId, /** @type {number} */ frame) {
+      const h = holds.get(clipId);
+      if (h && clock() < h.until) return h.frame;
+      if (h) holds.delete(clipId);
+      const d = drawn.get(clipId);
+      if (!d) drawn.set(clipId, { cur: frame, prev: frame, changedAt: clock() });
+      else if (d.cur !== frame) { d.prev = d.cur; d.cur = frame; d.changedAt = clock(); }
+      return frame;
+    }
     /** @type {{ clipId: string, seconds: number, cb: any } | null} a scrub preview coalesced to the next microtask */
     let pendingThumb = null;
     let thumbGen = 0;
+
+    /**
+     * Paint frame `frame` of `clip`; the canvas gets the CSS size (opts.width/height, else its own) times `dpr`.
+     * @param {HTMLCanvasElement} canvas @param {any} clip @param {number} frame
+     * @param {{ width?: number, height?: number, splitClipRatio?: number | null }} opts @param {number} dpr
+     */
+    function paintFrame(canvas, clip, frame, opts, dpr) {
+      const cssW = Number(opts.width) > 0 ? Number(opts.width) : (canvas.clientWidth || 320);
+      const cssH = Number(opts.height) > 0 ? Number(opts.height) : (canvas.clientHeight || 180);
+      const w = Math.max(1, Math.round(cssW * dpr));
+      const h = Math.max(1, Math.round(cssH * dpr));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.save();
+      if (typeof opts.splitClipRatio === 'number') {
+        const sx = Math.round(w * opts.splitClipRatio);
+        ctx.clearRect(0, 0, w, h);
+        ctx.beginPath();
+        ctx.rect(sx, 0, w - sx, h);
+        ctx.clip();
+      }
+      const grad = ctx.createLinearGradient(0, 0, w, h);
+      grad.addColorStop(0, clip.bg1);
+      grad.addColorStop(1, clip.bg2);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+
+      const t = frame / (clip.fps || 24);
+      ctx.strokeStyle = clip.accent;
+      ctx.globalAlpha = 0.25;
+      ctx.lineWidth = Math.max(1.5, 2 * dpr);
+      ctx.beginPath();
+      const step = Math.max(8, w / 40);
+      for (let x = 0; x <= w; x += step) {
+        const y = h * 0.52 + Math.sin(x * 0.015 + t * 2.4 + clip.seed * 1.4) * (h * 0.14);
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      const ox = ((frame * 3.2 + clip.seed * 70) % (w + 60)) - 30;
+      const oy = h * 0.52 + Math.sin(ox * 0.015 + t * 2.4 + clip.seed * 1.4) * (h * 0.14);
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = clip.accent;
+      ctx.beginPath();
+      ctx.arc(ox, oy, Math.max(4, Math.min(9, w * 0.018)), 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = 0.78;
+      ctx.fillStyle = '#fff';
+      ctx.font = `600 ${Math.max(11, Math.min(16, Math.round(w * 0.032)))}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(clip.name, w / 2, h / 2 - 8 * dpr);
+      ctx.globalAlpha = 0.52;
+      ctx.font = `${Math.max(9, Math.min(12, Math.round(w * 0.022)))}px ui-monospace, monospace`;
+      ctx.fillText(`${clip.codec}  ·  frame #${frame}`, w / 2, h / 2 + 12 * dpr);
+      ctx.restore();
+    }
 
     const engine = {
       clips,
@@ -64,7 +165,8 @@
         return true;
       },
       /**
-       * Render a deterministic synthetic video frame onto a 2D canvas.
+       * Render a deterministic synthetic video frame onto a 2D canvas. While a simulated seek latency holds the clip
+       * (fake.hold), the frame it showed before stays, as a real decoder keeps its last picture until the new one lands.
        * @param {HTMLCanvasElement} canvas
        * @param {string} clipId
        * @param {number} frame
@@ -73,61 +175,7 @@
       draw(canvas, clipId, frame, opts = {}) {
         const clip = byId.get(clipId) || clips[0];
         const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-        const cssW = Number(opts.width) > 0 ? Number(opts.width) : (canvas.clientWidth || 320);
-        const cssH = Number(opts.height) > 0 ? Number(opts.height) : (canvas.clientHeight || 180);
-        const w = Math.max(1, Math.round(cssW * dpr));
-        const h = Math.max(1, Math.round(cssH * dpr));
-        if (canvas.width !== w || canvas.height !== h) {
-          canvas.width = w;
-          canvas.height = h;
-        }
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.save();
-        if (typeof opts.splitClipRatio === 'number') {
-          const sx = Math.round(w * opts.splitClipRatio);
-          ctx.clearRect(0, 0, w, h);
-          ctx.beginPath();
-          ctx.rect(sx, 0, w - sx, h);
-          ctx.clip();
-        }
-        const grad = ctx.createLinearGradient(0, 0, w, h);
-        grad.addColorStop(0, clip.bg1);
-        grad.addColorStop(1, clip.bg2);
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, w, h);
-
-        const t = frame / (clip.fps || 24);
-        ctx.strokeStyle = clip.accent;
-        ctx.globalAlpha = 0.25;
-        ctx.lineWidth = Math.max(1.5, 2 * dpr);
-        ctx.beginPath();
-        const step = Math.max(8, w / 40);
-        for (let x = 0; x <= w; x += step) {
-          const y = h * 0.52 + Math.sin(x * 0.015 + t * 2.4 + clip.seed * 1.4) * (h * 0.14);
-          if (x === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-
-        const ox = ((frame * 3.2 + clip.seed * 70) % (w + 60)) - 30;
-        const oy = h * 0.52 + Math.sin(ox * 0.015 + t * 2.4 + clip.seed * 1.4) * (h * 0.14);
-        ctx.globalAlpha = 0.85;
-        ctx.fillStyle = clip.accent;
-        ctx.beginPath();
-        ctx.arc(ox, oy, Math.max(4, Math.min(9, w * 0.018)), 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.globalAlpha = 0.78;
-        ctx.fillStyle = '#fff';
-        ctx.font = `600 ${Math.max(11, Math.min(16, Math.round(w * 0.032)))}px system-ui, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(clip.name, w / 2, h / 2 - 8 * dpr);
-        ctx.globalAlpha = 0.52;
-        ctx.font = `${Math.max(9, Math.min(12, Math.round(w * 0.022)))}px ui-monospace, monospace`;
-        ctx.fillText(`${clip.codec}  ·  frame #${frame}`, w / 2, h / 2 + 12 * dpr);
-        ctx.restore();
+        paintFrame(canvas, clip, heldFrame(clip.id, frame), opts, dpr);
       },
 
       // ---- metadata ----
@@ -219,7 +267,13 @@
           const frame = Math.max(0, Math.min(framesOf(c) - 1, Math.round((Number(p.seconds) || 0) * fps)));
           fake.thumbnails++;
           if (typeof p.cb === 'function') p.cb({ clipId: c.id, seconds: frame / fps, frame, ...sizeOf(c) });
-          else if (p.cb && typeof p.cb.getContext === 'function') engine.draw(p.cb, c.id, frame, {});
+          else if (p.cb && typeof p.cb.getContext === 'function') {
+            // Like media/thumbs.js: a picture fitted in 160 x 120 at one canvas pixel per CSS pixel, so the canvas'
+            // own size is its layout size (sizing it from clientWidth x dpr grew it on every hover on HiDPI).
+            const { width, height } = sizeOf(c);
+            const s = Math.min(160 / width, 120 / height);
+            paintFrame(p.cb, c, frame, { width: Math.round(width * s), height: Math.round(height * s) }, 1);
+          }
         };
         if (!scrubbing) { pendingThumb = null; deliver({ clipId, seconds, cb }); return; }
         const first = !pendingThumb;

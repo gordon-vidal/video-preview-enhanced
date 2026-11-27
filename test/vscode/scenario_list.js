@@ -13,7 +13,7 @@ const UNIFIED_SRC = ['src/unified-viewer.js', 'src/unified-session.js', 'src/uni
 const PLAYER = [...UNIFIED_MEDIA, 'media/debug-probe.js', 'media/controls.js', 'media/ctxmenu.js', 'media/range-drag.js', 'media/modes.js', 'media/timefmt.js', 'media/abloop.js', 'media/autoplay.js', 'media/frame-player.js', 'media/player.css', 'src/bar.js'];
 const RAIL = ['media/folder-rail.js', 'media/folder-rail.css', 'src/folder-rail.js', 'src/folder-rail-html.js', ...UNIFIED_SRC];
 const ENGINE_CORE = [
-  'media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/gl-renderer.js',
+  'media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/packet-cache.js', 'media/gl-renderer.js',
 ];
 const ENGINE = [...ENGINE_CORE, 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/framestream.js', 'media/hdr.js'];
 const HOST = ['src/extension.js', ...UNIFIED_SRC, 'src/decide.js', 'src/avi.js', 'src/rotation.js'];
@@ -117,6 +117,12 @@ module.exports = [
     steps: [{ case: 'multiview-transcode' }],
   },
   {
+    name: 'multiview-transcode-packets',
+    journey: 'Compare on Live transcode: a paused seek and steps back into what played come from the packets each tile kept',
+    sources: [...COMPARE, 'media/packet-cache.js', 'src/stream.js', 'src/warm-decoder.js'],
+    steps: [{ case: 'multiview-transcode-packets' }],
+  },
+  {
     name: 'multiview-native',
     journey: 'Play together with native ffmpeg: tile sizes, the frame server and its budget, resizing, the message fallback',
     sources: [...COMPARE, ...NATIVE, 'src/decide.js'],
@@ -195,6 +201,18 @@ module.exports = [
     journey: 'Remote windows: formats the GPU decoder can\'t play are re-encoded to H.264 by ffmpeg; seeks, scrubbing, the quality ladder, pixel tools',
     sources: ['src/remotestream.js', 'src/stream.js', 'src/stream-adapt.js', 'src/stream-buffer.js', 'src/remoteopus.js', 'src/remoteff.js', 'src/ffmpeg.js', 'src/decide.js', ...ENGINE_CORE, ...UNIFIED_MEDIA, 'media/frame-player.js'],
     steps: [{ case: 'remote_stream' }, { case: 'remote_stream_long' }, { case: 'remote_stream_size' }, { case: 'remote_stream_fallback' }],
+  },
+  {
+    name: 'remote-stream-packets',
+    journey: 'Remote windows on a slow link: a paused jump shows a small first picture, then the frame sharp; a paused seek back to a place already seen, and steps back, decode from the packets the page kept; paused jumps to new places come from the host kept-running decoder, frame-exact',
+    sources: ['media/packet-cache.js', 'src/stream.js', 'src/transcode_args.js', 'src/gpu-sessions.js', 'src/warm-decoder.js', ...ENGINE_CORE, 'media/debug-probe.js'],
+    steps: [{ case: 'remote_stream_packets' }],
+  },
+  {
+    name: 'remote-stream-hdr',
+    journey: 'HDR over Live transcode: tone-mapped on the host (NVDEC in front on NVIDIA), a seek and a step land exactly',
+    sources: ['src/stream.js', 'src/warm-decoder.js', 'src/transcode_args.js', ...ENGINE_CORE],
+    steps: [{ case: 'remote_stream_hdr' }],
   },
   {
     name: 'file-icons',

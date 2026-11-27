@@ -99,6 +99,10 @@ const PB = 'videoPreviewEnhanced.playbackPrefs';
   c = t.s.config();
   assert.strictEqual(c.nativeMaxHeight, 720); assert.strictEqual(c.nativeMaxAuto, false);
   assert.strictEqual(c.pictureSize, 'fit'); assert.strictEqual(c.hdrOutput, 'off'); assert.strictEqual(c.transcodeMaxBitrate, 0);
+  assert.strictEqual(c.liveTranscodeCacheMB, 64, 'Live transcode page cache: 64 MB by default');
+  for (const [v, want] of [[0, 0], [256.4, 256], [-5, 0], [99999, 2048], ['x', 64]]) {
+    assert.strictEqual(make({ values: { liveTranscodeCacheMB: v } }).s.config().liveTranscodeCacheMB, want, `cache ${v}`);
+  }
   assert.strictEqual(c.jumps['jump.ctrl'], 30);
   // The default Live transcode resolution: an offered height, else Auto (0); the pages get it with their prefs.
   assert.strictEqual(c.transcodeResolution, 0);

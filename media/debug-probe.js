@@ -470,6 +470,9 @@
             id: m.id,
             toast: ui.toast.hidden ? '' : ui.toast.textContent, toastRect: ui.toast.hidden ? null : rect(ui.toast),
             status: p && p.status ? ((p.status() || {}).text || '') : '',
+            // The loading feedback (media/player-ui.js setLoading): tiles with a spinner, and the seek bar's pulse.
+            loading: doc && doc.querySelectorAll ? doc.querySelectorAll('.cell.loading').length : 0,
+            seekPulse: !!(ui.seek && ui.seek.parentElement && ui.seek.parentElement.classList.contains('seeking')),
             notice: !noticeEl || noticeEl.hidden ? '' : (noticeTextEl ? noticeTextEl.textContent : ''),
             message: overlay.hidden ? '' : message.textContent, hint: overlay.hidden ? '' : hint.textContent,
             action: overlay.hidden || actionBtn.hidden ? '' : actionBtn.textContent, seekDisabled: ui.seek.disabled,
@@ -514,6 +517,11 @@
               audioSeconds: Array.isArray(p.audio) ? p.audio.reduce((/** @type {number} */ x, /** @type {any} */ a) => x + a.dur, 0) : null,
               drift: p.audioMaster && p.audioMaster() && p.shownT !== null ? p.now() - p.shownT : null,
               tracks: p.tracks ? p.tracks() : null,
+              // Live transcode, paused: the last seek's first picture (ms) and the sharp frames (media/engine.js requestSharp).
+              lastSeekMs: p.lastSeekMs !== undefined ? Math.round(p.lastSeekMs) : null,
+              sharp: p.sharpStats ? { ...p.sharpStats, pending: !!p.sharp } : null,
+              quick: p.quickStats ? { ...p.quickStats } : null,
+              play: p.playStats || null,
             });
             if (p.gl && p.gl.gl && p.gl.prog) { try { s.tf = p.gl.gl.getUniform(p.gl.prog, p.gl.uTf); } catch { /* not WebGL */ } }
           }
@@ -666,6 +674,25 @@
       const player = getPlayer();
       if (!player) return;
       if (m.action === 'remoteStreamRate' && player.remoteStream) player.debugRemoteRate = m.bytesPerSecond;
+      // Tests: the page's packet cache for paused seeks (media/packet-cache.js) off (mb 0) or at this size.
+      if (m.action === 'packetCache' && player.remoteStream) {
+        const PC = /** @type {any} */ (globalThis).VpePacketCache;
+        if (m.mb !== undefined) player.packetCache = m.mb > 0 && PC ? PC.create({ cap: m.mb * 1e6 }) : null;
+        // The sound kept with the packets used (play after a seek served from them) or not; it is kept either way.
+        if (m.sound !== undefined) player.soundCacheOff = !m.sound;
+      }
+      // Tests: Live transcode's paused fast first picture (host) and sharp frame (page) on or off, for before/after.
+      if (m.action === 'pausedSharp' && player.remoteStream) {
+        if (m.sharp !== undefined) { player.sharpOff = !m.sharp; if (!m.sharp && player.cancelSharp) player.cancelSharp(); }
+        if (m.fastFirst !== undefined) player.fastFirstHook = !!m.fastFirst; // sent with the next seek (host: on or off)
+        // The quick first picture (src/stream.js startQuick): true for any encoder (instead of x264's small first keyframe),
+        // false never, null as the link and encoder decide.
+        if (m.quick !== undefined) player.quickHook = m.quick;
+      }
+      // Tests: Live transcode's kept-running decoder on the host (src/warm-decoder.js) off or on (with the next seek).
+      if (m.action === 'warmDecoder' && player.remoteStream) player.warmHook = m.on === undefined ? undefined : !!m.on;
+      // Tests: the last sharp frame's centre crop (media/engine.js sharpThumb), to tell which frame it is.
+      if (m.action === 'sharpThumb') log(`sharpThumb ${JSON.stringify({ id: m.id, ...(player.sharpThumb || { error: 'no sharp frame yet' }) })}`);
       // A page with a controller over its decoders (the unified viewer) seeks / plays through it, so its state and
       // every decoder follow; a bare player is told directly.
       if (m.action === 'seek') { if (deps.seek) deps.seek(Number(m.t) || 0); else player.seekTime(m.t); wake(); }

@@ -4,6 +4,7 @@
 // test can drive it (test/host/settings_test.js); src/extension.js wires the real objects.
 
 const { resolveOnEnd, LAYOUTS } = require('./folder-rail');
+const { limitOf: gpuSessionsLimit } = require('./gpu-sessions');
 
 /** The jump sizes the page shows and changes: only the values package.json declares. */
 const JUMPS = ['frame', 1, 5, 10, 30];
@@ -80,6 +81,9 @@ function createSettings({ vscode, getState, log, transcodePolicy, pages }) {
     return gs.update(PLAYBACK_PREFS_KEY, next);
   }
 
+  /** MB from 0 (off) to 2048; 64 for anything that is not a number. @param {unknown} v */
+  const cacheMB = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(2048, Math.max(0, n)) : 64; };
+
   /** The prefs object the pages get: jump sizes, step buttons, picture size, transcode, remembered playback prefs. */
   function prefsOf(/** @type {any} */ c) {
     const v = (/** @type {string} */ k) => (PREFS[k].values.includes(c.jumps[k]) ? c.jumps[k] : PREFS[k].dflt);
@@ -146,6 +150,10 @@ function createSettings({ vscode, getState, log, transcodePolicy, pages }) {
       })(),
       transcodeMaxBitrate: Math.max(0, Number(settingOr(c, 'transcodeMaxBitrate', 0)) || 0),
       transcodeSplitBitrate: settingOr(c, 'transcodeSplitBitrate', true),
+      // The packets a Live transcode page keeps per video for paused seeks and steps back (media/packet-cache.js).
+      liveTranscodeCacheMB: cacheMB(settingOr(c, 'liveTranscodeCacheMB', 64)),
+      // Live transcode encodes at once on this machine's GPU (src/gpu-sessions.js); more go to the CPU encoder.
+      gpuEncoderSessions: Math.min(64, gpuSessionsLimit(settingOr(c, 'gpuEncoderSessions', 8))),
       transcodeResolution: transcodePolicy.resolutionOf(settingOr(c, 'transcodeResolution', 0)),
       hdrOutput: c.get('hdrOutput', 'auto') === 'off' ? 'off' : 'auto',
       pictureSize: ['fit', 'fill', 'stretch', 'actual'].includes(c.get('pictureSize')) ? c.get('pictureSize') : 'fit',

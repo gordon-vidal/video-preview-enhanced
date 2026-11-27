@@ -3001,6 +3001,36 @@
       });
     }
 
+    // ---- waiting for a frame: a seek, step or start that has not shown yet (docs/notes/seek-pending-feedback.md) ----
+    /** When each tile began waiting (setLoading), by clip id. @type {Map<string, number>} */
+    const loadingSince = new Map();
+    /** Tiles whose spinner shows now: their wait passed LOADING_DELAY_MS. @type {Set<string>} */
+    let loadingShown = new Set();
+    const seekRowEl = seekEl && seekEl.parentElement;
+    /**
+     * The decoders of these tiles still work on the frame asked for (media/player-unified.js calls this every animation
+     * frame while any decoder is busy, and once with none when they all settle). The position already moved at the
+     * click; after LOADING_DELAY_MS of waiting the tile shows a spinner over its picture and the seek bar pulses, so a
+     * slow seek (a remote link, a long GOP) never looks like a click that was lost.
+     * @param {string[]} ids @param {number} [now]
+     */
+    function setLoading(ids, now = win.performance ? win.performance.now() : Date.now()) {
+      const want = new Set(ids);
+      for (const id of [...loadingSince.keys()]) if (!want.has(id)) loadingSince.delete(id);
+      for (const id of want) if (!loadingSince.has(id)) loadingSince.set(id, now);
+      const shown = loadingAfter(loadingSince, now, LOADING_DELAY_MS);
+      const same = shown.size === loadingShown.size && [...shown].every((id) => loadingShown.has(id));
+      // Cells are rebuilt on layout changes: re-apply when a shown tile's cell lost its class.
+      if (same && [...shown].every((id) => { const e = cellNodes.get(id); return !e || e.cell.classList.contains('loading'); })) return;
+      loadingShown = shown;
+      for (const [id, entry] of cellNodes) {
+        const on = shown.has(id);
+        entry.cell.classList.toggle('loading', on);
+        if (on) entry.cell.setAttribute('aria-busy', 'true'); else entry.cell.removeAttribute('aria-busy');
+      }
+      if (seekRowEl) seekRowEl.classList.toggle('seeking', shown.size > 0);
+    }
+
     function disposeAll() {
       if (disposed) return;
       disposed = true;
@@ -3027,6 +3057,9 @@
         syncClock(null);
         if (ws !== before) render();
       },
+      setLoading,
+      /** The tiles whose loading spinner shows (tests and the harness). */
+      loading: () => [...loadingShown],
       /** A decoder clock (tickMs: 0) presented this clock frame: the UI follows without telling onTransport. */
       onDecoderFrame: (/** @type {number} */ frame) => decoderFrame(frame),
       /** A decoder clock reached its end: A-B wrap, Loop, or pause and Autoplay next. */
@@ -3047,7 +3080,20 @@
     return /** @satisfies {UnifiedControllerApi} */ (controller);
   }
 
+  /** A wait shorter than this shows nothing (a seek from memory lands in a frame or two): no flicker. */
+  const LOADING_DELAY_MS = 150;
+  /**
+   * The tiles whose spinner shows: those waiting at least `delay` ms. Pure (Node-tested).
+   * @param {Map<string, number>} since @param {number} now @param {number} delay
+   */
+  function loadingAfter(since, now, delay) {
+    const out = new Set();
+    for (const [id, t] of since) if (now - t >= delay) out.add(id);
+    return out;
+  }
+
   const api = {
+    LOADING_DELAY_MS, loadingAfter,
     HOST_COMMANDS, PICTURE_MODES, TIME_MODE_NAMES, pickVideoMessage, defaultPrefs, keyCommand, keyAction, runKey, nextTimeMode, timeReadout,
     formatTime, bindButtons, stepBy, bindStepBadges, pinPercent, bindAbPins, pictureButton, copyInfoText, createContextMenu,
     createFolderRail, goNeighbour, spotlightRatioAt, spotlightKeyRatio, splitKeyRatio, splitRatioAt,

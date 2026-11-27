@@ -355,7 +355,24 @@ if (require.main === module) {
     const sample = createFakeEngine();
     sample.registerClip({ id: 'extra', name: 'extra.mp4' });
     assert.ok(!createFakeEngine().clips.some((c) => c.id === 'extra'), 'FakeEngine: registerClip never changes SAMPLE_CLIPS');
-    await runHostAdapterContract('FakeHost', () => createFakeHost({ clips: createFakeEngine().clips }));
+    // The mockup's simulated seek latency: the frame shown before the seek stays until the hold passes.
+    const slow = createFakeEngine();
+    const cv = { width: 0, height: 0, clientWidth: 100, clientHeight: 50, getContext: () => null };
+    slow.draw(cv, 'clip-0', 48);
+    slow.draw(cv, 'clip-0', 150);
+    slow.fake.hold(['clip-0'], performance.now() + 60_000);
+    assert.strictEqual(slow.fake.held('clip-0'), 48, 'FakeEngine: a held clip keeps the frame it showed before the seek');
+    slow.draw(cv, 'clip-0', 160);
+    slow.fake.hold(['clip-0'], performance.now() + 60_000);
+    assert.strictEqual(slow.fake.held('clip-0'), 48, 'FakeEngine: a second seek while held keeps the same old frame');
+    slow.fake.release();
+    assert.strictEqual(slow.fake.held('clip-0'), null, 'FakeEngine: release ends the hold');
+    // The seek-bar preview canvas is sized like media/thumbs.js (fit in 160 x 120, one pixel per CSS pixel), never
+    // from its own clientWidth (which grew it on every hover on HiDPI).
+    const tc = { width: 300, height: 150, clientWidth: 900, clientHeight: 450, getContext: () => null };
+    slow.thumbnail('clip-0', 1, tc);
+    assert.deepStrictEqual([tc.width, tc.height], [160, 90], 'FakeEngine: a 16:9 seek preview is 160 x 90');
+    await runHostAdapterContract('FakeHost',() => createFakeHost({ clips: createFakeEngine().clips }));
     // A host with no subfolder and few clips still passes (the contract does not lean on the fake's tree).
     await runHostAdapterContract('FakeHost (flat)', () => createFakeHost({ clips: createFakeEngine().clips, subfolder: 0 }));
     console.log(`adapter_contract_test: ok (${Date.now() - T0} ms)`);

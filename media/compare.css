@@ -16,6 +16,20 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 .cell.split[data-role="split-b"] > canvas { background: transparent; }
 /* A 1 px inner edge so neighbouring tiles read apart (media/player-ui.js adds it to Compare tiles only). */
 .cell-border { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+/* Waiting for the frame asked for (a seek or step not shown after 150 ms: media/player-ui.js setLoading): a small ring
+   centred on the picture, frosted like the bar. The position already moved at the click; this says the frame is coming. */
+.cell.loading::after {
+  content: ''; position: absolute; z-index: 3; pointer-events: none; box-sizing: border-box;
+  top: var(--pic-t, 0px); right: var(--pic-r, 0px); bottom: var(--pic-b, 0px); left: var(--pic-l, 0px);
+  width: 34px; height: 34px; margin: auto; border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.22); border-top-color: rgba(255, 255, 255, 0.92);
+  background: rgba(0, 0, 0, 0.32); box-shadow: 0 0 0 6px rgba(0, 0, 0, 0.32);
+  animation: vpeLoadingSpin 0.8s linear infinite, vpeLoadingIn 0.15s ease-out;
+}
+@keyframes vpeLoadingSpin { to { transform: rotate(360deg); } }
+@keyframes vpeLoadingIn { from { opacity: 0; } }
+/* Reduced motion: a slow turn, no fade-in. A ring standing still reads as broken (maintainer, 2026-11-27). */
+@media (prefers-reduced-motion: reduce) { .cell.loading::after { animation: vpeLoadingSpin 2.4s linear infinite; } }
 .cell:not(.add):not(.split) { touch-action: none; }
 /* Tiles drag to reorder only in Compare: one video in the unified page (#cells holds a single cell) keeps the player's
    pointer, as media/player.js does. */
