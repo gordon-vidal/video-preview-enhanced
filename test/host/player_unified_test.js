@@ -556,7 +556,9 @@ test('Capture: the host\'s changes reach the page (no echo back), Esc in the pag
   };
   withPage(({ doc, app, posted }) => {
     const btn = doc.getElementById('startCompareBtn');
-    const banner = doc.getElementById('capBanner');
+    // Add mode's prompt is a #notice (media/player-ui.js syncCapturePrompt).
+    const notice = doc.getElementById('notice');
+    const banner = { get hidden() { return notice.hidden || notice.dataset.kind !== 'capture'; } };
     const tab = () => S.getTab(app.ui.getState());
     const captures = () => posted.filter((m) => m.type === 'capture').length;
     // The Command Palette's "Add Videos from the Explorer" (or Shift+D's host side): the page shows it at once.

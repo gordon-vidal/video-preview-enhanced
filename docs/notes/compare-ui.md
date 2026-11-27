@@ -203,11 +203,8 @@ The single-video player's **Compare** button asks before it starts a one-video C
 Compare open it reads **Add to Compare** and adds the video to the most recently active Compare at once
 ([player design note](ui-simple.md#compare-cc-and-toolbar-icons-maintainer-approved-2026-11-22)).
 
-The Add Mode hint ("Click videos in Explorer to add · Esc to stop") ends with a small **Stop** button. A click, or
-Enter / Space after Tab, ends Add Mode like Esc; focus then moves to the bar's Compare button. The hint stays
-click-through apart from the button. The hint text is the live status (`role="status"`).
-
-![The Add Mode hint with Stop](img/compare-addhint-stop.png)
+The Add Mode hint is a `#notice` banner now, with **Browse folder** (the Folder Rail) and **Stop adding**; see
+[notifications.md, Add mode prompt](notifications.md#add-mode-prompt-and-toast). Esc still ends Add Mode in one press.
 
 Compare's bar uses the same icon set as the player (`src/bar.js`); **Reorder**, speed and time stay text. Compare
 does not render subtitles, so its bar has no CC.

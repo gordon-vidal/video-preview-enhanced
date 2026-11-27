@@ -242,8 +242,8 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
 }
 
 { // What the mock-up harness used to carry on its own (tools/mockup/render.js) is the real CSS now: the capture
-  // banner and toggle, and the toggled-on bar button. The Compare button keeps a gap between its icon and its label.
-  for (const sel of ['.cap-banner', '.cap-pulse', '#startCompareBtn', '#startCompareBtn.cap-on', '#bar .ib.active']) {
+  // toggle's pulse and the toggled-on bar button. The Compare button keeps a gap between its icon and its label.
+  for (const sel of ['.cap-pulse', '#startCompareBtn', '#startCompareBtn.cap-on', '#bar .ib.active']) {
     assert.ok(anySelector(PLAYER, (s) => s === sel), `${sel} is in player.css`);
   }
   assert.ok(/^\d/.test(declsOf(PLAYER, '#startCompareBtn').gap), 'a gap between the icon and the label');
@@ -313,6 +313,18 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.strictEqual(text['box-sizing'], 'border-box', 'and never spills out of the card');
   assert.strictEqual(declsOf(PLAYER, '#notice #noticeClose').position, 'absolute', '× in the corner');
   assert.match(declsOf(PLAYER, '#notice #noticeAction').background || '', /--vscode-button-background/, 'main action filled');
+}
+
+{ // The toast is the notice card without buttons: the theme's surface, border and text, not a fixed black box; the
+  // old Add mode pill and the #addHint leftovers are gone (Add mode's prompt is a #notice).
+  const toast = declsOf(PLAYER, '#toast');
+  const notice = declsOf(PLAYER, '#notice');
+  for (const k of ['background', 'border', 'border-radius', 'box-shadow', 'backdrop-filter', 'font-size']) {
+    assert.strictEqual(toast[k], notice[k], `#toast ${k} is the notice's`);
+  }
+  assert.strictEqual(toast.color, 'var(--vpe-panel-fg)', 'theme text colour');
+  assert.ok(!toast['font-weight'] || Number(toast['font-weight']) < 600, 'not bold');
+  assert.ok(!anySelector(PLAYER, (s) => /\.cap-banner|#addHint/.test(s)), 'no capture pill or #addHint rules left');
 }
 
 console.log('unified_css: ok');

@@ -594,7 +594,7 @@
     // ---- DOM: the real #bar (src/bar.js) and the stage ----
     const stageEl = need('stage'), barEl = need('bar');
     const cellsEl = $('cells') || stageEl.appendChild(Object.assign(doc.createElement('div'), { id: 'cells' }));
-    const capBanner = $('capBanner'), splitterEl = $('splitter'), dividerEl = $('divider');
+    const splitterEl = $('splitter'), dividerEl = $('divider');
     const seekEl = need('seek'), nowEl = $('now'), durEl = $('dur'), timeEl = $('time'), tipEl = $('tip');
     // Compare: the readout is the clock video's time, so the clock's letter leads it ("A 0:01.000 / 0:03.000", as the
     // seek bar's aria-valuetext); src/bar.js has no place for it, the controller adds it in front of #now.
@@ -1520,7 +1520,8 @@
         if (tileMenu && tileMenu.isOpen()) { tileMenu.close(); return true; }
         if (controls.anyOpen()) { controls.closeAll(true); return true; }
         if (ctxMenu.isOpen()) { ctxMenu.close(true); return true; }
-        if (notices && notices.handleEscape()) return true;
+        // The Add mode prompt is not closed by Esc: Esc ends Add mode itself (below), which also takes the prompt away.
+        if (notices && notices.kind() !== 'capture' && notices.handleEscape()) return true;
         if (insp && insp.handleEscape()) { controls.refresh(); return true; }
         if (t.syncMode) { commit(S.toggleSyncMode(ws), 'Sync offsets off'); return true; }
         if (t.layout === 'spotlight' && t.spotlightId) { withGlide(() => commit(S.toggleEnlarge(ws, t.spotlightId))); return true; }
@@ -1719,11 +1720,6 @@
         if (!hasAudio(tab().soundId)) return false;
         act.volumeStep(dir * 0.05);
       }));
-    }
-    if (capBanner) {
-      const stopBtn = capBanner.querySelector('[data-act="pause"]') || $('capStopBtn');
-      const pickBtn = capBanner.querySelector('[data-act="pick"]') || $('capPickBtn');
-      bindButtons([[stopBtn, act.capture, true], [pickBtn, () => openPicker(), true]], onClick);
     }
     // Dragging an A–B pin moves that end to the nearest frame: the same helper as media/player.js and media/compare.js.
     if (W.VpeAbLoop.bindPin) {
@@ -2772,6 +2768,36 @@
 
     let lastSound = '';
     let lastCmpBtnKey = '';
+    /**
+     * Add mode with one video: its prompt is a #notice (docs/notes/notifications.md). Browse folder opens the Folder
+     * Rail (else the host's picker), Stop adding ends Add mode, × hides the prompt until Add mode starts again.
+     */
+    let capPromptOpen = false;
+    let capPromptHidden = false;
+    function syncCapturePrompt(/** @type {boolean} */ want) {
+      if (!notices) return;
+      if (!want) {
+        capPromptHidden = false;
+        if (capPromptOpen) notices.hide('capture');
+        capPromptOpen = false;
+        return;
+      }
+      if (capPromptOpen || capPromptHidden) return;
+      capPromptOpen = true;
+      notices.show({
+        kind: 'capture',
+        text: rail
+          ? 'Adding videos to Compare. Open a video from the Explorer, or browse this folder to pick one.'
+          : 'Adding videos to Compare. Open a video from the Explorer, or choose one here.',
+        action: rail
+          ? { label: 'Browse folder', title: 'Show the videos of this folder beside the picture', run: () => openPicker() }
+          : { label: 'Choose video…', title: 'Pick a video to add', run: () => openPicker() },
+        // Not close: true: ending Add mode already withdraws the prompt (render), a second close would hit the next notice.
+        hide: { label: 'Stop adding', title: 'Stop adding videos to Compare (Esc)', run: () => act.capture() },
+        onClose: () => { capPromptHidden = true; },
+        dismiss: () => { capPromptOpen = false; },
+      });
+    }
     function render(/** @type {{ skipCells?: boolean }} */ opts = {}) {
       if (disposed) return;
       postCapture();
@@ -2802,7 +2828,7 @@
           dividerEl.setAttribute('aria-valuetext', `A ${pct}%, B ${100 - pct}%`);
         }
       }
-      if (capBanner) capBanner.hidden = !ui.showCaptureBanner;
+      syncCapturePrompt(ui.showCaptureBanner);
 
       // Compare's layout buttons: Spotlight / Equal Grid (N >= 2), Split Wipe and Swap (N = 2).
       const layoutBtn = (/** @type {any} */ b, /** @type {boolean} */ show, /** @type {boolean} */ on) => {
