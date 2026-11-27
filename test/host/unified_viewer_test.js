@@ -527,7 +527,11 @@ const context = { extensionUri: Uri.file(ROOT) };
       const created = [];
       const prefs = [];
       const viewer = createUnifiedViewer({ vscode: rv.api, context, panel, clip: clipA, registry: null, deps: deps({
-        createStream: (c, opts) => { const s = fakeDecoder(); created.push({ c, opts, s }); return s; },
+        createStream: (c, opts) => {
+          const s = fakeDecoder({ views: [], setView(v) { s.views.push([v.w, v.h]); } });
+          created.push({ c, opts, s });
+          return s;
+        },
         transcodePrefs: () => ({ transcodeMaxBitrate: 0 }),
         setTranscodePref: (m) => { prefs.push(m); },
       }) });
@@ -552,10 +556,11 @@ const context = { extensionUri: Uri.file(ROOT) };
       assert.deepStrictEqual([s.resolution, s.bitrate, prefs.length], [[720], [8], 1]);
       handlers.view();
       assert.deepStrictEqual(s.hidden, [true, false]);
+      // One video, frames sized to the view (sizeFramesToView): the stream follows the picture (EncodedStream.setView
+      // restarts or asks the page to refresh itself), never Compare's per-tile output and bitrate share.
       await handlers.message({ type: 'tileSize', page: 1, tile: { w: 1280, h: 720 } });
       await handlers.message({ type: 'tileSize', page: 1, tile: { w: 2560, h: 1440 } });
-      assert.deepStrictEqual(s.outputs.map((o) => o[0]), [720, 1080]);
-      assert.strictEqual(posts.filter((m) => m.type === 'resize').length, 1, 'a grown stream: one seek');
+      assert.deepStrictEqual([s.views, s.outputs], [[[1280, 720], [2560, 1440]], []]);
       posts.length = 0;
       // ⚙ › "Use original video" (originalTile): the built-in decoder in the tile's place.
       await handlers.message({ type: 'originalTile', page: 1, clipId: clipA.id });
@@ -565,6 +570,29 @@ const context = { extensionUri: Uri.file(ROOT) };
       opts.post({ type: 'packet', n: 2 });
       opts.onFail(new Error('late'));
       assert.strictEqual(posts.length, 0, 'the old stream is not heard any more');
+      handlers.dispose();
+    }
+
+    { // sizeFramesToView off (deps.fitTiles false): one Live transcode video keeps its own size and bitrate cap.
+      const { panel, handlers } = fakePanel();
+      const decision = { ...nativeDecision, stream: { encoder: 'libx264', remote: false } };
+      const clipA = await prepareClip(a, { nativeFor: async () => decision, streams: true });
+      const created = [];
+      const viewer = createUnifiedViewer({ vscode, context, panel, clip: clipA, registry: null, deps: deps({
+        fitTiles: () => false, transcodePrefs: () => ({ transcodeMaxBitrate: 0 }),
+        createStream: (c, opts) => {
+          const s = fakeDecoder({ views: [], setView(v) { s.views.push([v.w, v.h]); } });
+          created.push({ c, opts, s });
+          return s;
+        },
+      }) });
+      viewer.show();
+      await open(handlers);
+      await handlers.message({ type: 'nd', page: 1, clipId: clipA.id, m: { type: 'open' } });
+      const { opts, s } = created[0];
+      assert.deepStrictEqual([opts.maxHeight, opts.fitView], [1080, false]);
+      await handlers.message({ type: 'tileSize', page: 1, tile: { w: 786, h: 442 } });
+      assert.deepStrictEqual([s.views, s.outputs], [[], []], 'never resized to the picture or given a Compare tile output');
       handlers.dispose();
     }
 
