@@ -770,6 +770,11 @@ module.exports = [{
         ok(r.local.below.length === 0 && r.local.max < 20, `play during a seek from the page's packets: the bar left 11 s (${JSON.stringify(r.local)})`);
         p.pause();
       } finally {
+        // A seek that does not land (seen intermittently): the host's and the page's account of it.
+        {
+          r.log = vs.lines.filter((l) => l.includes(`[${p.name}]`) && /seek|remote stream|live transcode|landed|warm|quick|fill|sharp|batch|first bytes/.test(l))
+            .slice(-80).map((l) => l.replace(/^\S+ /, '').slice(0, 260));
+        }
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
         await h.closeClip(vs);
       }
