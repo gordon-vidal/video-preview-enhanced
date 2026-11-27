@@ -73,7 +73,9 @@ leaves them alone (`docs/notes/ui-simple.md`).
 | Ctrl+wheel (or pinch) | Zoom around the cursor, in any picture size; drag to pan when the picture is larger than the player (a click without moving still plays or pauses) |
 | Hover the seek bar | Thumbnail and time |
 | Click the time | Time → timecode → frame number |
-| Wheel over the speed button | Speed ±0.05 |
+| Wheel over the speed button | Next / previous preset speed (0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4×); the speed popover shows while you scroll and fades out after you stop (point into it to keep it open) |
+| Shift+wheel over the speed button | Speed ±0.05 |
+| ↺ above the speed button | Back to 1× (shown while the speed is not 1×) |
 | Wheel over the volume | Volume ±5 % |
 | Drag the seek bar or the volume | Keeps following the mouse while the button is held, also off the slider |
 | X-ray strip | Hover for details, click to go there, wheel to zoom, Shift+wheel to pan, double-click to zoom out |

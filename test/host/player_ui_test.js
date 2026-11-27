@@ -44,6 +44,9 @@ const ROOT = path.join(__dirname, '..', '..');
   assert.deepStrictEqual(PUI.keyCommand({ key: 'ArrowLeft', shiftKey: true }), { action: 'jump', arg: { dir: -1, shift: true } });
   assert.deepStrictEqual(PUI.keyCommand({ key: 'j' }), { action: 'skip', arg: -10 });
   assert.deepStrictEqual(PUI.keyCommand({ key: ']' }), { action: 'rateStep', arg: 1 });
+  // No set-speed keys (maintainer, 2026-11-27): Shift+digits and \ do not change the speed.
+  assert.strictEqual(PUI.keyCommand({ key: '!', shiftKey: true }), null, 'Shift+1 is not a speed key');
+  assert.strictEqual(PUI.keyCommand({ key: '\\' }), null, '\\ is not a speed key');
   assert.deepStrictEqual(PUI.keyCommand({ key: 'ArrowDown' }), { action: 'volumeStep', arg: -0.05 });
   assert.deepStrictEqual(PUI.keyCommand({ key: '7' }), { action: 'seekTenth', arg: 7 });
   assert.strictEqual(PUI.keyCommand({ key: '[', ctrlKey: true, altKey: true }), null, 'Ctrl+Alt+[ is not a player key');
@@ -984,12 +987,48 @@ const withGlobals = (dom, fn) => {
         ui.dispatch('setA');
         assert.strictEqual(ui.ab.a, null, 'A twice clears it again');
 
-        // The wheel over the speed button: ±0.05; over the volume: ±5 %.
+        // The wheel over the speed button: the presets; Shift+wheel: ±0.05; over the volume: ±5 %.
         ui.dispatch('volume', 0.5);
+        assert.strictEqual($('rateReset').hidden, true, 'no reset badge at 1×');
         $('rate').fire('wheel', { deltaY: -100 });
-        assert.ok(Math.abs(ui.getPrefs().rate - 1.05) < 1e-9, 'wheel up over the speed button');
+        assert.strictEqual(ui.getPrefs().rate, 1.25, 'wheel up over the speed button: the next preset');
+        assert.deepStrictEqual([$('panel').hidden, $('panel').className], [false, 'panel speed popover'], 'the wheel opens the speed popover');
+        assert.ok(!$('panel').contains(dom.doc.activeElement), 'the wheel peek does not take the focus');
+        assert.strictEqual($('rateReset').hidden, false, 'the reset badge shows off 1×');
         assert.strictEqual($('rate').fire('wheel', { deltaY: 100 }).defaultPrevented, true, 'the page does not scroll');
-        assert.ok(Math.abs(ui.getPrefs().rate - 1) < 1e-9, 'wheel down');
+        assert.strictEqual(ui.getPrefs().rate, 1, 'wheel down: back to 1×');
+        $('rate').fire('wheel', { deltaY: -100, shiftKey: true });
+        assert.ok(Math.abs(ui.getPrefs().rate - 1.05) < 1e-9, 'Shift+wheel up: +0.05');
+        $('rate').fire('wheel', { deltaY: 0, deltaX: -100, shiftKey: true });
+        assert.ok(Math.abs(ui.getPrefs().rate - 1.1) < 1e-9, 'Shift+wheel as Chromium sends it (deltaX): +0.05');
+        $('rate').fire('wheel', { deltaY: -100 });
+        assert.strictEqual(ui.getPrefs().rate, 1.25, 'from between two presets: the next one up');
+        $('rate').fire('wheel', { deltaY: 20, deltaMode: 0 });
+        $('rate').fire('wheel', { deltaY: 20, deltaMode: 0 });
+        assert.strictEqual(ui.getPrefs().rate, 1.25, 'small touchpad deltas add up first');
+        $('rate').fire('wheel', { deltaY: 20, deltaMode: 0 });
+        assert.strictEqual(ui.getPrefs().rate, 1, 'a notch worth of them: one preset');
+        // The wheel peek fades out after the last turn; pointing into it keeps it open.
+        const runTimer = (ms) => { const i = dom.win.timers.findLastIndex((t) => t && t.ms === ms); assert.ok(i >= 0, `a ${ms} ms timer`); const t = dom.win.timers[i]; dom.win.timers[i] = null; t.fn(); };
+        runTimer(1500);
+        assert.ok($('panel').classList.contains('fading'), 'it fades after the last turn');
+        runTimer(200);
+        assert.strictEqual($('panel').hidden, true, 'then it closes');
+        $('rate').fire('wheel', { deltaY: -100 });
+        $('panel').fire('pointerenter', {});
+        assert.strictEqual(dom.win.timers.some((t) => t && t.ms === 1500), false, 'pointing into it cancels the fade');
+        assert.strictEqual($('panel').hidden, false);
+        $('rate').fire('wheel', { deltaY: 100 });
+        assert.strictEqual($('panel').hidden, false, 'a popover that is kept stays while the wheel turns');
+        $('rate').fire('click', { button: 0 });
+        assert.strictEqual($('panel').hidden, true, 'a click on the speed button closes it as usual');
+        // The reset badge.
+        ui.dispatch('rateSet', 3);
+        assert.deepStrictEqual([ui.getPrefs().rate, $('rate').textContent, $('rateReset').hidden], [3, '3×', false]);
+        $('rateReset').focus();
+        $('rateReset').fire('click', { button: 0 });
+        assert.deepStrictEqual([ui.getPrefs().rate, $('rateReset').hidden, dom.doc.activeElement === $('rate')], [1, true, true],
+          'the badge resets to 1×, hides, and leaves the focus on the speed button');
         $('volume').fire('wheel', { deltaY: -100 });
         assert.ok(Math.abs(ui.getPrefs().volume - 0.55) < 1e-9, 'wheel up over the volume');
 

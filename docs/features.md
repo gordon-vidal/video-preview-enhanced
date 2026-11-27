@@ -4,7 +4,7 @@
 
 - **Opens by double-click.** AVI, MKV, MOV, WMV, FLV, MPEG and the other formats below open in this player. MP4 and WebM open here too: on first start the extension sets itself as their default, unless you already chose another editor ([details and undo](commands-and-settings.md#making-it-the-default-for-mp4-and-webm)).
 - **Frame by frame.** `,` and `.` step one frame, and the mouse wheel steps while paused. Stepping backward is exact too: the player seeks to the keyframe before and decodes forward.
-- **Speed from 0.25× to 4×** in steps of 0.05, with the sound at its normal pitch. The speed button on the bar opens a slider with presets; scrolling over it, or `Shift+<` / `Shift+>`, changes the speed by 0.05.
+- **Speed from 0.25× to 4×** in steps of 0.05, with the sound at its normal pitch. The speed button on the bar opens a small popover: − and + (0.05), the speed, a slider and the presets 0.5× / 1× / 1.5× / 2×. Scrolling over the button walks the presets (0.25× … 4×) and shows the popover until you stop; Shift+scroll or `Shift+<` / `Shift+>` change the speed by 0.05. The small ↺ badge above the speed button (shown while it is not 1×) goes back to 1×.
 - **Autoplay.** What happens at the end: **Off** (default: stop on the last frame), **Play next in folder** (the next video of the folder plays in the same tab from the start; it stops at the last one) or **Loop**. In ⚙ › Autoplay and the folder rail's footer; `R` turns Loop on and off. `A` and `B` set an A-B loop over any section, which always repeats.
 - **Picks up where you left off.** Reopening a video resumes at the last position.
 - **Subtitles.** SRT, WebVTT and ASS/SSA files.

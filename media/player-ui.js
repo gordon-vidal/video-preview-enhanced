@@ -87,6 +87,9 @@
     };
   }
 
+  /** Pixels of touchpad scroll that make one preset step over the speed button (a mouse notch is 100-120). */
+  const WHEEL_NOTCH = 50;
+
   /**
    * The keyboard shortcuts of the single player (media/player.js), Compare (media/compare.js) and create(), as one
    * table. Each page maps the action names it supports to its own functions (runKey); a name a page lacks, or a
@@ -625,7 +628,7 @@
     for (const a of ['aria-haspopup', 'aria-controls', 'aria-expanded']) cmpBtn.removeAttribute(a);
     const playBtn = need('play'), prevBtn = need('prev'), nextBtn = need('next');
     const prevSize = $('prevSize'), nextSize = $('nextSize');
-    const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate');
+    const muteBtn = $('mute'), volEl = $('volume'), rateBtn = $('rate'), rateReset = $('rateReset');
     const cogBtn = need('cog'), infoBtn = need('infoBtn'), picBtn = $('picBtn'), fullBtn = $('full');
     const setABtn = $('setABtn'), setBBtn = $('setBBtn'), abMarks = $('abMarks'), abA = $('abA'), abB = $('abB');
     /** The tiles' right-click menu (#menu, compare.css); pages without it get one. */
@@ -1417,6 +1420,8 @@
       end: () => { const t = tab(); commit(S.seekFrame(t.playing ? S.togglePlay(ws) : ws, t.maxFrame)); },
       seekTenth: (/** @type {number} */ n) => commit(S.seekFrame(ws, (n / 10) * tab().maxFrame)),
       rateStep: (/** @type {number} */ d) => { setRate(prefs.rate + d * W.VpeControls.SPEED_STEP); toast(W.VpeControls.speedText ? W.VpeControls.speedText(prefs.rate) : `${prefs.rate}×`); },
+      /** The reset badge: back to one set speed. */
+      rateSet: (/** @type {number} */ r) => { setRate(r); toast(W.VpeControls.speedText ? W.VpeControls.speedText(prefs.rate) : `${prefs.rate}×`); },
       volumeStep: (/** @type {number} */ d) => { act.volume(prefs.volume + d); toast(`Volume ${Math.round(prefs.volume * 100)}%`); },
       /** T: the shown time as m:ss.mmm (VpePlayerUiTools copyTimestamp), else in the bar's time format. */
       copyTime: () => {
@@ -1630,20 +1635,40 @@
     volDrag = RangeDrag && volEl ? RangeDrag.bind(volEl) : null;
     if (volDrag && W.VpeControls.holdVolumeOpen) W.VpeControls.holdVolumeOpen(volEl);
     cleanups.push(() => { if (seekDrag) seekDrag.stop(); if (volDrag) volDrag.stop(); });
-    // The wheel over the speed button steps the speed, over the volume the volume (media/player.js).
+    // The wheel over the speed button walks the presets (Shift: steps of 0.05) and opens the speed popover for a
+    // moment instead of a toast (controls.peek); over the volume it steps the volume (media/player.js). Chromium turns Shift+wheel into a
+    // horizontal scroll, hence deltaX. A touchpad sends many small deltas: a preset needs a notch's worth of them.
     if (rateBtn) {
+      let wheelAcc = 0;
       listen(rateBtn, 'wheel', (/** @type {WheelEvent} */ e) => {
-        if (!e.deltaY) return;
+        const d = e.deltaY || e.deltaX;
+        if (!d) return;
         e.preventDefault();
-        act.rateStep(e.deltaY < 0 ? 1 : -1);
+        const C = W.VpeControls;
+        if (e.shiftKey) setRate(prefs.rate + (d < 0 ? 1 : -1) * C.SPEED_STEP);
+        else {
+          wheelAcc = Math.sign(wheelAcc) === Math.sign(d) ? wheelAcc + d : d;
+          if (Math.abs(wheelAcc) < WHEEL_NOTCH && e.deltaMode === 0) return;
+          wheelAcc = 0;
+          setRate(C.presetRate ? C.presetRate(prefs.rate, d < 0 ? 1 : -1) : prefs.rate + (d < 0 ? 1 : -1) * C.SPEED_STEP);
+        }
+        controls.peek('speed', rateBtn);
       }, { passive: false });
     }
-    if (volEl) {
-      listen(volEl, 'wheel', (/** @type {WheelEvent} */ e) => {
-        if (!e.deltaY || !hasAudio(tab().soundId)) return;
-        e.preventDefault();
-        act.volumeStep(e.deltaY < 0 ? 0.05 : -0.05);
-      }, { passive: false });
+    // The reset badge above the speed button: back to 1×; focus moves to the speed button as the badge goes away.
+    if (rateReset) {
+      listen(rateReset, 'click', (/** @type {MouseEvent} */ e) => {
+        e.stopPropagation();
+        const had = doc.activeElement === rateReset;
+        act.rateSet(1);
+        if (had && rateBtn) rateBtn.focus();
+      });
+    }
+    if (volEl && RangeDrag) {
+      cleanups.push(RangeDrag.wheelStep(volEl, (/** @type {number} */ dir) => {
+        if (!hasAudio(tab().soundId)) return false;
+        act.volumeStep(dir * 0.05);
+      }));
     }
     if (capBanner) {
       const stopBtn = capBanner.querySelector('[data-act="pause"]') || $('capStopBtn');
@@ -2583,6 +2608,8 @@
         rateBtn.textContent = sp;
         rateBtn.setAttribute('aria-label', `Speed ${sp}`);
       }
+      // The reset badge only while the speed is not 1× (always visible then, so an off-normal speed is never missed).
+      if (rateReset) rateReset.hidden = Math.abs(prefs.rate - 1) < 1e-6;
       if (picBtn && W.VpePicture) pictureButton(picBtn, W.VpePicture, t.picMode, multi ? 'all videos' : '');
       else if (picBtn) picBtn.dataset.mode = t.picMode;
       // CC: one video only, and (with the subtitle controller) only once the clip has a track; until then C and

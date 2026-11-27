@@ -97,9 +97,26 @@ const VpeControls = (() => {
     picture: SVG('<rect x="3" y="5" width="18" height="14" rx="1.5"></rect><rect x="8" y="9" width="8" height="6" rx="0.8"></rect>'),
     quality: SVG('<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 15v-3M11 15V9M15 15v-5M19 15V8" stroke-width="1.4"></path>'),
   };
-  /** Preset labels on the speed slider's track. */
-  const SPEEDS = [0.5, 1, 1.5, 2, 3, 4];
+  /**
+   * The speed ladder: the presets in the speed panel and what the wheel over the speed button walks through
+   * (Shift+wheel and Shift+< / > keep the fine steps of SPEED_STEP).
+   */
+  const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+  /** The preset chips in the speed popover: the most used speeds, one row (maintainer, 2026-11-27). */
+  const PANEL_SPEEDS = [0.5, 1, 1.5, 2];
+  /** How long a peeked popover stays after the last peek, then how long it fades (create's peek). */
+  const PEEK_MS = 1500, FADE_MS = 200;
   const SPEED_MIN = 0.25, SPEED_MAX = 4, SPEED_STEP = 0.05;
+  /**
+   * The next preset above (dir 1) or below (dir -1) a speed: a speed between two presets goes to the nearer one in
+   * that direction; the ends stay where they are.
+   */
+  const presetRate = (r, dir) => {
+    const v = Number(r);
+    if (dir > 0) return SPEEDS.find((p) => p > v + 1e-6) ?? SPEEDS[SPEEDS.length - 1];
+    for (let i = SPEEDS.length - 1; i >= 0; i--) if (SPEEDS[i] < v - 1e-6) return SPEEDS[i];
+    return SPEEDS[0];
+  };
   /** Jump sizes: one frame or seconds (settings videoPreviewEnhanced.jump.arrow / jump.shift / jump.ctrl). */
   const NAV = ['frame', 1, 5, 10, 30];
   const navName = (v) => (v === 'frame' ? '1 frame' : `${v} s`);
@@ -400,6 +417,26 @@ const VpeControls = (() => {
     };
     /** A page's title row: back to `to` (the main page, or a compare page's parent). */
     const head = (title, to = 'main') => btn('row head', title, () => show(to), { icon: ICON.back, aria: { 'aria-label': `Back from ${title}` } });
+    /**
+     * Stepper: [name] − value + in one row of chips. With reset, the value is a chip that resets; without, plain text
+     * (taking the middle when there is no name). down / up label the − / + buttons.
+     * @param {{ name: string, value: string, minus: () => void, plus: () => void, reset?: () => void, showName?: boolean, down?: string, up?: string }} o
+     */
+    const stepper = (o) => {
+      const r = el('div', 'jrow');
+      r.setAttribute('role', 'group');
+      r.setAttribute('aria-label', o.name);
+      if (o.showName !== false) {
+        const n = el('span', 'grow', o.name);
+        n.setAttribute('aria-hidden', 'true');
+        r.appendChild(n);
+      }
+      const v = o.reset ? btn('chip', o.value, () => { o.reset(); render(); }, { aria: { 'aria-label': `${o.name} ${o.value}, reset` } })
+        : el('span', o.showName === false ? 'zval grow' : 'zval', o.value);
+      r.append(btn('chip', '−', () => { o.minus(); render(); }, { aria: { 'aria-label': o.down || `${o.name} down` } }), v,
+        btn('chip', '+', () => { o.plus(); render(); }, { aria: { 'aria-label': o.up || `${o.name} up` } }));
+      return r;
+    };
     const heading = (t) => { const h = el('div', 'phead', t); h.setAttribute('aria-hidden', 'true'); return h; };
 
     /**
@@ -500,47 +537,49 @@ const VpeControls = (() => {
       return f;
     }
 
+    /**
+     * The speed page (maintainer's pick "A2", 2026-11-27), from blocks: a stepper (− speed +), the slider (the volume
+     * bar's look) and one row of preset chips. From the speed button it is a popover (POPOVERS); from ⚙ a page with a
+     * title to go back. The keys are in the shortcut sheet, not here.
+     */
     function renderSpeed(s) {
       const f = document.createDocumentFragment();
-      f.appendChild(head('Speed'));
-      const top = el('div', 'speedTop');
-      const read = el('div', 'readout', speedText(s.rate));
-      const minus = btn('big', null, () => { env.act.stepRate(-1); render(); }, { aria: { 'aria-label': `Slower by ${SPEED_STEP}` } });
-      const plus = btn('big', null, () => { env.act.stepRate(1); render(); }, { aria: { 'aria-label': `Faster by ${SPEED_STEP}` } });
-      minus.textContent = '−';
-      plus.textContent = '+';
-      top.append(minus, read, plus);
-      f.appendChild(top);
+      if (!popover()) f.appendChild(head('Speed'));
+      const top = stepper({ name: 'Speed', showName: false, value: speedText(s.rate), minus: () => env.act.stepRate(-1), plus: () => env.act.stepRate(1),
+        down: `Slower by ${SPEED_STEP}`, up: `Faster by ${SPEED_STEP}` });
+      const read = /** @type {HTMLElement} */ (top.querySelector('.zval'));
       const sl = el('div', 'slider');
-      const input = /** @type {HTMLInputElement} */ (el('input'));
+      const input = /** @type {HTMLInputElement} */ (el('input', 'range'));
       input.type = 'range'; input.min = String(SPEED_MIN); input.max = String(SPEED_MAX); input.step = String(SPEED_STEP); input.value = String(s.rate);
       input.id = 'speedSlider';
       input.setAttribute('aria-label', 'Speed');
       input.setAttribute('aria-valuetext', speedText(s.rate));
       input.dataset.nav = '1';
-      // Presets as labels on the slider's track, each at its speed.
-      const marks = el('div', 'marks');
-      for (const v of SPEEDS) {
-        const b = btn('mark', speedText(v), () => env.act.pickRate(v), { aria: { 'aria-pressed': String(Math.abs(v - s.rate) < 1e-6), 'aria-label': `Speed ${speedText(v)}` } });
-        b.style.left = `${((v - SPEED_MIN) / (SPEED_MAX - SPEED_MIN)) * 100}%`;
-        marks.appendChild(b);
+      sl.appendChild(input);
+      f.append(top, sl);
+      // The most used speeds as one row of chips; 1× is the way back to normal.
+      const box = el('div', 'jbox');
+      const presets = el('div', 'jopts one-row');
+      presets.setAttribute('role', 'group');
+      presets.setAttribute('aria-label', 'Preset speeds');
+      for (const v of PANEL_SPEEDS) {
+        presets.appendChild(btn('chip', speedText(v), () => env.act.pickRate(v), { aria: { 'aria-pressed': String(Math.abs(v - s.rate) < 1e-6), 'aria-label': `Speed ${speedText(v)}` } }));
       }
-      // Apply the rate without rebuilding the panel while the slider owns the pointer.
+      box.appendChild(presets);
+      f.appendChild(box);
+      // Apply the rate without rebuilding the panel while the slider owns the pointer; the wheel steps it, as on
+      // the volume bar.
       speedDrag = VpeRangeDrag.bind(input);
+      VpeRangeDrag.wheelStep(input, (dir) => { env.act.stepRate(dir); render(); });
       input.addEventListener('input', () => {
         const rate = clampRate(Number(input.value));
         env.act.setRate(rate);
         read.textContent = speedText(rate);
         input.setAttribute('aria-valuetext', read.textContent);
-        for (const [i, b] of [...marks.children].entries()) {
-          b.setAttribute('aria-pressed', String(Math.abs(SPEEDS[i] - rate) < 1e-6));
+        for (const [i, b] of [...presets.children].entries()) {
+          b.setAttribute('aria-pressed', String(Math.abs(PANEL_SPEEDS[i] - rate) < 1e-6));
         }
       });
-      sl.append(input, marks);
-      f.appendChild(sl);
-      const note = el('div', 'pnote');
-      note.append(`Steps of ${SPEED_STEP}×. Scroll on the speed button or `, kbd('Shift'), '+', kbd('<'), kbd('>'), '.');
-      f.appendChild(note);
       return f;
     }
 
@@ -550,16 +589,8 @@ const VpeControls = (() => {
       const pc = s.picture;
       f.appendChild(radios('Picture size', PIC.MODES.map((m) => ({ label: PIC.name(m), sub: PIC.SHORT[m], checked: pc.mode === m, pick: () => env.act.setPicture(m) }))));
       f.appendChild(el('div', 'sep'));
-      const r = el('div', 'jrow');
-      r.setAttribute('role', 'group');
-      r.setAttribute('aria-label', 'Zoom');
-      const n = el('span', 'grow', 'Zoom');
-      n.setAttribute('aria-hidden', 'true');
-      const val = pc.pct === null ? '—' : `${pc.pct}%`;
-      r.append(n, btn('chip', '−', () => { env.act.zoomPicture(-1); render(); }, { aria: { 'aria-label': 'Zoom out' } }),
-        el('span', 'zval', val),
-        btn('chip', '+', () => { env.act.zoomPicture(1); render(); }, { aria: { 'aria-label': 'Zoom in' } }),
-        btn('chip', 'Reset', () => { env.act.resetPicture(); render(); }, { aria: { 'aria-label': 'Reset zoom' } }));
+      const r = stepper({ name: 'Zoom', value: pc.pct === null ? '—' : `${pc.pct}%`, minus: () => env.act.zoomPicture(-1), plus: () => env.act.zoomPicture(1), down: 'Zoom out', up: 'Zoom in' });
+      r.appendChild(btn('chip', 'Reset', () => { env.act.resetPicture(); render(); }, { aria: { 'aria-label': 'Reset zoom' } }));
       f.appendChild(r);
       const note = el('div', 'pnote');
       note.append(kbd('Z'), ' cycles the sizes (zoomed in: back to Fit). Ctrl+wheel zooms, drag moves the picture', s.compare ? '. All videos follow together.' : '.');
@@ -617,18 +648,8 @@ const VpeControls = (() => {
         ...t.subs.map((x) => ({ label: x.main, sub: x.sub, checked: x.checked, pick: () => env.act.selectSub(x.key) }))]));
       f.appendChild(btn('row', 'Load subtitle file…', () => { close(false); env.act.loadSubs(); }));
       f.appendChild(el('div', 'sep'));
-      const stepper = (name, value, minus, plus, reset) => {
-        const r = el('div', 'jrow');
-        r.setAttribute('role', 'group');
-        r.setAttribute('aria-label', name);
-        const n = el('span', 'grow', name);
-        n.setAttribute('aria-hidden', 'true');
-        const v = btn('chip', value, () => { reset(); render(); }, { aria: { 'aria-label': `${name} ${value}, reset` } });
-        r.append(n, btn('chip', '−', () => { minus(); render(); }, { aria: { 'aria-label': `${name} down` } }), v, btn('chip', '+', () => { plus(); render(); }, { aria: { 'aria-label': `${name} up` } }));
-        return r;
-      };
-      f.appendChild(stepper('Delay', `${t.delay > 0 ? '+' : ''}${Math.round(t.delay * 1000)} ms`, () => env.act.subDelay(-0.05), () => env.act.subDelay(0.05), () => env.act.subDelay(null)));
-      f.appendChild(stepper('Size', `${Math.round(t.size * 100)}%`, () => env.act.subSize(-0.1), () => env.act.subSize(0.1), () => env.act.subSize(null)));
+      f.appendChild(stepper({ name: 'Delay', value: `${t.delay > 0 ? '+' : ''}${Math.round(t.delay * 1000)} ms`, minus: () => env.act.subDelay(-0.05), plus: () => env.act.subDelay(0.05), reset: () => env.act.subDelay(null) }));
+      f.appendChild(stepper({ name: 'Size', value: `${Math.round(t.size * 100)}%`, minus: () => env.act.subSize(-0.1), plus: () => env.act.subSize(0.1), reset: () => env.act.subSize(null) }));
       return f;
     }
 
@@ -747,6 +768,36 @@ const VpeControls = (() => {
       return f;
     }
 
+    /**
+     * Popovers: pages that sit right above the bar button that opened them, without a title row. Others open at the
+     * bar's right end. view → the env.buttons keys that open it as a popover.
+     */
+    const POPOVERS = { step: ['stepPrev', 'stepNext'], speed: ['rate'] };
+    const popover = () => !!opener && !!view && (POPOVERS[view] || []).some((k) => buttons[k] === opener);
+    /**
+     * Peek: a popover opened for a moment without taking focus (the wheel over the speed button). It fades out
+     * PEEK_MS after the last peek; pointing into it, pressing in it or focusing it keeps it open, and a click on its
+     * button then keeps it too (toggle). A page opened another way is left alone.
+     */
+    let peeking = false, peekTimer = 0, fading = false;
+    const setFading = (on) => { fading = on; panel.className = panel.className.replace(/ fading/g, '') + (on ? ' fading' : ''); };
+    function stopPeek() {
+      peeking = false;
+      if (peekTimer) window.clearTimeout(peekTimer);
+      peekTimer = 0;
+      if (fading) setFading(false);
+    }
+    function peek(v, from) {
+      if (view === v && !peeking) return;
+      if (view !== v) show(v, from, false);
+      stopPeek();
+      peeking = true;
+      peekTimer = window.setTimeout(() => {
+        setFading(true);
+        peekTimer = window.setTimeout(() => { const was = peeking; stopPeek(); if (was) close(false); }, FADE_MS);
+      }, PEEK_MS);
+    }
+    if (panel.addEventListener) for (const ev of ['pointerenter', 'pointerdown', 'focusin']) panel.addEventListener(ev, () => { if (peeking) stopPeek(); });
     const LABEL = { main: 'Player settings', autoplay: 'Autoplay', speed: 'Speed', ab: 'A–B Range', inspect: 'Inspection', picture: 'Picture size', transcode: 'Live transcode', subs: 'Subtitles', audio: 'Audio track', quality: 'Quality', info: 'About this video', step: 'Step size' };
     /**
      * Pages a page adds (compare's panel and its per-video page): { label, render(s, kit), parent?, button? }.
@@ -763,7 +814,7 @@ const VpeControls = (() => {
       const nav = [...panel.querySelectorAll('[data-nav]')];
       const fi = nav.indexOf(/** @type {any} */ (document.activeElement));
       panel.textContent = '';
-      panel.className = `panel ${view}`;
+      panel.className = `panel ${view}${popover() ? ' popover' : ''}${fading ? ' fading' : ''}`;
       const custom = VIEWS[view];
       panel.setAttribute('aria-label', custom ? (typeof custom.label === 'function' ? custom.label(s) : custom.label) : view === 'info' && s.infoTabs ? 'About these videos' : LABEL[view]);
       const body = custom ? custom.render(s, kit) : view === 'main' ? renderMain(s) : view === 'autoplay' ? renderAutoplay(s) : view === 'speed' ? renderSpeed(s) : view === 'ab' ? renderAB(s) : view === 'inspect' ? renderInspect(s) : view === 'picture' ? renderPicture(s) : view === 'transcode' ? renderTranscode(s) : view === 'subs' ? renderSubs(s) : view === 'audio' ? renderAudio(s) : view === 'quality' ? renderQuality(s) : view === 'step' ? renderStep(s) : renderInfo(s);
@@ -777,8 +828,8 @@ const VpeControls = (() => {
       const r = bar.getBoundingClientRect();
       panel.style.bottom = `${Math.max(8, window.innerHeight - r.top + 8)}px`;
       panel.style.maxHeight = `${Math.max(120, r.top - 16)}px`;
-      // The step size popover sits right above the step button it was opened from; the other pages at the bar's right end.
-      if (view === 'step' && opener) {
+      // A popover sits right above the button it was opened from; the other pages at the bar's right end.
+      if (popover() && opener) {
         const o = opener.getBoundingClientRect();
         const w = panel.offsetWidth;
         panel.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - w - 8, o.left + o.width / 2 - w / 2)))}px`;
@@ -798,24 +849,26 @@ const VpeControls = (() => {
       set(buttons.rate, view === 'speed' && opener === buttons.rate);
       set(buttons.tracks, view === 'subs' && opener === buttons.tracks);
     }
-    /** Opens (or switches to) a page; focus moves into it. */
-    function show(v, from) {
+    /** Opens (or switches to) a page; focus moves into it unless `focus` is false (peek). */
+    function show(v, from, focus = true) {
       if (from !== undefined) opener = from;
       if (onShow) onShow();
       closeSheet(false);
       view = v;
       panel.hidden = false;
       render();
-      const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' || v === 'step' || v === 'autoplay' ? panel.querySelector('[aria-checked="true"]') : null) || panel.querySelector('[data-nav]'));
-      if (first) first.focus();
+      const first = /** @type {HTMLElement|null} */ ((v === 'subs' || v === 'audio' || v === 'quality' || v === 'step' || v === 'autoplay' ? panel.querySelector('[aria-checked="true"]') : v === 'speed' && popover() ? panel.querySelector('#speedSlider') : null) || panel.querySelector('[data-nav]'));
+      if (first && focus) first.focus();
     }
     /** A bar button: opens its page, or closes it when it is the page shown. */
     function toggle(v, from) {
+      if (view === v && peeking) { stopPeek(); show(v, from); return; } // a click on a peeked popover keeps it
       if (view === v) { close(true); return; }
       show(v, from);
     }
     function close(refocus) {
       if (!view) return;
+      stopPeek();
       const back = opener;
       view = null;
       speedDrag?.stop();
@@ -919,7 +972,7 @@ const VpeControls = (() => {
     }, true);
 
     return {
-      toggle, show, close, render, openSheet, closeSheet,
+      toggle, show, peek, close, render, openSheet, closeSheet,
       /** True once after a press outside the bar closed a panel: the click that follows was the dismissal. */
       consumeDismiss: () => { const d = dismissedAtPress; dismissedAtPress = false; return d; },
       toggleSheet: () => { if (sheet.hidden) openSheet(); else closeSheet(true); },
@@ -933,7 +986,7 @@ const VpeControls = (() => {
 
   return {
     create, createToast, createPlayFlash, drawRangeMarks, drawRangeButtons, facts, keyGroups, qualityRows, qualityLabel,
-    clampRate, speedText, navName, stepTips, SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
+    clampRate, presetRate, speedText, navName, stepTips, SPEEDS, PANEL_SPEEDS, SPEED_MIN, SPEED_MAX, SPEED_STEP, NAV,
     STEP_SIZES, stepName, stepBadge, stepSizeOf, stepAmount, drawStepBadges, holdVolumeOpen, remoteChipState, resolutionChoices,
   };
 })();

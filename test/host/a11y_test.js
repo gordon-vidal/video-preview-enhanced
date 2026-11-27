@@ -145,7 +145,7 @@ assert.match(cmpStyles, /#cells\.dense \.pill:focus-visible \{ outline-color: va
   assert.ok(html.indexOf('picture.js') > 0 && html.indexOf('picture.js') < html.indexOf('inspect.js"'), 'picture.js loads before inspect.js');
   assert.match(html, /<div id="panel" class="panel" role="dialog" aria-label="[^"]+" hidden><\/div>/);
   assert.match(html, /<input id="seek" type="range"[^>]*aria-label="Position"/);
-  assert.match(html, /<input id="volume" type="range"[^>]*aria-label="Volume"/);
+  assert.match(html, /<input id="volume" class="range" type="range"[^>]*aria-label="Volume"/);
   assert.match(html, /<button id="time"[^>]*aria-label="Position"/);
   assert.ok(html.indexOf('controls.js') > 0 && html.indexOf('controls.js') < html.indexOf('player-ui.js"'), 'controls.js loads before player-ui.js');
   assert.ok(html.indexOf('modes.js') > 0 && html.indexOf('modes.js') < html.indexOf('player-ui.js"'), 'modes.js (ownsKey) loads before player-ui.js');
