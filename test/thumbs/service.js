@@ -3,7 +3,9 @@
 // worker_threads: a fast sweep over the bar must end on the last position
 // (stale requests cancelled, few decodes), the neighbours of a resting pointer
 // are filled (not while busy() says playback needs the CPU, not for remote
-// files), repeats come from the cache, and nothing decodes after the pointer left.
+// files), repeats come from the cache, and nothing decodes after the pointer left. On a generated 10 s-GOP clip
+// (test/lib/gop_clip.js) the worker's 'near' mode returns the closer keyframe and both keyframe times, and
+// 'between' returns the frame at the target (ffmpeg reference), not the keyframe.
 //
 //   node test/thumbs/service.js <video file>
 'use strict';
@@ -116,13 +118,11 @@ async function main() {
   svc.dispose();
   svc = new globalThis.ThumbService({ ...svc.o });
   svc.hover(duration * 0.6, () => {}, true);
-  // A keyframe answer covers [its time, the asked time]: a slot inside that range needs no request.
-  const covering = () => svc.list.find((e) => e.kind === 'key' && e.end > e.t);
-  for (let i = 0; i < 400 && !covering(); i++) await sleep(10);
-  const key = covering() || { t: 0, end: 0 };
+  // One answer teaches the keyframes around the pointer: another slot between them needs no request.
+  for (let i = 0; i < 400 && !(svc.stats.decoded && !svc.inflight); i++) await sleep(10);
   let revisit = 0;
-  while (revisit < svc.n && !(svc.target(revisit) > key.t)) revisit++;
-  check('observed range contains an unrequested slot', svc.target(revisit) <= key.end && !svc.asked.has(revisit));
+  while (revisit < svc.n && (revisit === svc.want || svc.asked.has(revisit) || svc.need(revisit))) revisit++;
+  check('observed range contains an unrequested slot', revisit < svc.n);
   svc.leave(true);
   const readsBefore = reads.length;
   let immediate = false;
@@ -142,8 +142,67 @@ async function main() {
   check('no neighbour filling when remote', rsvc.nextNear() === null);
   svc.dispose();
   fs.closeSync(fd);
+  await gopChecks(check);
   if (process.env.THUMBS_LOG) console.log(logs.join('\n'));
   process.exit(ok.every(Boolean) ? 0 : 1);
+}
+
+/** A bare worker on `file`: ask(m) posts a request and resolves its reply. */
+function openWorker(file) {
+  const wfd = fs.openSync(file, 'r');
+  const wsize = fs.fstatSync(wfd).size;
+  const w = new WT(path.join(root, 'test', 'pool', 'worker-shim.js'), { workerData: { script: path.join(root, 'media', 'thumbs-worker.js') } });
+  let recv = null;
+  w.on('message', (m) => {
+    if (m.type === 'ready') w.postMessage({ type: 'open', size: wsize });
+    else if (m.type === 'read') {
+      const n = Math.max(0, Math.min(m.len, wsize - m.pos));
+      const b = Buffer.alloc(n);
+      if (n) fs.readSync(wfd, b, 0, n, m.pos);
+      w.postMessage({ type: 'block', pos: m.pos, data: new Uint8Array(b.buffer, b.byteOffset, n) });
+    } else if (m.type === 'opened' || m.type === 'thumb' || m.type === 'error') recv(m);
+  });
+  const ask = (m) => new Promise((resolve) => { recv = resolve; w.postMessage(m); });
+  const close = async () => { await w.terminate(); fs.closeSync(wfd); };
+  return { ask, close };
+}
+
+async function gopChecks(check) {
+  const gop = require('../lib/gop_clip');
+  const file = gop.make();
+  if (!file) { console.log('skip: no ffmpeg for the 10 s-GOP clip'); return; }
+  const w = openWorker(file);
+  try {
+    await w.ask({ type: 'init', loader: path.join(libdir, 'libav-6.11.9.0.2-vpe.js'), toImport: path.join(libdir, 'libav-6.11.9.0.2-vpe.wasm.js'), wasmurl: path.join(libdir, 'libav-6.11.9.0.2-vpe.wasm.wasm'), variant: 'vpe' });
+    let id = 0;
+    const near3 = await w.ask({ type: 'thumb', id: ++id, t: 3, w: 160, h: 120, mode: 'near' });
+    check('near at 3 s: the keyframe before, both keyframe times', near3.kt === 0 && near3.kp === 0 && near3.kn === 10, JSON.stringify({ kt: near3.kt, kp: near3.kp, kn: near3.kn }));
+    const near7 = await w.ask({ type: 'thumb', id: ++id, t: 7, w: 160, h: 120, mode: 'near' });
+    check('near at 7 s: the keyframe after is closer', near7.kt === 10 && near7.kp === 0 && near7.data, JSON.stringify({ kt: near7.kt, kp: near7.kp, kn: near7.kn }));
+    for (const T of [1, 5, 9]) {
+      const t0 = performance.now();
+      const r = await w.ask({ type: 'thumb', id: ++id, t: T, w: 160, h: 120, mode: 'between' });
+      const ms = Math.round(performance.now() - t0);
+      const k = Math.round(T * gop.FPS);
+      const slot = r.data ? await gop.frameOf(r.data, r.w, r.h, k, file) : null;
+      check(`between at ${T} s: the frame at the target (ffmpeg reference)`, r.kp === 0 && r.kt <= T + 1e-6 && r.kt > T - 3 / gop.FPS && slot >= k - 2 && slot <= k,
+        `kt ${r.kt}, frame ${slot} of ${k}, ${r.frames} packets, ${ms} ms`);
+    }
+    // A key request after 'between' is a keyframe again (the cheap flags are reset).
+    const key = await w.ask({ type: 'thumb', id: ++id, t: 5.5, w: 160, h: 120, mode: 'key' });
+    check('key after between: the keyframe', key.kt === 0, JSON.stringify({ kt: key.kt }));
+  } finally { await w.close(); }
+  // MPEG-PS has no index: a seek can land past the keyframe, which must not answer with the keyframe after.
+  const ps = gop.make({ codec: 'mpeg2' });
+  const p = openWorker(ps);
+  try {
+    const info = await p.ask({ type: 'init', loader: path.join(libdir, 'libav-6.11.9.0.2-vpe.js'), toImport: path.join(libdir, 'libav-6.11.9.0.2-vpe.wasm.js'), wasmurl: path.join(libdir, 'libav-6.11.9.0.2-vpe.wasm.wasm'), variant: 'vpe' });
+    const t0 = info.start || 0;
+    const key = await p.ask({ type: 'thumb', id: 1, t: t0 + 5, w: 160, h: 120, mode: 'key' });
+    check('MPEG-PS key at 5 s: the keyframe before, not after', Math.abs(key.kt - t0) < 0.05, JSON.stringify({ kt: key.kt, start: t0 }));
+    const r = await p.ask({ type: 'thumb', id: 2, t: t0 + 7, w: 160, h: 120, mode: 'between' });
+    check('MPEG-PS between at 7 s: from the keyframe before', Math.abs(r.kp - t0) < 0.05 && Math.abs(r.kt - t0 - 7) < 3 / gop.FPS, JSON.stringify({ kt: r.kt, kp: r.kp }));
+  } finally { await p.close(); }
 }
 
 function probeDuration() {

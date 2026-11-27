@@ -1,9 +1,11 @@
-// Seek-bar thumbnail worker: a second, keyframe-only libav.js instance, started
-// by thumbs.js on the first hover. Separate from decoder-worker.js so playback
-// never waits on it. For a request at time t it seeks to the latest keyframe at
-// or before t, decodes that one picture in software (also H.264/VP8, which
-// playback sends to WebCodecs), scales it down with swscale and returns packed
-// RGBA. File reads go through the engine's block cache as reader 'thumbs'.
+// Seek-bar thumbnail worker: a second libav.js instance, started by thumbs.js on the first hover. Separate from
+// decoder-worker.js so playback never waits on it. Decodes in software (also H.264/VP8, which playback sends to
+// WebCodecs), scales down with swscale and returns packed RGBA. File reads go through the engine's block cache as
+// reader 'thumbs'. Modes of a request at time t:
+// - 'key': the latest keyframe at or before t (one packet decoded);
+// - 'near': the same, or the first keyframe after t when that one is closer (found through the demuxer index);
+// - 'between': cheap decode (skip_frame noref, no loop filter, flags2 fast) from the keyframe up to t, keeping the
+//   last frame at or before t.
 'use strict';
 
 const AVMEDIA_TYPE_VIDEO = 0;
@@ -12,6 +14,7 @@ const AV_PIX_FMT_RGBA = 26;
 const SWS_BILINEAR = 2;
 const BLOCK = 1 << 20;
 const MAX_PACKETS = 400; // packets read looking for a keyframe before giving up
+const MAX_BETWEEN = 3000; // packets read at most for one 'between' picture
 
 let libav = null;
 let fmt = 0;
@@ -121,15 +124,39 @@ async function seekTo(t, mode) {
   return mode === 'min' ? libav.avformat_seek_file_min(fmt, -1, lo, hi, 0) : libav.avformat_seek_file_max(fmt, -1, lo, hi, 0);
 }
 
-/** One thumbnail: m = {id, t (absolute seconds), w, h (box)}. */
+/** The first keyframe after `t` by the demuxer index: its packet and time, or null (none found). */
+async function keyAfter(t) {
+  const landed = await seekTo(t + 1e-6, 'min');
+  if (landed < 0) return null;
+  for (let n = 0; n < MAX_PACKETS; n++) {
+    const [res, packets] = await libav.ff_read_frame_multi(fmt, pkt, { limit: 1 });
+    const key = (packets[V.idx] || []).find((p) => p.flags & AV_PKT_FLAG_KEY);
+    if (key) { const k = packetTime(key); return k !== null && k > t ? { p: key, t: k } : null; }
+    if (res === libav.AVERROR_EOF || (res < 0 && res !== -libav.EAGAIN)) return null;
+  }
+  return null;
+}
+
+/** One thumbnail: m = {id, t (absolute seconds), w, h (box), mode?: 'key' | 'near' | 'between'}. */
 async function thumb(m) {
+  if (m.mode === 'between') { await between(m); return; }
   const t0 = Date.now();
   const stale = () => m.id < cancelBelow;
   if (stale()) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
   let frames = [];
   let kt = null;
+  let kp;
+  let kn;
   let covered = false;
-  // Formats without an index (MPEG-TS, some MKV) can land past the keyframe:
+  let late = null; // the earliest keyframe seen after the target: the answer only when none comes before it
+  // Decodes just this packet and drains the decoder (no reordering wait); false when main has that picture.
+  const decodeKey = async (p) => {
+    if (kt !== null && known.has(kt)) { post({ type: 'thumb', id: m.id, kt, kp, kn, covered, known: true, ms: Date.now() - t0 }); return false; }
+    frames = await libav.ff_decode_multi(V.c, V.pkt, V.frame, [p], { fin: true, ignoreErrors: true, copyoutFrame: 'ptr' });
+    await libav.avcodec_flush_buffers(V.c);
+    return true;
+  };
+  // Formats without an index (MPEG-PS/TS, some MKV) can land past the keyframe:
   // step back (2, 6, 14 s ...) and finally to the start before giving up.
   for (let back = 0, tries = 0; !frames.length && tries < 6; tries++) {
     const t = m.t - back;
@@ -143,26 +170,124 @@ async function thumb(m) {
       const key = (packets[V.idx] || []).filter((p) => p.flags & AV_PKT_FLAG_KEY);
       if (key.length) {
         const p = key[0];
-        kt = packetTime(p);
+        const pt = packetTime(p);
+        if (pt !== null && pt > m.t + 1e-6 && t > 0) {
+          if (!late || pt < late.t) late = { p, t: pt };
+          break;
+        }
+        kt = pt;
         covered = tries === 0 && landed >= 0 && kt !== null && kt <= m.t;
-        if (kt !== null && known.has(kt)) { post({ type: 'thumb', id: m.id, kt, covered, known: true, ms: Date.now() - t0 }); return; }
-        // Decode just this packet and drain the decoder (no reordering wait).
-        frames = await libav.ff_decode_multi(V.c, V.pkt, V.frame, [p], { fin: true, ignoreErrors: true, copyoutFrame: 'ptr' });
-        await libav.avcodec_flush_buffers(V.c);
+        let use = p;
+        if (m.mode === 'near' && covered) {
+          kp = kt;
+          const after = await keyAfter(Math.max(kt, m.t));
+          kn = after ? after.t : undefined;
+          if (after && after.t - m.t < m.t - kt) { use = after.p; kt = after.t; }
+        }
+        if (!await decodeKey(use)) return;
       }
       if (atEnd) break;
     }
     if (t <= 0) break;
     back = back * 2 + 2;
   }
+  if (!frames.length && late) {
+    kt = late.t;
+    if (!await decodeKey(late.p)) return;
+  }
   if (!frames.length) { post({ type: 'thumb', id: m.id, kt: null, ms: Date.now() - t0 }); return; }
   try {
     const out = await scale(frames[0], m.w, m.h);
     if (kt === null) kt = out.t;
     if (kt !== null) known.add(kt);
-    post({ type: 'thumb', id: m.id, kt, covered, w: out.w, h: out.h, data: out.data, ms: Date.now() - t0 }, [out.data.buffer]);
+    post({ type: 'thumb', id: m.id, kt, kp, kn, covered, w: out.w, h: out.h, data: out.data, ms: Date.now() - t0 }, [out.data.buffer]);
   } finally {
     for (const f of frames) await libav.av_frame_free_js(f);
+  }
+}
+
+async function setCheap(on) {
+  await libav.av_opt_set(V.c, 'skip_frame', on ? 'noref' : 'nokey', 0);
+  await libav.av_opt_set(V.c, 'skip_loop_filter', on ? 'all' : 'default', 0);
+  await libav.av_opt_set(V.c, 'flags2', on ? '+fast' : '-fast', 0);
+}
+
+async function frameTime(f) {
+  const lo = await libav.AVFrame_pts(f);
+  const hi = await libav.AVFrame_ptshi(f);
+  return noTs(lo, hi) ? null : f64(lo, hi) * V.tb[0] / V.tb[1];
+}
+
+/**
+ * A picture between keyframes: decodes cheaply from the keyframe at or before m.t and keeps the last frame at or
+ * before it. Replies {kt: the frame's time, kp: the keyframe's, frames: packets read, exact: true}.
+ */
+async function between(m) {
+  const t0 = Date.now();
+  const stale = () => m.id < cancelBelow;
+  const cancelled = () => post({ type: 'thumb', id: m.id, cancelled: true });
+  if (stale()) { cancelled(); return; }
+  await setCheap(true);
+  let keep = 0;
+  let keepT = null;
+  let kp;
+  let n = 0;
+  let past = false;
+  const take = async (frames) => {
+    for (const f of frames) {
+      const ft = await frameTime(f);
+      if (ft !== null && ft <= m.t + 1e-6 && (keepT === null || ft >= keepT)) {
+        if (keep) await libav.av_frame_free_js(keep);
+        keep = f;
+        keepT = ft;
+      } else {
+        if (ft !== null && ft > m.t + 1e-6) past = true;
+        await libav.av_frame_free_js(f);
+      }
+    }
+  };
+  try {
+    // Formats without an index (MPEG-PS/TS) can land past the keyframe: step back as thumb() does.
+    for (let back = 0, tries = 0; tries < 6; tries++) {
+      const t = m.t - back;
+      const landed = await seekTo(Math.max(0, t), t > 0 ? 'max' : 'min');
+      if (landed < 0 && t > 0) await seekTo(t, 'min');
+      await libav.avcodec_flush_buffers(V.c);
+      kp = undefined;
+      let missed = false;
+      for (let i = 0; i < MAX_BETWEEN && !past && !missed; i++, n++) {
+        if (stale()) { cancelled(); return; }
+        const [res, packets] = await libav.ff_read_frame_multi(fmt, pkt, { limit: 1 });
+        const atEnd = res === libav.AVERROR_EOF || (res < 0 && res !== -libav.EAGAIN);
+        const vp = [];
+        let pt = null;
+        for (const p of packets[V.idx] || []) {
+          pt = packetTime(p);
+          if ((p.flags & AV_PKT_FLAG_KEY) && pt !== null && pt <= m.t + 1e-6) {
+            // A later keyframe at or before the target: the frames before it are not needed.
+            if (kp !== undefined) { await libav.avcodec_flush_buffers(V.c); vp.length = 0; }
+            kp = pt;
+          } else if (kp === undefined) {
+            if (pt !== null && pt > m.t + 1e-6) missed = true;
+            continue;
+          }
+          vp.push(p);
+        }
+        // Packets 2 s past the target: any reordering is shorter, so the frame at the target is out.
+        const end = atEnd || (kp !== undefined && pt !== null && pt > m.t + 2);
+        if (vp.length || end) await take(await libav.ff_decode_multi(V.c, V.pkt, V.frame, vp, { fin: end, ignoreErrors: true, copyoutFrame: 'ptr' }));
+        if (end) break;
+      }
+      if (kp !== undefined || !missed || t <= 0) break;
+      back = back * 2 + 2;
+    }
+    if (!keep) { post({ type: 'thumb', id: m.id, kt: null, kp, exact: true, frames: n, ms: Date.now() - t0 }); return; }
+    const out = await scale(keep, m.w, m.h);
+    post({ type: 'thumb', id: m.id, kt: keepT, kp, exact: true, frames: n, w: out.w, h: out.h, data: out.data, ms: Date.now() - t0 }, [out.data.buffer]);
+  } finally {
+    if (keep) await libav.av_frame_free_js(keep);
+    await libav.avcodec_flush_buffers(V.c);
+    await setCheap(false);
   }
 }
 

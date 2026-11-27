@@ -1,17 +1,21 @@
 // @ts-check
-// Seek-bar thumbnails for the native ffmpeg backend (media/thumbs.js asks via the
-// engine's 'thumb' message), for native ffmpeg and Live transcode clips. One short keyframe-only ffmpeg per thumbnail:
-//   ffmpeg -skip_frame nokey -ss T -i FILE -frames:v 1 -vf scale=W:H,showinfo -c:v mjpeg -q:v 6 -f image2pipe -
-// The page always gets JPEG (nativeThumb: 3-6 KB instead of ~60 KB RGBA, which matters on a remote link's RPC
-// pipe) plus the keyframe's time read from showinfo. decodeThumb's 'rgba' format remains for tests and benches.
-// An input-side -ss seeks to the keyframe at or before T and -skip_frame nokey
-// makes the decoder drop everything else, so a long-GOP 4K file costs one
-// keyframe decode (~50-200 ms of one core). ffmpeg only decodes (docs/PRODUCT.md).
-// One at a time per player; the page asks for one at a time anyway.
+// Seek-bar thumbnails for native ffmpeg and Live transcode clips (media/thumbs.js asks via the engine's 'thumb'
+// message). One short ffmpeg per picture on the source file, never the running stream, in one of three modes:
+// - 'key': the keyframe at or before T (-skip_frame nokey, -noaccurate_seek): one keyframe decode (~50-200 ms of
+//   one core even for long-GOP 4K);
+// - 'near': the same plus the next keyframe (two frames), so the page can show the closer one and learns the GOP;
+// - 'exact': the frame at T, decoded cheaply from the keyframe (-skip_frame noref -skip_loop_filter all -flags2
+//   fast, fast_bilinear). skip_frame bidir gives wrong pictures (B-frames can be references) and -hwaccel does not
+//   pay off for one picture (docs/notes/seek-preview.md, measurements).
+// The page always gets JPEG (3-6 KB instead of ~60 KB RGBA, which matters on a remote link's RPC pipe) plus each
+// picture's time read from showinfo. decodeThumb's 'rgba' format remains for tests and benches.
+// One at a time per player; the page asks for one at a time anyway. ffmpeg only decodes (docs/PRODUCT.md).
 'use strict';
 
 const { spawn } = require('child_process');
 const { lowerPriority } = require('./ffmpeg');
+
+const MAX_JPEG = 25 * 1024;
 
 /** Fits a w x h picture into a box (even sizes, at least 2). */
 function fitBox(w, h, bw, bh) {
@@ -21,22 +25,51 @@ function fitBox(w, h, bw, bh) {
   return { w: even(w), h: even(h) };
 }
 
-/** ffmpeg arguments for one thumbnail at `t` seconds (from the file's start). */
-// -noaccurate_seek and passthrough timing: the keyframe before T has a time before the cut, and
-// would otherwise be dropped (with every other frame skipped, nothing would come out).
-function thumbArgs(file, t, w, h, legacy, stream = 'v:0', format = 'rgba') {
-  // -threads 2 (decoder and filters): one keyframe needs no more, and ffmpeg's default (~40 threads on 8 cores)
-  // next to playback made the desktop stutter (2026-11-20).
-  return ['-hide_banner', '-loglevel', 'info', '-nostats', '-copyts', '-nostdin', '-noautorotate', '-skip_frame', 'nokey', '-noaccurate_seek',
+/**
+ * ffmpeg arguments for one thumbnail at `t` seconds (from the file's start).
+ * @param {string} file @param {number} t @param {number} w @param {number} h @param {boolean} [legacy]
+ * @param {string} [stream] @param {'rgba' | 'jpeg'} [format] @param {'key' | 'near' | 'exact'} [mode]
+ */
+function thumbArgs(file, t, w, h, legacy, stream = 'v:0', format = 'rgba', mode = 'key') {
+  const exact = mode === 'exact';
+  // Key modes: -noaccurate_seek and passthrough timing, because the keyframe before T has a time before the cut and
+  // would otherwise be dropped (with every other frame skipped, nothing would come out).
+  // -threads 2 (decoder and filters): ffmpeg's default (~40 threads on 8 cores) next to playback made the desktop
+  // stutter (2026-11-20).
+  const decode = exact
+    ? ['-skip_frame', 'noref', '-skip_loop_filter', 'all', '-flags2', 'fast']
+    : ['-skip_frame', 'nokey', '-noaccurate_seek'];
+  return ['-hide_banner', '-loglevel', 'info', '-nostats', '-copyts', '-nostdin', '-noautorotate', ...decode,
     '-threads', '2', '-ss', Math.max(0, t).toFixed(3), '-protocol_whitelist', 'file', '-i', file, '-filter_threads', '1', '-map', `0:${stream}`, '-an', '-sn', '-dn',
-    ...(legacy ? ['-vsync', '0'] : ['-fps_mode', 'passthrough']), '-frames:v', '1',
-    '-vf', `scale=${w}:${h}:flags=bilinear,showinfo`,
+    ...(legacy ? ['-vsync', '0'] : ['-fps_mode', 'passthrough']), '-frames:v', mode === 'near' ? '2' : '1',
+    '-vf', `scale=${w}:${h}:flags=${exact ? 'fast_bilinear' : 'bilinear'},showinfo`,
     ...(format === 'jpeg' ? ['-pix_fmt', 'yuvj420p', '-c:v', 'mjpeg', '-q:v', '6', '-f', 'image2pipe']
       : ['-f', 'rawvideo', '-pix_fmt', 'rgba']), '-'];
 }
 
+/** Splits ffmpeg's output into pictures: JPEG files (SOI ... EOI) or RGBA frames of `size` bytes. */
+function splitPictures(buf, jpeg, size) {
+  const out = [];
+  if (!jpeg) {
+    for (let at = 0; at + size <= buf.length; at += size) out.push(buf.subarray(at, at + size));
+    return out;
+  }
+  let at = 0;
+  while (at + 4 <= buf.length && buf[at] === 0xff && buf[at + 1] === 0xd8) {
+    // Entropy-coded data stuffs every 0xff, so the first EOI marker ends the picture.
+    let end = -1;
+    for (let i = at + 2; i + 1 < buf.length; i++) if (buf[i] === 0xff && buf[i + 1] === 0xd9) { end = i + 2; break; }
+    if (end < 0 || end - at > MAX_JPEG) break;
+    out.push(buf.subarray(at, end));
+    at = end;
+  }
+  return out;
+}
+
 /**
- * Decodes one thumbnail. Resolves {kt, w, h, data: Buffer (RGBA, or a JPEG file when format is 'jpeg')} or null.
+ * Decodes one thumbnail. Resolves {kt, w, h, data: Buffer (RGBA, or a JPEG file when format is 'jpeg')} or null;
+ * kt is the picture's time (the keyframe's in the key modes). Mode 'near' adds `next`: {kt, data} of the following
+ * keyframe when there is one.
  * @param {{ffmpeg: string, legacy?: boolean}} tools
  * @param {string} file
  * @param {{w: number, h: number, index?: number, lead?: number}} src video size (before rotation)
@@ -46,22 +79,24 @@ function thumbArgs(file, t, w, h, legacy, stream = 'v:0', format = 'rgba') {
  * @param {(m: string) => void} [log]
  * @param {AbortSignal} [signal]
  * @param {'rgba' | 'jpeg'} [format]
+ * @param {'key' | 'near' | 'exact'} [mode]
  */
-function decodeThumb(tools, file, src, t, bw, bh, log, signal, format = 'rgba') {
+function decodeThumb(tools, file, src, t, bw, bh, log, signal, format = 'rgba', mode = 'key') {
   if (signal?.aborted) return Promise.resolve(null);
   const { w, h } = fitBox(src.w, src.h, bw, bh);
   const jpeg = format === 'jpeg';
-  const want = jpeg ? 0 : w * h * 4;
-  const MAX_JPEG = 25 * 1024;
+  const count = mode === 'near' ? 2 : 1;
+  const max = jpeg ? count * MAX_JPEG : count * w * h * 4;
   return new Promise((resolve) => {
-    const proc = lowerPriority(spawn(tools.ffmpeg, thumbArgs(file, t + (src.lead || 0), w, h, tools.legacy, src.index, format), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+    const proc = lowerPriority(spawn(tools.ffmpeg, thumbArgs(file, t + (src.lead || 0), w, h, tools.legacy, src.index, format, mode), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
     const parts = [];
     let got = 0;
     let err = '';
-    let kt = null;
+    /** @type {number[]} */
+    const times = [];
     // checkJs: start
     let settled = false;
-    /** @param {{kt: number|null, w: number, h: number, data: Uint8Array} | null} result */
+    /** @param {any} result */
     const finish = (result) => {
       if (settled) return;
       settled = true;
@@ -80,23 +115,30 @@ function decodeThumb(tools, file, src, t, bw, bh, log, signal, format = 'rgba') 
     signal?.addEventListener('abort', cancel, { once: true });
     // checkJs: end
     proc.stdout.on('data', (d) => {
-      if (settled || (jpeg ? got > MAX_JPEG : got >= want)) return;
-      // Keep one overflow byte so an oversized JPEG cannot be mistaken for a complete one.
-      const part = jpeg ? d.subarray(0, MAX_JPEG + 1 - got) : d.subarray(0, want - got);
+      if (settled || got > max) return;
+      // Keep one overflow byte so an oversized picture cannot be mistaken for a complete one.
+      const part = d.subarray(0, max + 1 - got);
       parts.push(part);
       got += part.length;
     });
     proc.stderr.on('data', (d) => {
       if (settled) return;
       err = (err + d).slice(-8192);
-      const match = err.match(/Parsed_showinfo_[^\r\n]*\bpts_time:\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?=\s)/i);
-      if (kt === null && match) kt = Number(match[1]);
+      // showinfo prints one line per frame that reached the filter, numbered from 0.
+      const re = /Parsed_showinfo_[^\r\n]*\bn:\s*(\d+)[^\r\n]*\bpts_time:\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?=\s)/gi;
+      for (let m = re.exec(err); m; m = re.exec(err)) {
+        const n = Number(m[1]);
+        if (n === times.length && n < count) times.push(Number(m[2]));
+      }
     });
     proc.on('error', (e) => { if (log && !signal?.aborted) log(`thumb ffmpeg: ${e.message}`); finish(null); });
     proc.on('close', () => {
       if (settled) return;
-      if (jpeg ? got < 4 || got > MAX_JPEG || parts[0][0] !== 0xff || parts[0][1] !== 0xd8 : got < want) { if (log && err) log(`thumb at ${t.toFixed(2)} s: ${err.trim().slice(0, 300)}`); finish(null); return; }
-      finish({ kt, w, h, data: jpeg ? Buffer.concat(parts, got) : Buffer.concat(parts, got).subarray(0, want) });
+      const pics = got > max ? [] : splitPictures(Buffer.concat(parts, got), jpeg, w * h * 4);
+      if (!pics.length) { if (log && err) log(`thumb at ${t.toFixed(2)} s: ${err.trim().slice(0, 300)}`); finish(null); return; }
+      const kt = Number.isFinite(times[0]) ? times[0] : null;
+      const next = pics[1] && Number.isFinite(times[1]) ? { kt: times[1], data: Buffer.from(pics[1]) } : undefined;
+      finish({ kt, w, h, data: Buffer.from(pics[0]), ...(next ? { next } : {}) });
     });
   });
 }
@@ -105,13 +147,17 @@ function decodeThumb(tools, file, src, t, bw, bh, log, signal, format = 'rgba') 
 function nativeThumb(decoder, request, log, signal) {
   const v = decoder.pr?.video;
   const { t, w, h } = request;
+  const mode = request.mode === 'near' || request.mode === 'exact' ? request.mode : 'key';
   if (!v || !decoder.file || !Number.isFinite(t) ||
       !Number.isInteger(w) || w <= 0 || w > 160 || !Number.isInteger(h) || h <= 0 || h > 160) return null;
   const src = { w: v.sourceWidth || v.width, h: v.sourceHeight || v.height, index: v.index, lead: v.lead };
-  return decodeThumb(decoder.tools, decoder.file, src, t, w, h, log, signal, 'jpeg').then((r) => {
+  const rel = (kt) => (Number.isFinite(kt) && Number.isFinite(v.startTime) ? kt - v.startTime : null);
+  return decodeThumb(decoder.tools, decoder.file, src, t, w, h, log, signal, 'jpeg', mode).then((r) => {
     if (!r) return null;
-    const rel = Number.isFinite(r.kt) && Number.isFinite(v.startTime) ? r.kt - v.startTime : null;
-    return { w: r.w, h: r.h, data: new Uint8Array(r.data), fmt: 'jpeg', kt: r.kt, rel };
+    const next = r.next ? { kt: r.next.kt, rel: rel(r.next.kt), data: new Uint8Array(r.next.data) } : undefined;
+    // 'near' without a second picture: ffmpeg read to the end and found no keyframe after.
+    const last = mode === 'near' && !next ? { kn: null } : {};
+    return { w: r.w, h: r.h, data: new Uint8Array(r.data), fmt: 'jpeg', kt: r.kt, rel: rel(r.kt), ...(next ? { next } : last) };
   });
 }
 
