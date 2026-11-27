@@ -78,17 +78,21 @@ module.exports = [{
         // B has its first 3 frames cut: with offset -3 frame B#38 sits against A#41 and the PSNR is high.
         const at = await openPair(ref, lib.clip('cmp/offset3.mp4'));
         const m1 = await at(40, { want: 41 });
-        act({ action: 'offset', tile: 1, v: -3, unit: 'f' });
+        // Mark, act, wait for that action's result: the offset alone re-pairs B and is measured once (the metrics log
+        // each settled pair once), so the mark goes before the offset, not between it and the seek.
         const m0 = vs.mark();
+        act({ action: 'offset', tile: 1, v: -3, unit: 'f' });
         act({ action: 'seek', t: (40 + 0.5) / 30 });
         const line = await vs.waitLog(/webview: metrics frameA=41 frameB=38 /, { from: m0, timeout: 30000, what: 'metrics with offset -3' });
         const m2 = METRICS.exec(line);
         ok(m1.psnrY < 30 && num(m2[3]) > 40, `offset 0: PSNR Y ${m1.psnrY.toFixed(1)}; offset -3: ${num(m2[3]).toFixed(1)} (frames A${m2[1]} B${m2[2]})`);
         // The first-difference search (no UI for now, kept for a later advanced mode): lined up (-3), nothing
         // below 35 dB from #41 on would be found before the end; at offset 0 the next frame already differs.
+        const r0 = vs.mark();
         act({ action: 'offset', tile: 1, v: 0, unit: 'frames' });
         act({ action: 'seek', t: (40 + 0.5) / 30 });
-        await vs.waitLog(/webview: metrics frameA=41 frameB=41 /, { from: vs.mark(), timeout: 30000, what: 'metrics at offset 0' }).catch(() => null);
+        // The scan starts from the paired frames: it must wait for the reset to land (a timeout here is a failure).
+        await vs.waitLog(/webview: metrics frameA=41 frameB=41 /, { from: r0, timeout: 30000, what: 'metrics at offset 0' });
         const s0 = vs.mark();
         act({ action: 'scan', thresh: 35 });
         const found = await vs.waitLog(/webview: scan: /, { from: s0, timeout: 30000, what: 'scan result' });
