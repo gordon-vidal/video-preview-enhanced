@@ -1,4 +1,4 @@
-# AGENTS.md
+﻿# AGENTS.md
 
 Instructions for coding agents (Claude Code, Codex, Copilot, Cursor, ...). Humans: see
 [CONTRIBUTING.md](CONTRIBUTING.md). Nearest-file rules win; the user's prompt wins over this file.
@@ -8,8 +8,10 @@ Instructions for coding agents (Claude Code, Codex, Copilot, Cursor, ...). Human
 Video Preview Enhanced is a VS Code extension that plays video in the editor (MP4, MKV, MOV, AVI,
 WebM, WMV, MXF ...) with frame-exact stepping, compare views, scopes and inspection tools. Three
 decoders, picked per file: VS Code's WebCodecs (H.264/VP8), a built-in FFmpeg-as-WebAssembly
-(libav.js, LGPL) and an optional native ffmpeg the user installs. Plain JavaScript, no runtime or
-build dependencies, no build step. Works locally, in WSL and over Remote-SSH.
+(libav.js, LGPL) and an optional native ffmpeg the user installs. Node extension host (src/)
+plus a webview viewer (media/, with media/ui/ bundled into media/dist/webview-ui.js via
+
+pm run build:ui, ADR 0004). Works locally, in WSL and over Remote-SSH.
 
 ### Known VS Code platform limits (do not re-propose)
 
@@ -39,7 +41,7 @@ build dependencies, no build step. Works locally, in WSL and over Remote-SSH.
 ## Setup
 
 Node 20+, Git, Git LFS (`git lfs pull` for test videos), ffmpeg and ffprobe on `PATH`, Python 3 on
-Windows. `npm ci` (only verifies the lock file). Run from the repo root.
+Windows. Run `npm ci` from the repo root (and in fresh worktrees before `build:ui` or `verify:fast`).
 
 ## Tests
 
@@ -77,9 +79,10 @@ before releases or in performance work.
 
 ## Rules
 
-- **Diagram + pushback before big edits**: before implementing changes touching >2 files or a new UI
+- **Diagram + pushback before big edits**: before unscoped changes touching >2 files or a new UI
   surface, show a compact architecture/flow diagram (`.claude/skills/show-me/SKILL.md`) plus a
-  "Reuses vs. Introduces" check. If you catch yourself duplicating a helper, adding imperative DOM/CSS
+  "Reuses vs. Introduces" check (delegated briefs executing an approved ADR or explicit spec are
+  already scoped). If you catch yourself duplicating a helper, adding imperative DOM/CSS
   syncing, or working around an `AGENTS.md` constraint, stop and flag it first.
 - **Retrospective rule**: whenever a recurring bug class, architectural smell, or workflow
   misalignment surfaces, propose a concrete update to `AGENTS.md`, a skill, or an automated check
@@ -105,8 +108,9 @@ before releases or in performance work.
   (`tools/mockup/render.js`, UI wiring in `media/player-ui.js`, following
   `.claude/skills/ui-mockup/SKILL.md`), document changes in `docs/notes/` with visuals, keys and
   a11y names, and open a PR or ask first.
-- Code: `'use strict'`, 2 spaces, LF, about 120 columns; comments say why. No new runtime
-  dependencies. Put logic in small modules a Node test can load without VS Code or a browser.
+- Code: `'use strict'`, 2 spaces, LF, about 120 columns; comments say why. Keep dependencies lean,
+  and propose a dependency or build-system change whenever it clearly pays for itself. Put logic in
+  small modules a Node test can load without VS Code or a browser.
 - Test media must be openly licensed (no NC/ND) and credited in `test/media/LICENSES.md`;
   prefer generating clips.
 - **Licences**: the extension is MIT; the bundled decoder is FFmpeg under LGPL 2.1+ (plus dav1d, zlib).

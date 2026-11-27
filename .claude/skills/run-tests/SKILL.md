@@ -1,4 +1,4 @@
----
+﻿---
 name: run-tests
 description: Choose and run the right test layer for a change in Video Preview Enhanced (host/engine Node tests, hidden-desktop real VS Code scenarios, performance). Use when verifying a change, before a PR or merge, or when a test fails.
 ---
@@ -16,6 +16,7 @@ Read them if a command below fails; if they disagree with this file, they win an
 | `media/*.js` logic (engine, subtitles, timestretch, inspect, hdr ...) | `node test/run.js unit engine --changed` |
 | Decoder behaviour, seeking, formats | `node test/run.js engine` plus scenario `seeking` / `playback` |
 | Player UI, panels, compare, scopes | the scenario(s) that cover the file, see the table in `test/vscode/README.md` |
+| `test/host/*_test.js` (test-only) | `node test/run.js unit --grep <name>` + `npm run verify:fast` |
 | Anything user-visible before a merge | layers 1-3 (about 10 minutes) |
 
 ## 2. Commands
