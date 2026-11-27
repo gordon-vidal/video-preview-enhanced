@@ -79,6 +79,9 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
 
 ## Buttons
 
+![The error screen: a centered card with one main button](notes/img/error-card.png)
+
+
 - **One button:** `.vpe-btn`, 4 px corners (`--vpe-btn-radius`), 12 px text, **24 px** high on the picture (notices,
   callouts, error screen, tile buttons) and **28 px** in panels (`--vpe-btn-h`, `--vpe-btn-h-panel`). Chips, steppers
   and tile buttons follow the same corners and heights.
