@@ -129,9 +129,15 @@ before releases or in performance work.
   (`tools/mockup/render.js`, UI wiring in `media/player-ui.js`, following
   `.claude/skills/ui-mockup/SKILL.md`), document changes in `docs/notes/` with visuals, keys and
   a11y names, and open a PR or ask first.
-- Code: `'use strict'`, 2 spaces, LF, about 120 columns; comments say why. Keep dependencies lean,
+- Code: `'use strict'`, 2 spaces, LF, about 120 columns. Keep dependencies lean,
   and propose a dependency or build-system change whenever it clearly pays for itself. Put logic in
   small modules a Node test can load without VS Code or a browser.
+- **Comments: few and short** (maintainer, 2026-11-27). Comment only a non-obvious why (a platform
+  quirk, a measured number, a trap); no narration of what the code does, no history ("was X, now
+  Y" belongs in the commit). Comments and notes go stale faster than code.
+- **Stale is a bug**: when you find a comment, `docs/notes/` design note, or doc that no longer
+  matches the code, fix or delete it in the same change (or a follow-up commit on the branch).
+  Delete outdated text rather than adding "update:" paragraphs on top.
 - Test media must be openly licensed (no NC/ND) and credited in `test/media/LICENSES.md`;
   prefer generating clips.
 - **Licences**: the extension is MIT; the bundled decoder is FFmpeg under LGPL 2.1+ (plus dav1d, zlib).
