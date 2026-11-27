@@ -520,6 +520,7 @@
               // Live transcode, paused: the last seek's first picture (ms) and the sharp frames (media/engine.js requestSharp).
               lastSeekMs: p.lastSeekMs !== undefined ? Math.round(p.lastSeekMs) : null,
               sharp: p.sharpStats ? { ...p.sharpStats, pending: !!p.sharp } : null,
+              quick: p.quickStats ? { ...p.quickStats } : null,
             });
             if (p.gl && p.gl.gl && p.gl.prog) { try { s.tf = p.gl.gl.getUniform(p.gl.prog, p.gl.uTf); } catch { /* not WebGL */ } }
           }
@@ -681,6 +682,9 @@
       if (m.action === 'pausedSharp' && player.remoteStream) {
         if (m.sharp !== undefined) { player.sharpOff = !m.sharp; if (!m.sharp && player.cancelSharp) player.cancelSharp(); }
         if (m.fastFirst !== undefined) player.fastFirstHook = !!m.fastFirst; // sent with the next seek (host: on or off)
+        // The quick first picture (src/stream.js startQuick): true for any encoder (instead of x264's small first keyframe),
+        // false never, null as the link and encoder decide.
+        if (m.quick !== undefined) player.quickHook = m.quick;
       }
       // Tests: Live transcode's kept-running decoder on the host (src/warm-decoder.js) off or on (with the next seek).
       if (m.action === 'warmDecoder' && player.remoteStream) player.warmHook = m.on === undefined ? undefined : !!m.on;

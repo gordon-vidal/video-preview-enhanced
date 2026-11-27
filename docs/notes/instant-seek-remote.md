@@ -388,6 +388,47 @@ hook, libx264 because this machine's NVENC needs a newer driver; page times from
 The clip is temporal noise on testsrc2, the worst case for size: a visually lossless 1080p frame of it is ~1 MB, so on
 a 2 Mb/s link "sharp" takes seconds; ordinary footage is several times smaller.
 
+## Quick first picture, any encoder (built 2026-11-27)
+
+Maintainer decision of 2026-11-27. The fast first picture above (`fastFirstBits`, a small first keyframe) works only with
+libx264: NVENC ignores the rate buffer's start, and the kept-running decoder's encoder is already running. So:
+
+```
+page seek (paused) ─► host spawnVideo ─► stream ffmpeg / warm segment ──► frames ─┐ held (answer) until the quick
+                          │ slow link, no small first keyframe                     │ picture is out, at most 3/4 of a
+                          └─► startQuick: same args() at w/2 x h/2, -frames:v 1 ───┴► 'quickFrame' first, then batches
+page: onQuickFrame ─► sharp frames' VideoDecoder ─► drawn as VideoFrame{displayWidth/Height = stream size}
+      only while that seek has shown nothing (same gen, seekTarget set); the seek's own frame replaces it
+```
+
+- **When** (`src/stream.js` spawnVideo / startQuick): the same rule as the small first keyframe (paused, remote, the
+  link estimate would not carry a full keyframe within 100 ms, test hook `fastFirst`), and the start did not get a
+  small first keyframe (any encoder but x264, or a warm segment). Not for Direct Stream.
+- **What**: the target frame alone, built by `args(t, false, { quick: true })` with the stream's encoder, pipeline and
+  tone-mapping at half the width and height (a quarter of the pixels, so about a quarter of a full keyframe's bytes),
+  one IDR (`-frames:v 1`). A GPU encoder holds a GPU encoder session for it (`quick`); none free: skipped.
+- **Ahead of the stream**: `answer()` holds the stream's batches until it is posted, at most 3/4 of the time a full
+  keyframe would take on the link estimate (beyond that the full one would show sooner), 100 ms to 1 s; 1 s with no
+  estimate or with the test hook. Not ready by then: killed, the stream goes first.
+- **Page** (`media/engine.js` onQuickFrame / showQuick): decoded by the sharp frames' second VideoDecoder (outputs are
+  routed by decode order: each is one IDR), drawn scaled up by giving the VideoFrame the stream's display size (the
+  renderer sizes its canvas by it). Never in the packet cache, the frames kept for steps back, the queue or the main
+  decoder. A seek, play or hide drops it (the host kills its ffmpeg on the seek).
+
+Layer 3 `remote-stream-packets` › `paused-quick` (1080p25 noisy clip, link throttled to 250 000 B/s with the test hook,
+NVENC through an ffmpeg 2024 master build passed to the runner with `--ffmpeg`, since ffmpeg 9 on PATH needs a newer
+driver for NVENC; 3 fresh paused seeks each, medians, page time from the seek):
+
+| | before (neither) | after |
+| --- | --- | --- |
+| First picture | 1842 ms (the stream's full keyframe) | 531 ms (the quick picture: 31-32 KiB, encoded in 290-709 ms) |
+| The stream's own frame | 1842 ms | 1966 ms (it waited for the quick picture) |
+| Landing | exact frame | exact frame, full size after the quick picture |
+
+The quick encode is a cold ffmpeg (open, decode to the target, NVENC init: ~300 ms on an idle machine); the test
+machine was loaded, hence the 709 ms one. The test hook's link throttle delays each message by its own size, so the
+real link adds the quick picture's ~0.13 s at 2 Mb/s to the stream's frame as well.
+
 ## Kept-running decoder (built 2026-11-27)
 
 Maintainer decisions of 2026-11-27: a single video gets one; in Compare only the video that sets the clock (the others
@@ -496,7 +537,8 @@ variable-frame-rate MP4 checked against ffmpeg's own accurate seek).
    decode. Disk: ~2-4 GB per hour at 1080p. The pro-tool approach.
 2. **Paused frame: fast then sharp** (display mode): after a paused seek, send the target as a small low-QP-capped
    keyframe at once and a sharper one after; the remote-desktop model. **Built 2026-11-27** (section above): first
-   picture 1.16 s -> 0.22 s on a 2 Mb/s link with x264; NVENC has no per-frame lever in stock ffmpeg.
+   picture 1.16 s -> 0.22 s on a 2 Mb/s link with x264; NVENC has no per-frame lever in stock ffmpeg, so it gets a
+   separate quick picture at half size instead (1.84 s -> 0.53 s; "Quick first picture, any encoder").
 3. **Host pushes the GOPs around the playhead while paused** (level 3), within a share of the link, so the first step
    back after a jump hits the page's packets.
 4. **A kept-running decoder on the host** (prototype above): ~134 ms instead of 340-470 ms per jump, no ffmpeg start.

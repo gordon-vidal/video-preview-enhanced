@@ -376,6 +376,73 @@ module.exports = [{
         await h.closeClip(vs);
       }
     });
+    // The quick first picture (src/stream.js startQuick, media/engine.js onQuickFrame): over the same 2 Mb/s link, a
+    // paused seek the host serves first shows the target frame at half the width and height, sent before the stream's
+    // frames, then the stream's own frame. For any encoder (NVENC ignores the small first keyframe); here forced on
+    // through the test hook, before = neither it nor x264's small first keyframe. Times from the page (not asserted:
+    // this machine is shared); asserted: the quick picture shows, and the seek still lands on its exact frame after it.
+    await run('paused-quick', async (ok, r) => {
+      const file = makeLinkClip(h.ffmpeg);
+      const p = await lib.open(vs, h, file);
+      const fps = 25;
+      const seekTo = async (sec) => {
+        const frame = sec * fps;
+        const s0 = await p.state();
+        const from = vs.mark();
+        p.seek(sec + 0.5 / fps);
+        const s = await p.waitState((x) => !x.playing && x.frame === frame && x.gen > s0.gen, { timeout: 30000, interval: 50, what: `frame ${frame}` });
+        const lines = vs.lines.slice(from).filter((l) => l.includes(`[${p.name}]`));
+        const landed = lines.map((l) => /webview: seek landed in (\d+) ms \(gen (\d+)\)/.exec(l)).filter((x) => x && Number(x[2]) === s.gen);
+        const start = lines.find((l) => /remote stream from /.test(l)) || '';
+        const host = lines.map((l) => /quick picture at [\d.]+ s, (\d+x\d+), (\d+) KiB in (\d+) ms/.exec(l)).find(Boolean);
+        const shownQuick = (s.quick ? s.quick.shown : 0) - (s0.quick ? s0.quick.shown : 0);
+        const firstPictureMs = landed.length ? Number(landed[0][1]) : null;
+        const quickMs = shownQuick && s.quick.last ? s.quick.last.sinceSeekMs : null;
+        return {
+          frame, shows: s.frame, firstPictureMs, quickMs, toFirstPictureMs: quickMs !== null ? Math.min(quickMs, firstPictureMs) : firstPictureMs,
+          shownQuick, hostSeek: !!start, encoder: (/-> H\.264 \d+x\d+ \(([^,)]+)/.exec(start) || [])[1] || '',
+          quickSize: host ? host[1] : '', quickKiB: host ? Number(host[2]) : 0, quickEncodeMs: host ? Number(host[3]) : null,
+          canvas: s.canvas,
+        };
+      };
+      try {
+        await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown);
+        p.pause();
+        p.act({ action: 'stageSize', w: 1920, h: 1080 });
+        await h.sleep(1500);
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 250000 }); // 2 Mb/s
+        p.act({ action: 'pausedSharp', sharp: false, fastFirst: false, quick: false });
+        r.before = [];
+        // Fresh places only: away from the resume position (the last clip ended near 44 s) and from each other.
+        for (const sec of [8, 16, 28]) { r.before.push(await seekTo(sec)); await h.sleep(1200); }
+        p.act({ action: 'pausedSharp', sharp: false, fastFirst: true, quick: true });
+        r.after = [];
+        for (const sec of [12, 24, 34]) { r.after.push(await seekTo(sec)); await h.sleep(1200); }
+        for (const x of [...r.before, ...r.after]) {
+          ok(x.hostSeek, `the seek to frame ${x.frame} did not go to the host`);
+          ok(x.shows === x.frame, `the seek to frame ${x.frame} shows ${x.shows}`);
+        }
+        ok(r.before.every((x) => !x.shownQuick), `before: a quick picture showed (${JSON.stringify(r.before)})`);
+        ok(r.after.every((x) => x.shownQuick === 1 && x.quickMs < x.firstPictureMs), `after: no quick picture ahead of the stream's frame (${JSON.stringify(r.after)})`);
+        // After the quick picture, the stream's own frame at full size.
+        const last = r.after[r.after.length - 1];
+        ok(last.canvas && last.canvas[0] === 1920 && last.canvas[1] === 1080, `the picture after the quick one is ${JSON.stringify(last.canvas)}`);
+        const med = (a) => { const v = a.filter((x) => Number.isFinite(x)).sort((x, y) => x - y); return v.length ? v[v.length >> 1] : null; };
+        r.summary = {
+          encoder: r.after[0] && r.after[0].encoder,
+          firstPictureBeforeMs: med(r.before.map((x) => x.firstPictureMs)), firstPictureAfterMs: med(r.after.map((x) => x.toFirstPictureMs)),
+          streamFrameAfterMs: med(r.after.map((x) => x.firstPictureMs)), quickKiB: med(r.after.map((x) => x.quickKiB)),
+          quickEncodeMs: med(r.after.map((x) => x.quickEncodeMs)),
+        };
+      } finally {
+        p.act({ action: 'pausedSharp', quick: null });
+        p.act({ action: 'stageSize' });
+        r.notes = vs.lines.filter((l) => l.includes(`[${p.name}]`) && /quick picture|remote stream from /.test(l) && !/webview: state /.test(l))
+          .map((l) => l.replace(/^.*\] /, '')).slice(-12);
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
+        await h.closeClip(vs);
+      }
+    });
     await run('slow-link-seek-back', async (ok, r) => {
       const file = makeLinkClip(h.ffmpeg);
       const p = await lib.open(vs, h, file);

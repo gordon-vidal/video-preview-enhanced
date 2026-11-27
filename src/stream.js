@@ -57,6 +57,14 @@ const SHARP_PIECE_BYTES = 96 * 1024;
 // link would carry a full one within FAST_FIRST_SKIP_MS anyway.
 const FAST_FIRST_SHARE = 0.25;
 const FAST_FIRST_SKIP_MS = 100;
+// Quick first picture (startQuick): on a slow link, when the encoder cannot make its first keyframe small (fastFirstBits:
+// only x264 can), the target frame is encoded once more at half the width and height (a quarter of the pixels, so about
+// a quarter of the bytes) and sent before the stream's own frames. They wait for it at most 3/4 of the time a full
+// keyframe would take on the link (beyond that the full one would show sooner), within QUICK_HOLD_MIN_MS..MAX_MS; the
+// most with no link estimate yet. (Measured: the quick encode alone takes ~320 ms with NVENC, ffmpeg start included.)
+const QUICK_HOLD_SHARE = 0.75;
+const QUICK_HOLD_MIN_MS = 100;
+const QUICK_HOLD_MAX_MS = 1000;
 // A full keyframe's size before one was measured, in bytes per pixel (1080p: ~200 KB).
 const KEY_BYTES_PER_PIXEL = 0.1;
 // Sound sent at most this far past the picture sent.
@@ -83,6 +91,9 @@ function stepBackStart(t, { from, base, hasPackets, fps, remote = false }) {
   const idx = Math.max(0, Math.floor(t * fps + 1e-6));
   return Math.max(0, idx - Math.round(fps * lead)) / fps;
 }
+
+/** Half a picture side, even (the quick picture: startQuick). @param {number} x */
+const quickSize = (x) => Math.max(2, Math.round(x / 4) * 2);
 
 function opusArgs(encoder) {
   return ['-c:a', encoder, '-strict', '-2', '-b:a', '96k',
@@ -391,7 +402,7 @@ class EncodedStream {
   setHidden(on) {
     const wasHidden = this.hidden;
     this.hidden = !!on;
-    if (on) { this.stopFill(); this.stopSharp(); }
+    if (on) { this.stopFill(); this.stopSharp(); this.stopQuick(); }
     if (!this.fps) return;
     if (!on) {
       this.hiddenRefresh = false;
@@ -498,11 +509,12 @@ class EncodedStream {
 
   /**
    * @param {number} t @param {boolean} audio
-   * @param {{ exactAudio?: boolean, sharp?: boolean, firstKeyBits?: number, warm?: boolean }} [opts]
+   * @param {{ exactAudio?: boolean, sharp?: boolean, firstKeyBits?: number, warm?: boolean, quick?: boolean }} [opts]
    *   sharp: one visually lossless picture (sharp); firstKeyBits: a small first keyframe (fastFirstBits);
-   *   warm: the kept-running decoder's process (src/warm-decoder.js): MPEG-TS in and out, frames kept as they come
+   *   warm: the kept-running decoder's process (src/warm-decoder.js): MPEG-TS in and out, frames kept as they come;
+   *   quick: at half the stream's width and height (startQuick)
    */
-  args(t, audio, { exactAudio = false, sharp = false, firstKeyBits = 0, warm = false } = {}) {
+  args(t, audio, { exactAudio = false, sharp = false, firstKeyBits = 0, warm = false, quick = false } = {}) {
     const v = this.pr.video;
     if (!audio && !warm && this.useDirectStream()) {
       this.pipelineMode = 'direct-stream';
@@ -515,8 +527,8 @@ class EncodedStream {
       decodeMethod: this.decodeMethod,
       gpuFilters: this.tools && this.tools.gpuFilters ? this.tools.gpuFilters : null,
       video: v,
-      w: this.w,
-      h: this.h,
+      w: quick ? quickSize(this.w) : this.w,
+      h: quick ? quickSize(this.h) : this.h,
       fps: this.fps,
       maxKbps: cap,
       // Started paused (a jump or a step): keyframes every PAUSED_GOP_S, so a step back decodes few frames on the page.
@@ -642,10 +654,13 @@ class EncodedStream {
     const t = this.vBase;
     let proc;
     let firstKeyBits = 0;
+    let slowStart = false;
     try {
       proc = this.takeStandby(t);
       if (!proc) {
         firstKeyBits = this.fastFirstBits();
+        slowStart = firstKeyBits > 0;
+        if (this.quickHook === true) firstKeyBits = 0; // tests: the quick picture instead
         // A small first keyframe (only x264 honours it) needs a fresh encoder: it wins over the kept-running one.
         proc = firstKeyBits && this.encoder === 'libx264' ? null : this.warmSegment(t);
         if (proc) firstKeyBits = 0;
@@ -660,6 +675,8 @@ class EncodedStream {
     this.spawns++;
     this.lastSpawnAt = Date.now();
     this.watchVideo(proc);
+    // A slow link and no small first keyframe (NVENC and the other encoders, or the kept-running decoder): a quick picture.
+    if (slowStart && !proc.firstKeyBits && this.quickHook !== false && this.pipelineMode !== 'direct-stream') this.startQuick(t);
     const cap = this.activeCapKbps();
     this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${this.gpuDecode ? ', GPU decode' : ''}${this.hdr && this.tonemapKind ? `, ${this.tonemapKind} tone-mapping` : ''}${cap ? `, ${cap} kb/s cap` : ''}${firstKeyBits ? `, first keyframe ~${Math.round(firstKeyBits / 8192)} KiB for a fast first picture` : ''}${proc.warm ? ', kept-running decoder' : ''})`);
     return true;
@@ -675,11 +692,20 @@ class EncodedStream {
    */
   fastFirstBits() {
     if (this.playing || !this.remote || this.fastFirstHook === false || !this.w || !this.h) return 0;
+    const { key, ms } = this.fullKeyOnLink();
+    if (ms <= FAST_FIRST_SKIP_MS && this.fastFirstHook !== true) return 0;
+    return Math.round(key * 8 * FAST_FIRST_SHARE);
+  }
+
+  /**
+   * A full keyframe at this picture size (the largest measured, else 0.1 byte per pixel) and how long the link estimate
+   * (stream-adapt.js fastKbps / slowKbps) takes to carry it: { key: bytes, ms } (ms Infinity with no estimate yet).
+   */
+  fullKeyOnLink() {
     const key = this.keyBytes > 0 && this.keyBytesFor === `${this.w}x${this.h}` ? this.keyBytes
       : Math.round(this.w * this.h * KEY_BYTES_PER_PIXEL);
     const kbps = Math.min(this.link.fastKbps || 0, this.link.slowKbps || this.link.fastKbps || 0);
-    if (kbps > 0 && (key * 8) / kbps <= FAST_FIRST_SKIP_MS && this.fastFirstHook !== true) return 0; // bits / (kb/s) = ms
-    return Math.round(key * 8 * FAST_FIRST_SHARE);
+    return { key, ms: kbps > 0 ? (key * 8) / kbps : Infinity }; // bits / (kb/s) = ms
   }
 
   /**
@@ -1042,6 +1068,17 @@ class EncodedStream {
   answer() {
     const m = this.waiting;
     if (!m) return;
+    // The quick picture goes on the link first (startQuick): the stream's frames wait for it, at most q.holdMs.
+    const q = this.quick;
+    if (q && q.gen === this.gen) {
+      const left = q.holdMs - (Date.now() - q.t0);
+      if (left > 0) {
+        if (!q.timer) q.timer = setTimeout(() => { q.timer = null; this.answer(); }, left);
+        return;
+      }
+      this.log(`remote stream: quick picture not ready after ${Math.round(q.holdMs)} ms; the stream goes first`);
+      this.stopQuick();
+    }
     if (this.restored) this.continueRegion();
     if (this.failed) return;
     const gen = this.gen;
@@ -1140,8 +1177,11 @@ class EncodedStream {
     if (this.disposed) return;
     this.stopFill();
     this.stopSharp();
+    this.stopQuick();
     // The page's test hook (media/debug-probe.js pausedSharp): false off, true on whatever the link estimate says.
     if (m.fastFirst !== undefined) this.fastFirstHook = !!m.fastFirst;
+    // Same hook: true sends the quick picture whatever the encoder (instead of x264's small first keyframe), false never.
+    if (m.quick !== undefined) this.quickHook = m.quick === null ? undefined : !!m.quick;
     // The page: whether this video sets the clock (Compare's clock tile, or a single video); tests turn it off.
     if (m.warm !== undefined) this.setWarmWanted(!!m.warm);
     this.videoFragment = null;
@@ -1375,6 +1415,67 @@ class EncodedStream {
   }
 
   /**
+   * Quick first picture: a paused start on a slow link whose first keyframe stays full size (fastFirstBits is x264 only;
+   * NVENC and the other GPU encoders ignore the rate buffer's start, and the kept-running decoder's encoder is already
+   * running) also encodes the target frame alone, at half the width and height with the stream's encoder, pipeline and
+   * tone-mapping, as one IDR. It goes to the page before the stream's own frames (answer holds them at most 3/4 of a
+   * full keyframe's time on the link, QUICK_HOLD_SHARE); the page decodes it with the sharp frame's decoder, draws it
+   * scaled up while that seek has shown nothing yet, and keeps it nowhere. A GPU encoder holds one of the host's GPU encoder sessions for it (none free: no
+   * quick picture). A seek, hide or dispose stops it. Posts 'quickFrame' { gen, t, w, h, data } (w x h: the stream's size).
+   * @param {number} t
+   */
+  startQuick(t) {
+    this.stopQuick();
+    if (!this.remote || !this.w || !this.h) return;
+    const gpu = isGpuEncoder(this.encoder);
+    const token = gpu ? this.gpu.acquire('quick') : null;
+    if (gpu && !token) { this.log('remote stream: no quick picture: every GPU encoder session is in use'); return; }
+    // args() records the pipeline it builds on this stream: the quick picture must not change what the live stream reports.
+    const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode];
+    let argv;
+    try { argv = this.args(t, false, { quick: true }); } catch { this.gpu.release(token); return; }
+    finally { [this.pipelineMode, this.tonemapKind, this.gpuDecode] = keep; }
+    argv.splice(argv.length - 1, 0, '-frames:v', '1');
+    let proc;
+    try { proc = this.spawnJob(argv); } catch { this.gpu.release(token); return; }
+    const { ms } = this.fullKeyOnLink();
+    const forced = this.quickHook === true || this.fastFirstHook === true; // tests: whatever the estimate says
+    const holdMs = forced ? QUICK_HOLD_MAX_MS : Math.max(QUICK_HOLD_MIN_MS, Math.min(QUICK_HOLD_MAX_MS, ms * QUICK_HOLD_SHARE));
+    const q = { gen: this.gen, t, proc, chunks: [], t0: Date.now(), ended: false, timer: null, holdMs };
+    this.quick = q;
+    let err = '';
+    proc.on('error', (e) => { err += String(e); });
+    if (proc.stderr) proc.stderr.on('data', (d) => { err = (err + d).slice(-500); });
+    proc.stdout.on('data', (d) => { q.chunks.push(d); });
+    proc.on('close', (code) => {
+      this.gpu.release(token);
+      q.ended = true;
+      if (this.quick !== q) return;
+      this.stopQuick();
+      const data = Buffer.concat(q.chunks);
+      q.chunks = [];
+      if (code !== 0 || !data.length) {
+        this.log(`remote stream: no quick picture (${err.trim().split(/\r?\n/).pop() || `ffmpeg exit ${code}`})`);
+      } else {
+        this.log(`remote stream: quick picture at ${t.toFixed(3)} s, ${quickSize(this.w)}x${quickSize(this.h)}, `
+          + `${(data.length / 1024).toFixed(0)} KiB in ${Date.now() - q.t0} ms`);
+        // Its own ArrayBuffer: a view on a larger one crosses to the webview as the whole buffer.
+        this.post({ type: 'quickFrame', gen: q.gen, t, w: this.w, h: this.h,
+          data: new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.length)) });
+      }
+      this.answer();
+    });
+  }
+
+  stopQuick() {
+    const q = this.quick;
+    if (!q) return;
+    this.quick = null;
+    if (q.timer) clearTimeout(q.timer);
+    if (!q.ended) this.stopProcess(q.proc);
+  }
+
+  /**
    * Why this stream does not use the kept-running decoder now ('' when it may). The lasting reasons also stop one that
    * is idle (its GPU session goes back); 'playing' only skips it for this start.
    */
@@ -1547,6 +1648,7 @@ class EncodedStream {
     if (this.disposed) return;
     this.stopFill();
     this.stopSharp();
+    this.stopQuick();
     this.disposed = true;
     this.videoFragment = null;
     clearTimeout(this.startTimer);

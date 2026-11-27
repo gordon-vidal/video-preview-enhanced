@@ -264,6 +264,7 @@ function createEngine(env) {
         case 'configured': mark('configured'); this.onConfigured(m); break;
         case 'fillBatch': this.onFillBatch(m); break;
         case 'sharpFrame': this.onSharpFrame(m); break;
+        case 'quickFrame': if (this.remoteStream) this.onQuickFrame(m); break;
         case 'batch':
           if (this.remoteStream) this.receiveRemoteBatch(m);
           else this.onBatch(m);
@@ -2040,6 +2041,7 @@ function createEngine(env) {
       this.worker.postMessage({ type: 'seek', gen: this.gen, t, ...(have ? { have: { keyT: have.keyT, lastT: have.lastT } } : {}),
         ...(this.remoteStream ? { playing: this.playing, warm: this.warmHook !== undefined ? this.warmHook : !!isClock() } : {}),
         ...(this.remoteStream && this.fastFirstHook !== undefined ? { fastFirst: this.fastFirstHook } : {}),
+        ...(this.remoteStream && this.quickHook !== undefined ? { quick: this.quickHook } : {}),
         ...(recoverTransport ? { recoverTransport: true } : {}) });
     }
 
@@ -2210,6 +2212,7 @@ function createEngine(env) {
         if (!dec) { this.sharp = null; st.failed++; return; }
         try {
           dec.decode(new EncodedVideoChunk({ type: 'key', timestamp: Math.round(r.t * 1e6), data }));
+          this.sideJobs.push('sharp');
           dec.flush().catch(() => {});
         } catch (e) {
           this.sharp = null;
@@ -2222,13 +2225,80 @@ function createEngine(env) {
       else receive();
     }
 
-    /** The sharp frames' own decoder (onSharpFrame), made once and kept. */
+    /**
+     * The quick first picture of a paused host seek on a slow link (src/stream.js startQuick): the target frame alone at
+     * half the stream's width and height, one IDR, sent before the stream's own frames. It decodes in the sharp frames'
+     * decoder (never the main one: its P-frames' references would break) and is drawn scaled up to the stream's size
+     * only while that seek has shown nothing yet; the seek's own frame (or a sharp frame after it) replaces it as usual.
+     * It is kept nowhere: not the packets, the frames kept for steps back, nor the queue.
+     */
+    onQuickFrame(m) {
+      if (m.gen !== this.gen || !m.data) return;
+      const r = { gen: m.gen, t: m.t, w: m.w, h: m.h, bytes: m.data.byteLength };
+      const st = this.quickStats || (this.quickStats = { got: 0, shown: 0, dropped: 0, failed: 0 });
+      st.got++;
+      const receive = () => {
+        if (!this.quickStill(r)) { st.dropped++; return; }
+        const dec = this.sharpDecoder();
+        if (!dec) { st.failed++; return; }
+        r.arrivedMs = performance.now();
+        this.quick = r;
+        try {
+          dec.decode(new EncodedVideoChunk({ type: 'key', timestamp: Math.round(r.t * 1e6), data: m.data }));
+          this.sideJobs.push('quick');
+          dec.flush().catch(() => {});
+        } catch (e) {
+          this.quick = null;
+          st.failed++;
+          log(`quick picture: decode failed (${e && e.message || e})`);
+        }
+      };
+      // The VS Code test hook paces delivery at its fixed rate, as for the stream's batches (receiveRemoteBatch).
+      if (this.debugRemoteRate > 0) setTimeout(receive, m.data.byteLength * 1000 / this.debugRemoteRate);
+      else receive();
+    }
+
+    /** That seek is still waiting for its first picture (paused, visible, nothing shown or sought since). */
+    quickStill(r) {
+      return !!this.remoteStream && !this.playing && !this.hidden && !this.disposed && this.vmode === 'webcodecs'
+        && this.gen === r.gen && this.seekTarget !== null && !!this.vconf && typeof VideoDecoder !== 'undefined';
+    }
+
+    showQuick(vf) {
+      const r = this.quick;
+      this.quick = null;
+      wake();
+      const st = this.quickStats;
+      if (!r || Math.round(r.t * 1e6) !== vf.timestamp || !this.quickStill(r)) { vf.close(); if (st) st.dropped++; return; }
+      let big = null;
+      try {
+        // Scaled up: the renderer sizes its canvas by the frame's display size, which is the stream's.
+        big = r.w > 0 && r.h > 0 ? new VideoFrame(vf, { displayWidth: r.w, displayHeight: r.h }) : null;
+        this.gl.drawFrame(big || vf);
+      } catch (e) {
+        st.failed++;
+        log(`quick picture: draw failed (${e && e.message || e})`);
+        return;
+      } finally { if (big) big.close(); vf.close(); }
+      const now = performance.now();
+      st.shown++;
+      st.last = {
+        t: r.t, frame: this.frameAt(r.t), bytes: r.bytes, size: [vf.codedWidth, vf.codedHeight],
+        sinceSeekMs: this.seekStartMs !== undefined ? Math.round(now - this.seekStartMs) : null,
+        decodeMs: Math.round(now - r.arrivedMs),
+      };
+      log(`quick picture shown at ${this.rel(r.t).toFixed(3)} s: ${(r.bytes / 1024).toFixed(0)} KiB, `
+        + `${st.last.sinceSeekMs} ms after the seek`);
+    }
+
+    /** The sharp frames' own decoder (onSharpFrame, and the quick picture: onQuickFrame), made once and kept. */
     sharpDecoder() {
       const d = this.sharpDec;
       if (d && d.state === 'configured') return d;
+      this.sideJobs = []; // which picture each output is, in decode order (each is one IDR: no reordering)
       try {
         const dec = new VideoDecoder({
-          output: (vf) => this.showSharp(vf),
+          output: (vf) => { if (this.sideJobs.shift() === 'quick') this.showQuick(vf); else this.showSharp(vf); },
           error: (e) => { log(`sharp frame decoder: ${e && e.message || e}`); if (this.sharpDec === dec) this.sharpDec = null; },
         });
         dec.configure(this.vconf);
