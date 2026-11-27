@@ -822,7 +822,9 @@
     "test:vscode": "node test/run.js vscode",
     "test:perf": "node test/run.js perf",
     "package": "npx --yes @vscode/vsce@4.1.1 package",
-    "verify:fast": "npm run typecheck && dependency-cruiser --config .dependency-cruiser.cjs src media && knip && node tools/check-syntax.js && node tools/check-personal-data.js && node tools/check-links.js",
+    "build:ui": "node tools/build-ui.js",
+    "typecheck:ui": "tsc -p tsconfig.ui.json",
+    "verify:fast": "npm run typecheck && npm run typecheck:ui && node tools/build-ui.js --check && dependency-cruiser --config .dependency-cruiser.cjs src media && knip && node tools/check-syntax.js && node tools/check-personal-data.js && node tools/check-links.js",
     "arch:dupes": "jscpd src media",
     "arch:check": "npm run verify:fast && npm run arch:dupes"
   },
@@ -830,9 +832,13 @@
   "qna": false,
   "pricing": "Free",
   "devDependencies": {
+    "@floating-ui/dom": "^1.8.0",
+    "@preact/signals": "^2.11.4",
     "dependency-cruiser": "^17.4.3",
+    "esbuild": "^0.28.2",
     "jscpd": "^5.4.3",
     "knip": "^6.48.0",
+    "preact": "^11.2.0",
     "typescript": "5.9.3"
   }
 }

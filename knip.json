@@ -1,5 +1,5 @@
 {
-  "entry": ["test/**/*.js", "!test/vscode/.code/**", "!test/vscode/out/**", "!test/out/**"],
-  "project": ["src/**/*.js"],
+  "entry": ["test/**/*.js", "media/ui/index.ts", "!test/vscode/.code/**", "!test/vscode/out/**", "!test/out/**"],
+  "project": ["src/**/*.js", "media/ui/**/*.{ts,tsx}"],
   "ignoreExportsUsedInFile": true
 }

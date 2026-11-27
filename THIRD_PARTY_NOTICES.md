@@ -5,6 +5,13 @@ component: a decode-only WebAssembly build of FFmpeg, made with libav.js. Everyt
 else in the package (`src/`, `media/*.js`, `media/*.css`) is this project's own code
 under the MIT licence, with no runtime npm dependencies.
 
+## Webview UI libraries (build-time, bundled into `media/dist/webview-ui.js`)
+
+`media/dist/webview-ui.js` is built by `npm run build:ui` from `media/ui/` and bundles three MIT-licensed
+libraries: Preact (https://github.com/preactjs/preact), @preact/signals (https://github.com/preactjs/signals)
+and @floating-ui/dom (https://github.com/floating-ui/floating-ui). They are devDependencies only; nothing from
+`node_modules` ships in the package. Each library's MIT licence and copyright notice are in its npm package.
+
 ## What is bundled
 
 All of it is in `media/libav-vpe/`. Its details are in

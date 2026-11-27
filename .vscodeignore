@@ -20,11 +20,15 @@ CLAUDE.md
 package-lock.json
 tsconfig.check.json
 tsconfig.contracts.json
+tsconfig.ui.json
 # Type declarations for `npm run typecheck` only: no page or host loads them
 media/**/*.d.ts
 .dependency-cruiser.cjs
 knip.json
 *.vsix
+
+# Webview UI sources: only the bundle media/dist/webview-ui.js ships (built by tools/build-ui.js)
+media/ui/**
 
 # Repository-only files (the README, CHANGELOG, LICENSE and THIRD_PARTY_NOTICES ship)
 .editorconfig
