@@ -1,4 +1,39 @@
 ﻿:root { --buf: color-mix(in srgb, var(--vscode-foreground) 22%, transparent); }
+
+/* ==== The card (docs/DESIGN.md): every floating surface over the picture, in one place. A member's own rule may only
+   add a shadow level (--vpe-shadow-low / -high), pill corners (999px) or a border colour. A new surface joins this list
+   instead of styling itself (test/host/unified_css_test.js checks it). ==== */
+#notice, #toast, #overlay.error, #pxread, #stats, #goto, #scopes, .panel, #sheet .sheet, #ctxmenu, #menu, .vpe-pop,
+.hover-pop, .add-pop, .tile-stats, .sync-pill, .nudge, .pill, .tile-bottom-pill, .tbtn, .addcell, .skeleton-label,
+.edge-shelf, .rail-collapse-tab {
+  background: var(--vpe-surface-float);
+  backdrop-filter: var(--vpe-card-blur);
+  -webkit-backdrop-filter: var(--vpe-card-blur);
+  border: 1px solid var(--vpe-panel-border);
+  border-radius: var(--vpe-card-radius);
+  color: var(--vpe-panel-fg);
+}
+
+/* ==== The button (docs/DESIGN.md, Buttons): text buttons in notices, callouts, panels and the error screen.
+   .vpe-btn-main is the one main action of a surface, in VS Code's button colour; the only place that uses it. ==== */
+.vpe-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; box-sizing: border-box;
+  height: var(--vpe-btn-h); padding: 0 10px; border-radius: var(--vpe-btn-radius);
+  border: 1px solid var(--vpe-bd-subtle); background: transparent; color: var(--vscode-foreground);
+  font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer;
+}
+.vpe-btn:hover { background: var(--vpe-hover); }
+.vpe-btn:disabled { opacity: 0.6; cursor: default; }
+.vpe-btn-main {
+  background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent;
+}
+.vpe-btn-main:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+.panel .vpe-btn { height: var(--vpe-btn-h-panel); }
+/* × of a notice or callout. */
+.vpe-close {
+  position: absolute; top: 5px; right: 6px; line-height: 1; padding: 0 4px; border: 0; background: transparent;
+  color: var(--vscode-foreground); font: inherit; font-size: 14px; cursor: pointer;
+}
 html, body {
   margin: 0;
   padding: 0;
@@ -76,29 +111,25 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 /* One status line per Compare tile ("A: Opening…") in the unified page (media/player-ui-lifecycle.js renderMessage). */
 #overlay .overlay-line { max-width: 46em; line-height: 1.35; overflow-wrap: anywhere; }
 /* An error stays readable above the tiles' hover controls (.ov, z-index 4) and keeps long paths inside the stage. */
-#overlay.error { z-index: 5; }
-#overlay.error #message { max-width: 46em; overflow-wrap: anywhere; }
+/* An error is a centered card (docs/DESIGN.md): the first line bold, the hint below, one main button. */
+#overlay.error {
+  z-index: 5; inset: 0; margin: auto; width: min(420px, calc(100% - 32px)); height: max-content; box-sizing: border-box;
+  padding: 14px 16px; gap: 4px; align-items: flex-start; text-align: left; text-shadow: none; font-size: 12px;
+  line-height: 1.45; box-shadow: var(--vpe-shadow-high);
+}
+#overlay.error #message { font-size: 13px; font-weight: 600; max-width: 100%; overflow-wrap: anywhere; }
+#overlay.error #hint { opacity: 1; color: var(--vscode-descriptionForeground, var(--vpe-dim)); }
 /* Over the (black) picture, the theme's text colour can be dark: white with the shadow reads on any picture.
    The unified page draws into the tiles' canvases (#cells .cell > canvas), not the stage's own #canvas. */
-#stage:has(> canvas:not([hidden])) #overlay, #stage:has(> #cells > .cell > canvas) #overlay { color: #fff; }
+#stage:has(> canvas:not([hidden])) #overlay:not(.error),
+#stage:has(> #cells > .cell > canvas) #overlay:not(.error) { color: #fff; }
 /* A video is dragged over the player: compare with it (media/player.js, key D's twin). */
 #dropHint { position: absolute; inset: 12px; display: flex; align-items: center; justify-content: center; border: 2px dashed var(--vscode-focusBorder); border-radius: 8px; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 1.3em; pointer-events: none; z-index: 5; }
 #dropHint[hidden] { display: none; }
 #hint { opacity: 0.8; max-width: 46em; }
-/* #overlay .overlay-action: the same button when the unified page creates it (media/player-ui-lifecycle.js). */
-#action, #overlay .overlay-action {
-  pointer-events: auto;
-  margin-top: 8px;
-  padding: 6px 14px;
-  font: inherit;
-  border: none;
-  border-radius: 2px;
-  cursor: pointer;
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
-}
-#action:hover, #overlay .overlay-action:hover { background: var(--vscode-button-hoverBackground); }
-#action:disabled, #overlay .overlay-action:disabled { opacity: 0.7; cursor: default; }
+/* #overlay .overlay-action: the same button when the unified page creates it (media/player-ui-lifecycle.js); its
+   look is the shared .vpe-btn-main. */
+#action, #overlay .overlay-action { pointer-events: auto; margin-top: 8px; }
 
 /* A short confirmation: the notice card's look without buttons (docs/notes/notifications.md, "Banner layout"). */
 #toast {
@@ -114,12 +145,6 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
   overflow: hidden;
   overflow-wrap: anywhere;
   padding: 8px 12px;
-  border-radius: var(--vpe-card-radius);
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur);
-  -webkit-backdrop-filter: var(--vpe-card-blur);
-  color: var(--vpe-panel-fg);
-  border: 1px solid var(--vpe-panel-border);
   box-shadow: var(--vpe-shadow-low);
   font-size: 12px;
   font-weight: 400;
@@ -195,51 +220,13 @@ body.idle { cursor: none; }
   gap: 8px 6px;
   width: min(460px, calc(100% - 32px));
   padding: 10px 12px;
-  border-radius: var(--vpe-card-radius);
   font-size: 12px;
   text-align: left;
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur);
-  -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border);
   box-shadow: var(--vpe-shadow-low);
   /* Above a passing #toast (3) should they ever meet: the banner has buttons, the toast is pointer-events: none. */
   z-index: 4;
 }
 #noticeText { flex: 1 0 100%; box-sizing: border-box; line-height: 1.45; padding-right: 22px; }
-#notice button {
-  font: inherit;
-  cursor: pointer;
-  border: 1px solid var(--vpe-bd-active);
-  border-radius: 4px;
-  padding: 2px 8px;
-  color: var(--vscode-foreground);
-  background: var(--vpe-fill-subtle);
-}
-#notice button:hover { background: var(--vpe-hover); }
-#notice #noticeAction {
-  border-color: transparent;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-}
-#notice #noticeAction:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
-#notice .noticeSecondary {
-  border-color: var(--vpe-bd-subtle);
-  color: var(--vscode-foreground);
-  background: transparent;
-}
-#notice .noticeSecondary:hover { background: var(--vpe-hover); }
-#notice #noticeClose {
-  position: absolute;
-  top: 5px;
-  right: 6px;
-  line-height: 1;
-  border-color: transparent;
-  background: transparent;
-  color: var(--vscode-foreground);
-  padding: 0 4px;
-  font-size: 14px;
-}
 
 #abMarks {
   position: absolute;
@@ -298,11 +285,6 @@ body.idle { cursor: none; }
 }
 #pxread, #stats, #goto {
   position: absolute;
-  border-radius: var(--vpe-card-radius);
-  color: var(--vpe-panel-fg);
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border);
   font-family: var(--vscode-editor-font-family);
   font-size: 11px;
   line-height: 1.45;
@@ -427,12 +409,8 @@ body.idle { cursor: none; }
 
 /* ---- scopes (media/scopes.js) and A-B export buttons ---- */
 #scopes {
-  position: absolute; right: 8px; bottom: 8px; z-index: 2; padding: 4px 6px 6px; border-radius: var(--vpe-card-radius); pointer-events: none;
-  color: var(--vpe-panel-fg);
+  position: absolute; right: 8px; bottom: 8px; z-index: 2; padding: 4px 6px 6px; pointer-events: none;
   --scope-fg: var(--vpe-panel-fg);
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border);
   font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.45;
 }
 #stage #scopes canvas { display: block; position: static; transform: none; width: min(384px, 45vw); height: auto; max-width: none; max-height: none; background: rgba(0, 0, 0, 0.55); border-radius: 2px; margin-top: 2px; }
@@ -459,6 +437,10 @@ body.idle { cursor: none; }
   --vpe-surface-float: color-mix(in srgb, var(--vscode-menu-background, #1e1f23) 90%, transparent);
   --vpe-card-blur: blur(2px);
   --vpe-card-radius: 8px;
+  /* The button scale (docs/DESIGN.md, Buttons): one corner size, compact on the picture, taller in panels. */
+  --vpe-btn-radius: 4px;
+  --vpe-btn-h: 24px;
+  --vpe-btn-h-panel: 28px;
   /* low: lies on the picture (notice, toast, pills, tabs); high: opened over it (menus, panels, popovers, dialogs) */
   --vpe-shadow-low: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
   --vpe-shadow-high: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
@@ -624,11 +606,7 @@ kbd {
 :where(#ctxmenu, #menu, .vpe-pop, .panel)[popover] { inset: auto; margin: 0; width: auto; height: auto; overflow: visible; }
 .panel {
   position: fixed; right: 16px; z-index: 7; width: 316px; box-sizing: border-box; overflow-y: auto;
-  display: flex; flex-direction: column; padding: 6px 0;
-  color: var(--vpe-panel-fg); background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border);
-  border-radius: var(--vpe-card-radius); box-shadow: var(--vpe-shadow-high);
+  display: flex; flex-direction: column; padding: 6px 0; box-shadow: var(--vpe-shadow-high);
   font-size: 13px;
 }
 .panel.speed { width: 220px; gap: 8px; padding-bottom: 10px; }
@@ -638,7 +616,7 @@ kbd {
 .panel.fading { opacity: 0; transition: opacity 200ms ease-out; }
 @media (prefers-reduced-motion: reduce) { .panel.fading { transition: none; } }
 .panel.info { width: 360px; padding: 14px 16px; gap: 10px; }
-.panel button { font: inherit; color: inherit; cursor: pointer; }
+.panel button:not(.vpe-btn) { font: inherit; color: inherit; cursor: pointer; }
 .panel .row {
   display: flex; align-items: center; gap: 12px; width: 100%; height: 38px; flex: none; padding: 0 14px; box-sizing: border-box; text-align: left;
   background: none; border: 1px solid transparent; border-radius: 0;
@@ -659,7 +637,7 @@ kbd {
 .panel .sep { height: 1px; margin: 6px 0; background: var(--vpe-sep); flex: none; }
 .panel .phead, #sheet .phead { padding: 2px 14px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vpe-dim); }
 .panel .chip {
-  height: 26px; padding: 0 7px; border-radius: 5px; font-size: 11.5px;
+  height: var(--vpe-btn-h-panel); padding: 0 7px; border-radius: var(--vpe-btn-radius); font-size: 12px;
   background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-bd-subtle);
 }
 .panel .chip[aria-pressed="true"], .panel .chip[aria-checked="true"] { background: var(--vpe-on-bg); color: var(--vpe-on-fg); border-color: var(--vpe-bd-active); }
@@ -675,9 +653,11 @@ kbd {
 .panel .jrow .zval.grow { flex: 1; }
 .panel .pnote, .panel .ptext { padding: 2px 14px 4px; font-size: 11.5px; line-height: 1.5; color: var(--vpe-dim); }
 .panel .ptext { font-size: 13px; padding-top: 6px; }
-.panel .primary { height: 36px; margin: 6px 12px 2px; border-radius: 6px; border: 1px solid transparent; background: var(--vpe-on-bg); color: var(--vpe-on-fg); }
-.panel .primary:hover { background: var(--vscode-button-hoverBackground, var(--vpe-on-bg)); }
-.panel .big { width: 32px; height: 32px; border-radius: 6px; font-size: 17px; background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border); }
+.panel .primary { margin: 6px 12px 2px; }
+.panel .big {
+  width: var(--vpe-btn-h-panel); height: var(--vpe-btn-h-panel); border-radius: var(--vpe-btn-radius); font-size: 15px;
+  background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border);
+}
 .panel .slider { padding: 0 14px; display: flex; flex-direction: column; }
 .panel .slider input { width: 100%; margin: 0; }
 .panel .itop { display: flex; flex-direction: column; gap: 2px; }
@@ -687,7 +667,7 @@ kbd {
 .panel .igrid dt { color: var(--vpe-dim); }
 .panel .igrid dd { margin: 0; }
 .panel .ibtns { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
-.panel .secondary { height: 30px; padding: 0 12px; border-radius: 6px; background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border); }
+
 .panel .link { height: 30px; padding: 0 8px; border: 0; background: none; color: var(--vscode-textLink-foreground) !important; }
 .panel .link:hover { text-decoration: underline; }
 .panel :focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
@@ -696,8 +676,6 @@ kbd {
 #sheet .sheet {
   width: min(900px, 100%); max-height: 100%; overflow-y: auto; box-sizing: border-box; padding: 18px 22px 20px;
   display: flex; flex-direction: column; gap: 14px;
-  color: var(--vpe-panel-fg); background: var(--vpe-panel-bg); border: 1px solid var(--vpe-panel-border); border-radius: var(--vpe-card-radius);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   box-shadow: var(--vpe-shadow-high);
 }
 #sheet .stop { display: flex; align-items: center; gap: 12px; }
@@ -730,11 +708,7 @@ body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-co
    Kept in its own block at the end of the file so edits to the bar's rules never touch it. */
 #ctxmenu {
   position: fixed; z-index: 20; box-sizing: border-box; min-width: 240px; max-width: calc(100vw - 8px); max-height: calc(100vh - 8px); overflow-y: auto;
-  display: flex; flex-direction: column; padding: 6px 0; outline: none;
-  color: var(--vpe-panel-fg); background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border);
-  border-radius: var(--vpe-card-radius); box-shadow: var(--vpe-shadow-high);
+  display: flex; flex-direction: column; padding: 6px 0; outline: none; box-shadow: var(--vpe-shadow-high);
   font-size: 13px;
 }
 #ctxmenu[hidden] { display: none; }
@@ -748,3 +722,10 @@ body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-co
 #ctxmenu .ctx-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #ctxmenu .ctx-key { flex: none; margin-left: 24px; font-family: var(--vpe-mono); font-size: 11px; font-weight: 400; color: var(--vpe-dim); white-space: nowrap; }
 #ctxmenu .ctx-sep { height: 1px; margin: 6px 0; flex: none; background: var(--vpe-sep); }
+
+/* ==== The callout (docs/DESIGN.md, Building blocks): a .vpe-pop card next to the control it explains. ==== */
+.vpe-pop.callout {
+  position: fixed; width: min(280px, calc(100vw - 16px)); padding: 10px 28px 10px 12px; font-size: 12px; line-height: 1.45;
+}
+.callout-title { font-weight: 600; }
+.callout-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }

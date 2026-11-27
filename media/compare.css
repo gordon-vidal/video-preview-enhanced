@@ -52,10 +52,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: inline-flex; align-items: center; gap: 4px;
 }
 .tbtn {
-  height: 22px; min-width: 22px; padding: 0 5px; border-radius: var(--vpe-card-radius);
-  border: 1px solid var(--vpe-panel-border);
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
+  height: var(--vpe-btn-h); min-width: var(--vpe-btn-h); padding: 0 5px; border-radius: var(--vpe-btn-radius);
   color: var(--vscode-foreground, #e4e4e7);
   font: 600 11px/1 var(--vscode-font-family, system-ui, sans-serif);
   cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
@@ -76,9 +73,6 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: inline-flex; align-items: center; gap: 5px;
   max-width: calc(100% - 70px); height: 26px; padding: 0 5px 0 4px; box-sizing: border-box;
   border-radius: 999px;
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border);
   color: var(--vscode-foreground, #f4f4f5);
   font: inherit; font-size: 11.5px;
 }
@@ -123,12 +117,8 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   position: absolute; top: 38px; left: 7px; z-index: 6;
   display: none; flex-direction: column; gap: 8px;
   width: min(300px, calc(100% - 14px)); box-sizing: border-box;
-  padding: 10px 12px; border-radius: var(--vpe-card-radius);
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border);
-  box-shadow: var(--vpe-shadow-high);
-  color: var(--vpe-panel-fg); pointer-events: none;
+  padding: 10px 12px;
+  box-shadow: var(--vpe-shadow-high); pointer-events: none;
 }
 .cell.show-stats .tile-stats { display: flex; }
 .tile-stats .itop { display: flex; flex-direction: column; gap: 2px; padding-right: 22px; }
@@ -153,8 +143,6 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   position: absolute; bottom: 7px; right: 7px; z-index: 7;
   display: none; align-items: center; gap: 3px; height: 24px; padding: 0 4px;
   border-radius: 999px;
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   border: 1px solid var(--vpe-bd-active);
   font-family: var(--vpe-mono, monospace); font-size: 11px; color: var(--vscode-foreground, #e4e4e7);
 }
@@ -177,7 +165,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   top: 4px; left: 4px; bottom: auto; height: 22px; gap: 4px; padding: 0 4px 0 3px; font-size: 11px; max-width: calc(100% - 54px);
 }
 #cells.dense .tile-top-acts { top: 4px; right: 4px; }
-#cells.dense .tbtn { height: 20px; min-width: 20px; border-radius: var(--vpe-card-radius); }
+#cells.dense .tbtn { height: 20px; min-width: 20px; }
 #cells.dense .ltr { width: 15px; height: 15px; font-size: 9.5px; }
 #cells.dense .mute-mini { width: 18px; height: 18px; }
 #cells.dense .sync-pill, #cells.dense .nudge { bottom: 4px; right: 4px; height: 21px; padding: 0 2px; gap: 1px; font-size: 10px; max-width: calc(100% - 8px); box-sizing: border-box; }
@@ -250,8 +238,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
               width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
 }
 .skeleton-label {
-  background: var(--vpe-surface-float); color: var(--vscode-foreground, #f4f4f5);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
+  color: var(--vscode-foreground, #f4f4f5);
   border: 1px solid var(--vpe-bd-active);
   padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
 }
@@ -271,10 +258,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 #stage.pannable.panning .cell.add { cursor: grabbing; }
 .addcell {
   display: inline-flex; flex-direction: column; align-items: center; gap: 6px;
-  padding: 10px 16px; border-radius: var(--vpe-card-radius);
-  border: 1px solid var(--vpe-panel-border);
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
+  padding: 10px 16px;
   color: var(--vscode-foreground, #d4d4d8); font: inherit; font-size: 12px; cursor: pointer;
   opacity: 0.6; transition: opacity 120ms, background 120ms, border-color 120ms, color 120ms;
 }
@@ -296,11 +280,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 /* Add popover anchored above the Compare capsule in the player bar (the shared card surface, docs/DESIGN.md). */
 .add-pop {
   position: fixed; bottom: 52px; right: 120px; z-index: 15; width: 240px; box-sizing: border-box;
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  color: var(--vpe-panel-fg, var(--vscode-foreground, #e4e4e7));
-  border: 1px solid var(--vpe-panel-border);
-  border-radius: var(--vpe-card-radius); padding: 5px;
+  color: var(--vpe-panel-fg, var(--vscode-foreground, #e4e4e7)); padding: 5px;
   box-shadow: var(--vpe-shadow-high);
 }
 .add-pop button {
@@ -365,7 +345,8 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 .panel .row .seg { width: 196px; }
 .panel .seg .chip { white-space: nowrap; padding: 0 8px; }
 .panel.info .seg .chip, .panel.info .seg button {
-  height: 26px; border-radius: 5px; font-size: 11.5px; background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border);
+  height: var(--vpe-btn-h-panel); border-radius: var(--vpe-btn-radius); font-size: 12px;
+  background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border);
 }
 .panel.info .seg button[aria-pressed="true"] { background: var(--vpe-on-bg); color: var(--vpe-on-fg); border-color: var(--vpe-accent); }
 .panel .unitrow { display: flex; align-items: center; gap: 10px; padding: 8px 12px 0; }
@@ -375,9 +356,7 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 /* A tile's right-click menu (the shared card surface, docs/DESIGN.md). */
 #menu {
   position: fixed; z-index: 16; min-width: 250px; padding: 4px 0; display: flex; flex-direction: column;
-  color: var(--vpe-panel-fg, var(--vscode-foreground)); background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border); border-radius: var(--vpe-card-radius); box-shadow: var(--vpe-shadow-high);
+  color: var(--vpe-panel-fg, var(--vscode-foreground)); box-shadow: var(--vpe-shadow-high);
   font-size: 13px;
 }
 #menu .mi {

@@ -163,6 +163,9 @@ function element(parent) {
     const info = flat(panel.children.at(-1)).map(labelOf).filter(Boolean).join('|');
     assert.ok(!/Open in system player|Full technical details/.test(info), `ⓘ keeps to information: ${info}`);
     assert.ok(/Copy details/.test(info) && /Copy link to this frame/.test(info), info);
+    // The panel's buttons are the shared buttons (docs/DESIGN.md): secondary ones plain, a main one filled.
+    const copyBtn = flat(panel.children.at(-1)).find((e) => labelOf(e) === 'Copy details');
+    assert.ok(copyBtn && /\bvpe-btn\b/.test(copyBtn.className) && !/vpe-btn-main/.test(copyBtn.className), copyBtn && copyBtn.className);
   } finally {
     Object.assign(globalThis, originals);
   }
