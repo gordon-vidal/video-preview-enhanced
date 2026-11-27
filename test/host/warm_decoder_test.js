@@ -431,7 +431,8 @@ const tick = () => new Promise((r) => setImmediate(r));
     const clips = [['h264', 'libx264', ['-bf', '3', '-g', '50', '-sc_threshold', '0'], '25'],
       ['h264', 'libx264', ['-bf', '3', '-g', '50', '-sc_threshold', '0'], '24000/1001'],
       ['h264', 'libx264', ['-bf', '3', '-g', '50', '-sc_threshold', '0'], '48000/1001']];
-    const x265 = ['-x265-params', 'keyint=50:min-keyint=50:bframes=3:open-gop=1:scenecut=0:log-level=error'];
+    // Lower CRF on x265 so 50–100 frames don't fit inside Linux's 64 KB pipe buffer and hit EOF on mid-clip jumps.
+    const x265 = ['-crf', '14', '-x265-params', 'keyint=50:min-keyint=50:bframes=3:open-gop=1:scenecut=0:log-level=error'];
     if (/libx265/.test(ff.stdout)) clips.push(['hevc', 'libx265', x265, '25'], ['hevc', 'libx265', x265, '24000/1001']);
     const bits = String.raw`format=yuv420p,geq=lum='if(bitand(N\,pow(2\,floor(X/32)))\,235\,16)':cb=128:cr=128,noise=alls=30:allf=t`;
     for (const [codec, enc, opts, rate] of clips) {
