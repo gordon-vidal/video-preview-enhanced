@@ -21,7 +21,7 @@ const setup = lazy(() => require('./setup'));
 const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
 const { ExactFrameGrabber } = require('./exact_frame');
-const { toggleFocusMode, noteFocusModeExited, resetFocusMode, setFocusModeListener } = require('./focus-mode');
+const { toggleFocusMode, noteFocusModeExited, isFocusModeActive, resetFocusMode, setFocusModeListener } = require('./focus-mode');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
 const remotestream = lazy(() => require('./remotestream')); // unified Live transcode stream engine (ADR 0002)
 const transcodePolicy = lazy(() => require('./transcode_policy'));
@@ -1073,7 +1073,7 @@ function activate(context) {
     libavBuild: () => libavBuild(context.extensionUri), prefs: () => prefsOf(config()), maxVideos,
     pick: (label, defaultUri, many) => pickVideos(label, defaultUri, many),
     setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
-    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : noteFocusModeExited()),
+    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : noteFocusModeExited(vscode)),
     rail: {
       cache: railMeta, probe: railProbe, prefs: railPrefs, layout: () => config().railLayout,
       caseless: process.platform === 'win32' || process.platform === 'darwin',
@@ -1819,6 +1819,7 @@ async function showViewerNow(context, panel, clip, openTarget, more, { allowDupl
     updateContexts();
   };
   viewer.show();
+  if (isFocusModeActive()) viewer.post({ type: 'focusMode', active: true });
   updateContexts();
   if (logFile) log(`[${viewer.session.title}] viewer opened (${viewer.session.clips.length} video${viewer.session.clips.length === 1 ? '' : 's'})`);
   return viewer;
@@ -2469,7 +2470,7 @@ async function openLink(context, link) {
 
 function deactivate() {
   for (const v of [...unifiedViewers]) v.dispose();
-  resetFocusMode();
+  resetFocusMode(vscode);
 }
 
 module.exports = { activate, deactivate };

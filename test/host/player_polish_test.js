@@ -36,8 +36,9 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
     h.vscode._updates.length = 0;
     const zen = ['workbench.action.toggleZenMode'];
     // Overlapping second click during the OS fullscreen settle window is ignored.
-    // Temporarily disables zenMode.centerLayout around toggleZenMode and restores it in finally;
-    // never calls toggleCenteredLayout (which would corrupt normal VS Code layout on desync).
+    // Sets zenMode.centerLayout = false while Zen Mode is active (NOT restored until exiting Zen Mode,
+    // because VS Code live-reacts to zenMode.centerLayout and would shrink back into Centered Layout).
+    // Never calls toggleCenteredLayout (which would corrupt normal VS Code layout on desync).
     const first = s.send({ type: 'focusMode' });
     await s.send({ type: 'focusMode' });
     await first;
@@ -45,28 +46,41 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
     assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, true);
     assert.deepEqual(
       h.vscode._updates,
-      centerLayout ? [['zenMode.centerLayout', false], ['zenMode.centerLayout', true]] : [],
-      'temporarily disables zenMode.centerLayout around toggleZenMode and restores it',
+      centerLayout ? [['zenMode.centerLayout', false]] : [],
+      'disables zenMode.centerLayout while in Zen Mode and does not restore it early',
     );
+    // A new tab opened while Zen Mode is active inherits focusMode on ready (e.g. Shift+N / Folder Rail).
+    const second = h.open(clip);
+    await second.send({ type: 'ready' });
+    assert.equal(second.posted.filter((m) => m.type === 'focusMode').pop()?.active, true, 'new tab inherits active Zen Mode');
+    second.panel.dispose();
+
     h.vscode.executed = [];
     h.vscode._updates.length = 0;
     await s.send({ type: 'focusMode' });
     assert.deepEqual(h.vscode.executed, [zen]);
     assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, false);
+    assert.deepEqual(
+      h.vscode._updates,
+      centerLayout ? [['zenMode.centerLayout', true]] : [],
+      'restores zenMode.centerLayout when leaving Zen Mode',
+    );
     if (centerLayout) {
-      // Exiting Zen Mode outside the button (Esc Esc) resets zenActive; re-entering still expands full-width without toggleCenteredLayout.
+      // Exiting Zen Mode outside the button (Esc Esc) restores zenMode.centerLayout and resets zenActive.
       h.vscode.executed = [];
       h.vscode._updates.length = 0;
       await s.send({ type: 'focusMode' });
       assert.deepEqual(h.vscode.executed, [zen]);
-      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', false], ['zenMode.centerLayout', true]]);
+      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', false]]);
+      h.vscode._updates.length = 0;
       await s.send({ type: 'focusModeExited' });
       assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, false);
+      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', true]], 'Esc Esc restores zenMode.centerLayout');
       h.vscode.executed = [];
       h.vscode._updates.length = 0;
       await s.send({ type: 'focusMode' });
       assert.deepEqual(h.vscode.executed, [zen]);
-      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', false], ['zenMode.centerLayout', true]]);
+      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', false]]);
       await s.send({ type: 'focusMode' });
     }
 
