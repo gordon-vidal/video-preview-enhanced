@@ -139,14 +139,21 @@ async function passChecks(vs, h, file, other, R, label) {
       const B = await lib.open(vs, h, other); // in front: A is hidden before its pass starts (3 s)
       const m = vs.mark();
       await B.waitFirstFrame();
-      await lib.sleep(6000);
+      // Sampled while A is hidden: past the pass's start delay, then 3 s later.
+      const seen = [];
+      for (const wait of [3000, 3000]) {
+        await lib.sleep(wait);
+        const x = await A.state();
+        seen.push({ hidden: x.engineHidden, pass: x.strip && x.strip.pass });
+      }
+      r.whileHidden = seen;
       const mine = new RegExp(`\\[${lib.esc(A.name)}\\].*(thumbs: starting worker|thumb ffmpeg)`);
       const hiddenWork = lib.lines(vs, mine, m);
-      await B.close();
-      const s = await A.state();
-      r.atShow = s.strip && s.strip.pass;
+      ok(seen.every((x) => x.hidden), 'A was hidden');
       ok(!hiddenWork.length, `no pass work while hidden (${hiddenWork.slice(0, 2)})`);
-      ok(!s.strip || !s.strip.pass || s.strip.pass.requests <= 1, `no pass requests while hidden (${JSON.stringify(r.atShow)})`);
+      ok(seen.every((x) => !x.pass || (x.pass.requests === 0 && x.pass.state === 'paused:hidden')), `the pass waits while hidden (${JSON.stringify(seen)})`);
+      vs.send({ command: 'workbench.action.closeActiveEditor' }); // B: A is shown again
+      await lib.sleep(700);
       const done = await A.waitState((x) => x.strip && x.strip.pass && /^done/.test(x.strip.pass.state), { timeout: 30000, what: 'the pass after showing' });
       ok(done.strip.bar === done.strip.n, `the pass fills the bar once shown (${done.strip.bar} of ${done.strip.n})`);
     } finally { await A.close(); }
