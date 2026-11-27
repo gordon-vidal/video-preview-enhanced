@@ -1,10 +1,10 @@
 'use strict';
 // Compare's UI in a real VS Code (docs/notes/compare-ui.md, the approved mock-up): entering from a player
-// takes its tab in place and starts at its position; the player's bar (no CC, the
+// grows its tab in place (one tab, one page) and starts at its position; the player's bar (no CC, the
 // Compare button); the Compare panel and a video's page (offset in frames / ms, Reset, clock, sound);
 // the hover pills and ‹ offset › nudges, − / + on the video under the pointer; side by side / split with
 // a dragged divider and Swap; the tile's right-click menu; 3 videos in a 2x2 grid with an "Add video" cell;
-// Remove; Leave compare back to the player at the kept video's moment, in the same tab.
+// Remove; Leave compare back to one video at the kept video's moment, in the same tab.
 // Read from the page's `compare report` / `compare ui {json}` lines and the `tabs` hook (VPE_LOG).
 const path = require('path');
 
@@ -13,7 +13,10 @@ const CLIPS = ['h264_aac_anim_1080p.mp4', 'vp9_opus_anim_1080p.webm', 'h264_8_10
 const kv = (line) => Object.fromEntries([...line.matchAll(/(\w+)=(\S+)/g)].map((m) => [m[1], m[2]]));
 const list = (s) => String(s || '').split(',');
 const nums = (s) => list(s).map(Number);
-const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] opened, .* ${n} tiles`);
+// The unified viewer logs "tiles: N" as its tab grows or shrinks in place ("opened, ..., N tiles" for a new panel).
+const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] (?:opened, .*, |tiles: )${n}(?: tiles)?\\b`);
+// A comparison's tab here is the player's tab grown in place: its title lists the videos.
+const isCompareTab = (tab) => /compare/i.test(tab.viewType) || /↔| · /.test(tab.label);
 
 module.exports = [{
   name: 'compare_ui',
@@ -72,7 +75,7 @@ module.exports = [{
     const rows = JSON.parse(/debug comparepick (\[.*\])/.exec(await vs.waitLog(/debug comparepick \[/, { from, timeout: 20000, what: 'the quick pick' }))[1]);
     ok(rows[0] === 'Same folder' && !rows.includes(CLIPS[0]) && rows.includes(CLIPS[1]) && rows[rows.length - 1].includes('Browse'), `quick pick rows: ${rows}`);
     await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened by key D' });
-    await vs.waitLog(new RegExp(`\\[${tagA}\\] session closed`), { from, timeout: 10000, what: 'the player tab closed' });
+    ok(!vs.lines.slice(from).some((l) => l.includes(`[${tagA}] session closed`)), 'the player tab closed instead of growing in place');
     let r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
     ok(r.synced === 'true', `compare after key D: ${JSON.stringify(r)}`);
     vs.send({ command: 'workbench.action.closeActiveEditor' });
@@ -93,21 +96,30 @@ module.exports = [{
     ok = t('enter/in-place');
     from = await h.openClip(vs, files[0]);
     await vs.waitLog(new RegExp(`\\[${tagA}\\] webview: first frame shown`), { from, timeout: 45000, what: 'first frame' });
+    // The player paused at 1.0 s (frame 31): entering Compare grows this page in place and keeps that moment (the
+    // host sends no time; the page's position is the comparison's).
+    vs.send({ name: CLIPS[0], action: 'seek', t: 1.0 });
+    for (const end = Date.now() + 10000; Date.now() < end; await h.sleep(200)) {
+      const m1 = vs.mark();
+      vs.send({ name: CLIPS[0], action: 'state', id: 'enter' });
+      const s1 = JSON.parse(/webview: state (\{.*\})/.exec(await vs.waitLog(/webview: state \{/, { from: m1, timeout: 10000 }))[1]);
+      if (Math.abs(s1.t - 1.0) < 0.05) break;
+    }
     from = vs.mark();
-    vs.send({ compareWith: [files[1]], name: CLIPS[0], t: 1.0 });
+    vs.send({ compareWith: [files[1]], name: CLIPS[0] });
     await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened from the player' });
-    await vs.waitLog(new RegExp(`\\[${tagA}\\] session closed`), { from, timeout: 10000, what: 'the player tab closed' });
+    ok(!vs.lines.slice(from).some((l) => l.includes(`[${tagA}] session closed`)), 'the player tab closed instead of growing in place');
     r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
     ok(Math.abs(nums(r.frames)[0] - 31) <= 1, `compare started at A #${nums(r.frames)[0]}, expected about #31 (the player's 1.0 s)`);
     const tb = await tabs();
     const all = tb.flat();
-    ok(all.length === 1 && /compare/i.test(all[0].viewType), `tabs after entering: ${JSON.stringify(tb)}`);
+    ok(all.length === 1 && isCompareTab(all[0]), `tabs after entering: ${JSON.stringify(tb)}`);
 
     // ---- the bar: the player's, without CC, plus the grouped Compare capsule ----
     ok = t('bar');
     let u = await ui();
     const ids = u.bar.ids;
-    for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'layoutSpotlightBtn', 'layoutGridBtn', 'layoutSplitBtn', 'addPopBtn', 'syncModeBtn', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(ids.includes(id), `bar has no #${id} (${ids})`);
+    for (const id of ['prev', 'play', 'next', 'mute', 'volume', 'time', 'spotlightBtn', 'gridBtn', 'splitBtn', 'swapBtn', 'syncBtn', 'cmpBtn', 'infoBtn', 'rate', 'cog', 'full']) ok(ids.includes(id), `bar has no #${id} (${ids})`);
     ok(!ids.includes('keysBtn'), 'the shortcuts button still appears in the Compare toolbar');
     ok(!ids.includes('reorderBtn'), 'the old Reorder button should be gone');
     ok(!ids.includes('tracks'), `CC shown while comparing: ${ids}`);
@@ -162,7 +174,7 @@ module.exports = [{
     const txt = panelText(u);
     for (const want of ['Videos', CLIPS[0], CLIPS[1], 'Add video…', '2 of 8', 'Layout', 'Spotlight', 'Grid', 'Split', 'Swap sides', 'Leave compare', 'keep A']) ok(txt.includes(want), `panel lacks "${want}": ${txt}`);
     for (const gone of ['PSNR', 'SSIM', 'Find first difference', 'A vs B']) ok(!txt.includes(gone), `panel shows "${gone}" (hidden for now)`);
-    ok(u.panel.rows.some((x) => /^A: .*clock, sound, offset In step/.test(x.label)), `A's row: ${JSON.stringify(u.panel.rows.map((x) => x.label))}`);
+    ok(u.panel.rows.some((x) => /^A: .*, offset In step, sets the clock, sound on$/.test(x.label)), `A's row: ${JSON.stringify(u.panel.rows.map((x) => x.label))}`);
     await click({ sel: '#cmpBtn' });
     u = await ui();
     ok(!u.panel, 'the Compare button did not close its panel');
@@ -171,7 +183,15 @@ module.exports = [{
     ok(u.panel && u.panel.view === 'main' && /Sound/.test(panelText(u)) && /from A/.test(panelText(u)) && /Copy view/.test(panelText(u)) && /Compare/.test(panelText(u)), `⚙ panel: ${panelText(u)}`);
     ok(!/Subtitles|Audio track/.test(panelText(u)), `⚙ panel shows player-only rows: ${panelText(u)}`);
     ok(u.panel?.rows.some((r) => /A–B Range/.test(r.label)), 'Compare Settings has the shared A–B Range row');
-    ok(!/Inspection/.test(panelText(u)), 'Compare has no Inspection row (no inspection tools there)');
+    // Inspection in Compare: scopes, stats and the codec X-ray (of the clock video); no pixel inspector, X swaps sides.
+    ok(u.panel?.rows.some((r) => r.label === 'Inspection: scopes, stats, codec X-ray'), `Compare's Inspection row: ${JSON.stringify(u.panel?.rows.map((r) => r.label))}`);
+    await click({ text: 'Inspection' });
+    u = await ui();
+    const inspRows = (u.panel?.rows || []).map((r) => r.label);
+    ok(u.panel?.view === 'inspect' && ['Scopes', 'Stats', 'Codec X-ray'].every((w) => inspRows.some((l) => l.startsWith(w)))
+      && !inspRows.some((l) => /inspector/i.test(l)), `Compare's Inspection page: ${u.panel?.view} ${JSON.stringify(inspRows)}`);
+    await click({ sel: '#cog' }); // back to the main page
+    u = await ui();
     await click({ text: 'A–B Range' });
     u = await ui();
     ok(u.panel?.view === 'ab' && u.panel.rows.some((r) => r.label === 'Export A–B video for all Compare tiles'), 'Compare clip export accessible name on the A–B Range page');
@@ -187,13 +207,13 @@ module.exports = [{
     await click({ text: 'B:' });
     u = await ui();
     ok(u.panel && u.panel.view === 'cmpVid', `B's page: ${u.panel && u.panel.view}`);
-    for (const want of ['Offset', 'In step', 'Frames', 'Time (ms)', 'Clock', 'Sound from this video', 'Replace video…', 'Remove (back to one video)']) ok(panelText(u).includes(want), `B's page lacks "${want}": ${panelText(u)}`);
+    for (const want of ['Offset', 'Frames', 'Time ms', 'B sets the clock', 'Sound from B', 'Replace video…', 'Remove from compare']) ok(panelText(u).includes(want), `B's page lacks "${want}": ${panelText(u)}`);
     await click({ text: 'B later' });
     r = await until((x) => x.offsets === '0f,1f', 5000);
     ok(r.offsets === '0f,1f', `+ on B's page: offsets ${r.offsets}`);
     r = await until((x) => x.synced === 'true' && nums(x.frames)[1] === nums(x.frames)[0] + 1, 10000);
     ok(nums(r.frames)[1] === nums(r.frames)[0] + 1, `B +1 frame shows #${nums(r.frames)[1]} against A #${nums(r.frames)[0]}`);
-    await click({ text: 'Time (ms)' });
+    await click({ text: 'Time ms' });
     r = await report();
     ok(/^0f,33\.33\dms$/.test(r.offsets), `frames → ms keeps the moment: ${r.offsets}`);
     await click({ text: 'B later' });
@@ -205,8 +225,8 @@ module.exports = [{
     await click({ text: 'Frames' });
     r = await until((x) => x.offsets === '0f,0f', 5000);
     ok(r.offsets === '0f,0f', `Reset and Frames: ${r.offsets}`);
-    await click({ text: 'Clock:' });
-    await click({ text: 'Sound from this video' });
+    await click({ text: 'B sets the clock' });
+    await click({ text: 'Sound from B' });
     r = await until((x) => x.clock === '1' && x.sound === '1', 5000);
     ok(r.clock === '1' && r.sound === '1', `clock and sound switches: clock=${r.clock} sound=${r.sound}`);
     u = await ui();
@@ -223,10 +243,11 @@ module.exports = [{
     ok = t('tiles/pills-and-nudge');
     r = await until((x) => x.synced === 'true', 10000);
     u = await ui();
-    ok(u.cells.length === 2 && u.cells.every((c) => c.pills.length === 1 && !c.hasSpot), `cells: ${JSON.stringify(u.cells.map((c) => [c.tile, c.pills.length, c.hasSpot]))}`);
+    // The grid: every tile's Enlarge button puts it in Spotlight.
+    ok(u.cells.length === 2 && u.cells.every((c) => c.pills.length === 1 && c.enlarge === 'Enlarge tile'), `cells: ${JSON.stringify(u.cells.map((c) => [c.tile, c.pills.length, c.enlarge]))}`);
     ok(u.cells[0].pills[0].includes('A') && u.cells[0].pills[0].includes(CLIPS[0]) && /#\d+/.test(u.cells[0].pills[0]), `A's pill: ${u.cells[0].pills[0]}`);
     ok(u.syncMode === false, 'Sync mode should be off by default');
-    await click({ sel: '#syncModeBtn' });
+    await click({ sel: '#syncBtn' });
     u = await ui();
     ok(u.syncMode === true && u.cells[1].nudges[0].replace(/\s/g, '') === '−0+', `Sync mode B nudge: ${u.cells[1].nudges[0]}`);
     await click({ sel: '.nudge [data-act="nudge"][data-i="1"][data-d="1"]' });
@@ -260,18 +281,19 @@ module.exports = [{
 
     // ---- Spotlight (4-sided dock + splitter), Equal Grid, Split Wipe, Swap ----
     ok = t('view/spotlight-and-split');
-    await click({ sel: '#layoutSpotlightBtn' });
+    await click({ sel: '#spotlightBtn' });
     r = await until((x) => x.mode === 'spotlight', 5000);
     u = await ui();
     ok(r.mode === 'spotlight' && u.splitter && u.splitter.dir === 'h', `Spotlight: mode=${r.mode} splitter=${JSON.stringify(u.splitter)}`);
-    ok(!u.cells[0].hasSpot && u.cells[1].hasSpot, `Spotlight button only on non-main tile: ${JSON.stringify(u.cells.map((c) => c.hasSpot))}`);
+    // The main tile's button goes back to the grid; the other tile's swaps it into Spotlight.
+    ok(u.cells[0].enlarge === 'Back to grid' && u.cells[1].enlarge === 'Enlarge tile', `Spotlight buttons (main tile first): ${JSON.stringify(u.cells.map((c) => c.enlarge))}`);
     act({ action: 'dock', dock: 'left' });
     u = await ui();
     ok(u.spotlight.dock === 'left' && u.splitter && u.splitter.dir === 'v', `dock left: ${JSON.stringify(u.spotlight)} ${JSON.stringify(u.splitter)}`);
     act({ action: 'heroRatio', ratio: 0.5 });
     u = await ui();
     ok(u.splitter && u.splitter.value === '50', `splitter ratio 50%: ${JSON.stringify(u.splitter)}`);
-    await click({ sel: '#layoutSplitBtn' });
+    await click({ sel: '#splitBtn' });
     r = await until((x) => x.mode === 'split' && x.divider === 'true', 5000);
     ok(r.mode === 'split' && r.divider === 'true' && r.cells === '1', `Split: mode=${r.mode} divider=${r.divider} cells=${r.cells}`);
     u = await ui();
@@ -286,9 +308,9 @@ module.exports = [{
     ok(r.swap === 'true', 'X did not swap');
     u = await ui();
     ok(u.cells[0].pills[0].includes(`A${CLIPS[1]}`) || u.cells[0].pills[0].includes(CLIPS[1]), `after Swap the left pill is ${u.cells[0].pills[0]}`);
-    await click({ sel: '#layoutGridBtn' });
+    await click({ sel: '#gridBtn' });
     u = await ui();
-    ok(u.cells[0].pills[0].includes(CLIPS[1]) && u.cells.every((c) => !c.hasSpot), `Equal Grid kept ${u.cells[0].pills[0]} on the left with no Spotlight button`);
+    ok(u.cells[0].pills[0].includes(CLIPS[1]) && u.cells.every((c) => c.enlarge === 'Enlarge tile'), `Equal Grid kept ${u.cells[0].pills[0]} on the left, buttons ${JSON.stringify(u.cells.map((c) => c.enlarge))}`);
     await click({ text: `Move ${CLIPS[1]} later` });
     r = await until((x) => x.mode === 'grid' && x.divider === 'false' && x.swap === 'false', 5000);
     ok(r.mode === 'grid' && r.cells === '2', `back to grid: mode=${r.mode} cells=${r.cells}`);
@@ -348,12 +370,15 @@ module.exports = [{
     ok(r.clock === '0', `clock before leaving: ${r.clock}`);
     act({ action: 'panel', view: 'cmp' });
     await h.sleep(200);
-    from = vs.mark();
     await click({ text: 'Leave compare' });
-    await vs.waitLog(new RegExp(`\\[${tagA}\\] webview: first frame shown`), { from, timeout: 45000, what: 'the player after Leave compare' });
+    // The same tab and page shrink back to one video: the tab title is A's name alone again.
+    let tb2 = [];
+    for (const end = Date.now() + 20000; Date.now() < end; await h.sleep(300)) {
+      tb2 = (await tabs()).flat();
+      if (tb2.length === 1 && tb2[0].label === CLIPS[0]) break;
+    }
     await h.sleep(800);
-    const tb2 = (await tabs()).flat();
-    ok(tb2.length === 1 && /videoPreviewEnhanced\.player/.test(tb2[0].viewType), `tabs after leaving: ${JSON.stringify(tb2)}`);
+    ok(tb2.length === 1 && tb2[0].label === CLIPS[0] && /videoPreviewEnhanced\.player/.test(tb2[0].viewType), `tabs after leaving: ${JSON.stringify(tb2)}`);
     const m0 = vs.mark();
     vs.send({ name: CLIPS[0], action: 'state', id: 'leave' });
     const st = JSON.parse(/webview: state (\{.*\})/.exec(await vs.waitLog(/webview: state \{/, { from: m0, timeout: 10000 }))[1]);

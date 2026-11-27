@@ -2,7 +2,8 @@
 
 const assert = require('node:assert/strict');
 const { create, followerTime, followerSeekAction } = require('../../media/stepgoal');
-const { offsetSeconds } = require('../../media/comparerange');
+/** A Compare offset in seconds: milliseconds, or frames at the tile's rate. */
+const offsetSeconds = (offset, fps) => (offset.unit === 'ms' ? offset.v / 1000 : offset.v / fps);
 
 function harness(frame = 60, dispatch = () => {}) {
   let now = 0;

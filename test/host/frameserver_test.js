@@ -74,12 +74,10 @@ async function interruptedBenchmarks() {
     await new Promise((r) => setTimeout(r, 100));
     assert.strictEqual((await get(dropped, owner)).statusCode, 403, 'disconnect closed the benchmark channel');
 
+    // VS Code recreated the document (a second 'ready' from the same page): its waiting channel closes.
     const reloaded = await bench();
-    const html = s.panel.webview.html;
-    disk.writeFileSync(file, Buffer.alloc(2));
-    await s.until(() => s.panel.webview.html !== html);
-    assert.strictEqual((await get(reloaded, owner)).statusCode, 403, 'reload closed a waiting channel');
-    await s.send({ type: 'ready', origin });
+    await s.send({ type: 'ready', origin, boot: 'document-2' });
+    assert.strictEqual((await get(reloaded, owner)).statusCode, 403, 'a new document closed a waiting channel');
     const disposed = await bench();
     s.panel.dispose();
     assert.strictEqual((await get(disposed, owner)).statusCode, 403, 'disposal closed a waiting channel');

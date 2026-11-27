@@ -2,7 +2,7 @@
 // "Open together" (docs/notes/compare-ui.md): VS Code opens a multi-selection of the Explorer (Open With…,
 // Enter, double-click, drop) as one editor per file in quick succession. Videos that arrive close together (each
 // within `windowMs` of the one before) are one gesture and become one compare. Pure (timers injected), so a
-// Node test checks the rules; src/compare.js does the opening and closing.
+// Node test checks the rules; src/extension.js (openBurst) does the opening and closing.
 
 // The opens of one gesture reach the extension host within a few ms of each other (measured: 5-8 videos, under
 // 15 ms); a longer window only delays compare. Each new video restarts it; a repeat report of one does not.

@@ -73,13 +73,20 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 #message { font-size: 1.15em; }
-/* Over the (black) picture, the theme's text colour can be dark: white with the shadow reads on any picture. */
-#stage:has(> canvas:not([hidden])) #overlay { color: #fff; }
+/* One status line per Compare tile ("A: Opening…") in the unified page (media/player-ui-lifecycle.js renderMessage). */
+#overlay .overlay-line { max-width: 46em; line-height: 1.35; overflow-wrap: anywhere; }
+/* An error stays readable above the tiles' hover controls (.ov, z-index 4) and keeps long paths inside the stage. */
+#overlay.error { z-index: 5; }
+#overlay.error #message { max-width: 46em; overflow-wrap: anywhere; }
+/* Over the (black) picture, the theme's text colour can be dark: white with the shadow reads on any picture.
+   The unified page draws into the tiles' canvases (#cells .cell > canvas), not the stage's own #canvas. */
+#stage:has(> canvas:not([hidden])) #overlay, #stage:has(> #cells > .cell > canvas) #overlay { color: #fff; }
 /* A video is dragged over the player: compare with it (media/player.js, key D's twin). */
 #dropHint { position: absolute; inset: 12px; display: flex; align-items: center; justify-content: center; border: 2px dashed var(--vscode-focusBorder); border-radius: 8px; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 1.3em; pointer-events: none; z-index: 5; }
 #dropHint[hidden] { display: none; }
 #hint { opacity: 0.8; max-width: 46em; }
-#action {
+/* #overlay .overlay-action: the same button when the unified page creates it (media/player-ui-lifecycle.js). */
+#action, #overlay .overlay-action {
   pointer-events: auto;
   margin-top: 8px;
   padding: 6px 14px;
@@ -90,8 +97,8 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
   color: var(--vscode-button-foreground);
   background: var(--vscode-button-background);
 }
-#action:hover { background: var(--vscode-button-hoverBackground); }
-#action:disabled { opacity: 0.7; cursor: default; }
+#action:hover, #overlay .overlay-action:hover { background: var(--vscode-button-hoverBackground); }
+#action:disabled, #overlay .overlay-action:disabled { opacity: 0.7; cursor: default; }
 
 #toast {
   --toast-top: 12px;
@@ -120,8 +127,10 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 }
 /* Drop below a top-centre banner (Add Mode hint, playback notice, Go to) so neither hides the other. */
 body:has(#addHint:not([hidden]), #notice:not([hidden]), #goto:not([hidden])) #toast { --toast-top: 44px; }
-/* The pixel readout and loupe are what the user is reading while inspecting; keep them above a passing toast. */
-#pxread { z-index: 4; }
+/* The notice controller (media/player-ui-tools.js) sets .notice-open and the banner's measured bottom edge, so a toast
+   sits 8px under the banner even when its text wraps (44px until measured). Specificity ties the rule above; source
+   order wins. */
+body #stage.notice-open #toast { --toast-top: calc(var(--notice-bottom, 36px) + 8px); }
 :is(.vscode-high-contrast, .vscode-high-contrast-light) #toast {
   background: var(--vscode-notifications-background, var(--vscode-editor-background));
   color: var(--vscode-notifications-foreground, var(--vscode-foreground));
@@ -159,7 +168,8 @@ body.idle { cursor: none; }
   background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
   border: 1px solid var(--vscode-editorHoverWidget-border, transparent);
   pointer-events: none;
-  z-index: 3;
+  /* Above the open Folder Rail (.rail z-index 5, collapse tab 8) and the seek thumbnail (9). */
+  z-index: 10;
 }
 
 #notice {
@@ -182,7 +192,8 @@ body.idle { cursor: none; }
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--vpe-panel-border);
-  z-index: 3;
+  /* Above a passing #toast (3) should they ever meet: the banner has buttons, the toast is pointer-events: none. */
+  z-index: 4;
 }
 #notice button {
   font: inherit;
@@ -268,7 +279,8 @@ body.idle { cursor: none; }
   line-height: 1.45;
   z-index: 2;
 }
-#pxread { display: flex; gap: 8px; align-items: flex-start; padding: 4px; pointer-events: none; white-space: pre; font-variant-numeric: tabular-nums; }
+/* The pixel readout is what the user is reading while inspecting: above a passing toast. */
+#pxread { display: flex; gap: 8px; align-items: flex-start; padding: 4px; pointer-events: none; white-space: pre; font-variant-numeric: tabular-nums; z-index: 4; }
 #pxread .loupe { display: block; image-rendering: pixelated; background: transparent; }
 #stats { left: 8px; bottom: 8px; margin: 0; padding: 6px 10px; pointer-events: none; white-space: pre; font-variant-numeric: tabular-nums; max-width: calc(100% - 32px); overflow: hidden; }
 #goto { top: 8px; left: 50%; transform: translateX(-50%); padding: 4px; z-index: 3; }
@@ -336,9 +348,26 @@ body.idle { cursor: none; }
   border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-editorWidget-border, transparent));
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   pointer-events: none;
-  z-index: 2;
+  /* Above the open Folder Rail (.rail z-index 5, collapse tab 8) so scrubbing previews stay visible. */
+  z-index: 9;
 }
 #thumb canvas { display: block; background: #000; }
+/* The unified page's hover thumbnail: one canvas in #seekRow, just before #tip (media/player-ui.js), drawn by the engine
+   and placed by its left (the pointer). The same frame as #thumb, without the wrapper. */
+#seekRow canvas.seek-thumb {
+  position: absolute;
+  bottom: 42px;
+  transform: translateX(-50%);
+  max-width: none;
+  max-height: none;
+  border-radius: 6px;
+  background: #000;
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-editorWidget-border, transparent));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 9;
+}
+#seekRow canvas.seek-thumb[hidden] { display: none; }
 /* ---- xray: Codec X-ray strip (media/xray.js) ---- */
 #xray, #seekRow { --xray-inset: 8px; }
 #xray { position: relative; height: 46px; cursor: crosshair; }
@@ -490,6 +519,30 @@ body.idle { cursor: none; }
 #tracks.on .ccline::after {
   content: ''; position: absolute; inset: auto 0 -3px; border-bottom: 2px solid var(--vpe-accent);
 }
+/* The unified page's Compare button is the Capture toggle (media/player-ui.js): icon + the label, which needs a gap. */
+#startCompareBtn { width: auto; padding: 0 6px; gap: 5px; font-size: 11px; }
+#startCompareBtn.cap-on {
+  background: color-mix(in srgb, var(--vscode-focusBorder) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder) 55%, transparent);
+  color: var(--vscode-foreground); padding: 0 7px;
+}
+.cap-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-focusBorder); flex: none; }
+/* A toggled-on bar button (a layout, Sync offsets): outlined like the Compare capsule's active state. */
+#bar .ib.active { background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-active); }
+/* "Open videos to add to comparison" while the Compare capture is on and one video is open (#capBanner). */
+.cap-banner {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 12;
+  display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px 4px 10px; border-radius: 999px;
+  background: var(--vpe-surface-float); backdrop-filter: blur(10px);
+  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder) 55%, transparent);
+  color: var(--vpe-panel-fg); font-size: 11px; white-space: nowrap;
+}
+.cap-banner[hidden] { display: none; }
+.cap-banner button {
+  border: 1px solid var(--vpe-bd-subtle); background: var(--vpe-fill-subtle); color: inherit;
+  border-radius: 999px; padding: 2px 8px; font: inherit; font-size: 10.5px; cursor: pointer;
+}
+.cap-banner button:hover { background: var(--vpe-hover); }
 #startCompareBackdrop { position: fixed; inset: 0; z-index: 8; }
 #startCompareDialog {
   position: absolute; width: min(270px, calc(100% - 16px)); max-height: calc(100% - 80px); overflow: auto;
@@ -548,8 +601,11 @@ kbd {
   border-bottom-width: 2px;
 }
 
+/* Page-level layers (player.css, folder-rail.css, compare.css): Folder Rail 5 (its collapse tab 8 inside it) < panel 7
+   < seek thumbnail 9 < seek tip 10 < popovers (rail hover card 12, rail menus 14, tile menu 16) < context menu 20
+   < #sheet 40 (modal: above everything, also the stage's drag and split overlays, which reach 30). */
 .panel {
-  position: fixed; right: 16px; z-index: 5; width: 316px; box-sizing: border-box; overflow-y: auto;
+  position: fixed; right: 16px; z-index: 7; width: 316px; box-sizing: border-box; overflow-y: auto;
   display: flex; flex-direction: column; padding: 6px 0;
   color: var(--vpe-panel-fg); background: var(--vpe-surface-float);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
@@ -618,7 +674,7 @@ kbd {
 .panel .link:hover { text-decoration: underline; }
 .panel :focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 
-#sheet { position: fixed; inset: 0; z-index: 6; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); padding: 16px; box-sizing: border-box; }
+#sheet { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); padding: 16px; box-sizing: border-box; }
 #sheet .sheet {
   width: min(900px, 100%); max-height: 100%; overflow-y: auto; box-sizing: border-box; padding: 18px 22px 20px;
   display: flex; flex-direction: column; gap: 14px;

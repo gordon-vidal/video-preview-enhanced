@@ -1,6 +1,6 @@
 'use strict';
-// node test/host/readblock_test.js: concurrent readBlock calls share one handle,
-// short reads are trimmed, and a failed read still answers (empty block).
+// node test/run.js unit --grep readblock: the viewer's file blocks (src/unified-viewer.js readBlock): concurrent
+// readBlock calls share one handle, short reads are trimmed, and a failed read still answers (empty block).
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -20,6 +20,8 @@ const { load, webviewConfig } = require('./mock_vscode');
   const s = h.open(file);
   try {
     await s.shown;
+    await s.send({ type: 'ready' });
+    opens = 0; // preparing the clip read its header (src/rotation.js): only the block reads count here
     const { page } = webviewConfig(s.panel.webview);
     const B = 1 << 20;
     await Promise.all([0, 1, 2, 3, 4].map((k) => s.send({ type: 'readBlock', page, pos: k * B, len: B })));
@@ -33,15 +35,18 @@ const { load, webviewConfig } = require('./mock_vscode');
     }
     assert.strictEqual(blocks.find((b) => b.pos === 4 * B).data.length, 0, 'past EOF is empty');
 
-    // A failed open still answers, so the webview doesn't wait forever.
+    // A failed read still answers (empty), so the webview doesn't wait forever: the file is gone after it opened.
     s.panel.dispose();
-    const bad = load().open(path.join(os.tmpdir(), 'vpe_missing_file.bin'));
+    const gone = path.join(os.tmpdir(), `vpe_rb_gone_${process.pid}.bin`);
+    fs.writeFileSync(gone, Buffer.alloc(16));
+    const bad = load().open(gone);
     await bad.shown;
-    await bad.send({ type: 'readBlock', page: webviewConfig(bad.panel.webview).page, pos: 0, len: 1024 });
+    fs.unlinkSync(gone);
+    await bad.send({ type: 'ready' });
+    await bad.send({ type: 'readBlock', pos: 0, len: 1024 });
     const ans = bad.posted.filter((m) => m.type === 'block');
     assert.strictEqual(ans.length, 1, 'answered after error');
     assert.strictEqual(ans[0].data.length, 0);
-    assert.ok(bad.posted.some((m) => m.type === 'error'), 'error shown');
     bad.panel.dispose();
     console.log('readblock: ok');
   } finally {

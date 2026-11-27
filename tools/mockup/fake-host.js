@@ -6,7 +6,16 @@
 //   const host = createFakeHost({ clips });
 //   const ui = VpePlayerUi.create({ ..., host });
 //   host.connect(ui.onHostMessage);
+//
+// Unified host protocol (page -> host, and what the fake answers): 'tileOrder' { order } and 'leaveCompare'
+// { keepId, t } update the tiles and the rail's members; 'tileSize' { w, h, cols, rows, zoom } is recorded;
+// 'replaceVideo' { oldId } answers { type: 'replaceTile', oldId, newId }; 'playbackPrefs' { prefs } is stored and
+// broadcastPrefs() simulates another tab's change; 'toast' { text, ms? } echoes back (ms capped at 10 s);
+// 'focusMode' { active } / 'focusModeExited' answer { type: 'focusMode', active }. test/host/adapter_contract_test.js
+// is the contract every HostAdapter (this fake and media/player-host-adapter.js) must pass; its types are
+// media/unified-contracts.d.ts (HostAdapter, PageToHostMessage, HostToPageMessage).
 (() => {
+  /** @typedef {import('../../media/unified-contracts').HostAdapter} HostAdapter */
   const ROOT_CRUMB = 'clips / dailies_v4';
   const SUB_CRUMB = 'clips / dailies_v4 / renders';
   const COMMAND_TOASTS = {
@@ -20,6 +29,8 @@
     openUrl: 'Open Video URL… (mock)',
     fullscreen: 'Fullscreen (mock)',
   };
+  const PREF_KEYS = ['volume', 'rate', 'timeMode', 'stepSize'];
+  const MAX_TOAST_MS = 10000;
 
   /**
    * @param {{ clips: { id: string, name: string, fps?: number, frames?: number }[], subfolder?: number,
@@ -40,6 +51,15 @@
     let railOpen = false;
     let tiles = [];
     let current = null;
+    /** @type {string[]} the last display order the page reported ('tileOrder') */
+    let tileOrder = [];
+    /** @type {{ w: number, h: number, cols: number, rows: number, zoom: number } | null} */
+    let tileSize = null;
+    /** @type {{ keepId: string | null, t: number } | null} the last 'leaveCompare' */
+    let leftCompare = null;
+    /** Shared playback preferences (the host keeps one copy for every player tab). */
+    const prefs = { volume: 0.85, rate: 1, timeMode: 'clock', stepSize: 'frame' };
+    let focusMode = false;
 
     const metaOf = (c, i) => ({
       id: c.id,
@@ -95,6 +115,9 @@
         const was = folder;
         folder = e.kind === 'dir' ? 'sub' : 'root';
         list(was === 'sub' && folder === 'root' ? 'dir:renders' : undefined);
+      } else if ((m.op === 'activate' || m.op === 'compare') && e.kind === 'video' && tiles.length >= 2) {
+        // In Compare a video row toggles membership (as the old Compare did): in → out, out → in.
+        deliver(tiles.includes(e.id) ? { type: 'removeVideo', clipId: e.id } : { type: 'openVideo', clipId: e.id, label: e.name, compare: true });
       } else if (m.op === 'activate' && e.kind === 'video') {
         deliver({ type: 'openVideo', clipId: e.id, label: e.name, replace: true });
       } else if (m.op === 'compare' && e.kind === 'video') {
@@ -133,19 +156,85 @@
         deliver(next ? { type: 'openVideo', clipId: next.id, label: next.name, compare: true } : { type: 'toast', text: 'No more videos in this folder' });
         return;
       }
+      if (m.type === 'tileOrder') {
+        // The page reordered its tiles (drag, swap): the rail's members follow the new display order.
+        const order = Array.isArray(m.order) ? m.order : Array.isArray(m.tiles) ? m.tiles : [];
+        tileOrder = order.filter((id) => typeof id === 'string');
+        setTiles(tileOrder, m.current || tileOrder[0] || null);
+        return;
+      }
+      if (m.type === 'tileSize') {
+        tileSize = { w: Number(m.w) || 0, h: Number(m.h) || 0, cols: Number(m.cols) || 1, rows: Number(m.rows) || 1, zoom: Number(m.zoom) || 1 };
+        return;
+      }
+      if (m.type === 'replaceVideo') {
+        // "Replace this tile": the host picks the next video not already shown and swaps it in.
+        const oldId = m.oldId || m.clipId;
+        const taken = new Set([...tiles, oldId, ...(m.exclude || [])]);
+        const next = clips.find((c) => !taken.has(c.id));
+        if (!next) { deliver({ type: 'toast', text: 'No more videos in this folder' }); return; }
+        if (tiles.includes(oldId)) setTiles(tiles.map((id) => (id === oldId ? next.id : id)), current === oldId ? next.id : current);
+        deliver({ type: 'replaceTile', oldId, newId: next.id, label: next.name });
+        return;
+      }
+      if (m.type === 'leaveCompare') {
+        const keepId = m.keepId || current || tiles[0] || null;
+        leftCompare = { keepId, t: Number(m.t) || 0 };
+        setTiles(keepId ? [keepId] : [], keepId);
+        return;
+      }
+      if (m.type === 'playbackPrefs') {
+        const src = m.prefs && typeof m.prefs === 'object' ? m.prefs : m;
+        for (const k of PREF_KEYS) if (src[k] !== undefined) prefs[k] = src[k];
+        return;
+      }
+      if (m.type === 'toast') { toast(m.text, m.ms); return; }
+      if (m.type === 'focusMode') { setFocus(m.active === undefined ? !focusMode : !!m.active); return; }
+      if (m.type === 'focusModeExited') { setFocus(false); return; }
       if (Object.prototype.hasOwnProperty.call(COMMAND_TOASTS, m.type) && COMMAND_TOASTS[m.type]) {
         deliver({ type: 'toast', text: COMMAND_TOASTS[m.type] });
       }
     }
 
-    return {
+    /** Membership changed outside a 'tiles' report (order, replace, leave): keep rail members and position current. */
+    function setTiles(/** @type {string[]} */ next, /** @type {string | null} */ cur) {
+      tiles = next.slice();
+      current = cur;
+      if (railOpen) deliver({ type: 'rail', op: 'members', gen, ids: tiles.filter((id) => entries(folder).some((e) => e.id === id)), count: tiles.length });
+      pos();
+    }
+    /** A toast to the page; `ms` (how long it stays) is optional and capped at 10 s like the real host. */
+    function toast(/** @type {any} */ text, /** @type {any} */ ms) {
+      const n = Number(ms);
+      deliver({ type: 'toast', text: String(text || ''), ...(n > 0 ? { ms: Math.min(MAX_TOAST_MS, Math.round(n)) } : {}) });
+    }
+    function setFocus(/** @type {boolean} */ active) {
+      focusMode = active;
+      deliver({ type: 'focusMode', active });
+    }
+
+    const host = {
       post,
       log,
-      connect(fn) { deliver = fn; },
+      connect(/** @type {(m: any) => void} */ fn) { deliver = fn; },
+      /** Nothing to release: the fake holds no listener of its own. */
+      dispose() { deliver = () => {}; },
       /** The simulated VS Code Explorer: a click opens the video the way the extension does. */
       explorerOpen(id) { deliver({ type: 'openVideo', clipId: id, label: label(id) }); },
-      snapshot: () => ({ gen, folder, railOpen, tiles: tiles.slice(), current }),
+      /** Another player tab changed its playback preferences: the host broadcasts them to this page. */
+      broadcastPrefs(/** @type {any} */ p) {
+        for (const k of PREF_KEYS) if (p && p[k] !== undefined) prefs[k] = p[k];
+        deliver({ type: 'playbackPrefs', prefs: { ...prefs } });
+      },
+      /** The user left VS Code's Zen Mode by other means (Escape twice, the command palette). */
+      exitFocusMode() { setFocus(false); },
+      toast,
+      snapshot: () => ({
+        gen, folder, railOpen, tiles: tiles.slice(), current, tileOrder: tileOrder.slice(),
+        tileSize: tileSize && { ...tileSize }, leftCompare: leftCompare && { ...leftCompare }, prefs: { ...prefs }, focusMode,
+      }),
     };
+    return /** @satisfies {HostAdapter} */ (host);
   }
 
   const api = { createFakeHost };

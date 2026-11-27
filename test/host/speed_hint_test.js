@@ -28,7 +28,7 @@ async function session({ answer, remote, before } = {}) {
   // Slow, then real time, then slow again: never two slow samples in a row -> no hint.
   let { h, s, shown } = await session({ answer: 'Not now' });
   for (const m of [slow, fast, slow, fast]) { await s.send(m); await wait(30); }
-  assert.strictEqual(shown.length, 0, 'no hint for blips');
+  assert.strictEqual(shown.length, 0, 'no hint for blips: ' + JSON.stringify(shown));
   // Two in a row: the hint, with the measured speed and the three choices.
   await s.send(slow);
   await s.send(slow);

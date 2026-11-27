@@ -1,5 +1,5 @@
 'use strict';
-// node test/host/remote_uri_test.js: URI schemes (review 1 #17).
+// node test/run.js unit --grep remote_uri: URI schemes the viewer opens (review 1 #17).
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -12,29 +12,36 @@ const { load } = require('./mock_vscode');
   try {
     // git: URIs carry the working-tree path in fsPath; they must not play that file.
     let h = load();
+    const warned = [];
+    h.vscode.window.showWarningMessage = async (m) => { warned.push(m); };
     const git = h.vscode.Uri.file(file).with({ scheme: 'git' });
     let s = h.open(git);
-    await s.send({ type: 'ready' });
-    assert.ok(s.posted.some((m) => m.type === 'error' && /git/.test(m.message)), 'git: refused');
-    assert.ok(!s.posted.some((m) => m.type === 'libav'), 'git: not opened');
-    s.panel.dispose();
-    s = h.open(file);
     await s.shown;
-    assert.ok(/"canOpenExternal":true/.test(s.panel.webview.html), 'local file keeps "Open in the system player" (About this video panel)');
+    assert.ok(warned.some((m) => /git/.test(m)), 'git: refused');
+    assert.strictEqual(s.panel.webview.html, '', 'git: not opened');
+    s.panel.dispose();
+    // A local file: "Open in the system player" opens it.
+    const external = [];
+    h.vscode.env.openExternal = async (u) => { external.push(u); return true; };
+    s = h.open(file);
+    await s.send({ type: 'ready' });
+    await s.send({ type: 'external' });
+    assert.deepStrictEqual(external.map((u) => u.fsPath), [file], 'local file opens in the system player');
     s.panel.dispose();
 
-    // Remote window: files are vscode-remote: URIs; they open, are watched, and hide the system-player button.
+    // Remote window: files are vscode-remote: URIs; they open, are watched, and the system player says it can't.
     h = load();
     h.vscode.env.remoteName = 'ssh-remote';
+    h.vscode.env.openExternal = async (u) => { external.push(u); return true; };
     s = h.open(h.vscode.Uri.file(file).with({ scheme: 'vscode-remote' }));
     await s.send({ type: 'ready' });
-    assert.ok(s.posted.some((m) => m.type === 'libav'), 'vscode-remote: opened');
-    assert.ok(/"canOpenExternal":false/.test(s.panel.webview.html), 'no system player on remote');
+    assert.ok(s.posted.some((m) => m.type === 'sessionState' && m.clips.length === 1), 'vscode-remote: opened');
     await s.send({ type: 'external' });
-    const before = s.panel.webview.html;
+    assert.strictEqual(external.length, 1, 'no system player on remote');
+    assert.ok(s.posted.some((m) => m.type === 'toast' && /system player/.test(m.text)));
     fs.writeFileSync(file, Buffer.alloc(2000));
-    await s.until(() => s.panel.webview.html !== before, 4000).catch(() => {});
-    assert.notStrictEqual(s.panel.webview.html, before, 'vscode-remote: reloads on change');
+    await s.until((p) => p.some((m) => m.type === 'replaceTile' && m.reload), 4000).catch(() => {});
+    assert.ok(s.posted.some((m) => m.type === 'replaceTile' && m.reload), 'vscode-remote: reloads on change');
     s.panel.dispose();
     console.log('remote/uri: ok');
   } finally {

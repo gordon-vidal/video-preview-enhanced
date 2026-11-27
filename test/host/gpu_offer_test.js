@@ -114,8 +114,8 @@ const isOffer = (a) => a[0] === decide.PROBE_OFFER_TEXT;
   // left over from before the switch says nothing.
   x = await session({ answer: 'Not now', decoder: 'ffmpeg' });
   await x.s.send({ type: 'ready' });
-  await x.s.until((p) => p.some((m) => m.type === 'libav'), 15000);
-  assert.strictEqual(x.s.posted.find((m) => m.type === 'libav').meta.native, true, 'native ffmpeg plays it');
+  await x.s.until((p) => p.some((m) => m.type === 'sessionState'), 15000);
+  assert.strictEqual(x.s.cfg().clips[0].native, true, 'native ffmpeg plays it');
   await x.s.send(slow); await x.s.send(slow); await wait(200);
   assert.strictEqual(x.offers().length, 0, 'a built-in sample in a native tab is ignored');
   await x.s.send({ ...slow, native: true }); await x.s.send({ ...slow, native: true });

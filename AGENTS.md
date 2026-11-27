@@ -25,8 +25,8 @@ build dependencies, no build step. Works locally, in WSL and over Remote-SSH.
 
 | Path | What |
 |---|---|
-| `src/` | Extension host (Node, CommonJS): activation, custom editor, ffmpeg setup, remote streaming, settings |
-| `media/` | Webview player (browser scripts, workers): `player.js`, `player-state.js` (pure unified player/compare state), `player-ui.js` (shared UI controller over Engine/Host adapters), `engine.js`, `compare.js`, scopes, thumbs; `media/libav-vpe/` is the prebuilt WebAssembly decoder (do not hand-edit) |
+| `src/` | Extension host (Node, CommonJS): activation, custom editor, the viewer's host (`unified-viewer.js`, `unified-session.js`, `unified-sources.js`), ffmpeg setup, remote streaming, settings |
+| `media/` | Webview viewer (browser scripts, workers): `player-unified.js` (the page's boot), `player-state.js` (pure unified player/compare state), `player-ui.js` (UI controller over Engine/Host adapters), `engine.js`, scopes, thumbs; `media/libav-vpe/` is the prebuilt WebAssembly decoder (do not hand-edit) |
 | `test/host/`, `test/engine/` | Layers 1-2: Node tests. `node test/run.js unit engine` runs them |
 | `test/vscode/` | Layers 3-4: real VS Code on a hidden desktop (Windows). `cases/` are the scenarios |
 | `test/subtitles`, `test/timestretch`, `test/inspect` | More Node unit tests that CI runs |

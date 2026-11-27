@@ -11,7 +11,7 @@ assert.deepStrictEqual(pkg.enum, ['frame', 'jump']);
 assert.strictEqual(pkg.default, 'frame');
 assert.ok(/Ctrl\+Left/.test(pkg.markdownDescription));
 
-// Wheel jump sizes: declared with the same values as the other jumps, wired in both pages, Shift+wheel falls back to deltaX.
+// Wheel jump sizes: declared with the same values as the other jumps, wired in the viewer, Shift+wheel falls back to deltaX.
 const props = require('../../package.json').contributes.configuration.properties;
 const jumpEnum = props['videoPreviewEnhanced.jump.ctrl'].enum;
 assert.deepStrictEqual(props['videoPreviewEnhanced.jump.wheel'].enum, jumpEnum);
@@ -19,10 +19,12 @@ assert.strictEqual(props['videoPreviewEnhanced.jump.wheel'].default, 'frame');
 assert.deepStrictEqual(props['videoPreviewEnhanced.jump.wheelShift'].enum, jumpEnum);
 assert.strictEqual(props['videoPreviewEnhanced.jump.wheelShift'].default, 1);
 const fs = require('fs');
-for (const f of ['player.js', 'compare.js']) {
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', 'media', f), 'utf8');
-  assert.ok(src.includes('e.deltaY || (e.shiftKey ? e.deltaX : 0)'), `${f}: Shift+wheel falls back to deltaX (Windows)`);
-  assert.ok(src.includes('e.shiftKey ? prefs.jump.wheelShift : prefs.jump.wheel'), `${f}: wheel sizes come from prefs`);
+{ // The viewer's wheel handling (media/player-ui-input.js) and the jump it takes (media/player-ui.js).
+  const input = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'player-ui-input.js'), 'utf8');
+  const ui = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'player-ui.js'), 'utf8');
+  assert.ok(input.includes('e.deltaY || (e.shiftKey ? e.deltaX : 0)'), 'Shift+wheel falls back to deltaX (Windows)');
+  assert.ok(ui.includes('jumpBy(shift ? JUMP.wheelShift : JUMP.wheel, dir)'), 'wheel sizes come from prefs');
+  assert.ok(ui.includes("['arrow', 'shift', 'ctrl', 'wheel', 'wheelShift']"), 'live settings update the wheel sizes too');
 }
 
 (async () => {

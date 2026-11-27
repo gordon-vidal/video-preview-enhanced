@@ -37,7 +37,7 @@ assert.strictEqual(mb.basisGB(0), null);
   const file = path.join(os.tmpdir(), `vpe_mem_${process.pid}.mkv`);
   fs.writeFileSync(file, Buffer.alloc(1000));
   try {
-    // The page is made after the frame server has its port (an await in Session.show).
+    // The page is made after the frame server has its port (an await before the viewer is created).
     const pageOf = async (s) => { for (let i = 0; i < 200 && !s.panel.webview.html; i++) await new Promise((r) => setTimeout(r, 10)); return s; };
     const cfgOf = (s) => JSON.parse(/<script type="application\/json" id="cfg">([^<]*)<\/script>/.exec(s.panel.webview.html)[1].replace(/\\u003c/g, '<'));
     const logOf = (h) => h.context.subscriptions.find((x) => x && Array.isArray(x.lines)).lines.join('\n');
@@ -59,7 +59,7 @@ assert.strictEqual(mb.basisGB(0), null);
     s = h.open(file);
     assert.strictEqual(cfgOf(await pageOf(s)).engine.mem, null, 'remote: sized in the webview');
     h.vscode.env.remoteName = undefined;
-    // decoder auto: the ffmpeg lookup (and ffprobe when there is one) starts with the session, before 'ready'.
+    // decoder auto: the ffmpeg lookup (and ffprobe when there is one) runs while the clip is prepared, before 'ready'.
     h = load({ settings: {}, env: { VPE_LOG: undefined } });
     h.vscode.window.withProgress = async () => null; // no background GPU test here
     s = h.open(file);
@@ -67,7 +67,7 @@ assert.strictEqual(mb.basisGB(0), null);
     while (!/native ffmpeg:/.test(logOf(h)) && Date.now() - t0 < 10000) await new Promise((r) => setTimeout(r, 10));
     assert.ok(/native ffmpeg:/.test(logOf(h)), 'auto: ffmpeg looked up with the session');
     await s.send({ type: 'ready' });
-    await s.until((p) => p.some((m) => m.type === 'libav'), 15000);
+    await s.until((p) => p.some((m) => m.type === 'sessionState'), 15000);
     console.log('membudget: ok');
   } finally {
     fs.rmSync(file, { force: true });

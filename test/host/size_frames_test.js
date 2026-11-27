@@ -1,8 +1,8 @@
 'use strict';
-// node test/host/size_frames_test.js: the sizeFramesToView setting end to end (src/extension.js with the mock vscode
-// and a real ffmpeg on PATH or VPE_FFMPEG): on (default), a 4K file opened in a 1600x900 picture gets 1920x1080 frames
-// over the frame server; off, it gets the automatic cap (3840x2160 for 4K30); a number in nativeMaxHeight wins either
-// way. Skipped without ffmpeg.
+// node test/run.js unit --grep size_frames: the sizeFramesToView setting end to end (src/extension.js with the mock
+// vscode and a real ffmpeg on PATH or VPE_FFMPEG): on (default), a 4K file shown in a 1600x900 tile gets 1600x900
+// frames over the frame server; off, it gets the automatic cap (3840x2160 for 4K30); a number in nativeMaxHeight wins
+// either way. Skipped without ffmpeg.
 const assert = require('assert');
 const http = require('http');
 const path = require('path');
@@ -27,8 +27,10 @@ const origin = 'vscode-webview://size-frames-test';
     const s = h.open(clip);
     await s.shown;
     await s.send({ type: 'ready', origin });
-    assert.ok(s.posted.some((m) => m.type === 'libav' && m.meta.native), 'native ffmpeg chosen');
+    assert.strictEqual(s.cfg().clips[0].native, true, 'native ffmpeg chosen');
     const posted = (type) => s.posted.filter((m) => m.type === 'nd' && m.m.type === type).map((m) => m.m);
+    // The page reports its tile (device pixels) before its decoder opens.
+    await s.send({ type: 'tileSize', tile: { w: 1600, h: 900, cols: 1, rows: 1 } });
     const opening = s.send({ type: 'nd', m: { type: 'open', view: { w: 1600, h: 900 } } });
     await s.until(() => posted('link').length, 5000);
     const res = await new Promise((resolve, reject) => http.get(posted('link')[0].url, { headers: { Origin: origin } }, resolve).on('error', reject));
@@ -39,7 +41,8 @@ const origin = 'vscode-webview://size-frames-test';
     h.dispose();
     return `${v.width}x${v.height}`;
   }
-  assert.strictEqual(await frames({}), '1920x1080', 'default (on): frames sized to the picture');
+  // Stepped to NativeDecoder.VIEW_HEIGHTS (540/720/1080/1440/2160) for a lone video, never above the source.
+  assert.strictEqual(await frames({}), '1920x1080', 'default (on): frames stepped to the view (900 -> 1080p)');
   assert.strictEqual(await frames({ 'videoPreviewEnhanced.sizeFramesToView': true }), '1920x1080', 'on');
   assert.strictEqual(await frames({ 'videoPreviewEnhanced.sizeFramesToView': false }), '3840x2160', 'off: the automatic cap (2160p for 4K30)');
   assert.strictEqual(await frames({ 'videoPreviewEnhanced.sizeFramesToView': false, 'videoPreviewEnhanced.nativeMaxHeight': 1440 }), '2560x1440', 'off: a number wins');

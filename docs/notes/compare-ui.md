@@ -170,7 +170,7 @@ Compare, or the active or most recently used file player if no Compare is open. 
 A single selected file starts a one-tile Compare with the existing Add cell alongside it.
 
 Add Mode turns on only on an explicit "add more" intent (maintainer decision 2026-11-22; `startsInAddMode` in
-`src/addmode.js`, unit-tested):
+`src/addmode.js`, unit-tested, until the unified viewer replaced the old Compare page and that module was removed):
 
 | Starts the Compare in Add Mode | Opens with Add Mode off |
 |---|---|
@@ -212,7 +212,8 @@ does not render subtitles, so its bar has no CC.
 
 [Compare bar before](img/toolbar-compare-before.png) · [after](img/toolbar-compare-after.png)
 
-`src/addmode.js` tracks the active target, video identities, capacity and editor-switch rule. `src/comparepick.js`
+`src/addmode.js` (since removed with the old Compare page) tracked the active target, video identities, capacity and
+editor-switch rule. `src/comparepick.js`
 plans a selection against the open editors. The host intercepts player opens in `resolveCustomEditor` and closes the
 temporary tab. It uses tab events for files opened through a different editor and distinguishes those new video tabs
 from switching to an existing editor. Only file and VS Code remote video URIs join.
@@ -229,8 +230,8 @@ Compare. The Command Palette shows the matching player command with the same nam
 
 `videoPreviewEnhanced.compareOpen` is initialized from the window's live sessions and follows their lifecycle.
 A background Compare still counts. The last Compare closing switches the label back to Start Compare.
-`comparemenu_test.js` checks the context and menu contributions, and `compare_addmode` runs the Explorer and
-player commands in the hidden desktop.
+`compare_addmode` runs the Explorer and player commands in the hidden desktop (the old `src/comparemenu.js` and its
+unit test went with the old Compare page).
 
 - **Open together.** A multi-selection opened through Open With…, Enter, a double-click or a drop is one editor per
   file in quick succession. `src/burst.js` (pure, timers injected) groups videos that arrive within 120 ms of the one
@@ -257,7 +258,7 @@ player commands in the hidden desktop.
   within the window would (not seen, not tested: a real restart is not driven). Fallback if it misfires for someone:
   the setting, and the Explorer's **Add to Compare**.
 
-`test/host/addmode_test.js` and `test/host/comparepick_test.js` cover mode transitions, capacity, duplicate files,
+`test/host/comparepick_test.js` (and, before the old Compare page was removed, `test/host/addmode_test.js`) cover mode transitions, capacity, duplicate files,
 routing and which starts turn the mode on. The hidden VS Code `compare_addmode` case checks the context-menu
 arguments, tab switching and the hint through single-file, multi-file, folder and playback flows. `compare_burst`
 checks Open Together (one compare, Add Mode off, the next open a player of its own). `test/host/burst_test.js` covers

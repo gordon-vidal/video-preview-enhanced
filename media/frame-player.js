@@ -1,7 +1,7 @@
 // @ts-check
 'use strict';
 // Frame player: JPEG/PNG frames decoded by the browser, on a canvas. Used for MJPEG AVI and image
-// sequences. Frame accurate by construction. The page (media/player.js) gives it the canvas, the host
+// sequences. Frame accurate by construction. The page (media/player-unified.js) gives it the canvas, the host
 // channel and the page's live settings (rate, loop, volume) through createFramePlayer's `deps`, so a Node
 // test can drive the class with stubs (test/unit/frame_player_test.js).
 (function () {

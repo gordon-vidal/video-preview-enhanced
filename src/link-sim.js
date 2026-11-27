@@ -1,7 +1,7 @@
 'use strict';
 // A bidirectional model of a slow or flaky SSH link between the extension host and the webview, for testing
 // without a real remote: Layer 1/2 tests drive it with a virtual clock, a developer turns it on in real VS Code
-// with VPE_SIMULATE_LINK (src/extension.js, src/compare.js).
+// with VPE_SIMULATE_LINK (src/extension.js deps.link, src/unified-viewer.js).
 //
 // Two pipes, `down` (host -> webview) and `up` (webview -> host). Each is a FIFO byte-budget queue: a message
 // takes bytes / rate to serialize, and nothing behind it starts before it ends, so one large batch delays every

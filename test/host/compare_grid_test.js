@@ -35,7 +35,6 @@ assert.strictEqual(Grid.offText({ v: 2, unit: 'frames' }), '+2 f');
 assert.strictEqual(Grid.offText({ v: -40.24, unit: 'ms' }), '−40.2 ms');
 assert.strictEqual(Grid.esc('<a href="b&c">'), '&lt;a href=&quot;b&amp;c&quot;&gt;');
 const { budgets } = require('../../media/membudget');
-const { FRAME_SERVER_BPS, TRANSPORT_BPS } = require('../../src/decide');
 
 // A raw Compare grid also resumes when the document reveals after VS Code's panel event.
 {
@@ -211,13 +210,14 @@ for (const n of [3, 4, 9]) {
   assert.match(conf, />Remove\?<\/button>$/);
 }
 {
-  const src = require('fs').readFileSync(path.join(__dirname, '../../media/compare.js'), 'utf8');
-  assert.match(src, /Grid\.removeButtonHtml\(N, i, esc\(names\[i\]\), ICONS\.close, confirmingId === i\)/, 'tile overlays use the two-click remove button');
-  assert.match(src, /case 'remove':[\s\S]*if \(confirmingId === i\) \{ confirmingId = -1; removeTile\(i\); \}/, 'second click removes through removeTile');
-  assert.match(src, /cellsEl\.addEventListener\('click', \(e\) => \{[\s\S]*e\.stopPropagation\(\);/, 'tile button clicks stop before stage play/pause');
+  // The viewer's tiles (media/player-ui.js): a two-click remove from 3 videos on; tile buttons stop before play / pause.
+  const src = require('fs').readFileSync(path.join(__dirname, '../../media/player-ui.js'), 'utf8');
+  assert.match(src, /if \(n > 2 && confirming\) rm = `<button type="button" class="tbtn rm confirm" data-act="remove"/, 'tile overlays use the two-click remove button');
+  assert.match(src, /case 'remove': act\.removeClick\(id\); break;/, 'a tile\'s remove goes through removeClick');
+  assert.match(src, /listen\(cellsEl, 'click', [\s\S]{0,400}e\.stopPropagation\(\);/, 'tile button clicks stop before stage play/pause');
   const css = require('fs').readFileSync(path.join(__dirname, '../../media/compare.css'), 'utf8');
   assert.match(css, /#stage\.sync-mode \.sync-pill/, 'sync steppers reveal in sync-mode');
-  assert.match(css, /#cmpGroup\.cmp-group/, 'grouped Compare capsule styled');
+  assert.doesNotMatch(css, /#cmpGroup/, 'no styles for the removed src/bar.js Compare capsule (player-ui.js adds the buttons)');
 }
 
 // ---- memory: 2-4 tiles exactly as before; 5-16 share fixed budgets ----
@@ -272,93 +272,75 @@ assert.strictEqual(Grid.nativeQueuePerTile(4, 9), 1);
   }
 }
 
-// ---- the host: native frame sizes for 9 and 16 tiles in a 1920x1080 stage ----
-require('./mock_vscode').load({});
-const { CompareSession, fileOfKey, compareHtml, MAX_TILES } = require('../../src/compare');
+// ---- the host: native frame sizes for 9 and 16 tiles in a 1920x1080 stage (src/unified-viewer.js nativeHeightFor) ----
+const { fileOfKey, MAX_TILES } = require('../../src/comparepick');
+const { nativeHeightFor } = require('../../src/unified-viewer');
 assert.strictEqual(MAX_TILES, 16);
 Array.from(Grid.TILE_KEYS).forEach((k, i) => assert.strictEqual(fileOfKey(k), i));
 assert.strictEqual(fileOfKey('sB'), 1);
 const video = { width: 1920, height: 1080, fps: 24 };
-const fake = (n, tile, link = 'stream') => ({
-  tile, liveTransport: link, natives: [], rotation: Array(n).fill(0),
-  decisions: Array.from({ length: n }, () => ({ tools: {}, maxHeight: 2160, messageMaxHeight: 1080, probed: { video } })),
-});
-const heights = (n, tile, link) => CompareSession.prototype.tileHeights.call(fake(n, tile, link));
-assert.deepStrictEqual(heights(9, { w: 1920, h: 1080, cols: 3, rows: 3, rate: 1 }), Array(9).fill(360));
-assert.deepStrictEqual(heights(16, { w: 1920, h: 1080, cols: 4, rows: 4, rate: 1 }), Array(16).fill(270));
+const tileClip = (rotation = 0) => ({ rotation, decision: { tools: {}, maxHeight: 2160, messageMaxHeight: 1080, probed: { video } } });
+const heights = (n, tile) => Array.from({ length: n }, () => nativeHeightFor(tileClip(), tile, false));
+assert.deepStrictEqual(heights(9, { w: 1920, h: 1080, cols: 3, rows: 3 }), Array(9).fill(360));
+assert.deepStrictEqual(heights(16, { w: 1920, h: 1080, cols: 4, rows: 4 }), Array(16).fill(270));
 // 2x2 stays as it was (cols 2, rows 2: the stage halved).
-assert.deepStrictEqual(heights(4, { w: 1920, h: 1080, cols: 2, rows: 2, rate: 1 }), Array(4).fill(540));
-// A rotated tile fits the same cell.
-{
-  const s = fake(16, { w: 1920, h: 1080, cols: 4, rows: 4, rate: 1 });
-  s.rotation[15] = 90;
-  assert.strictEqual(CompareSession.prototype.tileHeights.call(s)[15], 150);
-}
-// Built-in first tile (no ffprobe): the page's aspect fits the cells.
-{
-  const s = fake(9, { w: 1920, h: 1080, cols: 3, rows: 3, rate: 1, aspect: 4 / 3 });
-  s.decisions[0] = null;
-  // The 640x360 cell holds A's 4:3 picture at 480x360; a 16:9 tile fitted to that is 480x270.
-  assert.strictEqual(CompareSession.prototype.tileHeights.call(s)[1], 270);
-  delete s.tile.aspect;
-  assert.strictEqual(CompareSession.prototype.tileHeights.call(s)[1], 360, 'without it: the whole cell');
-}
-// 100 % at 2x speed: every grid stays under the link's budget, even with ffmpeg's even-width rounding.
-for (const n of [9, 16]) {
-  for (const link of ['stream', 'message']) {
-    const hs = heights(n, { w: 1920, h: 1080, cols: Math.ceil(Math.sqrt(n)), rows: Math.ceil(Math.sqrt(n)), rate: 2, actual: true }, link);
-    const bytes = hs.reduce((sum, h) => sum + 1.5 * h * (Math.ceil(h * 16 / 9 / 2) * 2) * 24 * 2, 0);
-    const budget = link === 'message' ? TRANSPORT_BPS : FRAME_SERVER_BPS;
-    assert.ok(bytes <= budget && bytes > budget * 0.9, `${n} tiles over ${link}: ${bytes / 1e6} MB/s of ${budget / 1e6}`);
-  }
-}
+assert.deepStrictEqual(heights(4, { w: 1920, h: 1080, cols: 2, rows: 2 }), Array(4).fill(540));
+// A turned tile fits the same cell (upright: 270 high on screen is 152 wide, the source's height).
+assert.strictEqual(nativeHeightFor(tileClip(90), { w: 1920, h: 1080, cols: 4, rows: 4 }, false), 152);
+// 100 % ('actual'): the source's own size, whatever the cell.
+assert.deepStrictEqual(heights(16, { w: 1920, h: 1080, cols: 4, rows: 4, actual: true }), Array(16).fill(1080));
 
-// ---- the page: compare-grid.js always; membudget.js (remote windows' client memory) from 5 videos ----
-const uri = (...p) => `https://webview/${p.join('/')}`;
-const page = (n) => compareHtml({ uri, cspSource: 'x', nonce: 'n', cfg: { names: Array(n).fill('v.mp4') }, frameSource: '' });
-for (let n = 2; n <= 16; n++) {
-  const html = page(n);
-  const scripts = [...html.matchAll(/<script nonce="n" src="https:\/\/webview\/([^"]+)"><\/script>/g)]
-    .map((match) => match[1]);
+// ---- the page: compare-grid.js and membudget.js always (one page for 1 to 16 videos) ----
+{
+  const { unifiedHtml } = require('../../src/unified-html');
+  const html = unifiedHtml({ uri: (...p) => `https://webview/${p.join('/')}`, cspSource: 'x', nonce: 'n', cfg: {}, base: 'b', loader: 'l.js', transport: 'message' });
+  const scripts = [...html.matchAll(/<script nonce="n" src="https:\/\/webview\/([^"]+)"><\/script>/g)].map((match) => match[1]);
   for (const [dependency, entry] of [
-    ['codec-utils.js', 'engine.js'], ['decoder-boot.js', 'engine.js'], ['compare-compositor.js', 'compare.js'],
+    ['codec-utils.js', 'engine.js'], ['decoder-boot.js', 'engine.js'], ['compare-compositor.js', 'player-engine-adapter.js'],
+    ['compare-grid.js', 'player-ui-tiles.js'],
   ]) {
-    assert.ok(scripts.includes(dependency) && scripts.indexOf(dependency) < scripts.indexOf(entry),
-      `${n}: ${dependency} loads with a nonce before ${entry}`);
+    assert.ok(scripts.includes(dependency) && scripts.indexOf(dependency) < scripts.indexOf(entry), `${dependency} loads with a nonce before ${entry}`);
   }
-  assert.ok(html.indexOf('compare-grid.js') > 0 && html.indexOf('compare-grid.js') < html.indexOf('compare.js"'), `${n}: compare-grid.js before compare.js`);
-  assert.strictEqual(html.includes('membudget.js'), n > 4, `${n}: membudget.js`);
-  assert.strictEqual(html.includes('id="cells" class="dense"'), n > 4, `${n}: dense layout`);
+  assert.ok(scripts.includes('membudget.js'), 'membudget.js (remote windows size from the client\'s memory)');
 }
 
 // ---- the setting caps what opens and what can be added ----
 (async () => {
-  // Only the name matters here (nothing is read): the command keeps video files.
-  const file = path.join(__dirname, '..', 'media', 'h264_8_1080p.mp4');
-  for (const [setting, want] of [[undefined, 8], [4, 4], [9, 9], [16, 16], [40, 16]]) {
-    const h = require('./mock_vscode').load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin', ...(setting === undefined ? {} : { 'videoPreviewEnhanced.compare.maxVideos': setting }) } });
-    const warnings = [];
-    h.vscode.window.showWarningMessage = async (w) => { warnings.push(w); };
-    const webview = { cspSource: 'x', asWebviewUri: (u) => u, postMessage() {}, onDidReceiveMessage() {} };
-    h.vscode.window.createWebviewPanel = () => ({ webview, onDidDispose() {}, onDidChangeViewState() {} });
-    let s;
-    try {
-      s = await h.vscode._commands['videoPreviewEnhanced.compare'](null, Array(20).fill(h.vscode.Uri.file(file)));
-      const cfg = JSON.parse(/<script type="application\/json" id="cfg">([^<]*)<\/script>/.exec(webview.html)[1]);
-      assert.strictEqual(cfg.names.length, want, `setting ${setting}: opened ${cfg.names.length}`);
-      assert.strictEqual(cfg.maxVideos, want);
-      assert.ok(warnings.length === 1 && warnings[0].includes(`up to ${want} videos`), `setting ${setting}: ${warnings}`);
-      s.addUris([h.vscode.Uri.file(file)]);
-      assert.strictEqual(s.names.length, want, 'a full view adds nothing');
-      if (want > 2) {
-        await s.onMessage({ type: 'remove', index: 0 });
-        assert.strictEqual(s.names.length, want - 1);
-        s.addUris([h.vscode.Uri.file(file), h.vscode.Uri.file(file)]);
-        assert.strictEqual(s.names.length, want, 'adding fills the free slot only');
+  const fs = require('fs');
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-grid-'));
+  // Distinct files (a video already shown is not added twice); their bytes are never decoded here.
+  const files = Array.from({ length: 20 }, (_, i) => { const f = path.join(dir, `v${i + 1}.mp4`); fs.writeFileSync(f, 'x'); return f; });
+  try {
+    for (const [setting, want] of [[undefined, 8], [4, 4], [9, 9], [16, 16], [40, 16]]) {
+      const h = require('./mock_vscode').load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin', ...(setting === undefined ? {} : { 'videoPreviewEnhanced.compare.maxVideos': setting }) } });
+      const warnings = [];
+      h.vscode.window.showWarningMessage = async (w) => { warnings.push(w); };
+      const p = h.nextPanel();
+      let v;
+      try {
+        v = await h.vscode._commands['videoPreviewEnhanced.compare'](null, files.map((f) => h.vscode.Uri.file(f)));
+        assert.strictEqual(p.cfg().clips.length, want, `setting ${setting}: opened ${p.cfg().clips.length}`);
+        assert.strictEqual(v.session.maxVideos, want);
+        assert.ok(warnings.length === 1 && warnings[0].includes(`up to ${want} videos`), `setting ${setting}: ${warnings}`);
+        await p.send({ type: 'ready' });
+        assert.strictEqual(p.posted.find((m) => m.type === 'sessionState').maxVideos, want, 'the page knows the limit');
+        assert.strictEqual(await v.addUri(h.vscode.Uri.file(files[19])), false, 'a full view adds nothing');
+        assert.strictEqual(v.session.clips.length, want);
+        if (want > 2) {
+          // The page closed the first tile; then adding fills the free slot only.
+          await p.send({ type: 'tiles', tiles: v.session.order.slice(1) });
+          assert.strictEqual(v.session.clips.length, want - 1);
+          await v.addUri(h.vscode.Uri.file(files[18]));
+          await v.addUri(h.vscode.Uri.file(files[19]));
+          assert.strictEqual(v.session.clips.length, want, 'adding fills the free slot only');
+        }
+      } finally {
+        p.panel.dispose();
+        h.dispose();
       }
-    } finally {
-      if (s) s.dispose();
-      h.dispose();
     }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 })().then(() => console.log('compare_grid_test: ok'), (e) => { console.error(e); process.exitCode = 1; });

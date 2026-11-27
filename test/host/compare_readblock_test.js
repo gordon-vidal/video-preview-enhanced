@@ -1,14 +1,15 @@
 'use strict';
-// node test/host/compare_readblock_test.js: Compare's host block reads share src/read-block.js: tile keys that name
-// no file are rejected, a bad range answers an empty block (never a read at position -1), and a request that was
-// overtaken by a reload while the file opened neither reads nor posts. Both session classes ignore null and
-// primitive envelopes.
+// node test/run.js unit --grep compare_readblock: a comparing viewer's block reads (src/unified-viewer.js over
+// src/read-block.js): each clip's blocks by its id (the page never names a file), a clip id the viewer does not show
+// reads nothing, a bad range answers an empty block (never a read at position -1), a request overtaken by a reload
+// of its clip neither reads nor posts, and null or primitive envelopes are ignored. The legacy tile keys of
+// src/comparepick.js fileOfKey still map to files only when they name one.
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { load, webviewConfig } = require('./mock_vscode');
-const { fileOfKey } = require('../../src/compare');
+const { load } = require('./mock_vscode');
+const { fileOfKey } = require('../../src/comparepick');
 
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe_cmp_rb_'));
@@ -16,7 +17,6 @@ const { fileOfKey } = require('../../src/compare');
   const files = bytes.map((b, k) => { const p = path.join(dir, `c${k}.mp4`); fs.writeFileSync(p, b); return p; });
   const h = load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin', 'videoPreviewEnhanced.compare.maxVideos': 4 } });
   const origOpen = fs.promises.open;
-  let compare;
   try {
     // Engine keys: tiles 'A'-'P', scans 'sA'/'sB'; anything else names no file instead of falling back to file A.
     assert.strictEqual(fileOfKey('A'), 0);
@@ -27,135 +27,101 @@ const { fileOfKey } = require('../../src/compare');
       assert.strictEqual(fileOfKey(bad), -1, `fileOfKey(${JSON.stringify(bad)})`);
     }
 
-    const posts = [];
-    let receive = null;
-    const webview = {
-      cspSource: 'vscode-resource:', asWebviewUri: (u) => u,
-      postMessage(m) { posts.push(m); }, onDidReceiveMessage(fn) { receive = fn; },
-    };
-    h.vscode.window.createWebviewPanel = () => ({ webview, onDidDispose() {}, onDidChangeViewState() {} });
-    compare = await h.vscode._commands['videoPreviewEnhanced.compare'](null, files.map(h.vscode.Uri.file));
-    const blocks = () => posts.filter((m) => m.type === 'block');
-    const errors = () => posts.filter((m) => m.type === 'error');
+    const s = h.nextPanel();
+    const viewer = await h.vscode._commands['videoPreviewEnhanced.compare'](null, files.map(h.vscode.Uri.file));
+    await s.send({ type: 'ready' });
+    const [A, B] = viewer.session.clips.map((c) => c.id);
+    const page = s.cfg().page;
+    const blocks = () => s.posted.filter((m) => m.type === 'block');
+    const read = (clipId, pos, len) => s.send({ type: 'readBlock', clipId, pos, len });
 
-    // Normal reads, with the tile key echoed back for the engine.
-    await compare.readBlock('A', 16, 32);
-    await compare.readBlock('sB', 0, 8);
-    assert.deepStrictEqual(blocks().map((b) => [b.key, b.pos, Buffer.from(b.data).equals(bytes[b.key === 'A' ? 0 : 1].subarray(b.pos, b.pos + b.data.length))]),
-      [['A', 16, true], ['sB', 0, true]]);
+    // Normal reads, with the clip id echoed back for the page's decoder.
+    await read(A, 16, 32);
+    await read(B, 0, 8);
+    assert.deepStrictEqual(blocks().map((b) => [b.clipId, b.pos, Buffer.from(b.data).equals(bytes[b.clipId === A ? 0 : 1].subarray(b.pos, b.pos + b.data.length))]),
+      [[A, 16, true], [B, 0, true]]);
     assert.strictEqual(blocks()[0].data.length, 32);
-    assert.strictEqual(blocks()[0].page, compare.page, 'replies carry the page');
-    await compare.readBlock('B', 4090, 100);
+    assert.strictEqual(blocks()[0].page, page, 'replies carry the page');
+    await read(B, 4090, 100);
     assert.strictEqual(blocks().pop().data.length, 6, 'cut at the end of the file');
-    await compare.readBlock('A', 9999, 16);
+    await read(A, 9999, 16);
     assert.strictEqual(blocks().pop().data.length, 0, 'past the end is empty');
 
-    // Keys naming no file reject, and nothing is posted.
-    posts.length = 0;
-    for (const key of ['Z', 'C', 'D', 'P', '', null, undefined, 123, 'tile-A', {}]) {
-      await assert.rejects(() => compare.readBlock(key, 0, 64), /no file for tile key/, `key ${JSON.stringify(key)}`);
-    }
-    assert.strictEqual(posts.length, 0, 'a bad key posts nothing');
-    // ... also from the page: reported as an error, never as a read of file A.
-    const boot = 'compare-document';
-    await receive({ type: 'ready', page: compare.page, boot });
-    await receive({ type: 'readBlock', page: compare.page, boot, key: 'tile-A', pos: 0, len: 64 });
-    await new Promise((r) => setImmediate(r));
-    assert.strictEqual(blocks().length, 0);
-    assert.strictEqual(errors().length, 1, 'the page learns about the bad key');
-
-    // VS Code recreated the document without changing the HTML or the page number.
-    const nextBoot = 'compare-recreated';
-    await receive({ type: 'ready', page: compare.page, boot: nextBoot });
-    const count = posts.length;
-    await receive({ type: 'ready', page: compare.page, boot });
-    for (const staleBoot of [boot, undefined]) {
-      await receive({ type: 'readBlock', page: compare.page, boot: staleBoot, key: 'A', pos: 0, len: 64 });
-    }
-    assert.strictEqual(posts.length, count, 'old and untagged requests are ignored');
-    await receive({ type: 'readBlock', page: compare.page, boot: nextBoot, key: 'A', pos: 0, len: 64 });
-    assert.strictEqual(posts.at(-1).boot, nextBoot, 'replies are tagged for the current document');
-    const seeks = [];
-    compare.natives[0] = { handle: (m) => seeks.push(m.t), dispose() {} };
-    for (const t of [NaN, Infinity, -1, '1', undefined, 0, 0.5]) {
-      await receive({ type: 'nd', page: compare.page, boot: nextBoot, key: 'A', m: { type: 'seek', t } });
-    }
-    assert.deepStrictEqual(seeks, [0, 0.5], 'only finite non-negative seek times reach the decoder');
+    // Clip ids the viewer does not show (or a tile letter) read nothing and post nothing: never file A.
+    s.posted.length = 0;
+    for (const clipId of ['Z', 'A', '', 'tile-A', `${A}x`]) await read(clipId, 0, 64);
+    assert.strictEqual(s.posted.length, 0, 'an unknown clip posts nothing');
 
     // A bad range answers an empty block once: no read at fd position -1, no RangeError.
-    posts.length = 0;
     let reads = 0;
-    const real = await compare.blockFile(0);
-    const origRead = real.fh.read.bind(real.fh);
-    real.fh.read = (...a) => { reads++; return origRead(...a); };
+    fs.promises.open = async (...a) => {
+      const fh = await origOpen(...a);
+      const orig = fh.read.bind(fh);
+      fh.read = (...r) => { reads++; return orig(...r); };
+      return fh;
+    };
+    await viewer.reloadClip(A); // a fresh file handle, counted
+    const A2 = viewer.session.clips[0].id;
     for (const [pos, len] of [[-1, 64], [-32, 64], [NaN, 8], [1.5, 8], [Infinity, 8], [0, -10], [0, NaN], [0, Infinity]]) {
-      posts.length = 0;
-      await compare.readBlock('A', pos, len);
-      assert.strictEqual(posts.length, 1, `${pos}+${len}: one answer`);
-      assert.strictEqual(posts[0].type, 'block');
-      assert.strictEqual(posts[0].key, 'A');
-      assert.strictEqual(posts[0].data.length, 0);
-      assert.strictEqual(posts[0].error, 'invalid range');
+      s.posted.length = 0;
+      await read(A2, pos, len);
+      assert.strictEqual(s.posted.length, 1, `${pos}+${len}: one answer`);
+      assert.deepStrictEqual([s.posted[0].type, s.posted[0].clipId, s.posted[0].data.length, s.posted[0].error], ['block', A2, 0, 'invalid range']);
     }
     assert.strictEqual(reads, 0, 'bad ranges never reach the file');
-    assert.strictEqual(errors().length, 0);
+    fs.promises.open = origOpen;
 
-    // A reload while the file opens: the request neither reads nor posts (checked after blockFile()).
-    compare.closeFiles();
-    let openedFh;
+    // A reload while the file opens: the request neither reads nor posts (checked after the open).
+    await viewer.reloadClip(A2);
+    const A3 = viewer.session.clips[0].id;
     let finishOpen;
     let reloadReads = 0;
+    let openedFh;
     const gate = new Promise((r) => { finishOpen = r; });
+    let first = true;
     fs.promises.open = async (...a) => {
+      if (!first) return origOpen(...a);
+      first = false;
       await gate;
       openedFh = await origOpen(...a);
       openedFh.read = () => { reloadReads++; throw new Error('read after a reload'); };
       return openedFh;
     };
-    posts.length = 0;
-    const pending = compare.readBlock('A', 0, 64);
+    s.posted.length = 0;
+    const pending = read(A3, 0, 64);
     await new Promise((r) => setImmediate(r));
-    compare.reload();
+    await viewer.reloadClip(A3);
     finishOpen();
     await pending;
     assert.strictEqual(reloadReads, 0, 'a request overtaken by a reload never calls fh.read');
-    assert.strictEqual(posts.filter((m) => m.type === 'block' || m.type === 'error').length, 0,
-      'a request overtaken by a reload does not read or post');
+    assert.strictEqual(blocks().length, 0, 'a request overtaken by a reload does not post');
     fs.promises.open = origOpen;
     if (openedFh) await openedFh.close().catch(() => {});
 
-    // Envelopes that are not objects are ignored by Compare ...
-    for (const m of [null, undefined, 0, 7, 'ready', true, NaN]) {
-      await compare.onMessage(m);
-      receive(m);
-    }
-    assert.strictEqual(errors().length, 0, 'Compare ignores null and primitive envelopes');
+    // Envelopes that are not objects are ignored.
+    s.posted.length = 0;
+    for (const m of [null, undefined, 0, 7, 'ready', true, NaN]) await s.send(m);
+    assert.strictEqual(s.posted.length, 0, 'null and primitive envelopes are ignored');
+    s.panel.dispose();
+
+    // The same file twice (the internal compare command, layer 3 compare_metrics same-file): two tiles, each its own
+    // clip id, each read on its own; Start Compare on a selection still shows a file once.
+    const s2 = h.nextPanel();
+    const twice = await h.vscode._commands['videoPreviewEnhanced.compare'](null, [files[0], files[0]].map(h.vscode.Uri.file));
+    await s2.send({ type: 'ready' });
+    const ids = twice.session.clips.map((c) => c.id);
+    assert.strictEqual(ids.length, 2, `two tiles: ${ids}`);
+    assert.notStrictEqual(ids[0], ids[1], 'each tile has its own clip id');
+    assert.deepStrictEqual(twice.session.clips.map((c) => c.label), ['c0.mp4', 'c0.mp4']);
+    s2.posted.length = 0;
+    for (const id of ids) await s2.send({ type: 'readBlock', clipId: id, pos: 0, len: 16 });
+    const got = s2.posted.filter((m) => m.type === 'block');
+    assert.deepStrictEqual(got.map((b) => [b.clipId, Buffer.from(b.data).equals(bytes[0].subarray(0, 16))]), [[ids[0], true], [ids[1], true]]);
+    s2.panel.dispose();
   } finally {
     fs.promises.open = origOpen;
-    if (compare) compare.dispose();
     h.dispose();
-  }
-
-  // ... and by the single-file Session.
-  const h2 = load();
-  const s = h2.open(files[0]);
-  try {
-    await s.shown;
-    const { page } = webviewConfig(s.panel.webview);
-    const before = s.posted.length;
-    for (const m of [null, undefined, 0, 7, 'readBlock', true, NaN]) await s.send(m);
-    await s.send({ type: 'readBlock', page, pos: -1, len: 64 });
-    const added = s.posted.slice(before);
-    assert.ok(!added.some((m) => m.type === 'error'), `no error for junk envelopes: ${JSON.stringify(added)}`);
-    const bad = added.filter((m) => m.type === 'block');
-    assert.strictEqual(bad.length, 1, 'a negative position answers once');
-    assert.strictEqual(bad[0].data.length, 0);
-    await s.send({ type: 'readBlock', page, pos: 4, len: 8 });
-    assert.ok(Buffer.from(s.posted.filter((m) => m.type === 'block').pop().data).equals(bytes[0].subarray(4, 12)));
-  } finally {
-    s.panel.dispose();
-    h2.dispose();
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  console.log('compare readBlock: key, range, epoch and envelope tests passed');
+  console.log('compare readBlock: clip id, range, reload and envelope tests passed');
 })().catch((e) => { console.error(e); process.exitCode = 1; });

@@ -4,7 +4,7 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 
 | Layer | What it checks | Runs in | Parallel | Target time |
 |---|---|---|---|---|
-| 1. Unit | Pure logic: decoder choice, playlist/manifest parsing, time and frame math, settings, caches. Logic lives in small modules (not inside `player.js` / `engine.js`) so it can be tested alone. | Node | yes (all cores) | seconds |
+| 1. Unit | Pure logic: decoder choice, playlist/manifest parsing, time and frame math, settings, caches. Logic lives in small modules (not inside `player-unified.js` / `engine.js`) so it can be tested alone. | Node | yes (all cores) | seconds |
 | 2. Engine | The WebAssembly decoders in Node, no browser: frame-exact seeking, stepping, end of file, A-B loop, every format. Engine correctness may be proven here (2026-11-20). | Node | yes (all cores) | about a minute |
 | 3. VS Code | 20-30 user scenarios in real VS Code on a hidden desktop (GPU decoding, WebGL, panels, icons, native ffmpeg, URLs, compare). Each scenario checks many things in one instance. Scenarios check correctness only, never speed, so load can't fail them. | real VS Code | 2-3 instances if WebGL2 stays stable (serial for now: see below) | minutes |
 | 4. Performance | CPU, memory, start-up and frame rates, compared with the previous numbers. Not a pass/fail gate; run before a release or during performance work. | real VS Code | no: shares the VS Code lock with layer 3 and also holds the benchmark lock | as long as it takes |
@@ -30,11 +30,11 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 | Stepping, seeking, the decoder pool, end of file (`media/engine.js` seek paths, `media/pool.js`) | `seeking`, `playback` |
 | Native ffmpeg transport or frame sizes (`src/native.js`, `src/frameserver.js`, `sizeFramesToView`) | `native`, `picture-size-native` |
 | Drawn picture size, zoom, pan (`media/picture.js`, `media/inspect.js` geometry) | `picture-size`, `compare`, `inspect` |
-| Compare / multi-view (`media/compare.js`, `src/compare.js`) | `compare`, `multiview` |
+| The viewer's host and Compare commands (`src/unified-viewer.js`, `src/unified-session.js`, `src/unified-sources.js`, `src/extension.js`) | `compare`, `multiview`, `ui` |
 | Remote stream (`src/remotestream.js`) | `remote-stream` |
 | URLs (`src/urlsource.js`) | `url`, `url-native` |
 | The bar, panels, keys (`media/controls.js`, `src/bar.js`) | `ui` |
-| The shared UI seam (`media/player-ui.js`; `media/player-state.js` is not loaded by a production page yet) | `ui`, `compare`, `folder-rail` |
+| The UI controller and state (`media/player-ui.js` and its modules, `media/player-state.js`, `media/player-unified.js`) | `ui`, `compare`, `folder-rail` |
 | Subtitles, tracks | `subtitles` |
 | Folder rail, the bar's capsule, Autoplay, folder navigation (`src/folder-rail.js`, `media/folder-rail.js`, `media/autoplay.js`) | `folder-rail`, `ui`, `compare` |
 - **GitHub Actions:** layers 1-2 on every push and pull request. Layer 3 stays local for now (needs a GPU).
@@ -54,7 +54,8 @@ holds the boundary: `.dependency-cruiser.cjs` (`npm run verify:fast`) forbids `p
 | Part | What | Where | Speed |
 |---|---|---|---|
 | **1A** Pure state | Layout, capture, add / remove / enlarge / split (0–100 %) / sync / offsets, tabs | `test/host/player_state_test.js` | milliseconds |
-| **1B** UI controller | The shared helpers alone, then `create()` over the real widgets on a **strict** fake DOM of the real markup (`src/bar.js`, `src/folder-rail-html.js`; `test/host/fake-dom.js`: unknown ids are `null`, `closest()` and bubbling are real), FakeEngine + FakeHost | `test/host/player_ui_test.js` | about 2 s |
+| **1B** UI controller | The shared helpers alone, then `create()` over the real widgets on a **strict** fake DOM of the real markup (`src/bar.js`, `src/folder-rail-html.js`; `test/host/fake-dom.js`: unknown ids are `null`, `closest()` and bubbling are real), FakeEngine + FakeHost; the controller modules (`media/player-ui-tiles.js`, `-input.js`, `-tools.js`, `-lifecycle.js`) on the same fake DOM | `test/host/player_ui_test.js`, `player_ui_tiles_test.js`, `player_ui_input_test.js`, `player_ui_tools_test.js`, `player_ui_lifecycle_test.js` | seconds |
+| **1C** Adapter contracts | One EngineAdapter / HostAdapter contract suite run against the mockup fakes (`tools/mockup/fake-engine.js`, `fake-host.js`) and the production adapters (`media/player-engine-adapter.js`, `media/player-host-adapter.js`), plus production-only behaviour | `test/host/adapter_contract_test.js`, `test/host/production_adapters_test.js` | under a second |
 | **2** Engine contract | Decoders, seeking, clocks, the frame stream, without the UI | `test/engine/` | seconds |
 | **3a** Webview UI / gestures | Real Chromium DOM: layout, focus, pointer capture, letterboxed picture rects, event bubbling in the real page | `ui`, `compare`, `folder-rail` scenarios | about a minute each |
 | **3b** Real-clip integration | Frame accuracy, decoder clocks, Compare sync across real videos, the decoders, real host messages (files, folder listing, Remote-SSH) | `playback`, `seeking`, `multiview`, `remote-stream`, ... | minutes |
@@ -62,31 +63,22 @@ holds the boundary: `.dependency-cruiser.cjs` (`npm run verify:fast`) forbids `p
 Layer 3a still opens real clips today (there is no fake-media webview yet); it is listed apart because what it
 must prove is the real-webview half of a gesture, not decoding.
 
-### What is shared with production, interaction by interaction
+### What runs in production
 
-Production (`media/player.js`, `media/compare.js`) calls the seam's helpers; it does not mount `create()` and does
-not load `player-state.js` yet. So a 1B test proves production behaviour only where the row says so:
-
-| Interaction | Production uses the shared code | `create()` (mockup) is |
-|---|---|---|
-| Key dispatch (`keyCommand`, `runKey`) | both pages, end to end; each page's handler set is pinned to `PAGE_KEY_ACTIONS` | the same dispatch over unified actions |
-| `D` | player: `pickVideoMessage('player')` → `comparePick` with the time; Compare: no plain-`D` key | **proposal**: `pickVideo` with `exclude`, in any N |
-| Bar buttons, step buttons and badges, A–B pins, time readout, Picture size, Copy details | both pages, end to end (`bindButtons`, `stepBy`, `bindStepBadges`, `bindAbPins`, `timeReadout`, `pictureButton`, `copyInfoText`) | the same helpers |
-| Split Wipe divider: drag over the displayed picture, pointer capture, keys, 0–100 % | Compare, end to end (`bindSplitDivider`) | the same binding (picture = split cell; no letterbox model) |
-| Spotlight splitter | Compare: the math only (`spotlightRatioAt`, `spotlightKeyRatio`) | its own drag over the same math |
-| Right-click menu, Folder Rail creation, Shift+N / Shift+P | player (menu), both (rail) | the same helpers |
-| Tile overlay (Enlarge / Remove / Sync buttons, click to pause, double-click to enlarge), one tab growing 1 → N, capture | no: Compare has its own compositor stage and tile menu | **proposal** (unified state) |
+The viewer's page (`media/player-unified.js` in `src/unified-html.js`) mounts `create()` over the production adapters
+(`media/player-engine-adapter.js`, `media/player-host-adapter.js`) for one video and for several, so a 1B test of
+`create()` over the fakes tests the code that ships; 1C holds the fakes and the production adapters to the same
+contract. What only a real webview shows (layout, focus, pointer capture, letterboxed picture rects, decoding) is
+layer 3.
 
 **New UI features from now on:**
 
 1. Put the state transition in `media/player-state.js` and test it in `player_state_test.js`.
-2. Put the wiring (key, button, menu item, gesture) in `media/player-ui.js` as a helper both pages call, or in
-   `create()` for the unified page; add the key to `keyCommand`, a handler to each page's `KEY_ACTIONS` table and
-   the name to `PAGE_KEY_ACTIONS`.
+2. Put the wiring (key, button, menu item, gesture) in `media/player-ui.js` (`create()` or one of its modules);
+   add a key to `keyCommand` and its action to `create()`.
 3. Prove it in `test/host/player_ui_test.js`: the helper alone, then the gesture through `create()` over the
    real widgets (fire the click / key / pointer events on the fake DOM, assert the state and what FakeHost got).
-   Keep production-parity assertions apart from unified-proposal ones. A control the fixture lacks is `null`: add
-   it to the real markup, not to the test.
+   A control the fixture lacks is `null`: add it to the real markup, not to the test.
 4. Look at it in the mockup (`node tools/mockup/render.js`, `.claude/skills/ui-mockup/SKILL.md`).
 5. Pick only the Layer 3 scenarios that cover the real-webview boundary of the change (usually `ui`, plus
    `compare` or `folder-rail` when those change), not the whole layer.

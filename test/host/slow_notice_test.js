@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const slowNotice = require('../../media/slow-notice');
-const { load, webviewConfig } = require('./mock_vscode');
+const { load } = require('./mock_vscode');
 
 const every = slowNotice('every');
 const skip = slowNotice('skip');
@@ -38,10 +38,10 @@ for (const notice of [every, skip, auto, fast, setup]) {
   const h = load();
   const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mkv');
   const first = h.open(clip);
-  await first.shown;
+  await first.send({ type: 'ready' });
   const existing = h.open(clip);
-  await existing.shown;
-  assert.equal(webviewConfig(first.panel.webview).hideSlowPlaybackNotice, false);
+  await existing.send({ type: 'ready' });
+  assert.ok(!first.posted.some((m) => m.type === 'hideSlowPlaybackNotice'), 'shown until hidden');
   h.vscode.executed = [];
   for (const notice of [every, fast]) await first.send({ type: 'action', id: notice.settings.id });
   assert.deepEqual(h.vscode.executed, [
@@ -53,9 +53,10 @@ for (const notice of [every, skip, auto, fast, setup]) {
   for (const session of [first, existing]) {
     assert.ok(session.posted.some((message) => message.type === 'hideSlowPlaybackNotice'));
   }
+  // A page opened later hears it as soon as it is ready.
   const next = h.open(clip);
-  await next.shown;
-  assert.equal(webviewConfig(next.panel.webview).hideSlowPlaybackNotice, true);
+  await next.send({ type: 'ready' });
+  assert.ok(next.posted.some((message) => message.type === 'hideSlowPlaybackNotice'));
   for (const session of [first, existing, next]) session.panel.dispose();
   h.dispose();
   console.log('slow playback notice: ok');

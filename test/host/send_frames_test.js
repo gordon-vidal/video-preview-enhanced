@@ -1,6 +1,6 @@
 'use strict';
-// node test/host/send_frames_test.js: every requested frame gets an answer, even
-// when it can't be read (review 1 #18: FramePlayer inflight).
+// node test/run.js unit --grep send_frames: an image sequence in the viewer (src/unified-sources.js
+// createSequenceDecoder): every requested frame gets an answer, even when it can't be read (review 1 #18).
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -13,13 +13,11 @@ const { load } = require('./mock_vscode');
     const files = [0, 1, 2].map((i) => path.join(dir, `f_${String(i).padStart(4, '0')}.png`));
     for (const f of files) fs.writeFileSync(f, Buffer.from('png'));
     const h = load();
-    // Borrow a mock panel, then open a sequence through the playSequence command.
-    const s = h.open(files[0]);
-    s.panel.dispose();
+    // A sequence through the playSequence command; the page's frame player asks for pictures by its clip.
+    const s = h.nextPanel();
     const panel = s.panel;
-    h.vscode.window.createWebviewPanel = () => panel;
-    panel.webview.html = '';
     await h.vscode._commands['videoPreviewEnhanced.playSequence'](h.vscode.Uri.file(files[0]));
+    assert.deepStrictEqual([s.cfg().clips[0].kind, s.cfg().clips[0].frames, s.cfg().clips[0].fps], ['sequence', 3, 30]);
     assert.ok(panel.webview.html, 'sequence session');
     await s.send({ type: 'ready' });
     fs.unlinkSync(files[1]); // unreadable frame

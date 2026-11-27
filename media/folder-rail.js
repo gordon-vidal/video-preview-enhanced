@@ -111,7 +111,7 @@
     const stand = (/** @type {string} */ tag) => { const x = doc.createElement(tag); x.hidden = true; return x; };
     const cap = $('folderCap') || stand('div'), capCount = $('capCount') || stand('button');
     const capPrev = $('capPrev') || stand('button'), capNext = $('capNext') || stand('button');
-    const compare = !!env.compare;
+    let compare = !!env.compare;
     /** Compare: the ids of the listed videos it shows, and how many it shows. */
     let members = new Set();
     let memberCount = 0;
@@ -571,13 +571,24 @@
     refreshOnEnd();
     /** Compare's footer: how many videos it shows (no Autoplay there). */
     function showCount() { if (compare) pos.textContent = memberCount ? `${memberCount} in Compare` : ''; }
+    /** Unified viewer: switch between single-video and Compare rail mode in place. @param {boolean} on */
+    function setCompare(on) {
+      const next = !!on;
+      if (next === compare) return;
+      compare = next;
+      endBtn.hidden = compare;
+      if (compare) { cap.hidden = true; showCount(); }
+      else { members = new Set(); memberCount = 0; setPos(place.index, place.count); }
+      updateOpener();
+      render();
+    }
     if (compare) endBtn.hidden = true;
 
     edge.hidden = false;
     updateOpener();
 
     return {
-      go, carry, adopt, onMessage, setPos, refreshOnEnd,
+      go, carry, adopt, onMessage, setPos, setCompare, refreshOnEnd,
       isOpen: () => open,
       open: () => setOpen(true, { focus: true }),
       show: () => setOpen(true),

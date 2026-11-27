@@ -1,7 +1,8 @@
 'use strict';
-// node test/host/ctxmenu_test.js: the player's right-click menu is an HTML menu in the page (media/ctxmenu.js),
-// not VS Code's native webview/context menu. Checks its items per player state, that every item is wired to a page
-// action and a real key, that nothing of the native menu is left in package.json, and that the host page carries it.
+// node test/run.js unit --grep ctxmenu: the viewer's right-click menu is an HTML menu in the page (media/ctxmenu.js),
+// not VS Code's native webview/context menu. Checks its items per player state, that every item is wired to an action
+// of the viewer's controller (media/player-ui.js) and a real key, that nothing of the native menu is left in
+// package.json, and that the viewer's page (src/unified-html.js) carries it.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -9,7 +10,7 @@ const path = require('path');
 const root = path.join(__dirname, '..', '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
 const pkg = JSON.parse(read('package.json'));
-const page = read('media', 'player.js');
+const page = read('media', 'player-ui.js'); // the viewer's UI controller: the menu's actions and the keys
 const css = read('media', 'player.css');
 const host = read('src', 'extension.js');
 
@@ -81,19 +82,19 @@ for (let bits = 0; bits < 32; bits++) {
 }
 
 // every item runs a page action, and the key it shows is a key the page handles
-const MENU_ACTIONS = page.slice(page.indexOf('const MENU_ACTIONS = {'), page.indexOf('const ctxMenu = VpePlayerUi.createContextMenu(VpeCtxMenu'));
+const MENU_ACTIONS = page.slice(page.indexOf('ctxMenu = createContextMenu(W.VpeCtxMenu, {'), page.indexOf("// ---- the tiles' right-click menu"));
 const every = [READY, { ...READY, playing: true, loop: true, abSet: true }, { ...READY, compareOpen: true }]
   .flatMap((s) => Menu.items(s)).filter((i) => !('sep' in i));
 for (const i of every) assert(new RegExp(`\\b${i.action}:`).test(MENU_ACTIONS), `the page handles ${i.action}`);
-// The keys go through the shared table (media/player-ui.js keyCommand) into the page's own KEY_ACTIONS handlers.
+// The keys go through the shared table (media/player-ui.js keyCommand) into the controller's actions (act).
 const PUI = require('../../media/player-ui');
-const KEY_ACTIONS = page.slice(page.indexOf('const KEY_ACTIONS = {'), page.indexOf('};', page.indexOf('const KEY_ACTIONS = {')));
+const KEY_ACTIONS = page.slice(page.indexOf('    const act = {'), page.indexOf('\n    };\n', page.indexOf('    const act = {')));
 const keyOf = { play: ' ', loop: 'r', setA: 'a', setB: 'b', clearAB: 'Backspace', saveFrame: 's', copyTime: 't' };
 for (const [id, key] of Object.entries(keyOf)) {
   const cmd = PUI.keyCommand({ key });
   assert(every.some((i) => i.id === id) && cmd && new RegExp(`\\b${cmd.action}:`).test(KEY_ACTIONS), `${id}: its key is handled by the page (${JSON.stringify(key)})`);
 }
-assert(page.includes("e.key === '?'") && page.includes("e.key === 'c' || e.key === 'C'") && page.includes("label: 'Compare', key: 'Shift+D'"), 'Ctrl+C, ? and Shift+D exist');
+assert(page.includes("case '?': return a('keys')") && page.includes("k === 'c' || k === 'C'") && page.includes("label: t.capture ? 'Pause Compare capture' : 'Start Compare', key: 'Shift+D'"), 'Ctrl+C, ? and Shift+D exist');
 
 // the native menu is gone: no webview/context entries, no ctx commands, no data-vscode-context
 assert(!pkg.contributes.menus['webview/context'], 'no webview/context menu');
@@ -103,14 +104,14 @@ assert(!fs.existsSync(path.join(root, 'src', 'ctxmenu.js')), 'src/ctxmenu.js is 
 assert(!/require\('\.\/ctxmenu'\)|ctxCommand|ctxmenu\.register/.test(host), 'the host registers no ctx commands');
 assert(!page.includes('data-vscode-context') && !page.includes('updateMenuContext'), 'the page no longer feeds VS Code a context');
 
-// the host page: the menu element, its script (nonce, between controls.js and player.js), the CSS block at the end of player.css
-const { playerHtml } = require('../../src/player-html');
-const html = playerHtml({
+// the viewer's page: the menu element, its script (nonce, between controls.js and player-ui.js), the CSS block at the end of player.css
+const { unifiedHtml } = require('../../src/unified-html');
+const html = unifiedHtml({
   cspSource: 'csp:', uri: (...p) => 'u/' + p.join('/'), base: 'b', loader: 'l.js', nonce: 'N', cfg: {}, sequence: true,
-  transport: 'message', debug: false, canCompare: false, compareOpen: false,
+  transport: 'message', debug: false, entryScript: 'player-unified.js',
 });
 assert(/<div id="ctxmenu" class="ctxmenu" role="menu"[^>]* hidden><\/div>/.test(html), 'the page has #ctxmenu');
-assert(html.indexOf('u/ctxmenu.js') > html.indexOf('u/controls.js') && html.indexOf('u/ctxmenu.js') < html.indexOf('u/player.js'), 'ctxmenu.js loads after controls.js, before player.js');
+assert(html.indexOf('u/ctxmenu.js') > html.indexOf('u/controls.js') && html.indexOf('u/ctxmenu.js') < html.indexOf('u/player-ui.js"'), 'ctxmenu.js loads after controls.js, before player-ui.js');
 assert(html.includes('<script nonce="N" src="u/ctxmenu.js"></script>'), 'ctxmenu.js carries the CSP nonce');
 const block = css.slice(css.indexOf('/* ==== Right-click menu'));
 assert(block.length > 0 && !/^#(bar|volume|row)\b/m.test(block), 'the #ctxmenu CSS is its own block at the end');

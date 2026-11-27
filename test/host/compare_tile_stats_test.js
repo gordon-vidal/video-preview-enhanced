@@ -29,14 +29,14 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
   assert.deepStrictEqual([...ids], [4]);
 }
 {
-  const js = read('media/compare.js');
-  // The card is rendered with the × first, and the click handler toggles through the shared helper.
-  assert.match(js, /statsEl\.innerHTML = Grid\.statsCloseHtml\(i, tileLabel\(i\), ICONS\.close\)/);
-  assert.match(js, /case 'info':[\s\S]{0,200}Grid\.toggleStats\(statsIds, i\)/);
-  // A press on the × must not start a pan or tile drag.
-  assert.match(js, /closest\('[^']*\.tile-stats-close[^']*'\)\) return;/);
+  // The viewer's tiles: the card's × comes from the shared helper; ⓘ toggles it; a press on the × starts no drag.
+  const js = read('media/player-ui.js');
+  const tiles = read('media/player-ui-tiles.js');
+  assert.match(tiles, /el\.innerHTML = grid\.statsCloseHtml\(index, letter, o\.closeIcon \|\| '×'\)/);
+  assert.match(js, /case 'info': act\.toggleStats\(id\); break;/);
+  assert.match(tiles, /const DRAG_IGNORE = '[^']*\.tile-stats-close[^']*'/);
   // The pill ⓘ still reports its state.
-  assert.match(js, /data-act="info" data-i="\$\{i\}" aria-label="Toggle details for \$\{k\}" aria-pressed="\$\{showStats\}"/);
+  assert.match(js, /data-act="info" data-i="\$\{v\}" aria-label="Toggle details for \$\{k\}" aria-pressed="\$\{statsOn\}"/);
   const css = read('media/compare.css');
   // The card ignores the pointer; its × must take clicks.
   assert.match(css, /\.tile-stats \{[^}]*pointer-events: none/);
@@ -50,7 +50,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
     { codec: 'hevc', pixFmt: 'yuv420p', width: 1920, height: 1080, bitRate: 8e6, fps: 30 }, // WebCodecs cannot play it
     h264(1080, 4), h264(720, 2), h264(1080, 5), h264(480, 1), // low-bitrate 8-bit H.264
   ];
-  // compare.js chooseNative: the same cell height (stage / rows) for every tile.
+  // The same cell height (stage / rows) for every tile, as the viewer asks for a tile.
   const viewHeight = 1000 / 2;
   const decide = (mode, v) => policy.shouldTranscodeOnOpen({ mode, remote: 'ssh-remote', video: v, compare: true, viewHeight });
   assert.deepStrictEqual(clips.map((v) => decide('auto', v).action), ['stream', 'skip', 'skip', 'skip', 'skip'],

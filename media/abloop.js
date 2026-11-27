@@ -1,5 +1,5 @@
 // @ts-check
-// A-B loop state of the player (media/player.js): A sets the start, B the end, the same key again
+// A-B loop state of the player (media/player-ui.js): A sets the start, B the end, the same key again
 // clears that end; B before A swaps them. While playing, reaching B goes back to A (start of the file
 // without A). The frames shown when A and B were set are the range the frame export uses.
 // Pure state, also driven by the unit tests (test/unit/abloop_test.js) and the engine tests in Node.

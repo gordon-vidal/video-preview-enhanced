@@ -1,6 +1,7 @@
 'use strict';
-// node test/host/frame_link_test.js: frame links name the remote host and only
-// open in the window connected to it (review 2 #4).
+// node test/run.js unit --grep frame_link: frame links name the remote host and only open in the window connected
+// to it (review 2 #4); a link's moment reaches the viewer it opens (or the one showing the file), compare links open
+// one viewer with all their videos.
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -50,8 +51,11 @@ async function follow(h, text) {
     assert.strictEqual(h.vscode.env.clipboard.text, text, 'invalid frame numbers never reach the clipboard');
     h.vscode.window.showSaveDialog = async () => h.vscode.Uri.file(file);
     h.vscode.workspace.fs.writeFile = async () => { throw new Error('Write denied'); };
+    await s.send({ type: 'ready' });
     await s.send({ type: 'saveFrame', page, frame: 0, data: new Uint8Array([1]) });
-    assert.ok(s.posted.some((m) => m.type === 'toast' && /Write denied/.test(m.text)));
+    // The page hears that it failed, never the raw error (it can name a path); the log has it.
+    assert.ok(s.posted.some((m) => m.type === 'toast' && /action failed/.test(m.text)), JSON.stringify(s.posted.map((m) => m.type)));
+    assert.ok(!s.posted.some((m) => m.type === 'toast' && /Write denied/.test(m.text)));
     assert.ok(s.posted.every((m) => m.type !== 'error'), 'a failed save does not cover the video');
     s.panel.dispose();
 
@@ -118,16 +122,21 @@ async function follow(h, text) {
     assert.ok(/"goto":\{"frame":5/.test(s2.panel.webview.html), 'fresh link target used');
     s2.panel.dispose();
 
-    // A reload (file changed on disk) does not jump back to the linked frame (review 2 #10).
+    // A reload (file changed on disk) does not jump back to the linked frame (review 2 #10): the first page's
+    // 'ready' spends it; the reloaded clip comes without one, in the same page.
     h = load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin' } });
     const s3 = h.open(h.vscode.Uri.file(file).with({ fragment: 'frame=5' }));
     await s3.shown;
     assert.ok(/"goto":\{"frame":5/.test(s3.panel.webview.html), 'first page gets the linked frame');
     await s3.send({ type: 'ready' });
+    assert.deepStrictEqual(s3.posted.find((m) => m.type === 'sessionState').goto, { frame: 5 });
     const html0 = s3.panel.webview.html;
     fs.writeFileSync(file, Buffer.alloc(2000));
-    await s3.until(() => s3.panel.webview.html !== html0, 4000);
-    assert.ok(/"goto":null/.test(s3.panel.webview.html), 'reloaded page has no goto');
+    await s3.until((p) => p.some((m) => m.type === 'replaceTile' && m.reload), 4000);
+    const reloaded = s3.posted.find((m) => m.type === 'replaceTile' && m.reload);
+    assert.strictEqual(reloaded.clip.size, 2000, 'the new file');
+    assert.strictEqual(reloaded.clip.goto, undefined, 'the reloaded clip has no goto');
+    assert.strictEqual(s3.panel.webview.html, html0, 'the same page');
     s3.panel.dispose();
 
     // /compare deep links: opens a Compare panel with goto & mode, reuses an existing panel for the same files,
@@ -136,46 +145,32 @@ async function follow(h, text) {
     fs.writeFileSync(fileB, Buffer.alloc(1000));
     try {
       h = load({ settings: { 'videoPreviewEnhanced.decoder': 'builtin', 'videoPreviewEnhanced.compare.maxVideos': 2 } });
-      const created = [];
-      h.vscode.window.createWebviewPanel = (_type, title) => {
-        const posted = [];
-        const listeners = {};
-        let revealed = 0;
-        const panel = {
-          title, visible: true, viewColumn: 1,
-          webview: {
-            cspSource: 'vscode-resource:', html: '',
-            asWebviewUri: (u) => ({ toString: () => `https://webview/${u.path}` }),
-            postMessage: (m) => { posted.push(m); return Promise.resolve(true); },
-            onDidReceiveMessage: (fn) => { listeners.msg = fn; },
-          },
-          onDidDispose: (fn) => { (listeners.dispose = listeners.dispose || []).push(fn); },
-          onDidChangeViewState: (fn) => { listeners.viewState = fn; },
-          reveal() { revealed++; },
-          dispose() { for (const fn of listeners.dispose || []) fn(); },
-          get revealed() { return revealed; },
-          posted,
-        };
-        created.push(panel);
-        return panel;
-      };
-      const cfgOf = (panel) => JSON.parse(/<script type="application\/json" id="cfg">([^<]*)<\/script>/.exec(panel.webview.html)[1]);
+      let created = 0;
+      let cmp = h.nextPanel();
+      const counted = h.vscode.window.createWebviewPanel;
+      h.vscode.window.createWebviewPanel = (...a) => { created++; return counted(...a); };
+      let revealed = 0;
+      cmp.panel.reveal = () => { revealed++; };
       const cmpUrl = `vscode://gordon-vidal.video-preview-enhanced/compare?frame=42&mode=split&file=${encodeURIComponent(file)}&file=${encodeURIComponent(fileB)}`;
       let rc = await follow(h, cmpUrl);
       assert.strictEqual(rc.warned.length, 0, `no warning for valid compare link: ${rc.warned}`);
-      assert.strictEqual(created.length, 1, 'compare panel opened');
-      const cfg1 = cfgOf(created[0]);
-      assert.deepStrictEqual(cfg1.goto, { frame: 42 }, 'compare panel gets goto');
-      assert.strictEqual(cfg1.mode, 'split', 'compare panel gets mode');
+      assert.strictEqual(created, 1, 'compare panel opened');
+      const cfg1 = cmp.cfg();
+      assert.deepStrictEqual(cfg1.clips.map((c) => c.name), [path.basename(file), path.basename(fileB)], 'both videos in one viewer');
+      assert.deepStrictEqual(cfg1.goto, { frame: 42, mode: 'split' }, 'compare panel gets goto and mode');
+      await cmp.send({ type: 'ready' });
 
       // Following a link for the same pair reveals the existing panel and sends a goto message.
       const cmpUrl2 = `vscode://gordon-vidal.video-preview-enhanced/compare?t=3.5&mode=grid&file=${encodeURIComponent(file)}&file=${encodeURIComponent(fileB)}`;
       rc = await follow(h, cmpUrl2);
-      assert.strictEqual(created.length, 1, 'existing compare panel reused');
-      assert.strictEqual(created[0].revealed, 1, 'existing compare panel revealed');
-      const gotoMsg = created[0].posted.find((m) => m.type === 'goto');
+      assert.strictEqual(created, 1, 'existing compare panel reused');
+      assert.strictEqual(revealed, 1, 'existing compare panel revealed');
+      const gotoMsg = cmp.posted.find((m) => m.type === 'goto');
       assert.ok(gotoMsg && gotoMsg.t === 3.5 && gotoMsg.mode === 'grid', `goto message sent: ${JSON.stringify(gotoMsg)}`);
-      created[0].dispose();
+      cmp.panel.dispose();
+      cmp = h.nextPanel();
+      const counted2 = h.vscode.window.createWebviewPanel;
+      h.vscode.window.createWebviewPanel = (...a) => { created++; return counted2(...a); };
 
       // Hardening: fewer than two files, non-video files, UNC paths, http URLs, and foreign remote hosts are refused.
       for (const bad of [
@@ -185,9 +180,9 @@ async function follow(h, text) {
         `vscode://x/compare?file=${encodeURIComponent(file)}&uri=${encodeURIComponent('https://example.com/clip.mkv')}`,
         `vscode://x/compare?uri=${encodeURIComponent('vscode-remote://ssh-remote+box/a.mkv')}&uri=${encodeURIComponent('vscode-remote://ssh-remote+box/b.mkv')}`,
       ]) {
-        const before = created.length;
+        const before = created;
         rc = await follow(h, bad);
-        assert.strictEqual(created.length, before, `compare refused: ${bad}`);
+        assert.strictEqual(created, before, `compare refused: ${bad}`);
         assert.strictEqual(rc.warned.length, 1, `compare warned: ${bad}`);
       }
       h.dispose();

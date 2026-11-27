@@ -213,7 +213,7 @@ function listAll(dir) {
       h.vscode.window.withProgress = async (o, fn) => fn({ report() {} }, { onCancellationRequested() {} });
       const s = h.open(clip);
       await s.send({ type: 'ready' });
-      await s.until((p) => p.some((m) => m.type === 'libav'), 15000);
+      await s.until((p) => p.some((m) => m.type === 'sessionState'), 15000);
       const soft = async () => { await s.send({ type: 'softVideo', codec: 'hevc', depth: 10 }); await new Promise((r) => setTimeout(r, 100)); };
       return { h, s, offers, infos, soft };
     }

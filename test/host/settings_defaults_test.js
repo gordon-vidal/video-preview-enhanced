@@ -8,7 +8,7 @@ const { makeVscode } = require('./mock_vscode');
 
 const section = 'videoPreviewEnhanced';
 const make = (vscode) => createSettings({
-  vscode, transcodePolicy, getState: () => undefined, log: () => {}, sessions: [], compareSessions: [],
+  vscode, transcodePolicy, getState: () => undefined, log: () => {}, pages: [],
 }).config();
 const vscode = makeVscode();
 const cfg = vscode.workspace.getConfiguration(section);
@@ -29,7 +29,7 @@ function settingValues(config) {
   };
 }
 
-// These settings are resolved by Compare or file associations, or are deprecated and ignored.
+// These settings are resolved by the viewer's Compare commands or file associations, or are deprecated and ignored.
 const otherDefaults = { advancedMode: false, 'compare.openTogether': true, 'compare.maxVideos': 8, overrideFileIcons: true };
 assert.deepStrictEqual(resolved, fallback, 'the host fallback and manifest-backed configuration must agree');
 const expected = { ...settingValues(fallback), ...otherDefaults };

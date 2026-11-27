@@ -322,8 +322,17 @@ async function rejects(p, re, what) {
             onDidChangeViewState: () => {},
             reveal() {},
             dispose() { if (listeners.dispose) listeners.dispose(); },
-            send: (m) => listeners.msg(m.type === 'ready'
-                ? { page: webviewConfig(panel.webview).page, boot: 'mock-document', ...m } : m),
+            // The page's messages carry its page number; its player's (blocks, native ffmpeg) its clip id.
+            send: (m) => {
+              const cfg = webviewConfig(panel.webview);
+              const id = cfg.clips && cfg.clips[0] ? cfg.clips[0].id : undefined;
+              return listeners.msg({
+                page: cfg.page, ...(m.type === 'ready' ? { boot: 'mock-document' } : {}),
+                ...(['readBlock', 'nd'].includes(m.type) && id ? { clipId: id, key: id } : {}), ...m,
+              });
+            },
+            // The page is ready and its placeholder player asks: the host inspects the URL and answers 'libav'.
+            start: async (m) => { await panel.send({ type: 'ready', ...m }); await panel.send({ type: 'nd', m: { type: 'open' } }); },
           };
           panels.push(panel);
           return panel;
@@ -350,8 +359,9 @@ async function rejects(p, re, what) {
       const p = panels[0];
       assert.strictEqual(p.viewType, 'videoPreviewEnhanced.url');
       assert.strictEqual(p.title, 'src.mp4');
-      assert.ok(/"url":{"host":"127\.0\.0\.1:\d+"}/.test(p.webview.html) && /"net":true/.test(p.webview.html), 'page config marks a URL player');
-      await p.send({ type: 'ready', origin: 'vscode-webview://abc' });
+      assert.strictEqual(webviewConfig(p.webview).sourceKind, 'url', 'page config marks a URL clip');
+      assert.ok(!p.webview.html.includes('/media/src.mp4'), 'the URL stays on the host');
+      await p.start({ origin: 'vscode-webview://abc' });
       await until(() => p.posted.some((m) => m.type === 'libav' || m.type === 'error'));
       const meta = p.posted.find((m) => m.type === 'libav');
       assert.ok(meta, `libav meta posted: ${JSON.stringify(p.posted.find((m) => m.type === 'error'))}`);
@@ -375,7 +385,7 @@ async function rejects(p, re, what) {
       inputs.next.push(`${b}/media/dash/manifest.mpd`);
       await h.vscode._commands['videoPreviewEnhanced.openUrl']();
       const d = panels[1];
-      await d.send({ type: 'ready', origin: 'vscode-webview://abd' });
+      await d.start({ origin: 'vscode-webview://abd' });
       await until(() => d.posted.some((m) => m.type === 'error'));
       const err = d.posted.find((m) => m.type === 'error');
       assert.ok(/DASH stream needs native ffmpeg/.test(err.message) && /builtin/.test(err.hint), JSON.stringify(err));
@@ -384,10 +394,10 @@ async function rejects(p, re, what) {
       inputs.next.push(`${b}/media/hls_ts/index.m3u8`);
       await h.vscode._commands['videoPreviewEnhanced.openUrl']();
       const hp = panels[2];
-      await hp.send({ type: 'ready', origin: 'vscode-webview://abe' });
+      await hp.start({ origin: 'vscode-webview://abe' });
       await until(() => hp.posted.some((m) => m.type === 'libav' || m.type === 'error'));
       assert.strictEqual(hp.posted.find((m) => m.type === 'libav').meta.size, Buffer.concat(segBufs).length);
-      assert.ok(!hp.posted.some((m) => m.type === 'stream'), 'one media playlist: no quality menu');
+      assert.ok(!hp.posted.some((m) => m.type === 'stream' && m.quality), 'one media playlist: no quality menu');
 
       // To the side / in a new window: the same input box, then ViewColumn.Beside / moveEditorToNewWindow.
       inputs.pick.push({ label: 'new' });
@@ -396,7 +406,7 @@ async function rejects(p, re, what) {
       const side = panels[3];
       assert.strictEqual(side.show.viewColumn, h.vscode.ViewColumn.Beside, 'to the side');
       // AES-128 HLS with the built-in decoder: decrypted bytes, the key not in any message.
-      await side.send({ type: 'ready', origin: 'vscode-webview://abg' });
+      await side.start({ origin: 'vscode-webview://abg' });
       await until(() => side.posted.some((m) => m.type === 'libav' || m.type === 'error'));
       assert.strictEqual((side.posted.find((m) => m.type === 'libav') || {}).meta.size, Buffer.concat(segBufs).length, JSON.stringify(side.posted.find((m) => m.type === 'error')));
       await side.send({ type: 'readBlock', page: webviewConfig(side.webview).page, pos: 0, len: 1 << 20 });
@@ -419,7 +429,7 @@ async function rejects(p, re, what) {
       inputs.next.push(`${b}/media/hls_ts/fairplay.m3u8`);
       await h.vscode._commands['videoPreviewEnhanced.openUrl']();
       const drm = panels[5];
-      await drm.send({ type: 'ready', origin: 'vscode-webview://abh' });
+      await drm.start({ origin: 'vscode-webview://abh' });
       await until(() => drm.posted.some((m) => m.type === 'error'));
       const de = drm.posted.find((m) => m.type === 'error');
       assert.ok(/protected \(FairPlay\)/.test(de.message) && /ffmpeg can't play it either/.test(de.hint), JSON.stringify(de));
@@ -429,9 +439,9 @@ async function rejects(p, re, what) {
       inputs.next.push(`${b}/media/master_full.m3u8`);
       await h.vscode._commands['videoPreviewEnhanced.openUrl']();
       const mp = panels[6];
-      await mp.send({ type: 'ready', origin: 'vscode-webview://abi', view: { w: 1280, h: 720 } });
+      await mp.start({ origin: 'vscode-webview://abi', view: { w: 1280, h: 720 } });
       await until(() => mp.posted.some((m) => m.type === 'subs') || mp.posted.some((m) => m.type === 'error'));
-      const q = mp.posted.find((m) => m.type === 'stream');
+      const q = mp.posted.find((m) => m.type === 'stream' && m.quality);
       assert.ok(q && q.quality.pick === 'auto' && q.quality.variants.length === 2 && q.quality.variants[q.quality.current].height === 360, JSON.stringify(q));
       const sm = mp.posted.find((m) => m.type === 'subs');
       assert.deepStrictEqual(sm.files.map((f) => [f.title, f.lang, f.auto, f.stream]), [['English', 'en', true, true], ['Deutsch', 'de', false, true]]);
@@ -443,10 +453,10 @@ async function rejects(p, re, what) {
       assert.strictEqual(mp.webview.html, html0, 'a bad pick is ignored');
       mp.posted.length = 0;
       await mp.send({ type: 'quality', pick: 0 });
-      assert.notStrictEqual(mp.webview.html, html0, 'a pick reloads the page');
-      await mp.send({ type: 'ready', origin: 'vscode-webview://abi', view: { w: 1280, h: 720 } });
+      // The clip's player restarts at that variant ('libav'), in the same page.
       await until(() => mp.posted.some((m) => m.type === 'subs') || mp.posted.some((m) => m.type === 'error'));
-      const q2 = mp.posted.find((m) => m.type === 'stream');
+      assert.strictEqual(mp.webview.html, html0, 'the same page');
+      const q2 = mp.posted.find((m) => m.type === 'stream' && m.quality);
       assert.ok(q2 && q2.quality.pick === 0 && q2.quality.variants[q2.quality.current].height === 180, JSON.stringify(q2));
       assert.ok(mp.posted.find((m) => m.type === 'libav').meta.size < Buffer.concat(segBufs).length, 'the small variant plays');
       assert.strictEqual(srv.hits.filter((x) => /\/subs\//.test(x.path)).length, subHits, 'subtitles kept, not fetched again');
@@ -459,7 +469,7 @@ async function rejects(p, re, what) {
       h = load({ settings: { 'videoPreviewEnhanced.ffmpegPath': 'ffmpeg' }, env: { VPE_LOG: '' }, setup: (v) => setup(v, inputs) });
       await h.vscode._commands['videoPreviewEnhanced.openUrl']();
       const n = panels[0];
-      await n.send({ type: 'ready', origin: 'vscode-webview://abf' });
+      await n.start({ origin: 'vscode-webview://abf' });
       await until(() => n.posted.some((m) => m.type === 'libav' || m.type === 'error'), 40000);
       const nm = n.posted.find((m) => m.type === 'libav');
       assert.ok(nm && nm.meta.native, `native: ${JSON.stringify(n.posted.filter((m) => m.type === 'error' || m.type === 'libav'))}`);

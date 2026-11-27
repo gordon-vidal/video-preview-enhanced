@@ -429,17 +429,17 @@ assert.deepStrictEqual(probe.platformEncoders('linux'), ['h264_nvenc', 'h264_vaa
       try {
         const h = loadMockVscode({ settings: { 'videoPreviewEnhanced.ffmpegPath': tools.ffmpeg, 'videoPreviewEnhanced.transcode': 'always' } });
         h.vscode.window.withProgress = async () => null;
+        // The encoder is probed while the clip is prepared (src/extension.js nativeFor), before the viewer exists.
         const s = h.open(clip);
-        // Do not await s.send('ready') yet: it awaits our deferred encoderFor promise.
-        const readyP = s.send({ type: 'ready' });
         for (let i = 0; i < 500 && !probeCalled; i++) await new Promise((r) => setTimeout(r, 20));
         assert.ok(probeCalled, 'encoderFor was invoked');
         const beforeDispose = s.posted.length;
         s.panel.dispose();
         resolveProbe({ encoder: 'libx264', hw: false, cpu: 'libx264', driverNotice: null });
-        await readyP;
+        await s.shown;
         await new Promise((r) => setTimeout(r, 40));
         assert.strictEqual(s.posted.length, beforeDispose, 'no messages posted after dispose');
+        assert.strictEqual(s.panel.webview.html, '', 'no viewer for a closed tab');
         h.dispose();
       } finally {
         hwMod.detect = origDetect;

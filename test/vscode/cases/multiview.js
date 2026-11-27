@@ -90,7 +90,7 @@ async function activate(vs, h, file) {
   await h.closeClip(vs);
 }
 
-const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] opened, .* ${n} tiles`);
+const opened = (n) => new RegExp(`\\[compare [^\\]]*\\] (?:opened, .*, |tiles: )${n}(?: tiles)?\\b`);
 
 module.exports = [{
   name: 'multiview-transcode',
@@ -144,8 +144,8 @@ module.exports = [{
     const from = vs.mark();
     vs.send({ compareFiles: files });
     await vs.waitLog(opened(2), { from, timeout: 30000 });
-    await vs.waitLog(/webview: begin: A \S+ soft, B \S+ soft; clock A/, { from, timeout: 30000 });
-    await until((r) => r.synced === 'true');
+    // Both tiles on the built-in decoder, A the clock, in step (media/compare.js said "begin: A ... soft, B ... soft").
+    await until((r) => r.native === '0,0' && r.clock === '0' && r.synced === 'true', 30000);
     act({ action: 'play' });
 
     const loops = [];
@@ -163,9 +163,12 @@ module.exports = [{
     }
     const problems = [];
     if (loops.length < 3) problems.push(`expected three clock wraps, saw ${loops.length}`);
-    if (!vs.lines.slice(from).some((l) => /webview: \[A\] loop: replaying \d+ cached frames/.test(l))) {
-      problems.push('the clock did not replay cached frames');
-    }
+    // Compare loops as one: every decoder runs with its own loop off and the clock's end wraps them all together (media/
+    // player-unified.js onPlayerEnded: "end of file: loop", then the controller seeks to 0 and plays on). One such end per
+    // wrap; a decoder that wrapped on its own would show as a wrap without one.
+    const ends = vs.lines.slice(from).filter((l) => /\[compare [^\]]*\] webview: end of file: loop/.test(l)).length;
+    if (ends < 3 || ends < loops.length) problems.push(`the clock's end drove ${ends} shared wraps, the report saw ${loops.length}`);
+    if (vs.lines.slice(from).some((l) => /webview: \[[AB]\] loop: replaying/.test(l))) problems.push('a decoder looped on its own in Compare');
     // A seek may still be settling right at the wrap. Check sync twice during each new pass that was sampled twice.
     let checked = 0;
     loops.forEach((samples, i) => {
@@ -207,11 +210,11 @@ module.exports = [{
     from = vs.mark();
     vs.send({ compareAdd: [files[3]] });
     await vs.waitLog(opened(4), { from, timeout: 30000, what: 'compare reopened with 4' });
-    let firstCanvas;
+    let firstPic;
     r = await until((x) => {
       if (x.n !== '4') return false;
-      // The grid has a size as soon as its first tile draws, even while the other tiles settle.
-      if (!firstCanvas && Number(list(x.shown)[0]) > 0) firstCanvas = x.canvas;
+      // The grid has its layout as soon as its first tile draws, even while the other tiles settle.
+      if (!firstPic && Number(list(x.shown)[0]) > 0) firstPic = String(x.fulls).split(';')[0];
       return allShown(x);
     }, 45000);
 
@@ -219,11 +222,16 @@ module.exports = [{
     ok = t('grid/four-play');
     ok(allShown(r), `4 tiles: not every tile shows a frame (${r && r.frames})`);
     ok(r.n === '4' && r.mode === 'grid' && r.add === 'false' && r.cells === '4', `n=${r.n} mode=${r.mode} add=${r.add} cells=${r.cells}`);
-    // One canvas covers the picture area at device pixels; each tile is fitted into its quarter.
-    const [cw, ch] = r.canvas.split('x').map(Number);
-    const [sw0, sh0] = r.stage.split('x').map(Number);
-    ok(Math.abs(cw - sw0) <= 1 && Math.abs(ch - sh0) <= 1, `grid canvas ${r.canvas}: expected the stage's ${r.stage}`);
-    ok(firstCanvas === r.canvas, `grid canvas changed from ${firstCanvas} to ${r.canvas} after the first tile drew`);
+    // Each tile draws on its own canvas (the unified page), fitted into its quarter of the picture area: a 2x2 grid of
+    // equal pictures (the four clips are all 1080p) that do not overlap, laid out once the first tile drew.
+    const pics = String(r.fulls).split(';').map((q) => q.split('/').map(Number));
+    const cols = [...new Set(pics.map(([x, , w]) => Math.round(x + w / 2)))].sort((a, b) => a - b);
+    const rows = [...new Set(pics.map(([, y, , h]) => Math.round(y + h / 2)))].sort((a, b) => a - b);
+    ok(r.grid === '2x2' && pics.length === 4 && cols.length === 2 && rows.length === 2, `grid ${r.grid}, tile pictures ${r.fulls}`);
+    ok(pics.every(([, , w, h]) => w > 0 && h > 0 && Math.abs(w - pics[0][2]) <= 1 && Math.abs(h - pics[0][3]) <= 1), `tile pictures differ in size: ${r.fulls}`);
+    ok(pics.every(([x, y, w, h]) => pics.every(([x2, y2, w2, h2]) => (x === x2 && y === y2)
+      || x + w <= x2 + 1 || x2 + w2 <= x + 1 || y + h <= y2 + 1 || y2 + h2 <= y + 1)), `tile pictures overlap: ${r.fulls}`);
+    ok(firstPic === pics[0].join('/'), `A's picture moved from ${firstPic} to ${pics[0].join('/')} after the first tile drew`);
     act({ action: 'seek', t: 0 });
     await until((x) => x.synced === 'true', 15000);
     const s0 = nums((await report()).shown);
@@ -368,6 +376,20 @@ module.exports = [{
     await until((x) => x.synced === 'true', 15000);
     r = await stepAndWait(1);
     checkFrames(ok, r, pair, '2 tiles, B +250 ms');
+    // Shorter clock (B = 2 s, 24 fps) playing to natural EOF must pause the longer follower (A = 3 s, 30 fps) too,
+    // and seeking backwards while paused must keep both tiles paused.
+    ok = t('pair/short-clock-eof');
+    act({ action: 'offset', tile: 1, v: 0, unit: 'frames' });
+    act({ action: 'clock', tile: 1 });
+    await until((x) => x.clock === '1' && x.synced === 'true', 10000);
+    act({ action: 'seek', t: 1.7 });
+    await until((x) => x.synced === 'true' && nums(x.frames)[1] >= 38, 10000);
+    act({ action: 'play' });
+    r = await until((x) => x.playing === '0,0' && nums(x.frames)[1] >= 46, 15000);
+    ok(r && r.playing === '0,0', `shorter clock EOF left a tile playing: playing=${r && r.playing} frames=${r && r.frames}`);
+    act({ action: 'seek', t: 0.5 });
+    r = await until((x) => x.synced === 'true' && nums(x.frames)[1] <= 15, 10000);
+    ok(r && r.playing === '0,0', `seeking backwards after EOF resumed a tile: playing=${r && r.playing}`);
     await h.closeClip(vs);
     return out;
   },
@@ -705,6 +727,7 @@ module.exports = [{
       let from = vs.mark();
       vs.send({ compareFiles: files.slice(0, 3) });
       await vs.waitLog(opened(3), { from, timeout: 30000 });
+      await until((x) => list(x.frames).length === 3 && !list(x.frames).includes('-'), 30000);
       act({ action: 'offset', tile: 1, v: 3, unit: 'frames' });
       act({ action: 'clock', tile: 2 });
       act({ action: 'sound', tile: 1 });
@@ -736,9 +759,9 @@ module.exports = [{
       await results.run('reorder/commit', (ok) => {
         ok(order(u) === '2,0,1,add', `committed order: ${order(u)}`);
         const rows = (u.panel?.rows || []).map((r) => r.label).filter((label) => /^[A-C]:/.test(label));
-        ok(rows[0]?.startsWith(`A: ${CLIPS[2]}, clock`) && rows[1]?.startsWith(`B: ${CLIPS[0]}`),
+        ok(rows[0] === `A: ${CLIPS[2]}, offset In step, sets the clock` && rows[1]?.startsWith(`B: ${CLIPS[0]}`),
           `clock or panel order changed: ${rows}`);
-        ok(rows[2] === `C: ${CLIPS[1]}, sound, offset +3 frames`, `sound or offset changed: ${rows}`);
+        ok(rows[2] === `C: ${CLIPS[1]}, offset +3 frames, sound on`, `sound or offset changed: ${rows}`);
       });
       act({ action: 'panel' });
       pointer('pointerdown', grid[0].rect);
@@ -754,19 +777,22 @@ module.exports = [{
       u = await ui();
       const addedOrder = order(u);
       from = vs.mark();
-      act({ action: 'remove', tile: 0 });
+      // Tiles are numbered as shown (C, A, B, D): remove A, the second. The report's per-tile values follow the shown
+      // order; a cell's `tile` is its video's own number (A 0, B 1, C 2, D 3), which does not change.
+      act({ action: 'remove', tile: 1 });
       await vs.waitLog(opened(3), { from, timeout: 30000 });
       const r = await until((x) => x.synced === 'true');
       u = await ui();
       await results.run('reorder/restore', (ok) => {
         ok(addedOrder === '2,0,1,3', `added video should go last: ${addedOrder}`);
-        ok(order(u) === '1,0,2,add', `removal should keep the other videos' order: ${order(u)}`);
-        ok(r.synced === 'true' && r.clock === '1' && r.sound === '0' && r.offsets === '3f,0f,0f',
-          `restored sync, clock, sound and offset: ${JSON.stringify(r)}`);
+        ok(order(u) === '2,1,3,add', `removal should keep the other videos' order: ${order(u)}`);
+        ok(r.synced === 'true' && r.clock === '0' && r.sound === '1' && r.offsets === '0f,3f,0f',
+          `kept sync, clock (C), sound (B) and B's offset: ${JSON.stringify(r)}`);
       });
       // A letterboxed grid (5 tiles, 3x2): each tile's arrows sit on its own picture, not in the black bars of the cell.
+      // Two videos not shown yet (Compare declines a video it shows already): the removed one and a fifth.
       from = vs.mark();
-      vs.send({ compareAdd: [files[2], files[3]] });
+      vs.send({ compareAdd: [files[0], path.join(h.MEDIA, 'av1_8_1080p.mp4')] });
       await vs.waitLog(opened(5), { from, timeout: 30000 });
       act({ action: 'stageSize', w: 1000, h: 700 });
       await until((x) => x.n === '5' && x.grid === '3x2', 20000);

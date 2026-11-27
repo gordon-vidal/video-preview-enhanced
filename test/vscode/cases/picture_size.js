@@ -195,7 +195,7 @@ module.exports = [{
       await vs.waitLog(new RegExp(`\\[${tagA}\\] webview: first frame shown`), { from, timeout: 45000, what: 'first frame' });
       const f2 = vs.mark();
       vs.send({ compareWith: [files[1]], name: CLIP, t: 0.5 });
-      await vs.waitLog(/\[compare [^\]]*\] opened, .* 2 tiles/, { from: f2, timeout: 30000, what: 'compare opened' });
+      await vs.waitLog(/\[compare [^\]]*\] (?:opened, .*, |tiles: )2(?: tiles)?\b/, { from: f2, timeout: 30000, what: 'compare opened' });
       await ui((x) => x.picture.tiles.length === 2 && x.picture.tiles.every((t) => t.box[2] > 0));
       act({ action: 'stageSize', w: 1000, h: 600 });
 

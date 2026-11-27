@@ -51,6 +51,35 @@
    * }} CompareDebugDeps
    */
 
+  /**
+   * The stage's cell elements as the viewer sees them, one group per cell: in layout order (rows top to bottom, then
+   * left to right), not in the order they were made. The unified page keeps a tile's element across reorder, swap and
+   * dock changes and only moves it (style left / top), so its DOM order is the order the tiles first appeared. A tile
+   * lifted by a drag counts where it is dragged to (its translate). The two halves of a Split Wipe are one cell, the
+   * left (split-a) first.
+   * @param {ArrayLike<any>} children
+   * @returns {any[][]}
+   */
+  function cellGroups(children) {
+    const els = Array.from(children || []);
+    const px = (/** @type {any} */ v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+    const split = els.filter((d) => d.classList && d.classList.contains('split'));
+    if (split.length) {
+      const side = (/** @type {any} */ d) => (d.dataset && d.dataset.role === 'split-b' ? 1 : 0);
+      return [split.slice().sort((a, b) => side(a) - side(b)), ...els.filter((d) => !split.includes(d)).map((d) => [d])];
+    }
+    const at = els.map((d, i) => {
+      const st = d.style || {};
+      let x = px(st.left), y = px(st.top);
+      const lift = String(st.zIndex) === '5' && /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(String(st.transform || ''));
+      if (lift) { x += Number(lift[1]); y += Number(lift[2]); }
+      return { d, i, x, y };
+    });
+    // Half a pixel apart is the same row (rounding of the layout).
+    at.sort((a, b) => (Math.abs(a.y - b.y) > 0.5 ? a.y - b.y : Math.abs(a.x - b.x) > 0.5 ? a.x - b.x : a.i - b.i));
+    return at.map((e) => [e.d]);
+  }
+
   /** @param {CompareDebugDeps} deps */
   function install(deps) {
     const {
@@ -78,7 +107,7 @@
         + ` transport=${per((p) => p.frameStream ? 'stream' : p.cfg.native ? 'message' : '-')}`
         + ` gains=${per((p) => (p.gain ? p.gain.gain.value.toFixed(2) : 'x'))} audio=${per((p) => (p.info && p.info.audio ? 1 : 0))}`
         + ` offsets=${st.offsets.map((o) => `${o.v}${o.unit === 'ms' ? 'ms' : 'f'}`).join(',')} seekMax=${ui.seek.max}`
-        + ` picture=${st.pic.mode} zoom=${st.pic.zoom.toFixed(3)} cx=${st.pic.cx.toFixed(3)} cy=${st.pic.cy.toFixed(3)} factor=${frameFactor()} fulls=${cells.filter((c) => !c.add).map((c) => [c.full.x, c.full.y, c.full.w, c.full.h].map(Math.round).join('/')).join(';')} cells=${cells.filter((c) => !c.add).length} add=${cells.some((c) => c.add)} divider=${!!cellsEl.querySelector('#divider')} panel=${controls.view() || '-'} menu=${!ui.menu.hidden}`
+        + ` picture=${st.pic.mode} zoom=${st.pic.zoom.toFixed(3)} cx=${st.pic.cx.toFixed(3)} cy=${st.pic.cy.toFixed(3)} factor=${frameFactor()} fulls=${cells.filter((c) => !c.add).map((c) => [c.full.x, c.full.y, c.full.w, c.full.h].map(Math.round).join('/')).join(';')} cells=${cells.filter((c) => !c.add).length} add=${cells.some((c) => c.add)} divider=${!!($('divider') && !$('divider').hidden)} panel=${controls.view() || '-'} menu=${!ui.menu.hidden}`
         + ` rate=${st.rate} loop=${st.loop} scan=${scanner.running ? 'running' : scanner.found ? `found:${scanner.found.frame + 1}` : '-'}`);
     }
     /** What the page shows, as JSON (test hook): the bar, the open panel, the menu, the tiles' overlays. */
@@ -86,9 +115,13 @@
       const { cells, hover, syncMode, statsIds } = getState();
       const text = (e) => (e ? (e.textContent || '').replace(/\s+/g, ' ').trim() : '');
       const rect = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
-      const shown = (e) => !!e && !e.hidden && getComputedStyle(e).display !== 'none';
+      const shown = (e) => !!e && !e.hidden && (!e.closest || !e.closest('[hidden]')) && getComputedStyle(e).display !== 'none';
       const splitter = $('splitter');
       const addPop = $('addPop');
+      const divider = $('divider');
+      const groups = cellGroups(cellsEl.children);
+      const all = (/** @type {any[]} */ g, /** @type {string} */ sel) => g.flatMap((d) => [...d.querySelectorAll(sel)]);
+      const one = (/** @type {any[]} */ g, /** @type {string} */ sel) => all(g, sel)[0] || null;
       return {
         bar: {
           ids: [...ui.bar.querySelectorAll('button, input')].filter(shown).map((b) => b.id),
@@ -106,25 +139,30 @@
         active: document.activeElement?.id || document.activeElement?.getAttribute('aria-label'),
         menu: ui.menu.hidden ? null : { tile: Number(ui.menu.dataset.tile), items: [...ui.menu.querySelectorAll('.mi')].map((b) => text(b)) },
         addPop: addPop && !addPop.hidden ? text(addPop) : null,
-        cells: [...cellsEl.children].map((/** @type {HTMLElement} */ d) => ({
-          tile: d.dataset.tile === undefined ? (d.classList.contains('add') ? 'add' : '') : d.dataset.tile, rect: rect(d),
-          pills: [...d.querySelectorAll('.pill')].map((p) => text(p)), nudges: [...d.querySelectorAll('.nudge')].map((n) => text(n)),
-          moves: [...d.querySelectorAll('[data-act="move"]')].map((/** @type {HTMLButtonElement} */ b) => ({
-            label: b.getAttribute('aria-label'), disabled: b.disabled, focused: b === document.activeElement,
-          })),
-          hasSpot: !!d.querySelector('[data-act="spot"]'),
-          hasRm: !!d.querySelector('[data-act="remove"]'),
-          rmConfirm: !!d.querySelector('[data-act="remove"].confirm'),
-          statsOpen: d.classList.contains('show-stats'),
-          info: (() => { const b = d.querySelector('.mute-mini[data-act="info"]'); return b ? { pressed: b.getAttribute('aria-pressed'), focused: b === document.activeElement } : null; })(),
-          ended: d.classList.contains('ended'),
-          pillRects: [...d.querySelectorAll('.pill')].map(rect),
-          nudgeRects: [...d.querySelectorAll('.nudge')].map(rect),
-          moveRects: [...d.querySelectorAll('.move button')].map(rect),
-          picRect: (() => { const c = cells[[...cellsEl.children].indexOf(d)]; const o = cellsEl.getBoundingClientRect(); return c && c.pic ? [Math.round(o.left + c.pic.x), Math.round(o.top + c.pic.y), Math.round(c.pic.w), Math.round(c.pic.h)] : null; })(),
-          pics: [...d.querySelectorAll('.ov')].map((o) => rect(o)), oor: !!d.querySelector('.oor:not([hidden])') || d.classList.contains('ended'),
-        })),
-        divider: (() => { const dv = cellsEl.querySelector('#divider'); return dv ? { rect: rect(dv), value: dv.getAttribute('aria-valuenow') } : null; })(),
+        cells: groups.map((g, gi) => {
+          const d = g[0];
+          return {
+            tile: d.dataset.tile === undefined ? (d.classList.contains('add') ? 'add' : '') : d.dataset.tile, rect: rect(d),
+            pills: all(g, '.pill').map((p) => text(p)), nudges: all(g, '.nudge').map((n) => text(n)),
+            moves: all(g, '[data-act="move"]').map((/** @type {HTMLButtonElement} */ b) => ({
+              label: b.getAttribute('aria-label'), disabled: b.disabled, focused: b === document.activeElement,
+            })),
+            hasSpot: !!one(g, '[data-act="spot"]'),
+            // The tile's Enlarge button: "Enlarge tile" (into Spotlight, or swap into it) or "Back to grid" (the main tile).
+            enlarge: (() => { const b = one(g, '[data-act="enlarge"]'); return b ? b.getAttribute('title') : null; })(),
+            hasRm: !!one(g, '[data-act="remove"]'),
+            rmConfirm: !!one(g, '[data-act="remove"].confirm'),
+            statsOpen: d.classList.contains('show-stats'),
+            info: (() => { const b = one(g, '.mute-mini[data-act="info"]'); return b ? { pressed: b.getAttribute('aria-pressed'), focused: b === document.activeElement } : null; })(),
+            ended: d.classList.contains('ended'),
+            pillRects: all(g, '.pill').map(rect),
+            nudgeRects: all(g, '.nudge').map(rect),
+            moveRects: all(g, '.move button').map(rect),
+            picRect: (() => { const c = cells[gi]; const o = cellsEl.getBoundingClientRect(); return c && c.pic ? [Math.round(o.left + c.pic.x), Math.round(o.top + c.pic.y), Math.round(c.pic.w), Math.round(c.pic.h)] : null; })(),
+            pics: all(g, '.ov').map((o) => rect(o)), oor: !!one(g, '.oor:not([hidden])') || g.some((x) => x.classList.contains('ended')),
+          };
+        }),
+        divider: divider && !divider.hidden ? { rect: rect(divider), value: divider.getAttribute('aria-valuenow') } : null,
         splitter: splitter && !splitter.hidden ? { rect: rect(splitter), value: splitter.getAttribute('aria-valuenow'), dir: splitter.classList.contains('v') ? 'v' : 'h' } : null,
         stage: rect(stage), toast: ui.toast.hidden ? '' : ui.toast.textContent,
         toastRect: ui.toast.hidden ? null : rect(ui.toast), live: ui.live.textContent, hover,
@@ -185,16 +223,20 @@
           break;
         }
         case 'drag': { // the split divider dragged to fraction `x` of the picture, with pointer events
-          const dv = cellsEl.querySelector('#divider');
-          if (!dv) { log('drag: no divider'); break; }
+          const dv = $('divider');
+          if (!dv || dv.hidden) { log('drag: no divider'); break; }
           const c = getState().cells[0];
-          const r = stage.getBoundingClientRect();
+          // The divider tracks the picture as shown (letterboxing): its part inside the cell, in client pixels.
+          const o = cellsEl.getBoundingClientRect();
+          const full = c.full || c.pic;
+          const left = o.left + Math.max(c.x, full.x);
+          const width = Math.min(c.x + c.w, full.x + full.w) - Math.max(c.x, full.x);
           const from = dv.getBoundingClientRect();
           const y = from.top + from.height / 2;
           const ev = (type, x) => dv.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 7, button: 0, isPrimary: true }));
           ev('pointerdown', from.left + from.width / 2);
-          for (let k = 1; k <= 4; k++) ev('pointermove', r.left + c.pic.x + c.pic.w * (st.split + (m.x - st.split) * k / 4));
-          ev('pointerup', r.left + c.pic.x + c.pic.w * m.x);
+          for (let k = 1; k <= 4; k++) ev('pointermove', left + width * (st.split + (m.x - st.split) * k / 4));
+          ev('pointerup', left + width * m.x);
           break;
         }
         case 'dom': { // a mouse / pointer / wheel event at client (x, y), or at an explicit target
@@ -240,7 +282,7 @@
     });
   }
 
-  const api = { install };
+  const api = { install, cellGroups };
   const commonJs = /** @type {{ exports?: typeof api } | undefined} */ (
     // @ts-ignore The webview has no CommonJS globals.
     typeof module === 'undefined' ? undefined : module

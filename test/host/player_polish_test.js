@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { barHtml } = require('../../src/bar');
 const reducedResNotice = require('../../media/reduced-res-notice');
-const { load, webviewConfig } = require('./mock_vscode');
+const { load } = require('./mock_vscode');
 
 const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mkv');
 
@@ -31,7 +31,7 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
   for (const centerLayout of [true, false]) {
     const h = load({ settings: { 'zenMode.centerLayout': centerLayout } });
     const s = h.open(clip);
-    await s.shown;
+    await s.send({ type: 'ready' });
     h.vscode.executed = [];
     const zen = ['workbench.action.toggleZenMode'];
     const centered = ['workbench.action.toggleCenteredLayout'];
@@ -59,7 +59,7 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
     }
 
     if (centerLayout) {
-      assert.equal(webviewConfig(s.panel.webview).hideReducedResNotice, false);
+      assert.ok(!s.posted.some((message) => message.type === 'hideReducedResNotice'), 'shown until hidden');
       h.vscode.executed = [];
       await s.send({ type: 'action', id: native.settings.id });
       await s.send({ type: 'action', id: stream.settings.id });
@@ -71,8 +71,8 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
       assert.equal(h.context.globalState.get('videoPreviewEnhanced.hideReducedResNotice'), true);
       assert.ok(s.posted.some((message) => message.type === 'hideReducedResNotice'));
       const next = h.open(clip);
-      await next.shown;
-      assert.equal(webviewConfig(next.panel.webview).hideReducedResNotice, true);
+      await next.send({ type: 'ready' });
+      assert.ok(next.posted.some((message) => message.type === 'hideReducedResNotice'), 'a later page hears it when ready');
       next.panel.dispose();
     }
     s.panel.dispose();

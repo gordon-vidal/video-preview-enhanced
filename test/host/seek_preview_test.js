@@ -209,10 +209,10 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
   const engineSrc = fs.readFileSync(path.join(root, 'media', 'engine.js'), 'utf8');
   assert.ok(!engineSrc.includes('cfg.native ? this.remoteStream'), 'engine: Live transcode is not excluded from thumbnails');
   assert.ok(engineSrc.includes('if (this.cfg.net) return null;'), 'engine: URL tabs have no thumbnails');
-  const extSrc = fs.readFileSync(path.join(root, 'src', 'extension.js'), 'utf8');
-  const sendThumbSrc = extSrc.slice(extSrc.indexOf('  sendThumb(m) {'), extSrc.indexOf('  async sendExactFrame'));
-  assert.ok(sendThumbSrc.includes('nd instanceof remotestream.EncodedStream'), 'host: EncodedStream gets thumbnails');
-  assert.ok(sendThumbSrc.includes('!this.url'), 'host: URL tabs excluded');
+  const viewerSrc = fs.readFileSync(path.join(root, 'src', 'unified-viewer.js'), 'utf8');
+  const onThumbSrc = viewerSrc.slice(viewerSrc.indexOf('  async function onThumb('), viewerSrc.indexOf('  async function onExactFrame('));
+  assert.ok(onThumbSrc.includes("kind === 'native' || kind === 'stream'"), 'host: Live transcode (EncodedStream) gets thumbnails');
+  assert.ok(onThumbSrc.includes('isFileClip(c)'), 'host: URL clips excluded');
   {
     const { EncodedStream } = require('../../src/remotestream.js');
     const probed = { duration: 20, video: { index: 0, codec: 'hevc', width: 1920, height: 1080, fps: 30, startTime: 0 }, audio: null };

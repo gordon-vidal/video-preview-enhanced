@@ -334,7 +334,178 @@
     };
   }
 
-  const api = { computeMetrics, ssim, lumaMetrics, resizeLuma, lumaOf, captureLuma, Metrics, install };
+  /**
+   * Stops what captureLuma started: the renderer no longer hands its frames over, a kept VideoFrame is closed.
+   * @param {any} p
+   * @param {{setCapture?: (renderer: any, onFrame: ((frame: any) => void) | null) => void}} [renderer]
+   */
+  function releaseLuma(p, renderer) {
+    const g = p && p.gl;
+    if (g) {
+      if (renderer && typeof renderer.setCapture === 'function') renderer.setCapture(g, null);
+      else g.onFrame = null;
+    }
+    const old = p && p.lumaSrc;
+    if (old && old.vf) { try { old.vf.close(); } catch { /* closed */ } }
+    if (p) p.lumaSrc = null;
+  }
+
+  /** PSNR as Compare's log prints it. @param {number} v */
+  const fmtDb = (v) => (v === Infinity ? '∞' : `${v.toFixed(2)} dB`);
+
+  /**
+   * @typedef {{
+   *   pairMetrics: (pa: any, pb: any, o: {ssim: boolean, rgb: boolean}) => Promise<any>,
+   *   log: (message: string) => void,
+   *   pair: () => any[] | null,
+   *   paused: () => boolean,
+   *   settled: () => boolean,
+   *   outOfRange: () => boolean,
+   *   offsetKey: () => string,
+   *   frameOf: (p: any) => number,
+   *   seekFrame: (frame: number) => void,
+   *   maxFrame: () => number,
+   *   pause?: () => void,
+   *   now?: () => number,
+   *   setTimer?: (fn: () => void, ms: number) => any,
+   *   clearTimer?: (t: any) => void,
+   *   settleMs?: number,
+   * }} DebugMetricsDeps
+   */
+
+  /**
+   * Compare's metrics and first-difference search over any page (media/player-unified.js), as media/compare.js ran
+   * them: kept for a later advanced mode, so debug builds only log them (the layer-3 scenario compare_metrics reads
+   * `metrics frameA=..` and `scan: ..`). `check()` after each frame tick logs the paused pair's metrics once per pair of
+   * pictures; `scanner.start()` steps both tiles on from the next frame until B's PSNR Y drops below the threshold.
+   * @param {DebugMetricsDeps} deps
+   */
+  function createDebugMetrics(deps) {
+    const { pairMetrics, log, pair, paused, settled, outOfRange, offsetKey, frameOf, seekFrame, maxFrame } = deps;
+    const now = deps.now || (() => Date.now());
+    const setTimer = deps.setTimer || ((fn, ms) => setTimeout(fn, ms));
+    const clearTimer = deps.clearTimer || ((t) => clearTimeout(t));
+    const settleMs = deps.settleMs || 10000;
+    let lastKey = '';
+    /** @type {any} */
+    let last = null;
+
+    /** @param {string} key @param {any[]} ps */
+    async function run(key, ps) {
+      const [pa, pb] = ps;
+      try {
+        const t0 = now();
+        const m = await pairMetrics(pa, pb, { ssim: true, rgb: true });
+        if (!m || key !== lastKey) return;
+        m.ms = now() - t0;
+        last = m;
+        log(`metrics frameA=${frameOf(pa) + 1} frameB=${frameOf(pb) + 1} psnrY=${m.psnrY.toFixed(3)} psnrRGB=${Number(m.psnrRGB).toFixed(3)} ssimY=${Number(m.ssimY).toFixed(5)} exactY=${m.exactY} ${m.w}x${m.h} ${m.ms.toFixed(0)}ms`);
+      } catch (e) {
+        log(`metrics failed: ${e && /** @type {any} */ (e).stack || e}`);
+        last = null;
+      }
+    }
+
+    /** After a frame tick: a paused, settled pair whose pictures changed is measured (once). */
+    function check() {
+      const ps = pair();
+      if (!ps || ps.length !== 2 || !paused()) { lastKey = ''; last = null; return; }
+      if (scanner.running || !settled()) return;
+      const out = outOfRange();
+      const key = `${ps[0].shownCount || 0}|${ps[1].shownCount || 0}|${offsetKey()}|${out}`;
+      if (key === lastKey) return;
+      lastKey = key;
+      if (out) { last = { out: true }; return; }
+      Promise.resolve().then(() => { if (key === lastKey) return run(key, ps); return undefined; });
+    }
+
+    const scanner = {
+      running: false,
+      /** @type {{frame: number, psnrY: number} | null} */ found: null,
+      thresh: 40,
+      from: 0,
+      frame: 0,
+      count: 0,
+      t0: 0,
+      /** @type {any} */ timer: null,
+      /** @param {number} [thresh] */
+      start(thresh) {
+        const ps = pair();
+        if (this.running || !ps || ps.length !== 2) return;
+        this.running = true;
+        this.found = null;
+        if (Number(thresh) > 0) this.thresh = Number(thresh);
+        this.from = frameOf(ps[0]) + 1;
+        this.frame = this.from;
+        this.count = 0;
+        this.t0 = now();
+        if (deps.pause) deps.pause();
+        this.next();
+      },
+      /** @param {string} [text] @param {{frame: number, psnrY: number}} [found] */
+      stop(text, found) {
+        if (!this.running) return;
+        this.running = false;
+        if (this.timer !== null) { clearTimer(this.timer); this.timer = null; }
+        if (found) this.found = found;
+        log(`scan: ${text || 'Stopped'} (${this.count} frames in ${((now() - this.t0) / 1000).toFixed(1)} s)`);
+      },
+      /** Shows the next frame on both tiles, then measures it once they settled. */
+      next() {
+        if (!this.running) return;
+        if (this.frame > maxFrame()) {
+          this.stop(`No frame below ${this.thresh} dB after #${this.from} (${this.count} frames checked)`);
+          return;
+        }
+        seekFrame(this.frame);
+        const since = now();
+        const wait = () => {
+          this.timer = null;
+          if (!this.running) return;
+          const ps = pair();
+          if (!ps || ps.length !== 2) { this.stop('Scan failed: a tile closed'); return; }
+          if (!settled() || frameOf(ps[0]) !== this.frame) {
+            if (now() - since > settleMs) { this.stop(`Scan failed: frame #${this.frame + 1} did not show`); return; }
+            this.timer = setTimer(wait, 20);
+            return;
+          }
+          this.measure(ps);
+        };
+        this.timer = setTimer(wait, 0);
+      },
+      /** @param {any[]} ps */
+      async measure(ps) {
+        const frame = this.frame;
+        this.count++;
+        try {
+          if (!outOfRange()) {
+            const m = await pairMetrics(ps[0], ps[1], { ssim: false, rgb: false });
+            if (!this.running) return;
+            if (m && m.psnrY < this.thresh) {
+              this.stop(`#${frame + 1}: PSNR Y ${fmtDb(m.psnrY)} (< ${this.thresh} dB)`, { frame, psnrY: m.psnrY });
+              return;
+            }
+          }
+        } catch (e) {
+          log(`scan error: ${e && /** @type {any} */ (e).stack || e}`);
+          this.stop(`Scan failed: ${e && /** @type {any} */ (e).message || e}`);
+          return;
+        }
+        this.frame = frame + 1;
+        this.next();
+      },
+    };
+
+    return {
+      check,
+      scanner,
+      /** The last metrics logged (or { out: true }), null while playing or before one. */
+      metrics: () => last,
+      dispose() { scanner.stop(); lastKey = ''; last = null; },
+    };
+  }
+
+  const api = { computeMetrics, ssim, lumaMetrics, resizeLuma, lumaOf, captureLuma, releaseLuma, Metrics, install, createDebugMetrics };
   const commonJs = /** @type {{ exports?: typeof api } | undefined} */ (
     // @ts-ignore The webview has no CommonJS globals.
     typeof module === 'undefined' ? undefined : module

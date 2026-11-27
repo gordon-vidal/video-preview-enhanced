@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { barHtml, playFlashHtml } = require('../../src/bar');
 const { folderRailHtml } = require('../../src/folder-rail-html');
+const { capBannerHtml } = require('../../src/unified-html');
 
 const ROOT = path.join(__dirname, '..', '..');
 
@@ -40,24 +41,31 @@ function sanitizeCssForInlineFrame(css) {
 
 /**
  * Shared stage + rail + bar + popup markup used by both the rendered mockup harness and the strict Node DOM
- * fixture (test/host/player_ui_test.js), so the test fixture can never drift from the rendered harness.
+ * fixture (test/host/player_ui_test.js), so the test fixture can never drift from the rendered harness. The stage
+ * carries src/unified-html.js's #subs cue layer, #overlay (status / error; hidden here, the fake engine opens at once)
+ * and #notice banner, so the tool and lifecycle controllers run against the same elements as production.
  */
 function stageMarkupHtml() {
-  const realBarHtml = barHtml({ compare: false, canCompare: true, compareOpen: false, folder: true });
+  const realBarHtml = barHtml({ canCompare: true, compareOpen: false, folder: true });
   const realRailHtml = folderRailHtml();
   return `<div id="main">
     <div id="stage" class="fit">
       <div id="cells"></div>
+      <div id="subs" hidden></div>
+      <div id="overlay" hidden><div id="message"></div><div id="hint"></div><button id="action" type="button" hidden></button></div>
+      <div id="dropHint" hidden aria-hidden="true">Drop to compare</div>
       ${playFlashHtml}
-      <div class="cap-banner" id="capBanner" hidden>
-        <span class="cap-pulse"></span>
-        <span>Open new videos in this compare view</span>
-        <button id="capPickBtn" type="button">Pick…</button>
-        <button id="capStopBtn" type="button">Pause</button>
-      </div>
+      ${capBannerHtml}
       <div class="splitter h" id="splitter" hidden><div class="splitter-bar"></div></div>
       <div id="divider" role="slider" tabindex="0" aria-label="Split position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" hidden><div class="h">⇄</div></div>
       <div id="toast" hidden aria-hidden="true"></div>
+      <div id="notice" hidden>
+        <span id="noticeText"></span>
+        <button id="noticeAction" type="button"></button>
+        <button id="noticeSettings" class="noticeSecondary" type="button" hidden></button>
+        <button id="noticeHide" class="noticeSecondary" type="button" hidden></button>
+        <button id="noticeClose" type="button" title="Dismiss" aria-label="Dismiss">×</button>
+      </div>
     </div>
     ${realRailHtml}
   </div>
@@ -65,6 +73,7 @@ function stageMarkupHtml() {
   <div id="panel" class="panel" role="dialog" aria-label="Player settings" hidden></div>
   <div id="sheet" hidden></div>
   <div id="ctxmenu" class="ctxmenu" role="menu" aria-label="Player menu" tabindex="-1" hidden></div>
+  <div id="menu" role="menu" aria-label="Tile menu" hidden></div>
   <div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>`;
 }
 
@@ -95,6 +104,12 @@ function buildMockupHtml(opts = {}) {
     'media/controls.js',
     'media/ctxmenu.js',
     'media/folder-rail.js',
+    'media/player-ui-tiles.js',
+    'media/player-ui-input.js',
+    'media/reduced-res-notice.js',
+    'media/slow-notice.js',
+    'media/player-ui-tools.js',
+    'media/player-ui-lifecycle.js',
     'media/player-ui.js',
     'tools/mockup/fake-engine.js',
     'tools/mockup/fake-host.js',
@@ -218,40 +233,31 @@ html, body {
 /* Real #main (stage + real Folder Rail side-by-side) and #bar fill the rest of .wb */
 #main { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
 #stage { flex: 1; min-width: 0; min-height: 0; background: #000; position: relative; overflow: hidden; }
-.cell { cursor: pointer !important; transition: left 160ms cubic-bezier(0.2,0,0,1), top 160ms cubic-bezier(0.2,0,0,1), width 160ms cubic-bezier(0.2,0,0,1), height 160ms cubic-bezier(0.2,0,0,1); }
-#stage.fit .cell canvas, #stage .cell canvas { width: 100%; height: 100%; max-width: none; max-height: none; display: block; }
-.cell-border { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
-.cell.add .addcell { opacity: 0.45; border-style: dashed; }
-.cell.add:hover .addcell { opacity: 1; }
-
-.cap-banner {
-  position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 12;
-  display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px 4px 10px; border-radius: 999px;
-  background: var(--vpe-surface-float); backdrop-filter: blur(10px);
-  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder) 55%, transparent);
-  color: var(--vpe-panel-fg); font-size: 11px; white-space: nowrap;
+/* No CSS transition on the cells: media/player-ui-tiles.js createGlide (FLIP) glides them, as in Compare. */
+.cell { cursor: pointer !important; }
+/* The tile canvases (#stage .cell > canvas) and .cell-border are styled by the real media/compare.css. */
+.cell.add { cursor: pointer !important; }
+.cell.add .addcell {
+  flex-direction: row; padding: 6px 12px; border-radius: 999px; font-size: 11.5px; border-style: dashed;
 }
-.cap-banner button {
-  border: 1px solid var(--vpe-bd-subtle); background: var(--vpe-fill-subtle); color: inherit;
-  border-radius: 999px; padding: 2px 8px; font: inherit; font-size: 10.5px; cursor: pointer;
-}
-.cap-banner button:hover { background: var(--vpe-hover); }
-.cap-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-focusBorder); }
-
-#startCompareBtn { width: auto; padding: 0 6px; gap: 5px; font-size: 11px; }
-#startCompareBtn.cap-on {
-  background: color-mix(in srgb, var(--vscode-focusBorder) 16%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vscode-focusBorder) 55%, transparent);
-  color: var(--vscode-foreground); padding: 0 7px;
-}
-#bar .ib.active { background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-active); }
 
 /* Keep real popups (#panel, #sheet, #ctxmenu, rail menus) bounded cleanly inside the 728 px inline frame */
 .panel { max-height: ${wbHeight - 86}px !important; overflow-y: auto; z-index: 25; }
 #sheet { position: absolute !important; inset: 0; z-index: 30; }
-#ctxmenu { z-index: 32; }
+#ctxmenu, #menu { z-index: 32; }
 .rail { width: var(--rail-w, 200px); }
 
+.code-tab-view {
+  position: absolute; inset: 0; z-index: 20;
+  background: var(--vscode-editor-background); color: var(--vscode-foreground);
+  padding: 20px 24px; font-family: var(--vpe-mono); font-size: 12px; line-height: 1.65;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.code-tab-banner {
+  padding: 8px 12px; border-radius: 6px; font-family: var(--vscode-font-family); font-size: 11.5px;
+  background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle); color: var(--vpe-dim);
+}
+.code-tab-banner strong { color: var(--vscode-foreground); }
 .harness-foot {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
   padding: 8px 2px 2px; font-size: 11.5px; color: var(--muted-foreground, var(--vpe-dim));
@@ -276,6 +282,10 @@ html, body {
     <div id="expList" style="display:flex;gap:5px;align-items:center;"></div>
   </div>
   <div class="tabs" id="tabs"></div>
+  <div id="codeView" class="code-tab-view" hidden>
+    <div class="code-tab-banner"><strong>Other editor active (app.js):</strong> Compare capture is paused while you work here. Clicking a video in Explorer above opens it in its own tab; switch back to your Compare tab to resume capture.</div>
+    <pre style="margin:0;opacity:0.85;">// Simulated non-video editor tab\nexport function exportSequence(clips) {\n  return clips.filter(Boolean).map((c) => c.name);\n}</pre>
+  </div>
   ${stageMarkupHtml()}
 </div>
 
@@ -300,10 +310,13 @@ ${inlinedScripts}
   const INITIAL_KEY = ${JSON.stringify(scenarioKey)};
   const $ = (id) => document.getElementById(id);
   const expList = $('expList'), tabsEl = $('tabs'), statePills = $('statePills'), scenarioSel = $('scenarioSel');
+  const codeView = $('codeView');
+  let inOtherEditor = false;
   const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text) x.textContent = text; return x; };
 
   function chrome(ws, ui) {
     const tab = S.getTab(ws);
+    if (codeView) codeView.hidden = !inOtherEditor;
     expList.textContent = '';
     for (const c of engine.clips.slice(0, 5)) {
       const idx = tab.tiles.indexOf(c.id);
@@ -312,26 +325,76 @@ ${inlinedScripts}
       const dot = el('span', 'dot');
       dot.style.background = c.color;
       b.append(dot, el('span', '', c.name));
-      if (idx >= 0 && ui.isMulti) b.appendChild(el('span', 'tag', S.TILE_KEYS[idx]));
-      b.onclick = () => host.explorerOpen(c.id);
+      if (!inOtherEditor && idx >= 0 && ui.isMulti) b.appendChild(el('span', 'tag', S.TILE_KEYS[idx]));
+      b.onclick = () => {
+        if (inOtherEditor) {
+          inOtherEditor = false;
+          // Other editor active: capture is paused, so opening a video opens a new tab instead of hijacking Compare.
+          const res = S.openVideo(ui$.getState(), c.id, { forceNewTab: true, label: c.name });
+          ui$.setState(res.state);
+          return;
+        }
+        host.explorerOpen(c.id);
+      };
       expList.appendChild(b);
     }
     tabsEl.textContent = '';
     for (const t of ws.tabs) {
-      const div = el('div', 'tab' + (t.id === tab.id ? ' active' : ''));
-      if (t.capture) { const d = el('span', 'tab-cap-dot'); d.title = 'Open new videos here'; div.appendChild(d); }
+      const div = el('div', 'tab' + (!inOtherEditor && t.id === tab.id ? ' active' : ''));
+      if (t.capture) { const d = el('span', 'tab-cap-dot'); d.title = inOtherEditor ? 'Capture paused (other editor active)' : 'Open new videos here'; if (inOtherEditor) d.style.opacity = '0.35'; div.appendChild(d); }
       div.appendChild(el('span', '', t.tiles.length === 1 ? engine.getClip(t.tiles[0]).name : 'Compare (' + t.tiles.length + ')'));
       if (ws.tabs.length > 1) { const x = el('span', 'tab-x', '×'); x.dataset.close = String(t.id); div.appendChild(x); }
       div.onclick = (e) => {
+        inOtherEditor = false;
         const close = e.target && e.target.dataset && e.target.dataset.close;
         ui$.setState(close ? S.closeTab(ui$.getState(), t.id) : S.selectTab(ui$.getState(), t.id));
       };
       tabsEl.appendChild(div);
     }
+    // Simulated non-video editor tab so you can test capture pausing while in another editor.
+    const codeTab = el('div', 'tab' + (inOtherEditor ? ' active' : ''));
+    codeTab.appendChild(el('span', '', 'app.js'));
+    codeTab.title = 'Switch to a code editor tab (pauses Compare capture while active)';
+    codeTab.onclick = () => { inOtherEditor = true; chrome(ui$.getState(), S.deriveUi(S.getTab(ui$.getState()), { width: 680, height: 370 })); };
+    tabsEl.appendChild(codeTab);
+
     statePills.innerHTML =
       '<span class="harness-pill">Videos: <strong>' + ui.n + '</strong></span>' +
       '<span class="harness-pill">Layout: <strong>' + ui.layoutLabel + '</strong></span>' +
-      '<span class="harness-pill">Capture: <strong>' + (tab.capture ? 'ON' : 'OFF') + '</strong></span>';
+      '<span class="harness-pill">Capture: <strong>' + (tab.capture ? (inOtherEditor ? 'PAUSED (other tab)' : 'ON') : 'OFF') + '</strong></span>';
+  }
+
+  // The mock-up's demo sound and subtitle tracks: media/player-ui.js shows none without a decoder, so the harness wraps
+  // VpeControls the way media/player-unified.js wrapControls does with the decoder's real streams.
+  const demoTracks = { audio: 'a0', sub: 'en' };
+  const DEMO_AUDIO = [{ id: 'a0', main: 'English (AAC 2.0)' }, { id: 'a1', main: 'Director Commentary' }];
+  const DEMO_SUBS = [{ key: 'en', main: 'English (SRT)', sub: 'Sidecar' }];
+  function demoControls(C) {
+    if (!C || typeof C.create !== 'function') return C;
+    return Object.assign({}, C, {
+      create(o) {
+        let inst = null;
+        const act = Object.assign({}, o.act, {
+          selectAudio(id) { demoTracks.audio = id; inst.refresh(); },
+          selectSub(k) { demoTracks.sub = k; inst.refresh(); },
+        });
+        const get = () => {
+          const s = o.get();
+          const sub = DEMO_SUBS.find((x) => x.key === demoTracks.sub);
+          const audio = DEMO_AUDIO.map((a) => Object.assign({}, a, { checked: a.id === demoTracks.audio }));
+          return Object.assign({}, s, {
+            subsLabel: sub ? sub.main : 'Off',
+            audioLabel: (DEMO_AUDIO.find((a) => a.id === demoTracks.audio) || DEMO_AUDIO[0]).main,
+            tracks: Object.assign({}, s.tracks, {
+              on: !!sub, label: sub ? sub.main : 'Off', sel: demoTracks.sub, audio,
+              subs: DEMO_SUBS.map((x) => Object.assign({}, x, { checked: x.key === demoTracks.sub })),
+            }),
+          });
+        };
+        inst = C.create(Object.assign({}, o, { get, act }));
+        return inst;
+      },
+    });
   }
 
   const ui$ = globalThis.VpePlayerUi.create({
@@ -341,7 +404,7 @@ ${inlinedScripts}
     engine,
     host,
     widgets: {
-      VpeControls: typeof VpeControls !== 'undefined' ? VpeControls : globalThis.VpeControls,
+      VpeControls: demoControls(typeof VpeControls !== 'undefined' ? VpeControls : globalThis.VpeControls),
       VpeFolderRail: typeof VpeFolderRail !== 'undefined' ? VpeFolderRail : globalThis.VpeFolderRail,
       VpeCtxMenu: typeof VpeCtxMenu !== 'undefined' ? VpeCtxMenu : globalThis.VpeCtxMenu,
       VpeAbLoop: typeof VpeAbLoop !== 'undefined' ? VpeAbLoop : globalThis.VpeAbLoop,
@@ -349,9 +412,18 @@ ${inlinedScripts}
       VpeTime: typeof VpeTime !== 'undefined' ? VpeTime : globalThis.VpeTime,
       VpePicture: globalThis.VpePicture,
       VpeModes: typeof VpeModes !== 'undefined' ? VpeModes : globalThis.VpeModes,
+      VpePlayerUiTiles: globalThis.VpePlayerUiTiles,
+      VpePlayerUiInput: globalThis.VpePlayerUiInput,
+      CompareGrid: globalThis.CompareGrid,
+      VpePlayerUiTools: globalThis.VpePlayerUiTools,
+      VpePlayerUiLifecycle: globalThis.VpePlayerUiLifecycle,
+      VpeReducedResNotice: globalThis.VpeReducedResNotice,
+      VpeSlowNotice: globalThis.VpeSlowNotice,
     },
     initial: SCENARIOS[INITIAL_KEY],
     container: $('wb'),
+    // No decoder here: the page's own clock plays the fake engine (the production default, 0, waits for a decoder).
+    tickMs: 42,
     onChange: chrome,
   });
   host.connect(ui$.onHostMessage);

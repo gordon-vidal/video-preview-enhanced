@@ -5,7 +5,21 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
 
 /* One cell per tile (Spotlight, Equal Grid, or Split's single picture); its overlay covers the tile's picture. */
 .cell { position: absolute; box-sizing: border-box; overflow: hidden; }
-.cell:not(.add):not(.split) { cursor: grab; touch-action: none; }
+/* The unified page (media/player-ui.js buildCells) draws each tile into its own canvas at the cell's size, also for one
+   video. player.css sizes stage pictures by #stage.fit / .zoom (max-width, width: auto, absolute + transform-origin):
+   a tile's canvas fills its cell instead, the engine letterboxes inside it. */
+#stage .cell > canvas {
+  position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+  max-width: none; max-height: none; transform: none; object-fit: fill;
+}
+/* Split Wipe: B's canvas overlays A's, so it must not paint player.css's black (it would hide A left of the divider). */
+.cell.split[data-role="split-b"] > canvas { background: transparent; }
+/* A 1 px inner edge so neighbouring tiles read apart (media/player-ui.js adds it to Compare tiles only). */
+.cell-border { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+.cell:not(.add):not(.split) { touch-action: none; }
+/* Tiles drag to reorder only in Compare: one video in the unified page (#cells holds a single cell) keeps the player's
+   pointer, as media/player.js does. */
+body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-child) { cursor: grab; }
 #stage.tile-dragging, #stage.tile-dragging .cell:not(.add) { cursor: grabbing; }
 /* A picture larger than its cell (Fill, 100 %, zoom) pans all tiles in lockstep; the ⋮⋮ name pill still drags tiles. */
 #stage.pannable .cell:not(.add) { cursor: move; }
@@ -20,7 +34,12 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   border-radius: 6px;
 }
 
-.ov { position: absolute; pointer-events: none; opacity: 0; transition: opacity 140ms ease; z-index: 4; }
+/* The overlay covers the tile's picture (--pic-* are the letterbox insets media/player-ui.js sets on the cell; 0 when
+   unset). Without an inset or a size it would collapse to 0 x 0 and clip the pills it positions. */
+.ov {
+  position: absolute; inset: var(--pic-t, 0px) var(--pic-r, 0px) var(--pic-b, 0px) var(--pic-l, 0px);
+  pointer-events: none; opacity: 0; transition: opacity 140ms ease; z-index: 4;
+}
 .cell:hover .ov,
 .cell.confirming .ov,
 #stage.sync-mode .ov,
@@ -241,7 +260,8 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
               width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
 }
 
-/* The first unused slot in Equal Grid has a centered Add video button (shows on hover); the empty area keeps normal stage gestures. */
+/* The first unused slot in Equal Grid has a centered Add video button (quiet at rest, full on hover or focus, so an empty
+   slot reads as one); the empty area keeps normal stage gestures. */
 .cell.add { border: 0; background: none; padding: 0; cursor: default; display: flex; align-items: center; justify-content: center; }
 #stage.pannable .cell.add { cursor: move; }
 #stage.pannable.panning .cell.add { cursor: grabbing; }
@@ -251,9 +271,9 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: color-mix(in srgb, var(--vscode-editorWidget-background, #14161c) 82%, transparent);
   color: var(--vscode-foreground, #d4d4d8); font: inherit; font-size: 12px; cursor: pointer;
-  opacity: 0; transition: opacity 120ms, background 120ms, border-color 120ms, color 120ms;
+  opacity: 0.6; transition: opacity 120ms, background 120ms, border-color 120ms, color 120ms;
 }
-.cell.add:hover .addcell, .addcell:focus-visible { opacity: 1; }
+.cell.add:hover .addcell, .addcell:hover, .addcell:focus-visible { opacity: 1; }
 .addcell:hover { background: rgba(255, 255, 255, 0.14); color: #fff; border-color: rgba(255, 255, 255, 0.28); }
 #cells.dense .addcell {
   box-sizing: border-box; max-width: 100%; gap: 3px; padding: 4px 8px; border-radius: 6px; font-size: 11px;
@@ -267,23 +287,6 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   display: flex; align-items: center; justify-content: center; color: #fff;
   background: rgba(20, 20, 20, 0.86); border: 2px solid rgba(255, 255, 255, 0.85);
 }
-
-/* Grouped Compare Capsule inside the bottom player bar (#bar #row): pure monochrome, outline-only active state. */
-#cmpGroup.cmp-group {
-  display: inline-flex; align-items: center; gap: 2px;
-  padding: 2px 3px; margin: 0 3px; border-radius: 7px;
-  background: var(--vpe-fill-subtle);
-  border: 1px solid var(--vpe-bd-subtle);
-}
-#cmpGroup .ib { height: 24px; min-width: 24px; width: 26px; border-radius: 5px; border: 1px solid transparent; }
-#cmpGroup .ib[aria-pressed="true"],
-#cmpGroup .ib.active {
-  background: var(--vpe-fill-subtle);
-  border-color: var(--vpe-bd-active);
-  color: var(--vscode-foreground);
-}
-#cmpGroup .ib:disabled { opacity: 0.4; cursor: default; }
-#cmpGroup .cmp-sep { width: 1px; height: 14px; background: var(--vpe-bd-subtle); margin: 0 2px; flex: none; }
 
 /* Add popover anchored above the Compare capsule in the player bar (unified 86% frosted surface). */
 .add-pop {
@@ -307,16 +310,22 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   border-top: 1px solid var(--vpe-sep, rgba(255, 255, 255, 0.08)); margin-top: 4px; line-height: 1.35;
 }
 
-/* Responsive narrow-width fallbacks for the Compare capsule (all controls remain in #cmpBtn panel). */
+/* Narrow panes shed Compare's bar buttons in this order, after player.css has dropped the range pins, the info button
+   and the duration (640 px): the Compare toggle's words, Swap and Sync, Split, then Spotlight and Grid. The layouts, Swap
+   and the offsets stay in the Compare panel (#cmpBtn), Swap also on X, so Picture size and Fullscreen at the bar's right
+   edge are never clipped. #spotlightBtn ... #syncBtn are the buttons the unified page's controller injects
+   (media/player-ui.js barButton). */
 @media (max-width: 640px) {
-  #cmpGroup.cmp-group { padding: 1px 2px; gap: 1px; margin: 0 1px; }
-  #cmpGroup .cmp-sep { display: none; }
+  /* The Compare / capture toggle keeps its icon and its name (title, aria-label) but loses its words. */
+  #row #startCompareBtn > span:not(.cap-pulse) { display: none; }
+  #row #startCompareBtn { gap: 0; }
+  #row #swapBtn, #row #syncBtn { display: none; }
 }
-@media (max-width: 500px) {
-  #addPopBtn, #syncModeBtn { display: none; }
+@media (max-width: 560px) {
+  #row #splitBtn { display: none; }
 }
-@media (max-width: 400px) {
-  #layoutSpotlightBtn, #layoutGridBtn, #layoutSplitBtn { display: none; }
+@media (max-width: 440px) {
+  #row #spotlightBtn, #row #gridBtn { display: none; }
 }
 
 /* The bar: the clock video's letter before the time. */
@@ -368,7 +377,6 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 body.vscode-high-contrast .pill,
 body.vscode-high-contrast .tbtn,
 body.vscode-high-contrast .sync-pill,
-body.vscode-high-contrast #cmpGroup.cmp-group,
 body.vscode-high-contrast-light .tbtn {
   outline: 1px solid var(--vscode-contrastBorder, transparent);
 }

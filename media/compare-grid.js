@@ -1,6 +1,6 @@
 // @ts-check
-// Compare with many videos: the grid and the per-tile budgets, shared by the page (media/compare.js) and
-// the host (src/compare.js), small enough for a Node test (test/host/compare_grid_test.js).
+// Compare with many videos: the grid and the per-tile budgets, shared by the page (media/player-ui*.js) and
+// the host (src/unified-viewer.js), small enough for a Node test (test/host/compare_grid_test.js).
 // Up to 4 videos everything stays as it was; from 5 on
 // the tiles split fixed budgets, so 16 videos use about what 4 did (docs/notes/multiview-engine.md).
 'use strict';
@@ -158,7 +158,7 @@
     };
   }
 
-  /** The tile header's remove button: only from 3 videos on (with 2, Remove leaves Compare: src/compare.js `remove`). */
+  /** The tile header's remove button: only from 3 videos on (with 2, Remove leaves Compare). */
   const canRemoveTile = (n) => n > 2;
   /** `name` is already HTML-escaped; `icon` an SVG string or text; `confirming` switches to inline "Remove?". */
   function removeButtonHtml(n, i, name, icon, confirming = false) {
