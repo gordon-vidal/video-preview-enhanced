@@ -33,7 +33,7 @@ pm run build:ui, ADR 0004). Works locally, in WSL and over Remote-SSH.
 | `test/vscode/` | Layers 3-4: real VS Code on a hidden desktop (Windows). `cases/` are the scenarios |
 | `test/subtitles`, `test/timestretch`, `test/inspect` | More Node unit tests that CI runs |
 | `test/media/` | Test clips (Git LFS) and generators; licences in `test/media/LICENSES.md` |
-| `docs/` | User docs, `PRODUCT.md` (product truth), `TESTING.md` (test truth), `RELEASING.md`, `REVIEW.md`, `adr/` (signed-off decisions), `notes/` (design notes) |
+| `docs/` | User docs, `PRODUCT.md` (product truth), `DESIGN.md` (look and UI tokens), `TESTING.md` (test truth), `RELEASING.md`, `REVIEW.md`, `adr/` (signed-off decisions), `notes/` (design notes) |
 | `tools/`, `review.cmd`, `review.sh` | Maintainer helpers (`tools/mockup/` = reusable interactive UI mockup harness: real CSS/bar/state and the shared `media/player-ui.js` controller over a fake engine and host; `review.cmd` / `review.sh` = visible review profile; humans only) |
 | `build/libav/` | Scripts that rebuild the WebAssembly decoder (Linux/WSL only; rarely needed) |
 | `.private-context/` | Git-ignored maintainer notes, local only (see below) |
@@ -101,6 +101,9 @@ before releases or in performance work.
   `CHANGELOG.md`. README claims and numbers must match a measured run.
 - `docs/PRODUCT.md` is the product source of truth. A change that contradicts it needs the
   maintainer's decision first.
+- **One look ([docs/DESIGN.md](docs/DESIGN.md))**: every floating surface uses the card tokens in `media/player.css`
+  (background, blur, radius, shadow); no per-surface values, no new look-alike surfaces. A new message is a toast or
+  a notice. `test/host/unified_css_test.js` fails on a card that sets its own values; change the token instead.
 - **UI changes & 3-way separation**: keep **UI shell** (`src/bar.js`, `media/player.css`,
   `media/compare.css`), **pure state** (`media/player-state.js`), and **decoder/host engine**
   cleanly separated (see [docs/TESTING.md](docs/TESTING.md)). Do not restyle or rearrange the

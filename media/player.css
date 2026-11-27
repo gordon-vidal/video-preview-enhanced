@@ -114,13 +114,13 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
   overflow: hidden;
   overflow-wrap: anywhere;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--vpe-card-radius);
   background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--vpe-card-blur);
+  -webkit-backdrop-filter: var(--vpe-card-blur);
   color: var(--vpe-panel-fg);
   border: 1px solid var(--vpe-panel-border);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--vpe-shadow-low);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.45;
@@ -195,14 +195,14 @@ body.idle { cursor: none; }
   gap: 8px 6px;
   width: min(460px, calc(100% - 32px));
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--vpe-card-radius);
   font-size: 12px;
   text-align: left;
   background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--vpe-card-blur);
+  -webkit-backdrop-filter: var(--vpe-card-blur);
   border: 1px solid var(--vpe-panel-border);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--vpe-shadow-low);
   /* Above a passing #toast (3) should they ever meet: the banner has buttons, the toast is pointer-events: none. */
   z-index: 4;
 }
@@ -298,10 +298,11 @@ body.idle { cursor: none; }
 }
 #pxread, #stats, #goto {
   position: absolute;
-  border-radius: 4px;
-  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #ccc));
-  background: color-mix(in srgb, var(--vscode-editorWidget-background, #252526) 88%, transparent);
-  border: 1px solid var(--vscode-editorWidget-border, transparent);
+  border-radius: var(--vpe-card-radius);
+  color: var(--vpe-panel-fg);
+  background: var(--vpe-surface-float);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
+  border: 1px solid var(--vpe-panel-border);
   font-family: var(--vscode-editor-font-family);
   font-size: 11px;
   line-height: 1.45;
@@ -369,12 +370,12 @@ body.idle { cursor: none; }
   bottom: 42px;
   transform: translateX(-50%);
   padding: 0;
-  border-radius: 6px;
+  border-radius: var(--vpe-card-radius);
   overflow: hidden;
   line-height: 0;
   background: #000;
   border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-editorWidget-border, transparent));
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--vpe-shadow-low);
   pointer-events: none;
   /* Above the open Folder Rail (.rail z-index 5, collapse tab 8) so scrubbing previews stay visible. */
   z-index: 9;
@@ -388,10 +389,10 @@ body.idle { cursor: none; }
   transform: translateX(-50%);
   max-width: none;
   max-height: none;
-  border-radius: 6px;
+  border-radius: var(--vpe-card-radius);
   background: #000;
   border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-editorWidget-border, transparent));
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--vpe-shadow-low);
   pointer-events: none;
   z-index: 9;
 }
@@ -426,11 +427,12 @@ body.idle { cursor: none; }
 
 /* ---- scopes (media/scopes.js) and A-B export buttons ---- */
 #scopes {
-  position: absolute; right: 8px; bottom: 8px; z-index: 2; padding: 4px 6px 6px; border-radius: 4px; pointer-events: none;
-  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #ccc));
-  --scope-fg: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #ccc));
-  background: color-mix(in srgb, var(--vscode-editorWidget-background, #252526) 88%, transparent);
-  border: 1px solid var(--vscode-editorWidget-border, transparent);
+  position: absolute; right: 8px; bottom: 8px; z-index: 2; padding: 4px 6px 6px; border-radius: var(--vpe-card-radius); pointer-events: none;
+  color: var(--vpe-panel-fg);
+  --scope-fg: var(--vpe-panel-fg);
+  background: var(--vpe-surface-float);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
+  border: 1px solid var(--vpe-panel-border);
   font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; line-height: 1.45;
 }
 #stage #scopes canvas { display: block; position: static; transform: none; width: min(384px, 45vw); height: auto; max-width: none; max-height: none; background: rgba(0, 0, 0, 0.55); border-radius: 2px; margin-top: 2px; }
@@ -453,7 +455,13 @@ body.idle { cursor: none; }
   --vpe-bd-active: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
   --vpe-seek-fill: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
   --vpe-seek-ab: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
-  --vpe-surface-float: color-mix(in srgb, var(--vscode-menu-background, #1e1f23) 86%, transparent);
+  /* The one card look (docs/DESIGN.md): every floating surface uses these, test/host/unified_css_test.js checks it. */
+  --vpe-surface-float: color-mix(in srgb, var(--vscode-menu-background, #1e1f23) 90%, transparent);
+  --vpe-card-blur: blur(2px);
+  --vpe-card-radius: 8px;
+  /* low: lies on the picture (notice, toast, pills, tabs); high: opened over it (menus, panels, popovers, dialogs) */
+  --vpe-shadow-low: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  --vpe-shadow-high: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
   --vpe-accent: var(--vpe-bd-active);
   --vpe-panel-bg: var(--vpe-surface-float);
   --vpe-panel-fg: var(--vscode-menu-foreground, var(--vscode-foreground));
@@ -571,9 +579,10 @@ body.idle { cursor: none; }
 #startCompareDialog {
   position: absolute; width: min(270px, calc(100% - 16px)); max-height: calc(100% - 80px); overflow: auto;
   box-sizing: border-box; padding: 12px;
-  border: 1px solid var(--vpe-panel-border); border-radius: 10px;
+  border: 1px solid var(--vpe-panel-border); border-radius: var(--vpe-card-radius);
   background: var(--vpe-panel-bg); color: var(--vpe-panel-fg);
-  box-shadow: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
+  box-shadow: var(--vpe-shadow-high);
 }
 #startCompareHint { margin: 0 0 12px; }
 .compare-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
@@ -636,9 +645,9 @@ kbd {
   position: fixed; right: 16px; z-index: 7; width: 316px; box-sizing: border-box; overflow-y: auto;
   display: flex; flex-direction: column; padding: 6px 0;
   color: var(--vpe-panel-fg); background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   border: 1px solid var(--vpe-panel-border);
-  border-radius: 10px; box-shadow: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
+  border-radius: var(--vpe-card-radius); box-shadow: var(--vpe-shadow-high);
   font-size: 13px;
 }
 .panel.speed { width: 220px; gap: 8px; padding-bottom: 10px; }
@@ -706,8 +715,9 @@ kbd {
 #sheet .sheet {
   width: min(900px, 100%); max-height: 100%; overflow-y: auto; box-sizing: border-box; padding: 18px 22px 20px;
   display: flex; flex-direction: column; gap: 14px;
-  color: var(--vpe-panel-fg); background: var(--vpe-panel-bg); border: 1px solid var(--vpe-panel-border); border-radius: 12px;
-  box-shadow: 0 16px 40px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.5));
+  color: var(--vpe-panel-fg); background: var(--vpe-panel-bg); border: 1px solid var(--vpe-panel-border); border-radius: var(--vpe-card-radius);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
+  box-shadow: var(--vpe-shadow-high);
 }
 #sheet .stop { display: flex; align-items: center; gap: 12px; }
 #sheet .stitle { font-size: 16px; font-weight: 600; flex: 1; }
@@ -741,9 +751,9 @@ body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-co
   position: fixed; z-index: 20; box-sizing: border-box; min-width: 240px; max-width: calc(100vw - 8px); max-height: calc(100vh - 8px); overflow-y: auto;
   display: flex; flex-direction: column; padding: 6px 0; outline: none;
   color: var(--vpe-panel-fg); background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   border: 1px solid var(--vpe-panel-border);
-  border-radius: 8px; box-shadow: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
+  border-radius: var(--vpe-card-radius); box-shadow: var(--vpe-shadow-high);
   font-size: 13px;
 }
 #ctxmenu[hidden] { display: none; }
