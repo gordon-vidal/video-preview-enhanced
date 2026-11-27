@@ -26,12 +26,12 @@
 .edge-zone[hidden] { display: none; }
 .edge-shelf, .rail-collapse-tab {
   appearance: none; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
-  height: 84px; width: 20px; padding: 0; border-radius: 7px 0 0 7px;
+  height: 84px; width: 20px; padding: 0; border-radius: var(--vpe-card-radius) 0 0 var(--vpe-card-radius);
   background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   border: 1px solid var(--vpe-panel-border); border-right: none;
   color: var(--vscode-foreground);
-  box-shadow: -2px 2px 10px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  box-shadow: var(--vpe-shadow-low);
   cursor: pointer;
   opacity: 0; pointer-events: none;
   /* A soft glide in (ease-out with a long tail) rather than a pop; the border follows the pointer quicker. */
@@ -63,7 +63,7 @@
 .rail.overlay {
   position: absolute; top: 0; right: 0; bottom: 0;
   background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   box-shadow: -8px 0 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
 }
 /* The resize grip on the left edge; the fold tab sits outside it (left of the rail) and above it. */
@@ -170,13 +170,13 @@
 .end-btn .lbl { color: var(--vpe-dim); }
 .r-pos { font-family: var(--vpe-mono); font-size: 10.5px; font-variant-numeric: tabular-nums; padding-right: 2px; flex: none; }
 
-/* The column and Autoplay menus: the same 86% frosted float as #ctxmenu and the ⚙ panel */
+/* The column and Autoplay menus: the shared card surface (docs/DESIGN.md), as #ctxmenu and the ⚙ panel */
 .vpe-pop {
   position: fixed; z-index: 14; min-width: 138px; padding: 4px; box-sizing: border-box;
-  border-radius: 8px; background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--vpe-card-radius); background: var(--vpe-surface-float);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   border: 1px solid var(--vpe-panel-border);
-  box-shadow: 0 10px 30px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
+  box-shadow: var(--vpe-shadow-high);
   color: var(--vpe-panel-fg);
 }
 .vpe-pop[hidden] { display: none; }
@@ -191,9 +191,9 @@
 /* The hover card, left of the rail (outside the picture's hit-testing: it never takes the pointer) */
 .hover-pop {
   position: absolute; z-index: 12; width: 184px; box-sizing: border-box;
-  border-radius: 6px; overflow: hidden;
-  background: var(--vpe-surface-float); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--vpe-panel-border); box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  border-radius: var(--vpe-card-radius); overflow: hidden;
+  background: var(--vpe-surface-float); backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
+  border: 1px solid var(--vpe-panel-border); box-shadow: var(--vpe-shadow-high);
   pointer-events: none; color: var(--vpe-panel-fg);
 }
 .hover-pop[hidden] { display: none; }
@@ -216,5 +216,5 @@ body.vscode-high-contrast .r-row:hover, body.vscode-high-contrast .r-row.active 
 /* Narrow panes (the capsule's own step is in media/player.css's narrow-bar ladder): a docked rail would leave
    little picture, so it overlays instead. */
 @media (max-width: 560px) {
-  .rail.dock { position: absolute; top: 0; right: 0; bottom: 0; background: var(--vpe-surface-float); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  .rail.dock { position: absolute; top: 0; right: 0; bottom: 0; background: var(--vpe-surface-float); backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur); }
 }

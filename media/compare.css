@@ -66,20 +66,23 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: inline-flex; align-items: center; gap: 4px;
 }
 .tbtn {
-  height: 22px; min-width: 22px; padding: 0 5px; border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: color-mix(in srgb, var(--vscode-editorWidget-background, #14161c) 82%, transparent);
-  backdrop-filter: blur(6px);
+  height: 22px; min-width: 22px; padding: 0 5px; border-radius: var(--vpe-card-radius);
+  border: 1px solid var(--vpe-panel-border);
+  background: var(--vpe-surface-float);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   color: var(--vscode-foreground, #e4e4e7);
   font: 600 11px/1 var(--vscode-font-family, system-ui, sans-serif);
   cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
   transition: background 120ms, color 120ms, border-color 120ms;
 }
-.tbtn:hover { background: rgba(255, 255, 255, 0.18); color: #fff; border-color: rgba(255, 255, 255, 0.28); }
+.tbtn:hover { background: var(--vpe-hover); color: var(--vscode-foreground); border-color: var(--vpe-bd-active); }
 .tbtn.spot svg rect { transition: opacity 120ms ease; }
 .tbtn.spot:hover svg rect, .tbtn.spot:focus-visible svg rect { opacity: 1; }
-.tbtn.rm:hover { background: rgba(220, 38, 38, 0.88); border-color: transparent; color: #fff; }
-.tbtn.rm.confirm { background: #dc2626; border-color: #f87171; color: #fff; padding: 0 8px; }
+.tbtn.rm:hover, .tbtn.rm.confirm {
+  background: var(--vscode-statusBarItem-errorBackground, #c72e0f); border-color: transparent;
+  color: var(--vscode-statusBarItem-errorForeground, #fff);
+}
+.tbtn.rm.confirm { padding: 0 8px; }
 
 /* Floating top-left identity + drag-grip + monochrome info & mute pill (no heavy shaded bar). */
 .tile-bottom-pill, .pill {
@@ -87,9 +90,9 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: inline-flex; align-items: center; gap: 5px;
   max-width: calc(100% - 70px); height: 26px; padding: 0 5px 0 4px; box-sizing: border-box;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--vscode-editorWidget-background, #101216) 80%, transparent);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--vpe-surface-float);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
+  border: 1px solid var(--vpe-panel-border);
   color: var(--vscode-foreground, #f4f4f5);
   font: inherit; font-size: 11.5px;
 }
@@ -129,16 +132,16 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 .mute-mini.on { color: var(--vscode-foreground, #f4f4f5); }
 .mute-mini.info-on { background: var(--vpe-fill-subtle); border-color: var(--vpe-bd-active); color: var(--vscode-foreground, #fff); }
 
-/* Per-tile ⓘ info card: unified 86% frosted surface reusing the exact .itop + <dl class="igrid"> layout (amber on mismatches). */
+/* Per-tile ⓘ info card: the shared card surface, docs/DESIGN.md reusing the exact .itop + <dl class="igrid"> layout (amber on mismatches). */
 .tile-stats {
   position: absolute; top: 38px; left: 7px; z-index: 6;
   display: none; flex-direction: column; gap: 8px;
   width: min(300px, calc(100% - 14px)); box-sizing: border-box;
-  padding: 10px 12px; border-radius: 10px;
+  padding: 10px 12px; border-radius: var(--vpe-card-radius);
   background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   border: 1px solid var(--vpe-panel-border);
-  box-shadow: 0 10px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.45));
+  box-shadow: var(--vpe-shadow-high);
   color: var(--vpe-panel-fg); pointer-events: none;
 }
 .cell.show-stats .tile-stats { display: flex; }
@@ -165,7 +168,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: none; align-items: center; gap: 3px; height: 24px; padding: 0 4px;
   border-radius: 999px;
   background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   border: 1px solid var(--vpe-bd-active);
   font-family: var(--vpe-mono, monospace); font-size: 11px; color: var(--vscode-foreground, #e4e4e7);
 }
@@ -188,7 +191,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   top: 4px; left: 4px; bottom: auto; height: 22px; gap: 4px; padding: 0 4px 0 3px; font-size: 11px; max-width: calc(100% - 54px);
 }
 #cells.dense .tile-top-acts { top: 4px; right: 4px; }
-#cells.dense .tbtn { height: 20px; min-width: 20px; border-radius: 5px; }
+#cells.dense .tbtn { height: 20px; min-width: 20px; border-radius: var(--vpe-card-radius); }
 #cells.dense .ltr { width: 15px; height: 15px; font-size: 9.5px; }
 #cells.dense .mute-mini { width: 18px; height: 18px; }
 #cells.dense .sync-pill, #cells.dense .nudge { bottom: 4px; right: 4px; height: 21px; padding: 0 2px; gap: 1px; font-size: 10px; max-width: calc(100% - 8px); box-sizing: border-box; }
@@ -262,6 +265,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 }
 .skeleton-label {
   background: var(--vpe-surface-float); color: var(--vscode-foreground, #f4f4f5);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   border: 1px solid var(--vpe-bd-active);
   padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
 }
@@ -281,9 +285,10 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 #stage.pannable.panning .cell.add { cursor: grabbing; }
 .addcell {
   display: inline-flex; flex-direction: column; align-items: center; gap: 6px;
-  padding: 10px 16px; border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: color-mix(in srgb, var(--vscode-editorWidget-background, #14161c) 82%, transparent);
+  padding: 10px 16px; border-radius: var(--vpe-card-radius);
+  border: 1px solid var(--vpe-panel-border);
+  background: var(--vpe-surface-float);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   color: var(--vscode-foreground, #d4d4d8); font: inherit; font-size: 12px; cursor: pointer;
   opacity: 0.6; transition: opacity 120ms, background 120ms, border-color 120ms, color 120ms;
 }
@@ -302,15 +307,15 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   background: rgba(20, 20, 20, 0.86); border: 2px solid rgba(255, 255, 255, 0.85);
 }
 
-/* Add popover anchored above the Compare capsule in the player bar (unified 86% frosted surface). */
+/* Add popover anchored above the Compare capsule in the player bar (the shared card surface, docs/DESIGN.md). */
 .add-pop {
   position: fixed; bottom: 52px; right: 120px; z-index: 15; width: 240px; box-sizing: border-box;
   background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
   color: var(--vpe-panel-fg, var(--vscode-foreground, #e4e4e7));
   border: 1px solid var(--vpe-panel-border);
-  border-radius: 9px; padding: 5px;
-  box-shadow: 0 12px 32px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
+  border-radius: var(--vpe-card-radius); padding: 5px;
+  box-shadow: var(--vpe-shadow-high);
 }
 .add-pop button {
   width: 100%; text-align: left; background: transparent; border: 0; color: inherit;
@@ -381,12 +386,12 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 .panel .unitrow .seg { flex: 1; }
 .panel .readout.off { font-size: 18px; }
 
-/* A tile's right-click menu (unified 86% frosted surface). */
+/* A tile's right-click menu (the shared card surface, docs/DESIGN.md). */
 #menu {
   position: fixed; z-index: 16; min-width: 250px; padding: 4px 0; display: flex; flex-direction: column;
   color: var(--vpe-panel-fg, var(--vscode-foreground)); background: var(--vpe-surface-float);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--vpe-panel-border); border-radius: 8px; box-shadow: 0 6px 20px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
+  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
+  border: 1px solid var(--vpe-panel-border); border-radius: var(--vpe-card-radius); box-shadow: var(--vpe-shadow-high);
   font-size: 13px;
 }
 #menu .mi {

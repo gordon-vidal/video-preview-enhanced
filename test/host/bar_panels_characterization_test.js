@@ -187,13 +187,15 @@ test('single-video picture size, speed reset, capture banner and folder capsule'
   assert.equal($('rate').textContent, '1×');
   assert.equal($('rateReset').hidden, true);
   pressed($('startCompareBtn'), false, 'cap-on');
-  assert.equal($('capBanner').hidden, true);
+  // Add mode's prompt is a #notice now (docs/notes/notifications.md).
+  const prompt = () => !$('notice').hidden && $('notice').dataset.kind === 'capture';
+  assert.equal(prompt(), false);
   click('startCompareBtn');
   pressed($('startCompareBtn'), true, 'cap-on');
-  assert.equal($('capBanner').hidden, false);
+  assert.equal(prompt(), true);
   click('startCompareBtn');
   pressed($('startCompareBtn'), false, 'cap-on');
-  assert.equal($('capBanner').hidden, true);
+  assert.equal(prompt(), false);
 });
 
 for (const n of [1, 2, 3]) {

@@ -1,0 +1,96 @@
+# Design guide
+
+The source of truth for how the player looks. [PRODUCT.md](PRODUCT.md) says what we build; this file says how it
+should look so every part of the player feels like one product. `test/host/unified_css_test.js` enforces the card rules
+below, so a surface that sets its own background, blur, corners or shadow fails CI.
+
+**This guide is young and meant to grow.** It codifies only what has been decided so far; the player still has
+inconsistencies that no rule covers yet (see [Not codified yet](#not-codified-yet)). Whenever a review or a change
+finds a drift, settle it with the maintainer, write the rule down here, and where possible add a check to
+`unified_css_test.js`, so the same drift cannot come back (the retrospective rule in `AGENTS.md`).
+
+![Cards in the player: the ⚙ panel and a toast over a comparison](notes/img/design-cards.png)
+
+## Principles
+
+- **Look like VS Code.** Colours come from the VS Code theme (`--vscode-*`), so light, dark and high-contrast themes
+  work without extra rules. The player is mostly black and white; colour comes only from VS Code's own tokens.
+- **One card look.** Everything that floats over the picture (notices, toasts, menus, panels, popovers, dialogs,
+  readouts, tile pills) is the same card. Do not invent a new surface.
+- **Reuse first, so things look the same everywhere.** Before you make anything new, look at the
+  [building blocks](#building-blocks) and build it out of them. A new message is a toast or a notice, a new menu uses
+  the menu styles, a new popover is a `.vpe-pop`. Only when none fits: say so in the PR, ask the maintainer, and
+  extend a shared piece (or add a new one here) rather than a one-off look-alike.
+
+## Building blocks
+
+What exists today; build new UI from these first.
+
+| Block | Where | Use for |
+|---|---|---|
+| Card tokens | `:root` in `media/player.css` | The background, blur, corners and shadow of anything floating |
+| Notice (`#notice`) | `createNoticeController`, `media/player-ui-tools.js` | A decision or a lasting state: text, buttons below, × |
+| Toast (`#toast`) | `toast()` in `media/player-ui.js` | A short confirmation of what the user just did |
+| ⚙ panel (`.panel`) | `media/controls.js` | Settings pages, rows, chips, switches, steppers |
+| Menus (`#ctxmenu`, `#menu`) | `media/ctxmenu.js`, Compare tile menu | Right-click and tile menus |
+| Popover (`.vpe-pop`) | `media/folder-rail.js` and others | A small menu or callout anchored to a button |
+| Bar buttons (`#bar .ib`) | `src/bar.js` | Icon buttons in the control bar; `.active` / `aria-pressed` for on |
+| Pills (`.pill`, `.sync-pill`) | `media/compare.css` | Compact labels and steppers on a tile |
+
+## Tokens (`:root` in `media/player.css`)
+
+| Token | Value | Use |
+|---|---|---|
+| `--vpe-surface-float` (alias `--vpe-panel-bg`) | VS Code menu background at **90%** | The background of every card |
+| `--vpe-card-blur` | `blur(2px)` | `backdrop-filter` (and `-webkit-backdrop-filter`) of every card |
+| `--vpe-card-radius` | `8px` | Corners of every card and of the small tile buttons; pills use `999px` |
+| `--vpe-shadow-low` | `0 4px 16px` widget shadow | Things that lie on the picture: notice, toast, pills, tabs, seek thumbnails |
+| `--vpe-shadow-high` | `0 10px 30px` widget shadow | Things that open over it: menus, panels, popovers, dialogs, info cards |
+| `--vpe-panel-border` | VS Code menu / widget border | The 1 px border of every card |
+| `--vpe-panel-fg` | VS Code menu foreground | Text on cards |
+
+Change a value here, never per surface. The one exception is the overlay Folder Rail's side shadow (it falls to one
+side only).
+
+## Type
+
+- **12 px** for messages (notice, toast, Add mode prompt), line height 1.45.
+- **13 px** for menus and panels, as VS Code's own menus.
+- **11 px** for dense data (pixel readout, stats, Go to, scopes, tile pills).
+- Normal weight. Bold only for a label inside a card, never for a whole message.
+
+## Colour
+
+- **Accent blue only from VS Code:** `--vscode-button-background` for the one main action of a notice or dialog,
+  `--vscode-focusBorder` for focus rings and "a mode is on" marks (the Add mode dot, the drop frame).
+- No hard-coded colours on cards. Exceptions that sit on the picture itself: the drop frame and the shortcut sheet's
+  backdrop (dimmers, not cards), the Compare divider and the A–B pins.
+- Warnings and errors are said in words; a notice has no accent colour or icon.
+
+## Messages
+
+Which channel to use: [notes/notifications.md](notes/notifications.md) (ownership matrix, priority queue, placement).
+In short: a **toast** confirms what the user just did (no buttons, disappears); a **notice** asks for a decision or
+reports a lasting state (text on its own line, buttons below: main action filled, then Settings, then the "don't show
+again" answer, × in the corner); things outside the player are **VS Code notifications**. Wording and required
+buttons: `.claude/skills/ui-notices/SKILL.md`.
+
+## Not codified yet
+
+Known gaps, each to be settled with the maintainer and then written down above:
+
+- **Buttons:** one scale for corners and heights, and the main action's colour everywhere (proposed: 4 px corners,
+  24 / 28 px, main action always VS Code's button colour).
+- **Add mode:** the element that shows while videos are being added (a mode, not a message).
+- **Error screen:** text on the picture today; proposed as a centered card.
+- **Type:** sizes still drift (10.5 and 11.5 px next to the 11 / 12 / 13 scale), including the bar's time readout.
+- **Spacing, icons, focus rings, motion and layering (z-index):** in use but not written down; the z-index order is
+  only checked in `unified_css_test.js`.
+
+## Adding or changing a surface
+
+1. Start from a [building block](#building-blocks) and the tokens above (the test fails otherwise).
+2. Show it in the mockup harness (`tools/mockup/render.js`, a scenario per state) before wiring it to the host.
+3. Check dark, light and a narrow editor; keyboard (Tab, Esc) and accessible names.
+4. Write it down in `docs/notes/` with a screenshot, and update this file: a new rule, a new building block, or a
+   gap from [Not codified yet](#not-codified-yet) that is now settled.

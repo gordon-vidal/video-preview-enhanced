@@ -1,6 +1,8 @@
-# Video Preview Enhanced
+# <img src="media/icon.png" alt="" width="36" height="36" align="absmiddle"> Video Preview Enhanced
 
 **Play all major video formats with sound in VS Code, locally, over Remote‑SSH, or in WSL.**
+
+**Install:** [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=gordon-vidal.video-preview-enhanced) · [Open VSX](https://open-vsx.org/extension/gordon-vidal/video-preview-enhanced)
 
 - **Every common format, with sound:** MP4, MKV, MOV, AVI, WebM, WMV, MXF and more, including HEVC, AV1 and ProRes.
 - **Nothing else to install, no admin rights:** plays right away. Add portable FFmpeg with one click (still no admin rights) and 4K HEVC and AV1 play in real time on your GPU.
@@ -19,7 +21,7 @@ Double-click a video in a **Remote‑SSH or WSL workspace** and it plays, with n
 
 ## Compare, frame by frame
 
-Select up to **8 videos** (16 with `compare.maxVideos`), right-click and choose **Start Compare**, or click **Compare** in the player's bar. They play on one timeline, and every step lands on matching frames in all of them, forward or backward. Pause and scroll to step through frames, Ctrl+scroll and drag to zoom and pan all videos together, and nudge a video's offset one frame at a time to bring it in sync. Side by side, split or grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
+Select up to **16 videos**, right-click and choose **Start Compare**, or click **Compare** in the player's bar. They play on one timeline, and every step lands on matching frames in all of them, forward or backward. Pause and scroll to step through frames, Ctrl+scroll and drag to zoom and pan all videos together, and nudge a video's offset one frame at a time to bring it in sync. Side by side, split or grid. Made for checking an encode against its source, a render against a reference, or several camera angles of one take.
 
 ![Comparing four encodes in a 2×2 grid, stepping frame by frame, zooming together and nudging one video into sync](media/marketing/compare-showcase.gif)
 
@@ -70,4 +72,4 @@ The three most-installed dedicated players in the Marketplace snapshot reviewed 
 3. **Compare:** Click **Compare** in the player's bar, or right-click a video, folder or selection and choose **Start Compare**.
 4. **Play heavier footage:** Run **Video Preview: Set Up Optional ffmpeg** from the Command Palette.
 
-Details: [features](docs/features.md) · [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [agents & deep links](docs/agents.md) · [FAQ](docs/faq.md) · [all docs](docs/) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md) · [website](https://gordonvidal.dev/)
+Details: [features](docs/features.md) · [formats](docs/formats.md) · [shortcuts](docs/keys.md) · [commands and settings](docs/commands-and-settings.md) · [remote](docs/remote.md) · [ffmpeg](docs/ffmpeg.md) · [agents & deep links](docs/agents.md) · [FAQ](docs/faq.md) · [all docs](https://github.com/gordon-vidal/video-preview-enhanced/tree/main/docs) · [contributing](CONTRIBUTING.md) · [licences](docs/licences.md) · [website](https://gordonvidal.dev/)

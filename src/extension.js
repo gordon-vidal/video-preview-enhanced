@@ -21,7 +21,7 @@ const setup = lazy(() => require('./setup'));
 const hardware = require('./hardware');
 const { NativeDecoder, onGuessFailed } = require('./native');
 const { ExactFrameGrabber } = require('./exact_frame');
-const { toggleFocusMode, noteFocusModeExited, resetFocusMode, setFocusModeListener } = require('./focus-mode');
+const { toggleFocusMode, resetFocusMode, takeZenLayoutOffer } = require('./focus-mode');
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
 const remotestream = lazy(() => require('./remotestream')); // unified Live transcode stream engine (ADR 0002)
 const transcodePolicy = lazy(() => require('./transcode_policy'));
@@ -64,7 +64,11 @@ const folderRail = require('./folder-rail'); // the folder rail, neighbours, Aut
 const HIDE_SLOW_PLAYBACK_NOTICE = 'videoPreviewEnhanced.hideSlowPlaybackNotice';
 const HIDE_REDUCED_RES_NOTICE = 'videoPreviewEnhanced.hideReducedResNotice';
 /** The notices "Don't show again" hides for good, by the page's action id. */
-const NOTICE_KEYS = { hideSlowPlaybackNotice: HIDE_SLOW_PLAYBACK_NOTICE, hideReducedResNotice: HIDE_REDUCED_RES_NOTICE };
+const HIDE_ZEN_LAYOUT_NOTICE = 'videoPreviewEnhanced.hideZenLayoutNotice'; // "Keep centered"
+const NOTICE_KEYS = {
+  hideSlowPlaybackNotice: HIDE_SLOW_PLAYBACK_NOTICE, hideReducedResNotice: HIDE_REDUCED_RES_NOTICE,
+  hideZenLayoutNotice: HIDE_ZEN_LAYOUT_NOTICE,
+};
 const VIEW_TYPES = ['videoPreviewEnhanced.player', 'videoPreviewEnhanced.playerOptional'];
 /** The webview panel type of a viewer a Compare command opens (not a custom editor: it has several files). */
 const COMPARE_VIEW_TYPE = 'videoPreviewEnhanced.compare';
@@ -147,11 +151,6 @@ const {
 } = createFrameLink({ vscode, config, decide, nativeTransport, probe, urlsource, parseFragment });
 
 const EXT_ID = 'gordon-vidal.video-preview-enhanced'; // publisher.name in package.json
-
-function broadcastFocusMode(active) {
-  for (const v of unifiedViewers) v.post({ type: 'focusMode', active: !!active });
-}
-setFocusModeListener(broadcastFocusMode);
 
 /** Native ffmpeg: the setting, then a build downloaded by setup, then PATH. Null when absent. */
 function tools() {
@@ -1080,7 +1079,12 @@ function activate(context) {
     libavBuild: () => libavBuild(context.extensionUri), prefs: () => prefsOf(config()), maxVideos,
     pick: (label, defaultUri, many) => pickVideos(label, defaultUri, many),
     setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
-    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : noteFocusModeExited()),
+    focusMode: (what, viewer) => (what === 'toggle' ? toggleZen(viewer) : undefined),
+    zenFullWidth: async () => {
+      // The user's own click: VS Code re-lays out Zen Mode live when this setting changes.
+      await vscode.workspace.getConfiguration('zenMode').update('centerLayout', false, vscode.ConfigurationTarget.Global);
+      for (const v of unifiedViewers) v.post({ type: 'hideZenLayoutNotice' });
+    },
     rail: {
       cache: railMeta, probe: railProbe, prefs: railPrefs, layout: () => config().railLayout,
       caseless: process.platform === 'win32' || process.platform === 'darwin',
@@ -1645,6 +1649,18 @@ function speedStateOf(viewer) {
     speedStates.set(viewer, st);
   }
   return st;
+}
+
+/**
+ * F in a webview: Zen Mode (stateless toggle), then, once per window, ask the page to offer full width while Zen
+ * Mode would center the video (VS Code's default zenMode.centerLayout: true). Nothing is written until the user
+ * clicks "Fill the screen".
+ */
+async function toggleZen(viewer) {
+  await toggleFocusMode(vscode);
+  const centerLayout = vscode.workspace.getConfiguration('zenMode').get('centerLayout', true);
+  const keepCentered = globalState && globalState.get(HIDE_ZEN_LAYOUT_NOTICE);
+  if (viewer && takeZenLayoutOffer({ centerLayout, keepCentered })) viewer.post({ type: 'zenLayoutOffer' });
 }
 
 function onPageMessage(m, viewer) {

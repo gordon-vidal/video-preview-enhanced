@@ -242,8 +242,8 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
 }
 
 { // What the mock-up harness used to carry on its own (tools/mockup/render.js) is the real CSS now: the capture
-  // banner and toggle, and the toggled-on bar button. The Compare button keeps a gap between its icon and its label.
-  for (const sel of ['.cap-banner', '.cap-pulse', '#startCompareBtn', '#startCompareBtn.cap-on', '#bar .ib.active']) {
+  // toggle's pulse and the toggled-on bar button. The Compare button keeps a gap between its icon and its label.
+  for (const sel of ['.cap-pulse', '#startCompareBtn', '#startCompareBtn.cap-on', '#bar .ib.active']) {
     assert.ok(anySelector(PLAYER, (s) => s === sel), `${sel} is in player.css`);
   }
   assert.ok(/^\d/.test(declsOf(PLAYER, '#startCompareBtn').gap), 'a gap between the icon and the label');
@@ -301,6 +301,76 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   const pxRules = rules(PLAYER).filter((x) => !x.at && x.selectors.length === 1 && norm(x.selectors[0]) === '#pxread'
     && /z-index/.test(x.body));
   assert.strictEqual(pxRules.length, 1, '#pxread z-index is set once');
+}
+
+{ // The #notice banner reads as a message (docs/notes/notifications.md, "Banner layout"): the text on its own line
+  // with the buttons on a row below it, the main action filled, × in the corner; neutral, no accent colour or icon.
+  const notice = declsOf(PLAYER, '#notice');
+  assert.strictEqual(notice['flex-wrap'], 'wrap', 'buttons wrap under the text');
+  assert.ok(!notice['border-left'] && !anySelector(PLAYER, (sel) => /^#notice(\[[^\]]*\])?::before$/.test(sel)), 'no accent edge or icon');
+  const text = declsOf(PLAYER, '#noticeText');
+  assert.match(text.flex || '', /100%/, 'the text takes a whole line');
+  assert.strictEqual(text['box-sizing'], 'border-box', 'and never spills out of the card');
+  assert.strictEqual(declsOf(PLAYER, '#notice #noticeClose').position, 'absolute', '× in the corner');
+  assert.match(declsOf(PLAYER, '#notice #noticeAction').background || '', /--vscode-button-background/, 'main action filled');
+}
+
+{ // The toast is the notice card without buttons: the theme's surface, border and text, not a fixed black box; the
+  // old Add mode pill and the #addHint leftovers are gone (Add mode's prompt is a #notice).
+  const toast = declsOf(PLAYER, '#toast');
+  const notice = declsOf(PLAYER, '#notice');
+  for (const k of ['background', 'border', 'border-radius', 'box-shadow', 'backdrop-filter', 'font-size']) {
+    assert.strictEqual(toast[k], notice[k], `#toast ${k} is the notice's`);
+  }
+  assert.strictEqual(toast.color, 'var(--vpe-panel-fg)', 'theme text colour');
+  assert.ok(!toast['font-weight'] || Number(toast['font-weight']) < 600, 'not bold');
+  assert.ok(!anySelector(PLAYER, (s) => /\.cap-banner|#addHint/.test(s)), 'no capture pill or #addHint rules left');
+}
+
+{ // One card look for every floating surface (docs/DESIGN.md): the same background, blur, corners and two shadow
+  // levels, all from the :root tokens in player.css. A new surface that sets its own values fails here.
+  const RAIL = read('folder-rail.css');
+  const root = Object.assign({}, ...rules(PLAYER).filter((x) => !x.at && x.selectors.map(norm).includes(':root'))
+    .map((x) => Object.fromEntries(splitTop(x.body, /;/).map((d) => [d.slice(0, d.indexOf(':')).trim(), d.slice(d.indexOf(':') + 1).trim()]))));
+  assert.match(root['--vpe-surface-float'], /var\(--vscode-menu-background\b.*\) 90%, transparent\)$/, '90% opacity');
+  assert.strictEqual(root['--vpe-card-blur'], 'blur(2px)', '2 px blur');
+  assert.strictEqual(root['--vpe-card-radius'], '8px');
+  for (const k of ['--vpe-shadow-low', '--vpe-shadow-high']) assert.match(root[k] || '', /var\(--vscode-widget-shadow\b/, k);
+  const SHADOW_EXCEPTIONS = new Set(['.rail.overlay']); // a side panel: its shadow falls to one side only
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    const src = stripComments(css);
+    assert.ok(!/backdrop-filter:\s*blur\(/.test(src), `${name}: blur only through var(--vpe-card-blur)`);
+    const mixes = src.match(/color-mix\([^;]*--vscode-(menu|editorWidget)-background[^;]*;/g) || [];
+    assert.ok(mixes.every((m) => /^color-mix\(in srgb, var\(--vscode-menu-background, #1e1f23\) 90%/.test(m)) && (name !== 'player.css' || mixes.length === 1),
+      `${name}: no translucent surface besides --vpe-surface-float (${mixes.join(' | ')})`);
+    for (const r of rules(css)) {
+      const d = Object.fromEntries(splitTop(r.body, /;/).map((x) => [x.slice(0, x.indexOf(':')).trim(), x.slice(x.indexOf(':') + 1).trim()]));
+      if (!/var\(--vpe-(surface-float|panel-bg)\)/.test(d.background || '')) continue;
+      const sel = r.selectors.join(', ');
+      assert.strictEqual(d['backdrop-filter'], 'var(--vpe-card-blur)', `${name} ${sel}: card blur`);
+      if (d['box-shadow'] && !r.selectors.some((s) => SHADOW_EXCEPTIONS.has(norm(s)))) {
+        assert.match(d['box-shadow'], /^var\(--vpe-shadow-(low|high)\)$/, `${name} ${sel}: a shadow token`);
+      }
+      if (d['border-radius']) {
+        assert.match(d['border-radius'], /^(var\(--vpe-card-radius\)|999px|var\(--vpe-card-radius\) 0 0 var\(--vpe-card-radius\))$/,
+          `${name} ${sel}: card corners (${d['border-radius']})`);
+      }
+    }
+  }
+}
+
+{ // No dead surfaces (the unified page never builds the old Start Compare dialog), and the Compare tile buttons take
+  // the theme's hover and error colours instead of fixed white / red (docs/DESIGN.md, Colour).
+  for (const dead of ['#startCompareDialog', '#startCompareBackdrop', '#confirmCompareBtn', '.compare-actions']) {
+    assert.ok(!anySelector(PLAYER, (s) => s.includes(dead)), `${dead} is gone from player.css`);
+  }
+  assert.strictEqual(declsOf(COMPARE, '.tbtn:hover').background, 'var(--vpe-hover)');
+  for (const sel of ['.tbtn.rm:hover', '.tbtn.rm.confirm']) {
+    const d = declsOf(COMPARE, sel);
+    assert.match(d.background, /^var\(--vscode-/, `${sel}: a VS Code colour`);
+    assert.ok(!/#[0-9a-f]{3,6}|rgba?\(/i.test(`${d.background} ${d['border-color'] || ''} ${d.color || ''}`.replace(/var\([^)]*\)/g, '')),
+      `${sel}: no fixed colours outside a var() fallback`);
+  }
 }
 
 console.log('unified_css: ok');

@@ -16,12 +16,44 @@ tested in milliseconds by `test/host/player_ui_tools_test.js`.
 |---|---|---|---|
 | VS Code notification (`showInformationMessage` / `showWarningMessage` / `showErrorMessage`) | extension host (`src/`) | things outside the player tab: ffmpeg setup and downloads, file associations, clip export results, offers | anything about the picture now playing in a tab (the user is looking at the tab, not the corner) |
 | `#notice` banner | `createNoticeController` | a lasting state of this tab the user may want to change: reduced picture, slow playback, refused A-B clip, errors with an action | one-off confirmations; status the bar already shows |
-| `#toast` pill | the page's `toast()` | a short confirmation of what the user just did (key, menu, click): "Frame copied", "Volume 80%", "Live transcode: auto" | anything that needs an action or must survive a glance away |
+| `#toast` card | the page's `toast()` | a short confirmation of what the user just did (key, menu, click): "Frame copied", "Volume 80%", "Live transcode: auto" | anything that needs an action or must survive a glance away |
 | Bar `Live` chip | `media/controls.js` | Live transcode / streaming state, resolution and rate | (it is the owner: toasts and notices do not repeat it) |
+
+## Banner layout
+
+![The #notice banner: text on its own line, buttons below](img/notice-banner.png)
+
+The banner is a neutral card so it reads as a message rather than a strip of buttons (`#notice` in
+`media/player.css`), with no accent colour or icon:
+
+- the **text on its own line**, the **buttons on a row below it**, starting where the text starts, in DOM order: the
+  main action (filled with VS Code's button colour), then **Settings**, then the "don't show again" answer;
+- **×** in the top-right corner. Keys and accessible names are unchanged: Tab order is text → action → Settings →
+  hide → ×, Esc closes it (after any open panel), the text goes to the polite live region.
+- Centered at the top, `min(460px, 100% - 32px)` wide; on a narrow editor the buttons wrap onto another row.
+
+Every banner has a mockup scenario built by its production helper: `notice` (Zen Mode full width),
+`notice-reduced-res`, `notice-slow`, `notice-ffmpeg` and `notice-clip-refusal`, e.g.
+`node tools/mockup/render.js --scenario notice-slow --out .tmp/notice.html`.
+
+## Add mode prompt and toast
+
+![Add mode's prompt as a notice, a toast under it](img/add-mode-notice.png)
+
+- **Add mode's prompt is a notice** (kind `capture`, `syncCapturePrompt` in `media/player-ui.js`), shown while Add
+  mode is on with one video (`deriveUi().showCaptureBanner`): *Adding videos to Compare. Open a video from the Explorer,
+  or browse this folder to pick one.* **Browse folder** opens the Folder Rail (no rail: **Choose video…**, the host's
+  picker); **Stop adding** ends Add mode; **×** hides only the prompt until Add mode starts again (the bar's
+  **Adding videos** button still shows the mode). **Esc** skips the prompt and ends Add mode in one press, as before
+  (`docs/PRODUCT.md`, Add Mode). It replaces the separate `#capBanner` pill.
+- **The toast is the notice card without buttons**: the same surface, border, corners, shadow and 12 px text (no
+  longer a fixed black box with bold white text), so it follows the VS Code theme. It moves below an open notice as
+  before, which also covers the Add mode prompt now.
 
 ## Banner priority queue
 
-`NOTICE_PRIORITY`: `error` = `clipRefusal` (3) > `reducedRes` (2) > `slowPlayback` (1) > `info` (0, also unknown kinds).
+`NOTICE_PRIORITY`: `error` = `clipRefusal` = `capture` (3) > `reducedRes` (2) > `slowPlayback` (1) > `info` (0, also
+unknown kinds). The Add mode prompt ranks with the errors because it is about what the user is doing right now.
 
 - **Higher preempts lower.** The lower notice goes into a pending queue, is *not* dismissed (its "remember the
   dismissal" hook does not run) and shows again when the higher one closes.
@@ -31,6 +63,23 @@ tested in milliseconds by `test/host/player_ui_tools_test.js`.
 - **On close** (×, Esc, a closing action, `hide(kind)`), the highest waiting notice shows next, first come first among
   equals. Entries the user dismissed meanwhile (persisted dismissals) or that no longer apply are dropped.
 - `hide(kind)` withdraws a kind from the banner and the queue; `hide()` clears both.
+
+## Zen Mode layout offer
+
+F in a webview falls back to VS Code Zen Mode, which centers the editor by default (`zenMode.centerLayout: true`), so
+the video does not fill the screen. VS Code has no API to ask whether Zen Mode is on, so the extension never guesses
+and never writes the setting by itself. After a toggle, the host (`toggleZen` in `src/extension.js`,
+`takeZenLayoutOffer` in `src/focus-mode.js`) sends `zenLayoutOffer` at most once per window, only while the setting is
+still on and the user has not chosen **Keep centered**. The banner (kind `zenLayout`, priority `info`):
+
+> Fullscreen uses VS Code's Zen Mode, which shows the video in a centered column. Fill the whole screen instead? This
+> turns off Zen Mode's centered layout for all of VS Code.
+> **Fill the screen (all of VS Code)** · **Settings** · **Keep centered** · ×
+
+- **Fill the screen** writes `zenMode.centerLayout: false` to user settings; VS Code re-lays out Zen Mode live, so the
+  video widens at once, and the setting itself remembers the answer. Every open tab closes the banner.
+- **Settings** opens `@id:zenMode.centerLayout`. **Keep centered** is stored in `globalState`
+  (`hideZenLayoutNotice`) and broadcast like the other "Don't show again" answers. **×** / Esc: this window only.
 
 ## Suppression rules
 

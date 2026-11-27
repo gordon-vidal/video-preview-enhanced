@@ -435,7 +435,7 @@ const withGlobals = (dom, fn) => {
   for (const id of ['bar', 'seek', 'play', 'prev', 'next', 'cog', 'infoBtn', 'startCompareBtn', 'rail', 'folderCap', 'railFilter']) {
     assert.ok(dom.$(id), `#${id} is in the production markup`);
   }
-  for (const id of ['panel', 'sheet', 'ctxmenu', 'rail', 'railHover', 'railColMenu', 'railEndMenu', 'capBanner', 'splitter', 'divider']) {
+  for (const id of ['panel', 'sheet', 'ctxmenu', 'rail', 'railHover', 'railColMenu', 'railEndMenu', 'notice', 'splitter', 'divider']) {
     assert.strictEqual(dom.$(id).hidden, true, `#${id} starts hidden, as in the real markup`);
   }
   assert.strictEqual(dom.$('prevSize').closest('#bar'), dom.$('bar'), 'closest() walks the real parent chain');
@@ -1443,6 +1443,7 @@ const withGlobals = (dom, fn) => {
     key('Escape');
     key('Escape');
     assert.ok(host.log.some((m) => m.type === 'focusModeExited'), 'Esc Esc in Zen Mode tells the host');
+    ui.onHostMessage({ type: 'focusMode', active: false });
     ui.dispatch('playPause');
     ui.onHostMessage({ type: 'setVisible', visible: false });
     assert.strictEqual(tab().playing, false, 'a hidden tab pauses');
@@ -1663,6 +1664,66 @@ async function phase34() {
     assert.strictEqual(n.kind(), 'slowPlayback');
     ui.onHostMessage({ type: 'hideSlowPlaybackNotice' });
     assert.deepStrictEqual([$('notice').hidden, n.getDismissals().slowPlayback], [true, true], 'turned off in Settings: closed and remembered');
+  });
+
+  // Zen Mode's centered column: the host asks once whether to fill the screen; every answer is the host's.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, key, $ }) => {
+    const n = ui.parts.notices;
+    ui.onHostMessage({ type: 'zenLayoutOffer' });
+    assert.strictEqual(n.kind(), 'zenLayout');
+    assert.match($('noticeText').textContent, /Zen Mode.*centered.*Fill the whole screen.*all of VS Code/);
+    assert.deepStrictEqual([$('noticeAction').textContent, $('noticeSettings').textContent, $('noticeHide').textContent],
+      ['Fill the screen (all of VS Code)', 'Settings', 'Keep centered']);
+    $('noticeAction').fire('click');
+    assert.deepStrictEqual(host.log.filter((m) => m.type === 'action').pop(), { type: 'action', id: 'zenFullWidth' });
+    assert.strictEqual($('notice').hidden, true, 'the click closes it');
+    ui.onHostMessage({ type: 'zenLayoutOffer' });
+    $('noticeSettings').fire('click');
+    assert.deepStrictEqual(host.log.filter((m) => m.type === 'action').pop(), { type: 'action', id: 'zenLayoutSettings' });
+    $('noticeHide').fire('click');
+    assert.deepStrictEqual(host.log.filter((m) => m.type === 'action').pop(), { type: 'action', id: 'hideZenLayoutNotice' });
+    ui.onHostMessage({ type: 'zenLayoutOffer' });
+    ui.onHostMessage({ type: 'hideZenLayoutNotice' });
+    assert.strictEqual($('notice').hidden, true, 'answered in another tab: closed here too');
+    ui.onHostMessage({ type: 'zenLayoutOffer' });
+    key('Escape');
+    assert.strictEqual($('notice').hidden, true, 'Esc closes it');
+  });
+
+  // Add mode with one video: the prompt is a #notice (docs/notes/notifications.md). Browse folder opens the Folder
+  // Rail, Stop adding ends Add mode, × hides only the prompt until Add mode starts again; it beats the other notices.
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, tab, key, $ }) => {
+    const n = ui.parts.notices;
+    assert.strictEqual($('capBanner'), null, 'no separate capture banner any more');
+    key('D', { shiftKey: true });
+    assert.strictEqual(tab().capture, true);
+    assert.strictEqual(n.kind(), 'capture', 'Add mode shows its prompt as a notice');
+    assert.match($('noticeText').textContent, /^Adding videos to Compare\. Open a video from the Explorer/);
+    assert.deepStrictEqual([$('noticeAction').textContent, $('noticeHide').textContent, $('noticeSettings').hidden],
+      ['Browse folder', 'Stop adding', true]);
+    $('noticeAction').fire('click');
+    assert.strictEqual(ui.rail.isOpen(), true, 'Browse folder opens the Folder Rail');
+    assert.strictEqual(n.kind(), 'capture', 'and the prompt stays');
+    ui.onHostMessage({ type: 'slowPlayback', variant: 'every' });
+    assert.strictEqual(n.kind(), 'capture', 'a lower notice waits behind the prompt');
+    $('noticeClose').fire('click');
+    assert.strictEqual(tab().capture, true, '× keeps Add mode on');
+    assert.strictEqual(n.kind(), 'slowPlayback', 'the waiting notice shows next');
+    n.hide();
+    ui.render();
+    assert.strictEqual($('notice').hidden, true, 'a hidden prompt stays hidden while Add mode lasts');
+    key('D', { shiftKey: true });
+    key('D', { shiftKey: true });
+    assert.strictEqual(n.kind(), 'capture', 'Add mode again: the prompt is back');
+    $('noticeHide').fire('click');
+    assert.strictEqual(tab().capture, false, 'Stop adding ends Add mode');
+    assert.strictEqual($('notice').hidden, true);
+    key('D', { shiftKey: true });
+    ui.onHostMessage({ type: 'capture', on: false });
+    assert.strictEqual($('notice').hidden, true, 'Add mode ended elsewhere: the prompt goes');
+    key('D', { shiftKey: true });
+    key('Escape');
+    assert.deepStrictEqual([tab().capture, $('notice').hidden], [false, true], 'one Esc still ends Add mode (PRODUCT.md)');
   });
 
   // Story C: a toast that repeats the open banner is dropped; Live transcode / streaming keeps the slow hint away.
