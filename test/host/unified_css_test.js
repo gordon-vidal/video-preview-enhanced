@@ -303,4 +303,16 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.strictEqual(pxRules.length, 1, '#pxread z-index is set once');
 }
 
+{ // The #notice banner reads as a message (docs/notes/notifications.md, "Banner layout"): the text on its own line
+  // with the buttons on a row below it, the main action filled, × in the corner; neutral, no accent colour or icon.
+  const notice = declsOf(PLAYER, '#notice');
+  assert.strictEqual(notice['flex-wrap'], 'wrap', 'buttons wrap under the text');
+  assert.ok(!notice['border-left'] && !anySelector(PLAYER, (sel) => /^#notice(\[[^\]]*\])?::before$/.test(sel)), 'no accent edge or icon');
+  const text = declsOf(PLAYER, '#noticeText');
+  assert.match(text.flex || '', /100%/, 'the text takes a whole line');
+  assert.strictEqual(text['box-sizing'], 'border-box', 'and never spills out of the card');
+  assert.strictEqual(declsOf(PLAYER, '#notice #noticeClose').position, 'absolute', '× in the corner');
+  assert.match(declsOf(PLAYER, '#notice #noticeAction').background || '', /--vscode-button-background/, 'main action filled');
+}
+
 console.log('unified_css: ok');
