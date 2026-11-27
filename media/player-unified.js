@@ -26,10 +26,11 @@
    *   onEnded: (info?: { natural?: boolean }) => void, post: (m: any) => void, log: (...a: any[]) => void,
    *   wake: () => void, showMessage: (msg?: string, hint?: string) => void,
    *   toast: (text: string, ms?: number) => void, getRate: () => number, getLoop: () => boolean,
-   *   getMuted: () => boolean, getVolume: () => number, onTracks: (player: any) => void }} PlayerHooks
+   *   getMuted: () => boolean, getVolume: () => number, onTracks: (player: any) => void, isClock?: () => boolean }} PlayerHooks
    *   getRate / getLoop / getMuted / getVolume: the page's live settings for a decoder that reads them on demand
    *   (media/frame-player.js); getMuted is true for every clip but the sound source. onTracks: media/engine.js's
-   *   track list or a track selection changed (the page reads player.tracks()).
+   *   track list or a track selection changed (the page reads player.tracks()). isClock: this decoder's video sets the
+   *   clock (a single video, or Compare's clock tile): Live transcode keeps a decoder running on the host only for it.
    * @typedef {(clip: ClipSpec, host: any, hooks: PlayerHooks) => any} CreatePlayer
    * @typedef {{ doc?: any, win?: any, vscode?: any, cfg?: any, createPlayer?: CreatePlayer | null, compositor?: any,
    *   sync?: any, widgets?: any, stateApi?: any, engineApi?: any, hostApi?: any, uiApi?: any, log?: (...a: any[]) => void }} BootEnv
@@ -190,6 +191,7 @@
         onEnded: (/** @type {any} */ _p, /** @type {any} */ info) => hooks.onEnded(info),
         // The sound and subtitle streams (tracks-streams): the page lists them in the CC and Audio track panels.
         onTracks: (/** @type {any} */ pl) => { if (typeof hooks.onTracks === 'function') hooks.onTracks(pl); },
+        isClock: () => (typeof hooks.isClock === 'function' ? hooks.isClock() : true),
       });
       const meta = clip.meta && typeof clip.meta === 'object' ? clip.meta
         : { size: clip.size || 0, duration: clip.duration || 0, label: clip.name || '', native: !!clip.native };
@@ -321,12 +323,13 @@
     const exacts = new Map();
     /**
      * The exact picture of the clip's shown frame from the host (Live transcode, lossy native), as media/player.js
-     * asks for it: null when VpeExact is missing or the shown picture is exact already.
-     * @param {string} id @param {any} p
+     * asks for it: null when VpeExact is missing or the shown picture is exact already. `opts`: VpeExact grab's
+     * ({ notify: false } fetches without the "Fetching exact frame…" toast).
+     * @param {string} id @param {any} p @param {{ notify?: boolean }} [opts]
      */
-    function grabExact(id, p) {
+    function grabExact(id, p, opts) {
       const X = W('VpeExact');
-      if (!X || disposed || !p || !X.available(p, cfg)) return null;
+      if (!X || disposed || !exactUsable(p)) return null;
       let ex = exacts.get(id);
       if (!ex) {
         ex = X.create({
@@ -337,7 +340,22 @@
         });
         exacts.set(id, ex);
       }
-      return ex.grab(`${p.gen}|${p.currentFrame()}|${p.shownCount || 0}`, X.shownTime(p));
+      return ex.grab(exactKeyOf(p), X.shownTime(p), opts);
+    }
+    /** The shown frame of a decoder as exact-frame requests key it: seek generation, frame, picture count. @param {any} p */
+    const exactKeyOf = (p) => `${p.gen}|${p.currentFrame()}|${p.shownCount || 0}`;
+    /** Transfers of HDR video (libav numbers and ffprobe names): PQ, HLG. */
+    const HDR_TRC = new Set([16, 18, 'smpte2084', 'arib-std-b67']);
+    /**
+     * Whether the host can give exact frames of the clip's decoder: Live transcode or lossy native, and not HDR (the
+     * host refuses it, src/exact_frame.js unsupported(): the picture is shown tone-mapped, so the "Use full
+     * resolution" offer stays for it). @param {any} p
+     */
+    function exactUsable(p) {
+      const X = W('VpeExact');
+      if (!X || !p || !X.available(p, cfg)) return false;
+      const info = p.info || {};
+      return !(info.transcode && info.transcode.hdrTonemap) && !(info.video && HDR_TRC.has(info.video.colorTrc));
     }
     const makeAdapter = () => EngineApi.create({
       clips: [...specs.values()], getPlayer: (/** @type {string} */ id) => players.get(id) || null, compositor,
@@ -367,6 +385,8 @@
       streams.delete(id);
       try { adapter.unregisterClip(id); } catch { /* already gone */ }
     }
+    /** The tools that read the exact frame from the host when the shown picture is not (pageEngine.exactFrames). */
+    const EXACT_TOOLS = new Set(['inspector', 'scopes', 'save', 'copy']);
     /** @type {Map<string, any>} shown-fps mark per clip for Shift+I stats overlay */
     const statsMarks = new Map();
     /** @type {any} */
@@ -403,6 +423,27 @@
       selectSubtitle: (/** @type {string} */ id, /** @type {number} */ track) => selectSubtitle(id, track),
       packetIndex: (/** @type {string} */ id) => xrayHost.packetIndex(id),
       chapters: (/** @type {string} */ id) => chaptersOf(id),
+      /**
+       * Whether the page fetches exact frames from the host for this clip's tool (Live transcode, lossy native; not
+       * HDR): the inspector and the scopes (exactHost), Save Frame and Copy Frame (snapshot). An A-B export is a clip.
+       */
+      exactFrames: (/** @type {string} */ id, /** @type {string} */ tool) =>
+        EXACT_TOOLS.has(tool) && exactUsable(players.get(id)),
+      /**
+       * A still of the clip's shown frame as PNG bytes (media/player-ui-tools.js Save / Copy Frame): the host's exact
+       * frame when it can give one (as media/player.js frameBlob did), else the decoded picture (the adapter). The
+       * host failing falls back to the decoded picture (its notice says so); the frame changing meanwhile gives null.
+       */
+      snapshot: (/** @type {string} */ id, /** @type {number} */ frame) => {
+        const p = players.get(id);
+        if (!exactUsable(p)) return adapter.snapshot(id, frame);
+        const key = exactKeyOf(p);
+        return Promise.resolve(grabExact(id, p)).then((/** @type {any} */ r) => {
+          if (r && r.png) return { clipId: id, frame, width: r.w, height: r.h, mimeType: 'image/png', data: r.png };
+          if (!r || disposed || players.get(id) !== p || exactKeyOf(p) !== key) return null;
+          return adapter.snapshot(id, frame);
+        }, () => null);
+      },
     };
 
     /** A clip the host named: known from now on (its name and numbers win over the decoder's). @param {any} m */
@@ -483,6 +524,10 @@
           return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
         },
         onTracks: (pl) => onPlayerTracks(id, pl),
+        isClock: () => {
+          const t = ui ? S.getTab(ui.getState()) : null;
+          return !t || t.tiles.length < 2 || clockIdOf(t) === id;
+        },
       };
       try {
         // Kept (not taken once): a clip closed and opened again, or restarted, opens with the host's meta again.
@@ -825,10 +870,15 @@
       const t = S.getTab(ui.getState());
       const p = players.get(clockIdOf(t));
       // While paused with a seek/step still in flight, or waiting to restore after a reload, never overwrite t.frame.
-      if (!p || pendingRestore.has(clockIdOf(t)) || (!t.playing && busy(p))) return;
+      // Playing, the same while a seek has not landed: the decoder's frame is still the one from before the seek.
+      if (!p || pendingRestore.has(clockIdOf(t)) || (!t.playing && busy(p)) || seekPending(p)) return;
       if (typeof p.currentFrame === 'function') {
         try { onPlayerFrame(clockIdOf(t), Number(p.currentFrame())); } catch { /* a closing decoder */ }
       }
+    }
+    /** A seek sent to this decoder has not shown its frame yet (media/engine.js seekTarget). @param {any} p */
+    function seekPending(p) {
+      try { return p.seekTarget !== null && p.seekTarget !== undefined; } catch { return false; }
     }
     /**
      * A decoder still has work a frame tick moves on: playing, a seek not yet shown, a first frame not yet presented
@@ -957,7 +1007,42 @@
       bitmapSubs.update();
       xrayHost.tick();
       scopesHost.tick(now);
+      exactHost.tick(now);
+      // Tiles still working on the frame asked for: a spinner after a short wait (media/player-ui.js setLoading).
+      if (ui && !disposed && typeof ui.setLoading === 'function') ui.setLoading(waitingTiles(S.getTab(ui.getState())), now); // the frame's time: performance.now()'s clock
       if (debugMetrics) debugMetrics.check();
+    }
+    /**
+     * The visible tiles whose decoder has not shown the frame asked for yet: paused, a seek or step in flight;
+     * playing, still opening, held by an accurate seek (media/engine.js playbackPhase) or buffering (waitPic). A tile
+     * outside its clip waits for nothing.
+     * @param {any} t
+     */
+    function waitingTiles(t) {
+      return visiblePlayers(t).filter(([id, p]) => {
+        if (targetOf(t, id) === null) return false;
+        try {
+          if (typeof p.playbackPhase === 'function') {
+            const phase = p.playbackPhase();
+            if (phase === 'loading' || phase === 'seeking') return true;
+            // Playing with no picture to show (a remote stream buffering): the clock holds at the frozen frame.
+            if (phase === 'playing') return !!p.waitPic;
+            if (phase !== 'paused') return false;
+          } else if (typeof p.isPlaying === 'function' ? p.isPlaying() : p.playing) return false;
+          return owesFrame(p);
+        } catch { return false; }
+      }).map((e) => e[0]);
+    }
+    /**
+     * A paused decoder has not shown the frame asked for yet: a seek or step in flight, a stale picture, or no first
+     * frame. Not its other work (busy(): the read-ahead still requesting over a slow link, queued frames), which keeps
+     * the loop running but owes the user nothing on screen. Decoders without these fields: busy().
+     * @param {any} p
+     */
+    function owesFrame(p) {
+      if (!('seekTarget' in p)) return busy(p);
+      return (p.seekTarget !== null && p.seekTarget !== undefined) || !!p.shownStale || !!p.catchUp || !!p.skipping
+        || (p.firstShown === false && !p.eof);
     }
     /** The shared loop's work, for the debug probe's state: animation frames that ticked, and the times it rested. */
     const loopStats = { frames: 0, rests: 0 };
@@ -973,7 +1058,7 @@
       if (disposed || !ui) return;
       const t = S.getTab(ui.getState());
       // Open scopes keep the loop going: their GPU read finishes on a later frame, and a paused frame change is sampled.
-      if (t.playing || scopesHost.active() || visiblePlayers(t).some((/** @type {any} */ e) => busy(e[1]))) scheduleTick();
+      if (t.playing || scopesHost.active() || exactHost.waiting() || visiblePlayers(t).some((/** @type {any} */ e) => busy(e[1]))) scheduleTick();
       else loopStats.rests++;
     };
     /** Wake the loop (a decoder's wake, a seek, play): one animation frame is asked for at a time. */
@@ -1758,9 +1843,70 @@
           .then((layouts) => I.vfSample(vf.format, buf, layouts, vr.x + sx - ax, vr.y + sy - ay) || null, () => null);
       } catch { return null; } // a closed frame
     }
+    /**
+     * The exact (full-resolution) picture of the paused clock frame during Live transcode or lossy native playback
+     * (grabExact, as media/player.js exactTick did): `{ key, w, h, img, matrix, png, ctx? }`. The pixel inspector and the
+     * scopes read it instead of the decoded picture while it belongs to the shown frame (docs/PRODUCT.md "Exact frame").
+     */
+    const exactHost = (() => {
+      /** @type {any} */
+      let exact = null;
+      let settle = { key: '', at: 0 };
+      let asked = '';
+      /** The exact picture of `p`'s shown frame, or null. @param {any} p */
+      const of = (p) => (exact && p && exact.key === exactKeyOf(p) ? exact : null);
+      /** A 2D context holding the exact picture (small getImageData reads), made once per picture. @param {any} e */
+      const ctxOf = (e) => {
+        if (!e.ctx) {
+          const c = doc.createElement('canvas');
+          c.width = e.w;
+          c.height = e.h;
+          e.ctx = c.getContext('2d', { willReadFrequently: true });
+          e.ctx.drawImage(e.img, 0, 0);
+        }
+        return e.ctx;
+      };
+      /** The paused clock decoder whose shown frame an open inspector or scope still needs the exact picture of. */
+      function wanting() {
+        if (!ui || S.getTab(ui.getState()).playing || !(pixelHost.inspecting() || scopesHost.active())) return null;
+        const p = clockPlayerNow();
+        if (!exactUsable(p) || (p.seekTarget !== null && p.seekTarget !== undefined)) return null;
+        return of(p) || asked === exactKeyOf(p) ? null : p;
+      }
+      /**
+       * From the frame loop: with the inspector or the scopes on and the clock clip paused on a frame that stayed for
+       * 150 ms, ask the host once for that frame's exact picture (Live transcode keeps playing the encoded stream).
+       * @param {number} now
+       */
+      function tick(now) {
+        const p = wanting();
+        if (!p) { settle = { key: '', at: 0 }; return; }
+        const key = exactKeyOf(p);
+        if (settle.key !== key) { settle = { key, at: now }; return; }
+        if (now - settle.at < 150) return;
+        asked = key;
+        const frame = Number(p.currentFrame()) || 0;
+        const got = grabExact(clockIdOf(S.getTab(ui.getState())), p, { notify: false });
+        if (!got) return;
+        Promise.resolve(got).then((/** @type {any} */ r) => {
+          if (disposed || !r || !r.img || !(r.w > 0 && r.h > 0)) return;
+          exact = { ...r, key };
+          if (cfg.debug && r.png) log(`exact frame ${r.w}x${r.h} for frame ${frame + 1}`); // test hook (layer 3)
+          pixelHost.refresh();
+          scheduleTick(); // the scopes sample again with it (their key changes)
+        }, () => {});
+      }
+      return {
+        of, ctxOf, tick,
+        /** The loop keeps running while the shown frame still waits for its exact-picture request. */
+        waiting: () => !!wanting(),
+      };
+    })();
     const pixelHost = (() => {
       /** @type {any} */
       let inst = null;
+      const exactOf = exactHost.of;
+      const exactCtx = exactHost.ctxOf;
       const ensure = () => {
         if (inst || disposed) return inst;
         const Tools = W('VpePlayerUiTools');
@@ -1773,12 +1919,19 @@
             const p = clockPlayerNow();
             const cv = p && (p.cv || p.canvas);
             const rect = pictureClientRect();
+            const ex = exactOf(p);
+            if (rect && ex) return { rect, width: ex.w, height: ex.h };
             return rect && cv && cv.width > 0 && cv.height > 0 ? { rect, width: cv.width, height: cv.height } : null;
           },
           read: (/** @type {number} */ x, /** @type {number} */ y) => {
             const p = clockPlayerNow();
             const cv = p && (p.cv || p.canvas);
             if (!p || !cv) return null;
+            const ex = exactOf(p);
+            if (ex) {
+              // The source's own pixels (RGB, already turned): no YUV code values to read.
+              try { return { block: exactCtx(ex).getImageData(x - (n >> 1), y - (n >> 1), n, n).data, rgb: null, rot: 0, yuv: null }; } catch { /* decoded picture below */ }
+            }
             let block = null;
             try { block = readBlock(p, cv, x, y, n); } catch { block = null; }
             /** @type {number[] | null} */
@@ -1795,6 +1948,8 @@
         return inst;
       };
       return {
+        /** Whether the pixel inspector is on (it then wants the exact picture of a paused frame). */
+        inspecting: () => !!(inst && (inst.getState() || {}).mode),
         /** The inspection controller's inspector widget. @param {string | null} m */
         setMode: (m) => { const i = m ? ensure() : inst; if (i) i.setMode(m); },
         /** The picture moved or changed: the grid follows (made once the picture is zoomed), the read-out reads again. */
@@ -1974,7 +2129,9 @@
         drop();
         try {
           inst = VS.create({
-            stage, canvas: cv, getPlayer: () => (realCanvas() === cv ? clockPlayer() : null), getExact: () => null,
+            stage, canvas: cv, getPlayer: () => (realCanvas() === cv ? clockPlayer() : null),
+            // The exact picture of the paused frame under Live transcode (exactHost), else the decoded one.
+            getExact: () => (realCanvas() === cv ? exactHost.of(clockPlayerNow()) : null),
             toast: () => {}, log, returnFocus: () => { const b = doc.getElementById('play'); if (b && b.focus) b.focus(); },
           });
           instCanvas = cv;

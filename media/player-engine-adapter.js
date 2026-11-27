@@ -423,7 +423,18 @@
         else if (q.cb && typeof q.cb.getContext === 'function') {
           let drawn = false;
           try { drawn = drawThumbPicture(q.cb, picture); } catch { drawn = false; }
-          if (!drawn) draw(q.cb, c.id, frame, {});
+          const st = q.cb.style;
+          if (drawn) { if (st) { st.width = ''; st.height = ''; } } else {
+            // No thumbnail service (a URL, an MJPEG sequence ...): the picture fitted in thumbs.js's 160 x 120 box at
+            // a fixed CSS size. Sized from the canvas' own clientWidth x dpr it grew on every hover on HiDPI screens.
+            const nw = pos(c.width) || 16;
+            const nh = pos(c.height) || 9;
+            const s = Math.min(160 / nw, 120 / nh);
+            const w = Math.max(1, Math.round(nw * s));
+            const h = Math.max(1, Math.round(nh * s));
+            if (st) { st.width = `${w}px`; st.height = `${h}px`; }
+            draw(q.cb, c.id, frame, { width: w, height: h });
+          }
         }
       };
       let asked = false;

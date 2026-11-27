@@ -80,8 +80,12 @@ export function positionAtPoint(el: HTMLElement, x: number, y: number, opts: Poi
 
   const token = (pointTokens.get(el) ?? 0) + 1;
   pointTokens.set(el, token);
+  // The point itself inside the page: flip() would otherwise put a menu for a point past the bottom edge above that
+  // point (still off the page), and shift() moves it only sideways for a bottom placement.
+  const px = Math.min(Math.max(x, 0), vw || x);
+  const py = Math.min(Math.max(y, 0), vh || y);
   const reference = {
-    getBoundingClientRect: () => ({ x, y, left: x, top: y, right: x, bottom: y, width: 0, height: 0 }),
+    getBoundingClientRect: () => ({ x: px, y: py, left: px, top: py, right: px, bottom: py, width: 0, height: 0 }),
   };
   computePosition(reference, el, {
     strategy: 'fixed',

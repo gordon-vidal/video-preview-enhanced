@@ -25,6 +25,7 @@ const { toggleFocusMode, resetFocusMode, takeZenLayoutOffer } = require('./focus
 const frameserver = require('./frameserver'); // native frames over 127.0.0.1 (local windows)
 const remotestream = lazy(() => require('./remotestream')); // unified Live transcode stream engine (ADR 0002)
 const transcodePolicy = lazy(() => require('./transcode_policy'));
+const driverNoticeUi = lazy(() => require('./driver_notice'));
 const transcodeProbe = lazy(() => require('./transcode_probe'));
 const transcodeArgs = lazy(() => require('./transcode_args'));
 const probe = lazy(() => require('./probe')); // ffmpeg's GPU decoding tested on this machine
@@ -436,19 +437,23 @@ async function downloadRemoteFfmpeg() {
 const DRIVER_NOTICE_KEY = 'videoPreviewEnhanced.nvencDriverNotice';
 
 /** Shows a one-time notice per ffmpeg binary + NVIDIA driver when NVENC refuses an older driver. */
-function maybeShowDriverNotice(t, notice, nvidiaDriver) {
+function maybeShowDriverNotice(t, enc, nvidiaDriver) {
+  const notice = enc.driverNotice;
   if (!notice || !globalState) return;
   const key = `${t.ffmpeg}|${t.version || ''}|${nvidiaDriver || ''}`;
   const seen = globalState.get(DRIVER_NOTICE_KEY) || {};
   if (seen[key]) return;
   if (offers && offers.popupPending()) return;
+  // Recorded before it shows: every answer, closing included, means "not again for this ffmpeg + driver".
   seen[key] = Date.now();
   globalState.update(DRIVER_NOTICE_KEY, seen).then(undefined, () => {});
-  const text = transcodePolicy.driverNoticeText(notice);
-  log(`[live transcode] ${text}${notice.requiredApi && notice.foundApi ? ` (NVENC API ${notice.requiredApi} vs ${notice.foundApi})` : ''}`);
-  vscode.window.showInformationMessage(text, 'Got it', 'Set up ffmpeg').then((ans) => {
-    if (ans === 'Set up ffmpeg') setupFfmpeg();
-  }, () => {});
+  // In a Remote-SSH / container window this extension host, its ffmpeg and the driver are on the remote machine.
+  const remote = vscode.env.remoteName && vscode.env.remoteName !== 'wsl';
+  const model = driverNoticeUi.driverNotice({
+    notice, installedDriver: nvidiaDriver, host: remote ? os.hostname() : null, otherGpuEncoder: !!enc.hw,
+  });
+  log(`[live transcode] ${model.text}${notice.requiredApi && notice.foundApi ? ` (NVENC API ${notice.requiredApi} vs ${notice.foundApi})` : ''}`);
+  driverNoticeUi.showDriverNotice(vscode, model, { setupFfmpeg: () => setupFfmpeg({ driverNotice: notice }) }).catch((e) => log(`driver notice: ${e.stack || e}`));
 }
 
 /** Shared hardware-first stream selection for the player and Compare. */
@@ -459,7 +464,7 @@ async function transcodeOptions(t, pr, c, remote, reprobe = true) {
     transcodeProbe.encoderFor(t, ff.run, globalState, log, { nvidiaDriver }),
     remote && pr.audio ? remotestream.audioEncoderFor(t) : null,
   ]);
-  if (enc.driverNotice) maybeShowDriverNotice(t, enc.driverNotice, nvidiaDriver);
+  if (enc.driverNotice) maybeShowDriverNotice(t, enc, nvidiaDriver);
   if (!enc.encoder) return null;
   const decodeMethod = c.gpuDecoding === false ? 'none'
     : decide.nativeMethod(remote ? null : probeRecordFor(t), pr.video, true, hw).method;
@@ -495,8 +500,11 @@ async function confirmDownload(build) {
   }
 }
 
-/** Setup for the optional native decoder: a build matched to this machine, or the user's own. */
-async function setupFfmpeg() {
+/**
+ * Setup for the optional native decoder: a build matched to this machine, or the user's own.
+ * @param {{ driverNotice?: any }} [opts] driverNotice: the NVENC driver mismatch that led here (driver notice)
+ */
+async function setupFfmpeg(opts = {}) {
   if (vscode.env.remoteName && vscode.env.remoteName !== 'wsl' && remoteff.supported(hostPlatform(), hostArch())) {
     return downloadRemoteFfmpeg();
   }
@@ -548,10 +556,9 @@ async function setupFfmpeg() {
   const now = t ? `${t.version.replace(/ Copyright.*/, '')} [${t.source}]` : 'not installed — the built-in decoder plays everything up to about 1080p';
   const items = [];
   if (build) {
-    items.push({
-      id: 'build', label: `$(cloud-download) Download portable ffmpeg${t ? '' : '  (recommended)'}`, description: `${build.label}, ~${build.sizeMB} MB from ${build.source}, no admin rights`,
-      detail: `Real-time 4K, HEVC 10-bit, AV1 and ProRes. ${build.note ? `${build.note}. ` : ''}Checked against the SHA-256 listed in the same release; stored in the extension's folder.`,
-    });
+    // Recommended when the ffmpeg found can't encode on the GPU with this NVIDIA driver and the download matches it.
+    const driverNotice = opts.driverNotice || transcodeProbe.knownDriverNotice(t, globalState, info.nvidiaDriver);
+    items.push(setup.downloadItem({ build, found: t, nvidiaDriver: info.nvidiaDriver, driverNotice }));
   } else {
     const blocked = buildError && proxy.looksBlocked({ message: buildError });
     items.push({ id: 'none', label: '$(warning) No ffmpeg download available', detail: `${buildError}${blocked ? ' (blocked? set http.proxy, or download ffmpeg in a browser and use it below)' : ''}` });
@@ -1152,6 +1159,7 @@ function engineCfg(context, w) {
     pool: debugPool,
     mem: memBudgets(), // the whole machine's; the page shares it among the clips it shows
     hdrOutput: c.hdrOutput,
+    packetCacheMB: c.liveTranscodeCacheMB, // 0: off (media/engine.js onStreams)
     // Tests (VPE_LOG only): VPE_HDR_FORCE=1 takes the HDR output path on an SDR display.
     hdrForce: !!logFile && process.env.VPE_HDR_FORCE === '1',
     // Tests (VPE_LOG only): VPE_NO_WEBGL=1 makes the decoder fail as on a machine without WebGL2 (the error screen).
@@ -1228,9 +1236,11 @@ async function nativeFailed(c, error, rejectedMedia) {
 /** A Live transcode stream for a clip whose decision has one (src/unified-viewer.js startStream). */
 function createStream(c, o) {
   const d = o.decision;
+  // The GPU encoder session budget is host-wide (src/gpu-sessions.js): the setting applies to the streams started from now.
+  require('./gpu-sessions').sessions.setLimit(config().gpuEncoderSessions);
   const stream = new remotestream.EncodedStream({
     ...d.stream, tools: d.tools, file: c.fsPath, probed: d.probed, hidden: o.hidden, rotation: o.rotation || 0,
-    allowOverlap: false, maxHeight: o.maxHeight, maxKbps: o.maxKbps, fitView: !!o.fitView, allowLinkAdapt: !!d.stream.remote,
+    allowOverlap: false, maxHeight: o.maxHeight, maxKbps: o.maxKbps, fitView: !!o.fitView, allowLinkAdapt: !!d.stream.remote, warm: o.warm !== false,
     resolution: o.resolution !== undefined ? o.resolution : config().transcodeResolution, stats: !!logFile,
     initialLink: d.stream.remote ? sessionLink.read() : undefined,
     onLinkUpdate: (snapshot) => sessionLink.update(snapshot),

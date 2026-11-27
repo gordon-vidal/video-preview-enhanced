@@ -17,6 +17,7 @@ const {
   CPU_ENCODERS,
   buildVideoPipeline,
   buildDirectStreamArgs,
+  seekArgs,
   defaultCodecLevel,
   pipelineLabel,
   toneMapSupport,
@@ -25,6 +26,8 @@ const { encoderCacheKey } = require('./transcode_probe');
 const { effectiveMaxKbps, isHdr, canDirectStreamVideo, resolutionOf } = require('./transcode_policy');
 const { LinkAdaptController, LINK_TIERS, LINK_SETTLE_MS } = require('./stream-adapt');
 const { SeekHistoryBuffer, AUDIO_RATE, MAX_QUEUED_AUDIO } = require('./stream-buffer');
+const { sessions: hostGpuSessions, isGpuEncoder } = require('./gpu-sessions');
+const { WarmDecoder, warmSourceRefusal, warmSelect, warmKeyArgs, WARM_INPUT, WARM_OUTPUT, WARM_ENCODERS } = require('./warm-decoder');
 
 const MAX_QUEUED_SECONDS = 2; // packets read ahead of the webview before ffmpeg is paused
 const OVERLAP_LEAD_S = 1;
@@ -38,6 +41,32 @@ const SEEK_MAX_DEFER_MS = 400;
 const STEP_BACK_SPAN_S = 4;
 const STEP_BACK_LEAD_S = 1;
 const REMOTE_STEP_BACK_LEAD_S = 2.5;
+// Keyframe spacing of the host's H.264: 2 s while playing (compact), 0.5 s for an encode started paused (stepping,
+// inspecting): a step back across a keyframe then decodes at most half a second on the page instead of two.
+const PLAY_GOP_S = 2;
+const PAUSED_GOP_S = 0.5;
+// Fills behind a paused frame (fill): at most this many encodes at once on this host (each holds a GPU encoder session;
+// consumer NVIDIA cards allow a handful), and each reply at most this many bytes (whole packets) so a seek sent
+// meanwhile waits behind little on the link.
+const MAX_FILLS = 2;
+const FILL_PIECE_BYTES = 96 * 1024;
+let fillsRunning = 0;
+// A paused frame made sharp (sharp): sent in pieces of at most this many bytes, one per page request, like a fill.
+const SHARP_PIECE_BYTES = 96 * 1024;
+// Fast first picture (fastFirstBits): a paused start's first keyframe is made about this share of a full one, unless the
+// link would carry a full one within FAST_FIRST_SKIP_MS anyway.
+const FAST_FIRST_SHARE = 0.25;
+const FAST_FIRST_SKIP_MS = 100;
+// Quick first picture (startQuick): on a slow link, when the encoder cannot make its first keyframe small (fastFirstBits:
+// only x264 can), the target frame is encoded once more at half the width and height (a quarter of the pixels, so about
+// a quarter of the bytes) and sent before the stream's own frames. They wait for it at most 3/4 of the time a full
+// keyframe would take on the link (beyond that the full one would show sooner), within QUICK_HOLD_MIN_MS..MAX_MS; the
+// most with no link estimate yet. (Measured: the quick encode alone takes ~320 ms with NVENC, ffmpeg start included.)
+const QUICK_HOLD_SHARE = 0.75;
+const QUICK_HOLD_MIN_MS = 100;
+const QUICK_HOLD_MAX_MS = 1000;
+// A full keyframe's size before one was measured, in bytes per pixel (1080p: ~200 KB).
+const KEY_BYTES_PER_PIXEL = 0.1;
 // Sound sent at most this far past the picture sent.
 const AUDIO_LEAD_S = 2;
 const MAX_AUDIO_BATCH = 256 * 1024;
@@ -47,6 +76,16 @@ const OPUS_KBPS = 128;
 const audioEncoders = new Map();
 // Largest video batch per reply on a remote link (see answer()).
 const REMOTE_BATCH_BYTES = 128 * 1024;
+// HDR tone-mappers that failed with an ffmpeg (src/ffmpeg.js locateTools gives one tools object per check): every stream
+// with it skips them, so a second video does not pay the failed start again (libplacebo without a Vulkan device: ~1 s).
+const BAD_TONEMAP = new WeakMap();
+/** @param {any} tools @returns {Set<string>} */
+function badTonemapFor(tools) {
+  if (!tools || typeof tools !== 'object') return new Set();
+  let bad = BAD_TONEMAP.get(tools);
+  if (!bad) { bad = new Set(); BAD_TONEMAP.set(tools, bad); }
+  return bad;
+}
 
 /**
  * Where ffmpeg restarts for a seek to t (pure). A seek back just before the packets held starts the step-back
@@ -62,6 +101,9 @@ function stepBackStart(t, { from, base, hasPackets, fps, remote = false }) {
   const idx = Math.max(0, Math.floor(t * fps + 1e-6));
   return Math.max(0, idx - Math.round(fps * lead)) / fps;
 }
+
+/** Half a picture side, even (the quick picture: startQuick). @param {number} x */
+const quickSize = (x) => Math.max(2, Math.round(x / 4) * 2);
 
 function opusArgs(encoder) {
   return ['-c:a', encoder, '-strict', '-2', '-b:a', '96k',
@@ -102,13 +144,24 @@ class EncodedStream {
     cpuEncoder: cpu, decodeMethod = 'none', onEncoderFail, audioEncoder = null,
     fitView = true, maxKbps = 0, maxBitrateMbps = 0, allowLinkAdapt = true, remote = true,
     allowSoftwareFallback = true, hidden = false, allowOverlap = true, rotation = 0, resolution = 0,
-    initialLink = undefined, onLinkUpdate = undefined,
+    initialLink = undefined, onLinkUpdate = undefined, gpuSessions = hostGpuSessions, warm = true,
   }) {
     // Packets and sound read, and the history for seeks back (src/stream-buffer.js). The fields it owns are
     // reachable as this.vAll, this.aNext ... (accessors below the class).
     this.buf = new SeekHistoryBuffer({ hasAudio: !!(probed && probed.audio), audioEncoder, remote: !!remote });
     this.tools = tools;
     this.file = file;
+    // This host's GPU encoder sessions (src/gpu-sessions.js): the live encode holds one while it runs on a GPU encoder.
+    this.gpu = gpuSessions;
+    this.gpuToken = null;
+    /** @type {{ encoder: string, decodeMethod: string, device: any } | null} the GPU encoder a launch with no session left */
+    this.gpuFallback = null;
+    // The kept-running decoder for paused starts (src/warm-decoder.js): wanted for a single video and Compare's clock
+    // tile (the page says so with each seek); warmOff: why this stream stopped using it (a failure).
+    this.warmWanted = warm !== false;
+    /** @type {any} */
+    this.warm = null;
+    this.warmOff = '';
     this.post = post;
     this.log = log;
     this.maxHeight = maxHeight || 1080;
@@ -131,7 +184,8 @@ class EncodedStream {
     this.pipelineMode = CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode';
     this.hdr = isHdr(probed && probed.video); // PQ/HLG/Dolby Vision 8.x: tone-mapped to SDR BT.709 (transcode_args.js)
     this.tonemapKind = null; // the tone-mapping path in use ('qsv', 'vaapi', 'libplacebo', 'opencl', 'cpu')
-    this.badTonemap = new Set(); // paths that failed on this host: the next start picks the next best
+    this.badTonemap = badTonemapFor(tools); // paths that failed with this ffmpeg: the next start picks the next best
+    this.tonemapOk = null; // the tone-mapping path that gave a frame (a later failure is not the tone-mapper's)
     this.rotation = Number(rotation) || 0;
     this.directStreamFailed = false;
     this.hidden = hidden;
@@ -146,6 +200,8 @@ class EncodedStream {
     this.gen = 0;
     this.proc = null;
     this.seekT = 0;
+    // The next video start is a seek's (or the open's) own first one: only it may send a quick picture (startQuick).
+    this.seekStart = false;
     this.spawns = 0;
     this.lastSpawnAt = -Infinity;
     this.lastSeekAt = -Infinity;
@@ -331,7 +387,7 @@ class EncodedStream {
         this.setView(m.view);
         return this.open();
       case 'view': return this.setView(m, !!m.playing);
-      case 'playback': this.playing = !!m.playing; return undefined;
+      case 'playback': this.playing = !!m.playing; if (this.playing) { this.stopFill(); this.stopSharp(); this.stopQuick(); } return undefined;
       case 'remoteAudioFailed':
         if (!this.audioEncoder) return;
         this.audioFallback(m.message);
@@ -344,6 +400,12 @@ class EncodedStream {
       case 'seek': return this.seek(m);
       case 'remoteLink': return this.adapt(m);
       case 'hidden': return this.setHidden(!!m.on);
+      case 'fill': return this.fill(m);
+      case 'fillMore': return this.fillMore(m);
+      case 'fillStop': return this.stopFill();
+      case 'sharp': return this.sharp(m);
+      case 'sharpMore': return this.sharpMore(m);
+      case 'sharpStop': return this.stopSharp();
       default: return undefined; // recycle: nothing held here
     }
   }
@@ -355,6 +417,7 @@ class EncodedStream {
   setHidden(on) {
     const wasHidden = this.hidden;
     this.hidden = !!on;
+    if (on) { this.stopFill(); this.stopSharp(); this.stopQuick(); }
     if (!this.fps) return;
     if (!on) {
       this.hiddenRefresh = false;
@@ -370,6 +433,8 @@ class EncodedStream {
     this.takeStandby(NaN);
     this.buf.invalidateRegions();
     this.reset(this.base);
+    this.releaseGpu(); // its encoder stopped: another video may use the session meanwhile
+    this.disposeWarm('the tab is hidden');
     if (had) this.log('live transcode: tab hidden, ffmpeg stopped until it is shown');
   }
 
@@ -457,9 +522,16 @@ class EncodedStream {
     this.growQueued = false;
   }
 
-  args(t, audio, { exactAudio = false } = {}) {
+  /**
+   * @param {number} t @param {boolean} audio
+   * @param {{ exactAudio?: boolean, sharp?: boolean, firstKeyBits?: number, warm?: boolean, quick?: boolean }} [opts]
+   *   sharp: one visually lossless picture (sharp); firstKeyBits: a small first keyframe (fastFirstBits);
+   *   warm: the kept-running decoder's process (src/warm-decoder.js): MPEG-TS in and out, frames kept as they come;
+   *   quick: at half the stream's width and height (startQuick)
+   */
+  args(t, audio, { exactAudio = false, sharp = false, firstKeyBits = 0, warm = false, quick = false } = {}) {
     const v = this.pr.video;
-    if (!audio && this.useDirectStream()) {
+    if (!audio && !warm && this.useDirectStream()) {
       this.pipelineMode = 'direct-stream';
       return buildDirectStreamArgs({ file: this.file, streamIndex: v.index, startTime: t });
     }
@@ -470,23 +542,36 @@ class EncodedStream {
       decodeMethod: this.decodeMethod,
       gpuFilters: this.tools && this.tools.gpuFilters ? this.tools.gpuFilters : null,
       video: v,
-      w: this.w,
-      h: this.h,
+      w: quick ? quickSize(this.w) : this.w,
+      h: quick ? quickSize(this.h) : this.h,
       fps: this.fps,
       maxKbps: cap,
+      // Started paused (a jump or a step): keyframes every PAUSED_GOP_S, so a step back decodes few frames on the page.
+      gopS: this.playing && !warm ? PLAY_GOP_S : PAUSED_GOP_S,
+      sharp,
+      firstKeyBits,
       badTonemap: this.badTonemap,
     });
-    if (!audio) { this.pipelineMode = pipe.mode; this.tonemapKind = pipe.tonemap; }
+    if (!audio) { this.pipelineMode = pipe.mode; this.tonemapKind = pipe.tonemap; this.gpuDecode = !!pipe.gpuDecode; }
     const args = ['-hide_banner', '-nostdin', '-v', 'error', ...pipe.pre];
-    if (t > 0) args.push('-ss', (audio && exactAudio ? t : Math.max(0, t - 0.0005)).toFixed(audio && exactAudio ? 6 : 4));
-    args.push('-noautorotate', '-protocol_whitelist', 'file', '-i', this.file);
+    if (warm) {
+      args.push(...WARM_INPUT, '-map', '0:v:0', '-vf', `${warmSelect(this.fps)},${pipe.vf}`, '-fps_mode', 'passthrough',
+        ...pipe.encArgs, ...warmKeyArgs(this.encoder, PAUSED_GOP_S, this.fps),
+        '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
+        '-bsf:v', 'h264_metadata=aud=insert', ...WARM_OUTPUT, 'pipe:1');
+      return args;
+    }
+    // Video: from the keyframe at or before t, never the one before it (transcode_args.js seekArgs).
+    const seek = audio ? { input: [], vf: '' } : seekArgs(t, { formatName: this.pr.formatName, bFrames: !!v.bFrames });
+    if (audio && t > 0) args.push('-ss', (exactAudio ? t : Math.max(0, t - 0.0005)).toFixed(exactAudio ? 6 : 4));
+    args.push(...seek.input, '-noautorotate', '-protocol_whitelist', 'file', '-i', this.file);
     // Keep the outputs in separate processes: a full PCM pipe must not stall video (or vice
     // versa), and changing the video encoder must not move the audio sample clock.
     if (audio) return args.concat('-map', `0:${this.pr.audio.index}`, '-af', `aresample=${AUDIO_RATE}:async=1:first_pts=0`,
       '-ac', '2', '-ar', String(AUDIO_RATE), ...(this.audioEncoder
         ? [...opusArgs(this.audioEncoder), '-page_duration', '20000', '-f', 'opus'] : ['-f', 's16le']), 'pipe:1');
     // Timestamps: both outputs follow the stream's timestamps from the output's zero (the seek target).
-    args.push('-map', `0:${v.index}`, '-vf', pipe.vf,
+    args.push('-map', `0:${v.index}`, '-vf', seek.vf ? `${seek.vf},${pipe.vf}` : pipe.vf,
       ...(this.tools && this.tools.legacy ? ['-vsync', 'cfr'] : ['-fps_mode', 'cfr']), '-r', String(this.fps), ...pipe.encArgs,
       '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
       '-bsf:v', 'h264_metadata=aud=insert', '-f', 'h264', 'pipe:1');
@@ -512,6 +597,7 @@ class EncodedStream {
     if (this.disposed) return;
     this.failed = false;
     this.reset(t);
+    this.seekStart = true;
     this.spawnNow();
   }
 
@@ -582,16 +668,115 @@ class EncodedStream {
   spawnVideo() {
     if (this.failed || this.disposed) return false;
     const t = this.vBase;
+    this.regainGpu();
+    // The quick picture is of the seek target: not for a step back's earlier start, a restart or a region going on.
+    const atSeekTarget = this.seekStart && t === this.seekT;
+    this.seekStart = false;
     let proc;
-    try { proc = this.takeStandby(t) || this.launch(t); }
-    catch (e) { this.fail(e.message); return false; }
+    let firstKeyBits = 0;
+    let slowStart = false;
+    try {
+      proc = this.takeStandby(t);
+      if (!proc) {
+        firstKeyBits = this.fastFirstBits();
+        slowStart = firstKeyBits > 0;
+        if (this.quickHook === true) firstKeyBits = 0; // tests: the quick picture instead
+        // A small first keyframe (only x264 honours it) needs a fresh encoder: it wins over the kept-running one.
+        proc = firstKeyBits && this.encoder === 'libx264' ? null : this.warmSegment(t);
+        if (proc) firstKeyBits = 0;
+        else {
+          proc = this.launch(t, false, firstKeyBits ? { firstKeyBits } : undefined);
+          if (this.encoder !== 'libx264') firstKeyBits = 0; // only x264 honours it (transcode_args.js encoderArgs)
+          proc.firstKeyBits = firstKeyBits;
+        }
+      }
+    } catch (e) { this.fail(e.message); return false; }
     this.proc = proc;
     this.spawns++;
     this.lastSpawnAt = Date.now();
     this.watchVideo(proc);
+    // A seek's first start at its target, a slow link and no small first keyframe (NVENC and the other encoders, or the
+    // kept-running decoder): a quick picture.
+    if (atSeekTarget && slowStart && !proc.firstKeyBits && this.quickHook !== false && this.pipelineMode !== 'direct-stream') this.startQuick(t);
     const cap = this.activeCapKbps();
-    this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${cap ? `, ${cap} kb/s cap` : ''})`);
+    this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${this.gpuDecode ? ', GPU decode' : ''}${this.hdr && this.tonemapKind ? `, ${this.tonemapKind} tone-mapping` : ''}${cap ? `, ${cap} kb/s cap` : ''}${firstKeyBits ? `, first keyframe ~${Math.round(firstKeyBits / 8192)} KiB for a fast first picture` : ''}${proc.warm ? ', kept-running decoder' : ''})`);
     return true;
+  }
+
+  /**
+   * Fast first picture: an encode started paused (a jump, a step the page could not serve) starts with its rate buffer
+   * nearly empty, so its first keyframe is about FAST_FIRST_SHARE of a full one and shows sooner over a slow link; the
+   * frames after it refill the buffer within a few frames, and the page asks for the frame it stays on sharp (sharp).
+   * Same size, encoder and SPS/PPS as the rest of the stream (the page's packet cache keeps both). 0 (off) while playing,
+   * on a local window, or when the link estimate (stream-adapt.js) carries a full keyframe within FAST_FIRST_SKIP_MS.
+   * @returns {number} the first keyframe's size in bits, or 0
+   */
+  fastFirstBits() {
+    if (this.playing || !this.remote || this.fastFirstHook === false || !this.w || !this.h) return 0;
+    const { key, ms } = this.fullKeyOnLink();
+    if (ms <= FAST_FIRST_SKIP_MS && this.fastFirstHook !== true) return 0;
+    return Math.round(key * 8 * FAST_FIRST_SHARE);
+  }
+
+  /**
+   * A full keyframe at this picture size (the largest measured, else 0.1 byte per pixel) and how long the link estimate
+   * (stream-adapt.js fastKbps / slowKbps) takes to carry it: { key: bytes, ms } (ms Infinity with no estimate yet).
+   */
+  fullKeyOnLink() {
+    const key = this.keyBytes > 0 && this.keyBytesFor === `${this.w}x${this.h}` ? this.keyBytes
+      : Math.round(this.w * this.h * KEY_BYTES_PER_PIXEL);
+    const kbps = Math.min(this.link.fastKbps || 0, this.link.slowKbps || this.link.fastKbps || 0);
+    return { key, ms: kbps > 0 ? (key * 8) / kbps : Infinity }; // bits / (kb/s) = ms
+  }
+
+  /**
+   * A live encode on a GPU encoder holds one of this host's GPU encoder sessions (src/gpu-sessions.js). Called before
+   * every video encode starts (launch); a CPU encoder holds none. With all of them in use (other videos, Compare tiles,
+   * short encodes), the stream first takes back the one its own idle kept-running decoder holds; failing that this
+   * launch encodes on the CPU (gpuFallback) and the user is told once per session which video and why. The stream keeps
+   * its GPU encoder: the next launch with a session free goes back to it (regainGpu).
+   */
+  holdGpu() {
+    if (this.gpuToken || !isGpuEncoder(this.encoder) || this.pipelineMode === 'direct-stream' || this.useDirectStream()) return;
+    this.gpuToken = this.gpu.acquire('stream');
+    if (!this.gpuToken && this.warm && !(this.proc && this.proc.warm)) {
+      this.disposeWarm('its GPU encoder session goes to the stream');
+      this.gpuToken = this.gpu.acquire('stream');
+    }
+    if (this.gpuToken || !this.cpuEncoder || !this.allowSoftwareFallback) return; // no CPU encoder: try the GPU anyway
+    const enc = this.encoder;
+    const name = String(this.file || '').split(/[\\/]/).pop();
+    this.log(`live transcode: all ${this.gpu.limit} GPU encoder sessions on this host are in use (${JSON.stringify(this.gpu.counts())}); `
+      + `encoding with ${this.cpuEncoder} instead of ${enc} until one is free (videoPreviewEnhanced.gpuEncoderSessions)`);
+    this.gpuFallback = { encoder: enc, decodeMethod: this.decodeMethod, device: this.device };
+    this.encoder = this.cpuEncoder;
+    this.decodeMethod = 'none';
+    this.device = undefined;
+    this.pipelineMode = this.defaultPipelineMode();
+    if (this.gpu.firstNotice()) {
+      this.post({ type: 'remoteNotice', kind: 'gpuSessions', text: `${name} is transcoded on the processor for now: all `
+        + `${this.gpu.limit} GPU encoder sessions here are in use. It may play less smoothly until one is free. Settings: GPU Encoder Sessions.` });
+    }
+  }
+
+  /**
+   * A stream on the CPU only because no GPU encoder session was free (holdGpu): back on its GPU encoder for the next
+   * launch when one is free now (or its own idle kept-running decoder's can be taken back).
+   */
+  regainGpu() {
+    const f = this.gpuFallback;
+    if (!f || this.gpu.used >= this.gpu.limit) return;
+    this.gpuFallback = null;
+    this.encoder = f.encoder;
+    this.decodeMethod = f.decodeMethod;
+    this.device = f.device;
+    this.pipelineMode = this.defaultPipelineMode();
+    this.log(`live transcode: a GPU encoder session is free again; encoding with ${f.encoder}`);
+  }
+
+  releaseGpu() {
+    this.gpu.release(this.gpuToken);
+    this.gpuToken = null;
   }
 
   watchVideo(proc, overlap = null) {
@@ -621,8 +806,9 @@ class EncodedStream {
         return;
       }
       if (proc !== this.proc) return;
+      this.tonemapOk = this.tonemapKind;
       if (!this.gotOutput) {
-        this.log(`live transcode: first bytes ${Date.now() - t0} ms after start${proc.adopted ? ' (prepared at the end)' : ''}`);
+        this.log(`live transcode: first bytes ${Date.now() - t0} ms after start${proc.adopted ? ' (prepared at the end)' : ''}${proc.warm ? ' (kept-running decoder)' : ''}`);
         this.link.noteFirstOutput(Date.now());
         if (this.spawns > 1) this.post({ type: 'transcodeInfo', transcode: this.transcodeInfo() });
       }
@@ -631,7 +817,8 @@ class EncodedStream {
       if (proc.directStream) {
         this.buf.splitMpegTs(false);
         if (!checkDirectStart()) return;
-      } else this.buf.split(false);
+      } else this.buf.split(!!proc.warm); // the kept-running decoder hands over whole access units
+      if (proc.firstKeyBits && !proc.markedSmall && this.vAll[first]) { proc.markedSmall = true; this.vAll[first].small = true; }
       if (this.spliceVideo()) return;
       if (this.vAll.length - this.vNext > MAX_QUEUED_SECONDS * this.fps) proc.stdout.pause();
       this.answer();
@@ -643,12 +830,27 @@ class EncodedStream {
       }
       if (proc !== this.proc) return;
       this.proc = null;
+      if ((code !== 0 || signal) && proc.warm) {
+        const why = this.exitReason(proc, code, signal);
+        // A hardware tone-mapper that has not given a frame yet is the likelier cause: drop it, keep the warm process
+        // (a new one with the next path), rather than turning the warm process off and failing again per seek.
+        if (this.tonemapUnproven()) {
+          this.log(`live transcode: ${this.tonemapKind} HDR tone-mapping failed in the kept-running decoder (${why}); trying the next tone-mapping path`);
+          this.badTonemap.add(/** @type {string} */ (this.tonemapKind));
+          this.disposeWarm('tone-mapping failed');
+          this.restartVideo();
+          return;
+        }
+        this.warmFailed(why);
+        return;
+      }
       if (code !== 0 || signal) {
         const why = this.exitReason(proc, code, signal);
-        // Step 0a: a failed hardware tone-mapper (QSV, VA-API, libplacebo, OpenCL) drops to the next best path.
-        if (this.hdr && this.tonemapKind && this.tonemapKind !== 'cpu' && !this.badTonemap.has(this.tonemapKind)) {
+        // Step 0a: a failed hardware tone-mapper (QSV, VA-API, libplacebo, OpenCL) drops to the next best path, for
+        // every stream with this ffmpeg; only one that has not given a frame here (a later failure is not its fault).
+        if (this.tonemapUnproven()) {
           this.log(`live transcode: ${this.tonemapKind} HDR tone-mapping failed (${why}); trying the next tone-mapping path`);
-          this.badTonemap.add(this.tonemapKind);
+          this.badTonemap.add(/** @type {string} */ (this.tonemapKind));
           this.restartVideo();
           return;
         }
@@ -665,7 +867,7 @@ class EncodedStream {
           return;
         }
         // Step 1: if full GPU decode->scale->encode failed, drop GPU decode and retry CPU decode -> GPU encode.
-        if (this.pipelineMode === 'gpu-full' && this.decodeMethod !== 'none') {
+        if ((this.pipelineMode === 'gpu-full' || this.gpuDecode) && this.decodeMethod !== 'none') {
           this.log(`live transcode: GPU decode pipeline failed (${why}); retrying with CPU decode -> ${this.videoEncoder}`);
           this.decodeMethod = 'none';
           this.restartVideo();
@@ -712,15 +914,19 @@ class EncodedStream {
     this.kill();
     this.takeStandby(NaN);
     this.waiting = null;
+    this.releaseGpu();
+    this.disposeWarm();
     this.onFail(why);
   }
 
   encoderFallback(why) {
     const enc = this.encoder;
     this.log(`live transcode: ${enc} failed (${why}); retrying this stream with ${this.cpuEncoder}`);
+    this.gpuFallback = null; // failed, not just busy: the CPU for good
     this.encoder = this.cpuEncoder;
     this.decodeMethod = 'none';
     this.device = undefined;
+    this.releaseGpu();
     this.onEncoderFail(enc);
     this.restartVideo();
   }
@@ -867,6 +1073,7 @@ class EncodedStream {
   }
 
   launch(t, audio = false, opts = undefined) {
+    if (!audio) this.holdGpu();
     const argv = this.args(t, audio, opts);
     const proc = lowerPriority(spawn(this.tools.ffmpeg, argv, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
     proc.t = t;
@@ -920,6 +1127,17 @@ class EncodedStream {
   answer() {
     const m = this.waiting;
     if (!m) return;
+    // The quick picture goes on the link first (startQuick): the stream's frames wait for it, at most q.holdMs.
+    const q = this.quick;
+    if (q && q.gen === this.gen) {
+      const left = q.holdMs - (Date.now() - q.t0);
+      if (left > 0) {
+        if (!q.timer) q.timer = setTimeout(() => { q.timer = null; this.answer(); }, left);
+        return;
+      }
+      this.log(`remote stream: quick picture not ready after ${Math.round(q.holdMs)} ms; the stream goes first`);
+      this.stopQuick();
+    }
     if (this.restored) this.continueRegion();
     if (this.failed) return;
     const gen = this.gen;
@@ -959,6 +1177,13 @@ class EncodedStream {
     let bytes = lastPiece ? lastPiece.video[0].data.byteLength : 0;
     while (!lastPiece && end < this.vAll.length && this.vAll[end].t < boundary && end - this.vNext < frameLimit
       && (end === this.vNext || (this.vAll[end].t <= videoUntil && bytes + this.vAll[end].data.length <= limit))) bytes += this.vAll[end++].data.length;
+    // A full keyframe's size at this picture size (fastFirstBits): the largest sent, as the ones right after a small
+    // first keyframe (fast first picture) are still held down by the rate buffer; the small one does not count.
+    const size = `${this.w}x${this.h}`;
+    if (this.keyBytesFor !== size) { this.keyBytes = 0; this.keyBytesFor = size; }
+    for (let i = this.vNext; i < end; i++) {
+      if (this.vAll[i].key && !this.vAll[i].small) this.keyBytes = Math.max(this.keyBytes, this.vAll[i].data.byteLength);
+    }
     const vT = end > 0 ? this.vAll[end - 1].t + 1 / this.fps : this.base;
     const tail = this.videoEnded && this.vNext === this.vAll.length;
     const aCap = tail ? this.aNext + Math.max(1, Math.floor(Math.min(limit, MAX_AUDIO_BATCH) / 4))
@@ -1009,6 +1234,15 @@ class EncodedStream {
 
   seek(m) {
     if (this.disposed) return;
+    this.stopFill();
+    this.stopSharp();
+    this.stopQuick();
+    // The page's test hook (media/debug-probe.js pausedSharp): false off, true on whatever the link estimate says.
+    if (m.fastFirst !== undefined) this.fastFirstHook = !!m.fastFirst;
+    // Same hook: true sends the quick picture whatever the encoder (instead of x264's small first keyframe), false never.
+    if (m.quick !== undefined) this.quickHook = m.quick === null ? undefined : !!m.quick;
+    // The page: whether this video sets the clock (Compare's clock tile, or a single video); tests turn it off.
+    if (m.warm !== undefined) this.setWarmWanted(!!m.warm);
     this.videoFragment = null;
     const interruptedOverlap = !!this.overlap;
     this.cancelOverlap();
@@ -1026,7 +1260,8 @@ class EncodedStream {
       && !this.gotOutput && this.aNext === 0 && t === this.base && t === this.vBase;
     if (!interruptedOverlap && !this.resizePending && (startingHere || this.reuseHistory(t))) {
       this.waiting = null;
-      this.post({ type: 'seeked', gen: m.gen, t });
+      const have = !startingHere && this.skipHeld(m.have);
+      this.post({ type: 'seeked', gen: m.gen, t, ...(have ? { have: true } : {}) });
       return;
     }
     const from = this.vAll.length ? this.vAll[0].t : this.base;
@@ -1036,6 +1271,7 @@ class EncodedStream {
     }
     this.sizeVideo();
     this.reset(start);
+    this.seekStart = true;
     this.aNext = Math.max(0, Math.round((t - start) * AUDIO_RATE));
     this.post({ type: 'seeked', gen: m.gen, t });
     clearTimeout(this.startTimer);
@@ -1046,6 +1282,375 @@ class EncodedStream {
     if (this.deferredSince === null) this.deferredSince = now;
     const at = Math.min(Math.max(due, now + SEEK_QUIET_MS), this.deferredSince + SEEK_MAX_DEFER_MS);
     this.startTimer = setTimeout(() => { this.startTimer = null; if (!this.disposed && !this.proc) this.spawnNow(); }, Math.max(0, at - now));
+  }
+
+  /**
+   * After reuseHistory: the page offered the packets it holds of this GOP ({ keyT, lastT }, media/engine.js
+   * packetsHeld). They are the ones this history sent it (same encode: the page drops packets of another stream
+   * configuration), so the reply starts after them and the link does not carry the GOP again. True when skipped;
+   * false (send from the keyframe as usual) unless the history's GOP is that one and holds every packet up to lastT.
+   */
+  skipHeld(have) {
+    if (!have || !Number.isFinite(have.keyT) || !Number.isFinite(have.lastT)) return false;
+    const eps = 1e-4;
+    const k = this.vNext;
+    const first = this.vAll[k];
+    if (!first || !first.key || Math.abs(first.t - have.keyT) > eps) return false;
+    let j = k + 1;
+    while (j < this.vAll.length && !this.vAll[j].key && this.vAll[j].t <= have.lastT + eps) j++;
+    if (Math.abs(this.vAll[j - 1].t - have.lastT) > eps) return false;
+    this.vNext = j;
+    // The sound it holds from the seek on (have.audioUntil): send from there, or from as far as this history has it
+    // (the page cuts what it already holds: media/engine.js takeHeld).
+    let sound = '';
+    if (Number.isFinite(have.audioUntil) && this.buf.hasAudio) {
+      const s = Math.round((have.audioUntil - this.base) * AUDIO_RATE);
+      const to = Math.min(s, this.aEnd);
+      if (to > this.aNext) { this.aNext = to; sound = ` and sound to ${(this.base + to / AUDIO_RATE).toFixed(3)} s`; }
+    }
+    this.log(`remote stream: the page holds ${j - k} packets (${have.keyT.toFixed(3)}-${have.lastT.toFixed(3)} s)${sound}; sending from the next`);
+    return true;
+  }
+
+  /**
+   * Paused: encode [from, to) behind the shown frame for the page's packet cache (media/engine.js fillBehind), so steps
+   * back from a fresh jump decode on the page. A second, short encode with this stream's own pipeline (same size,
+   * encoder and settings, so the page keeps both: media/packet-cache.js drops GOPs of another configuration) and the
+   * paused keyframe spacing. The page pulls it a piece at a time (fillMore) while it has nothing else to ask; a seek,
+   * play or hide stops it. Replies 'fillBatch' { id, video, done, error? }.
+   */
+  fill(m) {
+    this.stopFill();
+    const id = m.id;
+    const fps = this.fps;
+    const from = Math.max(0, Math.round(Number(m.from) * fps) / fps);
+    const frames = Math.round((Number(m.to) - from) * fps);
+    const no = (error) => this.post({ type: 'fillBatch', id, video: [], done: true, error });
+    if (this.disposed || this.failed || this.hidden || !this.pr.video || !(fps > 0)) return no('unavailable');
+    if (!(frames > 0)) return no('nothing to fill');
+    // A copy of the source's own GOPs (B-frames, sparse keyframes) is not kept by the page: nothing to gain.
+    if (this.pipelineMode === 'direct-stream' || this.useDirectStream()) return no('direct stream');
+    if (fillsRunning >= MAX_FILLS) return no('busy');
+    const token = isGpuEncoder(this.encoder) ? this.gpu.acquireShort('fill') : null;
+    if (isGpuEncoder(this.encoder) && !token) return no('busy'); // every GPU encoder session is in use
+    // args() records the pipeline it builds on this stream: the fill must not change what the live stream reports.
+    const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode, this.playing];
+    let argv;
+    try { this.playing = false; argv = this.args(from, false); }
+    catch (e) { this.gpu.release(token); return no(String(e && e.message || e)); }
+    finally { [this.pipelineMode, this.tonemapKind, this.gpuDecode, this.playing] = keep; }
+    argv.splice(argv.length - 1, 0, '-frames:v', String(frames));
+    let proc;
+    try {
+      proc = this.spawnJob(argv);
+    } catch (e) { this.gpu.release(token); return no(String(e && e.message || e)); }
+    fillsRunning++;
+    const buf = new SeekHistoryBuffer({ fps, hasAudio: false, remote: this.remote });
+    buf.reset(from);
+    const f = { id, proc, buf, sent: 0, ended: false, waiting: false, failed: '', t0: Date.now(), from, frames, bytes: 0 };
+    this.filling = f;
+    let err = '';
+    proc.on('error', (e) => { err += String(e); });
+    proc.stderr.on('data', (d) => { err = (err + d).slice(-500); });
+    proc.stdout.on('data', (d) => {
+      buf.pending = buf.pending.length ? Buffer.concat([buf.pending, d]) : d;
+      buf.split(false);
+      if (f.waiting && this.filling === f) this.fillMore({ id });
+    });
+    proc.on('close', (code) => {
+      fillsRunning = Math.max(0, fillsRunning - 1);
+      this.gpu.release(token);
+      buf.split(true);
+      f.ended = true;
+      if (code !== 0 && !buf.vAll.length) f.failed = err.trim().split(/\r?\n/).pop() || `ffmpeg exit ${code}`;
+      if (this.filling === f && f.waiting) this.fillMore({ id });
+    });
+    this.log(`remote stream: filling ${from.toFixed(3)}-${(from + frames / fps).toFixed(3)} s behind the paused frame (${frames} frames)`);
+    f.waiting = true; // the first piece goes out as soon as there is one
+  }
+
+  /** The page asks for the next piece of the fill (see fill). */
+  fillMore(m) {
+    const f = this.filling;
+    if (!f || f.id !== m.id) return;
+    const vAll = f.buf.vAll;
+    let end = f.sent;
+    let bytes = 0;
+    while (end < vAll.length && (end === f.sent || bytes + vAll[end].data.byteLength <= FILL_PIECE_BYTES)) bytes += vAll[end++].data.byteLength;
+    if (end === f.sent) {
+      if (!f.ended) { f.waiting = true; return; }
+      this.filling = null;
+      if (f.failed) this.log(`remote stream: fill failed (${f.failed})`);
+      this.post({ type: 'fillBatch', id: f.id, video: [], done: true, ...(f.failed ? { error: f.failed } : {}) });
+      return;
+    }
+    f.waiting = false;
+    const video = vAll.slice(f.sent, end);
+    f.sent = end;
+    f.bytes += bytes;
+    const done = f.ended && end === vAll.length;
+    if (done) {
+      this.filling = null;
+      this.log(`remote stream: filled ${f.sent} frames behind the paused frame, ${(f.bytes / 1024).toFixed(0)} KiB in ${Date.now() - f.t0} ms`);
+    }
+    this.post({ type: 'fillBatch', id: f.id, video, done });
+  }
+
+  stopFill() {
+    const f = this.filling;
+    if (!f) return;
+    this.filling = null;
+    if (!f.ended) this.stopProcess(f.proc);
+  }
+
+  /** A short ffmpeg job beside the live stream (a fill, a sharp frame); tests replace it. @param {string[]} argv */
+  spawnJob(argv) {
+    return lowerPriority(spawn(this.tools.ffmpeg, argv, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+  }
+
+  /**
+   * Paused, the page stayed on frame t for a moment (media/engine.js scheduleSharp): encode that one frame visually
+   * lossless (transcode_args.js sharpArgs) as one IDR, at the stream's size, with its pipeline and tone-mapping (the
+   * same frame grid: -ss t, constant rate), and send it in pieces the page pulls (sharpMore). The page decodes it with a
+   * decoder of its own and shows it only if it is still paused on that frame; it never enters a cache. A seek, play or
+   * hide stops it (its ffmpeg is killed). Replies 'sharpFrame' { id, t, data, done, total?, error? }.
+   */
+  sharp(m) {
+    this.stopSharp();
+    const id = m.id;
+    const fps = this.fps;
+    const no = (error) => this.post({ type: 'sharpFrame', id, done: true, error });
+    if (this.disposed || this.failed || this.hidden || !this.pr || !this.pr.video || !(fps > 0)) return no('unavailable');
+    if (this.playing) return no('playing');
+    // A copy of the source's own H.264 is already its own pictures: nothing to sharpen.
+    if (this.pipelineMode === 'direct-stream' || this.useDirectStream()) return no('direct stream');
+    const t = Math.max(0, Math.floor(Number(m.t) * fps + 1e-6)) / fps;
+    const gpu = isGpuEncoder(this.encoder);
+    const token = gpu ? this.gpu.acquireShort('sharp') : null;
+    if (gpu && !token) return no('busy'); // every GPU encoder session is in use: the soft picture stays
+    // args() records the pipeline it builds on this stream: the sharp frame must not change what the live stream reports.
+    const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode];
+    let argv;
+    try { argv = this.args(t, false, { sharp: true }); } catch (e) { this.gpu.release(token); return no(String(e && e.message || e)); }
+    finally { [this.pipelineMode, this.tonemapKind, this.gpuDecode] = keep; }
+    argv.splice(argv.length - 1, 0, '-frames:v', '1');
+    let proc;
+    try { proc = this.spawnJob(argv); } catch (e) { this.gpu.release(token); return no(String(e && e.message || e)); }
+    const s = { id, t, proc, chunks: [], data: null, sent: 0, waiting: true, ended: false, failed: '', t0: Date.now(), token };
+    this.sharping = s;
+    let err = '';
+    proc.on('error', (e) => { err += String(e); });
+    if (proc.stderr) proc.stderr.on('data', (d) => { err = (err + d).slice(-500); });
+    proc.stdout.on('data', (d) => { s.chunks.push(d); });
+    proc.on('close', (code) => {
+      this.gpu.release(token);
+      s.ended = true;
+      s.data = Buffer.concat(s.chunks);
+      s.chunks = [];
+      if (code !== 0 || !s.data.length) s.failed = err.trim().split(/\r?\n/).pop() || `ffmpeg exit ${code}`;
+      if (this.sharping !== s) return;
+      if (!s.failed) this.log(`remote stream: sharp frame at ${t.toFixed(3)} s, ${(s.data.length / 1024).toFixed(0)} KiB in ${Date.now() - s.t0} ms`);
+      if (s.waiting) this.sharpMore({ id });
+    });
+  }
+
+  /** The page asks for the next piece of the sharp frame (see sharp). */
+  sharpMore(m) {
+    const s = this.sharping;
+    if (!s || s.id !== m.id) return;
+    if (!s.ended) { s.waiting = true; return; }
+    s.waiting = false;
+    if (s.failed) {
+      this.sharping = null;
+      this.log(`remote stream: sharp frame failed (${s.failed})`);
+      this.post({ type: 'sharpFrame', id: s.id, done: true, error: s.failed });
+      return;
+    }
+    const total = s.data.length;
+    // Its own ArrayBuffer: a view on a larger one crosses to the webview as the whole buffer (as stream-buffer.js copies).
+    const end = Math.min(total, s.sent + SHARP_PIECE_BYTES);
+    const data = new Uint8Array(s.data.buffer.slice(s.data.byteOffset + s.sent, s.data.byteOffset + end));
+    s.sent = end;
+    const done = s.sent >= total;
+    if (done) this.sharping = null;
+    this.post({ type: 'sharpFrame', id: s.id, t: s.t, data, offset: s.sent - data.length, total, done });
+  }
+
+  stopSharp() {
+    const s = this.sharping;
+    if (!s) return;
+    this.sharping = null;
+    if (!s.ended) this.stopProcess(s.proc);
+  }
+
+  /**
+   * Quick first picture: a paused start on a slow link whose first keyframe stays full size (fastFirstBits is x264 only;
+   * NVENC and the other GPU encoders ignore the rate buffer's start, and the kept-running decoder's encoder is already
+   * running) also encodes the target frame alone, at half the width and height with the stream's encoder, pipeline and
+   * tone-mapping, as one IDR. It goes to the page before the stream's own frames (answer holds them at most 3/4 of a
+   * full keyframe's time on the link, QUICK_HOLD_SHARE); the page decodes it with the sharp frame's decoder, draws it
+   * scaled up while that seek has shown nothing yet, and keeps it nowhere. A GPU encoder holds one of the host's GPU encoder sessions for it (none free: no
+   * quick picture). A seek, hide or dispose stops it. Posts 'quickFrame' { gen, t, w, h, data } (w x h: the stream's size).
+   * @param {number} t
+   */
+  startQuick(t) {
+    this.stopQuick();
+    if (!this.remote || !this.w || !this.h) return;
+    const gpu = isGpuEncoder(this.encoder);
+    const token = gpu ? this.gpu.acquireShort('quick') : null;
+    if (gpu && !token) { this.log('remote stream: no quick picture: every GPU encoder session is in use'); return; }
+    // args() records the pipeline it builds on this stream: the quick picture must not change what the live stream reports.
+    const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode];
+    let argv;
+    try { argv = this.args(t, false, { quick: true }); } catch { this.gpu.release(token); return; }
+    finally { [this.pipelineMode, this.tonemapKind, this.gpuDecode] = keep; }
+    argv.splice(argv.length - 1, 0, '-frames:v', '1');
+    let proc;
+    try { proc = this.spawnJob(argv); } catch { this.gpu.release(token); return; }
+    const { ms } = this.fullKeyOnLink();
+    const forced = this.quickHook === true || this.fastFirstHook === true; // tests: whatever the estimate says
+    const holdMs = forced ? QUICK_HOLD_MAX_MS : Math.max(QUICK_HOLD_MIN_MS, Math.min(QUICK_HOLD_MAX_MS, ms * QUICK_HOLD_SHARE));
+    const q = { gen: this.gen, t, proc, chunks: [], t0: Date.now(), ended: false, timer: null, holdMs };
+    this.quick = q;
+    let err = '';
+    proc.on('error', (e) => { err += String(e); });
+    if (proc.stderr) proc.stderr.on('data', (d) => { err = (err + d).slice(-500); });
+    proc.stdout.on('data', (d) => { q.chunks.push(d); });
+    proc.on('close', (code) => {
+      this.gpu.release(token);
+      q.ended = true;
+      if (this.quick !== q) return;
+      this.stopQuick();
+      const data = Buffer.concat(q.chunks);
+      q.chunks = [];
+      if (code !== 0 || !data.length) {
+        this.log(`remote stream: no quick picture (${err.trim().split(/\r?\n/).pop() || `ffmpeg exit ${code}`})`);
+      } else {
+        this.log(`remote stream: quick picture at ${t.toFixed(3)} s, ${quickSize(this.w)}x${quickSize(this.h)}, `
+          + `${(data.length / 1024).toFixed(0)} KiB in ${Date.now() - q.t0} ms`);
+        // Its own ArrayBuffer: a view on a larger one crosses to the webview as the whole buffer.
+        this.post({ type: 'quickFrame', gen: q.gen, t, w: this.w, h: this.h,
+          data: new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.length)) });
+      }
+      this.answer();
+    });
+  }
+
+  stopQuick() {
+    const q = this.quick;
+    if (!q) return;
+    this.quick = null;
+    if (q.timer) clearTimeout(q.timer);
+    if (!q.ended) this.stopProcess(q.proc);
+  }
+
+  /**
+   * Why this stream does not use the kept-running decoder now ('' when it may). The lasting reasons also stop one that
+   * is idle (its GPU session goes back); 'playing' only skips it for this start.
+   */
+  warmRefusal() {
+    if (!this.warmWanted) return 'not the clock';
+    if (this.warmOff) return this.warmOff;
+    if (this.disposed || this.failed || this.hidden) return 'stopped';
+    if (!this.tools || !this.tools.ffmpeg || this.tools.legacy) return 'this ffmpeg';
+    if (!WARM_ENCODERS.includes(this.encoder)) return `encoder ${this.encoder}`;
+    if (this.pipelineMode === 'direct-stream' || this.useDirectStream()) return 'direct stream';
+    return warmSourceRefusal(this.pr);
+  }
+
+  /**
+   * A paused start from the kept-running decoder (src/warm-decoder.js): no ffmpeg start-up (probe, open, hardware init)
+   * per jump. Made on the first paused start, one per stream, holding a GPU encoder session of its own (none free: null,
+   * and the stream starts ffmpeg as before). A seek while playing starts ffmpeg as before (its 2 s keyframe spacing).
+   * @param {number} t @returns {any} a proc-like segment, or null
+   */
+  warmSegment(t) {
+    const why = this.warmRefusal();
+    if (why) { this.disposeWarm(); return null; }
+    if (this.playing) return null;
+    // args() records the pipeline it builds: the warm process is this stream's video encoder from here on.
+    const argv = this.args(0, false, { warm: true });
+    const key = argv.join('\u0001');
+    if (this.warm && (this.warm.key !== key || !this.warm.usable)) this.disposeWarm();
+    // No encoder of the stream's own runs here (spawnVideo): the warm process's session covers this stream's encode.
+    this.releaseGpu();
+    for (let tries = 0; tries < 2; tries++) {
+      if (!this.warm && !this.startWarm(argv, key)) return null;
+      const seg = this.warm.segment(t);
+      if (seg) return seg;
+      this.disposeWarm('its clock is used up'); // a new process
+    }
+    return null;
+  }
+
+  /** @param {string[]} argv @param {string} key @returns {boolean} */
+  startWarm(argv, key) {
+    const gpu = isGpuEncoder(this.encoder);
+    const token = gpu ? this.gpu.acquire('warm') : null;
+    if (gpu && !token) {
+      this.log(`live transcode: no GPU encoder session free for a kept-running decoder (${JSON.stringify(this.gpu.counts())}); ffmpeg starts per seek`);
+      return false;
+    }
+    const v = this.pr.video;
+    /** @type {any} */
+    let w = null;
+    try {
+      w = new WarmDecoder({
+        ffmpeg: this.tools.ffmpeg, argv, key, file: this.file, streamIndex: v.index, fps: this.fps, fileStart: v.fileStart,
+        duration: this.pr.duration, codec: v.codec, spawn: (cmd, a) => this.spawnWarm(cmd, a),
+        release: () => this.gpu.release(token),
+        onEnd: (why) => {
+          if (this.warm === w) this.warm = null;
+          this.log(`live transcode: kept-running decoder ended (${why})`);
+        },
+      });
+    } catch (e) {
+      this.gpu.release(token);
+      this.log(`live transcode: kept-running decoder unavailable (${e && /** @type {any} */ (e).message || e})`);
+      return false;
+    }
+    if (w.dead) return false;
+    this.warm = w;
+    this.log(`live transcode: kept-running decoder started (${this.videoEncoder}, ${this.pipelineMode}${this.gpuDecode ? ', GPU decode' : ''}); it ends after 60 s unused`);
+    return true;
+  }
+
+  /** The warm process and its remuxes (stdin piped); tests replace it. @param {string} cmd @param {string[]} argv */
+  spawnWarm(cmd, argv) {
+    return lowerPriority(spawn(cmd, argv, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }));
+  }
+
+  /** Stops the kept-running decoder (its GPU session goes back). @param {string} [why] */
+  disposeWarm(why = 'stopped') {
+    const w = this.warm;
+    this.warm = null;
+    if (w) w.dispose(why);
+  }
+
+  /** The page says whether this video sets the clock (Compare: only that tile keeps a warm decoder). @param {boolean} on */
+  setWarmWanted(on) {
+    if (on === this.warmWanted) return;
+    this.warmWanted = on;
+    // One serving the current read stays until the next start; an idle one gives its session back now.
+    if (!on && this.warm && !(this.proc && this.proc.warm)) this.disposeWarm('not the clock tile');
+  }
+
+  /**
+   * The kept-running decoder failed (a frame out of sequence, no IDR at the target, the process or a remux exited):
+   * this stream starts ffmpeg per seek from now on, from the first frame not sent yet.
+   * @param {string} why
+   */
+  warmFailed(why) {
+    this.log(`live transcode: kept-running decoder failed (${why}); ffmpeg starts per seek for this video`);
+    this.warmOff = 'failed';
+    this.disposeWarm('failed');
+    this.restartVideo();
+  }
+
+  /** An HDR stream on a hardware tone-mapper that has not given a frame and has not failed before. */
+  tonemapUnproven() {
+    const k = this.tonemapKind;
+    return !!(this.hdr && k && k !== 'cpu' && !this.badTonemap.has(k) && this.tonemapOk !== k);
   }
 
   /** A seek served from the packets held: no ffmpeg restart. */
@@ -1116,12 +1721,17 @@ class EncodedStream {
 
   dispose() {
     if (this.disposed) return;
+    this.stopFill();
+    this.stopSharp();
+    this.stopQuick();
     this.disposed = true;
     this.videoFragment = null;
     clearTimeout(this.startTimer);
     this.startTimer = null;
     this.kill();
     this.takeStandby(NaN);
+    this.releaseGpu();
+    this.disposeWarm();
     this.buf.clear();
     this.waiting = null;
   }
@@ -1146,6 +1756,10 @@ module.exports = {
   STEP_BACK_SPAN_S,
   STEP_BACK_LEAD_S,
   REMOTE_STEP_BACK_LEAD_S,
+  PAUSED_GOP_S,
+  PLAY_GOP_S,
+  FAST_FIRST_SHARE,
+  FAST_FIRST_SKIP_MS,
   stepBackStart,
   audioEncoderFor,
   opusArgs,

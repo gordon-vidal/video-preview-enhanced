@@ -134,6 +134,68 @@ module.exports = [{
     return [{ name: 'tile-streams-and-original', ok: !problems.length, problems }];
   },
 }, {
+  // Live transcode in Compare: each tile's engine keeps the packets it received (media/packet-cache.js). A paused seek
+  // back into what played comes from them in every tile, frame-exact and in step, with no seek sent to the host.
+  name: 'multiview-transcode-packets',
+  ffmpeg: true,
+  settings: { 'videoPreviewEnhanced.transcode': 'always', 'videoPreviewEnhanced.loop': false },
+  async run(vs, h) {
+    const problems = [];
+    const ok = (condition, message) => { if (!condition) problems.push(message); };
+    const { act, until } = helpers(vs, h);
+    const from = vs.mark();
+    vs.send({ compareFiles: CLIPS.slice(0, 2).map((clip) => path.join(h.MEDIA, clip)) });
+    await vs.waitLog(opened(2), { from, timeout: 45000 });
+    const ready = (r) => r?.synced === 'true' && list(r.frames).length === 2 && !list(r.frames).includes('-');
+    const shown = await until(ready, 45000);
+    ok(ready(shown) && shown.native === '1,1', `expected both tiles on Live transcode, got ${JSON.stringify(shown)}`);
+    const result = { name: 'seek-back-from-packets', problems, steps: [] };
+    if (ready(shown)) {
+      const at = (r) => nums(r.frames);
+      const seekTo = async (frame) => {
+        act({ action: 'seek', t: (frame + 0.25) / 30 }); // A and B are 30 fps
+        return until((r) => ready(r) && at(r).every((f) => f === frame + 1), 15000);
+      };
+      await seekTo(5);
+      act({ action: 'play' });
+      await h.sleep(1500);
+      act({ action: 'pause' });
+      await until((r) => ready(r) && !list(r.playing).includes('1'), 10000);
+      await seekTo(80);
+      await h.sleep(800);
+      const measure = async (what, fn) => {
+        const mark = vs.mark();
+        const t0 = Date.now();
+        const r = await fn();
+        const lines = vs.lines.slice(mark);
+        const step = {
+          what, ms: Date.now() - t0, frames: r && r.frames,
+          local: [...'AB'].filter((k) => lines.some((l) => l.includes(`[${k}]`) && l.includes("from the page's packets"))),
+          memory: [...'AB'].filter((k) => lines.some((l) => l.includes(`[${k}]`) && l.includes('step back from memory'))),
+          hostSeeks: lines.filter((l) => /tile [AB]: .*(seek to|remote stream from )/.test(l) || /remote stream.*seek to/.test(l)).length,
+        };
+        result.steps.push(step);
+        return { r, step };
+      };
+      const back = await measure('seek back to #21', () => seekTo(20));
+      ok(back.r && at(back.r).every((f) => f === 21), `seek back: tiles show ${back.r && back.r.frames}, expected #21 in both`);
+      ok(back.step.local.length === 2, `seek back: only tiles [${back.step.local}] were served from their packets`);
+      ok(back.step.hostSeeks === 0, `seek back: ${back.step.hostSeeks} seeks went to the host`);
+      for (let i = 0; i < 3; i++) {
+        const want = 20 - i; // 1-based frame after the step
+        const s = await measure(`step back to #${want}`, async () => {
+          act({ action: 'step', d: -1 });
+          return until((r) => ready(r) && at(r).every((f) => f === want), 15000);
+        });
+        ok(s.r && at(s.r).every((f) => f === want), `step ${i + 1}: tiles show ${s.r && s.r.frames}, expected #${want}`);
+        ok(s.step.hostSeeks === 0, `step ${i + 1}: ${s.step.hostSeeks} seeks went to the host`);
+      }
+      result.notes = vs.lines.slice(from).filter((l) => /page's packets|step back from memory|tile [AB]: /.test(l)).slice(-30);
+    }
+    result.ok = !problems.length;
+    return [result];
+  },
+}, {
   name: 'multiview-short-loop',
   settings: { 'videoPreviewEnhanced.decoder': 'builtin', 'videoPreviewEnhanced.loop': true },
   async run(vs, h) {

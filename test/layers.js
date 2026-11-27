@@ -213,6 +213,7 @@ const unit = [
   { file: 'test/timestretch/run.js', sources: ['media/timestretch.js'] },
   { file: 'test/unit/abloop_test.js', sources: ['media/abloop.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
   { file: 'test/unit/block_cache_test.js', sources: ['media/block-cache.js'] },
+  { file: 'test/unit/packet_cache_test.js', sources: ['media/packet-cache.js'] },
   { file: 'test/unit/codec_utils_test.js', sources: ['media/codec-utils.js', 'media/engine.js'] },
   { file: 'test/unit/compare_metrics_test.js', sources: ['media/compare-metrics.js', 'media/compare-compositor.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
   { file: 'test/unit/frame_player_test.js', sources: ['media/frame-player.js', 'media/player-unified.js', 'media/player-ui.js', 'media/player-state.js'] },
@@ -224,7 +225,7 @@ const unit = [
 ].filter((e) => fs.existsSync(path.join(ROOT, e.file)));
 
 // ---- layer 2: the WebAssembly decoders in Node, about a minute ----------------------------
-const ENGINE_SRC = ['media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/abloop.js', 'test/engine/harness.js', 'test/lib/frames.js'];
+const ENGINE_SRC = ['media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/packet-cache.js', 'media/gl-renderer.js', 'media/decoder-worker.js', 'media/pool.js', 'media/libav-vpe', 'media/membudget.js', 'media/timestretch.js', 'media/abloop.js', 'test/engine/harness.js', 'test/lib/frames.js'];
 const engine = [
   // Frame-exact seeking and stepping (frames_*) and every format of the test media (formats_*) through
   // media/engine.js (the product's player), one file per clip set so they run in parallel.

@@ -38,3 +38,5 @@ build/libav/dist_*/
 .lfs-ids
 
 /test/media/.heavy/
+# stress clips, several GB (test/media/make_stress_media.js, review.cmd --stress)
+/test/media/.stress/

@@ -504,6 +504,9 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
       maxKbps: out ? out.kbps : undefined,
       fitView: !multi && fitTiles(),
       resolution: resolutions.get(c.id), rotation: c.rotation || 0, hidden: panel.visible === false,
+      // A kept-running decoder on the host (src/warm-decoder.js) for a single video; in Compare the page's seeks say
+      // which tile sets the clock (only that one keeps one).
+      warm: !multi,
       post: (/** @type {any} */ msg) => {
         if (!current()) return;
         if (msg && msg.type === 'remoteNotice') toast(String(msg.text || ''), 6000);
@@ -626,8 +629,10 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
         if (had && now && had.height !== now.height) clipLog(c, `${view}: frames ${had.width}x${had.height} -> ${now.width}x${now.height}`);
         resized.push(c.id);
       } else if (kind === 'stream') {
-        if (session.clips.length < 2 && fit && typeof dec.setView === 'function') {
-          dec.setView({ w: size.w, h: size.h });
+        if (session.clips.length < 2) {
+          // One video: its frames follow the picture only with sizeFramesToView; otherwise it keeps the size and
+          // bitrate cap it started with (never Compare's per-tile output and share).
+          if (fit && typeof dec.setView === 'function') dec.setView({ w: size.w, h: size.h });
         } else if (typeof dec.setCompareOutput === 'function') {
           const out = streamOutput(c);
           // A grown picture (zoomed in) is not restarted at once: the page seeks it once ('resize').

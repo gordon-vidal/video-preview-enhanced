@@ -633,6 +633,34 @@ function enginePlayer(clip, host, hooks) {
   return p;
 }
 
+test('loading spinner: on while a paused seek owes its frame, off once it shows even while the read-ahead goes on', () => {
+  // media/engine.js: settled() stays false while the paused read-ahead is still requesting (a slow remote link), but
+  // the frame asked for is on screen: no spinner and no seek-bar pulse for that (docs/notes/seek-pending-feedback.md).
+  const reading = (clip, host, hooks) => {
+    const p = enginePlayer(clip, host, hooks);
+    p.requesting = false;
+    p.settled = () => p.seekTarget === null && !p.shownStale && !p.requesting && !p.playing;
+    p.playbackPhase = () => (p.playing ? 'playing' : 'paused');
+    return p;
+  };
+  withPage(({ doc, app, send, made, frames }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    frames(5);
+    const cell = doc.getElementById('cells').querySelector('.cell');
+    const row = doc.getElementById('seekRow');
+    p.settleTicks = 12; // the seek takes 12 animation frames (480 ms) to show its frame
+    p.requesting = true; // and the read-ahead behind it goes on after that
+    app.ui.dispatch('seek', 40);
+    frames(8);
+    assert.ok(cell.classList.contains('loading') && row.classList.contains('seeking'), 'the frame is still owed: spinner and pulse');
+    frames(10);
+    assert.strictEqual(p.seekTarget, null, 'the seek landed');
+    assert.ok(!cell.classList.contains('loading'), 'no spinner once the frame shows, though the read-ahead goes on');
+    assert.ok(!row.classList.contains('seeking'), 'and no pulse');
+  }, { createPlayer: reading, raf: true });
+});
+
 test('tick loop: decoders tick on animation frames until they settle; wake starts it again', () => {
   withPage(({ doc, app, send, made, frames, rafQueue }) => {
     send({ type: 'open' });
@@ -1480,6 +1508,154 @@ test('pixel inspector (X): the read-out reads the clock decoder\'s picture under
     app.ui.setState(S.setZoom(app.ui.getState(), 1, 0, 0));
     assert.strictEqual(grid.hidden, true, 'back to Fit');
   }, { createPlayer: trackPlayer, raf: true });
+});
+
+testAsync('pixel inspector under Live transcode: paused, it reads the exact full-resolution frame from the host', async () => {
+  const grabs = [];
+  /** The exact picture: 4x the decoded size, every pixel 9 (the decoded picture reads 7). */
+  const exactCtx = { getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4).fill(9) }) };
+  const VpeExact = {
+    available: (p) => !!(p && p.remoteStream),
+    shownTime: (p) => p.frame / 25,
+    failureText: () => 'failed',
+    create: () => ({
+      grab: (key, t, o) => { grabs.push([key, t, o && o.notify]); return Promise.resolve({ img: {}, w: 1280, h: 720, png: 'x', ctx: exactCtx }); },
+      onReply: () => Promise.resolve(),
+      invalidate() {},
+    }),
+  };
+  const livePlayer = (clip, host, hooks) => Object.assign(trackPlayer(clip, host, hooks), { remoteStream: true });
+  await withPage(async ({ doc, app, send, made, setRect, frames, posted }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    p.ctx = { getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4).fill(7) }) };
+    p.frame = 12;
+    app.ui.render();
+    setRect(doc.getElementById('cells').querySelector('.cell canvas'), { left: 0, top: 0, width: 640, height: 360 });
+    doc.body.fire('keydown', { key: 'x' });
+    doc.getElementById('stage').fire('pointermove', { clientX: 100.5, clientY: 50.5, pointerType: 'mouse' });
+    frames(10); // the frame settles (150 ms), then the page asks once, quietly (no "Fetching exact frame…" toast)
+    assert.deepStrictEqual(grabs, [['1|12|0', 12 / 25, false]]);
+    await new Promise((r) => setTimeout(r, 0));
+    frames(2);
+    assert.match(doc.getElementById('pxread').textContent, /^x 201 {2}y 101\nRGB 9 9 9/,
+      'the read-out reads the exact picture at its own size');
+    assert.ok(logsOf(posted).some((l) => l === 'exact frame 1280x720 for frame 13'), 'and says so (layer-3 hook)');
+    frames(10);
+    assert.strictEqual(grabs.length, 1, 'one request per frame');
+  }, { cfg: { debug: true }, createPlayer: livePlayer, raf: true, extraWidgets: { VpeExact } });
+});
+
+/**
+ * Live transcode with a VpeExact stub whose grabs answer with `exact` (docs/PRODUCT.md "Exact frame": the pixel tools,
+ * the scopes and the stills use the exact full-resolution frame). `hdr`: the stream is tone-mapped HDR, which the host
+ * cannot give exact frames of (src/exact_frame.js unsupported()).
+ */
+function exactFixture({ hdr = false } = {}) {
+  const grabs = [];
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+  const DECODED = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 2]);
+  const exact = { img: { exact: true }, w: 1280, h: 720, png: PNG, matrix: 709 };
+  const VpeExact = {
+    available: (p) => !!(p && p.remoteStream),
+    shownTime: (p) => p.frame / 25,
+    failureText: () => 'failed',
+    create: () => ({
+      grab: (key, t, o) => { grabs.push([key, t, o && o.notify]); return Promise.resolve(exact); },
+      onReply: () => Promise.resolve(),
+      invalidate() {},
+    }),
+  };
+  const scopeEnvs = [];
+  const VpeScopes = {
+    create: (env) => { scopeEnvs.push(env); let m = null; return { setMode: (x) => { m = x; }, mode: () => m, analysis: () => null, perf: () => null, tick() {} }; },
+    columnLevels: () => [], targets75: () => [],
+  };
+  const livePlayer = (clip, host, hooks) => Object.assign(trackPlayer(clip, host, hooks), {
+    remoteStream: true,
+    info: { tracks: true, transcode: { lossy: true, hdrTonemap: hdr }, video: hdr ? { colorTrc: 16 } : {} },
+    // The decoded (transcoded) picture as the adapter's still: what Copy / Save took before.
+    snapshot: () => ({ data: DECODED, width: 320, height: 180 }),
+  });
+  return { grabs, PNG, DECODED, exact, scopeEnvs, livePlayer, widgets: { VpeExact, VpeScopes } };
+}
+
+testAsync('Live transcode: Save Frame as PNG and Copy Frame take the exact full-resolution frame from the host', async () => {
+  const fx = exactFixture();
+  const written = [];
+  await withPage(async ({ doc, win, app, send, made, posted }) => {
+    win.ClipboardItem = function ClipboardItem(o) { this.o = o; };
+    win.Blob = global.Blob;
+    win.navigator = { clipboard: { write: (items) => { written.push(items[0].o['image/png']); return Promise.resolve(); } } };
+    send({ type: 'open' });
+    const p = made[0];
+    app.ui.dispatch('seek', 12);
+    assert.strictEqual(p.frame, 12);
+    app.ui.render();
+    for (const tool of ['inspector', 'scopes', 'save', 'copy']) {
+      assert.strictEqual(app.engine.exactFrames('A', tool), true, `${tool}: exact frames from the host`);
+    }
+    assert.strictEqual(app.engine.exactFrames('A', 'export'), false, 'an A-B export is a clip, not a frame');
+    doc.body.fire('keydown', { key: 's' });
+    for (let i = 0; i < 5; i++) await microtasks();
+    const save = posted.filter((m) => m.type === 'saveFrame').pop();
+    assert.ok(save, 'S saves a frame');
+    assert.strictEqual(save.frame, 12);
+    assert.deepStrictEqual([...save.data], [...fx.PNG], 'the exact PNG, not the transcoded picture');
+    assert.deepStrictEqual(fx.grabs.map((g) => g[0]), ['1|12|0'], 'asked for the shown frame');
+    assert.strictEqual(doc.getElementById('notice').hidden !== false || !/reduced|full resolution/i.test(doc.getElementById('notice').textContent), true,
+      'no "Use full resolution" offer: the still is exact already');
+    app.ui.dispatch('copyFrame');
+    for (let i = 0; i < 5; i++) await microtasks();
+    assert.strictEqual(written.length, 1, 'Copy Frame writes the clipboard');
+    const blob = written[0];
+    assert.deepStrictEqual([...new Uint8Array(await blob.arrayBuffer())], [...fx.PNG], 'with the exact PNG');
+  }, { createPlayer: fx.livePlayer, extraWidgets: fx.widgets });
+});
+
+testAsync('Live transcode: the scopes read the exact frame of the paused picture from the host', async () => {
+  const fx = exactFixture();
+  await withPage(async ({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    p.frame = 12;
+    app.ui.render();
+    app.ui.dispatch('scopes');
+    assert.strictEqual(fx.scopeEnvs.length, 1, 'a scopes panel is made');
+    const env = fx.scopeEnvs[0];
+    assert.strictEqual(env.getExact(), null, 'nothing exact yet');
+    frames(10); // the paused frame settles (150 ms), then the page asks once, quietly
+    assert.deepStrictEqual(fx.grabs, [['1|12|0', 12 / 25, false]]);
+    await microtasks();
+    frames(2);
+    const ex = env.getExact();
+    assert.ok(ex && ex.img === fx.exact.img && ex.w === 1280 && ex.matrix === 709, 'the scopes get the exact picture with its matrix');
+    p.frame = 13; // a step: the exact picture of frame 13 is another one
+    assert.strictEqual(env.getExact(), null, 'not for another frame');
+    frames(10);
+    assert.deepStrictEqual(fx.grabs.map((g) => g[0]), ['1|12|0', '1|13|0'], 'asked again for the new frame');
+  }, { createPlayer: fx.livePlayer, raf: true, extraWidgets: fx.widgets });
+});
+
+testAsync('Live transcode of HDR: no exact frames (tone-mapped), the stills and scopes read the shown picture', async () => {
+  const fx = exactFixture({ hdr: true });
+  await withPage(async ({ doc, app, send, made, frames, posted }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    p.frame = 12;
+    app.ui.render();
+    for (const tool of ['inspector', 'scopes', 'save', 'copy']) {
+      assert.strictEqual(app.engine.exactFrames('A', tool), false, `${tool}: HDR keeps the "Use full resolution" offer`);
+    }
+    app.ui.dispatch('scopes');
+    frames(10);
+    assert.strictEqual(fx.scopeEnvs[0].getExact(), null);
+    doc.body.fire('keydown', { key: 's' });
+    for (let i = 0; i < 5; i++) await microtasks();
+    const save = posted.filter((m) => m.type === 'saveFrame').pop();
+    assert.ok(save && [...save.data].join() === [...fx.DECODED].join(), 'Save takes the shown picture');
+    assert.deepStrictEqual(fx.grabs, [], 'the host is never asked');
+  }, { createPlayer: fx.livePlayer, raf: true, extraWidgets: fx.widgets });
 });
 
 test('debug probe: the seek-bar thumbnail (canvas.seek-thumb) is the probe\'s #thumb', () => {

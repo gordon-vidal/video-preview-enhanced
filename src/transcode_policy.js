@@ -255,10 +255,6 @@ function informText() {
     + 'so it plays smoothly instead of stuttering. Switching to the original file gives exact pixels, but playback may be slower.';
 }
 
-function driverNoticeText(notice) {
-  const drv = notice && notice.minDriver ? `NVIDIA driver ${notice.minDriver} or newer` : 'a newer NVIDIA driver';
-  return `Hardware NVIDIA encoding needs ${drv}. Playback still works on the CPU; update your driver or run "Set up ffmpeg" to install a compatible build.`;
-}
 
 module.exports = {
   MODES,
@@ -288,5 +284,4 @@ module.exports = {
   INFORM_OFF,
   INFORM_SETTINGS,
   informText,
-  driverNoticeText,
 };
