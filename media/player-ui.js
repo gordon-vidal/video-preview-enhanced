@@ -1947,10 +1947,17 @@
         });
       },
     };
-    /** Before an exact pixel tool or a still: offer the full-resolution picture once (media/player.js exactTool). */
-    const exactTool = () => {
+    /**
+     * Before an exact pixel tool or a still: offer the full-resolution picture once (media/player.js exactTool),
+     * unless the page fetches that tool's exact frames from the host itself (engine.exactFrames: Live transcode keeps
+     * playing, docs/PRODUCT.md). @param {string} [tool] 'inspector', 'scopes', 'save', 'copy', 'export'
+     */
+    const exactTool = (tool) => {
       if (!notices || typeof engine.pictureInfo !== 'function') return;
-      const info = engine.pictureInfo(tab().tiles[0]);
+      const id = tab().tiles[0];
+      const own = /** @type {any} */ (engine).exactFrames;
+      if (tool && typeof own === 'function' && own(id, tool)) return;
+      const info = engine.pictureInfo(id);
       if (info) notices.maybeShowReducedRes(info);
     };
     /** The saved state: debounced, and only when the page has a store (persist runs on every change). */

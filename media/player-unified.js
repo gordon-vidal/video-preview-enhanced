@@ -406,6 +406,15 @@
       selectSubtitle: (/** @type {string} */ id, /** @type {number} */ track) => selectSubtitle(id, track),
       packetIndex: (/** @type {string} */ id) => xrayHost.packetIndex(id),
       chapters: (/** @type {string} */ id) => chaptersOf(id),
+      /**
+       * Whether the page fetches exact frames from the host for this clip's pixel tool (Live transcode, lossy native):
+       * the inspector does (pixelHost); the scopes and stills still read the decoded picture.
+       */
+      exactFrames: (/** @type {string} */ id, /** @type {string} */ tool) => {
+        const X = W('VpeExact');
+        const p = players.get(id);
+        return tool === 'inspector' && !!X && !!p && X.available(p, cfg);
+      },
     };
 
     /** A clip the host named: known from now on (its name and numbers win over the decoder's). @param {any} m */
