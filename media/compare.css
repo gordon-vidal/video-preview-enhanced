@@ -310,11 +310,21 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   border-top: 1px solid var(--vpe-sep, rgba(255, 255, 255, 0.08)); margin-top: 4px; line-height: 1.35;
 }
 
+/* The Compare capsule (src/bar.js #cmpGroup, shown with two videos or more): the layouts, Swap, Sync and the panel button
+   in the same quiet monochrome pill as the folder capsule (media/folder-rail.css). */
+#row #cmpGroup.cmp-group {
+  display: inline-flex; align-items: center; flex: none; padding: 0 2px; margin-right: 4px; gap: 2px;
+  border-radius: 6px; background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle); box-sizing: border-box;
+}
+#row #cmpGroup.cmp-group[hidden] { display: none; }
+#row #cmpGroup .ib { height: 24px; min-width: 26px; border-radius: 4px; }
+/* The pressed layout / Sync button keeps a crisp outline on the capsule's own fill. */
+#cmpGroup .ib.active { background: var(--vpe-hover); border: 1px solid var(--vpe-bd-active); }
+
 /* Narrow panes shed Compare's bar buttons in this order, after player.css has dropped the range pins, the info button
    and the duration (640 px): the Compare toggle's words, Swap and Sync, Split, then Spotlight and Grid. The layouts, Swap
    and the offsets stay in the Compare panel (#cmpBtn), Swap also on X, so Picture size and Fullscreen at the bar's right
-   edge are never clipped. #spotlightBtn ... #syncBtn are the buttons the unified page's controller injects
-   (media/player-ui.js barButton). */
+   edge are never clipped. #spotlightBtn ... #cmpBtn are the buttons of the #cmpGroup capsule (src/bar.js). */
 @media (max-width: 640px) {
   /* The Compare / capture toggle keeps its icon and its name (title, aria-label) but loses its words. */
   #row #startCompareBtn > span:not(.cap-pulse) { display: none; }

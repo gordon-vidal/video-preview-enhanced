@@ -1,7 +1,8 @@
 'use strict';
 // The player's bar (seek bar and buttons) of the unified page (src/unified-html.js, one page for 1 to N videos;
-// docs/notes/ui-simple.md, docs/notes/compare-ui.md). Compare's layout, sync and panel buttons are not here: the page's
-// controller adds them (media/player-ui.js barButton).
+// docs/notes/ui-simple.md, docs/notes/compare-ui.md). Compare's layout, swap, sync and panel buttons are in #cmpGroup,
+// hidden until the page holds two videos or more (media/player-ui.js render).
+const { ICONS } = require('../media/ui-primitives.js');
 
 // Every bar icon: an 18 px box on a 24-unit grid with 1.6 stroke (= 1.20 px rendered) and uniform ~14.4-15u vertical span.
 const STROKE = '1.6';
@@ -74,6 +75,18 @@ const folderCapsule = `    <div id="folderCap" class="folder-cap" role="group" a
     </div>
 `;
 
+/** One button of the Compare capsule: hidden until the controller shows it (media/player-ui.js render). */
+const cmpButton = (id, title, icon, label = title, extra = '') => `      <button id="${id}" class="ib" title="${title}" aria-label="${label}"${extra} hidden>${icon}</button>
+`;
+// The Compare capsule (two videos or more): layouts, Swap, Sync and the Compare panel, right before the Compare / Capture
+// toggle. Same order and names the controller used to inject; the capsule itself is hidden below two videos.
+const compareCapsule = `    <div id="cmpGroup" class="cmp-group" role="group" aria-label="Compare controls" hidden>
+${cmpButton('spotlightBtn', 'Spotlight', ICONS.spotlight)}${cmpButton('gridBtn', 'Equal Grid', ICONS.grid)}${
+  cmpButton('splitBtn', 'Split Wipe (2 videos)', ICONS.split)}${cmpButton('swapBtn', 'Swap sides  X', ICONS.swap)}${
+  cmpButton('syncBtn', 'Sync frame offsets', ICONS.sync)}${
+  cmpButton('cmpBtn', 'Compare: videos, offsets, clock, sound', ICONS.cmpPanel, 'Compare', ' aria-expanded="false" aria-controls="panel"')}    </div>
+`;
+
 /**
  * The bar's markup. `compareOpen`: the Compare button adds to an open Compare ("Add to Compare"); `folder`: the player of
  * a file (adds the folder capsule).
@@ -99,7 +112,7 @@ function barHtml({ canCompare = true, compareOpen = false, folder = false } = {}
     <span class="spacer"></span>
     <button id="remoteLiveBtn" class="ib live-chip mono" title="Live transcode settings" aria-label="Live transcode settings" aria-expanded="false" aria-controls="panel" hidden></button>
     <button id="tracks" class="ib" title="Subtitles  C" aria-label="Subtitles" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="C" hidden><span class="ccline">${icons.cc}</span></button>
-${(folder ? folderCapsule : '') + playerCompareButton(canCompare, compareOpen)}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I">${icons.about}</button>
+${(folder ? folderCapsule : '') + compareCapsule + playerCompareButton(canCompare, compareOpen)}    <button id="infoBtn" class="ib" title="About this video  I" aria-label="About this video" aria-expanded="false" aria-controls="panel" aria-keyshortcuts="I">${icons.about}</button>
     ${speedButton()}
     <button id="cog" class="ib" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="panel">${icons.settings}</button>
     <button id="picBtn" class="ib" data-mode="fit" title="Picture size: Fit. Click for Fill  Z" aria-label="Picture size: Fit. Next: Fill" aria-keyshortcuts="Z">${pictures}</button>

@@ -21,6 +21,9 @@ async function build() {
     format: 'iife',
     globalName: 'VpeWebviewUi',
     platform: 'browser',
+    // .tsx components use Preact's automatic JSX runtime (tsconfig.ui.json says the same for the type check).
+    jsx: 'automatic',
+    jsxImportSource: 'preact',
     // VS Code 1.82 ships Chromium 114.
     target: 'chrome114',
     minify: true,
