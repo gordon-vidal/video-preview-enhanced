@@ -833,10 +833,11 @@
       // never restarts it from 0 by playing it at its end).
       const ep = players.get(id);
       const at = ep ? frameOf(ep) : NaN;
-      // Stopped before its end (media/engine.js stopped(): data ran out early, or the decoder kept failing): not an
-      // end, so a play or Retry there decodes again instead of staying on that picture.
+      // The clock stopped before its end (media/engine.js stopped(): data ran out early, or the decoder kept failing):
+      // not an end, so Retry or a play there decodes again instead of staying on that picture. A follower that stopped
+      // stays on its last picture like one at its end (a play would start it over from 0 alone).
       const stopped = !!(info && info.stopped);
-      if (Number.isFinite(at) && at > 0 && !stopped) endedAt.set(id, at);
+      if (Number.isFinite(at) && at > 0 && !(stopped && id === clockIdOf(t))) endedAt.set(id, at);
       if (id !== clockIdOf(t)) return;
       const natural = !!(info && info.natural);
       const onEnd = (typeof ui.getPrefs === 'function' && ui.getPrefs().onEnd) || 'off';
