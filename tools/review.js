@@ -23,9 +23,12 @@ const LINKS = {
   'fast-ssh': 'Fast SSH (25 Mbps, 15ms)',
   'typical-ssh': 'Typical SSH (8 Mbps, 40ms)',
   'slow-ssh': 'Slow SSH (2.5 Mbps, 80ms)',
+  'very-slow-ssh': 'Very slow SSH (1 Mbps, 150ms)',
   'flaky-ssh': 'Flaky SSH (4 Mbps, 120ms + drops)',
   remote: 'Remote-SSH (no throttle)',
 };
+/** Links the extension has no preset for: its own key=val spec (src/link-sim.js parseLinkSpec). */
+const LINK_SPECS = { 'very-slow-ssh': 'mbps=1,rtt=150,jitter=30' };
 const TRANSCODES = ['auto', 'always', 'off'];
 
 const USAGE = `Review launcher: a fresh VS Code with a build of the extension and sample videos (docs/REVIEW.md)
@@ -40,6 +43,9 @@ Usage: node tools/review.js [target] [flags]      (no arguments in a terminal: i
   --checklist <file.md> copy it into the folder as REVIEW.md and open it
   --link <preset>       simulate a Remote-SSH link: ${Object.keys(LINKS).join(' | ')}
   --transcode <mode>    seed the Live transcode setting: ${TRANSCODES.join(' | ')}
+  --stress              add the stress clips (4K at 60-120 Mb/s, long GOPs, B-frames, ProRes, VFR, 10 min; ~10 GB,
+                        made once into test/media/.stress/ by test/media/make_stress_media.js; VPE_FFMPEG picks ffmpeg)
+  --stress-quick        the same clips, shorter (~2.5 GB)
   --no-ffmpeg-on-path   hide ffmpeg on PATH only
   --first-run           open the setup guide on start, as after a fresh install (needs a fresh profile: always here)
   --no-ffmpeg           no ffmpeg at all (PATH hidden and the lookup in the usual places off)
@@ -55,6 +61,7 @@ const fail = (message) => { throw new ReviewError(message); };
 const SWITCHES = {
   dirty: 'dirty', dev: 'dev', installed: 'installed', dryrun: 'dryRun', nowait: 'noWait', keep: 'keep',
   noffmpeg: 'noFfmpeg', noffmpegonpath: 'noFfmpegOnPath', firstrun: 'firstRun', ui: 'ui', help: 'help', h: 'help',
+  stress: 'stress', stressquick: 'stressQuick',
 };
 const VALUES = { code: 'code', media: 'media', checklist: 'checklist', link: 'link', transcode: 'transcode' };
 
@@ -63,7 +70,7 @@ function parseArgs(argv) {
   const o = {
     target: 'main', dirty: false, dev: false, installed: false, code: '', media: '', checklist: '',
     link: 'off', transcode: '', dryRun: false, noWait: false, keep: false, noFfmpeg: false, noFfmpegOnPath: false, firstRun: false,
-    ui: false, help: false,
+    ui: false, help: false, stress: false, stressQuick: false,
   };
   let haveTarget = false;
   for (let i = 0; i < argv.length; i++) {
@@ -94,7 +101,7 @@ function linkEnv(link) {
   if (link === 'off') return {};
   return link === 'remote'
     ? { VPE_SIMULATE_REMOTE: 'ssh-remote' }
-    : { VPE_SIMULATE_LINK: link, VPE_SIMULATE_REMOTE: 'ssh-remote' };
+    : { VPE_SIMULATE_LINK: LINK_SPECS[link] || link, VPE_SIMULATE_REMOTE: 'ssh-remote' };
 }
 
 const isVsixPath = (target) => /\.vsix$/i.test(target);
@@ -110,6 +117,7 @@ const UI_ROWS = [
   { id: 'transcode', label: 'Live transcode', options: ['Auto (default)', 'Always', 'Off'] },
   { id: 'ffmpeg', label: 'FFmpeg', options: ['Normal', 'Hide on PATH', 'No ffmpeg at all'] },
   { id: 'firstRun', label: 'Setup guide', options: ['Closed', 'Open on start (first run)'] },
+  { id: 'stress', label: 'Stress clips', options: ['No', 'Quick (~2.5 GB, made once)', 'Full (~10 GB, made once)'] },
   { id: 'keep', label: 'Keep temp profile', options: ['No', 'Yes'] },
 ];
 const LAUNCH_ROW = UI_ROWS.length;
@@ -131,6 +139,7 @@ function createUiState({ branches = [], platform = process.platform, args = null
       transcode: a && a.transcode ? TRANSCODES.indexOf(a.transcode) : 0,
       ffmpeg: a && a.noFfmpeg ? 2 : a && a.noFfmpegOnPath ? 1 : 0,
       firstRun: a && a.firstRun ? 1 : 0,
+      stress: a && a.stress ? 2 : a && a.stressQuick ? 1 : 0,
       keep: a && a.keep ? 1 : 0,
     },
   };
@@ -189,6 +198,8 @@ function stateToArgs(state) {
   if (state.v.ffmpeg === 1) args.push('--no-ffmpeg-on-path');
   if (state.v.ffmpeg === 2) args.push('--no-ffmpeg');
   if (state.v.firstRun === 1) args.push('--first-run');
+  if (state.v.stress === 1) args.push('--stress-quick');
+  if (state.v.stress === 2) args.push('--stress');
   if (state.v.keep === 1) args.push('--keep');
   return args;
 }
@@ -551,6 +562,26 @@ async function launch(o) {
     const p = findMedia(rel);
     if (p) items.push([group, p, path.basename(rel)]); else missing.push(rel);
   }
+  // Stress clips: generated once into the main checkout (shared by every worktree), git-ignored.
+  const stressWhat = {};
+  if ((o.stress || o.stressQuick) && o.media) note('--stress is ignored with --media (your own folder)');
+  else if (o.stress || o.stressQuick) {
+    const quick = !o.stress;
+    const out = path.join(main, 'test', 'media', '.stress');
+    const gen = [toolRoot, main].map((r) => path.join(r, 'test', 'media', 'make_stress_media.js')).find(isFile);
+    if (!gen) fail('--stress: test/media/make_stress_media.js not found in this checkout');
+    const genArgs = [gen, ...(quick ? ['--quick'] : []), '--out', out];
+    cmd(`node ${q(gen)}${quick ? ' --quick' : ''} --out ${q(out)}`);
+    if (!o.dryRun) {
+      say('Making the stress clips that are missing (once; later runs reuse them) ...');
+      const r = spawnSync(process.execPath, genArgs, { stdio: 'inherit', windowsHide: true });
+      if (r.status !== 0) note('some stress clips could not be made (see above); the others are used');
+    }
+    for (const x of require(gen).list({ out, quick })) {
+      stressWhat[x.name] = x.what;
+      if (o.dryRun || isFile(x.file)) items.push(['stress', x.file, x.name]); else missing.push(`stress/${x.name}`);
+    }
+  }
   const sidecarSrc = findMedia('cases/long_20s.mp4');
   const srt = [toolRoot, main].map((r) => path.join(r, 'test', 'subtitles', 'fixtures', 'overlap.srt'))
     .find(isFile) || '';
@@ -707,7 +738,7 @@ async function launch(o) {
     if (o.checklist) fs.copyFileSync(o.checklist, reviewMd);
     else {
       const sidecar = Boolean(sidecarSrc && srt);
-      fs.writeFileSync(reviewMd, defaultChecklist({ o, describe, version, sha, vs, items, missing, sidecar }));
+      fs.writeFileSync(reviewMd, defaultChecklist({ o, describe, version, sha, vs, items, missing, sidecar, stressWhat }));
     }
     say('Launching VS Code ...');
     for (const l of envLines) say(l);
@@ -758,7 +789,7 @@ async function stopVsCode(child, exited, timeoutMs = 10000) {
 }
 
 /** The default REVIEW.md: what was started and a tick list of the clips. */
-function defaultChecklist({ o, describe, version, sha, vs, items, missing, sidecar }) {
+function defaultChecklist({ o, describe, version, sha, vs, items, missing, sidecar, stressWhat = {} }) {
   let md = `# Review: ${describe}\n\nversion ${version}, commit ${sha}, VS Code ${vs.version}\n\n`;
   if (o.link !== 'off') {
     const vars = Object.entries(linkEnv(o.link)).map(([k, v]) => `${k}=${v}`).join(', ');
@@ -769,7 +800,11 @@ function defaultChecklist({ o, describe, version, sha, vs, items, missing, sidec
   md += 'This folder holds linked copies of test clips (deleted when the window closes). '
     + 'Open them and check they play:\n\n';
   for (const g of [...new Set(items.map((i) => i[0]))]) {
-    md += `## ${g}\n${items.filter((i) => i[0] === g).map((i) => `- [ ] ${i[2]}\n`).join('')}\n`;
+    const intro = g !== 'stress' ? '' : 'On a slow link (--link slow-ssh / very-slow-ssh): play, pause, jump away and '
+      + 'back, step back and forward, scrub. The burned-in number is the frame (1-based) and its time: check it '
+      + 'matches the bar.\n';
+    const what = (name) => (stressWhat[name] ? `: ${stressWhat[name]}` : '');
+    md += `## ${g}\n${intro}${items.filter((i) => i[0] === g).map((i) => `- [ ] ${i[2]}${what(i[2])}\n`).join('')}\n`;
   }
   if (sidecar) md += '## subtitles\n- [ ] long_20s.mp4 (with long_20s.en.srt next to it)\n\n';
   if (missing.length) md += `Not available here: ${missing.join(', ')}\n`;
@@ -812,6 +847,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  parseArgs, linkEnv, createUiState, applyKey, renderUi, stateToArgs, parseKeys, readVsixVersion, LINKS,
+  LINK_SPECS, parseArgs, linkEnv, createUiState, applyKey, renderUi, stateToArgs, parseKeys, readVsixVersion, LINKS,
   mergeMenuArgs, cleanEnv, makeWorkDir, stopVsCode,
 };

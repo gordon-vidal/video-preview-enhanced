@@ -90,6 +90,21 @@ assert.deepStrictEqual(envs(dry('HEAD', '--dev', '--link=fast-ssh')).sort(),
   ['VPE_SIMULATE_LINK=fast-ssh', 'VPE_SIMULATE_REMOTE=ssh-remote']);
 assert.deepStrictEqual(envs(dry('HEAD', '--dev', '--link', 'off')), []);
 assert.deepStrictEqual(review.linkEnv('slow-ssh'), { VPE_SIMULATE_LINK: 'slow-ssh', VPE_SIMULATE_REMOTE: 'ssh-remote' });
+// A link the extension has no preset for goes as its key=val spec (src/link-sim.js parseLinkSpec).
+assert.deepStrictEqual(review.linkEnv('very-slow-ssh'),
+  { VPE_SIMULATE_LINK: 'mbps=1,rtt=150,jitter=30', VPE_SIMULATE_REMOTE: 'ssh-remote' });
+assert.deepStrictEqual(require('../../src/link-sim').parseLinkSpec(review.LINK_SPECS['very-slow-ssh']).downMbps, 1);
+
+// --stress / --stress-quick: the generator runs (printed only in a dry run) and its clips go in a 'stress' group.
+for (const [flag, quick] of [['--stress', false], ['--stress-quick', true]]) {
+  out = dry('HEAD', '--dev', flag);
+  const gen = cmds(out).find((x) => /make_stress_media\.js/.test(x));
+  assert(gen && /--out ".*[\\/]test[\\/]media[\\/]\.stress"/.test(gen), `${flag}: generator into test/media/.stress`);
+  assert.strictEqual(/ --quick/.test(gen), quick, `${flag}: quick or full`);
+  assert(cmds(out).some((x) => /hardlink-or-copy .*hevc10_2160p25_100mbps_gop250\.mp4" -> ".*[\\/]stress[\\/]/.test(x)),
+    `${flag}: stress clips linked into the stress group`);
+}
+assert(!cmds(dry('HEAD', '--dev')).some((x) => /make_stress_media/.test(x)), 'no stress clips unless asked');
 
 // --transcode: seeded into the throwaway profile's settings.json
 for (const flags of [['--transcode', 'always'], ['-Transcode', 'always']]) {
@@ -154,23 +169,26 @@ assert.deepStrictEqual(review.stateToArgs(s), ['main']);
 ({ state: s } = press(s, 'down', ' ')); // Working copy -> Dirty (Space)
 assert.deepStrictEqual(review.stateToArgs(s), ['main', '--dirty']);
 ({ state: s } = press(s, 'down', 'right')); // VS Code -> Installed
-({ state: s } = press(s, 'down', 'right', 'right', 'right', 'right')); // link: off -> fast -> typical -> slow -> flaky
+({ state: s } = press(s, 'down', 'right', 'right', 'right', 'right', 'right')); // link: off, fast, typical, slow, very slow, flaky
 ({ state: s } = press(s, 'down', 'right')); // Live transcode -> Always
 ({ state: s } = press(s, 'down', 'right', 'right')); // FFmpeg -> No ffmpeg at all
 ({ state: s } = press(s, 'down', 'right')); // Setup guide -> Open on start
+({ state: s } = press(s, 'down', 'right')); // Stress clips -> Quick
 ({ state: s } = press(s, 'down', 'right')); // Keep -> Yes
-assert.deepStrictEqual(review.stateToArgs(s),
-  ['main', '--dirty', '--installed', '--link', 'flaky-ssh', '--transcode', 'always', '--no-ffmpeg', '--first-run', '--keep']);
+assert.deepStrictEqual(review.stateToArgs(s), ['main', '--dirty', '--installed', '--link', 'flaky-ssh', '--transcode',
+  'always', '--no-ffmpeg', '--first-run', '--stress-quick', '--keep']);
 const parsed = review.parseArgs(review.stateToArgs(s)); // the menu only makes arguments the launcher accepts
 assert.strictEqual(parsed.link, 'flaky-ssh');
 assert.strictEqual(parsed.transcode, 'always');
 assert.strictEqual(parsed.noFfmpeg, true);
 assert.strictEqual(parsed.firstRun, true);
+assert.strictEqual(parsed.stressQuick, true);
+assert.strictEqual(review.createUiState({ args: review.parseArgs(['--stress']) }).v.stress, 2, '--stress pre-selects Full');
 ({ state: s } = press(s, 'left', 'left')); // Yes -> No -> Yes
 assert.strictEqual(s.v.keep, 1, 'a two-state row wraps');
-({ state: s } = press(s, 'up', 'up', 'left')); // FFmpeg: No ffmpeg -> Hide on PATH
+({ state: s } = press(s, 'up', 'up', 'up', 'left')); // FFmpeg: No ffmpeg -> Hide on PATH
 assert(review.stateToArgs(s).includes('--no-ffmpeg-on-path'));
-assert.strictEqual(Object.keys(review.LINKS).length, 6);
+assert.strictEqual(Object.keys(review.LINKS).length, 7);
 
 // target: cycle the known refs, wrap, or type one
 s = fresh();
@@ -183,7 +201,7 @@ assert.strictEqual(s.target, 'main', 'wraps around');
 ({ state: s } = press(s, 'left'));
 assert.strictEqual(s.target, 'feat/x');
 ({ state: s } = press(s, 'down', 'up', 'up')); // Up from the first row goes to Launch
-assert.strictEqual(s.row, 9);
+assert.strictEqual(s.row, 10);
 ({ state: s } = press(s, 'down'));
 assert.strictEqual(s.row, 0, 'wraps to the top');
 ({ state: s } = press(fresh(), 'e', 'q', 'x', '.', 'v', 's', 'i', 'x', 'backspace', 'x')); // 'q' is text while typing
@@ -230,7 +248,7 @@ for (const label of ['Target', 'Mode', 'Working copy', 'VS Code', 'SSH / Link si
 }
 assert(/^> Target\s+main$/m.test(screen), 'cursor on Target');
 assert(/Command: node tools\/review\.js main --dev$/.test(screen), 'shows the command');
-assert(screen.split('\n').filter((l) => /^[> ] /.test(l)).length === 10, '9 rows and Launch');
+assert(screen.split('\n').filter((l) => /^[> ] /.test(l)).length === 11, '10 rows and Launch');
 const typing = review.renderUi(press(fresh(), 'e', 'x').state);
 assert(/Target\s+x_/.test(typing) && /Esc = cancel/.test(typing), 'typing is visible');
 assert(/\(not used for a \.vsix\)/.test(review.renderUi(press(fresh(), 'e',

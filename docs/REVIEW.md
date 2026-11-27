@@ -59,7 +59,8 @@ Both spellings work, in any case: `--dry-run` and `-DryRun`, `--no-ffmpeg-on-pat
 | `--installed` | use your normally installed `code` (still with the fresh profile); the only choice off Windows |
 | `--media <folder>` | open your own folder instead of the generated one |
 | `--checklist <file.md>` | copy it into the folder as `REVIEW.md` and open it (for example one checklist per change) |
-| `--link <preset>` | simulate a Remote-SSH link: `off`, `fast-ssh`, `typical-ssh`, `slow-ssh`, `flaky-ssh` or `remote` (below) |
+| `--link <preset>` | simulate a Remote-SSH link: `off`, `fast-ssh`, `typical-ssh`, `slow-ssh`, `very-slow-ssh`, `flaky-ssh` or `remote` (below) |
+| `--stress` | add a `stress` group of generated clips (below); `--stress-quick`: the same, shorter |
 | `--transcode <mode>` | `auto`, `always` or `off`: seeds `videoPreviewEnhanced.transcode` in the throwaway profile (default: not set) |
 | `--ui` | open the menu |
 | `--dry-run` | print every command and path; create and launch nothing |
@@ -80,10 +81,23 @@ summary, in `--dry-run` as `ENV:` lines and in the generated `REVIEW.md`:
 | `fast-ssh` | Fast SSH (25 Mbps, 15ms) | `VPE_SIMULATE_LINK=fast-ssh`, `VPE_SIMULATE_REMOTE=ssh-remote` |
 | `typical-ssh` | Typical SSH (8 Mbps, 40ms) | `VPE_SIMULATE_LINK=typical-ssh`, `VPE_SIMULATE_REMOTE=ssh-remote` |
 | `slow-ssh` | Slow SSH (2.5 Mbps, 80ms) | `VPE_SIMULATE_LINK=slow-ssh`, `VPE_SIMULATE_REMOTE=ssh-remote` |
+| `very-slow-ssh` | Very slow SSH (1 Mbps, 150ms) | `VPE_SIMULATE_LINK=mbps=1,rtt=150,jitter=30`, `VPE_SIMULATE_REMOTE=ssh-remote` |
 | `flaky-ssh` | Flaky SSH (4 Mbps, 120ms + drops) | `VPE_SIMULATE_LINK=flaky-ssh`, `VPE_SIMULATE_REMOTE=ssh-remote` |
 | `remote` | Remote-SSH (no throttle) | `VPE_SIMULATE_REMOTE=ssh-remote` |
 
 The launcher only passes the variables on; the build under review has to read them.
+
+### Stress clips
+
+`--stress` adds clips that stress seeking and stepping over a slow link: 4K HEVC 10-bit at 100 Mb/s, one keyframe a
+minute, 4K H.264 with B-frames, 15 fps with a keyframe every 50 frames (with and without B-frames), 4K60 at 120 Mb/s,
+4K AV1, ProRes 422 HQ, open GOPs, variable frame rate and a 10-minute file. Every frame shows its number and time.
+They are generated, not committed: `test/media/make_stress_media.js` makes the missing ones once into
+`test/media/.stress/` of the main checkout (git-ignored, shared by every worktree), about 10 GB (`--stress-quick`:
+about 2.5 GB, the same clips shorter). With a GPU encoder (NVENC, Quick Sync, AMF) the full set takes a few minutes;
+software encoders work too, slower. `VPE_FFMPEG` picks the ffmpeg to make them with (for example a build whose NVENC
+matches your GPU driver). The generated `REVIEW.md` says what each clip stresses. Run the generator alone with
+`node test/media/make_stress_media.js [--quick] [--list]`.
 
 The first package build needs network once for `npx` to fetch `@vscode/vsce` (later runs use the
 npm cache). If it fails, the script says so; you can build a `.vsix` yourself and pass its path.
