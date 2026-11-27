@@ -1151,7 +1151,8 @@
           facts: facts(t.tiles[sel]),
           infoTabs: isMulti ? { keys: t.tiles.map((/** @type {string} */ _id, /** @type {number} */ i) => S.TILE_KEYS[i]), sel, pick: (/** @type {number} */ i) => { infoSel = i; } } : null,
           canExternal: !isUrl && (!c0.kind || c0.kind === 'file'),
-          canUseOriginal: !!(typeof engine.pictureInfo === 'function' && (engine.pictureInfo(t.tiles[sel]) || {}).remoteStream),
+          // Live transcode (pictureInfo's `transcoded`: the host's spec, or a remote stream feeding the decoder).
+          canUseOriginal: !!(typeof engine.pictureInfo === 'function' && (engine.pictureInfo(t.tiles[sel]) || {}).transcoded),
           transcode: (() => {
             const tc = typeof /** @type {any} */ (engine).transcodeInfo === 'function'
               ? /** @type {any} */ (engine).transcodeInfo(t.clockId || t.tiles[0]) : null;

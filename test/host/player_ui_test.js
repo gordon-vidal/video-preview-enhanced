@@ -1658,12 +1658,19 @@ async function phase34() {
   }, { engine: switchEngine });
   const liveEngine = toolEngine();
   liveEngine.pictureInfo = (id) => ({ clipId: id, nativeLossy: false, transcoded: true, streaming: false, video: null });
-  await mountTools({ tiles: ['clip-0'] }, async ({ ui, $ }) => {
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, host, $ }) => {
     const n = ui.parts.notices;
     n.setDismissals({});
     ui.onHostMessage({ type: 'slowPlayback', variant: 'every' });
     assert.deepStrictEqual([n.isOpen(), $('notice').hidden], [false, true],
       'pictureInfo says Live transcode: the local slow-playback notice stays away');
+    // About offers to leave Live transcode for the original video (the adapter's pictureInfo says `transcoded`).
+    ui.controls.show('info', $('infoBtn'));
+    const original = [...$('panel').querySelectorAll('button')].find((b) => b.textContent === 'Use original video');
+    assert.ok(original, 'About under Live transcode offers "Use original video"');
+    original.click();
+    assert.deepStrictEqual(host.log.filter((m) => m.type === 'originalTile').map((m) => m.clipId), ['clip-0'],
+      'and asks the host to play that clip with the built-in decoder');
   }, { engine: liveEngine });
 
   // Inspection: W, X (one video), Shift+I, Shift+X, { }, PageUp / PageDown, a click with the inspector on, ⚙ › Inspection, Esc order.
