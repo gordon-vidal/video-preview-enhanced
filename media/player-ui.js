@@ -683,6 +683,7 @@
     const prefs = { ...defaultPrefs(), ...(env.prefs || {}), ...(Life ? Life.cleanPlaybackPrefs(saved) : {}) };
     // The tool and lifecycle controllers (media/player-ui-tools.js, media/player-ui-lifecycle.js); null without them.
     /** @type {any} */ let notices = null;
+    /** @type {any} */ let callout = null;
     /** @type {any} */ let insp = null;
     /** @type {any} */ let subs = null;
     /** @type {any} */ let frameExport = null;
@@ -1521,8 +1522,7 @@
         if (tileMenu && tileMenu.isOpen()) { tileMenu.close(); return true; }
         if (controls.anyOpen()) { controls.closeAll(true); return true; }
         if (ctxMenu.isOpen()) { ctxMenu.close(true); return true; }
-        // The Add mode prompt is not closed by Esc: Esc ends Add mode itself (below), which also takes the prompt away.
-        if (notices && notices.kind() !== 'capture' && notices.handleEscape()) return true;
+        if (notices && notices.handleEscape()) return true;
         if (insp && insp.handleEscape()) { controls.refresh(); return true; }
         if (t.syncMode) { commit(S.toggleSyncMode(ws), 'Sync offsets off'); return true; }
         if (t.layout === 'spotlight' && t.spotlightId) { withGlide(() => commit(S.toggleEnlarge(ws, t.spotlightId))); return true; }
@@ -2078,6 +2078,28 @@
           dismissals: saved.dismissals,
         });
         cleanups.push(() => notices.dispose());
+      }
+      const calloutEl = $('capCallout');
+      if (calloutEl && Tools.createCalloutController) {
+        // The overlay engine (media/ui/floating.ts) puts it in the top layer next to the "Adding videos" button.
+        const engine = () => /** @type {any} */ (W.VpeWebviewUi && W.VpeWebviewUi.positionAnchored ? W.VpeWebviewUi : null);
+        callout = Tools.createCalloutController({
+          doc, el: calloutEl, onAnnounce: announce,
+          place: (/** @type {any} */ el) => {
+            // At once above the button's right edge; the overlay engine then keeps it there (flip / shift / resize).
+            const r = cmpBtn.getBoundingClientRect ? cmpBtn.getBoundingClientRect() : null;
+            if (r && r.width) {
+              el.style.left = `${Math.max(8, r.right - el.offsetWidth)}px`;
+              el.style.top = `${Math.max(8, r.top - el.offsetHeight - 8)}px`;
+            }
+            const e = engine();
+            if (!e) return undefined;
+            e.showTopLayer(el);
+            const stop = e.positionAnchored(cmpBtn, el, { placement: 'top-end', offset: 8 });
+            return () => { stop(); e.hideTopLayer(el); };
+          },
+        });
+        cleanups.push(() => callout.dispose());
       }
       const iw = env.inspectWidgets || {};
       insp = Tools.createInspectionController({
@@ -2779,33 +2801,28 @@
     let lastSound = '';
     let lastCmpBtnKey = '';
     /**
-     * Add mode with one video: its prompt is a #notice (docs/notes/notifications.md). Browse folder opens the Folder
-     * Rail (else the host's picker), Stop adding ends Add mode, × hides the prompt until Add mode starts again.
+     * Add mode with one video: a callout at the bar's "Adding videos" button (docs/DESIGN.md, Building blocks), once per
+     * start of Add mode. Browse folder opens the Folder Rail (else the host's picker) and closes it; Stop adding ends Add
+     * mode; × or a press outside closes it until Add mode starts again. Esc ends Add mode (escape), which closes it too.
      */
-    let capPromptOpen = false;
-    let capPromptHidden = false;
-    function syncCapturePrompt(/** @type {boolean} */ want) {
-      if (!notices) return;
+    let capCalloutSeen = false;
+    function syncCaptureCallout(/** @type {boolean} */ want) {
+      if (!callout) return;
       if (!want) {
-        capPromptHidden = false;
-        if (capPromptOpen) notices.hide('capture');
-        capPromptOpen = false;
+        capCalloutSeen = false;
+        callout.close();
         return;
       }
-      if (capPromptOpen || capPromptHidden) return;
-      capPromptOpen = true;
-      notices.show({
-        kind: 'capture',
-        text: rail
-          ? 'Adding videos to Compare. Open a video from the Explorer, or browse this folder to pick one.'
-          : 'Adding videos to Compare. Open a video from the Explorer, or choose one here.',
+      if (capCalloutSeen) return;
+      capCalloutSeen = true;
+      callout.show({
+        title: 'Adding videos',
+        text: rail ? 'Open a video from the Explorer to add it, or browse this folder.' : 'Open a video from the Explorer to add it, or choose one here.',
         action: rail
-          ? { label: 'Browse folder', title: 'Show the videos of this folder beside the picture', run: () => openPicker() }
-          : { label: 'Choose video…', title: 'Pick a video to add', run: () => openPicker() },
-        // Not close: true: ending Add mode already withdraws the prompt (render), a second close would hit the next notice.
-        hide: { label: 'Stop adding', title: 'Stop adding videos to Compare (Esc)', run: () => act.capture() },
-        onClose: () => { capPromptHidden = true; },
-        dismiss: () => { capPromptOpen = false; },
+          ? { label: 'Browse folder', title: 'Show the videos of this folder beside the picture', run: () => openPicker(), close: true }
+          : { label: 'Choose video…', title: 'Pick a video to add', run: () => openPicker(), close: true },
+        // Not close: true: ending Add mode closes it through render.
+        secondary: { label: 'Stop adding', title: 'Stop adding videos to Compare (Esc)', run: () => act.capture() },
       });
     }
     function render(/** @type {{ skipCells?: boolean }} */ opts = {}) {
@@ -2838,7 +2855,7 @@
           dividerEl.setAttribute('aria-valuetext', `A ${pct}%, B ${100 - pct}%`);
         }
       }
-      syncCapturePrompt(ui.showCaptureBanner);
+      syncCaptureCallout(ui.showCaptureBanner);
 
       // Compare's layout buttons: Spotlight / Equal Grid (N >= 2), Split Wipe and Swap (N = 2).
       const layoutBtn = (/** @type {any} */ b, /** @type {boolean} */ show, /** @type {boolean} */ on) => {

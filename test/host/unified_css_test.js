@@ -91,6 +91,10 @@ const declsOf = (css, sel) => {
     return [d.slice(0, k).trim(), d.slice(k + 1).trim()];
   }));
 };
+/** Every declaration for `sel` outside @media, later rules winning (as the cascade at equal specificity). */
+const merged = (css, sel) => Object.assign({}, ...rules(css).filter((x) => !x.at && x.selectors.map(norm).includes(norm(sel)))
+  .map((x) => Object.fromEntries(splitTop(x.body, /;/).map((d) => [d.slice(0, d.indexOf(':')).trim(), d.slice(d.indexOf(':') + 1).trim()]))));
+
 /** Every selector in `css` that `test` accepts (for "some rule styles X"). */
 const anySelector = (css, test) => [...selectorsOf(css)].some(test);
 
@@ -115,8 +119,9 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   has(PLAYER, /#overlay \.overlay-line$/, '#overlay .overlay-line');
   has(PLAYER, /^#overlay\.error$/, '#overlay.error');
   has(PLAYER, /#overlay \.overlay-action$/, '#overlay .overlay-action');
-  has(PLAYER, /#overlay \.overlay-action:hover$/, '#overlay .overlay-action:hover');
-  has(PLAYER, /#overlay \.overlay-action:disabled$/, '#overlay .overlay-action:disabled');
+  // Its hover and disabled looks are the shared button's (docs/DESIGN.md): .vpe-btn-main:hover, .vpe-btn:disabled.
+  has(PLAYER, /^\.vpe-btn-main:hover$/, '.vpe-btn-main:hover');
+  has(PLAYER, /^\.vpe-btn:disabled$/, '.vpe-btn:disabled');
   has(PLAYER, /^#notice$/, '#notice');
   has(PLAYER, /^#subs$/, '#subs');
   // compare.css: the tiles and Compare's controls.
@@ -156,10 +161,11 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
 { // Overlay lines wrap inside the stage; an error sits above the tiles' hover controls (.ov).
   const line = declsOf(PLAYER, '#overlay .overlay-line');
   assert.strictEqual(line['overflow-wrap'], 'anywhere');
-  const err = declsOf(PLAYER, '#overlay.error');
+  const err = merged(PLAYER, '#overlay.error');
   assert.ok(Number(err['z-index']) > Number(declsOf(COMPARE, '.ov')['z-index']), '#overlay.error above .ov');
-  // White text over the black picture also when the picture is a tile's canvas (the unified page), not #canvas.
-  assert.ok(anySelector(PLAYER, (s) => /^#stage:has\(.*\.cell > canvas\) #overlay$/.test(s)), 'white overlay text over tiles');
+  // White text over the black picture also when the picture is a tile's canvas (the unified page), not #canvas; an
+  // error is a card with the theme's text colour instead.
+  assert.ok(anySelector(PLAYER, (s) => /^#stage:has\(.*\.cell > canvas\) #overlay:not\(\.error\)$/.test(s)), 'white overlay text over tiles');
 }
 
 { // compare.css never restyles the player's own elements for one video: a rule whose subject is one of them must be
@@ -304,39 +310,51 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
 }
 
 { // The #notice banner reads as a message (docs/notes/notifications.md, "Banner layout"): the text on its own line
-  // with the buttons on a row below it, the main action filled, × in the corner; neutral, no accent colour or icon.
-  const notice = declsOf(PLAYER, '#notice');
+  // with the buttons on a row below it, × in the corner; neutral, no accent colour or icon. Its buttons are the shared
+  // .vpe-btn (no notice-only button look).
+  const notice = merged(PLAYER, '#notice');
   assert.strictEqual(notice['flex-wrap'], 'wrap', 'buttons wrap under the text');
   assert.ok(!notice['border-left'] && !anySelector(PLAYER, (sel) => /^#notice(\[[^\]]*\])?::before$/.test(sel)), 'no accent edge or icon');
-  const text = declsOf(PLAYER, '#noticeText');
+  const text = merged(PLAYER, '#noticeText');
   assert.match(text.flex || '', /100%/, 'the text takes a whole line');
   assert.strictEqual(text['box-sizing'], 'border-box', 'and never spills out of the card');
-  assert.strictEqual(declsOf(PLAYER, '#notice #noticeClose').position, 'absolute', '× in the corner');
-  assert.match(declsOf(PLAYER, '#notice #noticeAction').background || '', /--vscode-button-background/, 'main action filled');
+  assert.strictEqual(merged(PLAYER, '.vpe-close').position, 'absolute', '× in the corner (shared with the callout)');
+  for (const own of ['#notice button', '#notice #noticeAction', '#notice .noticeSecondary']) {
+    assert.ok(!anySelector(PLAYER, (s) => s === own), `${own}: no notice-only button style (the shared .vpe-btn)`);
+  }
 }
 
-{ // The toast is the notice card without buttons: the theme's surface, border and text, not a fixed black box; the
-  // old Add mode pill and the #addHint leftovers are gone (Add mode's prompt is a #notice).
-  const toast = declsOf(PLAYER, '#toast');
-  const notice = declsOf(PLAYER, '#notice');
-  for (const k of ['background', 'border', 'border-radius', 'box-shadow', 'backdrop-filter', 'font-size']) {
-    assert.strictEqual(toast[k], notice[k], `#toast ${k} is the notice's`);
-  }
-  assert.strictEqual(toast.color, 'var(--vpe-panel-fg)', 'theme text colour');
+{ // The toast is the notice card without buttons: the same card, 12 px, not bold; no capture pill or #addHint left.
+  const toast = merged(PLAYER, '#toast');
+  assert.strictEqual(toast['font-size'], merged(PLAYER, '#notice')['font-size'], 'the notice text size');
   assert.ok(!toast['font-weight'] || Number(toast['font-weight']) < 600, 'not bold');
   assert.ok(!anySelector(PLAYER, (s) => /\.cap-banner|#addHint/.test(s)), 'no capture pill or #addHint rules left');
 }
 
-{ // One card look for every floating surface (docs/DESIGN.md): the same background, blur, corners and two shadow
-  // levels, all from the :root tokens in player.css. A new surface that sets its own values fails here.
+{ // One card look (docs/DESIGN.md): ONE rule in player.css gives every floating card its background, blur, border,
+  // corners and text colour from the :root tokens; a card's own rule may only add a shadow level, pill corners or a
+  // border colour. A surface that styles itself fails here: join the card rule instead.
   const RAIL = read('folder-rail.css');
-  const root = Object.assign({}, ...rules(PLAYER).filter((x) => !x.at && x.selectors.map(norm).includes(':root'))
-    .map((x) => Object.fromEntries(splitTop(x.body, /;/).map((d) => [d.slice(0, d.indexOf(':')).trim(), d.slice(d.indexOf(':') + 1).trim()]))));
+  const root = merged(PLAYER, ':root');
   assert.match(root['--vpe-surface-float'], /var\(--vscode-menu-background\b.*\) 90%, transparent\)$/, '90% opacity');
   assert.strictEqual(root['--vpe-card-blur'], 'blur(2px)', '2 px blur');
   assert.strictEqual(root['--vpe-card-radius'], '8px');
   for (const k of ['--vpe-shadow-low', '--vpe-shadow-high']) assert.match(root[k] || '', /var\(--vscode-widget-shadow\b/, k);
+  const MEMBERS = ['#notice', '#toast', '#overlay.error', '#pxread', '#stats', '#goto', '#scopes', '.panel', '#sheet .sheet',
+    '#ctxmenu', '#menu', '.vpe-pop', '.hover-pop', '.add-pop', '.tile-stats', '.sync-pill', '.nudge', '.pill',
+    '.tile-bottom-pill', '.tbtn', '.addcell', '.skeleton-label', '.edge-shelf', '.rail-collapse-tab'];
+  // Side panels share the card background but are not cards (full height, no corners): their own rule.
+  const SIDE_PANELS = new Set(['.rail.overlay', '.rail.dock']);
   const SHADOW_EXCEPTIONS = new Set(['.rail.overlay']); // a side panel: its shadow falls to one side only
+  const declsOfRule = (r) => Object.fromEntries(splitTop(r.body, /;/).map((x) => [x.slice(0, x.indexOf(':')).trim(), x.slice(x.indexOf(':') + 1).trim()]));
+  const isSide = (r) => r.selectors.every((x) => SIDE_PANELS.has(norm(x)));
+  const cardRules = rules(PLAYER).filter((r) => !r.at && /var\(--vpe-surface-float\)/.test(declsOfRule(r).background || '') && !isSide(r));
+  assert.strictEqual(cardRules.length, 1, `one card rule (${cardRules.map((r) => r.selectors.join(', ')).join(' | ')})`);
+  const card = declsOfRule(cardRules[0]);
+  const members = cardRules[0].selectors.map(norm);
+  for (const m of MEMBERS) assert.ok(members.includes(m), `${m} is in the card rule`);
+  assert.deepStrictEqual([card['backdrop-filter'], card['-webkit-backdrop-filter'], card.border, card['border-radius'], card.color],
+    ['var(--vpe-card-blur)', 'var(--vpe-card-blur)', '1px solid var(--vpe-panel-border)', 'var(--vpe-card-radius)', 'var(--vpe-panel-fg)']);
   for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
     const src = stripComments(css);
     assert.ok(!/backdrop-filter:\s*blur\(/.test(src), `${name}: blur only through var(--vpe-card-blur)`);
@@ -344,18 +362,54 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
     assert.ok(mixes.every((m) => /^color-mix\(in srgb, var\(--vscode-menu-background, #1e1f23\) 90%/.test(m)) && (name !== 'player.css' || mixes.length === 1),
       `${name}: no translucent surface besides --vpe-surface-float (${mixes.join(' | ')})`);
     for (const r of rules(css)) {
-      const d = Object.fromEntries(splitTop(r.body, /;/).map((x) => [x.slice(0, x.indexOf(':')).trim(), x.slice(x.indexOf(':') + 1).trim()]));
-      if (!/var\(--vpe-(surface-float|panel-bg)\)/.test(d.background || '')) continue;
+      if (r.body === cardRules[0].body && css === PLAYER) continue;
+      const d = declsOfRule(r);
       const sel = r.selectors.join(', ');
-      assert.strictEqual(d['backdrop-filter'], 'var(--vpe-card-blur)', `${name} ${sel}: card blur`);
-      if (d['box-shadow'] && !r.selectors.some((s) => SHADOW_EXCEPTIONS.has(norm(s)))) {
+      if (!isSide(r)) {
+        assert.ok(!/var\(--vpe-(surface-float|panel-bg)\)/.test(d.background || ''), `${name} ${sel}: the card background only in the card rule`);
+        assert.ok(!d['backdrop-filter'], `${name} ${sel}: the card blur only in the card rule`);
+      }
+      if (!r.selectors.some((x) => MEMBERS.includes(norm(x)))) continue;
+      if (d['box-shadow'] && !r.selectors.some((x) => SHADOW_EXCEPTIONS.has(norm(x)))) {
         assert.match(d['box-shadow'], /^var\(--vpe-shadow-(low|high)\)$/, `${name} ${sel}: a shadow token`);
       }
       if (d['border-radius']) {
-        assert.match(d['border-radius'], /^(var\(--vpe-card-radius\)|999px|var\(--vpe-card-radius\) 0 0 var\(--vpe-card-radius\))$/,
+        assert.match(d['border-radius'], /^(var\(--vpe-card-radius\)|var\(--vpe-btn-radius\)|999px|var\(--vpe-card-radius\) 0 0 var\(--vpe-card-radius\))$/,
           `${name} ${sel}: card corners (${d['border-radius']})`);
       }
     }
+  }
+}
+
+{ // One button (docs/DESIGN.md, Buttons): .vpe-btn with its tokens; the main action (.vpe-btn-main) is the only place
+  // that uses VS Code's button colour; chips, steppers and tile buttons follow the same corners and heights.
+  const root = merged(PLAYER, ':root');
+  assert.deepStrictEqual([root['--vpe-btn-radius'], root['--vpe-btn-h'], root['--vpe-btn-h-panel']], ['4px', '24px', '28px']);
+  const btn = merged(PLAYER, '.vpe-btn');
+  assert.deepStrictEqual([btn['border-radius'], btn.height, btn['font-size']], ['var(--vpe-btn-radius)', 'var(--vpe-btn-h)', '12px']);
+  assert.strictEqual(merged(PLAYER, '.panel .vpe-btn').height, 'var(--vpe-btn-h-panel)');
+  assert.match(merged(PLAYER, '.vpe-btn-main').background || '', /^var\(--vscode-button-background\b/);
+  const RAIL = read('folder-rail.css');
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    for (const r of rules(css)) {
+      if (!/--vscode-button-background/.test(r.body)) continue;
+      assert.ok(r.selectors.every((x) => /\.vpe-btn-main\b/.test(x)), `${name} ${r.selectors.join(', ')}: VS Code's button colour only on .vpe-btn-main`);
+    }
+  }
+  // A container that can hold shared buttons never restyles "all its buttons": its generic rule skips .vpe-btn and
+  // .vpe-close (the rail's popover menu rows turned the Add mode callout's buttons into menu rows once).
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    for (const r of rules(css)) {
+      for (const x of r.selectors.map(norm)) {
+        if (!/^(\.vpe-pop|\.panel|#notice|#overlay|\.callout) button\b/.test(x)) continue;
+        assert.ok(/:not\(\.vpe-btn\)/.test(x) && (!/^\.vpe-pop/.test(x) || /:not\(\.vpe-close\)/.test(x)),
+          `${name} ${x}: a generic button rule skips the shared buttons`);
+      }
+    }
+  }
+  for (const [css, sel, h] of [[PLAYER, '.panel .chip', '--vpe-btn-h-panel'], [PLAYER, '.panel .big', '--vpe-btn-h-panel'], [COMPARE, '.tbtn', '--vpe-btn-h']]) {
+    const d = merged(css, sel);
+    assert.deepStrictEqual([d['border-radius'], d.height], ['var(--vpe-btn-radius)', `var(${h})`], `${sel}: the button scale`);
   }
 }
 

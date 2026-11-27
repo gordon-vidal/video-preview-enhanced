@@ -27,9 +27,7 @@
 .edge-shelf, .rail-collapse-tab {
   appearance: none; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
   height: 84px; width: 20px; padding: 0; border-radius: var(--vpe-card-radius) 0 0 var(--vpe-card-radius);
-  background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border); border-right: none;
+  border-right: none;
   color: var(--vscode-foreground);
   box-shadow: var(--vpe-shadow-low);
   cursor: pointer;
@@ -173,28 +171,24 @@
 /* The column and Autoplay menus: the shared card surface (docs/DESIGN.md), as #ctxmenu and the ⚙ panel */
 .vpe-pop {
   position: fixed; z-index: 14; min-width: 138px; padding: 4px; box-sizing: border-box;
-  border-radius: var(--vpe-card-radius); background: var(--vpe-surface-float);
-  backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border);
   box-shadow: var(--vpe-shadow-high);
-  color: var(--vpe-panel-fg);
 }
 .vpe-pop[hidden] { display: none; }
-.vpe-pop button {
+/* Menu rows; a callout in a .vpe-pop keeps the shared buttons (docs/DESIGN.md). */
+.vpe-pop button:not(.vpe-btn):not(.vpe-close) {
   width: 100%; appearance: none; border: none; background: transparent;
   color: var(--vscode-foreground); text-align: left; padding: 5px 8px;
   border-radius: 4px; font: inherit; font-size: 11px; cursor: pointer;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
 }
-.vpe-pop button:hover, .vpe-pop button:focus-visible { background: var(--vpe-row-hover); outline: none; }
+.vpe-pop button:not(.vpe-btn):not(.vpe-close):hover,
+.vpe-pop button:not(.vpe-btn):not(.vpe-close):focus-visible { background: var(--vpe-row-hover); outline: none; }
 
 /* The hover card, left of the rail (outside the picture's hit-testing: it never takes the pointer) */
 .hover-pop {
-  position: absolute; z-index: 12; width: 184px; box-sizing: border-box;
-  border-radius: var(--vpe-card-radius); overflow: hidden;
-  background: var(--vpe-surface-float); backdrop-filter: var(--vpe-card-blur); -webkit-backdrop-filter: var(--vpe-card-blur);
-  border: 1px solid var(--vpe-panel-border); box-shadow: var(--vpe-shadow-high);
-  pointer-events: none; color: var(--vpe-panel-fg);
+  position: absolute; z-index: 12; width: 184px; box-sizing: border-box; overflow: hidden;
+  box-shadow: var(--vpe-shadow-high);
+  pointer-events: none;
 }
 .hover-pop[hidden] { display: none; }
 .hover-body { padding: 5px 7px; font-size: 10.5px; display: flex; flex-direction: column; gap: 2px; }

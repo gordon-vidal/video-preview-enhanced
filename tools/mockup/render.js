@@ -77,7 +77,7 @@ function stageMarkupHtml() {
     <div id="stage" class="fit">
       <div id="cells"></div>
       <div id="subs" hidden></div>
-      <div id="overlay" hidden><div id="message"></div><div id="hint"></div><button id="action" type="button" hidden></button></div>
+      <div id="overlay" hidden><div id="message"></div><div id="hint"></div><button id="action" class="vpe-btn vpe-btn-main" type="button" hidden></button></div>
       <div id="dropHint" hidden aria-hidden="true">Drop to compare</div>
       ${playFlashHtml}
       <div class="splitter h" id="splitter" hidden><div class="splitter-bar"></div></div>
@@ -85,11 +85,12 @@ function stageMarkupHtml() {
       <div id="toast" hidden aria-hidden="true"></div>
       <div id="notice" hidden>
         <span id="noticeText"></span>
-        <button id="noticeAction" type="button"></button>
-        <button id="noticeSettings" class="noticeSecondary" type="button" hidden></button>
-        <button id="noticeHide" class="noticeSecondary" type="button" hidden></button>
-        <button id="noticeClose" type="button" title="Dismiss" aria-label="Dismiss">×</button>
+        <button id="noticeAction" class="vpe-btn vpe-btn-main" type="button"></button>
+        <button id="noticeSettings" class="vpe-btn noticeSecondary" type="button" hidden></button>
+        <button id="noticeHide" class="vpe-btn noticeSecondary" type="button" hidden></button>
+        <button id="noticeClose" class="vpe-close" type="button" title="Dismiss" aria-label="Dismiss">×</button>
       </div>
+      <div id="capCallout" class="vpe-pop callout" role="dialog" hidden></div>
     </div>
     ${realRailHtml}
   </div>

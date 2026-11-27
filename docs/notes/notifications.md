@@ -17,6 +17,7 @@ tested in milliseconds by `test/host/player_ui_tools_test.js`.
 | VS Code notification (`showInformationMessage` / `showWarningMessage` / `showErrorMessage`) | extension host (`src/`) | things outside the player tab: ffmpeg setup and downloads, file associations, clip export results, offers | anything about the picture now playing in a tab (the user is looking at the tab, not the corner) |
 | `#notice` banner | `createNoticeController` | a lasting state of this tab the user may want to change: reduced picture, slow playback, refused A-B clip, errors with an action | one-off confirmations; status the bar already shows |
 | `#toast` card | the page's `toast()` | a short confirmation of what the user just did (key, menu, click): "Frame copied", "Volume 80%", "Live transcode: auto" | anything that needs an action or must survive a glance away |
+| Callout (`.vpe-pop.callout`) | `createCalloutController` | explaining a mode once, next to the control that shows it (Add mode at the **Adding videos** button) | lasting state (the control shows it); decisions that must not be missed (a notice) |
 | Bar `Live` chip | `media/controls.js` | Live transcode / streaming state, resolution and rate | (it is the owner: toasts and notices do not repeat it) |
 
 ## Banner layout
@@ -38,22 +39,22 @@ Every banner has a mockup scenario built by its production helper: `notice` (Zen
 
 ## Add mode prompt and toast
 
-![Add mode's prompt as a notice, a toast under it](img/add-mode-notice.png)
+![Add mode's callout at the "Adding videos" button](img/add-mode-callout.png)
 
-- **Add mode's prompt is a notice** (kind `capture`, `syncCapturePrompt` in `media/player-ui.js`), shown while Add
-  mode is on with one video (`deriveUi().showCaptureBanner`): *Adding videos to Compare. Open a video from the Explorer,
-  or browse this folder to pick one.* **Browse folder** opens the Folder Rail (no rail: **Choose video…**, the host's
-  picker); **Stop adding** ends Add mode; **×** hides only the prompt until Add mode starts again (the bar's
-  **Adding videos** button still shows the mode). **Esc** skips the prompt and ends Add mode in one press, as before
-  (`docs/PRODUCT.md`, Add Mode). It replaces the separate `#capBanner` pill.
-- **The toast is the notice card without buttons**: the same surface, border, corners, shadow and 12 px text (no
-  longer a fixed black box with bold white text), so it follows the VS Code theme. It moves below an open notice as
-  before, which also covers the Add mode prompt now.
+- **Add mode is a mode, not a message**, so its prompt is a **callout** (`createCalloutController` in
+  `media/player-ui-tools.js`, `syncCaptureCallout` in `media/player-ui.js`): the `.vpe-pop` card, placed by the
+  overlay engine (`positionAnchored`) next to the bar's **Adding videos** button, which shows the mode for as long as it
+  lasts. It appears once when Add mode starts with one video (`deriveUi().showCaptureBanner`): **Adding videos** /
+  *Open a video from the Explorer to add it, or browse this folder.* **Browse folder** opens the Folder Rail and closes
+  it (no rail: **Choose video…**, the host's picker); **Stop adding** ends Add mode; **×** or a press outside closes
+  it until Add mode starts again. **Esc** ends Add mode in one press, as before (`docs/PRODUCT.md`, Add Mode). Its
+  buttons are wired by the same `bindNoticeButton` as the notice's. Starting Add mode shows no toast.
+- **The toast is the notice card without buttons**: the same card, 12 px text, so it follows the VS Code theme. It
+  moves below an open notice.
 
 ## Banner priority queue
 
-`NOTICE_PRIORITY`: `error` = `clipRefusal` = `capture` (3) > `reducedRes` (2) > `slowPlayback` (1) > `info` (0, also
-unknown kinds). The Add mode prompt ranks with the errors because it is about what the user is doing right now.
+`NOTICE_PRIORITY`: `error` = `clipRefusal` (3) > `reducedRes` (2) > `slowPlayback` (1) > `info` (0, also unknown kinds).
 
 - **Higher preempts lower.** The lower notice goes into a pending queue, is *not* dismissed (its "remember the
   dismissal" hook does not run) and shows again when the higher one closes.
