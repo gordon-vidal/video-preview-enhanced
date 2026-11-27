@@ -31,6 +31,14 @@ const { EncodedStream } = require('../../src/stream');
   assert.ok(g.firstNotice());
   assert.ok(!g.firstNotice(), 'the CPU notice once per session');
 }
+{ // Short jobs (fills, sharp frames, quick pictures) leave the last free session to the live streams.
+  const g = createGpuSessions(3);
+  assert.ok(g.acquire('stream'));
+  assert.ok(g.acquireShort('fill'), 'two free: a short job takes one');
+  assert.strictEqual(g.acquireShort('sharp'), null, 'one free: kept for a stream');
+  assert.ok(g.acquire('stream'), 'which a stream gets');
+  assert.strictEqual(createGpuSessions(1).acquireShort('quick'), null, 'a budget of 1: only streams');
+}
 { // Limits from the setting, and which encoders count.
   assert.strictEqual(limitOf(0), DEFAULT_GPU_SESSIONS);
   assert.strictEqual(limitOf('x'), DEFAULT_GPU_SESSIONS);
@@ -96,8 +104,9 @@ function stream(gpu, { encoder = 'h264_nvenc', file = '/v/clip.mkv' } = {}) {
     b.s.encoderFallback('test');
     assert.strictEqual(gpu.used, 0);
   }
-  { // Fills and sharp frames take a session of their own while they run; over the budget they are skipped.
-    const gpu = createGpuSessions(2);
+  { // Fills and sharp frames take a session of their own while they run; over the budget (less one kept free for a
+    // stream) they are skipped.
+    const gpu = createGpuSessions(3);
     const a = stream(gpu);
     a.s.holdGpu();
     a.s.fill({ id: 1, from: 8, to: 10 });
@@ -118,6 +127,25 @@ function stream(gpu, { encoder = 'h264_nvenc', file = '/v/clip.mkv' } = {}) {
     a.s.dispose();
     assert.strictEqual(gpu.used, 0);
   }
+  { // A fill whose arguments cannot be built (HDR with no tone-mapping filter in this ffmpeg) gives its session back and
+    // says why, as a sharp frame does; nothing escapes the message handler.
+    const gpu = createGpuSessions(8);
+    const posted = [];
+    const s = new EncodedStream({
+      tools: { ffmpeg: 'ffmpeg', gpuFilters: new Set() }, file: '/v/hdr.mkv', post: (m) => posted.push(m), log: () => {}, remote: true,
+      maxHeight: 1080, encoder: 'h264_nvenc', cpuEncoder: 'libx264', gpuSessions: gpu,
+      probed: { duration: 60, audio: null, video: { index: 0, codec: 'hevc', pixFmt: 'yuv420p10le', width: 1920, height: 1080, fps: 25,
+        colorTransfer: 'smpte2084', colorPrimaries: 'bt2020' } },
+    });
+    s.fps = 25;
+    s.sizeVideo();
+    s.spawnJob = () => { throw new Error('no ffmpeg in this test'); };
+    await s.handle({ type: 'fill', id: 3, from: 8, to: 10 });
+    const reply = posted.find((m) => m.type === 'fillBatch');
+    assert.ok(reply && reply.done && /tone-mapping/.test(reply.error), JSON.stringify(reply));
+    assert.strictEqual(gpu.used, 0, 'its session went back');
+    s.dispose();
+  }
   { // A stream already on the CPU encoder needs no session for its sharp frames.
     const gpu = createGpuSessions(1);
     gpu.acquire('stream');
@@ -126,6 +154,84 @@ function stream(gpu, { encoder = 'h264_nvenc', file = '/v/clip.mkv' } = {}) {
     assert.strictEqual(a.jobs.length, 1);
     assert.strictEqual(gpu.used, 1);
     a.s.dispose();
+  }
+  // A launch's encoder: the stream keeps its GPU encoder and asks for a session at each launch; only a launch that cannot
+  // get one encodes on the CPU (before that the stream gives back the session of its own idle kept-running decoder).
+  const WARM_PROBED = { duration: 60, audio: null, formatName: 'mov,mp4,m4a,3gp,3g2,mj2',
+    video: { index: 0, codec: 'hevc', pixFmt: 'yuv420p', width: 1920, height: 1080, fps: 25, cfr: true, fileStart: 0, startTime: 0, fieldOrder: 'progressive' } };
+  function live(gpu, { file = '/v/clip.mkv', probed, remote = false } = {}) {
+    const posted = [];
+    const logs = [];
+    const s = new EncodedStream({
+      tools: { ffmpeg: 'ffmpeg', gpuFilters: new Set() }, file, post: (m) => posted.push(m), log: (l) => logs.push(l), remote,
+      maxHeight: 1080, encoder: 'h264_nvenc', cpuEncoder: 'libx264', gpuSessions: gpu, warm: !!probed,
+      probed: probed || { duration: 60, video: { index: 0, codec: 'hevc', pixFmt: 'yuv420p', width: 1920, height: 1080, fps: 25 }, audio: null },
+    });
+    s.fps = 25;
+    s.sizeVideo();
+    const launched = [];
+    // As launch() does, without ffmpeg: the session first, then the arguments of the encoder it leaves.
+    s.launch = function (t, audio, opts) {
+      if (!audio) this.holdGpu();
+      const p = fakeProc();
+      p.argv = this.args(t, !!audio, opts);
+      p.encoder = p.argv[p.argv.indexOf('-c:v') + 1];
+      launched.push(p);
+      return p;
+    };
+    const warmProcs = [];
+    s.spawnWarm = (cmd, a) => { const p = fakeProc(); p.argv = a; p.stdin = new PassThrough(); warmProcs.push(p); return p; };
+    s.spawnJob = (argv) => { const p = fakeProc(); p.argv = argv; return p; };
+    const quiet = () => { s.lastSpawnAt = -Infinity; s.lastSeekAt = -Infinity; };
+    return { s, posted, logs, launched, warmProcs, quiet };
+  }
+  { // No session for one launch: that launch on the CPU; the next one with a session free is back on the GPU.
+    const gpu = createGpuSessions(1);
+    const other = gpu.acquire('stream'); // another video's encoder
+    const a = live(gpu);
+    a.s.handle({ type: 'open', view: { w: 1920, h: 1080 } });
+    assert.strictEqual(a.launched[0].encoder, 'libx264', 'no session free: this launch on the CPU');
+    gpu.release(other);
+    a.quiet(); a.s.seek({ gen: 1, t: 20, playing: true });
+    assert.strictEqual(a.launched.at(-1).encoder, 'h264_nvenc', 'a session free again: the next launch on the GPU');
+    assert.deepStrictEqual(gpu.counts(), { stream: 1 });
+    // Taken again by another video: the next launch goes back to the CPU, and the notice is not shown twice.
+    a.s.kill();
+    a.s.releaseGpu();
+    const again = gpu.acquire('stream');
+    a.quiet(); a.s.seek({ gen: 2, t: 30, playing: true });
+    assert.strictEqual(a.launched.at(-1).encoder, 'libx264');
+    assert.strictEqual(a.posted.filter((m) => m.type === 'remoteNotice').length, 1, 'one notice');
+    gpu.release(again);
+    a.s.dispose();
+    assert.strictEqual(gpu.used, 0);
+  }
+  { // Its own idle kept-running decoder holds the only session: a launch while playing takes that one back first.
+    const gpu = createGpuSessions(1);
+    const a = live(gpu, { probed: WARM_PROBED });
+    a.s.handle({ type: 'open', view: { w: 1920, h: 1080 } });
+    assert.ok(a.s.warm, 'the paused open: a kept-running decoder');
+    assert.deepStrictEqual(gpu.counts(), { warm: 1 });
+    a.quiet(); a.s.seek({ gen: 1, t: 30, playing: true }); // playing: ffmpeg per seek, which needs a session of its own
+    assert.strictEqual(a.launched.at(-1).encoder, 'h264_nvenc', 'still on the GPU');
+    assert.strictEqual(a.s.warm, null, 'the idle kept-running decoder gave its session back');
+    assert.deepStrictEqual(gpu.counts(), { stream: 1 });
+    assert.ok(!a.posted.some((m) => m.type === 'remoteNotice'), 'no notice');
+    a.s.dispose();
+    assert.strictEqual(gpu.used, 0);
+  }
+  { // The notice does not count short encodes as videos.
+    const gpu = createGpuSessions(3);
+    gpu.acquire('stream');
+    gpu.acquireShort('fill');
+    gpu.acquire('stream');
+    const c = live(gpu, { file: '/v/third.mkv' });
+    c.s.handle({ type: 'open', view: { w: 1920, h: 1080 } });
+    const note = c.posted.find((m) => m.type === 'remoteNotice');
+    assert.ok(note && /^third\.mkv is transcoded on the processor/.test(note.text), note && note.text);
+    assert.ok(!/encoding 3 videos/.test(note.text), note.text);
+    assert.ok(/GPU Encoder Sessions/.test(note.text));
+    c.s.dispose();
   }
   console.log('gpu sessions: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -370,9 +370,11 @@ Maintainer decisions of 2026-11-27, built on the remote Live transcode path (pau
 - **GPU encoder sessions** (`src/gpu-sessions.js`, setting `videoPreviewEnhanced.gpuEncoderSessions`, machine-scoped,
   default 8, minimum 1): one host-wide budget counts every GPU encode (NVENC, QSV, AMF, VA-API, VideoToolbox, Media
   Foundation): live streams (held while the encoder runs, given back when the tab is hidden or the stream ends), fills
-  (on top of `MAX_FILLS`) and sharp frames. A live stream that would go over it encodes with the CPU encoder (the
-  existing fallback path) and the user gets one toast per session naming the video; a fill or a sharp frame over it is
-  skipped (the soft picture stays). The loop standby process is not counted (it lives at most 20 s at the end of a
+  (on top of `MAX_FILLS`), sharp frames and quick pictures. A launch of a live stream that finds none free first takes
+  back the one its own idle kept-running decoder holds; failing that, that launch encodes with the CPU encoder and the
+  user gets one notice per session naming the video. The stream keeps its GPU encoder: its next launch with a session
+  free goes back to it. Fills, sharp frames and quick pictures never take the last free session (it stays for a live
+  stream); skipped, the soft picture stays. The loop standby process is not counted (it lives at most 20 s at the end of a
   file). The kept-running decoder (below) takes a session the same way.
 
 Layer 3 `remote-stream-packets` › `paused-sharp` (1080p25 noisy test clip, link throttled to 2 Mb/s with the test

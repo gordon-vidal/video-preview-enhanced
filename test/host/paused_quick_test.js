@@ -113,6 +113,38 @@ const sizeIn = (argv) => /scale\w*=(?:w=)?(\d+):(?:h=)?(\d+)/.exec(argv.join(' '
     assert.ok(quickOf(h.jobs) && quickOf(h.jobs).argv.includes('libx264'));
     h.s.dispose();
   }
+  { // Only for a seek's own first start at its target. A step back just before the held packets restarts 2.5 s early on a
+    // remote link: a quick picture of that start would be the wrong frame (the page drops it), so none is encoded. Nor
+    // for a restart of a running stream (an encoder fallback, a paused quality change) or a restored region going on.
+    const { s, jobs, launched } = make();
+    s.seek({ gen: 1, t: 10, playing: false });
+    const first = quickOf(jobs);
+    assert.ok(first, 'the seek to 10 s: a quick picture');
+    first.emit('close', 0, null);
+    s.vAll.push({ t: 10, key: true, data: new Uint8Array(10) }, { t: 10.04, key: false, data: new Uint8Array(10) });
+    s.lastSpawnAt = s.lastSeekAt = -Infinity;
+    const before = jobs.length;
+    s.seek({ gen: 2, t: 9.96, playing: false });
+    assert.ok(launched.at(-1).t < 9.96 - 2, `a step back starts early: ${launched.at(-1).t}`);
+    assert.strictEqual(jobs.length, before, 'no quick picture of the early start of a step back');
+    s.restartVideo(9.96); // even at the target itself
+    assert.strictEqual(jobs.length, before, 'no quick picture for a restart');
+    s.dispose();
+  }
+  { // Play while it is pending: it stops at once, and picture and sound are not held back for it.
+    const { s, posted, jobs } = make();
+    s.seek({ gen: 1, t: 4, playing: false });
+    const q = quickOf(jobs);
+    s.vAll.push({ t: 4, key: true, data: new Uint8Array(1000) });
+    s.vNext = 0;
+    s.more({ gen: 1, limit: 1e6 });
+    assert.ok(!posted.some((m) => m.type === 'batch'), 'paused: the frames wait for the quick picture');
+    await s.handle({ type: 'playback', playing: true });
+    assert.strictEqual(q.signalCode, 'SIGKILL', 'play stops the quick encode');
+    s.more({ gen: 1, limit: 1e6 });
+    assert.ok(posted.some((m) => m.type === 'batch'), 'the stream goes at once, not after the wait');
+    s.dispose();
+  }
   { // Over the GPU encoder session budget: skipped (the streams' own encoders come first).
     const gpu = createGpuSessions(1);
     gpu.acquire('stream'); // another video's encoder holds the only one

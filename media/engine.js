@@ -2311,10 +2311,11 @@ function createEngine(env) {
       else receive();
     }
 
-    /** That seek is still waiting for its first picture (paused, visible, nothing shown or sought since). */
+    /** That seek is still waiting for its first picture (paused, visible, nothing shown or sought since), and r is its target. */
     quickStill(r) {
       return !!this.remoteStream && !this.playing && !this.hidden && !this.disposed && this.vmode === 'webcodecs'
-        && this.gen === r.gen && this.seekTarget !== null && !!this.vconf && typeof VideoDecoder !== 'undefined';
+        && this.gen === r.gen && this.seekTarget !== null && Math.abs(r.t - this.seekTarget) < 0.5 / (this.fps || 30)
+        && !!this.vconf && typeof VideoDecoder !== 'undefined';
     }
 
     showQuick(vf) {

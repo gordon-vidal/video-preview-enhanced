@@ -154,6 +154,8 @@ class EncodedStream {
     // This host's GPU encoder sessions (src/gpu-sessions.js): the live encode holds one while it runs on a GPU encoder.
     this.gpu = gpuSessions;
     this.gpuToken = null;
+    /** @type {{ encoder: string, decodeMethod: string, device: any } | null} the GPU encoder a launch with no session left */
+    this.gpuFallback = null;
     // The kept-running decoder for paused starts (src/warm-decoder.js): wanted for a single video and Compare's clock
     // tile (the page says so with each seek); warmOff: why this stream stopped using it (a failure).
     this.warmWanted = warm !== false;
@@ -198,6 +200,8 @@ class EncodedStream {
     this.gen = 0;
     this.proc = null;
     this.seekT = 0;
+    // The next video start is a seek's (or the open's) own first one: only it may send a quick picture (startQuick).
+    this.seekStart = false;
     this.spawns = 0;
     this.lastSpawnAt = -Infinity;
     this.lastSeekAt = -Infinity;
@@ -383,7 +387,7 @@ class EncodedStream {
         this.setView(m.view);
         return this.open();
       case 'view': return this.setView(m, !!m.playing);
-      case 'playback': this.playing = !!m.playing; if (this.playing) { this.stopFill(); this.stopSharp(); } return undefined;
+      case 'playback': this.playing = !!m.playing; if (this.playing) { this.stopFill(); this.stopSharp(); this.stopQuick(); } return undefined;
       case 'remoteAudioFailed':
         if (!this.audioEncoder) return;
         this.audioFallback(m.message);
@@ -593,6 +597,7 @@ class EncodedStream {
     if (this.disposed) return;
     this.failed = false;
     this.reset(t);
+    this.seekStart = true;
     this.spawnNow();
   }
 
@@ -663,6 +668,10 @@ class EncodedStream {
   spawnVideo() {
     if (this.failed || this.disposed) return false;
     const t = this.vBase;
+    this.regainGpu();
+    // The quick picture is of the seek target: not for a step back's earlier start, a restart or a region going on.
+    const atSeekTarget = this.seekStart && t === this.seekT;
+    this.seekStart = false;
     let proc;
     let firstKeyBits = 0;
     let slowStart = false;
@@ -686,8 +695,9 @@ class EncodedStream {
     this.spawns++;
     this.lastSpawnAt = Date.now();
     this.watchVideo(proc);
-    // A slow link and no small first keyframe (NVENC and the other encoders, or the kept-running decoder): a quick picture.
-    if (slowStart && !proc.firstKeyBits && this.quickHook !== false && this.pipelineMode !== 'direct-stream') this.startQuick(t);
+    // A seek's first start at its target, a slow link and no small first keyframe (NVENC and the other encoders, or the
+    // kept-running decoder): a quick picture.
+    if (atSeekTarget && slowStart && !proc.firstKeyBits && this.quickHook !== false && this.pipelineMode !== 'direct-stream') this.startQuick(t);
     const cap = this.activeCapKbps();
     this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${this.gpuDecode ? ', GPU decode' : ''}${this.hdr && this.tonemapKind ? `, ${this.tonemapKind} tone-mapping` : ''}${cap ? `, ${cap} kb/s cap` : ''}${firstKeyBits ? `, first keyframe ~${Math.round(firstKeyBits / 8192)} KiB for a fast first picture` : ''}${proc.warm ? ', kept-running decoder' : ''})`);
     return true;
@@ -720,26 +730,48 @@ class EncodedStream {
   }
 
   /**
-   * A live encode on a GPU encoder holds one of this host's GPU encoder sessions (src/gpu-sessions.js). With all of them
-   * in use (other videos, Compare tiles, fills), this stream encodes on the CPU instead and the user is told once per
-   * session which video and why. Called before every video encode starts (launch); a CPU encoder holds none.
+   * A live encode on a GPU encoder holds one of this host's GPU encoder sessions (src/gpu-sessions.js). Called before
+   * every video encode starts (launch); a CPU encoder holds none. With all of them in use (other videos, Compare tiles,
+   * short encodes), the stream first takes back the one its own idle kept-running decoder holds; failing that this
+   * launch encodes on the CPU (gpuFallback) and the user is told once per session which video and why. The stream keeps
+   * its GPU encoder: the next launch with a session free goes back to it (regainGpu).
    */
   holdGpu() {
     if (this.gpuToken || !isGpuEncoder(this.encoder) || this.pipelineMode === 'direct-stream' || this.useDirectStream()) return;
     this.gpuToken = this.gpu.acquire('stream');
+    if (!this.gpuToken && this.warm && !(this.proc && this.proc.warm)) {
+      this.disposeWarm('its GPU encoder session goes to the stream');
+      this.gpuToken = this.gpu.acquire('stream');
+    }
     if (this.gpuToken || !this.cpuEncoder || !this.allowSoftwareFallback) return; // no CPU encoder: try the GPU anyway
     const enc = this.encoder;
     const name = String(this.file || '').split(/[\\/]/).pop();
     this.log(`live transcode: all ${this.gpu.limit} GPU encoder sessions on this host are in use (${JSON.stringify(this.gpu.counts())}); `
-      + `encoding with ${this.cpuEncoder} instead of ${enc} (videoPreviewEnhanced.gpuEncoderSessions)`);
+      + `encoding with ${this.cpuEncoder} instead of ${enc} until one is free (videoPreviewEnhanced.gpuEncoderSessions)`);
+    this.gpuFallback = { encoder: enc, decodeMethod: this.decodeMethod, device: this.device };
     this.encoder = this.cpuEncoder;
     this.decodeMethod = 'none';
     this.device = undefined;
     this.pipelineMode = this.defaultPipelineMode();
     if (this.gpu.firstNotice()) {
-      this.post({ type: 'remoteNotice', kind: 'gpuSessions', text: `${name} is transcoded on the processor: the GPU is already `
-        + `encoding ${this.gpu.limit} videos, its limit here. It may play less smoothly. Settings: GPU Encoder Sessions.` });
+      this.post({ type: 'remoteNotice', kind: 'gpuSessions', text: `${name} is transcoded on the processor for now: all `
+        + `${this.gpu.limit} GPU encoder sessions here are in use. It may play less smoothly until one is free. Settings: GPU Encoder Sessions.` });
     }
+  }
+
+  /**
+   * A stream on the CPU only because no GPU encoder session was free (holdGpu): back on its GPU encoder for the next
+   * launch when one is free now (or its own idle kept-running decoder's can be taken back).
+   */
+  regainGpu() {
+    const f = this.gpuFallback;
+    if (!f || this.gpu.used >= this.gpu.limit) return;
+    this.gpuFallback = null;
+    this.encoder = f.encoder;
+    this.decodeMethod = f.decodeMethod;
+    this.device = f.device;
+    this.pipelineMode = this.defaultPipelineMode();
+    this.log(`live transcode: a GPU encoder session is free again; encoding with ${f.encoder}`);
   }
 
   releaseGpu() {
@@ -814,10 +846,11 @@ class EncodedStream {
       }
       if (code !== 0 || signal) {
         const why = this.exitReason(proc, code, signal);
-        // Step 0a: a failed hardware tone-mapper (QSV, VA-API, libplacebo, OpenCL) drops to the next best path.
-        if (this.hdr && this.tonemapKind && this.tonemapKind !== 'cpu' && !this.badTonemap.has(this.tonemapKind)) {
+        // Step 0a: a failed hardware tone-mapper (QSV, VA-API, libplacebo, OpenCL) drops to the next best path, for
+        // every stream with this ffmpeg; only one that has not given a frame here (a later failure is not its fault).
+        if (this.tonemapUnproven()) {
           this.log(`live transcode: ${this.tonemapKind} HDR tone-mapping failed (${why}); trying the next tone-mapping path`);
-          this.badTonemap.add(this.tonemapKind);
+          this.badTonemap.add(/** @type {string} */ (this.tonemapKind));
           this.restartVideo();
           return;
         }
@@ -889,6 +922,7 @@ class EncodedStream {
   encoderFallback(why) {
     const enc = this.encoder;
     this.log(`live transcode: ${enc} failed (${why}); retrying this stream with ${this.cpuEncoder}`);
+    this.gpuFallback = null; // failed, not just busy: the CPU for good
     this.encoder = this.cpuEncoder;
     this.decodeMethod = 'none';
     this.device = undefined;
@@ -1237,6 +1271,7 @@ class EncodedStream {
     }
     this.sizeVideo();
     this.reset(start);
+    this.seekStart = true;
     this.aNext = Math.max(0, Math.round((t - start) * AUDIO_RATE));
     this.post({ type: 'seeked', gen: m.gen, t });
     clearTimeout(this.startTimer);
@@ -1296,12 +1331,13 @@ class EncodedStream {
     // A copy of the source's own GOPs (B-frames, sparse keyframes) is not kept by the page: nothing to gain.
     if (this.pipelineMode === 'direct-stream' || this.useDirectStream()) return no('direct stream');
     if (fillsRunning >= MAX_FILLS) return no('busy');
-    const token = isGpuEncoder(this.encoder) ? this.gpu.acquire('fill') : null;
+    const token = isGpuEncoder(this.encoder) ? this.gpu.acquireShort('fill') : null;
     if (isGpuEncoder(this.encoder) && !token) return no('busy'); // every GPU encoder session is in use
     // args() records the pipeline it builds on this stream: the fill must not change what the live stream reports.
     const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode, this.playing];
     let argv;
     try { this.playing = false; argv = this.args(from, false); }
+    catch (e) { this.gpu.release(token); return no(String(e && e.message || e)); }
     finally { [this.pipelineMode, this.tonemapKind, this.gpuDecode, this.playing] = keep; }
     argv.splice(argv.length - 1, 0, '-frames:v', String(frames));
     let proc;
@@ -1390,7 +1426,7 @@ class EncodedStream {
     if (this.pipelineMode === 'direct-stream' || this.useDirectStream()) return no('direct stream');
     const t = Math.max(0, Math.floor(Number(m.t) * fps + 1e-6)) / fps;
     const gpu = isGpuEncoder(this.encoder);
-    const token = gpu ? this.gpu.acquire('sharp') : null;
+    const token = gpu ? this.gpu.acquireShort('sharp') : null;
     if (gpu && !token) return no('busy'); // every GPU encoder session is in use: the soft picture stays
     // args() records the pipeline it builds on this stream: the sharp frame must not change what the live stream reports.
     const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode];
@@ -1461,7 +1497,7 @@ class EncodedStream {
     this.stopQuick();
     if (!this.remote || !this.w || !this.h) return;
     const gpu = isGpuEncoder(this.encoder);
-    const token = gpu ? this.gpu.acquire('quick') : null;
+    const token = gpu ? this.gpu.acquireShort('quick') : null;
     if (gpu && !token) { this.log('remote stream: no quick picture: every GPU encoder session is in use'); return; }
     // args() records the pipeline it builds on this stream: the quick picture must not change what the live stream reports.
     const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode];

@@ -667,7 +667,7 @@
           "minimum": 1,
           "maximum": 64,
           "scope": "machine",
-          "markdownDescription": "Live transcode: how many videos the GPU of this machine (the remote host in a remote window) encodes at once, counting every open video, Compare tile, short background encode and the ffmpeg kept running for paused jumps (one per video, stopped after 60 s unused). More than that are transcoded on the processor, which may play less smoothly. Most NVIDIA GeForce cards allow 8; raise it for a card that allows more."
+          "markdownDescription": "Live transcode: how many videos the GPU of this machine (the remote host in a remote window) encodes at once, counting every open video, Compare tile, short background encode and the ffmpeg kept running for paused jumps (one per video, stopped after 60 s unused). A video that finds none free is transcoded on the processor until a session is free again, which may play less smoothly; short background encodes leave the last one for a video. Most NVIDIA GeForce cards allow 8; raise it for a card that allows more."
         },
         "videoPreviewEnhanced.transcodeResolution": {
           "type": "number",

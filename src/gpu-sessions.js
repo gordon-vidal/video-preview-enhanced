@@ -2,8 +2,9 @@
 // The host's GPU video encoder sessions (NVENC, QSV, AMF, VA-API, VideoToolbox, Media Foundation): drivers allow only a
 // few at once (consumer NVIDIA cards: 8 with a current driver, fewer on older ones), and an encoder opened past the limit
 // fails. Every Live transcode encode on this host takes one here first: a live stream, a fill behind a paused frame
-// (src/stream.js fill), a sharp paused frame (sharp). Over the budget a live stream encodes on the CPU instead and the
-// shorter jobs are skipped. Host-wide (one extension host per machine), so Compare tiles and every open tab count.
+// (src/stream.js fill), a sharp paused frame (sharp). Over the budget a live stream encodes that launch on the CPU and
+// the shorter jobs are skipped; short jobs leave the last free session to the streams (acquireShort). Host-wide (one
+// extension host per machine), so Compare tiles and every open tab count.
 // Pure: no VS Code, no ffmpeg; test/host/gpu_sessions_test.js.
 
 const { CPU_ENCODERS } = require('./transcode_args');
@@ -51,6 +52,14 @@ function createGpuSessions(limit = DEFAULT_GPU_SESSIONS) {
       const token = { kind, released: false };
       held.add(token);
       return token;
+    },
+    /**
+     * One session for a short job (a fill, a sharp frame, a quick picture), or null: these never take the last free
+     * one, which stays for a live stream (a stream over the budget encodes on the CPU, a short job is just skipped).
+     * @param {string} kind
+     */
+    acquireShort(kind) {
+      return held.size + 1 >= max ? null : this.acquire(kind);
     },
     /** Gives a session back; a second release (or null) does nothing. @param {{ released: boolean } | null | undefined} token */
     release(token) {

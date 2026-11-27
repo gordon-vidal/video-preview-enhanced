@@ -149,7 +149,8 @@ const tick = () => new Promise((r) => setImmediate(r));
       release: () => { released++; }, onEnd: (why) => { ended = why; }, idleMs: 50 });
     const warm = procs[0];
     const s1 = dec.segment(10);
-    assert.strictEqual(s1.S, W.FIRST_S);
+    assert.strictEqual(s1.S, W.firstS(25));
+    assert.strictEqual(W.firstS(25), W.FIRST_S, '600 s is on the 25 fps grid');
     assert.strictEqual(procs.length, 2, 'a remux for the jump');
     assert.strictEqual(procs[1].argv[procs[1].argv.indexOf('-ss') + 1], '10.0100');
     const got = [];
@@ -215,6 +216,18 @@ const tick = () => new Promise((r) => setImmediate(r));
     warm.stdout.end(outFrame(s2.S, true));
     warm.exit(0);
     assert.strictEqual(await c2, 0, 'its last frames, then the end of the video');
+  }
+  { // Every segment, the first too, starts on the frame grid at any rate (600 s is 0.386 of a frame off it at 23.976).
+    for (const fps of [25, 24000 / 1001, 48000 / 1001, 30000 / 1001]) {
+      const dec = new W.WarmDecoder({ ffmpeg: 'ffmpeg', argv: ['warm'], key: 'k', file: 'in.mp4', streamIndex: 0, fps, fileStart: 0,
+        duration: 60, codec: 'h264', spawn: (cmd, a) => fakeProc(a) });
+      for (const t of [1, 30]) {
+        const seg = dec.segment(t);
+        assert.ok(Math.abs(seg.S * fps - Math.round(seg.S * fps)) < 1e-6, `${fps.toFixed(3)} fps: segment at ${seg.S} off the grid`);
+        seg.kill();
+      }
+      dec.dispose();
+    }
   }
   { // A stall: the target fed, nothing out for stallMs.
     const procs = [];
@@ -357,23 +370,31 @@ const tick = () => new Promise((r) => setImmediate(r));
   try {
     // Frame n shows its number in binary: 9 columns of 32 px, white for a 1. Noise on top makes frames of a real size
     // (a clip small enough to fit the pipe would reach its end at once, which ends a warm process by design).
-    const clips = [['h264', 'libx264', ['-bf', '3', '-g', '50', '-sc_threshold', '0']]];
-    if (/libx265/.test(ff.stdout)) clips.push(['hevc', 'libx265', ['-x265-params', 'keyint=50:min-keyint=50:bframes=3:open-gop=1:scenecut=0:log-level=error']]);
+    // 25 fps, and the NTSC-style rates whose frames are not on whole milliseconds (23.976, 47.952).
+    const clips = [['h264', 'libx264', ['-bf', '3', '-g', '50', '-sc_threshold', '0'], '25'],
+      ['h264', 'libx264', ['-bf', '3', '-g', '50', '-sc_threshold', '0'], '24000/1001'],
+      ['h264', 'libx264', ['-bf', '3', '-g', '50', '-sc_threshold', '0'], '48000/1001']];
+    const x265 = ['-x265-params', 'keyint=50:min-keyint=50:bframes=3:open-gop=1:scenecut=0:log-level=error'];
+    if (/libx265/.test(ff.stdout)) clips.push(['hevc', 'libx265', x265, '25'], ['hevc', 'libx265', x265, '24000/1001']);
     const bits = String.raw`format=yuv420p,geq=lum='if(bitand(N\,pow(2\,floor(X/32)))\,235\,16)':cb=128:cr=128,noise=alls=30:allf=t`;
-    for (const [codec, enc, opts] of clips) {
-      const file = path.join(dir, `${codec}.mkv`);
-      const mk = spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'nullsrc=s=288x160:r=25:d=12',
+    for (const [codec, enc, opts, rate] of clips) {
+      const [rn, rd = 1] = rate.split('/').map(Number);
+      const fps = rn / rd;
+      const file = path.join(dir, `${codec}-${rn}.mkv`);
+      const mk = spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', `nullsrc=s=288x160:r=${rate}`, '-frames:v', '300',
         '-vf', bits, '-c:v', enc, ...opts, '-pix_fmt', 'yuv420p', file], { encoding: 'utf8', windowsHide: true });
       assert.strictEqual(mk.status, 0, mk.stderr);
       const probed = await require('../../src/ffmpeg').probe({ ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' }, file);
       assert.strictEqual(W.warmSourceRefusal(probed), '', `${codec}: ${W.warmSourceRefusal(probed)}`);
       const s = new EncodedStream({ tools: { ffmpeg: 'ffmpeg', gpuFilters: new Set() }, file, post: () => {}, log: () => {}, remote: false,
         maxHeight: 1080, encoder: 'libx264', cpuEncoder: 'libx264', gpuSessions: createGpuSessions(8), probed });
-      s.fps = 25;
+      // MKV times are whole milliseconds: its average rate can be a little off the nominal one (47.952055 for 47.952048).
+      assert.ok(Math.abs(probed.video.fps / fps - 1) < 1e-5, `${rate}: probed ${probed.video.fps}`);
+      s.fps = probed.video.fps;
       s.directStreamFailed = true; // a small H.264 clip would be copied (Direct Stream), not re-encoded
       s.sizeVideo();
       const argv = s.args(0, false, { warm: true });
-      const make = () => new W.WarmDecoder({ ffmpeg: 'ffmpeg', argv, key: 'k', file, streamIndex: probed.video.index, fps: 25,
+      const make = () => new W.WarmDecoder({ ffmpeg: 'ffmpeg', argv, key: 'k', file, streamIndex: probed.video.index, fps: probed.video.fps,
         fileStart: probed.video.fileStart, duration: probed.duration, codec,
         spawn: (cmd, a) => spawn(cmd, a, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }) });
       let dec = make();
@@ -381,13 +402,13 @@ const tick = () => new Promise((r) => setImmediate(r));
       try {
         // Back and forth, on keyframes (0, 50, 100), one before and after one, deep into a GOP, near the end.
         for (const n of [37, 100, 99, 151, 50, 12, 250, 201, 0, 149, 296, 120]) {
-          let seg = dec.segment(n / 25);
-          if (!seg) { dec.dispose(); dec = make(); processes++; seg = dec.segment(n / 25); } // the source's end ended it
+          let seg = dec.segment(n / fps);
+          if (!seg) { dec.dispose(); dec = make(); processes++; seg = dec.segment(n / fps); } // the source's end ended it
           assert.ok(seg);
           const first = await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error(`${codec} frame ${n}: no picture`)), 8000);
+            const timer = setTimeout(() => reject(new Error(`${codec} ${rate} frame ${n}: no picture`)), 8000);
             seg.stdout.once('data', (d) => { clearTimeout(timer); resolve(d); });
-            seg.once('close', (code) => { if (code) { clearTimeout(timer); reject(new Error(`${codec} frame ${n}: ${seg.err.text}`)); } });
+            seg.once('close', (code) => { if (code) { clearTimeout(timer); reject(new Error(`${codec} ${rate} frame ${n}: ${seg.err.text}`)); } });
           });
           seg.kill();
           const y = spawnSync('ffmpeg', ['-v', 'error', '-f', 'h264', '-i', 'pipe:0', '-frames:v', '1', '-pix_fmt', 'yuv420p', '-f', 'rawvideo', 'pipe:1'],
@@ -399,10 +420,10 @@ const tick = () => new Promise((r) => setImmediate(r));
             for (let row = 40; row < 120; row++) for (let x = bit * 32 + 8; x < bit * 32 + 24; x++) sum += Y[row * 288 + x];
             if (sum / (80 * 16) > 125) shown |= 1 << bit;
           }
-          assert.strictEqual(shown, n, `${codec}: the jump to frame ${n} shows frame ${shown}`);
+          assert.strictEqual(shown, n, `${codec} ${rate}: the jump to frame ${n} shows frame ${shown}`);
         }
         assert.ok(processes <= 2, `${processes} processes for 12 jumps (one more only after the source's end)`);
-        console.log(`warm decoder: ${codec} (${enc}, B-frames${codec === 'hevc' ? ', open GOP' : ''}): 12 jumps on the exact frame, ${processes} process(es)`);
+        console.log(`warm decoder: ${codec} ${rate} fps (${enc}, B-frames${codec === 'hevc' ? ', open GOP' : ''}): 12 jumps on the exact frame, ${processes} process(es)`);
       } finally { dec.dispose(); }
     }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
