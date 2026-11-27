@@ -12,7 +12,7 @@ function page(P, mode, ab = AbLoop.create()) {
   P.player.setLoop(Autoplay.engineLoops(mode, ab.isSet()));
   P.onEnded = (info) => {
     const act = Autoplay.atEnd({ mode, a: ab.a, b: ab.b, natural: info.natural, file: true });
-    acts.push({ ...act, natural: info.natural, ran: info.ran });
+    acts.push({ ...act, natural: info.natural, ran: info.ran, stopped: !!info.stopped, at: P.time() });
     if (act.action === 'ab') { P.player.seekTime(act.to); P.player.play(); }
   };
   return acts;
@@ -20,6 +20,27 @@ function page(P, mode, ab = AbLoop.create()) {
 
 const CLIP = 'vp8_2s.webm'; // 2 s, 60 frames, no sound: the picture is the clock
 const RATE = 2;
+const CUT = 'trunc.mkv'; // declares 3 s, but the data stops about halfway (the second half of the file is gone)
+
+/** The file stops well before its declared end: reported as stopped, never as an end Loop or Autoplay acts on. */
+async function earlyEnd(P, mode) {
+  const acts = page(P, mode);
+  P.play();
+  let wrapped = false;
+  let last = 0;
+  J.assert(await P.until(() => {
+    const t = P.time();
+    if (t + 0.5 < last) wrapped = true;
+    last = t;
+    return acts.length || wrapped;
+  }, 'the early end', 20000), 'never stopped');
+  await P.until(() => false, 'settle', 500);
+  J.assert(!wrapped, `${mode}: started over from the start (the early end read as the end of the file)`);
+  J.assert(acts.length === 1 && acts[0].stopped && !acts[0].natural, `${mode}: ${JSON.stringify(acts)}`);
+  J.assert(acts[0].at < P.duration - 0.5, `${mode}: stopped at ${acts[0].at} of ${P.duration} s`);
+  J.assert(!P.playing(), `${mode}: paused`);
+  J.assert(Math.abs(P.time() - acts[0].at) < 0.1, `${mode}: stays on the last frame (${P.time()} vs ${acts[0].at})`);
+}
 
 runJobs('engine frames: Autoplay at the end of the file', [
   ['onend/off', CLIP, async (P) => {
@@ -77,6 +98,8 @@ runJobs('engine frames: Autoplay at the end of the file', [
     J.assert(!P.playing(), 'paused');
     P.onTick = null;
   }],
+  ['onend/early-end-next', CUT, (P) => earlyEnd(P, 'next')],
+  ['onend/early-end-loop', CUT, (P) => earlyEnd(P, 'loop')],
   ['onend/loop', CLIP, async (P) => {
     const acts = page(P, 'loop');
     P.setRate(RATE);
