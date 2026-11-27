@@ -4,6 +4,11 @@ The source of truth for how the player looks. [PRODUCT.md](PRODUCT.md) says what
 should look so every part of the player feels like one product. `test/host/unified_css_test.js` enforces the card rules
 below, so a surface that sets its own background, blur, corners or shadow fails CI.
 
+**This guide is young and meant to grow.** It codifies only what has been decided so far; the player still has
+inconsistencies that no rule covers yet (see [Not codified yet](#not-codified-yet)). Whenever a review or a change
+finds a drift, settle it with the maintainer, write the rule down here, and where possible add a check to
+`unified_css_test.js`, so the same drift cannot come back (the retrospective rule in `AGENTS.md`).
+
 ![Cards in the player: the ⚙ panel and a toast over a comparison](notes/img/design-cards.png)
 
 ## Principles
@@ -12,8 +17,25 @@ below, so a surface that sets its own background, blur, corners or shadow fails 
   work without extra rules. The player is mostly black and white; colour comes only from VS Code's own tokens.
 - **One card look.** Everything that floats over the picture (notices, toasts, menus, panels, popovers, dialogs,
   readouts, tile pills) is the same card. Do not invent a new surface.
-- **Reuse before you add.** A new message is a toast or a notice, a new menu uses the menu styles, a new popover is a
-  `.vpe-pop`. If none fits, say so in the PR and extend the shared piece instead of adding a look-alike.
+- **Reuse first, so things look the same everywhere.** Before you make anything new, look at the
+  [building blocks](#building-blocks) and build it out of them. A new message is a toast or a notice, a new menu uses
+  the menu styles, a new popover is a `.vpe-pop`. Only when none fits: say so in the PR, ask the maintainer, and
+  extend a shared piece (or add a new one here) rather than a one-off look-alike.
+
+## Building blocks
+
+What exists today; build new UI from these first.
+
+| Block | Where | Use for |
+|---|---|---|
+| Card tokens | `:root` in `media/player.css` | The background, blur, corners and shadow of anything floating |
+| Notice (`#notice`) | `createNoticeController`, `media/player-ui-tools.js` | A decision or a lasting state: text, buttons below, × |
+| Toast (`#toast`) | `toast()` in `media/player-ui.js` | A short confirmation of what the user just did |
+| ⚙ panel (`.panel`) | `media/controls.js` | Settings pages, rows, chips, switches, steppers |
+| Menus (`#ctxmenu`, `#menu`) | `media/ctxmenu.js`, Compare tile menu | Right-click and tile menus |
+| Popover (`.vpe-pop`) | `media/folder-rail.js` and others | A small menu or callout anchored to a button |
+| Bar buttons (`#bar .ib`) | `src/bar.js` | Icon buttons in the control bar; `.active` / `aria-pressed` for on |
+| Pills (`.pill`, `.sync-pill`) | `media/compare.css` | Compact labels and steppers on a tile |
 
 ## Tokens (`:root` in `media/player.css`)
 
@@ -53,10 +75,22 @@ reports a lasting state (text on its own line, buttons below: main action filled
 again" answer, × in the corner); things outside the player are **VS Code notifications**. Wording and required
 buttons: `.claude/skills/ui-notices/SKILL.md`.
 
+## Not codified yet
+
+Known gaps, each to be settled with the maintainer and then written down above:
+
+- **Buttons:** one scale for corners and heights, and the main action's colour everywhere (proposed: 4 px corners,
+  24 / 28 px, main action always VS Code's button colour).
+- **Add mode:** the element that shows while videos are being added (a mode, not a message).
+- **Error screen:** text on the picture today; proposed as a centered card.
+- **Type:** sizes still drift (10.5 and 11.5 px next to the 11 / 12 / 13 scale), including the bar's time readout.
+- **Spacing, icons, focus rings, motion and layering (z-index):** in use but not written down; the z-index order is
+  only checked in `unified_css_test.js`.
+
 ## Adding or changing a surface
 
-1. Use the tokens above (the test fails otherwise) and an existing pattern (notice, toast, `.panel`, `.vpe-pop`,
-   `#ctxmenu`).
+1. Start from a [building block](#building-blocks) and the tokens above (the test fails otherwise).
 2. Show it in the mockup harness (`tools/mockup/render.js`, a scenario per state) before wiring it to the host.
 3. Check dark, light and a narrow editor; keyboard (Tab, Esc) and accessible names.
-4. Write it down in `docs/notes/` with a screenshot, and update this file if a rule changes.
+4. Write it down in `docs/notes/` with a screenshot, and update this file: a new rule, a new building block, or a
+   gap from [Not codified yet](#not-codified-yet) that is now settled.

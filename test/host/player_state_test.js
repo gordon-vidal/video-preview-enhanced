@@ -23,7 +23,7 @@ const { SCENARIOS, buildMockupHtml } = require('../../tools/mockup/render');
   // Turn Capture ON at N = 1: still full-width, banner appears, no empty right half
   const cap = S.toggleCapture(ws);
   ws = cap.state;
-  assert.ok(cap.toast.includes('Compare ready'));
+  assert.strictEqual(cap.toast, '', 'one video: the Add mode prompt says it, no toast on top of it');
   ui = S.deriveUi(S.getTab(ws), { width: 800, height: 400 });
   assert.strictEqual(ui.showCaptureBanner, true);
   assert.strictEqual(ui.cells.length, 1);
