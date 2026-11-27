@@ -257,6 +257,10 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   for (const dup of ['.cap-banner {', '.cap-pulse {', '#startCompareBtn {', '#bar .ib.active {', '.cell.add .addcell {']) {
     assert.ok(!render.includes(dup), `render.js no longer restyles ${dup}`);
   }
+  // The harness stands in for VS Code only (--vscode-* theme colours); the player's own tokens (--vpe-*) come from
+  // player.css, or a mock-up shows a look the product does not have (a blue accent, another card background).
+  const ownTokens = [...render.matchAll(/(--vpe-[\w-]+)\s*:/g)].map((m) => m[1]);
+  assert.deepStrictEqual(ownTokens, [], 'render.js sets no --vpe-* token');
 }
 
 { // The narrow-pane collapse names the buttons of the #cmpGroup capsule (src/bar.js), in order, and
@@ -389,6 +393,10 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.deepStrictEqual([btn['border-radius'], btn.height, btn['font-size']], ['var(--vpe-btn-radius)', 'var(--vpe-btn-h)', '12px']);
   assert.strictEqual(merged(PLAYER, '.panel .vpe-btn').height, 'var(--vpe-btn-h-panel)');
   assert.match(merged(PLAYER, '.vpe-btn-main').background || '', /^var\(--vscode-button-background\b/);
+  // High Contrast leaves the button fill unset and draws buttons with --vscode-button-border: without it the main
+  // action is bare text on the card.
+  assert.match(merged(PLAYER, '.vpe-btn-main')['border-color'] || '', /^var\(--vscode-button-border\b/,
+    "the main action keeps VS Code's button border");
   const RAIL = read('folder-rail.css');
   for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
     for (const r of rules(css)) {

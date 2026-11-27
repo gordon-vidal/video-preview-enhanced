@@ -31,7 +31,7 @@ Never hand-craft throwaway HTML/CSS from scratch for UI proposals. Framewise kee
 
 ```bash
 node tools/mockup/render.js --list
-node tools/mockup/render.js --scenario spotlight --theme dark --height 496 --out path/to/out.html
+node tools/mockup/render.js --scenario spotlight --theme dark --height 496 --out path/to/out.html   # --theme dark | light | hc (High Contrast Dark)
 ```
 
 ## Rules
