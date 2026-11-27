@@ -15,7 +15,7 @@ see a clip's length or size before opening it, no "play the next one" and no qui
   a drag or in fullscreen with the bar hidden. Zero layout footprint while the rail is closed.
 - **The rail** (`#rail`, 218 px, 176–360 px by dragging its left edge; remembered for new tabs). `"dock"` (default,
   setting `folderRail.layout`) gives it real width beside the picture, so neither the video nor the scopes are covered;
-  `"overlay"` floats it over the picture (86% frosted, blur 12 px). Same DOM, one class. Below 560 px a docked rail
+  `"overlay"` floats it over the picture (the shared card surface, see [DESIGN.md](../DESIGN.md)). Same DOM, one class. Below 560 px a docked rail
   overlays. A 20×84 px `›` tab on its left edge (outside the resize grip) and a dim `×` close it; so does Esc.
   - Header: the folder and its parent. Filter (`Filter…`, keys stay in the field) and **Playable formats** (a
     monochrome check button, on by default: videos and folders only).

@@ -34,6 +34,10 @@ Every anchored panel (`ⓘ` Info, `⚙` Settings, Speed, Subtitles, Compare) and
 - **`Escape` always exits:** Every panel, notice, and modal/inspection tool (Pixel Inspector, Scopes) must close cleanly on `Escape`.
 - **Right-click menus show shortcuts:** Every context menu item with a keyboard shortcut displays it, and common actions should have clear, standard shortcuts.
 
+## 6. Look
+A notice or toast never gets its own styling: both use the shared card tokens in `docs/DESIGN.md` (no accent colour or
+icon; the main action filled with VS Code's button colour).
+
 ## Checklist Before Shipping
 - [ ] Plain English? Zero internal decoder jargon?
 - [ ] Explains *why* (the user benefit) and the *tradeoff* of switching?

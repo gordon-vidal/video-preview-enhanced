@@ -327,4 +327,36 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.ok(!anySelector(PLAYER, (s) => /\.cap-banner|#addHint/.test(s)), 'no capture pill or #addHint rules left');
 }
 
+{ // One card look for every floating surface (docs/DESIGN.md): the same background, blur, corners and two shadow
+  // levels, all from the :root tokens in player.css. A new surface that sets its own values fails here.
+  const RAIL = read('folder-rail.css');
+  const root = Object.assign({}, ...rules(PLAYER).filter((x) => !x.at && x.selectors.map(norm).includes(':root'))
+    .map((x) => Object.fromEntries(splitTop(x.body, /;/).map((d) => [d.slice(0, d.indexOf(':')).trim(), d.slice(d.indexOf(':') + 1).trim()]))));
+  assert.match(root['--vpe-surface-float'], /var\(--vscode-menu-background\b.*\) 90%, transparent\)$/, '90% opacity');
+  assert.strictEqual(root['--vpe-card-blur'], 'blur(2px)', '2 px blur');
+  assert.strictEqual(root['--vpe-card-radius'], '8px');
+  for (const k of ['--vpe-shadow-low', '--vpe-shadow-high']) assert.match(root[k] || '', /var\(--vscode-widget-shadow\b/, k);
+  const SHADOW_EXCEPTIONS = new Set(['.rail.overlay']); // a side panel: its shadow falls to one side only
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    const src = stripComments(css);
+    assert.ok(!/backdrop-filter:\s*blur\(/.test(src), `${name}: blur only through var(--vpe-card-blur)`);
+    const mixes = src.match(/color-mix\([^;]*--vscode-(menu|editorWidget)-background[^;]*;/g) || [];
+    assert.ok(mixes.every((m) => /^color-mix\(in srgb, var\(--vscode-menu-background, #1e1f23\) 90%/.test(m)) && (name !== 'player.css' || mixes.length === 1),
+      `${name}: no translucent surface besides --vpe-surface-float (${mixes.join(' | ')})`);
+    for (const r of rules(css)) {
+      const d = Object.fromEntries(splitTop(r.body, /;/).map((x) => [x.slice(0, x.indexOf(':')).trim(), x.slice(x.indexOf(':') + 1).trim()]));
+      if (!/var\(--vpe-(surface-float|panel-bg)\)/.test(d.background || '')) continue;
+      const sel = r.selectors.join(', ');
+      assert.strictEqual(d['backdrop-filter'], 'var(--vpe-card-blur)', `${name} ${sel}: card blur`);
+      if (d['box-shadow'] && !r.selectors.some((s) => SHADOW_EXCEPTIONS.has(norm(s)))) {
+        assert.match(d['box-shadow'], /^var\(--vpe-shadow-(low|high)\)$/, `${name} ${sel}: a shadow token`);
+      }
+      if (d['border-radius']) {
+        assert.match(d['border-radius'], /^(var\(--vpe-card-radius\)|999px|var\(--vpe-card-radius\) 0 0 var\(--vpe-card-radius\))$/,
+          `${name} ${sel}: card corners (${d['border-radius']})`);
+      }
+    }
+  }
+}
+
 console.log('unified_css: ok');

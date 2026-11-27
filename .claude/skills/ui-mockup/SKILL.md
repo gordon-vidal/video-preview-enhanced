@@ -36,6 +36,8 @@ node tools/mockup/render.js --scenario spotlight --theme dark --height 496 --out
 
 ## Rules
 
+- Follow `docs/DESIGN.md`: cards use the shared tokens (background, blur, radius, shadow), messages are a toast or a notice.
+
 - Always keep `media/player-state.js` pure (no DOM, no `vscode`, no Node builtins, no decoder imports) and covered by `checkJs` (`npm run typecheck`).
 - Keep `media/player-ui.js` free of VS Code and decoder code: everything outside the page goes through `host.post` / `onHostMessage`, every picture through the engine adapter.
 - When changing bar buttons, tile overlays, or Compare layouts, change `media/player-ui.js` (and a scenario in `tools/mockup/render.js` if useful) in the same PR so the mockup stays a truthful, living prototype.
