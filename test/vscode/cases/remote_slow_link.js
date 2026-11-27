@@ -111,6 +111,8 @@ module.exports = [{
       // the picture and before the input's next event (a press before its release, a drag at each move); the paused ones
       // then land on the bar's frame.
       const go = async (label, input, { paused = true } = {}) => {
+        const from = vs.mark();
+        const t0 = Date.now();
         const x = await trace(p, input);
         r.inputs[label] = x;
         const list = Array.isArray(input) ? input : [input];
@@ -121,8 +123,14 @@ module.exports = [{
           if (x.pictureMs !== null) ok(x.timeMs <= x.pictureMs, `${label}: the time moved after the picture`);
         }
         if (paused) {
-          const s = await p.waitState((y) => !y.playing && y.frame === x.bar, { timeout: 30000, interval: 100, what: `${label}: frame ${x.bar}` });
-          x.landed = s.frame;
+          try {
+            const s = await p.waitState((y) => !y.playing && y.frame === x.bar, { timeout: 30000, interval: 100, what: `${label}: frame ${x.bar}` });
+            x.landed = s.frame;
+          } catch (e) {
+            // What the host and the page did meanwhile, for the report.
+            r.stuck = { label, log: timeline(vs, p.name, from, t0).filter((l) => !/webview: (state|trace) \{/.test(l[1])) };
+            throw e;
+          }
         }
         await h.sleep(1500);
         return x;
@@ -133,6 +141,19 @@ module.exports = [{
         ...fs.slice(1).map((fr, i) => ({ action: 'dom', ev: 'pointermove', frac: at(fr), at: 120 * (i + 1) })),
         { action: 'dom', ev: 'pointerup', frac: at(fs[fs.length - 1]), at: 120 * fs.length }];
       const keys = (key, k, every) => Array.from({ length: k }, (_, i) => ({ action: 'key', key, at: i * every }));
+      // With VPE_SLOW_LINK_PER_SEEK: the kept-running decoder off (ffmpeg per seek, as for a Compare tile that does not
+      // set the clock), the paused inputs twice.
+      if (process.env.VPE_SLOW_LINK_PER_SEEK) {
+        p.act({ action: 'warmDecoder', on: false });
+        for (let i = 0; i < 2; i++) {
+          await go(`ps${i}-click`, click(f(0.6 - 0.3 * i)));
+          await go(`ps${i}-arrow-right`, { action: 'key', key: 'ArrowRight' });
+          await go(`ps${i}-end`, { action: 'key', key: 'End' });
+          await go(`ps${i}-number-3`, { action: 'key', key: '3' });
+          await go(`ps${i}-arrow-left-x2`, keys('ArrowLeft', 2, 120));
+        }
+        p.act({ action: 'warmDecoder', on: true });
+      }
       await go('seekbar-click', click(f(0.6)));
       await go('arrow-right', { action: 'key', key: 'ArrowRight' });
       await go('frame-step', { action: 'key', key: '.' });
