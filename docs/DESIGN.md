@@ -71,7 +71,12 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
 
 - **12 px** for messages (notice, toast, Add mode prompt), line height 1.45.
 - **13 px** for menus and panels, as VS Code's own menus.
-- **11 px** for dense data (pixel readout, stats, Go to, scopes, tile pills).
+- **11 px** for dense data (pixel readout, stats, Go to, scopes, tile pills, panel notes, column heads).
+- **12 px** for the bar's time and speed readouts and the Folder Rail's list.
+- Outside the scale only: **9-10 px** inside a badge or letter mark (A–B pins, step badges, tile letters) and in a
+  dense grid's pills and info card (5+ tiles, 10 px); **14 / 16 px** for a panel or sheet title; glyph buttons (×, ±)
+  and the big offset readout; em sizes for the status text over the picture. `unified_css_test.js` fails on any
+  other size.
 - Normal weight. Bold only for a label inside a card, never for a whole message.
 
 ## Colour
@@ -148,8 +153,6 @@ buttons: `.claude/skills/ui-notices/SKILL.md`.
 
 Known gaps, each to be settled with the maintainer and then written down above:
 
-- **Type:** sizes still drift (9, 9.5, 10, 10.5, 11.5, 12.5 px next to the 11 / 12 / 13 scale), including the bar's
-  time and speed readouts (11.5 px).
 - **Spacing:** paddings and gaps use many near values (2-7, 9, 10, 12, 14 px); no scale yet.
 - **Corners besides the card and button tokens:** bar buttons 6 px, A–B and range boxes 2-3 px, the switch 9 px.
 - **The bar's narrow-pane ladder:** Compare's bar needs about 824 px, so 721-824 px clips Picture size and

@@ -557,4 +557,30 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   }
 }
 
+{ // Type scale (docs/DESIGN.md, Type): 11 / 12 / 13 px. Outside it only: 9-10 px inside a badge or letter mark (and a
+  // dense grid's pills and card, 10 px), 14 / 16 px titles, glyph buttons (×, ±) and the big offset readout, and em
+  // sizes on the picture's own overlay text.
+  const RAIL = read('folder-rail.css');
+  const MARKS = /^(\.ab-pin span|#row button\.badge|\.rngl|\.panel \.row \.mark|\.panel \.abicon|\.ltr|#cells\.dense \.ltr|#cells\.dense \.sync-pill|#cells\.dense \.nudge|#cells\.dense \.sync-pill \.offv|#cells\.dense \.nudge \.offv|#cells\.dense \.tile-stats)$/;
+  const TITLES = /^(\.panel \.iname|#sheet \.stitle)$/;
+  const GLYPHS = /^(\.vpe-close|\.tile-stats-close|#cells\.dense \.tile-stats-close|\.scopesHeader button|\.panel \.big|\.panel \.readout\.off)$/;
+  const off = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    for (const r of rules(css)) {
+      const m = /(?:^|;)\s*font-size:\s*([^;]+)/.exec(r.body) || /(?:^|;)\s*font:\s*(?:\d+\s+)?(\d+(?:\.\d+)?px)/.exec(r.body);
+      if (!m) continue;
+      const v = m[1].trim();
+      if (/^(11|12|13)px$/.test(v) || /^var\(--vscode-font-size\)$|em$/.test(v)) continue;
+      for (const x of r.selectors.map(norm)) {
+        const ok = (/^(9|10)px$/.test(v) && MARKS.test(x)) || (/^(14|16)px$/.test(v) && TITLES.test(x)) || GLYPHS.test(x);
+        if (!ok) off.push(`${name}: ${x} ${v}`);
+      }
+    }
+  }
+  assert.deepStrictEqual(off, [], `font sizes off the scale:\n${off.join('\n')}`);
+  // The bar's readouts are on it too (12 px, maintainer 2026-11-27).
+  assert.strictEqual(merged(PLAYER, '#row #time')['font-size'], '12px');
+  assert.strictEqual(merged(PLAYER, '#row #rate')['font-size'], '12px');
+}
+
 console.log('unified_css: ok');

@@ -388,7 +388,7 @@ body.idle { cursor: none; }
 #xray canvas { display: block; width: 100%; height: 100%; background: transparent; }
 #xrayLegend {
   position: absolute; top: 0; left: var(--xray-inset); right: var(--xray-inset);
-  font-size: 10px; line-height: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 11px; line-height: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: var(--vscode-descriptionForeground); pointer-events: none;
 }
 #xrayLegend b { font-weight: 700; }
@@ -516,7 +516,7 @@ body.idle { cursor: none; }
 @media (prefers-reduced-motion: reduce) { #row button.stepsz { transition: none; } }
 .panel.step { width: max-content; min-width: 112px; }
 .panel.step .row.radio { height: 30px; padding: 0 14px 0 10px; gap: 8px; }
-#row #time { font-family: var(--vpe-mono); font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 8px; }
+#row #time { font-family: var(--vpe-mono); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 8px; }
 #row #time #dur { color: var(--vpe-dim); margin-left: 0.45em; }
 /* A / B range buttons beside the time: 16x16 visual box (1.2px border) inside a 24x28 hit target; outline-only active state. */
 #row button.rng { min-width: 24px; height: 28px; padding: 0 2px; opacity: 0.8; }
@@ -540,7 +540,7 @@ body.idle { cursor: none; }
 }
 #row #remoteLiveBtn.adapting { border-color: var(--vpe-bd-active); }
 /* One width for every speed (the longest is five characters, "1.25×"), so the bar does not shift while it changes. */
-#row #rate { font-family: var(--vpe-mono); font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums; width: calc(5ch + 14px); min-width: 40px; }
+#row #rate { font-family: var(--vpe-mono); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; width: calc(5ch + 14px); min-width: 40px; }
 /* Speed reset badge (src/bar.js speedButton): a bar badge shown whenever the speed is not 1×, so an off-normal
    speed is never missed; a click goes back to 1×. */
 #row button.ratereset { display: grid; place-items: center; }
@@ -631,7 +631,7 @@ kbd {
 .panel .row.radio { height: 34px; gap: 10px; }
 /* The radio mark (a span before the label in .radios rows). */
 .panel .row .mark { width: 14px; flex: none; font-size: 10px; color: var(--vpe-accent); }
-.panel .abicon { width: 18px; flex: none; text-align: center; font-weight: 600; font-size: 9.5px; letter-spacing: -0.02em; white-space: nowrap; }
+.panel .abicon { width: 18px; flex: none; text-align: center; font-weight: 600; font-size: 10px; letter-spacing: -0.02em; white-space: nowrap; }
 .panel .switch { position: relative; width: 34px; height: 18px; flex: none; border-radius: 9px; background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-subtle); box-sizing: border-box; }
 .panel .switch .knob { position: absolute; top: 1px; left: 1px; width: 14px; height: 14px; border-radius: 50%; background: var(--vpe-dim); }
 .panel .switch.on { background: var(--vpe-fill-subtle); border-color: var(--vpe-bd-active); }
@@ -646,14 +646,14 @@ kbd {
 .panel .zval { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
 .panel .jrow { display: flex; align-items: center; gap: 6px; padding: 2px 14px; }
 .panel .jbox { display: flex; flex-direction: column; gap: 5px; padding: 0 14px; }
-.panel .jtitle { font-size: 12.5px; }
+.panel .jtitle { font-size: 12px; }
 .panel .jopts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
 .panel .jopts .chip { padding: 0 2px; }
 /* Chips that fit one row share it equally (the speed presets). */
 .panel .jopts.one-row { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 /* A stepper's value with no name in front (the speed): it takes the row's middle. */
 .panel .jrow .zval.grow { flex: 1; }
-.panel .pnote, .panel .ptext { padding: 2px 14px 4px; font-size: 11.5px; line-height: 1.5; color: var(--vpe-dim); }
+.panel .pnote, .panel .ptext { padding: 2px 14px 4px; font-size: 11px; line-height: 1.5; color: var(--vpe-dim); }
 .panel .ptext { font-size: 13px; padding-top: 6px; }
 .panel .primary { margin: 6px 12px 2px; }
 .panel .big {
@@ -665,7 +665,7 @@ kbd {
 .panel .itop { display: flex; flex-direction: column; gap: 2px; }
 .panel .iname { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
 .panel .isub { color: var(--vpe-dim); font-size: 12px; }
-.panel .igrid { display: grid; grid-template-columns: 84px minmax(0, 1fr); row-gap: 7px; column-gap: 10px; margin: 0; font-size: 12.5px; line-height: 1.35; }
+.panel .igrid { display: grid; grid-template-columns: 84px minmax(0, 1fr); row-gap: 7px; column-gap: 10px; margin: 0; font-size: 12px; line-height: 1.35; }
 .panel .igrid dt { color: var(--vpe-dim); }
 .panel .igrid dd { margin: 0; }
 .panel .ibtns { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
@@ -688,7 +688,7 @@ kbd {
 #sheet .sgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px 28px; }
 #sheet .sgroup { display: flex; flex-direction: column; gap: 6px; }
 #sheet .sgroup .phead { padding: 0 0 2px; }
-#sheet .srow { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+#sheet .srow { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 #sheet .srow kbd { white-space: nowrap; }
 
 body.vscode-high-contrast #row button:hover, body.vscode-high-contrast #row button.open, body.vscode-high-contrast #notice button:hover,
