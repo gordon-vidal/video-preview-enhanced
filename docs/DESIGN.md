@@ -39,8 +39,11 @@ What exists today; build new UI from these first.
 | Close (`.vpe-close`) | `media/player.css` | × of a notice or callout |
 | Overlay engine | `media/ui/floating.ts` (`showTopLayer`, `positionAnchored`, `positionAtPoint`) | Putting a menu, panel or callout above everything and next to its button |
 | Error screen (`#overlay.error`) | `createOverlayController`, `media/player-ui-lifecycle.js` | A video that cannot play: a centered card, one main action |
-| Bar buttons (`#bar .ib`) | `src/bar.js` | Icon buttons in the control bar; `.active` / `aria-pressed` for on |
-| Pills (`.pill`, `.sync-pill`) | `media/compare.css` | Compact labels and steppers on a tile |
+| Bar buttons (`#bar .ib`) | `src/bar.js` | Icon buttons in the control bar: 34 px square, transparent, hover fill; `.active` / `aria-pressed` for on. Their own block, not `.vpe-btn` |
+| Capsules (`#cmpGroup`, `#folderCap`) | `src/bar.js` | A quiet pill holding related bar buttons (Compare layouts, folder previous / next) |
+| Switch (`.panel .switch`) | `media/controls.js` | An on / off setting in the ⚙ panel |
+| Pills (`.pill`, `.sync-pill`) | `media/compare.css` | Compact labels and steppers on a tile (the stepper's round 19 px buttons are part of the pill) |
+| Tile buttons (`.tbtn`) | `media/compare.css` | Square icon buttons on a tile (Spotlight, remove, the keyboard reorder arrows) |
 
 ## Tokens (`:root` in `media/player.css`)
 
