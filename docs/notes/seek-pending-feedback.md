@@ -24,8 +24,10 @@ stepping is not read out frame by frame. Under `prefers-reduced-motion` the ring
 and the bar is held at 0.7 opacity instead of breathing. Keys are unchanged.
 
 **Mock-up.** `node tools/mockup/render.js --scenario grid-2`: the harness foot has a "Seek" latency picker (instant,
-0.6 s, 2.5 s); with a latency, a paused seek or step shows the spinner on the tiles until it passes (the harness calls
-the controller's `setLoading` like the page does).
+0.6 s, 2.5 s); with a latency, a paused seek or step keeps each tile's previous picture and shows the spinner until it
+passes, then the new frame draws (the harness calls the controller's `setLoading` like the page does). A "Motion"
+picker (full, reduced, system) shows both looks: an embedded preview inherits the OS setting, and with Windows
+"Animation effects" off it reports reduced motion, so the ring holds still there as it would in VS Code.
 
 **Where.** `media/player-ui.js` setLoading / loadingAfter (controller, Node-tested in `test/host/player_ui_test.js`),
 `media/compare.css` `.cell.loading::after`, `media/player.css` `#seekRow.seeking`, `media/player-unified.js`
