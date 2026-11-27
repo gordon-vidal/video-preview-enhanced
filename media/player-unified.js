@@ -2620,9 +2620,14 @@
         if (tab.layout === 'split' && tab.tiles.length === 2) {
           const first = (groups()[0] || [])[0];
           const r = first ? first.getBoundingClientRect() : o;
+          const clampPic = (/** @type {any} */ box, /** @type {any} */ full) => {
+            const x0 = Math.max(box.x, full.x), y0 = Math.max(box.y, full.y);
+            const x1 = Math.min(box.x + box.w, full.x + full.w), y1 = Math.min(box.y + box.h, full.y + full.h);
+            return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
+          };
           const box = { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
           const full = picRectFor(tab.tiles[0], box);
-          return [/** @type {any} */ ({ ...box, tiles: [0, 1], full, pic: { ...box } })];
+          return [/** @type {any} */ ({ ...box, tiles: [0, 1], full, pic: clampPic(box, full) })];
         }
         return groups().map(([/** @type {any} */ d]) => {
           const r = d.getBoundingClientRect();
@@ -2630,7 +2635,10 @@
           const add = !!(d.classList && d.classList.contains('add'));
           const i = add ? -1 : tab.tiles.indexOf(d.dataset && d.dataset.clip);
           const full = add || i < 0 ? { ...box } : picRectFor(tab.tiles[i], box);
-          return /** @type {any} */ ({ ...box, ...(add ? { add: true } : { tiles: [i] }), full, pic: { ...box } });
+          const x0 = Math.max(box.x, full.x), y0 = Math.max(box.y, full.y);
+          const x1 = Math.min(box.x + box.w, full.x + full.w), y1 = Math.min(box.y + box.h, full.y + full.h);
+          const pic = { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
+          return /** @type {any} */ ({ ...box, ...(add ? { add: true } : { tiles: [i] }), full, pic });
         });
       };
       try {

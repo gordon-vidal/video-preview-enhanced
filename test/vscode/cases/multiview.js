@@ -727,6 +727,7 @@ module.exports = [{
       let from = vs.mark();
       vs.send({ compareFiles: files.slice(0, 3) });
       await vs.waitLog(opened(3), { from, timeout: 30000 });
+      await until((x) => list(x.frames).length === 3 && !list(x.frames).includes('-'), 30000);
       act({ action: 'offset', tile: 1, v: 3, unit: 'frames' });
       act({ action: 'clock', tile: 2 });
       act({ action: 'sound', tile: 1 });
@@ -758,9 +759,9 @@ module.exports = [{
       await results.run('reorder/commit', (ok) => {
         ok(order(u) === '2,0,1,add', `committed order: ${order(u)}`);
         const rows = (u.panel?.rows || []).map((r) => r.label).filter((label) => /^[A-C]:/.test(label));
-        ok(rows[0]?.startsWith(`A: ${CLIPS[2]}, clock`) && rows[1]?.startsWith(`B: ${CLIPS[0]}`),
+        ok(rows[0] === `A: ${CLIPS[2]}, offset In step, sets the clock` && rows[1]?.startsWith(`B: ${CLIPS[0]}`),
           `clock or panel order changed: ${rows}`);
-        ok(rows[2] === `C: ${CLIPS[1]}, sound, offset +3 frames`, `sound or offset changed: ${rows}`);
+        ok(rows[2] === `C: ${CLIPS[1]}, offset +3 frames, sound on`, `sound or offset changed: ${rows}`);
       });
       act({ action: 'panel' });
       pointer('pointerdown', grid[0].rect);
