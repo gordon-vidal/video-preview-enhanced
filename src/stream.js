@@ -198,6 +198,8 @@ class EncodedStream {
     this.gen = 0;
     this.proc = null;
     this.seekT = 0;
+    // The next video start is a seek's (or the open's) own first one: only it may send a quick picture (startQuick).
+    this.seekStart = false;
     this.spawns = 0;
     this.lastSpawnAt = -Infinity;
     this.lastSeekAt = -Infinity;
@@ -593,6 +595,7 @@ class EncodedStream {
     if (this.disposed) return;
     this.failed = false;
     this.reset(t);
+    this.seekStart = true;
     this.spawnNow();
   }
 
@@ -663,6 +666,9 @@ class EncodedStream {
   spawnVideo() {
     if (this.failed || this.disposed) return false;
     const t = this.vBase;
+    // The quick picture is of the seek target: not for a step back's earlier start, a restart or a region going on.
+    const atSeekTarget = this.seekStart && t === this.seekT;
+    this.seekStart = false;
     let proc;
     let firstKeyBits = 0;
     let slowStart = false;
@@ -686,8 +692,9 @@ class EncodedStream {
     this.spawns++;
     this.lastSpawnAt = Date.now();
     this.watchVideo(proc);
-    // A slow link and no small first keyframe (NVENC and the other encoders, or the kept-running decoder): a quick picture.
-    if (slowStart && !proc.firstKeyBits && this.quickHook !== false && this.pipelineMode !== 'direct-stream') this.startQuick(t);
+    // A seek's first start at its target, a slow link and no small first keyframe (NVENC and the other encoders, or the
+    // kept-running decoder): a quick picture.
+    if (atSeekTarget && slowStart && !proc.firstKeyBits && this.quickHook !== false && this.pipelineMode !== 'direct-stream') this.startQuick(t);
     const cap = this.activeCapKbps();
     this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${this.gpuDecode ? ', GPU decode' : ''}${this.hdr && this.tonemapKind ? `, ${this.tonemapKind} tone-mapping` : ''}${cap ? `, ${cap} kb/s cap` : ''}${firstKeyBits ? `, first keyframe ~${Math.round(firstKeyBits / 8192)} KiB for a fast first picture` : ''}${proc.warm ? ', kept-running decoder' : ''})`);
     return true;
@@ -1237,6 +1244,7 @@ class EncodedStream {
     }
     this.sizeVideo();
     this.reset(start);
+    this.seekStart = true;
     this.aNext = Math.max(0, Math.round((t - start) * AUDIO_RATE));
     this.post({ type: 'seeked', gen: m.gen, t });
     clearTimeout(this.startTimer);

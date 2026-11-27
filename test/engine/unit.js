@@ -1517,6 +1517,14 @@ test('remote Live transcode reads further ahead within the existing frame budget
   assert.strictEqual(p.worker.msgs.length, 1, 'stops at the remote playback target');
 });
 
+test('remote Live transcode: a quick picture of another frame than the seek target is dropped', () => {
+  ctx.VideoDecoder = ctx.VideoDecoder || class {};
+  const p = player({ remoteStream: true, vmode: 'webcodecs', gen: 2, seekTarget: 4, vconf: {}, hidden: false, fps: 25 });
+  assert.strictEqual(P.quickStill.call(p, { gen: 2, t: 4 }), true, 'the target itself');
+  assert.strictEqual(P.quickStill.call(p, { gen: 2, t: 1.5 }), false, 'the early start of a step back, 2.5 s before the target');
+  assert.strictEqual(P.quickStill.call(p, { gen: 1, t: 4 }), false, 'an older seek');
+});
+
 test('remote Live transcode: a whole GOP decoded faster than it copies is kept for steps back, no frame leaks', async () => {
   const copies = [];
   const closed = [];
