@@ -32,7 +32,8 @@ What exists today; build new UI from these first.
 | Notice (`#notice`) | `createNoticeController`, `media/player-ui-tools.js` | A decision or a lasting state: text, buttons below, × |
 | Toast (`#toast`) | `toast()` in `media/player-ui.js` | A short confirmation of what the user just did |
 | ⚙ panel (`.panel`) | `media/controls.js` | Settings pages, rows, chips, switches, steppers |
-| Menus (`#ctxmenu`, `#menu`) | `media/ctxmenu.js`, Compare tile menu | Right-click and tile menus |
+| Menus (`#ctxmenu`, `#menu`, rail `.vpe-pop[role=menu]`) | `media/ctxmenu.js`, `media/player-ui-tiles.js`, `src/folder-rail-html.js` | Right-click, tile and rail menus |
+| Menu row (`.vpe-mi`, `.vpe-msep`) | `VpeUi.menuItem` / `menuSep`, `media/ui-primitives.js` | Every row of every menu: check column, label, shortcut |
 | Popover (`.vpe-pop`) | `media/folder-rail.js` and others | A small menu anchored to a button |
 | Callout (`.vpe-pop.callout`) | `createCalloutController`, `media/player-ui-tools.js` | Explains a mode once, next to the control that shows it (Add mode) |
 | Button (`.vpe-btn`, `.vpe-btn-main`) | `media/player.css` | Every text button in a notice, callout, panel or the error screen |
@@ -98,6 +99,13 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
 - **Containers never restyle "all their buttons".** A generic `.x button` rule skips the shared ones
   (`:not(.vpe-btn)`); `unified_css_test.js` checks it. (The rail's menu rows once turned a callout's buttons into rows.)
 
+## Menus
+
+- Every menu row is `VpeUi.menuItem` (`.vpe-mi`): **28 px** high, 13 px, a 22 px check column (✓ or empty, so labels
+  align), the label, the shortcut or hint on the right (11 px mono, dim). Separators are `menuSep` (`.vpe-msep`).
+- Hover and focus show the row fill (`--vpe-row-hover`); keyboard focus adds the focus ring. No menu uses VS Code's
+  blue selection colour or its own row style. Menus have 4 px above and below their rows, rows run edge to edge.
+
 ## Icons
 
 - Bar icons are inline SVG in `src/bar.js` (shared ones in `media/ui-primitives.js` `ICONS`): an **18 px** box on a
@@ -144,8 +152,6 @@ Known gaps, each to be settled with the maintainer and then written down above:
   time and speed readouts (11.5 px).
 - **Spacing:** paddings and gaps use many near values (2-7, 9, 10, 12, 14 px); no scale yet.
 - **Corners besides the card and button tokens:** bar buttons 6 px, A–B and range boxes 2-3 px, the switch 9 px.
-- **Menu rows:** hover and keyboard focus look different in the right-click menu (grey border), the tile menu (VS
-  Code's blue selection) and the rail's menus (fill only).
 - **The bar's narrow-pane ladder:** Compare's bar needs about 824 px, so 721-824 px clips Picture size and
   Fullscreen; the single player clips by 9 px at 721-736 px.
 

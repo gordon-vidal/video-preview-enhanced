@@ -76,36 +76,11 @@ const VpeCtxMenu = (() => {
     function build() {
       menu.textContent = '';
       for (const it of items(env.getState())) {
-        if ('sep' in it) {
-          const sep = document.createElement('div');
-          sep.setAttribute('role', 'separator');
-          sep.className = 'ctx-sep';
-          menu.appendChild(sep);
-          continue;
-        }
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'ctx-item';
+        if ('sep' in it) { menu.appendChild(ui.menuSep(document)); continue; }
+        const b = ui.menuItem(document, it);
         b.dataset.id = it.id;
         b.tabIndex = -1;
-        b.setAttribute('role', it.checked === undefined ? 'menuitem' : 'menuitemcheckbox');
-        if (it.checked !== undefined) b.setAttribute('aria-checked', String(it.checked));
         if (it.key) b.setAttribute('aria-keyshortcuts', it.key.replace('Ctrl', 'Control'));
-        const check = document.createElement('span');
-        check.className = 'ctx-check';
-        check.setAttribute('aria-hidden', 'true');
-        check.textContent = it.checked ? '✓' : '';
-        const label = document.createElement('span');
-        label.className = 'ctx-label';
-        label.textContent = it.label;
-        b.append(check, label);
-        if (it.key) {
-          const k = document.createElement('span');
-          k.className = 'ctx-key';
-          k.setAttribute('aria-hidden', 'true');
-          k.textContent = it.key;
-          b.appendChild(k);
-        }
         b.addEventListener('click', (e) => {
           e.stopPropagation();
           close(false);
@@ -143,7 +118,7 @@ const VpeCtxMenu = (() => {
         left: menu.offsetLeft, top: menu.offsetTop, width: menu.offsetWidth, height: menu.offsetHeight,
         items: entries().map((b) => ({
           id: b.dataset.id, role: b.getAttribute('role'), checked: b.getAttribute('aria-checked'),
-          label: b.querySelector('.ctx-label')?.textContent, key: b.querySelector('.ctx-key')?.textContent || '',
+          label: b.querySelector('.vpe-mi-label')?.textContent, key: b.querySelector('.vpe-mi-key')?.textContent || '',
         })),
         seps: menu.querySelectorAll('[role=separator]').length,
         focused: /** @type {HTMLElement|null} */ (document.activeElement)?.dataset?.id || '',

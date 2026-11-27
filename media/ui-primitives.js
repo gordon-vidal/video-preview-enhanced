@@ -214,7 +214,50 @@
     return row;
   }
 
-  const api = { svg, ICONS, clampToViewport, createFloatingMenu, switchRow, segmentedRow };
+  /**
+   * One menu row (docs/DESIGN.md, Menus), shared by the right-click menu, the tile menu and the rail's menus: a check
+   * column, the label, the shortcut or hint on the right. `checked` undefined: a plain menuitem; true / false: checkable
+   * (`role` menuitemcheckbox unless given, e.g. menuitemradio).
+   * @param {Document} doc
+   * @param {{ label: string, key?: string, checked?: boolean, role?: string }} it
+   * @returns {HTMLButtonElement}
+   */
+  function menuItem(doc, it) {
+    const b = doc.createElement('button');
+    b.type = 'button';
+    b.className = 'vpe-mi';
+    if (it.checked === undefined) b.setAttribute('role', it.role || 'menuitem');
+    else {
+      b.setAttribute('role', it.role || 'menuitemcheckbox');
+      b.setAttribute('aria-checked', String(it.checked));
+    }
+    const check = doc.createElement('span');
+    check.className = 'vpe-mi-check';
+    check.setAttribute('aria-hidden', 'true');
+    check.textContent = it.checked ? '✓' : '';
+    const label = doc.createElement('span');
+    label.className = 'vpe-mi-label';
+    label.textContent = it.label;
+    b.append(check, label);
+    if (it.key) {
+      const k = doc.createElement('span');
+      k.className = 'vpe-mi-key';
+      k.setAttribute('aria-hidden', 'true');
+      k.textContent = it.key;
+      b.appendChild(k);
+    }
+    return b;
+  }
+
+  /** A menu separator. @param {Document} doc */
+  function menuSep(doc) {
+    const s = doc.createElement('div');
+    s.className = 'vpe-msep';
+    s.setAttribute('role', 'separator');
+    return s;
+  }
+
+  const api = { svg, ICONS, clampToViewport, createFloatingMenu, switchRow, segmentedRow, menuItem, menuSep };
   // checkJs: end
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

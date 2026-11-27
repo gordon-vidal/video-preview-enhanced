@@ -119,7 +119,7 @@ for (const t of ['--vpe-row-hover', '--vpe-sep', '--vpe-dim', '--vpe-mono']) ass
 // Its surface (background, border, text colour) is the one card rule's (docs/DESIGN.md), like every floating card.
 assert(/\n#notice, #toast[^{]*#ctxmenu[^{]*\{[^}]*var\(--vpe-surface-float\)[^}]*var\(--vpe-panel-border\)[^}]*var\(--vpe-panel-fg\)/.test(css),
   'the menu is in the card rule');
-const keyRule = /\.ctx-key \{([^}]*)\}/.exec(block)[1];
+const keyRule = /\.vpe-mi-key \{([^}]*)\}/.exec(block)[1];
 assert(/margin-left: 24px/.test(keyRule) && /var\(--vpe-mono\)/.test(keyRule) && /font-size: 11px/.test(keyRule) && /var\(--vpe-dim\)/.test(keyRule), 'the shortcut is dim mono, 24px from the label');
 assert(/#ctxmenu\[hidden\] \{ display: none/.test(block), 'hidden really hides (display: flex would win)');
 
@@ -137,7 +137,7 @@ assert(/#ctxmenu\[hidden\] \{ display: none/.test(block), 'hidden really hides (
   assert.strictEqual(snap.seps, 4);
   assert.deepStrictEqual(snap.items.find((i) => i.id === 'loop'), { id: 'loop', role: 'menuitemcheckbox', checked: 'true', label: 'Loop', key: 'R' });
   assert.strictEqual(snap.items.find((i) => i.id === 'play').role, 'menuitem');
-  assert(menu.all((c) => c.className === 'ctx-check').some((c) => c.textContent === '✓'), 'a check mark for Loop');
+  assert(menu.all((c) => c.className === 'vpe-mi-check').some((c) => c.textContent === '✓'), 'a check mark for Loop');
   assert.deepStrictEqual([snap.left, snap.top], [100, 120]);
   // clamped to the right and bottom edge, never negative
   m.open(790, 495);

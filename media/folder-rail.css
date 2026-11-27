@@ -173,15 +173,8 @@
   box-shadow: var(--vpe-shadow-high);
 }
 .vpe-pop[hidden] { display: none; }
-/* Menu rows; a callout in a .vpe-pop keeps the shared buttons (docs/DESIGN.md). */
-.vpe-pop button:not(.vpe-btn):not(.vpe-close) {
-  width: 100%; appearance: none; border: none; background: transparent;
-  color: var(--vscode-foreground); text-align: left; padding: 5px 8px;
-  border-radius: 4px; font: inherit; font-size: 11px; cursor: pointer;
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-}
-.vpe-pop button:not(.vpe-btn):not(.vpe-close):hover,
-.vpe-pop button:not(.vpe-btn):not(.vpe-close):focus-visible { background: var(--vpe-row-hover); outline: none; }
+/* Its menu rows are the shared .vpe-mi (media/player.css), edge to edge like the other menus. */
+.vpe-pop[role="menu"] { padding: 4px 0; }
 
 /* The hover card, left of the rail (outside the picture's hit-testing: it never takes the pointer) */
 .hover-pop {

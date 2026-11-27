@@ -1168,7 +1168,7 @@ const withGlobals = (dom, fn) => {
     // The tile menu: right-click a tile (N >= 2), not the player menu.
     cellOf('clip-1').querySelector('canvas').fire('contextmenu', { clientX: 40, clientY: 40, button: 2 });
     assert.deepStrictEqual([ui.tileMenu.isOpen(), ui.ctxMenu.isOpen()], [true, false], 'right-click on a tile opens the tile menu only');
-    const items = [...$('menu').querySelectorAll('.mi')].map((b) => b.dataset.action);
+    const items = [...$('menu').querySelectorAll('.vpe-mi')].map((b) => b.dataset.action);
     assert.deepStrictEqual(items, ['playPause', 'setClock', 'setSound', 'offset', 'copyFrame', 'copyTime', 'replace', 'remove', 'add', 'leave', 'keys', 'settings']);
     $('menu').querySelector('[data-action="setClock"]').fire('click');
     assert.deepStrictEqual([tab().clockId, ui.tileMenu.isOpen()], ['clip-1', false], 'B sets the clock');
@@ -1189,7 +1189,7 @@ const withGlobals = (dom, fn) => {
     assert.ok(!host.log.some((m) => m.type === 'copyFrame'), 'a tile copy is not left to the host');
     // Esc closes the tile menu.
     cellOf('clip-2').querySelector('canvas').fire('contextmenu', { clientX: 40, clientY: 40, button: 2 });
-    $('menu').querySelector('.mi').fire('keydown', { key: 'Escape' });
+    $('menu').querySelector('.vpe-mi').fire('keydown', { key: 'Escape' });
     assert.strictEqual(ui.tileMenu.isOpen(), false, 'Esc closes the tile menu');
     // Leave compare keeps the clock tile.
     ui.dispatch('leaveCompare');

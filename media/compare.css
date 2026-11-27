@@ -333,14 +333,6 @@ body.compare #toast { --toast-top: 36px; z-index: 12; }
   box-shadow: var(--vpe-shadow-high);
   font-size: 13px;
 }
-#menu .mi {
-  height: 26px; padding: 0 12px 0 26px; display: flex; align-items: center; gap: 16px; border: 0; background: none; cursor: pointer;
-  text-align: left; font: inherit; color: inherit;
-}
-#menu .mi:hover, #menu .mi:focus { background: var(--vscode-menu-selectionBackground, #04395e); color: var(--vscode-menu-selectionForeground, #fff); outline: none; }
-#menu .mi .h { color: var(--vpe-dim); font-size: 12px; }
-#menu .mi:hover .h, #menu .mi:focus .h { color: inherit; }
-#menu .msep { height: 1px; margin: 4px 10px; background: var(--vscode-menu-separatorBackground, #454545); }
 
 body.vscode-high-contrast .pill,
 body.vscode-high-contrast .tbtn,

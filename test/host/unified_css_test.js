@@ -535,4 +535,26 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.deepStrictEqual(missing, [], `moves without a reduced-motion off switch:\n${missing.join('\n')}`);
 }
 
+{ // One menu row (docs/DESIGN.md, Menus): the right-click menu, the tile menu and the rail's menus are built from
+  // VpeUi.menuItem (media/ui-primitives.js) and styled by the .vpe-mi rules only: 13 px, a check column, the shortcut
+  // on the right, the row fill on hover and focus, the focus ring on keyboard focus.
+  const RAIL = read('folder-rail.css');
+  const row = merged(PLAYER, '.vpe-mi');
+  assert.strictEqual(row.display, 'flex');
+  assert.strictEqual(row['font-size'], '13px');
+  assert.match(declsOf(PLAYER, '.vpe-mi:hover').background || '', /^var\(--vpe-row-hover\)$/);
+  assert.match(merged(PLAYER, '.vpe-mi:focus-visible').outline || '', /var\(--vscode-focusBorder\)/);
+  for (const sel of ['.vpe-mi-check', '.vpe-mi-key', '.vpe-msep']) assert.ok(anySelector(PLAYER, (x) => x === sel), `${sel} is styled`);
+  const old = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    for (const x of rules(css).flatMap((r) => r.selectors.map(norm))) {
+      if (/\.ctx-(item|check|label|key|sep)\b|#menu \.(mi|msep)\b|^\.vpe-pop button\b/.test(x)) old.push(`${name}: ${x}`);
+    }
+  }
+  assert.deepStrictEqual(old, [], `menu rows styled outside .vpe-mi:\n${old.join('\n')}`);
+  for (const f of ['ctxmenu.js', 'player-ui-tiles.js']) {
+    assert.match(fs.readFileSync(path.join(MEDIA, f), 'utf8'), /\.menuItem\(/, `${f} builds its rows with VpeUi.menuItem`);
+  }
+}
+
 console.log('unified_css: ok');

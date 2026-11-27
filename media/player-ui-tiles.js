@@ -366,7 +366,7 @@
   function createTileMenu({ doc, win, menuEl, onAction, onClose, ui }) {
     const prim = ui || /** @type {any} */ (globalThis).VpeUi;
     const fm = prim.createFloatingMenu({
-      doc, win, menuEl, itemSelector: '.mi',
+      doc, win, menuEl, itemSelector: '.vpe-mi',
       onClose: (/** @type {{ reason: string, target?: any }} */ info) => {
         delete menuEl.dataset.tile;
         onClose?.(info);
@@ -377,32 +377,9 @@
     function open(x, y, ctx) {
       menuEl.textContent = '';
       for (const it of tileMenuItems(ctx)) {
-        if (!it) {
-          const s = doc.createElement('div');
-          s.className = 'msep';
-          s.setAttribute('role', 'separator');
-          menuEl.appendChild(s);
-          continue;
-        }
-        const b = doc.createElement('button');
-        b.className = 'mi';
-        b.type = 'button';
+        if (!it) { menuEl.appendChild(prim.menuSep(doc)); continue; }
+        const b = prim.menuItem(doc, { label: it.label, key: it.hint, checked: it.checked });
         b.dataset.action = it.id;
-        if (it.checked === undefined) b.setAttribute('role', 'menuitem');
-        else {
-          b.setAttribute('role', 'menuitemcheckbox');
-          b.setAttribute('aria-checked', String(it.checked));
-        }
-        const lab = doc.createElement('span');
-        lab.className = 'grow';
-        lab.textContent = `${it.checked ? '✓ ' : ''}${it.label}`;
-        b.appendChild(lab);
-        if (it.hint) {
-          const h = doc.createElement('span');
-          h.className = 'h';
-          h.textContent = it.hint;
-          b.appendChild(h);
-        }
         b.addEventListener('click', (e) => {
           e.stopPropagation();
           fm.close('action');

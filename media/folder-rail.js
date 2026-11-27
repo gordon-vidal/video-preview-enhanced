@@ -297,7 +297,7 @@
       for (const b of /** @type {any[]} */ ([...menu.querySelectorAll('button')])) {
         const on = b.dataset[attr] === value;
         b.setAttribute('aria-checked', String(on));
-        b.querySelector('.chk').textContent = on ? '✓' : '';
+        b.querySelector('.vpe-mi-check').textContent = on ? '✓' : '';
       }
       menu.hidden = false;
       overlay()?.showTopLayer(menu);

@@ -702,20 +702,10 @@ body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-co
    Kept in its own block at the end of the file so edits to the bar's rules never touch it. */
 #ctxmenu {
   position: fixed; z-index: 20; box-sizing: border-box; min-width: 240px; max-width: calc(100vw - 8px); max-height: calc(100vh - 8px); overflow-y: auto;
-  display: flex; flex-direction: column; padding: 6px 0; outline: none; box-shadow: var(--vpe-shadow-high);
+  display: flex; flex-direction: column; padding: 4px 0; outline: none; box-shadow: var(--vpe-shadow-high);
   font-size: 13px;
 }
 #ctxmenu[hidden] { display: none; }
-#ctxmenu .ctx-item {
-  display: flex; align-items: center; gap: 0; flex: none; height: 30px; padding: 0 14px 0 6px; text-align: left; cursor: pointer;
-  font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: 0;
-}
-#ctxmenu .ctx-item:hover, #ctxmenu .ctx-item:focus-visible, #ctxmenu .ctx-item:focus { background: var(--vpe-row-hover); outline: none; }
-#ctxmenu .ctx-item:focus-visible { border-color: var(--vpe-accent); }
-#ctxmenu .ctx-check { flex: none; width: 22px; text-align: center; font-size: 12px; color: var(--vpe-accent); }
-#ctxmenu .ctx-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#ctxmenu .ctx-key { flex: none; margin-left: 24px; font-family: var(--vpe-mono); font-size: 11px; font-weight: 400; color: var(--vpe-dim); white-space: nowrap; }
-#ctxmenu .ctx-sep { height: 1px; margin: 6px 0; flex: none; background: var(--vpe-sep); }
 
 /* ==== The callout (docs/DESIGN.md, Building blocks): a .vpe-pop card next to the control it explains. ==== */
 .vpe-pop.callout {
@@ -723,3 +713,18 @@ body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-co
 }
 .callout-title { font-weight: 600; }
 .callout-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* ==== Menu rows (docs/DESIGN.md, Menus): VpeUi.menuItem / menuSep (ui-primitives.js) build every row of the
+   right-click menu, the tile menu and the rail's menus; these rules are their only look. ==== */
+.vpe-mi {
+  display: flex; align-items: center; flex: none; width: 100%; height: 28px; box-sizing: border-box; padding: 0 12px 0 4px;
+  border: 0; border-radius: 0; background: none; color: inherit; font: inherit; font-size: 13px; text-align: left;
+  cursor: pointer;
+}
+.vpe-mi:hover, .vpe-mi:focus { background: var(--vpe-row-hover); outline: none; }
+.vpe-mi:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.vpe-mi-check { flex: none; width: 22px; text-align: center; font-size: 12px; }
+.vpe-mi-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vpe-mi-key { flex: none; margin-left: 24px; font-family: var(--vpe-mono); font-size: 11px; color: var(--vpe-dim); white-space: nowrap; }
+.vpe-msep { height: 1px; margin: 4px 0; flex: none; background: var(--vpe-sep); }
+body.vscode-high-contrast .vpe-mi:hover { outline: 1px dashed var(--vscode-contrastActiveBorder, transparent); outline-offset: -1px; }
