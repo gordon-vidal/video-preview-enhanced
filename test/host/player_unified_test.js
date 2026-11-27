@@ -705,6 +705,33 @@ test('tick loop: decoders tick on animation frames until they settle; wake start
   }, { createPlayer: enginePlayer, raf: true });
 });
 
+test('frame steps while a paused seek decodes: one seek on its way, then the newest target (no restart per key repeat)', () => {
+  // Each restart throws away the GOP decoded so far (media/engine.js seekAbs: dropBack) and, with native ffmpeg,
+  // starts another process: a held `,` or a fast wheel landed nothing until it stopped.
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    frames(5);
+    app.ui.dispatch('seek', 100);
+    frames(5);
+    p.settleTicks = 6; // a cache-missing step back decodes its GOP again
+    p.calls.length = 0;
+    for (let i = 0; i < 5; i++) app.ui.dispatch('prevFrame');
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 95, 'the bar counts every step at once');
+    assert.deepStrictEqual(seeksOf(p), [99], 'only the first step seeks while it decodes');
+    frames(20);
+    assert.deepStrictEqual(seeksOf(p), [99, 95], 'once it lands, the newest target is sought, once');
+    assert.strictEqual(p.frame, 95);
+    // Play while a step's seek still decodes: the newest target is sought before play, never the stale one.
+    p.calls.length = 0;
+    app.ui.dispatch('prevFrame');
+    app.ui.dispatch('prevFrame');
+    app.ui.dispatch('playPause');
+    assert.deepStrictEqual(seeksOf(p), [94, 93], 'play sends the waiting target first');
+    assert.strictEqual(p.playing, true);
+  }, { createPlayer: enginePlayer, raf: true });
+});
+
 test('tick loop: the visible decoders all tick, and a disposed page asks for no frame', () => {
   withPage(({ app, send, made, frames, rafQueue }) => {
     send({ type: 'open' });

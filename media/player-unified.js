@@ -997,6 +997,7 @@
         }
       }
       pump();
+      sendDeferred();
       // Every frame: a decoder that stopped or started on its own (its end, a recovered stall) is put back in line.
       if (ui && !disposed) reconcile(S.getTab(ui.getState()), { tick: true, now });
       if (painted && ui && !disposed) {
@@ -1103,11 +1104,32 @@
      * seekTime) keeps a frame step's goal alive, it does not mean "keep playing" (a playing decoder plays on anyway).
      * @param {string} id @param {any} p @param {number} target
      */
-    function seekTo(id, p, target) {
+    function seekTo(id, p, target, now = false) {
       endedAt.delete(id);
       sought.set(id, target);
+      // A paused decoder still decoding toward its last target takes only the newest one, sent when that lands
+      // (sendDeferred): each restart drops the frames decoded so far (engine seekAbs) and, native, starts another ffmpeg.
+      if (!now && playingOf(p) === false && seekPending(p)) {
+        const was = deferred.get(id);
+        deferred.set(id, { p, target, since: was && was.p === p ? was.since : Date.now() });
+        return;
+      }
+      deferred.delete(id);
       if (typeof p.seekFrame === 'function') p.seekFrame(target);
       else if (typeof p.seekTime === 'function' && typeof p.frameSeekTime === 'function') p.seekTime(p.frameSeekTime(target));
+    }
+
+    /** Per tile: the newest frame target held back while its paused decoder's seek is on its way (seekTo). @type {Map<string, { p: any, target: number, since: number }>} */
+    const deferred = new Map();
+    /** A seek still not landed after this long is taken over by the held target anyway (a seek that never lands). */
+    const DEFER_MAX_MS = 8000;
+    /** Sends each held-back target once its decoder's seek has landed or it plays; drops those of replaced decoders. */
+    function sendDeferred() {
+      const at = Date.now();
+      for (const [id, d] of [...deferred]) {
+        if (players.get(id) !== d.p) deferred.delete(id);
+        else if (!seekPending(d.p) || playingOf(d.p) !== false || at - d.since > DEFER_MAX_MS) seekTo(id, d.p, d.target, true);
+      }
     }
 
     /** The clock each follower decoder follows (media/engine.js setFollowerMode), per decoder. @type {WeakMap<object, string | null>} */
@@ -1268,6 +1290,8 @@
             continue;
           }
           corrected.delete(id);
+          const held = deferred.get(id);
+          if (held && held.p === p) { seekTo(id, p, held.target, true); movedNow = true; } // play from the newest target
           if (is === true || (is === null && o.tick) || typeof p.play !== 'function') continue;
           if (!movedNow) {
             // Where it stopped itself, or its last frame: play() there would start it over from 0.
@@ -2356,6 +2380,7 @@
       if (typeof createPlayer !== 'function' || [...players.values()].some(isReady)) markReady();
       setupKey = null;
       sought.clear();
+      deferred.clear();
       corrected.clear();
       endedAt.clear();
       driveDecoders(S.getTab(ui.getState()));
