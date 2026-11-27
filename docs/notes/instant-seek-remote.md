@@ -252,6 +252,27 @@ A miss (a place never received) is unchanged: today's host seek. Paused read-ahe
 level 3 (pushing the GOPs around the playhead while paused, within a share of the link) is what makes the first step
 back after a jump hit.
 
+**Compare:** every tile has its own engine and so its own cache (64 MB each). Layer 3 `multiview-transcode-packets`
+(two tiles, one H.264, one VP9, both on Live transcode): a paused seek back landed on the same frame in both tiles from
+their own packets, and three steps back after it came from the decoded frames kept, with no seek sent to the host.
+
+**Edge cases, by what reaches the page.** The page only ever sees H.264 from the host, so the source format matters
+only through what the host sends:
+
+- *Transcoded* (HEVC, VP9, AV1, ProRes, 10-bit, HDR, rotated, resized ...): our own encode, constant frame rate,
+  no B-frames (`-bf 0`), an IDR with SPS/PPS on every keyframe. The safe case.
+- *Direct Stream* (an 8-bit 4:2:0 H.264 source at its own size, copied): the source's own GOPs. With B-frames the decode
+  order is not the frame order, so "the packets up to t" are not the frames up to t (it could show frame 0 for frame
+  2). A GOP whose packets go back in time is dropped whole, and the host is asked, as the host's own cache does for
+  Direct Stream. Open-GOP I-frames are no entry point (as before: the engine goes to software). Packets without a
+  time (H.264 in AVI) are not kept.
+- *The stream changed mid-session* (the view grew, a lower tier for a slow link, an encoder fallback): a keyframe with
+  other SPS/PPS bytes drops the GOPs of the old stream, and the page's re-fetch after a resize (`refreshNativeFrame`)
+  empties the cache first (it would otherwise answer its own re-fetch with the old, smaller picture). A bitrate-only
+  change keeps older GOPs: a seek back can show the older, softer copy of a frame.
+- Variable frame rate keeps the frame times of the source (Direct Stream) or the host's constant rate (transcode):
+  frames are found by those times either way.
+
 ### A decoder kept running behind a pipe (stock ffmpeg, host)
 
 Scratch prototype (not in the extension): one ffmpeg reads MPEG-TS on stdin (`-hwaccel cuda`, `-copyts`); a jump

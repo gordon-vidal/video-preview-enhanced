@@ -118,4 +118,29 @@ test('packets without a time end the run (no PTS: frame times would be guesses)'
   assert.equal(c.find(at(9)).frameT, at(9));
 });
 
+test('B-frames (decode order is not frame order, a Direct Stream copy): the GOP is not kept, the host is asked', () => {
+  const c = create();
+  // I0 P3 B1 B2 P6 B4 B5: frame 2 needs P3 too, "the packets up to frame 2" would show frame 0.
+  for (const i of [0, 3, 1, 2, 6, 4, 5]) c.add(1, { t: at(i), key: i === 0, idr: i === 0, data: new Uint8Array(10) });
+  assert.equal(c.find(at(2)), null);
+  assert.equal(c.find(at(0)), null);
+  assert.equal(c.stats().gops, 0);
+  assert.equal(c.stats().bytes, 0);
+});
+
+/** An Annex B IDR: SPS (its bytes stand for the stream's settings), PPS, slice. */
+const idr = (sps) => new Uint8Array([0, 0, 0, 1, 0x67, ...sps, 0, 0, 0, 1, 0x68, 0xce, 0x38, 0x80, 0, 0, 1, 0x65, 0x88, 0x84]);
+
+test('the host changed the stream (new size or encoder: other SPS): the GOPs of the old one go', () => {
+  const c = create();
+  const add = (gen, i, sps) => c.add(gen, { t: at(i), key: !!sps, idr: !!sps, data: sps ? idr(sps) : new Uint8Array(10) });
+  add(1, 0, [0x64, 0, 0x28]); for (let i = 1; i < 30; i++) add(1, i);
+  add(1, 30, [0x64, 0, 0x28]); for (let i = 31; i < 60; i++) add(1, i);
+  assert.equal(c.stats().gops, 2); // same settings: both kept
+  add(2, 90, [0x64, 0, 0x32]); for (let i = 91; i < 100; i++) add(2, i);
+  assert.equal(c.stats().gops, 1);
+  assert.equal(c.find(at(10)), null);
+  assert.equal(c.find(at(95)).keyT, at(90));
+});
+
 console.log(`packet_cache: ${n} passed`);

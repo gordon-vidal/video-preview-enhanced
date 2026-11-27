@@ -8,8 +8,30 @@
 (function (root) {
   /**
    * @typedef {{ t: number, key: boolean, idr?: boolean, data: Uint8Array, discard?: boolean }} Packet
-   * @typedef {{ keyT: number, lastT: number, endT?: number, packets: Packet[], bytes: number, used: number, open: boolean }} Gop
+   * @typedef {{ keyT: number, lastT: number, endT?: number, packets: Packet[], bytes: number, used: number, open: boolean,
+   *   params: string }} Gop
    */
+
+  /**
+   * The SPS and PPS of an Annex B keyframe (the host puts them on every IDR: src/stream.js spliceKeyframe), as a string
+   * to compare: they change with the picture size, profile and encoder. '' when the packet carries none.
+   * @param {Uint8Array} d
+   */
+  function paramSets(d) {
+    let out = '';
+    for (let i = 0; i + 3 < d.length; i++) {
+      if (d[i] !== 0 || d[i + 1] !== 0 || d[i + 2] !== 1) continue;
+      const type = d[i + 3] & 31;
+      if (type !== 7 && type !== 8) { if (type === 5 || type === 1) break; continue; }
+      let j = i + 3;
+      while (j + 2 < d.length && !(d[j] === 0 && d[j + 1] === 0 && (d[j + 2] === 1 || d[j + 2] === 0))) j++;
+      if (j + 2 >= d.length) j = d.length;
+      for (let k = i + 3; k < j; k++) out += String.fromCharCode(d[k]);
+      out += '|';
+      i = j - 1;
+    }
+    return out;
+  }
 
   /** @param {{ cap?: number }} [o] cap: bytes of packets kept (oldest-used GOPs go first) */
   function create(o = {}) {
@@ -52,13 +74,20 @@
       if (p.key && p.idr !== false) {
         // Read on into the next keyframe: nothing lies between this GOP's last frame and it.
         if (cur) { cur.open = false; cur.endT = p.t; }
-        // The same GOP read again (a later seek, another tier): the newer copy replaces it.
-        for (const g of gops.slice()) if (Math.abs(g.keyT - p.t) < 1e-4) drop(g);
-        cur = { keyT: p.t, lastT: p.t, packets: [], bytes: 0, used: ++clock, open: true };
+        const params = paramSets(p.data);
+        for (const g of gops.slice()) {
+          // The same GOP read again (a later seek, another tier): the newer copy replaces it.
+          if (Math.abs(g.keyT - p.t) < 1e-4) drop(g);
+          // The host changed the stream (picture size, encoder, profile): what it sends now is what a seek would get.
+          else if (params && g.params && g.params !== params) drop(g);
+        }
+        cur = { keyT: p.t, lastT: p.t, packets: [], bytes: 0, used: ++clock, open: true, params };
         gops.push(cur);
       }
       if (!cur) return;
-      if (!p.key && !(p.t > cur.lastT - 1e-6) && cur.packets.length) { cur.open = false; cur = null; return; } // out of order: stop
+      // Out of order: B-frames (a Direct Stream copy of the source). Decode order then differs from frame order, so
+      // "the packets up to t" would not be the frames up to t: the GOP is not kept at all (the host is asked).
+      if (!p.key && !(p.t > cur.lastT - 1e-6) && cur.packets.length) { drop(cur); return; }
       cur.packets.push({ t: p.t, key: p.key, idr: p.idr, data: p.data, discard: p.discard });
       if (p.t > cur.lastT) cur.lastT = p.t;
       cur.bytes += p.data.byteLength;

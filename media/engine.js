@@ -913,6 +913,8 @@ function createEngine(env) {
     }
 
     refreshNativeFrame(recoverTransport = false, rel) {
+      // The host's output changed (a new picture size): the kept packets are of the old one.
+      if (this.packetCache) this.packetCache.clear();
       const start = this.startT || 0;
       const end = this.meta.duration ? start + this.meta.duration - 0.5 / (this.fps || 30) : Infinity;
       const playhead = this.startT === null ? this.pauseT : this.now();

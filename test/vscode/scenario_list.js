@@ -117,6 +117,12 @@ module.exports = [
     steps: [{ case: 'multiview-transcode' }],
   },
   {
+    name: 'multiview-transcode-packets',
+    journey: 'Compare on Live transcode: a paused seek and steps back into what played come from the packets each tile kept',
+    sources: [...COMPARE, 'media/packet-cache.js', 'src/stream.js'],
+    steps: [{ case: 'multiview-transcode-packets' }],
+  },
+  {
     name: 'multiview-native',
     journey: 'Play together with native ffmpeg: tile sizes, the frame server and its budget, resizing, the message fallback',
     sources: [...COMPARE, ...NATIVE, 'src/decide.js'],
