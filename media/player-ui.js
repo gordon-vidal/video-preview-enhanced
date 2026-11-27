@@ -620,6 +620,7 @@
       || (timeEl && nowEl && nowEl.parentNode === timeEl ? timeEl.insertBefore(doc.createElement('span'), nowEl) : null);
     if (timeLetterEl) {
       timeLetterEl.setAttribute('id', 'timeLetter');
+      timeLetterEl.className = 'who';
       timeLetterEl.setAttribute('aria-hidden', 'true');
     }
     const tracksBtn = $('tracks'), cmpBtn = need('startCompareBtn');

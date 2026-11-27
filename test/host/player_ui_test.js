@@ -878,6 +878,7 @@ const withGlobals = (dom, fn) => {
   mount({ tiles: ['clip-0', 'clip-1'] }, ({ $, ui, tab }) => {
     assert.match($('time').textContent, /^A \d+:\d\d\.\d{3} \/ \d+:\d\d\.\d{3}$/, 'Compare: A sets the clock');
     assert.strictEqual($('time').firstChild.getAttribute('id'), 'timeLetter');
+    assert.strictEqual($('time').firstChild.className, 'who', 'styled by compare.css #row #time .who');
     assert.strictEqual($('time').firstChild.getAttribute('aria-hidden'), 'true', 'the button\'s aria-label has the letter already');
     assert.match($('time').getAttribute('aria-label'), /^Position A \d/);
     ui.dispatch('setClock', 'clip-1');

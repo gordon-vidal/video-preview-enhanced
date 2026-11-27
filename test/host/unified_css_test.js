@@ -248,7 +248,7 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   }
   assert.ok(/^\d/.test(declsOf(PLAYER, '#startCompareBtn').gap), 'a gap between the icon and the label');
   const render = fs.readFileSync(path.join(__dirname, '..', '..', 'tools', 'mockup', 'render.js'), 'utf8');
-  for (const dup of ['.cap-banner {', '.cap-pulse {', '#startCompareBtn {', '#bar .ib.active {']) {
+  for (const dup of ['.cap-banner {', '.cap-pulse {', '#startCompareBtn {', '#bar .ib.active {', '.cell.add .addcell {']) {
     assert.ok(!render.includes(dup), `render.js no longer restyles ${dup}`);
   }
 }

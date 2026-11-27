@@ -238,11 +238,8 @@ html, body {
 #stage { flex: 1; min-width: 0; min-height: 0; background: #000; position: relative; overflow: hidden; }
 /* No CSS transition on the cells: media/player-ui-tiles.js createGlide (FLIP) glides them, as in Compare. */
 .cell { cursor: pointer !important; }
-/* The tile canvases (#stage .cell > canvas) and .cell-border are styled by the real media/compare.css. */
+/* The tile canvases (#stage .cell > canvas), .cell-border and .addcell are styled by the real media/compare.css. */
 .cell.add { cursor: pointer !important; }
-.cell.add .addcell {
-  flex-direction: row; padding: 6px 12px; border-radius: 999px; font-size: 11.5px; border-style: dashed;
-}
 
 /* Keep real popups (#panel, #sheet, #ctxmenu, rail menus) bounded cleanly inside the 728 px inline frame */
 .panel { max-height: ${wbHeight - 86}px !important; overflow-y: auto; z-index: 25; }

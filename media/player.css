@@ -131,6 +131,10 @@ body:has(#addHint:not([hidden]), #notice:not([hidden]), #goto:not([hidden])) #to
    sits 8px under the banner even when its text wraps (44px until measured). Specificity ties the rule above; source
    order wins. */
 body #stage.notice-open #toast { --toast-top: calc(var(--notice-bottom, 36px) + 8px); }
+/* When a right-anchored settings/Compare panel is open on a wide pane, centre the toast in the open space to its left. */
+@media (min-width: 720px) {
+  body:has(#panel:not([hidden])) #toast { left: calc((100% - 356px) / 2); max-width: min(32em, calc(100% - 380px)); }
+}
 :is(.vscode-high-contrast, .vscode-high-contrast-light) #toast {
   background: var(--vscode-notifications-background, var(--vscode-editor-background));
   color: var(--vscode-notifications-foreground, var(--vscode-foreground));
