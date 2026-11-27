@@ -295,6 +295,9 @@ html, body {
     <button id="railToggleBtn" type="button" title="Toggle Folder Rail sidebar">Sidebar</button>
     <select id="scenarioSel" aria-label="Scenario preset">${scenarioOptions}</select>
     <button id="resetBtn" type="button">Reset</button>
+    <select id="latencySel" aria-label="Simulated seek latency" title="How long a paused seek or step takes to show its frame (the loading spinner shows after 150 ms)">
+      <option value="0">Seek: instant</option><option value="600">Seek: 0.6 s (remote)</option><option value="2500" selected>Seek: 2.5 s (slow link)</option>
+    </select>
   </div>
 </div>
 
@@ -397,6 +400,8 @@ ${inlinedScripts}
     });
   }
 
+  let lastFrame = null, waitUntil = 0, waitTiles = [], waitRaf = 0;
+  let harnessReady = false; // onChange may fire inside create(), before ui$ exists
   const ui$ = globalThis.VpePlayerUi.create({
     doc: document,
     win: window,
@@ -424,10 +429,30 @@ ${inlinedScripts}
     container: $('wb'),
     // No decoder here: the page's own clock plays the fake engine (the production default, 0, waits for a decoder).
     tickMs: 42,
-    onChange: chrome,
+    onChange: (ws, ui) => { chrome(ws, ui); simulateSeekLatency(ws); },
   });
   host.connect(ui$.onHostMessage);
+  harnessReady = true;
   globalThis.__vpeMockup = { ui: ui$, host, engine };
+
+  // A paused seek or step that takes latencySel ms to show its frame, as on a slow remote link: the controller gets
+  // setLoading() every animation frame like media/player-unified.js does, so the real spinner and bar pulse show.
+  function simulateSeekLatency(ws) {
+    const t = S.getTab(ws);
+    const moved = lastFrame !== null && t.frame !== lastFrame;
+    lastFrame = t.frame;
+    const ms = Number($('latencySel').value) || 0;
+    if (!moved || t.playing || !ms || !harnessReady) return;
+    waitUntil = performance.now() + ms;
+    waitTiles = t.tiles.slice();
+    if (!waitRaf) waitRaf = requestAnimationFrame(waitFrame);
+  }
+  function waitFrame(now) {
+    waitRaf = 0;
+    const waiting = now < waitUntil;
+    ui$.setLoading(waiting ? waitTiles : []);
+    if (waiting) waitRaf = requestAnimationFrame(waitFrame);
+  }
 
   function loadScenario(key) {
     const sc = SCENARIOS[key] || SCENARIOS.single;

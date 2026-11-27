@@ -426,6 +426,13 @@ export interface UnifiedControllerApi {
   onDecoderEnded(info?: { natural?: boolean }): void;
   /** The clock video's decoder learnt its real fps / length. */
   syncClockMeta(): void;
+  /**
+   * These tiles' decoders still work on the frame asked for (a seek, step or start not shown yet): after a short delay
+   * each shows a loading spinner and the seek bar pulses. Called every animation frame while busy, then with [].
+   */
+  setLoading(clipIds: string[], now?: number): void;
+  /** The tiles whose loading spinner shows. */
+  loading(): string[];
   /** Run one action by name (the table the keys, bar and menus use); throws for an unknown name. */
   dispatch(name: string, ...args: any[]): any;
   actions(): string[];

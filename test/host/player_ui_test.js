@@ -867,6 +867,35 @@ const withGlobals = (dom, fn) => {
     assert.strictEqual(ui.tileMenu.isOpen(), false, 'one video: no tile menu');
   });
 
+  // A tile still waiting for its frame (a slow seek): nothing for LOADING_DELAY_MS, then a spinner on that tile only
+  // (aria-busy) and the seek bar pulses; gone the moment it lands. A short wait never shows (no flicker).
+  assert.deepStrictEqual([...PUI.loadingAfter(new Map([['a', 0], ['b', 100]]), 150, 150)], ['a']);
+  for (const tiles of [['clip-0'], ['clip-0', 'clip-1']]) {
+    mount({ tiles }, ({ ui, cellOf, $ }) => {
+      const id = tiles[tiles.length - 1];
+      const d = PUI.LOADING_DELAY_MS;
+      ui.setLoading([id], 1000);
+      ui.setLoading([id], 1000 + d - 1);
+      assert.deepStrictEqual(ui.loading(), [], 'not yet');
+      assert.ok(!cellOf(id).classList.contains('loading') && !$('seekRow').classList.contains('seeking'));
+      ui.setLoading([id], 1000 + d);
+      assert.deepStrictEqual(ui.loading(), [id]);
+      assert.ok(cellOf(id).classList.contains('loading'), 'spinner on the waiting tile');
+      assert.strictEqual(cellOf(id).getAttribute('aria-busy'), 'true');
+      if (tiles.length > 1) assert.ok(!cellOf('clip-0').classList.contains('loading'), 'not on the tile that landed');
+      assert.ok($('seekRow').classList.contains('seeking'), 'the seek bar pulses');
+      ui.render(); // a redraw keeps it
+      assert.ok(cellOf(id).classList.contains('loading'));
+      ui.setLoading([], 1000 + d + 5);
+      assert.deepStrictEqual(ui.loading(), []);
+      assert.ok(!cellOf(id).classList.contains('loading') && cellOf(id).getAttribute('aria-busy') === null);
+      assert.ok(!$('seekRow').classList.contains('seeking'));
+      // A new wait starts its own delay.
+      ui.setLoading([id], 2000);
+      assert.deepStrictEqual(ui.loading(), []);
+    });
+  }
+
   // The time readout (#time) leads with the clock video's letter in Compare and follows the clock; one video: the time
   // alone (layer 3 compare_ui bar, panel/video-page).
   mount({ tiles: ['clip-0'] }, ({ $ }) => {

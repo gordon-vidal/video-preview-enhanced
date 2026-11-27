@@ -957,7 +957,30 @@
       bitmapSubs.update();
       xrayHost.tick();
       scopesHost.tick(now);
+      // Tiles still working on the frame asked for: a spinner after a short wait (media/player-ui.js setLoading).
+      if (ui && !disposed && typeof ui.setLoading === 'function') ui.setLoading(waitingTiles(S.getTab(ui.getState())));
       if (debugMetrics) debugMetrics.check();
+    }
+    /**
+     * The visible tiles whose decoder has not shown the frame asked for yet: paused, a seek or step in flight;
+     * playing, still opening, held by an accurate seek (media/engine.js playbackPhase) or buffering (waitPic). A tile
+     * outside its clip waits for nothing.
+     * @param {any} t
+     */
+    function waitingTiles(t) {
+      return visiblePlayers(t).filter(([id, p]) => {
+        if (targetOf(t, id) === null) return false;
+        try {
+          if (typeof p.playbackPhase === 'function') {
+            const phase = p.playbackPhase();
+            if (phase === 'loading' || phase === 'seeking') return true;
+            // Playing with no picture to show (a remote stream buffering): the clock holds at the frozen frame.
+            if (phase === 'playing') return !!p.waitPic;
+            if (phase !== 'paused') return false;
+          } else if (typeof p.isPlaying === 'function' ? p.isPlaying() : p.playing) return false;
+          return busy(p);
+        } catch { return false; }
+      }).map((e) => e[0]);
     }
     /** The shared loop's work, for the debug probe's state: animation frames that ticked, and the times it rested. */
     const loopStats = { frames: 0, rests: 0 };

@@ -292,8 +292,20 @@ module.exports = [{
         // The same seek back with the cache off: the host sends the GOP again over the 2 Mb/s link.
         p.act({ action: 'packetCache', mb: 0 });
         await timed(() => p.seek(30.0 + 0.5 / fps), 750, 'frame 750');
+        // Over the 2 Mb/s link this seek takes seconds: the tile shows its loading spinner and the bar pulses until it lands.
+        let spinner = null;
+        const watch = (async () => {
+          const t0 = Date.now();
+          const s = await p.waitState((x) => x.loading > 0 && x.seekPulse, { timeout: 5000, interval: 30, what: 'loading spinner' }).catch(() => null);
+          spinner = s ? Date.now() - t0 : null;
+        })();
         r.backHost = await timed(() => p.seek(11.4 + 0.5 / fps), 285, 'frame 285 (seek back, no cache)');
+        await watch;
+        r.backHost.spinnerMs = spinner;
         ok(!r.backHost.local, 'the cache was off but served the seek');
+        ok(spinner !== null, `no loading spinner during a ${r.backHost.ms} ms seek over the slow link`);
+        const after = await p.waitState((x) => x.loading === 0 && !x.seekPulse, { timeout: 3000, interval: 30, what: 'spinner gone' }).catch(() => null);
+        ok(after !== null, 'the spinner stayed after the seek landed');
       } finally {
         r.notes = vs.lines.filter((l) => l.includes(`[${p.name}]`) && /frames stay on the GPU|frame copy failed|step back from memory|page's packets/.test(l))
           .map((l) => l.replace(/^.*webview: /, '')).slice(-14);

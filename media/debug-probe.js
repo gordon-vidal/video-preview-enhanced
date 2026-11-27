@@ -470,6 +470,9 @@
             id: m.id,
             toast: ui.toast.hidden ? '' : ui.toast.textContent, toastRect: ui.toast.hidden ? null : rect(ui.toast),
             status: p && p.status ? ((p.status() || {}).text || '') : '',
+            // The loading feedback (media/player-ui.js setLoading): tiles with a spinner, and the seek bar's pulse.
+            loading: doc && doc.querySelectorAll ? doc.querySelectorAll('.cell.loading').length : 0,
+            seekPulse: !!(ui.seek && ui.seek.parentElement && ui.seek.parentElement.classList.contains('seeking')),
             notice: !noticeEl || noticeEl.hidden ? '' : (noticeTextEl ? noticeTextEl.textContent : ''),
             message: overlay.hidden ? '' : message.textContent, hint: overlay.hidden ? '' : hint.textContent,
             action: overlay.hidden || actionBtn.hidden ? '' : actionBtn.textContent, seekDisabled: ui.seek.disabled,
