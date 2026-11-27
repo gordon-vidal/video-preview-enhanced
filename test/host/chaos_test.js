@@ -15,9 +15,13 @@ const { createLinkSimulator } = require('../../src/link-sim');
 const spawn = cp.spawn;
 const children = [];
 let killAfterOutput = false;
+let killRepeats = 0; // more ffmpeg children after the next one that die the same way (a fault that comes back)
 cp.spawn = (cmd, args, options) => {
   const fault = cmd === ffmpeg && killAfterOutput;
-  if (fault) killAfterOutput = false;
+  if (fault) {
+    if (killRepeats > 0) killRepeats--;
+    else killAfterOutput = false;
+  }
   const paced = fault ? ['-re', ...args] : args;
   const exportProgress = fault && !options.stdio;
   if (exportProgress) paced.unshift('-progress', 'pipe:1', '-stats_period', '0.05');
@@ -87,17 +91,29 @@ async function streamFault(file) {
 async function nativeFault(file, faults) {
   const failures = [];
   const output = new EventEmitter();
+  const shown = [];
   const decoder = new NativeDecoder({
     ...options(file), largeGrid: true, onFail: (why) => failures.push(why),
-    postRaw: (frame) => output.emit('frame', frame),
+    postRaw: (frame) => { if (frame.type === 'ndv') shown.push(frame.t); output.emit('frame', frame); },
   });
   try {
+    // ffmpeg dies after its first picture (a crash, a GPU reset, the OOM killer): that is not the end of the file.
+    // The decode goes on from the picture after the last one delivered, with the same method, and nothing fails.
+    const spawned = children.length;
     await killed(async () => {
       await decoder.open();
+      decoder.more({ gen: 0 });
       await children.at(-1).closed;
     }, (bytes) => bytes >= decoder.frameBytes);
-    assert.equal(decoder.ended, true, 'loss after first output ends the current decode');
+    assert.equal(decoder.ended, false, 'an abnormal exit after output is not the end of the file');
     assert.deepEqual(failures, []);
+    assert.ok(children.length > spawned + 1, 'ffmpeg started again after the loss');
+    const before = shown.length;
+    const resumed = once(output, 'frame');
+    decoder.more({ gen: 0 });
+    const [first] = await resumed;
+    const expected = before ? shown[before - 1] + 1 / probed.video.fps : 0;
+    assert.ok(Math.abs(first.t - expected) < 1e-6, `resumed at ${first.t}, expected ${expected} (after the last delivered picture)`);
     const next = once(output, 'frame');
     decoder.startAt(5, 1);
     const [frame] = await next;
@@ -106,6 +122,25 @@ async function nativeFault(file, faults) {
   } finally {
     decoder.dispose();
   }
+
+  // The same loss again at the same spot after the restart: no endless restarts; it fails over as a decoder that never
+  // produced output does (software decoding here, so the built-in decoder takes over via onFail).
+  const again = new NativeDecoder({ ...options(file), largeGrid: true, onFail: (why) => failures.push(why) });
+  try {
+    killRepeats = 1;
+    await killed(async () => {
+      await again.open();
+      await children.at(-1).closed;
+      await children.at(-1).closed;
+    }, (bytes) => bytes >= again.frameBytes);
+    assert.equal(again.ended, false, 'a repeated loss is not the end of the file either');
+    assert.equal(again.failed, true, 'a repeated loss at the same spot fails over');
+    assert.equal(failures.length, 1);
+  } finally {
+    killRepeats = 0;
+    again.dispose();
+  }
+  failures.length = 0;
 
   for (const malformed of Object.values(faults)) {
     const bad = new NativeDecoder({ ...options(malformed), onFail: (why) => failures.push(why) });
