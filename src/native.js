@@ -42,6 +42,9 @@ const MAX_UNPAIRED = 16;
 // arrives in STAMP_SILENCE_MS the pipe is taken for dead.
 const STAMP_SKEW = 8;
 const STAMP_SILENCE_MS = 3000;
+// ffmpeg that dies after output is restarted where it stopped, unless it died before getting this much further than
+// the last time (then it falls over to another method or decoder).
+const LOSS_PROGRESS_S = 0.5;
 const STAMP_FAILURE = /metadata|No such filter|No option name|Error (?:parsing|initializing|reinitializing) (?:a )?filter|Bad file descriptor|pipe:4/i;
 // Told when a guessed method fails (the extension detects the GPUs again: they may have changed).
 let guessFailed = () => {};
@@ -102,6 +105,7 @@ class NativeDecoder {
     this.frames = []; // (startAt resets them) the transport can settle before the first start
     this.credits = 0;
     this.early = null; // { w, h }: ffmpeg started before the page was ready (prestart)
+    this.lossAt = -Infinity; // where ffmpeg last died after output (seconds it had reached)
   }
 
   /**
@@ -369,6 +373,7 @@ class NativeDecoder {
     this.credits = credits;
     this.eofSent = false;
     this.gotOutput = false;
+    this.audioFrom = -Infinity;
     const v = this.pr.video;
     const a = this.pr.audio;
     const proc = this.takeStandby(t) || this.launch(t);
@@ -397,6 +402,7 @@ class NativeDecoder {
           have = 0;
           if (!this.gotOutput && this.stats) this.log(`native: first frame ${Date.now() - this.spawnedAt} ms after start`);
           this.gotOutput = true;
+          proc.read++;
           if (this.st) this.st.read++;
         }
         // Backpressure: stop reading so ffmpeg blocks instead of filling memory.
@@ -447,6 +453,26 @@ class NativeDecoder {
       const why = error ? exit : ff.redactErrorUrls(diagnostic).trim().split(/\r?\n/).slice(-2).join(' | ');
       if (error) this.log(`native ffmpeg spawn failed: ${why}`);
       else if (failed) this.log(`native ffmpeg exited ${signal || code}: ${why}`);
+      if (failed && this.gotOutput) {
+        // Output came, then ffmpeg died (a signal, a GPU reset, the OOM killer, an error exit): not the end of the
+        // file, which would make Loop restart into the same fault and Autoplay leave the file. Once per spot it goes
+        // on after the last picture delivered, with the same method; dying again before it got further falls over
+        // like an ffmpeg that never produced output (below).
+        const fps = this.fps || 30;
+        const resume = this.pr.video ? this.base + this.frameIndex / fps : this.base + this.samples / (this.rate || 48000);
+        const reached = this.pr.video ? t + proc.read / fps : resume + this.audioBytes / 8 / (this.rate || 48000);
+        if (!(reached <= this.lossAt + LOSS_PROGRESS_S)) {
+          this.lossAt = reached;
+          const sentTo = this.base + this.samples / (this.rate || 48000);
+          this.log(`native ffmpeg stopped at ${reached.toFixed(3)} s, before the end of the file; decoding again from ${resume.toFixed(3)} s`);
+          this.takeStandby(NaN);
+          this.startAt(resume, this.credits);
+          this.audioFrom = sentTo; // the sound already sent is not sent twice
+          return;
+        }
+        this.log(`native ffmpeg stopped again at ${reached.toFixed(3)} s`);
+        this.gotOutput = false;
+      }
       if (failed && !this.gotOutput && proc.stamped && STAMP_FAILURE.test(err.text)) {
         // This build cannot run the timestamp filter (no metadata filter, no fd 4): one retry with ffmpeg's own
         // constant-rate output, before any GPU or decoder fallback.
@@ -543,6 +569,7 @@ class NativeDecoder {
     proc.w = this.w;
     proc.h = this.h;
     proc.startedAt = Date.now();
+    proc.read = 0; // pictures read from it (how far it got, for a loss mid-file)
     proc.err = { text: '', clipped: false };
     proc.stderr.on('data', (d) => {
       const text = proc.err.text + d;
@@ -742,10 +769,14 @@ class NativeDecoder {
     this.audioChunks = rest.length ? [Buffer.from(rest)] : [];
     this.audioBytes = rest.length;
     // Interleaved as ffmpeg wrote it (a copy, not a per-sample loop here): the page splits the channels.
-    const data = new Uint8Array(n * 8);
-    data.set(all.subarray(0, n * 8));
-    this.postRaw({ type: 'nda', gen, t: this.base + this.samples / this.rate, rate: this.rate, n, data });
+    const t = this.base + this.samples / this.rate;
     this.samples += n;
+    // After a restart mid-file (finish): the part of the sound the webview already has is left out.
+    const skip = this.audioFrom > t ? Math.min(n, Math.round((this.audioFrom - t) * this.rate)) : 0;
+    if (skip === n) return;
+    const data = new Uint8Array((n - skip) * 8);
+    data.set(all.subarray(skip * 8, n * 8));
+    this.postRaw({ type: 'nda', gen, t: t + skip / this.rate, rate: this.rate, n: n - skip, data });
     if (!this.pr.video) this.credits--;
   }
 
@@ -765,6 +796,7 @@ class NativeDecoder {
         this.post({ type: 'size', ...size });
       }
     }
+    this.lossAt = -Infinity; // the user moved: a loss there is a new spot
     // Start exactly on a frame: ffmpeg drops frames before -ss, and output frame i is base + i/fps.
     const fps = this.fps || 30;
     const idx = Math.max(0, Math.floor(m.t * fps + 1e-6));
