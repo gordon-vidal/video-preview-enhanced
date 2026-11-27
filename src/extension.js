@@ -1213,6 +1213,8 @@ function engineCfg(context, w) {
     packetCacheMB: c.liveTranscodeCacheMB, // 0: off (media/engine.js onStreams)
     // Tests (VPE_LOG only): VPE_HDR_FORCE=1 takes the HDR output path on an SDR display.
     hdrForce: !!logFile && process.env.VPE_HDR_FORCE === '1',
+    // Benches (VPE_LOG only): VPE_THUMB_PASS=0 keeps the background seek-bar preview pass off.
+    ...(logFile && process.env.VPE_THUMB_PASS === '0' ? { thumbPass: false } : {}),
     // Tests (VPE_LOG only): VPE_NO_WEBGL=1 makes the decoder fail as on a machine without WebGL2 (the error screen).
     noWebgl: !!logFile && process.env.VPE_NO_WEBGL === '1',
   };

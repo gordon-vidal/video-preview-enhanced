@@ -607,6 +607,11 @@
           log(`capture ${JSON.stringify({ id: m.id, on: !!(player && !player.captureOff) })}`);
           break;
         }
+        case 'thumbPass': { // the background seek-bar preview pass on (default) or off, to compare playback with and without
+          if (player) player.thumbPassOff = !m.on;
+          log(`thumbPass ${JSON.stringify({ id: m.id, on: !!(player && !player.thumbPassOff) })}`);
+          break;
+        }
         case 'gotoText': { // Ctrl+G, type, Enter
           doc.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', ctrlKey: true }));
           const input = doc.querySelector('#goto input');

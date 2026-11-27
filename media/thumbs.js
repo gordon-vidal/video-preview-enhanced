@@ -6,7 +6,9 @@
 //   either side of the pointer is shown; replies teach the service the keyframe times (keys);
 // - frames the player already shows (playback, seeks, steps), handed over by engine.js through offer();
 // - refining: after the pointer rested REST_MS on a slot whose best picture is more than X away, one cheap
-//   decode of the exact picture, when its estimated cost fits the budget (never while dragging or busy).
+//   decode of the exact picture, when its estimated cost fits the budget (never while dragging or busy);
+// - the background keyframe pass (passArm, after the first frame): coarse to fine over the slots still without a
+//   picture, one at a time, paced, paused while busy, hidden, the pointer is on the bar or another tile sets the clock.
 // The bar is a grid of N slots of X seconds (interval()); one picture per slot is enough. Pictures are kept
 // as small JPEGs; a few near the pointer also as ready-to-draw ImageBitmaps (HOT). Not used for MJPEG
 // AVI/image sequences (FramePlayer, no libav) or audio-only files.
@@ -19,6 +21,17 @@ const REST_MS = 250;
 /** Estimated decoder time (ms) one refine may take: while playing, and while paused. */
 const BUDGET_PLAYING = 500;
 const BUDGET_PAUSED = 2000;
+const PASS_DELAY_MS = 3000;
+const PASS_RETRY_MS = 500;
+/** How often a running pass request checks whether it should give way. */
+const PASS_WATCH_MS = 100;
+/** Share of wall time the pass may decode: here, and on a far host (Live transcode, remote native, shared CPU). */
+const PASS_DUTY = 0.5;
+const PASS_DUTY_FAR = 0.25;
+/** Decoder wall time (ms) a far host spends on one file's pass. */
+const PASS_BUDGET_FAR_MS = 20e3;
+/** Host runs: keyframes per ffmpeg, and the most keyframes per slot at which a run beats one ffmpeg per slot. */
+const RUN_KEYS_PER_SLOT = 1.25;
 
 /**
  * @typedef {{ t: number, kind: 'key' | 'frame', end: number, jpeg: Blob | null, bmp: ImageBitmap | null,
@@ -49,12 +62,18 @@ class ThumbService {
    * @param {number} [o.radius] neighbouring slots filled each side of the pointer (default 4)
    * @param {(msg: string) => void} [o.log]
    * @param {number} [o.cap] bytes of pictures kept (JPEGs plus hot bitmaps)
-   * @param {(t: number, w: number, h: number, signal: AbortSignal, mode?: 'key' | 'near' | 'exact') => Promise<any>} [o.request]
+   * @param {(t: number, w: number, h: number, signal: AbortSignal, mode?: 'key' | 'near' | 'exact' | 'run',
+   *   opts?: {pass?: boolean}) => Promise<any>} [o.request]
    *   decodes one thumbnail elsewhere (native ffmpeg in the extension host) instead of the libav.js
-   *   worker; resolves {kt, w, h, data, fmt, next?: {kt, data}} (data is a JPEG when fmt is 'jpeg', else RGBA) or null
+   *   worker; resolves {kt, w, h, data, fmt, next?: {kt, data}} (data is a JPEG when fmt is 'jpeg', else RGBA) or null;
+   *   'run': the next keyframes from t on, {kt, data, more: [{kt, data}], end} (end: no keyframe after the last)
    * @param {() => boolean} [o.playing] playback runs (the smaller refine budget)
    * @param {number} [o.frameMs] first guess of what decoding one frame between keyframes costs (ms); replies refine it
    * @param {number} [o.restMs] rest before refining (default REST_MS)
+   * @param {{delayMs?: number, far?: boolean, budgetMs?: number}} [o.pass] the background keyframe pass (passArm);
+   *   far: decoding on a far host (slower pace, a total budget)
+   * @param {() => boolean} [o.hidden] the page is hidden (no pass work)
+   * @param {() => boolean} [o.passOn] the pass may run (this tile sets the clock, not turned off by a test)
    */
   constructor(o) {
     this.o = o;
@@ -92,6 +111,8 @@ class ThumbService {
     this.refined = new Set();
     /** @type {Set<number>} slots a refine was skipped for (over budget), counted once */
     this.skipped = new Set();
+    /** The background pass's state (passArm), or null. */
+    this.ps = null;
   }
 
   /**
@@ -121,6 +142,7 @@ class ThumbService {
       refines: this.stats.refines, refineMs: spread(this.stats.refineMs), skipped: this.stats.skipped,
       keys: this.keys.length, frameMs: Math.round(this.frameMs * 100) / 100,
       shown: this.shown && { t: this.shown.t - this.o.startT, kind: this.shown.kind, refined: this.shown.refined },
+      bar: this.answered(), pass: this.passStats(),
       state: this.state, worker: !!this.worker, hovering: this.want !== null,
       // The pointer's slot and its neighbourhood have their pictures (nothing left to ask for there).
       filled: this.want !== null && !this.inflight && !this.need(this.want) && this.nextNear() === null,
@@ -228,6 +250,7 @@ class ThumbService {
   hover(rel, cb, scrub = false) {
     if (this.disposed) return;
     const slot = this.slotOf(rel);
+    if (this.inflight && this.inflight.pass) this.cancel(this.inflight); // the pointer always wins
     this.scrub = scrub;
     this.cb = cb;
     this.want = slot;
@@ -251,11 +274,7 @@ class ThumbService {
     clearTimeout(this.restTimer);
     this.restTimer = 0;
     const req = this.inflight;
-    if (req && req.refine && req.slot !== slot && !req.cancelSent) {
-      req.cancelSent = true;
-      if (req.abort) req.abort.abort();
-      else if (this.worker) this.worker.postMessage({ type: 'cancel', below: req.id + 1 });
-    }
+    if (req && req.refine && req.slot !== slot) this.cancel(req);
     if (this.scrub || !this.canRefine()) return;
     this.restTimer = setTimeout(() => {
       this.restTimer = 0;
@@ -348,11 +367,16 @@ class ThumbService {
     this.restSlot = -1;
     if (immediate || this.o.request && this.inflight) { this.stop(); return; }
     // Ordinary hover can keep the warm context after cancelling the packet scan.
-    if (this.inflight && this.worker && !this.inflight.cancelSent) {
-      this.inflight.cancelSent = true;
-      this.worker.postMessage({ type: 'cancel', below: this.inflight.id + 1 });
-    }
+    if (this.inflight && this.worker) this.cancel(this.inflight);
     if (!this.inflight) this.kick();
+  }
+
+  /** Cancels a running request: an abort of the host job, or a `cancel` to the worker. */
+  cancel(req) {
+    if (req.cancelSent) return;
+    req.cancelSent = true;
+    if (req.abort) req.abort.abort();
+    else if (this.worker) this.worker.postMessage({ type: 'cancel', below: req.id + 1 });
   }
 
   /** Whether a frame shown at `t` (absolute) would fill a slot that has no picture of its own yet. */
@@ -473,6 +497,7 @@ class ThumbService {
   /** Frees the worker (and its WebAssembly memory); the next hover starts it again. */
   stop() {
     this.epoch++;
+    if (this.inflight && this.inflight.pass && this.ps) this.ps.retry = this.inflight.slot;
     this.inflight?.abort?.abort();
     clearTimeout(this.idleTimer);
     clearTimeout(this.debounce);
@@ -484,10 +509,12 @@ class ThumbService {
     this.inflight = null;
     if (this.state !== 'failed') this.state = 'off';
     if (this.o.onIdle) this.o.onIdle();
+    if (this.ps && !this.ps.done && !this.disposed && !this.ps.timer) this.passLater(PASS_RETRY_MS);
   }
 
   dispose() {
     this.disposed = true;
+    if (this.ps) { clearTimeout(this.ps.timer); this.ps.timer = 0; this.ps.done = this.ps.done || 'closed'; }
     this.state = 'failed';
     this.leave(true);
     for (const e of this.list.slice()) this.drop(e);
@@ -527,7 +554,8 @@ class ThumbService {
     let slot = null;
     let prefetch = false;
     if (this.want === null) {
-      // Pointer away: nothing to decode. Close the worker after some idle time.
+      if (this.passKick()) return;
+      // Pointer away and no pass work: close the worker after some idle time.
       if (this.o.onIdle) this.o.onIdle();
       const left = (this.o.idleMs ?? 20e3) - (performance.now() - (this.lastHover || 0));
       if (left <= 0) this.stop();
@@ -548,19 +576,172 @@ class ThumbService {
       if (busy && later) this.idleTimer = setTimeout(() => this.kick(), 500);
       return;
     }
+    this.send(slot, { prefetch, refine });
+  }
+
+  /**
+   * Asks for `slot`'s picture: its known keyframe by time ('key'), the nearer keyframe ('near'), the exact picture
+   * (refine), or the keyframes from the slot's start on ('run', host only).
+   * @param {number} slot @param {{prefetch?: boolean, refine?: boolean, pass?: boolean, run?: boolean}} kind
+   */
+  send(slot, kind) {
     const T = this.target(slot);
     // A keyframe whose time is known is asked for by its time (+0.5 ms: under any frame, over rounding).
-    const k = refine ? null : this.nearerKey(T);
-    const mode = refine ? 'exact' : k !== null ? 'key' : 'near';
-    const t = k !== null ? k + 0.0005 : T;
-    this.inflight = { id: ++this.id, slot, prefetch, refine, mode, at: t, t: performance.now() };
+    const k = kind.refine || kind.run ? null : this.nearerKey(T);
+    const mode = kind.run ? 'run' : kind.refine ? 'exact' : k !== null ? 'key' : 'near';
+    const t = kind.run ? this.o.startT + slot * this.X + 0.0005 : k !== null ? k + 0.0005 : T;
+    this.inflight = { id: ++this.id, slot, prefetch: !!kind.prefetch, refine: !!kind.refine, pass: !!kind.pass, mode, at: t, t: performance.now() };
     this.stats.requests++;
     if (this.o.request) {
       this.inflight.abort = new AbortController();
       this.requestHost(this.inflight);
       return;
     }
-    this.worker.postMessage({ type: 'thumb', id: this.id, t, w: this.box.w, h: this.box.h, mode: refine ? 'between' : mode });
+    this.worker.postMessage({ type: 'thumb', id: this.id, t, w: this.box.w, h: this.box.h, mode: kind.refine ? 'between' : mode });
+  }
+
+  // ---- the background keyframe pass (docs/notes/seek-preview.md, phase 3) ----
+
+  /** Starts the pass once per file, after its delay; not for a remote file read by the worker (a block per keyframe). */
+  passArm() {
+    const p = this.o.pass;
+    if (!p || this.ps || this.disposed || (this.o.remote && !this.o.request)) return;
+    this.ps = {
+      order: ThumbService.coarseToFine(this.n), at: 0, tried: new Set(), retry: /** @type {number | null} */ (null),
+      timer: 0, notBefore: 0, ms: 0, requests: 0, runs: 0, done: '', paused: '', since: 0, t0: performance.now(),
+      duty: p.far ? PASS_DUTY_FAR : PASS_DUTY, budget: p.budgetMs ?? (p.far ? PASS_BUDGET_FAR_MS : Infinity),
+    };
+    this.passLater(p.delayMs ?? PASS_DELAY_MS);
+  }
+
+  passLater(ms) {
+    const ps = this.ps;
+    clearTimeout(ps.timer);
+    ps.timer = setTimeout(() => { ps.timer = 0; this.passStep(); }, Math.max(0, ms));
+  }
+
+  /** Why the pass waits now ('' when it may decode). */
+  passWhy() {
+    if (this.o.passOn && !this.o.passOn()) return 'off';
+    if (this.o.hidden && this.o.hidden()) return 'hidden';
+    if (this.want !== null) return 'pointer';
+    if (this.o.busy && this.o.busy()) return 'busy';
+    return '';
+  }
+
+  passPause(why) {
+    const ps = this.ps;
+    if (ps.paused !== why) { ps.paused = why; ps.since = performance.now(); }
+  }
+
+  /** Timer: watches a running pass request (cancelled when it should give way), or starts the next one. */
+  passStep() {
+    const ps = this.ps;
+    if (!ps || ps.done || this.disposed) return;
+    const req = this.inflight;
+    if (req) {
+      if (req.pass && this.passWhy()) this.cancel(req);
+      if (req.pass) this.passLater(PASS_WATCH_MS);
+      return; // its reply kicks
+    }
+    if (this.state === 'ready') { this.kick(); return; }
+    if (this.state === 'failed') { this.passDone('failed'); return; }
+    if (this.state !== 'off') return;
+    const why = this.passWhy();
+    if (why) { this.passPause(why); this.passLater(PASS_RETRY_MS); return; }
+    if (this.passNext() === null) { this.passDone('complete'); return; }
+    this.start();
+  }
+
+  /** kick() with the pointer away: sends the next pass request; true while the pass keeps the worker. */
+  passKick() {
+    const ps = this.ps;
+    if (!ps || ps.done || this.disposed) return false;
+    const now = performance.now();
+    const why = this.passWhy();
+    if (why) {
+      this.passPause(why);
+      this.passLater(PASS_RETRY_MS);
+      // A short busy spell keeps the worker; hidden, another clock tile or a long pause let it close.
+      return why === 'busy' && now - ps.since < (this.o.idleMs ?? 20e3);
+    }
+    ps.paused = '';
+    if (ps.ms >= ps.budget) { this.passDone('budget'); return false; }
+    const slot = this.passNext();
+    if (slot === null) { this.passDone('complete'); return false; }
+    if (ps.notBefore > now) { this.passLater(ps.notBefore - now); return true; }
+    const run = this.runMode();
+    const from = run ? this.runFrom(slot) : slot;
+    ps.tried.add(from);
+    ps.retry = null;
+    if (run) ps.runs++;
+    this.send(from, { pass: true, run });
+    this.passLater(PASS_WATCH_MS);
+    return true;
+  }
+
+  /** The next slot to ask for: a cancelled one first, then coarse to fine, skipping answered and tried slots. */
+  passNext() {
+    const ps = this.ps;
+    if (ps.retry !== null && !ps.tried.has(ps.retry) && this.need(ps.retry)) return ps.retry;
+    for (; ps.at < ps.order.length; ps.at++) {
+      const s = ps.order[ps.at];
+      if (!ps.tried.has(s) && this.need(s)) return s;
+    }
+    return null;
+  }
+
+  /**
+   * Host only: keyframe runs pay off when the known GOPs give at most RUN_KEYS_PER_SLOT keyframes per slot (one
+   * ffmpeg start for several keyframes instead of one per slot); with more per slot a run decodes keyframes no slot
+   * needs.
+   */
+  runMode() {
+    if (!this.o.request) return false;
+    const gaps = [];
+    for (const k of this.keys) if (typeof k.next === 'number') gaps.push(k.next - k.t);
+    if (gaps.length < 3) return false;
+    gaps.sort((a, b) => a - b);
+    return this.X / gaps[gaps.length >> 1] <= RUN_KEYS_PER_SLOT;
+  }
+
+  /** A run starts at the first slot of the gap that holds `slot`, so it fills forward without overlap. */
+  runFrom(slot) {
+    let s = slot;
+    while (s > 0 && !this.ps.tried.has(s - 1) && this.need(s - 1)) s--;
+    return s;
+  }
+
+  /** After a pass reply: its cost counts against the budget and sets the pause before the next. */
+  passAfter(req, m) {
+    const ps = this.ps;
+    if (!req.pass || !ps) return;
+    const ms = performance.now() - req.t;
+    ps.ms += ms;
+    if (m.cancelled || req.cancelSent) { ps.tried.delete(req.slot); ps.retry = req.slot; } else ps.requests++;
+    ps.notBefore = performance.now() + ms * (1 / ps.duty - 1);
+  }
+
+  passDone(why) {
+    const ps = this.ps;
+    ps.done = why;
+    clearTimeout(ps.timer);
+    ps.timer = 0;
+    this.log(`pass ${why}: ${this.answered()} of ${this.n} places, ${ps.requests} asks (${ps.runs} runs), ${Math.round(ps.ms)} ms decoding in ${Math.round(performance.now() - ps.t0)} ms`);
+  }
+
+  /** Slots with a picture (or known to have none). */
+  answered() {
+    let n = 0;
+    for (let s = 0; s < this.n; s++) if (!this.need(s)) n++;
+    return n;
+  }
+
+  passStats() {
+    const ps = this.ps;
+    if (!ps) return null;
+    const state = ps.done ? `done:${ps.done}` : ps.paused ? `paused:${ps.paused}` : ps.requests || this.inflight?.pass ? 'running' : 'waiting';
+    return { state, requests: ps.requests, runs: ps.runs, ms: Math.round(ps.ms), s: Math.round((performance.now() - ps.t0) / 100) / 10 };
   }
 
   /** 0..n-1 ordered so every prefix covers the range evenly (n/2, n/4, 3n/4, ...). */
@@ -581,7 +762,7 @@ class ThumbService {
   async requestHost(req) {
     let r = null;
     try {
-      r = await this.o.request(req.at, this.box.w, this.box.h, req.abort.signal, req.mode);
+      r = await this.o.request(req.at, this.box.w, this.box.h, req.abort.signal, req.mode, req.pass ? { pass: true } : undefined);
     } catch (e) { this.log(`host: ${e}`); }
     this.onThumb({ ...r, id: req.id, ms: Math.round(performance.now() - req.t) });
   }
@@ -654,10 +835,31 @@ class ThumbService {
     this.kick();
   }
 
+  /** A host run: consecutive keyframes, so each teaches the next (and the last none when the run reached the end). */
+  async onRun(req, m) {
+    const pics = [];
+    if (!m.cancelled && !req.cancelSent && Number.isFinite(m.kt)) {
+      pics.push({ kt: m.kt, data: m.data });
+      for (const x of m.more || []) if (x && Number.isFinite(x.kt) && x.kt > pics[pics.length - 1].kt) pics.push(x);
+    }
+    for (let i = 0; i < pics.length; i++) this.addKey(pics[i].kt, i + 1 < pics.length ? pics[i + 1].kt : m.end ? null : undefined);
+    for (const x of pics) {
+      if (this.keyAt(x.kt)) continue;
+      const p = await this.picture({ data: x.data, w: m.w, h: m.h, fmt: m.fmt });
+      if (this.inflight !== req) { if (p) p.bmp.close(); return; }
+      if (p) { this.add(x.kt, 'key', p, m.w, m.h); this.stats.decoded++; }
+    }
+    if (!pics.length && !m.cancelled && !req.cancelSent) this.asked.set(req.slot, null);
+    this.passAfter(req, m);
+    if (this.inflight === req) this.inflight = null;
+    this.kick();
+  }
+
   async onThumb(m) {
     const req = this.inflight;
     if (!req || req.id !== m.id) return;
     if (req.refine) { await this.onRefine(req, m); return; }
+    if (req.mode === 'run') { await this.onRun(req, m); return; }
     if (!m.cancelled && !req.cancelSent) {
       const asked = req.at;
       // A timestamp-less picture stands for the asked time (this slot only).
@@ -703,6 +905,7 @@ class ThumbService {
     } else if (Number.isFinite(m.kt) && !this.keyAt(m.kt)) {
       this.post({ type: 'forget', kt: m.kt });
     }
+    this.passAfter(req, m);
     if (this.inflight === req) this.inflight = null;
     this.kick();
   }

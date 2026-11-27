@@ -3081,10 +3081,11 @@ function createEngine(env) {
     subCues() { return this.startT === null && this.info && this.info.video && this.vmode !== 'none' ? [] : this.cueList(this.subId).map((c) => this.playerCue(c)); }
 
     // ---- seek-bar thumbnails (thumbs.js, thumbs-worker.js) -------------------
-    // Shown frames become small previews for free (captureThumb). Keyframes, and exact pictures where the pointer
-    // rests, are decoded only while the pointer is on the seek bar: by a second libav.js worker whose file reads share
-    // the block cache above as reader 'thumbs', or for native ffmpeg and Live transcode by a short ffmpeg on the
-    // extension host (src/thumbhost.js, never the running stream). Not for URLs or audio-only files; MJPEG/image sequences use
+    // Shown frames become small previews for free (captureThumb). Keyframes come from the pointer on the seek bar and,
+    // after the first frame, from a low-priority background pass (clock tile only); exact pictures only where the
+    // pointer rests. They are decoded by a second libav.js worker whose file reads share the block cache above as
+    // reader 'thumbs', or for native ffmpeg and Live transcode by a short ffmpeg on the extension host
+    // (src/thumbhost.js, never the running stream). Not for URLs or audio-only files; MJPEG/image sequences use
     // FramePlayer and have no thumbnails (docs/notes/seek-preview.md).
 
     /** The thumbnail service, made on first use (a capture or a hover); null when this file has none. */
@@ -3102,17 +3103,22 @@ function createEngine(env) {
         onRead: (pos, len) => this.thumbRead(pos, len),
         onIdle: () => this.dropBlockReader('thumbs'),
         busy: () => this.thumbsBusy(),
+        hidden: () => !!this.hidden || this.disposed,
+        passOn: () => !this.thumbPassOff && isClock(),
+        // Live transcode and native in a remote window decode on a host that may be shared: a slower pass.
+        pass: this.cfg.thumbPass === false ? undefined : { far: !!(this.cfg.remote || this.remoteStream) },
         playing: () => !!this.playing,
         // First guess per frame between keyframes, refined by replies: about 1 ns per pixel for native ffmpeg with
         // the cheap flags (2 threads), PER_PX_WASM for the single-threaded worker (docs/notes/seek-preview.md).
         frameMs: (v.width * v.height || 2e6) * (this.cfg.native ? 1e-6 : PER_PX_WASM),
-        request: this.cfg.native ? async (t, w, h, signal, mode) => {
-          const r = await this.hostThumb(t - startT, w, h, signal, mode);
+        request: this.cfg.native ? async (t, w, h, signal, mode, opts) => {
+          const r = await this.hostThumb(t - startT, w, h, signal, mode, !!(opts && opts.pass));
           if (!r) return null;
           const abs = (rel) => (Number.isFinite(rel) ? startT + rel : undefined);
           const kt = abs(r.rel);
           const next = r.next && abs(r.next.rel) !== undefined ? { kt: abs(r.next.rel), data: r.next.data } : undefined;
-          return { ...r, kt, next, covered: kt !== undefined && mode !== 'exact' };
+          const more = r.more && r.more.map((x) => ({ kt: abs(x.rel), data: x.data }));
+          return { ...r, kt, next, more, covered: kt !== undefined && mode !== 'exact' && mode !== 'run' };
         } : undefined,
       });
       return this.thumbs;
@@ -3131,16 +3137,17 @@ function createEngine(env) {
     }
 
     /**
-     * Native and Live transcode backend: one thumbnail from the extension host ({rel, w, h, fmt: 'jpeg', data, next?}, or null).
-     * @param {'key' | 'near' | 'exact'} [mode]
+     * Native and Live transcode backend: one thumbnail from the extension host ({rel, w, h, fmt: 'jpeg', data, next?,
+     * more?, end?}, or null).
+     * @param {'key' | 'near' | 'exact' | 'run'} [mode] @param {boolean} [pass] a background pass request (one thread)
      */
-    hostThumb(rel, w, h, signal, mode = 'key') {
+    hostThumb(rel, w, h, signal, mode = 'key', pass = false) {
       const id = (this.hostThumbId = (this.hostThumbId || 0) + 1);
       this.hostThumbWait = this.hostThumbWait || new Map();
       return new Promise((resolve) => {
         // checkJs: start
         const request = /** @satisfies {ThumbRequest} */ ({
-          type: 'thumb', page: env.page, id, t: Math.max(0, rel), w, h, mode,
+          type: 'thumb', page: env.page, id, t: Math.max(0, rel), w, h, mode, ...(pass ? { pass: true } : {}),
         });
         // checkJs: end
         const cancel = () => {
@@ -3166,7 +3173,8 @@ function createEngine(env) {
       const done = this.hostThumbWait && this.hostThumbWait.get(m.id);
       if (!done) return;
       const next = m.next && m.next.data ? { rel: m.next.rel, data: new Uint8Array(m.next.data) } : undefined;
-      done(m.data ? { rel: m.rel, w: m.w, h: m.h, fmt: m.fmt, data: new Uint8Array(m.data), next, kn: m.kn === null ? null : undefined } : null);
+      const more = Array.isArray(m.more) ? m.more.filter((x) => x && x.data).map((x) => ({ rel: x.rel, data: new Uint8Array(x.data) })) : undefined;
+      done(m.data ? { rel: m.rel, w: m.w, h: m.h, fmt: m.fmt, data: new Uint8Array(m.data), next, kn: m.kn === null ? null : undefined, more, end: m.end === true } : null);
     }
 
     /**
@@ -3174,6 +3182,7 @@ function createEngine(env) {
      * tone-mapped) scaled to the 160 x 120 box, at most one per slot, one at a time, never while playback is behind.
      */
     captureThumb(t) {
+      if (!this.thumbPassArmed) this.armThumbPass();
       if (this.capturing || this.captureOff || this.hidden || this.disposed || typeof createImageBitmap !== 'function') return;
       const cv = this.gl && this.gl.cv;
       if (!cv || !(cv.width > 0 && cv.height > 0) || !isClock()) return;
@@ -3192,6 +3201,14 @@ function createEngine(env) {
       pending.then((b) => {
         if (this.thumbs === s && !this.disposed) s.offer(t, b, 0, Math.round(syncMs * 100) / 100); else b.close();
       }, () => {}).finally(() => { this.capturing = false; });
+    }
+
+    /** After the first frame drawn while visible on the clock tile: the background keyframe pass, once per file. */
+    armThumbPass() {
+      if (this.hidden || this.disposed || !isClock()) return;
+      this.thumbPassArmed = true;
+      const s = this.thumbService();
+      if (s) s.passArm();
     }
 
     /** Tests: thumbnail service counters, or null while nothing has made it. */
