@@ -30,14 +30,15 @@ measure how much exact work it can replace before adding a native binary or a di
 - **Native.** [native.js](../../src/native.js) restarts its CLI decode pipeline on an out-of-buffer
   seek. It already scales frames to device-pixel view tiers, with grow now and shrink at next seek.
   A separate [thumbhost.js](../../src/thumbhost.js) process per thumbnail uses input-side
-  `-ss`, `-noaccurate_seek`, `-skip_frame nokey`, no audio and one scaled RGBA picture.
-  The native thumbnail reply carries pixels and dimensions, so VPE currently lacks the actual
-  source keyframe timestamp needed to deduplicate its results reliably across requested slots.
+  `-ss`, `-noaccurate_seek`, `-skip_frame nokey`, no audio and one scaled JPEG picture.
+  The reply carries the decoded keyframe's time (`kt`, from `showinfo`), so the page deduplicates
+  native results across requested slots like the WASM worker's.
 - **Live transcode.** [stream.js](../../src/stream.js) serves some seeks from encoded H.264 packet
   history and otherwise restarts the host pipeline. It already has a 60 ms quiet window, 200 ms
   spawn gap and 400 ms maximum deferral for misses. Transcode output keyframes describe that
-  rendition's seekability. Source random-access points remain a separate index. The current
-  thumbnail service excludes Live transcode and URL input.
+  rendition's seekability. Source random-access points remain a separate index. Live transcode
+  thumbnails come from the same host-side keyframe ffmpeg on the source file as native ffmpeg;
+  URL input has none.
 - **Gesture and thumbnails.** The single player's page (`media/player.js`, since replaced by the unified viewer) coalesced pending slider input
   in its display loop but still called `seekFrame` mid-drag while the tooltip independently asked
   for a thumbnail. Compare's page (`media/compare.js`, likewise replaced) used [stepgoal.js](../../media/stepgoal.js)

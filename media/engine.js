@@ -3123,7 +3123,7 @@ function createEngine(env) {
       return true;
     }
 
-    /** Native backend: one thumbnail from the extension host ({w, h, data} RGBA, or null). */
+    /** Native and Live transcode backend: one thumbnail from the extension host ({rel, w, h, fmt: 'jpeg', data}, or null). */
     hostThumb(rel, w, h, signal) {
       const id = (this.hostThumbId = (this.hostThumbId || 0) + 1);
       this.hostThumbWait = this.hostThumbWait || new Map();

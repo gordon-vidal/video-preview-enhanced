@@ -1,8 +1,8 @@
 // @ts-check
 // Seek-bar hover thumbnails. One low-priority worker (thumbs-worker.js, a second
 // keyframe-only libav.js instance) is started on the first hover and decodes one
-// keyframe at a time; it is idle when nobody hovers and is stopped after a minute
-// without use (the cache stays). Engine side: the "seek-bar thumbnails" section
+// keyframe at a time; it is idle when nobody hovers and is closed 20 s (o.idleMs)
+// after the pointer leaves (the cache stays). Engine side: the "seek-bar thumbnails" section
 // of engine.js. Not used for MJPEG AVI/image sequences (FramePlayer, no libav)
 // or audio-only files.
 //
@@ -11,9 +11,9 @@
 // while the pointer stays, a few neighbouring places so moving along the bar is quick.
 // When the pointer leaves, requests stop (a running worker request is cancelled) and the
 // worker is closed after some idle time. Decoded pictures stay cached (memory budget).
-// Native ffmpeg backend: o.request(t, w, h) replaces the worker; the extension host runs
-//   ffmpeg -skip_frame nokey -ss T -i FILE -frames:v 1 -vf scale=W:H -f rawvideo -pix_fmt rgba -
-// (src/thumbhost.js).
+// Native ffmpeg and Live transcode backend: o.request(t, w, h, signal) replaces the worker; the extension host runs
+//   ffmpeg -skip_frame nokey -noaccurate_seek -ss T -i FILE -frames:v 1 -vf scale=W:H,showinfo -c:v mjpeg -f image2pipe -
+// and answers with a small JPEG plus the decoded keyframe's time (src/thumbhost.js).
 'use strict';
 
 /* exported ThumbService */
@@ -39,7 +39,7 @@ class ThumbService {
    * @param {number} [o.cap] bytes of thumbnails kept
    * @param {(t: number, w: number, h: number, signal: AbortSignal) => Promise<any>} [o.request]
    *   decodes one thumbnail elsewhere (native ffmpeg in the extension host) instead of the libav.js
-   *   worker; resolves {kt, w, h, data (RGBA)} or null
+   *   worker; resolves {kt, w, h, data, fmt} (data is a JPEG when fmt is 'jpeg', else RGBA) or null
    */
   constructor(o) {
     this.o = o;

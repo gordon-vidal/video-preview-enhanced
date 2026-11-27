@@ -1,8 +1,9 @@
 // @ts-check
 // Seek-bar thumbnails for the native ffmpeg backend (media/thumbs.js asks via the
-// engine's 'thumb' message). One short keyframe-only ffmpeg per thumbnail:
-//   ffmpeg -skip_frame nokey -ss T -i FILE -frames:v 1 -vf scale=W:H -f rawvideo -pix_fmt rgba -
-// (format 'jpeg': mjpeg -q:v 6, 3-6 KB instead of ~60 KB RGBA, which matters on a remote link's RPC pipe).
+// engine's 'thumb' message), for native ffmpeg and Live transcode clips. One short keyframe-only ffmpeg per thumbnail:
+//   ffmpeg -skip_frame nokey -ss T -i FILE -frames:v 1 -vf scale=W:H,showinfo -c:v mjpeg -q:v 6 -f image2pipe -
+// The page always gets JPEG (nativeThumb: 3-6 KB instead of ~60 KB RGBA, which matters on a remote link's RPC
+// pipe) plus the keyframe's time read from showinfo. decodeThumb's 'rgba' format remains for tests and benches.
 // An input-side -ss seeks to the keyframe at or before T and -skip_frame nokey
 // makes the decoder drop everything else, so a long-GOP 4K file costs one
 // keyframe decode (~50-200 ms of one core). ffmpeg only decodes (docs/PRODUCT.md).
