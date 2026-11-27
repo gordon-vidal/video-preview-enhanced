@@ -821,10 +821,11 @@ class EncodedStream {
       }
       if (code !== 0 || signal) {
         const why = this.exitReason(proc, code, signal);
-        // Step 0a: a failed hardware tone-mapper (QSV, VA-API, libplacebo, OpenCL) drops to the next best path.
-        if (this.hdr && this.tonemapKind && this.tonemapKind !== 'cpu' && !this.badTonemap.has(this.tonemapKind)) {
+        // Step 0a: a failed hardware tone-mapper (QSV, VA-API, libplacebo, OpenCL) drops to the next best path, for
+        // every stream with this ffmpeg; only one that has not given a frame here (a later failure is not its fault).
+        if (this.tonemapUnproven()) {
           this.log(`live transcode: ${this.tonemapKind} HDR tone-mapping failed (${why}); trying the next tone-mapping path`);
-          this.badTonemap.add(this.tonemapKind);
+          this.badTonemap.add(/** @type {string} */ (this.tonemapKind));
           this.restartVideo();
           return;
         }
