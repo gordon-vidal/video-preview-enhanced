@@ -268,12 +268,19 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   const bar = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bar.js'), 'utf8');
   const hidden = (maxW) => rules(COMPARE).filter((r) => r.at.includes(`max-width: ${maxW}px`) && /display:\s*none/.test(r.body))
     .flatMap((r) => r.selectors.map(norm));
-  const all = [...hidden(640), ...hidden(560), ...hidden(440)].join(' ');
+  // Compare's bar needs about 824 px with every button: its words, Swap and Sync go at 840 px and the range buttons,
+  // ⓘ and the duration at 680 px, scoped to Compare so the single player keeps them (maintainer, 2026-11-27).
+  const all = [...hidden(840), ...hidden(560), ...hidden(440)].join(' ');
+  for (const sel of [...hidden(840), ...hidden(680)].filter((x) => /#startCompareBtn|button\.rng|#infoBtn|#dur/.test(x))) {
+    assert.match(sel, /^body\.compare /, `${sel}: only in Compare`);
+  }
+  const at680 = hidden(680).join(' ');
+  for (const id of ['button.rng', '#infoBtn', '#dur']) assert.ok(at680.includes(id), `${id} goes at 680 px in Compare`);
   for (const id of ['swapBtn', 'syncBtn', 'splitBtn', 'spotlightBtn', 'gridBtn']) {
     assert.ok(all.includes(`#row #${id}`), `#${id} collapses`);
     assert.ok(bar.includes(`cmpButton('${id}'`), `src/bar.js declares #${id}`);
   }
-  assert.ok(hidden(640).some((s) => /#startCompareBtn > span/.test(s)), 'the Compare toggle drops its label first');
+  assert.ok(hidden(840).some((s) => /#startCompareBtn > span/.test(s)), 'the Compare toggle drops its label first');
 }
 
 { // Layering contract across player.css, folder-rail.css and compare.css: floating overlays (context menu, seek tip

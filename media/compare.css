@@ -283,15 +283,19 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 /* The pressed layout / Sync button keeps a crisp outline on the capsule's own fill. */
 #cmpGroup .ib.active { background: var(--vpe-hover); border: 1px solid var(--vpe-bd-active); }
 
-/* Narrow panes shed Compare's bar buttons in this order, after player.css has dropped the range pins, the info button
-   and the duration (640 px): the Compare toggle's words, Swap and Sync, Split, then Spotlight and Grid. The layouts, Swap
-   and the offsets stay in the Compare panel (#cmpBtn), Swap also on X, so Picture size and Fullscreen at the bar's right
-   edge are never clipped. #spotlightBtn ... #cmpBtn are the buttons of the #cmpGroup capsule (src/bar.js). */
-@media (max-width: 640px) {
+/* Narrow panes shed Compare's bar buttons in this order (docs/notes/ui-simple.md, "Narrow bar"): the Compare toggle's
+   words, Swap and Sync (840 px: the bar needs about 824 px with every button), then the range buttons, ⓘ and the duration
+   (680 px, earlier than player.css's 640 px), Split, then Spotlight and Grid. The layouts, Swap and the offsets stay in
+   the Compare panel (#cmpBtn), Swap also on X, so Picture size and Fullscreen at the bar's right edge are never clipped.
+   #spotlightBtn ... #cmpBtn are the buttons of the #cmpGroup capsule (src/bar.js). */
+@media (max-width: 840px) {
   /* The Compare / capture toggle keeps its icon and its name (title, aria-label) but loses its words. */
-  #row #startCompareBtn > span:not(.cap-pulse) { display: none; }
-  #row #startCompareBtn { gap: 0; }
+  body.compare #row #startCompareBtn > span:not(.cap-pulse) { display: none; }
+  body.compare #row #startCompareBtn { gap: 0; }
   #row #swapBtn, #row #syncBtn { display: none; }
+}
+@media (max-width: 680px) {
+  body.compare #row button.rng, body.compare #row #infoBtn, body.compare #row #time #dur { display: none; }
 }
 @media (max-width: 560px) {
   #row #splitBtn { display: none; }

@@ -74,9 +74,10 @@ assert.match(playerStyles, /\.vol-wrap:not\(\.no-audio\):hover \.vol-slide/, 'no
 assert.match(playerStyles, /\.vol-wrap\.no-audio #mute \{ opacity: 0\.4;/, 'no-audio dims the disabled mute button');
 // Narrow panes shed bar buttons in steps (docs/notes/ui-simple.md, "Narrow bar"); the step buttons go only at the last one.
 const ladder = [...playerStyles.matchAll(/@media \(max-width: (\d+)px\) \{([\s\S]*?)\n\}/g)].map((m) => [Number(m[1]), m[2]]);
-assert.deepStrictEqual(ladder.map((m) => m[0]), [720, 640, 500, 400, 320, 250], 'narrow bar steps');
+// The folder capsule goes at 750 px: with it the single player's bar needs about 737 px (maintainer, 2026-11-27).
+assert.deepStrictEqual(ladder.map((m) => m[0]), [750, 640, 500, 400, 320, 250], 'narrow bar steps');
 // The folder capsule goes first (Shift+N / Shift+P and a right-click on the step buttons remain).
-assert.match(ladder[0][1], /^\s*#row #folderCap \{ display: none; \}\s*$/, 'below 720 px only the folder capsule goes');
+assert.match(ladder[0][1], /^\s*#row #folderCap \{ display: none; \}\s*$/, 'below 750 px only the folder capsule goes');
 for (const [w, css] of ladder) {
   if (w > 250) assert.doesNotMatch(css, /#prev|#next|\.stepw|#play|#cog|#full|#now/, `${w} px keeps Play, the step buttons, the time, Settings, Fullscreen`);
 }

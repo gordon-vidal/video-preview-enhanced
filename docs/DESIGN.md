@@ -155,8 +155,8 @@ Known gaps, each to be settled with the maintainer and then written down above:
 
 - **Spacing:** paddings and gaps use many near values (2-7, 9, 10, 12, 14 px); no scale yet.
 - **Corners besides the card and button tokens:** bar buttons 6 px, A–B and range boxes 2-3 px, the switch 9 px.
-- **The bar's narrow-pane ladder:** Compare's bar needs about 824 px, so 721-824 px clips Picture size and
-  Fullscreen; the single player clips by 9 px at 721-736 px.
+- **A layer-3 check of the narrow-pane ladder:** the runner cannot set the window width yet, so nothing checks that
+  Fullscreen stays inside the bar at 700 / 760 / 820 px (docs/notes/ui-simple.md, "Narrow bar").
 
 ## Adding or changing a surface
 

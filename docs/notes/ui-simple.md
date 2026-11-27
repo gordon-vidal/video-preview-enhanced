@@ -105,13 +105,17 @@ time, ⚙ and fullscreen stay longest; everything shed is still reachable anothe
 
 | Width | Hidden (in addition) | Still reachable |
 |---|---|---|
+| ≤ 750 px | the folder capsule | Shift+N / Shift+P, right-click on ◀| / |▶ |
 | ≤ 640 px | A / B buttons, ⓘ, the total duration | right-click, keys A / B / I |
 | ≤ 500 px | CC, Compare | ⚙ › Subtitles, right-click, keys C / Shift+D |
 | ≤ 400 px | speed, picture size; tighter padding | ⚙ › Speed / Picture size, keys Z and Shift+< / > |
 | ≤ 320 px | Mute and volume | keys M, ↑ / ↓ |
 | ≤ 250 px | ◀| / |▶ | keys , . and the arrows |
 
-Compare's own Reorder and Compare buttons are not in the ladder (Compare opens at desktop widths).
+Compare's bar is wider (about 824 px with every button, measured in the mock-up harness) and sheds earlier
+(`media/compare.css`, maintainer 2026-11-27): ≤ 840 px the Compare toggle's words, Swap and Sync; ≤ 680 px the A / B
+buttons, ⓘ and the duration; ≤ 560 px Split; ≤ 440 px Spotlight and Grid. Picture size and fullscreen are never
+clipped.
 
 ## Keyboard shortcuts in Settings
 

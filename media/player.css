@@ -564,8 +564,9 @@ body.idle { cursor: none; }
 #seek, #volume, #speedSlider { touch-action: none; }
 /* Narrow panes shed the bar's secondary buttons in this order; each stays reachable another way (docs/notes/ui-simple.md,
    "Narrow bar"). Play, the step buttons, the time, Settings and Fullscreen stay longest. The folder capsule
-   (media/folder-rail.css) goes first: Shift+N / Shift+P and a right-click on the step buttons still change the video. */
-@media (max-width: 720px) {
+   (media/folder-rail.css) goes first, at 750 px (the bar needs about 737 px with it): Shift+N / Shift+P and a right-click
+   on the step buttons still change the video. Compare's bar is wider and sheds earlier (media/compare.css). */
+@media (max-width: 750px) {
   #row #folderCap { display: none; }
 }
 @media (max-width: 640px) {
