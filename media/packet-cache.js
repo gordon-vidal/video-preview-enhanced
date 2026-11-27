@@ -38,9 +38,13 @@
     const cap = o.cap > 0 ? o.cap : 64e6;
     /** @type {Gop[]} */
     let gops = [];
-    /** @type {Gop | null} */
-    let cur = null; // the GOP the current read appends to
-    let curGen = NaN;
+    /**
+     * The GOP each read appends to, by read (gen). Reads interleave: the page's read-ahead and a fill behind the paused
+     * frame (media/engine.js fillBehind) arrive in turns, and each keeps its own run. The last few reads only.
+     * @type {Map<any, Gop | null>}
+     */
+    const runs = new Map();
+    const MAX_RUNS = 4;
     let bytes = 0;
     let clock = 0;
     let hits = 0;
@@ -51,26 +55,36 @@
       if (i < 0) return;
       gops.splice(i, 1);
       bytes -= g.bytes;
-      if (cur === g) cur = null;
+      for (const [gen, r] of runs) if (r === g) runs.set(gen, null);
     }
+    const appending = (g) => { for (const r of runs.values()) if (r === g) return true; return false; };
 
     function evict() {
       while (bytes > cap && gops.length > 1) {
         let old = null;
-        for (const g of gops) if (g !== cur && (!old || g.used < old.used)) old = g;
+        for (const g of gops) if (!appending(g) && (!old || g.used < old.used)) old = g;
         if (!old) break;
         drop(old);
       }
     }
 
     /**
-     * A video packet of read `gen`, in decode order. A new read (gen) or a packet without a time ends the GOP being
-     * appended; packets before the read's first keyframe are not kept (nothing could decode them).
-     * @param {number} gen @param {Packet} p
+     * A video packet of read `gen`, in decode order. Each read appends to its own GOP: a packet never joins another
+     * read's run. A packet without a time ends the read's run; packets before the read's first keyframe are not kept
+     * (nothing could decode them).
+     * @param {any} gen @param {Packet} p
      */
     function add(gen, p) {
-      if (gen !== curGen) { if (cur) cur.open = false; cur = null; curGen = gen; }
-      if (!(Number.isFinite(p.t)) || !p.data) { if (cur) cur.open = false; cur = null; return; }
+      if (!runs.has(gen)) {
+        runs.set(gen, null);
+        if (runs.size > MAX_RUNS) {
+          const [oldest, r] = runs.entries().next().value;
+          if (r) r.open = false;
+          runs.delete(oldest);
+        }
+      }
+      let cur = runs.get(gen) || null;
+      if (!(Number.isFinite(p.t)) || !p.data) { if (cur) cur.open = false; runs.set(gen, null); return; }
       if (p.key && p.idr !== false) {
         // Read on into the next keyframe: nothing lies between this GOP's last frame and it.
         if (cur) { cur.open = false; cur.endT = p.t; }
@@ -83,6 +97,7 @@
         }
         cur = { keyT: p.t, lastT: p.t, packets: [], bytes: 0, used: ++clock, open: true, params };
         gops.push(cur);
+        runs.set(gen, cur);
       }
       if (!cur) return;
       // Out of order: B-frames (a Direct Stream copy of the source). Decode order then differs from frame order, so
@@ -119,16 +134,29 @@
       return { frameT, packets, keyT: best.keyT };
     }
 
+    /**
+     * Read `gen` ended at `endT` with nothing between its last frame and endT (a fill from the host ends exactly where
+     * the packets it was asked for begin): its last GOP then covers the time up to endT, as if a keyframe followed.
+     * @param {any} gen @param {number} endT
+     */
+    function close(gen, endT) {
+      const cur = runs.get(gen);
+      if (!cur) return;
+      cur.open = false;
+      if (endT > cur.lastT) cur.endT = endT;
+      runs.set(gen, null);
+    }
+
     /** The packets after `t` in the same GOP (read ahead after the target, for a step forward). */
     function after(keyT, t, eps = 1e-4) {
       const g = gops.find((x) => Math.abs(x.keyT - keyT) < eps);
       return g ? g.packets.filter((p) => p.t > t + eps) : [];
     }
 
-    function clear() { gops = []; cur = null; curGen = NaN; bytes = 0; }
+    function clear() { gops = []; runs.clear(); bytes = 0; }
 
     return {
-      add, find, after, clear,
+      add, find, after, close, clear,
       stats: () => ({ gops: gops.length, bytes, cap, hits, misses }),
       /** Covered spans [keyT, lastT], for the debug probe and tests. */
       spans: () => gops.map((g) => [g.keyT, g.lastT, g.packets.length]).sort((a, b) => a[0] - b[0]),

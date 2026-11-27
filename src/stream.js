@@ -38,6 +38,16 @@ const SEEK_MAX_DEFER_MS = 400;
 const STEP_BACK_SPAN_S = 4;
 const STEP_BACK_LEAD_S = 1;
 const REMOTE_STEP_BACK_LEAD_S = 2.5;
+// Keyframe spacing of the host's H.264: 2 s while playing (compact), 0.5 s for an encode started paused (stepping,
+// inspecting): a step back across a keyframe then decodes at most half a second on the page instead of two.
+const PLAY_GOP_S = 2;
+const PAUSED_GOP_S = 0.5;
+// Fills behind a paused frame (fill): at most this many encodes at once on this host (each holds a GPU encoder session;
+// consumer NVIDIA cards allow a handful), and each reply at most this many bytes (whole packets) so a seek sent
+// meanwhile waits behind little on the link.
+const MAX_FILLS = 2;
+const FILL_PIECE_BYTES = 96 * 1024;
+let fillsRunning = 0;
 // Sound sent at most this far past the picture sent.
 const AUDIO_LEAD_S = 2;
 const MAX_AUDIO_BATCH = 256 * 1024;
@@ -331,7 +341,7 @@ class EncodedStream {
         this.setView(m.view);
         return this.open();
       case 'view': return this.setView(m, !!m.playing);
-      case 'playback': this.playing = !!m.playing; return undefined;
+      case 'playback': this.playing = !!m.playing; if (this.playing) this.stopFill(); return undefined;
       case 'remoteAudioFailed':
         if (!this.audioEncoder) return;
         this.audioFallback(m.message);
@@ -344,6 +354,9 @@ class EncodedStream {
       case 'seek': return this.seek(m);
       case 'remoteLink': return this.adapt(m);
       case 'hidden': return this.setHidden(!!m.on);
+      case 'fill': return this.fill(m);
+      case 'fillMore': return this.fillMore(m);
+      case 'fillStop': return this.stopFill();
       default: return undefined; // recycle: nothing held here
     }
   }
@@ -355,6 +368,7 @@ class EncodedStream {
   setHidden(on) {
     const wasHidden = this.hidden;
     this.hidden = !!on;
+    if (on) this.stopFill();
     if (!this.fps) return;
     if (!on) {
       this.hiddenRefresh = false;
@@ -474,6 +488,8 @@ class EncodedStream {
       h: this.h,
       fps: this.fps,
       maxKbps: cap,
+      // Started paused (a jump or a step): keyframes every PAUSED_GOP_S, so a step back decodes few frames on the page.
+      gopS: this.playing ? PLAY_GOP_S : PAUSED_GOP_S,
       badTonemap: this.badTonemap,
     });
     if (!audio) { this.pipelineMode = pipe.mode; this.tonemapKind = pipe.tonemap; this.gpuDecode = !!pipe.gpuDecode; }
@@ -1009,6 +1025,7 @@ class EncodedStream {
 
   seek(m) {
     if (this.disposed) return;
+    this.stopFill();
     this.videoFragment = null;
     const interruptedOverlap = !!this.overlap;
     this.cancelOverlap();
@@ -1067,6 +1084,93 @@ class EncodedStream {
     this.vNext = j;
     this.log(`remote stream: the page holds ${j - k} packets (${have.keyT.toFixed(3)}-${have.lastT.toFixed(3)} s); sending from the next`);
     return true;
+  }
+
+  /**
+   * Paused: encode [from, to) behind the shown frame for the page's packet cache (media/engine.js fillBehind), so steps
+   * back from a fresh jump decode on the page. A second, short encode with this stream's own pipeline (same size,
+   * encoder and settings, so the page keeps both: media/packet-cache.js drops GOPs of another configuration) and the
+   * paused keyframe spacing. The page pulls it a piece at a time (fillMore) while it has nothing else to ask; a seek,
+   * play or hide stops it. Replies 'fillBatch' { id, video, done, error? }.
+   */
+  fill(m) {
+    this.stopFill();
+    const id = m.id;
+    const fps = this.fps;
+    const from = Math.max(0, Math.round(Number(m.from) * fps) / fps);
+    const frames = Math.round((Number(m.to) - from) * fps);
+    const no = (error) => this.post({ type: 'fillBatch', id, video: [], done: true, error });
+    if (this.disposed || this.failed || this.hidden || !this.pr.video || !(fps > 0)) return no('unavailable');
+    if (!(frames > 0)) return no('nothing to fill');
+    // A copy of the source's own GOPs (B-frames, sparse keyframes) is not kept by the page: nothing to gain.
+    if (this.pipelineMode === 'direct-stream' || this.useDirectStream()) return no('direct stream');
+    if (fillsRunning >= MAX_FILLS) return no('busy');
+    // args() records the pipeline it builds on this stream: the fill must not change what the live stream reports.
+    const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode, this.playing];
+    let argv;
+    try { this.playing = false; argv = this.args(from, false); }
+    finally { [this.pipelineMode, this.tonemapKind, this.gpuDecode, this.playing] = keep; }
+    argv.splice(argv.length - 1, 0, '-frames:v', String(frames));
+    let proc;
+    try {
+      proc = lowerPriority(spawn(this.tools.ffmpeg, argv, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+    } catch (e) { return no(String(e && e.message || e)); }
+    fillsRunning++;
+    const buf = new SeekHistoryBuffer({ fps, hasAudio: false, remote: this.remote });
+    buf.reset(from);
+    const f = { id, proc, buf, sent: 0, ended: false, waiting: false, failed: '', t0: Date.now(), from, frames, bytes: 0 };
+    this.filling = f;
+    let err = '';
+    proc.on('error', (e) => { err += String(e); });
+    proc.stderr.on('data', (d) => { err = (err + d).slice(-500); });
+    proc.stdout.on('data', (d) => {
+      buf.pending = buf.pending.length ? Buffer.concat([buf.pending, d]) : d;
+      buf.split(false);
+      if (f.waiting && this.filling === f) this.fillMore({ id });
+    });
+    proc.on('close', (code) => {
+      fillsRunning = Math.max(0, fillsRunning - 1);
+      buf.split(true);
+      f.ended = true;
+      if (code !== 0 && !buf.vAll.length) f.failed = err.trim().split(/\r?\n/).pop() || `ffmpeg exit ${code}`;
+      if (this.filling === f && f.waiting) this.fillMore({ id });
+    });
+    this.log(`remote stream: filling ${from.toFixed(3)}-${(from + frames / fps).toFixed(3)} s behind the paused frame (${frames} frames)`);
+    f.waiting = true; // the first piece goes out as soon as there is one
+  }
+
+  /** The page asks for the next piece of the fill (see fill). */
+  fillMore(m) {
+    const f = this.filling;
+    if (!f || f.id !== m.id) return;
+    const vAll = f.buf.vAll;
+    let end = f.sent;
+    let bytes = 0;
+    while (end < vAll.length && (end === f.sent || bytes + vAll[end].data.byteLength <= FILL_PIECE_BYTES)) bytes += vAll[end++].data.byteLength;
+    if (end === f.sent) {
+      if (!f.ended) { f.waiting = true; return; }
+      this.filling = null;
+      if (f.failed) this.log(`remote stream: fill failed (${f.failed})`);
+      this.post({ type: 'fillBatch', id: f.id, video: [], done: true, ...(f.failed ? { error: f.failed } : {}) });
+      return;
+    }
+    f.waiting = false;
+    const video = vAll.slice(f.sent, end);
+    f.sent = end;
+    f.bytes += bytes;
+    const done = f.ended && end === vAll.length;
+    if (done) {
+      this.filling = null;
+      this.log(`remote stream: filled ${f.sent} frames behind the paused frame, ${(f.bytes / 1024).toFixed(0)} KiB in ${Date.now() - f.t0} ms`);
+    }
+    this.post({ type: 'fillBatch', id: f.id, video, done });
+  }
+
+  stopFill() {
+    const f = this.filling;
+    if (!f) return;
+    this.filling = null;
+    if (!f.ended) this.stopProcess(f.proc);
   }
 
   /** A seek served from the packets held: no ffmpeg restart. */
@@ -1137,6 +1241,7 @@ class EncodedStream {
 
   dispose() {
     if (this.disposed) return;
+    this.stopFill();
     this.disposed = true;
     this.videoFragment = null;
     clearTimeout(this.startTimer);
@@ -1167,6 +1272,8 @@ module.exports = {
   STEP_BACK_SPAN_S,
   STEP_BACK_LEAD_S,
   REMOTE_STEP_BACK_LEAD_S,
+  PAUSED_GOP_S,
+  PLAY_GOP_S,
   stepBackStart,
   audioEncoderFor,
   opusArgs,

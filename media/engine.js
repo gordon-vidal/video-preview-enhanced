@@ -33,6 +33,12 @@ function createEngine(env) {
     };
   };
   const { bootDecoder, preload, takePreload, dropPreload } = VpeDecoderBoot.create(env);
+  // Live transcode, paused: the host fills in this much video behind the shown frame (fillBehind), looked at no more
+  // than every FILL_CHECK_MS (also during a fast wheel scroll back), when less than FILL_AHEAD_S behind it is held.
+  // Steps back then decode on the page.
+  const FILL_SPAN_S = 2;
+  const FILL_AHEAD_S = 1.5;
+  const FILL_CHECK_MS = 250;
   const SPEED_WARMUP_MS = 1500; // decode speed samples (sampleSpeed): ignore the start
   const SPEED_SAMPLE_MS = 3000;
   const FAST_CODECS = new Set(['hevc', 'h264']); // decoders that honour skip_loop_filter (fast preview)
@@ -227,6 +233,7 @@ function createEngine(env) {
           }
           break;
         case 'configured': mark('configured'); this.onConfigured(m); break;
+        case 'fillBatch': this.onFillBatch(m); break;
         case 'batch':
           if (this.remoteStream) this.receiveRemoteBatch(m);
           else this.onBatch(m);
@@ -1018,6 +1025,7 @@ function createEngine(env) {
           this.lastSeekMs = performance.now() - this.seekStartMs; // seek to its frame decoded
           log(`seek landed in ${Math.round(this.lastSeekMs)} ms (gen ${this.gen})`);
         }
+        if (!this.playing) this.scheduleFill();
         // The clock waited for the seek (now()); start it at the target.
         if (this.playing) { this.stopAudio(); this.anchor(this.pauseT); }
       }
@@ -1283,6 +1291,7 @@ function createEngine(env) {
       wake();
       if (h === !!this.hidden || this.vmode === undefined) return;
       this.hidden = h;
+      if (h) this.cancelFill();
       if (h) this.thumbnailLeave(true);
       if (h && this.ac && !this.playing) this.restAudioLater(0);
       // A live stream (Open Video URL…) can't seek back to where it was: its ffmpeg keeps running.
@@ -1889,6 +1898,7 @@ function createEngine(env) {
       wake();
       this.seekGoalFrame = null;
       if (this.playing) return;
+      this.cancelFill();
       clearTimeout(this.acTimer);
       if (this.ac && (this.acRest || (this.acUnlocked && this.ac.state === 'suspended'))) this.wakeAudio();
       else if (this.ac && this.ac.state === 'suspended') {
@@ -1992,6 +2002,7 @@ function createEngine(env) {
       // holds of the target's GOP, so it sends only what follows (seeked.have, then onSeeked feeds them).
       const have = this.remoteStream && wasPlaying && !recoverTransport ? this.packetsHeld(t) : null;
       this.pendingHave = have ? { gen: this.gen, packets: have.packets } : null;
+      if (this.fill) this.fill = null; // the host stops its fill on a seek
       this.worker.postMessage({ type: 'seek', gen: this.gen, t, ...(have ? { have: { keyT: have.keyT, lastT: have.lastT } } : {}),
         ...(this.remoteStream ? { playing: this.playing } : {}), ...(recoverTransport ? { recoverTransport: true } : {}) });
     }
@@ -2024,6 +2035,76 @@ function createEngine(env) {
         if (dec && dec.state === 'configured') dec.flush().catch(() => {});
       });
       return true;
+    }
+
+    /**
+     * Paused, a frame shown: see within FILL_CHECK_MS whether the host should fill in behind it (fillBehind). A check
+     * already due is not pushed back, so a run of steps (a wheel scroll back) keeps the fill ahead of it.
+     */
+    scheduleFill() {
+      if (!this.remoteStream || !this.packetCache || this.fillTimer) return;
+      this.fillTimer = setTimeout(() => { this.fillTimer = 0; this.fillBehind(); }, FILL_CHECK_MS);
+    }
+
+    /**
+     * Live transcode, paused: steps back from a fresh jump need the frames before it, which the page never received
+     * (the host's encode started at the target). Ask the host to encode FILL_SPAN_S behind the packets held here,
+     * ending where they begin, for the packet cache only (nothing is shown or decoded now): the next steps back then
+     * decode on the page (media/packet-cache.js find) instead of a seek each over the link. Pulled a piece at a time
+     * (onFillBatch); a seek or play stops it. Again once the frame is within FILL_AHEAD_S of what is held.
+     */
+    fillBehind() {
+      const cache = this.packetCache;
+      if (this.disposed || !cache || !this.remoteStream || this.playing || this.hidden || this.fill) return;
+      if (this.vmode !== 'webcodecs' || this.seekTarget !== null || this.shownT === null) return;
+      if (this.fillRetryAt && performance.now() < this.fillRetryAt) return;
+      const f = 1 / (this.fps || 30);
+      const start = this.startT || 0;
+      const need = this.shownT - FILL_AHEAD_S;
+      if (need <= start + f / 2 || cache.find(need)) return; // held far enough behind, or the file starts there
+      // Back along the GOPs held without a gap: the fill ends where the first of them begins.
+      let to = this.shownT;
+      for (let i = 0; i < 64; i++) {
+        const h = cache.find(to - 0.5 * f);
+        if (!h || !(h.keyT < to - f / 4)) break;
+        to = h.keyT;
+      }
+      const from = Math.max(start, to - FILL_SPAN_S);
+      if (to - from < f / 2) return;
+      const id = (this.fillSeq = (this.fillSeq || 0) + 1);
+      this.fill = { id, gen: `fill:${id}`, from, to, t0: performance.now(), n: 0 };
+      log(`fill behind the paused frame: ${this.rel(from).toFixed(3)}-${this.rel(to).toFixed(3)} s asked from the host`);
+      this.worker.postMessage({ type: 'fill', id, from, to });
+    }
+
+    /** A piece of the fill (fillBehind): into the packet cache; the next piece is asked while still paused. */
+    onFillBatch(m) {
+      const fl = this.fill;
+      if (!fl || m.id !== fl.id || !this.packetCache) return;
+      for (const p of m.video) this.packetCache.add(fl.gen, p);
+      fl.n += m.video.length;
+      if (!m.done) {
+        if (!this.playing) this.worker.postMessage({ type: 'fillMore', id: fl.id });
+        return;
+      }
+      this.fill = null;
+      if (m.error || !fl.n) {
+        log(`fill behind the paused frame: none (${m.error || 'no frames'})`);
+        this.fillRetryAt = performance.now() + (m.error === 'busy' ? 2000 : 30000);
+        return;
+      }
+      this.packetCache.close(fl.gen, fl.to);
+      log(`fill behind the paused frame: ${fl.n} frames from ${this.rel(fl.from).toFixed(3)} s held in ${Math.round(performance.now() - fl.t0)} ms`);
+      this.scheduleFill();
+    }
+
+    /** Stop a fill in flight (play, hide): the host kills its encode. */
+    cancelFill() {
+      clearTimeout(this.fillTimer);
+      this.fillTimer = 0;
+      if (!this.fill) return;
+      this.fill = null;
+      this.worker.postMessage({ type: 'fillStop' });
     }
 
     /** The kept packets of the GOP holding t, from its keyframe to the last one held (null: none, or not WebCodecs). */
@@ -2417,6 +2498,7 @@ function createEngine(env) {
       }
       for (const x of moved) this.insert(x);
       log(`step back from memory to ${this.rel(moved[0].t).toFixed(3)} s (${back.length} more kept)`);
+      this.scheduleFill();
       this.pauseT = moved[0].t;
       this.stopAudio();
       this.anchor(this.pauseT);
@@ -2779,6 +2861,7 @@ function createEngine(env) {
 
     dispose() {
       if (this.disposed) return;
+      clearTimeout(this.fillTimer);
       this.disposed = true;
       this.remoteFragment = null;
       this.loopCache = null;

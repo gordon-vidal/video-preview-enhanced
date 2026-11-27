@@ -325,6 +325,22 @@ playing offers the host the packets the page holds of the target's GOP (`seek.ha
 them (`stream.js` skipHeld), so play after a page-served seek does not send the GOP again;
 `videoPreviewEnhanced.liveTranscodeCacheMB` (default 64, 0 = off).
 
+## Paused stepping (2026-11-27)
+
+- **Fill behind the paused frame** (level 3, pull-based): once a paused frame shows (a landed seek, a step from
+  memory), at most every 250 ms the page checks whether 1.5 s behind it is held in its packets; if not it asks the
+  host for the 2 s ending where the held packets begin (`media/engine.js` fillBehind, `src/stream.js` fill). The host
+  runs a second short encode with the stream's own pipeline and sends it in whole-packet pieces of at most 96 KiB, one
+  per page request, so a seek sent meanwhile waits behind little; a seek, play or hide stops it. At most 2 fills run
+  per host (each holds a GPU encoder session); a Direct Stream copy is never filled (its GOPs are not cached). The
+  packet cache keeps a run per read, so the fill and the read-ahead arriving in turns do not cut each other's GOPs,
+  and `close()` marks the fill as reaching the held packets.
+- **Paused encodes use 0.5 s GOPs** (2 s while playing): a step back across a keyframe decodes at most 13 frames at
+  25 fps on the page instead of 50.
+- Layer 3 `remote-stream-packets` (1080p25, link throttled to 2 Mb/s after the fill): fill of 50 frames in ~170 ms
+  on the full-speed link; the first step back after a jump 47-60 ms page time (was a host seek, seconds); 30 steps
+  back 40 ms apart: 0 host seeks, settled 1.9 s after the first (1.2 s of input).
+
 ## How others do it (research, 2026-11-27)
 
 - **Jellyfin / Plex** restart ffmpeg on a seek outside what was transcoded, force keyframes on segment boundaries,
