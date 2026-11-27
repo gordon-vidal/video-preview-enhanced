@@ -237,8 +237,15 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
 }
 
 { // Split Wipe: B's canvas is transparent (player.css paints every canvas black), or A would vanish left of the divider.
+  // B's cell passes pointer events through so A's overlay buttons stay clickable; hovering the stage reveals both pills,
+  // and #divider has vertical bounds so it never collapses to 0 px height.
   const b = declsOf(COMPARE, '.cell.split[data-role="split-b"] > canvas');
   assert.strictEqual(b.background, 'transparent');
+  assert.strictEqual(declsOf(COMPARE, '.cell.split[data-role="split-b"]')['pointer-events'], 'none');
+  assert.strictEqual(declsOf(COMPARE, '#cells:hover .cell.split .ov').opacity, '1');
+  const div = declsOf(COMPARE, '#divider');
+  assert.strictEqual(div.top, '0');
+  assert.strictEqual(div.bottom, '0');
 }
 
 { // An empty spare slot's "+ Add video" rests quiet but visible (0.6), full on hover and on keyboard focus.

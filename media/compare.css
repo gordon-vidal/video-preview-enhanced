@@ -12,7 +12,9 @@ body.compare #canvas { position: absolute; left: 0; top: 0; width: 100%; height:
   position: absolute; left: 0; top: 0; width: 100%; height: 100%;
   max-width: none; max-height: none; transform: none; object-fit: fill;
 }
-/* Split Wipe: B's canvas overlays A's, so it must not paint player.css's black (it would hide A left of the divider). */
+/* Split Wipe: B's canvas overlays A's, so it must not paint player.css's black (it would hide A left of the divider),
+   and B's cell passes pointer events through so A's overlay buttons stay clickable (B's own .ov > * keeps pointer-events: auto). */
+.cell.split[data-role="split-b"] { pointer-events: none; }
 .cell.split[data-role="split-b"] > canvas { background: transparent; }
 /* A 1 px inner edge so neighbouring tiles read apart (media/player-ui.js adds it to Compare tiles only). */
 .cell-border { position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
@@ -55,6 +57,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   pointer-events: none; opacity: 0; transition: opacity 140ms ease; z-index: 4;
 }
 .cell:hover .ov,
+#cells:hover .cell.split .ov,
 .cell.confirming .ov,
 #stage.sync-mode .ov,
 .cell:focus-within .ov { opacity: 1; }
@@ -264,7 +267,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 }
 
 /* Split: the divider (drag it, or ← → when focused). */
-#divider { position: absolute; width: 24px; margin-left: -12px; cursor: ew-resize; display: flex; justify-content: center; touch-action: none; z-index: 8; }
+#divider { position: absolute; top: 0; bottom: 0; width: 24px; margin-left: -12px; cursor: ew-resize; display: flex; justify-content: center; touch-action: none; z-index: 8; }
 #divider::before { content: ''; width: 2px; height: 100%; background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25); }
 #divider .h {
   position: absolute; top: 50%; width: 26px; height: 26px; margin-top: -13px; box-sizing: border-box; border-radius: 50%;

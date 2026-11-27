@@ -487,7 +487,7 @@ const withGlobals = (dom, fn) => {
     widgets.VpeCtxMenu = { ...realMenu, create: (env) => { menuEnv = env; return realMenu.create(env); } };
     const engine = createFakeEngine();
     const drawn = [];
-    const spyEngine = { ...engine, draw: (cv, id, frame, opts) => drawn.push({ id, frame, split: opts && opts.splitClipRatio }) };
+    const spyEngine = { ...engine, draw: (cv, id, frame, opts) => drawn.push({ id, frame, split: opts && opts.splitClipRatio, splitX: opts && opts.splitClipX }) };
     const host = createFakeHost({ clips: engine.clips });
     const changes = [];
     const ui = PUI.create({
@@ -726,7 +726,8 @@ const withGlobals = (dom, fn) => {
     $('splitBtn').querySelector('svg').fire('click');
     assert.strictEqual(tab().layout, 'split', 'Split Wipe');
     assert.strictEqual($('divider').hidden, false, 'the divider shows');
-    assert.ok(drawn.some((d) => d.split === tab().split), 'tile B is drawn clipped at the divider');
+    assert.ok(parseInt($('divider').style.height, 10) > 0, 'the divider spans the picture height (not 0 px)');
+    assert.ok(drawn.some((d) => d.split === tab().split && typeof d.splitX === 'number'), 'tile B is drawn clipped at the divider');
     // The divider: the shared bindSplitDivider (as media/compare.js), 0–100 %, pointer capture.
     const sp0 = tab().split;
     $('divider').fire('keydown', { key: 'ArrowRight' });

@@ -76,7 +76,7 @@
     /**
      * Paint frame `frame` of `clip`; the canvas gets the CSS size (opts.width/height, else its own) times `dpr`.
      * @param {HTMLCanvasElement} canvas @param {any} clip @param {number} frame
-     * @param {{ width?: number, height?: number, splitClipRatio?: number | null }} opts @param {number} dpr
+     * @param {{ width?: number, height?: number, splitClipRatio?: number | null, splitClipX?: number | null }} opts @param {number} dpr
      */
     function paintFrame(canvas, clip, frame, opts, dpr) {
       const cssW = Number(opts.width) > 0 ? Number(opts.width) : (canvas.clientWidth || 320);
@@ -90,8 +90,10 @@
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.save();
-      if (typeof opts.splitClipRatio === 'number') {
-        const sx = Math.round(w * opts.splitClipRatio);
+      if (typeof opts.splitClipX === 'number' || typeof opts.splitClipRatio === 'number') {
+        const sx = typeof opts.splitClipX === 'number'
+          ? Math.max(0, Math.min(w, Math.round(opts.splitClipX * dpr)))
+          : Math.round(w * /** @type {number} */ (opts.splitClipRatio));
         ctx.clearRect(0, 0, w, h);
         ctx.beginPath();
         ctx.rect(sx, 0, w - sx, h);

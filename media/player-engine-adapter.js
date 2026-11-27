@@ -362,7 +362,7 @@
      * Present a tile's frame into a canvas: the compositor if the page has one, else the player's own draw, else
      * the player's current picture (snapshotSource) fitted with the split clip. Never throws.
      * @param {any} canvas @param {string} clipId @param {number} frame
-     * @param {{ splitClipRatio?: number | null, width?: number, height?: number, picMode?: string, zoom?: number, panX?: number, panY?: number }} [o]
+     * @param {{ splitClipRatio?: number | null, splitClipX?: number | null, width?: number, height?: number, picMode?: string, zoom?: number, panX?: number, panY?: number }} [o]
      */
     function draw(canvas, clipId, frame, o = {}) {
       if (!canvas) return;
@@ -382,13 +382,15 @@
         const ctx = canvas.getContext && canvas.getContext('2d');
         if (!ctx) return;
         ctx.save();
-        if (typeof o.splitClipRatio === 'number') {
-          const sx = Math.round(w * clamp01(o.splitClipRatio));
-          ctx.clearRect(sx, 0, w - sx, h);
+        ctx.clearRect(0, 0, w, h);
+        if (typeof o.splitClipX === 'number' || typeof o.splitClipRatio === 'number') {
+          const sx = typeof o.splitClipX === 'number'
+            ? Math.max(0, Math.min(w, Math.round(o.splitClipX * dpr)))
+            : Math.round(w * clamp01(/** @type {number} */ (o.splitClipRatio)));
           ctx.beginPath();
           ctx.rect(sx, 0, w - sx, h);
           ctx.clip();
-        } else ctx.clearRect(0, 0, w, h);
+        }
         const src = p && typeof p.snapshotSource === 'function' ? p.snapshotSource() : null;
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, w, h);

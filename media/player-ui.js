@@ -1806,7 +1806,7 @@
       });
     }
     // The Split Wipe divider: the same binding as media/compare.js, over the picture as shown (letterboxing).
-    /** @type {{ x: number, w: number } | null} */
+    /** @type {{ x: number, y: number, w: number, h: number } | null} */
     let lastSplitPic = null;
     bindSplitDivider(dividerEl, {
       stageRect: () => stageEl.getBoundingClientRect(),
@@ -2650,7 +2650,16 @@
         entry.cell.style.setProperty('--pic-t', inset(pic.y));
         entry.cell.style.setProperty('--pic-r', inset(at.w - pic.x - pic.w));
         entry.cell.style.setProperty('--pic-b', inset(at.h - pic.y - pic.h));
-        if (r.role === 'split-a') lastSplitPic = { x: at.x + Math.max(0, pic.x), w: Math.min(at.w, pic.w) };
+        if (r.role === 'split-a') {
+          const px = Math.max(0, pic.x);
+          const py = Math.max(0, pic.y);
+          lastSplitPic = {
+            x: at.x + px,
+            y: at.y + py,
+            w: Math.max(0, Math.min(at.w, pic.x + pic.w) - px),
+            h: Math.max(0, Math.min(at.h, pic.y + pic.h) - py),
+          };
+        }
         const shown = shownOf(t, r.clipId);
         if (entry.ov) {
           const ovKey = [real.letter, real.role, t.tiles.length, t.removeConfirmId === r.clipId, t.statsOpen.includes(r.clipId),
@@ -2692,6 +2701,7 @@
           width: at.w,
           height: at.h,
           splitClipRatio: r.role === 'split-b' ? t.split : null,
+          splitClipX: r.role === 'split-b' && lastSplitPic ? (lastSplitPic.x - at.x) + lastSplitPic.w * t.split : null,
           picMode: t.picMode, zoom: t.zoom, panX: t.panX, panY: t.panY,
         });
       }
@@ -2846,8 +2856,11 @@
       if (dividerEl) {
         dividerEl.hidden = !ui.showDivider;
         if (ui.showDivider) {
-          const pic = lastSplitPic || { x: 0, w: width };
+          const pic = lastSplitPic || { x: 0, y: 0, w: width, h: height };
           dividerEl.style.left = `${Math.round(pic.x + pic.w * t.split)}px`;
+          dividerEl.style.top = `${Math.round(pic.y)}px`;
+          dividerEl.style.height = `${Math.round(pic.h)}px`;
+          dividerEl.style.bottom = 'auto';
           const pct = Math.round(t.split * 100);
           dividerEl.setAttribute('aria-valuenow', String(pct));
           dividerEl.setAttribute('aria-valuetext', `A ${pct}%, B ${100 - pct}%`);

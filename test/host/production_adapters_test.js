@@ -170,6 +170,20 @@ function makeBridge(/** @type {{ page?: string, boot?: string }} */ env = { page
     engine.draw(cv, 'B', 9);
     assert.strictEqual(drawn.length, 1);
     assert.doesNotThrow(() => makeEngine({ compositor: { present() { throw new Error('lost context'); } } }).engine.draw(cv, 'A', 0));
+    // Split Wipe: drawing B clears the full canvas (including left of the divider, where A shows through)
+    // and clips at splitClipX (CSS px) when given so pillarboxing matches the divider line.
+    const ops = [];
+    const splitCv = {
+      width: 0, height: 0, clientWidth: 400, clientHeight: 200, style: {},
+      getContext: () => ({
+        save() {}, restore() {}, beginPath() {}, clip() {}, fillRect() {}, drawImage() {},
+        clearRect: (/** @type {number[]} */ ...a) => ops.push(['clear', ...a]),
+        rect: (/** @type {number[]} */ ...a) => ops.push(['rect', ...a]),
+      }),
+    };
+    engine.draw(splitCv, 'A', 0, { width: 400, height: 200, splitClipRatio: 0.5, splitClipX: 150 });
+    assert.deepStrictEqual(ops.find((x) => x[0] === 'clear'), ['clear', 0, 0, 400, 200], 'split draw clears the full canvas, not just the right side');
+    assert.deepStrictEqual(ops.find((x) => x[0] === 'rect'), ['rect', 150, 0, 250, 200], 'splitClipX clips at the displayed picture divider x');
   }
 
   // ---- engine: thumbnails through the player, leave reaches every player ----

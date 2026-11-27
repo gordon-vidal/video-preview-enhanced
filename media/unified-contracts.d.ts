@@ -103,6 +103,7 @@ export interface DrawOptions {
   width?: number;
   height?: number;
   splitClipRatio?: number | null;
+  splitClipX?: number | null;
   picMode?: string;
   zoom?: number;
   panX?: number;
