@@ -2000,8 +2000,10 @@
       statsText: engineFn('statsText'), packetIndex: engineFn('packetIndex'), chapters: engineFn('chapters'),
       pixelAt: engineFn('pixelAt'), cueAt: engineFn('cueAt'), selectSubtitle: engineFn('selectSubtitle'),
       snapshot: hasSnapshot ? (/** @type {string} */ id) => {
+        const bytes = (/** @type {any} */ s) => (s && s.data !== undefined ? s.data : s);
+        // An exact frame comes from the extension host (Live transcode): the still is then a promise.
         const s = /** @type {any} */ (engine).snapshot(id, shownOf(tab(), id).frame);
-        return s && s.data !== undefined ? s.data : s;
+        return s && typeof s.then === 'function' ? s.then(bytes) : bytes(s);
       } : undefined,
       /**
        * Frame k of clip `id`, paused. With a decoder (engine.showFrame) the answer waits for the frame it really

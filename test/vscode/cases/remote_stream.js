@@ -17,6 +17,10 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const lib = require('../lib');
 
+// Save Frame as PNG writes here instead of opening the save dialog (src/extension.js VPE_SAVE_DIR).
+const SAVE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-rs-save-'));
+const pngSize = (f) => { const b = fs.readFileSync(f); return [b.readUInt32BE(16), b.readUInt32BE(20)]; };
+
 const CLIPS = ['hevc_10_2160p.mp4', 'hevc_10_1080p.mp4', 'vp9_opus_anim_1080p.webm'];
 const ASSOC = { '*.mp4': 'videoPreviewEnhanced.playerOptional', '*.webm': 'videoPreviewEnhanced.playerOptional', '*.mkv': 'videoPreviewEnhanced.playerOptional' };
 
@@ -807,7 +811,7 @@ module.exports = [{
 }, {
   name: 'remote_stream_fallback',
   ffmpeg: true,
-  env: { VPE_RS_ENCODER: 'libx264' },
+  env: { VPE_RS_ENCODER: 'libx264', VPE_SAVE_DIR: SAVE_DIR },
   settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.loop': false, 'videoPreviewEnhanced.advancedMode': true, 'videoPreviewEnhanced.sizeFramesToView': false, 'workbench.editorAssociations': ASSOC },
   async run(vs, h) {
     const { out, run } = lib.recorder();
@@ -824,6 +828,29 @@ module.exports = [{
         ok(s.vmode === 'webcodecs' && s.canvas[1] === 1080, `left Live transcode: ${s.vmode} ${s.canvas}`);
         const click = await p.ask('click', { sel: '#notice:not([hidden]) #noticeAction', text: 'Use full resolution' });
         ok(!click.found, 'the inspector still offers full resolution under Live transcode');
+        // The scopes alone (inspector off) on the next frame: they ask for its exact frame too (docs/PRODUCT.md).
+        p.key('x');
+        p.key('.');
+        const from2 = vs.mark();
+        p.key('w');
+        await vs.waitLog(new RegExp(`\\[${p.name}\\] webview: exact frame 3840x2160 for frame`), { from: from2, timeout: 20000, what: 'the exact frame for the scopes' });
+        const sc = await p.ask('scopesDump');
+        ok(sc.mode === 'waveform', `scopes open: ${sc.mode}`);
+        ok(!(await p.ask('click', { sel: '#notice:not([hidden]) #noticeAction', text: 'Use full resolution' })).found,
+          'the scopes still offer full resolution under Live transcode');
+        p.key('w'); p.key('w'); p.key('w'); p.key('w'); // back to off
+        // Save Frame as PNG: the exact full-resolution frame, not the 1080p transcoded picture.
+        for (const f of fs.readdirSync(SAVE_DIR)) fs.rmSync(path.join(SAVE_DIR, f), { force: true });
+        p.key('s');
+        const t0 = Date.now();
+        let png = null;
+        while (!png && Date.now() - t0 < 20000) {
+          await h.sleep(200);
+          const f = fs.readdirSync(SAVE_DIR).find((x) => x.endsWith('.png'));
+          if (f && fs.statSync(path.join(SAVE_DIR, f)).size > 1000) png = path.join(SAVE_DIR, f);
+        }
+        ok(!!png, `no PNG saved (${fs.readdirSync(SAVE_DIR)})`);
+        if (png) ok(pngSize(png).join('x') === '3840x2160', `Save Frame wrote ${pngSize(png).join('x')}, not the exact 3840x2160 frame`);
       } finally { await h.closeClip(vs); }
     });
     await run('ffmpeg-exit', async (ok) => {

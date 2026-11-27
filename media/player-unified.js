@@ -329,7 +329,7 @@
      */
     function grabExact(id, p, opts) {
       const X = W('VpeExact');
-      if (!X || disposed || !p || !X.available(p, cfg)) return null;
+      if (!X || disposed || !exactUsable(p)) return null;
       let ex = exacts.get(id);
       if (!ex) {
         ex = X.create({
@@ -344,6 +344,19 @@
     }
     /** The shown frame of a decoder as exact-frame requests key it: seek generation, frame, picture count. @param {any} p */
     const exactKeyOf = (p) => `${p.gen}|${p.currentFrame()}|${p.shownCount || 0}`;
+    /** Transfers of HDR video (libav numbers and ffprobe names): PQ, HLG. */
+    const HDR_TRC = new Set([16, 18, 'smpte2084', 'arib-std-b67']);
+    /**
+     * Whether the host can give exact frames of the clip's decoder: Live transcode or lossy native, and not HDR (the
+     * host refuses it, src/exact_frame.js unsupported(): the picture is shown tone-mapped, so the "Use full
+     * resolution" offer stays for it). @param {any} p
+     */
+    function exactUsable(p) {
+      const X = W('VpeExact');
+      if (!X || !p || !X.available(p, cfg)) return false;
+      const info = p.info || {};
+      return !(info.transcode && info.transcode.hdrTonemap) && !(info.video && HDR_TRC.has(info.video.colorTrc));
+    }
     const makeAdapter = () => EngineApi.create({
       clips: [...specs.values()], getPlayer: (/** @type {string} */ id) => players.get(id) || null, compositor,
       pictureApi: W('VpePicture'), controlsApi: W('VpeControls'), doc,
@@ -372,6 +385,8 @@
       streams.delete(id);
       try { adapter.unregisterClip(id); } catch { /* already gone */ }
     }
+    /** The tools that read the exact frame from the host when the shown picture is not (pageEngine.exactFrames). */
+    const EXACT_TOOLS = new Set(['inspector', 'scopes', 'save', 'copy']);
     /** @type {Map<string, any>} shown-fps mark per clip for Shift+I stats overlay */
     const statsMarks = new Map();
     /** @type {any} */
@@ -409,13 +424,25 @@
       packetIndex: (/** @type {string} */ id) => xrayHost.packetIndex(id),
       chapters: (/** @type {string} */ id) => chaptersOf(id),
       /**
-       * Whether the page fetches exact frames from the host for this clip's pixel tool (Live transcode, lossy native):
-       * the inspector does (pixelHost); the scopes and stills still read the decoded picture.
+       * Whether the page fetches exact frames from the host for this clip's tool (Live transcode, lossy native; not
+       * HDR): the inspector and the scopes (exactHost), Save Frame and Copy Frame (snapshot). An A-B export is a clip.
        */
-      exactFrames: (/** @type {string} */ id, /** @type {string} */ tool) => {
-        const X = W('VpeExact');
+      exactFrames: (/** @type {string} */ id, /** @type {string} */ tool) =>
+        EXACT_TOOLS.has(tool) && exactUsable(players.get(id)),
+      /**
+       * A still of the clip's shown frame as PNG bytes (media/player-ui-tools.js Save / Copy Frame): the host's exact
+       * frame when it can give one (as media/player.js frameBlob did), else the decoded picture (the adapter). The
+       * host failing falls back to the decoded picture (its notice says so); the frame changing meanwhile gives null.
+       */
+      snapshot: (/** @type {string} */ id, /** @type {number} */ frame) => {
         const p = players.get(id);
-        return tool === 'inspector' && !!X && !!p && X.available(p, cfg);
+        if (!exactUsable(p)) return adapter.snapshot(id, frame);
+        const key = exactKeyOf(p);
+        return Promise.resolve(grabExact(id, p)).then((/** @type {any} */ r) => {
+          if (r && r.png) return { clipId: id, frame, width: r.w, height: r.h, mimeType: 'image/png', data: r.png };
+          if (!r || disposed || players.get(id) !== p || exactKeyOf(p) !== key) return null;
+          return adapter.snapshot(id, frame);
+        }, () => null);
       },
     };
 
@@ -980,7 +1007,7 @@
       bitmapSubs.update();
       xrayHost.tick();
       scopesHost.tick(now);
-      pixelHost.tick(now);
+      exactHost.tick(now);
       // Tiles still working on the frame asked for: a spinner after a short wait (media/player-ui.js setLoading).
       if (ui && !disposed && typeof ui.setLoading === 'function') ui.setLoading(waitingTiles(S.getTab(ui.getState())));
       if (debugMetrics) debugMetrics.check();
@@ -1020,7 +1047,7 @@
       if (disposed || !ui) return;
       const t = S.getTab(ui.getState());
       // Open scopes keep the loop going: their GPU read finishes on a later frame, and a paused frame change is sampled.
-      if (t.playing || scopesHost.active() || pixelHost.waiting() || visiblePlayers(t).some((/** @type {any} */ e) => busy(e[1]))) scheduleTick();
+      if (t.playing || scopesHost.active() || exactHost.waiting() || visiblePlayers(t).some((/** @type {any} */ e) => busy(e[1]))) scheduleTick();
       else loopStats.rests++;
     };
     /** Wake the loop (a decoder's wake, a seek, play): one animation frame is asked for at a time. */
@@ -1805,22 +1832,20 @@
           .then((layouts) => I.vfSample(vf.format, buf, layouts, vr.x + sx - ax, vr.y + sy - ay) || null, () => null);
       } catch { return null; } // a closed frame
     }
-    const pixelHost = (() => {
+    /**
+     * The exact (full-resolution) picture of the paused clock frame during Live transcode or lossy native playback
+     * (grabExact, as media/player.js exactTick did): `{ key, w, h, img, matrix, png, ctx? }`. The pixel inspector and the
+     * scopes read it instead of the decoded picture while it belongs to the shown frame (docs/PRODUCT.md "Exact frame").
+     */
+    const exactHost = (() => {
       /** @type {any} */
-      let inst = null;
-      /**
-       * The exact (full-resolution) picture of the paused clock frame during Live transcode or lossy native playback
-       * (grabExact, as media/player.js exactTick): `{ key, w, h, img, ctx? }`; the inspector reads it instead of the
-       * decoded picture while it belongs to the shown frame.
-       * @type {any}
-       */
       let exact = null;
       let settle = { key: '', at: 0 };
       let asked = '';
       /** The exact picture of `p`'s shown frame, or null. @param {any} p */
-      const exactOf = (p) => (exact && p && exact.key === exactKeyOf(p) ? exact : null);
+      const of = (p) => (exact && p && exact.key === exactKeyOf(p) ? exact : null);
       /** A 2D context holding the exact picture (small getImageData reads), made once per picture. @param {any} e */
-      const exactCtx = (e) => {
+      const ctxOf = (e) => {
         if (!e.ctx) {
           const c = doc.createElement('canvas');
           c.width = e.w;
@@ -1830,6 +1855,47 @@
         }
         return e.ctx;
       };
+      /** The paused clock decoder whose shown frame an open inspector or scope still needs the exact picture of. */
+      function wanting() {
+        if (!ui || S.getTab(ui.getState()).playing || !(pixelHost.inspecting() || scopesHost.active())) return null;
+        const p = clockPlayerNow();
+        if (!exactUsable(p) || (p.seekTarget !== null && p.seekTarget !== undefined)) return null;
+        return of(p) || asked === exactKeyOf(p) ? null : p;
+      }
+      /**
+       * From the frame loop: with the inspector or the scopes on and the clock clip paused on a frame that stayed for
+       * 150 ms, ask the host once for that frame's exact picture (Live transcode keeps playing the encoded stream).
+       * @param {number} now
+       */
+      function tick(now) {
+        const p = wanting();
+        if (!p) { settle = { key: '', at: 0 }; return; }
+        const key = exactKeyOf(p);
+        if (settle.key !== key) { settle = { key, at: now }; return; }
+        if (now - settle.at < 150) return;
+        asked = key;
+        const frame = Number(p.currentFrame()) || 0;
+        const got = grabExact(clockIdOf(S.getTab(ui.getState())), p, { notify: false });
+        if (!got) return;
+        Promise.resolve(got).then((/** @type {any} */ r) => {
+          if (disposed || !r || !r.img || !(r.w > 0 && r.h > 0)) return;
+          exact = { ...r, key };
+          if (cfg.debug && r.png) log(`exact frame ${r.w}x${r.h} for frame ${frame + 1}`); // test hook (layer 3)
+          pixelHost.refresh();
+          scheduleTick(); // the scopes sample again with it (their key changes)
+        }, () => {});
+      }
+      return {
+        of, ctxOf, tick,
+        /** The loop keeps running while the shown frame still waits for its exact-picture request. */
+        waiting: () => !!wanting(),
+      };
+    })();
+    const pixelHost = (() => {
+      /** @type {any} */
+      let inst = null;
+      const exactOf = exactHost.of;
+      const exactCtx = exactHost.ctxOf;
       const ensure = () => {
         if (inst || disposed) return inst;
         const Tools = W('VpePlayerUiTools');
@@ -1870,40 +1936,9 @@
         });
         return inst;
       };
-      /**
-       * From the frame loop: with the inspector on and the clock clip paused on a frame that stayed for 150 ms, ask the
-       * host once for that frame's exact picture (Live transcode keeps playing the encoded stream; docs/PRODUCT.md).
-       * @param {number} now
-       */
-      /** The paused clock decoder whose shown frame the open inspector still needs the exact picture of, or null. */
-      function wanting() {
-        if (!inst || !ui || !(inst.getState() || {}).mode || S.getTab(ui.getState()).playing) return null;
-        const p = clockPlayerNow();
-        const X = W('VpeExact');
-        if (!p || !X || !X.available(p, cfg) || (p.seekTarget !== null && p.seekTarget !== undefined)) return null;
-        return exactOf(p) || asked === exactKeyOf(p) ? null : p;
-      }
-      function tick(now) {
-        const p = wanting();
-        if (!p) { settle = { key: '', at: 0 }; return; }
-        const key = exactKeyOf(p);
-        if (settle.key !== key) { settle = { key, at: now }; return; }
-        if (now - settle.at < 150) return;
-        asked = key;
-        const frame = Number(p.currentFrame()) || 0;
-        const got = grabExact(clockIdOf(S.getTab(ui.getState())), p, { notify: false });
-        if (!got) return;
-        Promise.resolve(got).then((/** @type {any} */ r) => {
-          if (disposed || !r || !r.img || !(r.w > 0 && r.h > 0)) return;
-          exact = { ...r, key };
-          if (cfg.debug && r.png) log(`exact frame ${r.w}x${r.h} for frame ${frame + 1}`); // test hook (layer 3)
-          if (inst) inst.refresh();
-        }, () => {});
-      }
       return {
-        tick,
-        /** The loop keeps running while the shown frame still waits for its exact-picture request. */
-        waiting: () => !!wanting(),
+        /** Whether the pixel inspector is on (it then wants the exact picture of a paused frame). */
+        inspecting: () => !!(inst && (inst.getState() || {}).mode),
         /** The inspection controller's inspector widget. @param {string | null} m */
         setMode: (m) => { const i = m ? ensure() : inst; if (i) i.setMode(m); },
         /** The picture moved or changed: the grid follows (made once the picture is zoomed), the read-out reads again. */
@@ -2083,7 +2118,9 @@
         drop();
         try {
           inst = VS.create({
-            stage, canvas: cv, getPlayer: () => (realCanvas() === cv ? clockPlayer() : null), getExact: () => null,
+            stage, canvas: cv, getPlayer: () => (realCanvas() === cv ? clockPlayer() : null),
+            // The exact picture of the paused frame under Live transcode (exactHost), else the decoded one.
+            getExact: () => (realCanvas() === cv ? exactHost.of(clockPlayerNow()) : null),
             toast: () => {}, log, returnFocus: () => { const b = doc.getElementById('play'); if (b && b.focus) b.focus(); },
           });
           instCanvas = cv;
