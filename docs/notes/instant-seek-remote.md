@@ -425,6 +425,11 @@ driver for NVENC; 3 fresh paused seeks each, medians, page time from the seek):
 | The stream's own frame | 1842 ms | 1966 ms (it waited for the quick picture) |
 | Landing | exact frame | exact frame, full size after the quick picture |
 
+With libx264 (ffmpeg 9 on PATH; the quick picture forced through the test hook instead of the small first keyframe,
+which is what x264 hosts get): first picture 1162 -> 320 ms (44 KiB, encoded in 117 ms), the stream's frame 1216 ms.
+On a loaded machine an x264 quick encode can miss its wait (the stream encoder competes for the CPU): it is then
+dropped and the stream goes first.
+
 The quick encode is a cold ffmpeg (open, decode to the target, NVENC init: ~300 ms on an idle machine); the test
 machine was loaded, hence the 709 ms one. The test hook's link throttle delays each message by its own size, so the
 real link adds the quick picture's ~0.13 s at 2 Mb/s to the stream's frame as well.
