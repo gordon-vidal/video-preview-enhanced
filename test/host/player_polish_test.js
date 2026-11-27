@@ -9,11 +9,11 @@ const { load } = require('./mock_vscode');
 const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mkv');
 
 (async () => {
-  for (const label of ['Compare', 'Add to Compare']) {
-    const html = barHtml({ compareOpen: label === 'Add to Compare' });
-    const button = html.match(/<button id="startCompareBtn"[^>]*>(.*?)<\/button>/)[0];
-    assert.ok(button.includes(`title="${label}" aria-label="${label}"`));
+  { // The Compare button is the Capture toggle: one name in the markup (media/player-ui.js sets its title and state).
+    const button = barHtml().match(/<button id="startCompareBtn"[^>]*>(.*?)<\/button>/)[0];
+    assert.ok(button.includes('title="Compare" aria-label="Compare"'));
     assert.match(button, /<svg[^>]*viewBox="0 0 24 24"[^>]*stroke-width="1\.6"[^>]*><rect x="2\.5" y="4\.5" width="19" height="15" rx="1\.5"\/><path d="M12 4\.5v15"\/><\/svg><\/button>$/);
+    assert.match(barHtml({ canCompare: false }), /<button id="startCompareBtn"[^>]* hidden>/, 'hidden without Compare');
   }
 
   const native = reducedResNotice({
