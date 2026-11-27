@@ -1091,14 +1091,21 @@ const withGlobals = (dom, fn) => {
         Object.assign(seek, { min: '0', step: '1' });
         const beforeSeek = tab().frame;
         const want = Math.round(0.75 * Number(seek.max));
+        const nowBefore = $('now').textContent;
         seek.fire('pointerdown', { button: 0, pointerId: 2, clientX: 680 * 0.2, clientY: 2 });
         assert.deepStrictEqual([ui.dragState().seek, seek.value, tab().frame], [true, '48', beforeSeek], 'the press moves the slider and holds the picture');
+        // The time readout is the UI's: it follows the slider at once (docs/notes/seek-pending-feedback.md), the picture waits.
+        const nowAtPress = $('now').textContent;
+        assert.notStrictEqual(nowAtPress, nowBefore, 'the press moves the time readout to the slider');
         dom.win.fire('pointermove', { pointerId: 2, clientX: 680 * 0.75, clientY: -250 });
         assert.deepStrictEqual([seek.value, tab().frame], [String(want), beforeSeek], 'above the bar the slider follows while holding the picture');
+        const nowDragged = $('now').textContent;
         ui.onDecoderFrame(150); // a late decoder frame does not pull the bar back under the pointer
         assert.strictEqual(seek.value, String(want));
+        assert.strictEqual($('now').textContent, nowDragged, 'nor the time readout');
         dom.win.fire('pointerup', { pointerId: 2, clientX: 680 * 0.75, clientY: -250 });
         assert.deepStrictEqual([ui.dragState().seek, tab().frame, seek.value], [false, want, String(want)], 'lands where let go');
+        assert.strictEqual($('now').textContent, nowDragged, 'the time readout showed the release point while dragging');
         assert.deepStrictEqual(told.filter((e) => e.type === 'seek').pop(), { type: 'seek', frame: want, playing: false });
 
         // Speed slider: the panel is not redrawn under the drag, so it goes on off the edges until the release.

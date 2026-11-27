@@ -215,6 +215,12 @@ module.exports = [
     steps: [{ case: 'remote_stream_play_during_seek' }],
   },
   {
+    name: 'remote-slow-link',
+    journey: 'A 4K high-bitrate long-GOP file over a very slow Remote-SSH link (1 Mb/s, 150 ms): the first picture soon after opening; every seek input moves the bar and time at once, the ring and the picture follow',
+    sources: ['src/stream.js', 'src/link-sim.js', 'src/thumbhost.js', 'media/thumbs.js', ...ENGINE_CORE, ...UNIFIED_MEDIA, 'media/debug-probe.js'],
+    steps: [{ case: 'remote_slow_link' }],
+  },
+  {
     name: 'remote-stream-hdr',
     journey: 'HDR over Live transcode: tone-mapped on the host (NVDEC in front on NVIDIA), a seek and a step land exactly',
     sources: ['src/stream.js', 'src/warm-decoder.js', 'src/transcode_args.js', ...ENGINE_CORE],

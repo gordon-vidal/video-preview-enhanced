@@ -1675,7 +1675,7 @@
     const RangeDrag = W.VpeRangeDrag || null;
     seekDrag = RangeDrag ? RangeDrag.bindSeek(seekEl, {
       // With seek-bar thumbnails active, hold the main picture while dragging and seek on release (commit).
-      preview: (/** @type {number} */ f) => { if (!thumbCanvas) act.seek(f); },
+      preview: (/** @type {number} */ f) => { if (!thumbCanvas) act.seek(f); else render({ skipCells: true }); }, // the time follows the slider
       finish: () => render(),
       commit: (/** @type {number} */ f) => act.seek(f),
     }) : null;
@@ -2838,10 +2838,13 @@
       const isLive = !ui.isMulti && !!(/** @type {any} */ (engine.getClip(t.tiles[0]) || {}).live);
       seekEl.disabled = isLive;
       seekEl.max = String(t.maxFrame);
-      // While the seek bar is dragged it shows where the pointer is, not the decoder's last frame.
-      if (!(seekDrag && seekDrag.dragging())) seekEl.value = String(t.frame);
+      // While the seek bar is pressed or dragged it shows where the pointer is, not the decoder's last frame, and so does
+      // the time: the UI moves on the input even when the seek waits for the release (thumbnails: the picture is held).
+      const dragging = !!(seekDrag && seekDrag.dragging());
+      if (!dragging) seekEl.value = String(t.frame);
+      const at = dragging ? Math.max(0, Math.min(t.maxFrame, Number(seekEl.value) || 0)) : t.frame;
       const rd = timeReadout({
-        f: t.frame, t: t.frame / fps(), dur: t.maxFrame / fps(), fps: fps(), nFrames: t.maxFrame + 1, mode: prefs.timeMode,
+        f: at, t: at / fps(), dur: t.maxFrame / fps(), fps: fps(), nFrames: t.maxFrame + 1, mode: prefs.timeMode,
         live: isLive,
         fmtClock: clockText, fmtTimecode: W.VpeTime ? W.VpeTime.fmtTimecode : (/** @type {number} */ f) => String(f),
       });
@@ -2852,12 +2855,12 @@
       // Empty (not hidden) with one video: the button's text is then the time alone.
       if (timeLetterEl) timeLetterEl.textContent = letter ? `${letter} ` : '';
       const aria = Input
-        ? Input.formatSeekAria({ letter, timeText: clockText(t.frame / fps()), durText: clockText(t.maxFrame / fps()), frame: t.frame })
-        : `${letter ? `${letter} ` : ''}${clockText(t.frame / fps())} of ${clockText(t.maxFrame / fps())}, frame ${t.frame + 1}`;
+        ? Input.formatSeekAria({ letter, timeText: clockText(at / fps()), durText: clockText(t.maxFrame / fps()), frame: at })
+        : `${letter ? `${letter} ` : ''}${clockText(at / fps())} of ${clockText(t.maxFrame / fps())}, frame ${at + 1}`;
       seekEl.setAttribute('aria-valuetext', aria);
       if (timeEl) {
-        const at = `${letter ? `${letter} ` : ''}${clockText(t.frame / fps())}, frame ${t.frame + 1}`;
-        timeEl.setAttribute('aria-label', `Position ${at}. Click to change the format.`);
+        const pos = `${letter ? `${letter} ` : ''}${clockText(at / fps())}, frame ${at + 1}`;
+        timeEl.setAttribute('aria-label', `Position ${pos}. Click to change the format.`);
       }
       namePlaceholders();
       playBtn.classList.toggle('playing', t.playing);

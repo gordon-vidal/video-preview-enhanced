@@ -19,7 +19,7 @@
 
   const DEBUG_PROBES = new Set([
     'state', 'thumb', 'pixels', 'scopesDump', 'dom', 'gotoText', 'track',
-    'click', 'a11y', 'scrub', 'hdrcaps', 'hdrpixels', 'telemetry',
+    'click', 'a11y', 'scrub', 'hdrcaps', 'hdrpixels', 'telemetry', 'trace',
   ]);
 
   /**
@@ -644,6 +644,41 @@
             sheet: { hidden: ui.sheet.hidden, dialog: (() => { const d = ui.sheet.querySelector ? ui.sheet.querySelector('[role=dialog]') : null; return d ? { label: d.getAttribute('aria-label'), modal: d.getAttribute('aria-modal'), groups: Array.from(d.querySelectorAll('[role=group]')).map((/** @type {any} */ g) => g.getAttribute('aria-label')) } : null; })() },
             unnamed, playing: player ? player.isPlaying() : null, muted: uiState.muted, loop: uiState.loop,
           })}`);
+          break;
+        }
+        case 'trace': { // tests: `input` (any debug action), then what the UI and the picture show, each change, for `ms`
+          // One line at the end: [ms since the input, seek bar value, time text, tiles loading, bar pulse, frame shown,
+          // seek pending] at every animation frame where one of them changed, and the longest gap between frames
+          // (a busy page answers input late whatever the UI does).
+          const t0 = perf.now();
+          /** @type {any[]} */
+          const rows = [];
+          let last = '';
+          let prevAt = t0;
+          let maxGap = 0;
+          const sample = (again = true) => {
+            const p = getPlayer();
+            const now = perf.now();
+            maxGap = Math.max(maxGap, now - prevAt);
+            prevAt = now;
+            const row = [Number(ui.seek.value), (ui.time.textContent || '').replace(/\s+/g, ' ').trim(),
+              doc.querySelectorAll('.cell.loading').length, !!(ui.seek.parentElement && ui.seek.parentElement.classList.contains('seeking')),
+              p ? p.currentFrame() : -1, !!(p && p.seekTarget !== undefined && p.seekTarget !== null)];
+            const key = JSON.stringify(row);
+            if (key !== last) { last = key; rows.push([Math.round(now - t0), ...row]); }
+            if (!again) return;
+            if (now - t0 < (m.ms || 3000)) raf(() => sample());
+            else log(`trace ${JSON.stringify({ id: m.id, maxGapMs: Math.round(maxGap), rows })}`);
+          };
+          sample(false);
+          // `inputs`: several, each `at` ms after the first (a key held, a drag); `frac` on a pointer event: that point of the bar.
+          const fire = (/** @type {any} */ x) => {
+            const r = ui.seek.getBoundingClientRect();
+            const at = x.frac !== undefined ? { x: r.left + x.frac * r.width, y: r.top + r.height / 2, target: x.ev === 'pointerdown' ? 'seek' : 'document' } : {};
+            onMessage({ data: { type: 'debug', name: m.name, ...x, ...at } });
+          };
+          for (const x of m.inputs || (m.input ? [m.input] : [])) { if (x.at) scheduleTimeout(() => fire(x), x.at); else fire(x); }
+          sample(); // what the input changed before the next frame, then every frame
           break;
         }
         case 'click': { // the first element matching `sel` (whose text contains `text`, when given)

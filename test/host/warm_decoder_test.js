@@ -313,6 +313,43 @@ const tick = () => new Promise((r) => setImmediate(r));
     s.dispose();
   }
 
+  { // HDR: a hardware tone-mapper that never gave a frame fails the warm process (libplacebo without a Vulkan device, seen
+    // with a 2024 ffmpeg and NVENC): the tone-mapper is dropped, not the warm process, and no per-seek ffmpeg tries it again.
+    // Every stream with the same ffmpeg (one tools object per check) skips it from then on: no second failed start.
+    const tools = { ffmpeg: 'ffmpeg', gpuFilters: new Set(['scale_cuda', 'hwdownload', 'hwupload', 'libplacebo', 'tonemap_opencl']) };
+    const pq = PROBED({ pixFmt: 'yuv420p10le', colorTransfer: 'smpte2084', colorPrimaries: 'bt2020' });
+    const mk = () => {
+      const logs = [];
+      const s = new EncodedStream({
+        tools, file: 'in.mp4', post: () => {}, log: (m) => logs.push(m), remote: false, maxHeight: 1080, encoder: 'h264_nvenc',
+        cpuEncoder: 'libx264', gpuSessions: createGpuSessions(8), probed: pq,
+      });
+      s.fps = 25;
+      s.sizeVideo();
+      const launched = [];
+      s.launch = (t) => { const p = fakeProc([]); p.t = t; p.err = { text: '' }; launched.push(p); return p; };
+      const warmProcs = [];
+      s.spawnWarm = (cmd, a) => { const p = fakeProc(a); warmProcs.push(p); return p; };
+      return { s, logs, launched, warmProcs };
+    };
+    const a = mk();
+    a.s.handle({ type: 'open', view: { w: 1920, h: 1080 } });
+    assert.match(a.warmProcs[0].argv.join(' '), /libplacebo=/);
+    a.warmProcs[0].exit(4294967274); // Invalid argument, before any frame
+    await new Promise((r) => setTimeout(r, 20));
+    assert.ok(a.logs.some((l) => /libplacebo HDR tone-mapping failed/.test(l)), a.logs.join('\n'));
+    assert.ok(!a.logs.some((l) => /kept-running decoder failed/.test(l)), 'the warm process is not blamed');
+    assert.strictEqual(a.launched.length, 0, 'no per-seek ffmpeg with the failed tone-mapper');
+    const again = a.warmProcs.filter((p) => p.argv.includes('pipe:0') && /tonemap_opencl/.test(p.argv.join(' ')));
+    assert.strictEqual(again.length, 1, 'a new warm process with the next tone-mapper');
+    const b = mk();
+    b.s.handle({ type: 'open', view: { w: 1920, h: 1080 } });
+    assert.ok(!/libplacebo=/.test(b.warmProcs[0].argv.join(' ')) && /tonemap_opencl/.test(b.warmProcs[0].argv.join(' ')),
+      'the next video with this ffmpeg skips the failed tone-mapper');
+    a.s.dispose();
+    b.s.dispose();
+  }
+
   // ---- Real ffmpeg: every landing is the exact frame ----------------------------------------------------------
   const ff = spawnSync('ffmpeg', ['-hide_banner', '-encoders'], { encoding: 'utf8', windowsHide: true });
   if (ff.status !== 0) { console.log('warm decoder: no ffmpeg on PATH, real-process checks skipped'); return; }

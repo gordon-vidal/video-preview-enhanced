@@ -555,6 +555,30 @@ The test reads what ffmpeg itself reports (`-debug_ts`, video packets demuxed be
 after for a keyframe target in a 250-frame GOP, every landing the frame whose number is drawn in it (MP4, MKV, and a
 variable-frame-rate MP4 checked against ffmpeg's own accurate seek).
 
+## First picture and seek inputs over a very slow link (measured 2026-11-27)
+
+Layer 3 `remote-slow-link` (simulated SSH link 1 Mb/s, 150 ms RTT, `transcode: always`; generated 4K HEVC 10-bit PQ at
+~80 Mb/s, 10 s GOPs, sound; the 2024 ffmpeg with NVENC). Host log times:
+
+| From the stream start | before | after |
+| --- | --- | --- |
+| libplacebo fails in the kept-running decoder (no Vulkan device; NVENC -22) | 1.2 s | 0.9 s, once per ffmpeg check |
+| libplacebo fails again in the per-seek ffmpeg | +1.3 s | gone |
+| OpenCL: first bytes, quick picture (25 KiB), first frame | +0.9 s | +0.7 s |
+| First frame shown | 3.3 s | 1.6 s |
+| Kept-running decoder for later paused jumps | off for that video | on |
+
+Before the stream starts, 1.3-1.7 s go to resolving the file, the encoder check (0.2-0.6 s, once per session) and the
+page's boot. On the stress clip (`hevc10_pq_2160p25_100mbps_gop250.mp4`, 120 s) the chain cost 3.0 s before, 2.8 s after
+on the first HDR file (that run's libplacebo failure took 1.7 s); later files skip it. Making libplacebo work
+(`-init_hw_device vulkan`) costs 1.4-1.6 s per ffmpeg start on this host against 0.6-0.7 s for OpenCL, so falling back
+is right here.
+
+Seek inputs (page trace, every animation frame): arrows, frame steps, wheel, Home / End / number keys, playing or
+paused, move the bar and the time within 1-3 ms of the input; the ring follows at ~155 ms when the picture is not there.
+The exception was the seek bar: pressed or dragged, the time stayed on the old position until the release (100-600 ms
+in the trace), since with thumbnails the seek waits for the release. Fixed: the time follows the slider.
+
 ## How others do it (research, 2026-11-27)
 
 - **Jellyfin / Plex** restart ffmpeg on a seek outside what was transcoded, force keyframes on segment boundaries,

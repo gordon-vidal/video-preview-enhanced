@@ -76,6 +76,16 @@ const OPUS_KBPS = 128;
 const audioEncoders = new Map();
 // Largest video batch per reply on a remote link (see answer()).
 const REMOTE_BATCH_BYTES = 128 * 1024;
+// HDR tone-mappers that failed with an ffmpeg (src/ffmpeg.js locateTools gives one tools object per check): every stream
+// with it skips them, so a second video does not pay the failed start again (libplacebo without a Vulkan device: ~1 s).
+const BAD_TONEMAP = new WeakMap();
+/** @param {any} tools @returns {Set<string>} */
+function badTonemapFor(tools) {
+  if (!tools || typeof tools !== 'object') return new Set();
+  let bad = BAD_TONEMAP.get(tools);
+  if (!bad) { bad = new Set(); BAD_TONEMAP.set(tools, bad); }
+  return bad;
+}
 
 /**
  * Where ffmpeg restarts for a seek to t (pure). A seek back just before the packets held starts the step-back
@@ -172,7 +182,8 @@ class EncodedStream {
     this.pipelineMode = CPU_ENCODERS.includes(this.encoder) ? 'cpu' : 'gpu-encode';
     this.hdr = isHdr(probed && probed.video); // PQ/HLG/Dolby Vision 8.x: tone-mapped to SDR BT.709 (transcode_args.js)
     this.tonemapKind = null; // the tone-mapping path in use ('qsv', 'vaapi', 'libplacebo', 'opencl', 'cpu')
-    this.badTonemap = new Set(); // paths that failed on this host: the next start picks the next best
+    this.badTonemap = badTonemapFor(tools); // paths that failed with this ffmpeg: the next start picks the next best
+    this.tonemapOk = null; // the tone-mapping path that gave a frame (a later failure is not the tone-mapper's)
     this.rotation = Number(rotation) || 0;
     this.directStreamFailed = false;
     this.hidden = hidden;
@@ -763,6 +774,7 @@ class EncodedStream {
         return;
       }
       if (proc !== this.proc) return;
+      this.tonemapOk = this.tonemapKind;
       if (!this.gotOutput) {
         this.log(`live transcode: first bytes ${Date.now() - t0} ms after start${proc.adopted ? ' (prepared at the end)' : ''}${proc.warm ? ' (kept-running decoder)' : ''}`);
         this.link.noteFirstOutput(Date.now());
@@ -786,7 +798,20 @@ class EncodedStream {
       }
       if (proc !== this.proc) return;
       this.proc = null;
-      if ((code !== 0 || signal) && proc.warm) { this.warmFailed(this.exitReason(proc, code, signal)); return; }
+      if ((code !== 0 || signal) && proc.warm) {
+        const why = this.exitReason(proc, code, signal);
+        // A hardware tone-mapper that has not given a frame yet is the likelier cause: drop it, keep the warm process
+        // (a new one with the next path), rather than turning the warm process off and failing again per seek.
+        if (this.tonemapUnproven()) {
+          this.log(`live transcode: ${this.tonemapKind} HDR tone-mapping failed in the kept-running decoder (${why}); trying the next tone-mapping path`);
+          this.badTonemap.add(/** @type {string} */ (this.tonemapKind));
+          this.disposeWarm('tone-mapping failed');
+          this.restartVideo();
+          return;
+        }
+        this.warmFailed(why);
+        return;
+      }
       if (code !== 0 || signal) {
         const why = this.exitReason(proc, code, signal);
         // Step 0a: a failed hardware tone-mapper (QSV, VA-API, libplacebo, OpenCL) drops to the next best path.
@@ -1584,6 +1609,12 @@ class EncodedStream {
     this.warmOff = 'failed';
     this.disposeWarm('failed');
     this.restartVideo();
+  }
+
+  /** An HDR stream on a hardware tone-mapper that has not given a frame and has not failed before. */
+  tonemapUnproven() {
+    const k = this.tonemapKind;
+    return !!(this.hdr && k && k !== 'cpu' && !this.badTonemap.has(k) && this.tonemapOk !== k);
   }
 
   /** A seek served from the packets held: no ffmpeg restart. */
