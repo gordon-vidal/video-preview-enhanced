@@ -152,7 +152,53 @@ async function chooseBuild(hw, { base = BTBN_DL } = {}) {
     source: 'BtbN/FFmpeg-Builds', label: `ffmpeg ${pick.major}.${pick.minor} (${plat}, LGPL)`, licence: 'LGPL-2.1',
     page: 'https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest',
     sizeMB: downloadSizeMB(hw.os, hw.arch), note: gpu.length ? `GPU decoding via ${gpu.join(', ')}` : 'CPU decoding',
-    files: [pick.asset],
+    files: [pick.asset], line: { major: pick.major, minor: pick.minor },
+  };
+}
+
+/**
+ * The release line of an ffmpeg from its `-version` banner ('ffmpeg version n9.0-12-g...', '8.1-full_build...'), or
+ * null for master and dated git builds, whose NVENC headers the banner does not tell.
+ * @param {string} version
+ * @returns {{ major: number, minor: number }|null}
+ */
+function ffmpegLine(version) {
+  const m = /ffmpeg version n?(\d+)\.(\d+)/i.exec(String(version || ''));
+  return m ? { major: Number(m[1]), minor: Number(m[2]) } : null;
+}
+
+const above = (a, b) => a.major > b.major || (a.major === b.major && a.minor > b.minor);
+/** The driver a release line's NVENC needs (nvidiaLineMax in reverse): 9.x 610, 8.x 570. */
+const lineDriver = (l) => (l.major >= 9 ? '610' : l.major >= 8 ? '570' : null);
+
+/**
+ * The download entry of the setup list. Recommended when no ffmpeg is found, and when the ffmpeg found cannot encode
+ * on the GPU (NVENC) with this NVIDIA driver (the encoder check saw it: driverNotice, or its release line is newer than
+ * the driver allows) while the download is the line that matches the driver (chooseBuild capped it).
+ * @param {{ build: any, found?: { version?: string, source?: string }|null, nvidiaDriver?: string|null,
+ *   driverNotice?: { minDriver?: string|null }|null }} o
+ * @returns {{ id: 'build', label: string, description: string, detail: string, recommended: boolean }}
+ */
+function downloadItem({ build, found = null, nvidiaDriver = null, driverNotice = null }) {
+  let why = '';
+  const cap = nvidiaLineMax(nvidiaDriver);
+  // An ffmpegPath setting wins over a downloaded build (extension.js tools()), so the download would change nothing.
+  if (found && found.source !== 'setting' && cap && build.line && !above(build.line, cap)) {
+    const have = ffmpegLine(found.version);
+    const tooNew = have && above(have, cap);
+    if (driverNotice || tooNew) {
+      const need = driverNotice && driverNotice.minDriver ? String(driverNotice.minDriver).replace(/\.0+$/, '')
+        : tooNew ? lineDriver(have) : null;
+      why = `Matches NVIDIA driver ${nvidiaDriver}, so GPU encoding (NVENC) works. The ffmpeg you have${have ? ` (${have.major}.${have.minor})` : ''} `
+        + `needs ${need ? `driver ${need} or newer` : 'a newer driver'} for it. `;
+    }
+  }
+  const recommended = !found || !!why;
+  return {
+    id: 'build', label: `$(cloud-download) Download portable ffmpeg${recommended ? '  (recommended)' : ''}`,
+    description: `${build.label}, ~${build.sizeMB} MB from ${build.source}, no admin rights`,
+    detail: `${why}Real-time 4K, HEVC 10-bit, AV1 and ProRes. ${build.note ? `${build.note}. ` : ''}Checked against the SHA-256 listed in the same release; stored in the extension's folder.`,
+    recommended,
   };
 }
 
@@ -269,4 +315,4 @@ function packageManagerCommand() {
   return 'sudo apt install ffmpeg   # or: sudo dnf install ffmpeg / sudo pacman -S ffmpeg';
 }
 
-module.exports = { chooseBuild, installBuild, packageManagerCommand, downloadSizeMB, setAgentFor, prune, findBinary, nvidiaLineMax, BTBN_DL };
+module.exports = { chooseBuild, downloadItem, ffmpegLine, installBuild, packageManagerCommand, downloadSizeMB, setAgentFor, prune, findBinary, nvidiaLineMax, BTBN_DL };

@@ -454,7 +454,7 @@ function maybeShowDriverNotice(t, enc, nvidiaDriver) {
     notice, installedDriver: nvidiaDriver, host: remote ? os.hostname() : null, otherGpuEncoder: !!enc.hw,
   });
   log(`[live transcode] ${model.text}${notice.requiredApi && notice.foundApi ? ` (NVENC API ${notice.requiredApi} vs ${notice.foundApi})` : ''}`);
-  driverNoticeUi.showDriverNotice(vscode, model, { setupFfmpeg }).catch((e) => log(`driver notice: ${e.stack || e}`));
+  driverNoticeUi.showDriverNotice(vscode, model, { setupFfmpeg: () => setupFfmpeg({ driverNotice: notice }) }).catch((e) => log(`driver notice: ${e.stack || e}`));
 }
 
 /** Shared hardware-first stream selection for the player and Compare. */
@@ -501,8 +501,11 @@ async function confirmDownload(build) {
   }
 }
 
-/** Setup for the optional native decoder: a build matched to this machine, or the user's own. */
-async function setupFfmpeg() {
+/**
+ * Setup for the optional native decoder: a build matched to this machine, or the user's own.
+ * @param {{ driverNotice?: any }} [opts] driverNotice: the NVENC driver mismatch that led here (driver notice)
+ */
+async function setupFfmpeg(opts = {}) {
   if (vscode.env.remoteName && vscode.env.remoteName !== 'wsl' && remoteff.supported(hostPlatform(), hostArch())) {
     return downloadRemoteFfmpeg();
   }
@@ -554,10 +557,9 @@ async function setupFfmpeg() {
   const now = t ? `${t.version.replace(/ Copyright.*/, '')} [${t.source}]` : 'not installed — the built-in decoder plays everything up to about 1080p';
   const items = [];
   if (build) {
-    items.push({
-      id: 'build', label: `$(cloud-download) Download portable ffmpeg${t ? '' : '  (recommended)'}`, description: `${build.label}, ~${build.sizeMB} MB from ${build.source}, no admin rights`,
-      detail: `Real-time 4K, HEVC 10-bit, AV1 and ProRes. ${build.note ? `${build.note}. ` : ''}Checked against the SHA-256 listed in the same release; stored in the extension's folder.`,
-    });
+    // Recommended when the ffmpeg found can't encode on the GPU with this NVIDIA driver and the download matches it.
+    const driverNotice = opts.driverNotice || transcodeProbe.knownDriverNotice(t, globalState, info.nvidiaDriver);
+    items.push(setup.downloadItem({ build, found: t, nvidiaDriver: info.nvidiaDriver, driverNotice }));
   } else {
     const blocked = buildError && proxy.looksBlocked({ message: buildError });
     items.push({ id: 'none', label: '$(warning) No ffmpeg download available', detail: `${buildError}${blocked ? ' (blocked? set http.proxy, or download ffmpeg in a browser and use it below)' : ''}` });

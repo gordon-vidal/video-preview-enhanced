@@ -165,6 +165,21 @@ async function encoderFor(tools, run, store, log = () => {}, opts = {}) {
   return entry.result;
 }
 
+/**
+ * The NVENC driver mismatch the encoder check last saw for this ffmpeg and driver, or null (the setup list marks a
+ * matching download as recommended with it). A CPU fallback is kept only in memory, so both places are read.
+ * @param {{ ffmpeg: string, version?: string }|null} tools
+ * @param {any} store VS Code globalState (Memento) or null
+ * @param {string|null} [nvidiaDriver]
+ */
+function knownDriverNotice(tools, store, nvidiaDriver) {
+  if (!tools) return null;
+  const key = encoderCacheKey(tools, nvidiaDriver);
+  const mem = encoderMem.get(key);
+  const rec = (mem && mem.choice) || (store && (store.get(ENCODER_KEY) || {})[key]) || null;
+  return (rec && rec.driverNotice) || null;
+}
+
 /** A runtime failure can be input-specific. Reprobe on next open. */
 function encoderFailed(tools, choice, nvidiaDriver) {
   const entry = encoderMem.get(encoderCacheKey(tools, nvidiaDriver));
@@ -180,6 +195,7 @@ module.exports = {
   encoderCacheKey,
   encoderFor,
   encoderFailed,
+  knownDriverNotice,
   ENCODER_KEY,
   ENCODER_CACHE_VER,
 };
