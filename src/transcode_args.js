@@ -326,6 +326,33 @@ function buildVideoPipeline(o) {
 }
 
 /**
+ * Where a re-encoding start at t (seconds from the file's start) has ffmpeg seek, and which frames it keeps.
+ *
+ * ffmpeg's input `-ss X` seeks to the keyframe at or before X and drops the frames before X. Starting at `t - 0.0005`
+ * (so a rounded page time never drops the target frame) put a target on a keyframe just after X: ffmpeg seeked to the
+ * keyframe before and decoded a whole GOP for nothing (1.8-2.5 s instead of 0.34-0.62 s on a 4K H.264 clip with 12 s
+ * GOPs). So the seek point is `t + 0.0005` (the keyframe at or before the target) and the frames before `t - 0.0005` are
+ * dropped by a select right after the decoder instead (`-noaccurate_seek`), with times moved so that zero is
+ * `t - 0.0005` as before: the same frames come out, on the same output grid.
+ *
+ * Matroska with B-frames: ffmpeg moves the seek point 3/23 s further back for formats that do not seek by PTS, when any
+ * stream has a reorder delay (fftools ffmpeg_demux.c, "dts_heuristic"). Matroska's cues are PTS, so that only reaches
+ * the GOP before for targets up to 3/23 s after a keyframe; the seek point is moved forward by the same amount.
+ * (MP4 seeks by PTS; other containers keep ffmpeg's margin.)
+ *
+ * @param {number} t @param {{ formatName?: string, bFrames?: boolean }} [src]
+ * @returns {{ input: string[], vf: string }} input: before -i; vf: the filters to put first (empty for t <= 0)
+ */
+function seekArgs(t, { formatName = '', bFrames = false } = {}) {
+  if (!(t > 0)) return { input: [], vf: '' };
+  const margin = /^matroska/.test(formatName) && bFrames ? 3 / 23 : 0;
+  const seek = Number((t + 0.0005 + margin).toFixed(6));
+  // Output zero as before (t - 0.0005); frames are kept from there on.
+  const shift = (seek - Math.max(0, t - 0.0005)).toFixed(6);
+  return { input: ['-ss', seek.toFixed(6), '-noaccurate_seek'], vf: `select='gte(t\,-${shift})',setpts=PTS+${shift}/TB` };
+}
+
+/**
  * Builds ffmpeg arguments for host-side Direct Stream (lossless H.264 bitstream copy without
  * video re-encoding). Uses `-c:v copy -bsf:v h264_mp4toannexb` inside a zero-delay MPEG-TS pipe
  * (`-f mpegts`) with `-copyts -start_at_zero -avoid_negative_ts disabled` so real source PTS
@@ -434,6 +461,7 @@ module.exports = {
   toneMapSupport,
   buildVideoPipeline,
   buildDirectStreamArgs,
+  seekArgs,
   defaultCodecLevel,
   parseSpsProfileLevel,
   pipelineLabel,

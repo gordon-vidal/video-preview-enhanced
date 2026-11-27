@@ -17,6 +17,7 @@ const {
   CPU_ENCODERS,
   buildVideoPipeline,
   buildDirectStreamArgs,
+  seekArgs,
   defaultCodecLevel,
   pipelineLabel,
   toneMapSupport,
@@ -533,15 +534,17 @@ class EncodedStream {
         '-bsf:v', 'h264_metadata=aud=insert', ...WARM_OUTPUT, 'pipe:1');
       return args;
     }
-    if (t > 0) args.push('-ss', (audio && exactAudio ? t : Math.max(0, t - 0.0005)).toFixed(audio && exactAudio ? 6 : 4));
-    args.push('-noautorotate', '-protocol_whitelist', 'file', '-i', this.file);
+    // Video: from the keyframe at or before t, never the one before it (transcode_args.js seekArgs).
+    const seek = audio ? { input: [], vf: '' } : seekArgs(t, { formatName: this.pr.formatName, bFrames: !!v.bFrames });
+    if (audio && t > 0) args.push('-ss', (exactAudio ? t : Math.max(0, t - 0.0005)).toFixed(exactAudio ? 6 : 4));
+    args.push(...seek.input, '-noautorotate', '-protocol_whitelist', 'file', '-i', this.file);
     // Keep the outputs in separate processes: a full PCM pipe must not stall video (or vice
     // versa), and changing the video encoder must not move the audio sample clock.
     if (audio) return args.concat('-map', `0:${this.pr.audio.index}`, '-af', `aresample=${AUDIO_RATE}:async=1:first_pts=0`,
       '-ac', '2', '-ar', String(AUDIO_RATE), ...(this.audioEncoder
         ? [...opusArgs(this.audioEncoder), '-page_duration', '20000', '-f', 'opus'] : ['-f', 's16le']), 'pipe:1');
     // Timestamps: both outputs follow the stream's timestamps from the output's zero (the seek target).
-    args.push('-map', `0:${v.index}`, '-vf', pipe.vf,
+    args.push('-map', `0:${v.index}`, '-vf', seek.vf ? `${seek.vf},${pipe.vf}` : pipe.vf,
       ...(this.tools && this.tools.legacy ? ['-vsync', 'cfr'] : ['-fps_mode', 'cfr']), '-r', String(this.fps), ...pipe.encArgs,
       '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
       '-bsf:v', 'h264_metadata=aud=insert', '-f', 'h264', 'pipe:1');

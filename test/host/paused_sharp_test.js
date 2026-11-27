@@ -99,13 +99,15 @@ function make({ remote = true, encoder = 'libx264', hdr = false } = {}) {
   { // The sharp frame: that frame alone (on the stream's frame grid), the sharp arguments, the stream's state untouched.
     const { s, posted, jobs } = make({ hdr: true });
     s.badTonemap.add('opencl');
+    const live = s.args(10, false); // the stream's own start at frame 250 (10.000 s)
     s.args(0, false); // the live stream's pipeline, as recorded
     const before = [s.pipelineMode, s.tonemapKind, s.gpuDecode];
     s.pipelineMode = 'gpu-encode'; // what the live stream reports must stay, whatever the sharp encode builds
     s.sharp({ id: 3, t: 10.019 }); // within frame 250 at 25 fps
     assert.strictEqual(jobs.length, 1);
     const argv = jobs[0].argv;
-    assert.strictEqual(argv[argv.indexOf('-ss') + 1], '9.9995', 'frame 250 (10.000 s), as the stream would seek');
+    assert.strictEqual(argv[argv.indexOf('-ss') + 1], live[live.indexOf('-ss') + 1], 'frame 250 (10.000 s), as the stream would seek');
+    assert.strictEqual(argv[argv.indexOf('-vf') + 1].split(',setpts')[0], live[live.indexOf('-vf') + 1].split(',setpts')[0], 'and keeps the same frames');
     assert.strictEqual(argv[argv.indexOf('-frames:v') + 1], '1');
     assert.strictEqual(argv[argv.indexOf('-crf') + 1], '11');
     assert.ok(argv.join(' ').includes('scale') && /tonemap/.test(argv.join(' ')), 'the stream\'s scale and tone-mapping');

@@ -400,8 +400,8 @@ free: no warm process, the stream behaves as before); remote and local Live tran
   with MPEG-TS on stdin and stdout. A paused start (the open, a paused jump, a restored region continuing) is a
   *segment*: a copy remux (`-ss t+¼ frame -copyts -c copy -f mpegts`, no decoder, ~25 ms to its first bytes) from the
   keyframe at or before the target, fed in by the host. Seeking a quarter frame past the target makes a target on a
-  keyframe start there (`-ss t-0.0005`, as the per-seek path does, decodes the whole previous GOP: on a 4K H.264 clip
-  with 12 s GOPs, 1.8-2.5 s instead of 0.34-0.62 s; worth fixing in the per-seek path separately).
+  keyframe start there (`-ss t-0.0005`, as the per-seek path did, decodes the whole previous GOP: on a 4K H.264 clip
+  with 12 s GOPs, 1.8-2.5 s instead of 0.34-0.62 s; the per-seek path is fixed too, see "Seek onto a keyframe" below).
 - **Times decide everything.** The remux's `setts` moves each packet onto a "warm clock": the target at S (past
   everything fed so far), the frames after it at their exact offset from S, the frames before it (decoded only as
   references) to whole frames half a frame off the grid. A `select` right after the decoder keeps on-grid frames only,
@@ -444,6 +444,34 @@ free: no warm process, the stream behaves as before); remote and local Live tran
 The saving is ffmpeg's start-up (open, probe, CUDA init: ~100-250 ms); the decode from the keyframe to the target stays
 and dominates long GOPs (levels 3-4 remove it). CPU-decoded sources gain little. A new process costs ~50-100 ms more
 than one ffmpeg per jump once (remux plus probing its input), paid at the first paused start of a video.
+
+## Seek onto a keyframe (fixed 2026-11-27)
+
+Every re-encoding ffmpeg start (a seek, a fill, a sharp frame, the restart after a fallback) used `-ss t-0.0005` so a
+rounded page time could not drop the target frame. ffmpeg's input seek goes to the keyframe at or before that point, so
+a target exactly on a keyframe started one GOP earlier and decoded it for nothing. And for formats that do not seek by
+PTS, ffmpeg moves the seek point back another 3/23 s whenever a stream has B-frames (fftools `ffmpeg_demux.c`,
+"dts_heuristic"); Matroska's cues are PTS, so in MKV every target up to 0.13 s after a keyframe paid the same.
+
+Now (`src/transcode_args.js` seekArgs): ffmpeg seeks to `t + 0.0005` (plus 3/23 s for Matroska with B-frames, from the
+probe's `has_b_frames`) with `-noaccurate_seek`, and a `select` right after the decoder drops the frames before
+`t - 0.0005`, with `setpts` putting time zero where it was: the same frames come out on the same output grid, from the
+right keyframe. MP4 seeks by PTS and needs no margin; other containers keep ffmpeg's. Direct Stream (a copy, no
+decoder) and native ffmpeg keep their own `-ss`. If a future ffmpeg dropped the Matroska margin, the test
+`test/host/seek_keyframe_test.js` (targets just before a keyframe, MKV) would fail rather than the player landing late.
+
+Measured (scratch, CPU decode, the stream's own command to its first bytes, median of 3; 4K H.264 25 fps, 3 B-frames,
+12 s GOPs):
+
+| Target | MP4 before | MP4 after | MKV before | MKV after |
+| --- | --- | --- | --- | --- |
+| On a keyframe (frames 300, 600) | 1844 / 1446 ms | 403 / 293 ms | 1347 / 1139 ms | 226 / 245 ms |
+| 1 and 3 frames after one | 314 / 368 ms | 318 / 388 ms | 1418 / 1369 ms | 276 / 293 ms |
+| Mid-GOP (frame 450) | 654 ms | 665 ms | 654 ms | 632 ms |
+
+The test reads what ffmpeg itself reports (`-debug_ts`, video packets demuxed before the first frame): 274 before, 25
+after for a keyframe target in a 250-frame GOP, every landing the frame whose number is drawn in it (MP4, MKV, and a
+variable-frame-rate MP4 checked against ffmpeg's own accurate seek).
 
 ## How others do it (research, 2026-11-27)
 

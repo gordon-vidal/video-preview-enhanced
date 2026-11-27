@@ -368,6 +368,8 @@ async function probeRun(tools, input, signal) {
       // decoder (src/warm-decoder.js) finds frames by their time on that grid.
       cfr: !!v.avg_frame_rate && v.avg_frame_rate === v.r_frame_rate && v.avg_frame_rate !== '0/0',
       fileStart: j.format && Number.isFinite(Number(j.format.start_time)) ? Number(j.format.start_time) : null,
+      // Any stream with a reorder delay (B-frames): ffmpeg then seeks some containers earlier (transcode_args.js seekArgs).
+      bFrames: streams.some((s) => s.codec_type === 'video' && Number(s.has_b_frames) > 0),
     } : null,
     audio: a ? { index: a.index, codec: a.codec_name, channels: a.channels, sampleRate: Number(a.sample_rate) || 0, bitRate: num(a.bit_rate) } : null,
     counts: { audio: streams.filter((s) => s.codec_type === 'audio').length, sub: streams.filter((s) => s.codec_type === 'subtitle').length },
