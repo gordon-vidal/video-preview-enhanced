@@ -874,6 +874,37 @@ test('natural end: Loop and an A-B range restart the decoder (seek and play), th
   });
 });
 
+test('decoding stopped before the end: no Loop, Autoplay or jump to the end; a notice offers Retry from there', () => {
+  withPage(({ doc, app, send, made }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    app.ui.dispatch('loop');
+    app.ui.dispatch('playPause');
+    p.hooks.onFrame(120);
+    // The decoder stopped itself (its data ran out early, or it kept failing there) and says so.
+    p.playing = false;
+    const seeks = seeksOf(p).length;
+    const plays = () => p.calls.filter((c) => c[0] === 'play').length;
+    const before = plays();
+    p.hooks.onEnded({ natural: false, stopped: true, t: 4.8 });
+    assert.strictEqual(seeksOf(p).length, seeks, 'Loop does not start over, the bar does not jump to the end');
+    assert.strictEqual(plays(), before, 'nothing plays');
+    const t = S.getTab(app.ui.getState());
+    assert.strictEqual(t.playing, false, 'the bar is paused');
+    assert.strictEqual(t.frame, 120, 'and stays on the last picture');
+    const notice = doc.getElementById('notice');
+    assert.strictEqual(notice.hidden, false, 'a notice says so');
+    assert.match(doc.getElementById('noticeText').textContent, /stopped at 0:04/);
+    const retry = doc.getElementById('noticeAction');
+    assert.strictEqual(retry.hidden, false);
+    assert.strictEqual(retry.textContent, 'Retry');
+    retry.onclick();
+    assert.deepStrictEqual(seeksOf(p).slice(-1), [120], 'Retry: back to where it stopped');
+    assert.strictEqual(plays(), before + 1, 'and playing from there');
+    assert.strictEqual(notice.hidden, true, 'the notice closes');
+  });
+});
+
 test('the full clip descriptor (size, native ...) reaches the decoder and the adapter from every host message', () => {
   withPage(({ app, send, made }) => {
     send({
