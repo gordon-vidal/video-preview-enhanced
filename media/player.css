@@ -4,8 +4,8 @@
    add a shadow level (--vpe-shadow-low / -high), pill corners (999px) or a border colour. A new surface joins this list
    instead of styling itself (test/host/unified_css_test.js checks it). ==== */
 #notice, #toast, #overlay.error, #pxread, #stats, #goto, #scopes, .panel, #sheet .sheet, #ctxmenu, #menu, .vpe-pop,
-.hover-pop, .add-pop, .tile-stats, .sync-pill, .nudge, .pill, .tile-bottom-pill, .tbtn, .addcell, .skeleton-label,
-.edge-shelf, .rail-collapse-tab {
+.hover-pop, .tile-stats, .sync-pill, .nudge, .pill, .tile-bottom-pill, .tbtn, .addcell, .skeleton-label,
+.ended-badge, .edge-shelf, .rail-collapse-tab {
   background: var(--vpe-surface-float);
   backdrop-filter: var(--vpe-card-blur);
   -webkit-backdrop-filter: var(--vpe-card-blur);
@@ -557,7 +557,6 @@ body.idle { cursor: none; }
 .cap-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--vscode-focusBorder); flex: none; }
 /* A toggled-on bar button (a layout, Sync offsets): outlined like the Compare capsule's active state. */
 #bar .ib.active { background: var(--vpe-fill-subtle); border: 1px solid var(--vpe-bd-active); }
-/* "Open videos to add to comparison" while the Compare capture is on and one video is open (#capBanner). */
 #cog svg { transition: transform 200ms ease-out; }
 #cog.open svg { transform: rotate(45deg); }
 #seek, #volume, #speedSlider { touch-action: none; }
@@ -695,14 +694,6 @@ body.vscode-high-contrast .panel .row:hover { outline: 1px dashed var(--vscode-c
 body.vscode-high-contrast .panel .chip[aria-pressed="true"], body.vscode-high-contrast .panel .chip[aria-checked="true"] { outline: 1px solid var(--vscode-contrastActiveBorder, transparent); }
 @media (prefers-reduced-motion: reduce) { #cog svg { transition: none; } }
 #sheet .srow .grow { white-space: normal; }
-/* Add mode (compare from the Explorer): a quiet line at the top while it is on. */
-/* Its Stop button: the only part of the hint that takes clicks. */
-#stopAddBtn {
-  flex: none; pointer-events: auto; margin: -2px -6px -2px 8px; padding: 1px 8px; font: inherit; cursor: pointer;
-  border-radius: 4px; border: 1px solid var(--vscode-button-border, transparent);
-  background: var(--vpe-chip-bg); color: var(--vpe-chip-fg);
-}
-#stopAddBtn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vpe-row-hover)); }
 
 /* ==== Right-click menu: #ctxmenu (media/ctxmenu.js, docs/notes/context-menu.md) ====
    Same tokens as .panel (settings), so it matches the ⚙ panel and VS Code's own menus in every theme.

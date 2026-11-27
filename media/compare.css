@@ -53,12 +53,11 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 }
 .tbtn {
   height: var(--vpe-btn-h); min-width: var(--vpe-btn-h); padding: 0 5px; border-radius: var(--vpe-btn-radius);
-  color: var(--vscode-foreground, #e4e4e7);
   font: 600 11px/1 var(--vscode-font-family, system-ui, sans-serif);
   cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
   transition: background 120ms, color 120ms, border-color 120ms;
 }
-.tbtn:hover { background: var(--vpe-hover); color: var(--vscode-foreground); border-color: var(--vpe-bd-active); }
+.tbtn:hover { background: var(--vpe-hover); border-color: var(--vpe-bd-active); }
 .tbtn.spot svg rect { transition: opacity 120ms ease; }
 .tbtn.spot:hover svg rect, .tbtn.spot:focus-visible svg rect { opacity: 1; }
 .tbtn.rm:hover, .tbtn.rm.confirm {
@@ -73,7 +72,6 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: inline-flex; align-items: center; gap: 5px;
   max-width: calc(100% - 70px); height: 26px; padding: 0 5px 0 4px; box-sizing: border-box;
   border-radius: 999px;
-  color: var(--vscode-foreground, #f4f4f5);
   font: inherit; font-size: 11.5px;
 }
 .cell.split .pill { max-width: calc(50% - 14px); }
@@ -85,7 +83,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 .pill .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .pill .fr { color: var(--vpe-dim); font-size: 10.5px; flex: none; }
 .zoom-grip {
-  display: none; color: rgba(255, 255, 255, 0.65); font-size: 11px; letter-spacing: -1px;
+  display: none; color: var(--vpe-dim); font-size: 11px; letter-spacing: -1px;
   padding: 0 2px; line-height: 1; flex: none;
 }
 #stage.zoomed .zoom-grip { display: inline-flex; }
@@ -136,7 +134,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 .tile-stats .igrid { display: grid; grid-template-columns: 74px minmax(0, 1fr); row-gap: 5px; column-gap: 10px; margin: 0; font-size: 12px; line-height: 1.35; }
 .tile-stats .igrid dt { color: var(--vpe-dim); }
 .tile-stats .igrid dd { margin: 0; overflow-wrap: anywhere; }
-.tile-stats .igrid dd.diff { color: #fbbf24; font-weight: 600; }
+.tile-stats .igrid dd.diff { color: var(--vscode-editorWarning-foreground, #cca700); font-weight: 600; }
 
 /* On-demand Sync mode per-tile offset stepper (bottom-right, hidden unless #stage.sync-mode). */
 .sync-pill, .nudge {
@@ -144,7 +142,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: none; align-items: center; gap: 3px; height: 24px; padding: 0 4px;
   border-radius: 999px;
   border: 1px solid var(--vpe-bd-active);
-  font-family: var(--vpe-mono, monospace); font-size: 11px; color: var(--vscode-foreground, #e4e4e7);
+  font-family: var(--vpe-mono, monospace); font-size: 11px;
 }
 .nudge.left { left: 7px; right: auto; top: 38px; bottom: auto; }
 .nudge.right.below { top: 38px; bottom: auto; }
@@ -157,7 +155,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 }
 .sync-pill button:hover, .nudge button:hover { background: var(--vpe-hover); color: var(--vscode-foreground, #fff); }
 .sync-pill .offv, .nudge .offv { background: transparent; min-width: 30px; padding: 0 4px; font-family: var(--vpe-mono, monospace); font-size: 11px; }
-.sync-pill .offv:hover, .nudge .offv:hover { background: rgba(255, 255, 255, 0.12); color: inherit; }
+.sync-pill .offv:hover, .nudge .offv:hover { background: var(--vpe-hover); color: inherit; }
 
 /* Dense cells (5+ tiles): compact pills and buttons so small tiles stay readable. */
 #cells.dense .cell { isolation: isolate; }
@@ -181,12 +179,8 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   z-index: 5; display: flex; gap: 2px; opacity: 0; pointer-events: none;
 }
 .cell:focus-within .move { opacity: 1; pointer-events: auto; }
-.move button {
-  display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px;
-  background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-editorWidget-foreground, #e8e8e8); cursor: pointer;
-}
-.move button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, #454545); }
-.move button:disabled { color: var(--vscode-disabledForeground, #999); cursor: default; }
+/* The arrows are tile buttons (.tbtn); the end that cannot move further rests dimmed, without a hover. */
+.move .tbtn:disabled { opacity: 0.5; cursor: default; pointer-events: none; }
 
 /* Out-of-range / Ended clip overlay: quiet dark matte with subtle diagonal hatch. */
 .ended-ov {
@@ -199,11 +193,7 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   display: none; align-items: center; justify-content: center;
 }
 .cell.ended .ended-ov { display: flex; }
-.ended-badge {
-  font-size: 11px; color: #8a8a93;
-  background: rgba(0, 0, 0, 0.48); border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 3px 9px; border-radius: 999px;
-}
+.ended-badge { font-size: 11px; padding: 3px 9px; border-radius: 999px; }
 .oor {
   position: absolute; left: 0; right: 0; top: 12px; text-align: center; pointer-events: none;
   color: #8a8a8a; font-size: 13px; z-index: 3;
@@ -238,17 +228,8 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
               width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
 }
 .skeleton-label {
-  color: var(--vscode-foreground, #f4f4f5);
   border: 1px solid var(--vpe-bd-active);
   padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
-}
-.skeleton-sub {
-  position: absolute; border-radius: 6px;
-  border: 1.5px dashed rgba(148, 163, 184, 0.45);
-  background: rgba(148, 163, 184, 0.08);
-  pointer-events: none; z-index: 25;
-  transition: left 140ms cubic-bezier(0.2, 0, 0, 1), top 140ms cubic-bezier(0.2, 0, 0, 1),
-              width 140ms cubic-bezier(0.2, 0, 0, 1), height 140ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms ease;
 }
 
 /* The first unused slot in Equal Grid has a centered Add video button (quiet at rest, full on hover or focus, so an empty
@@ -259,11 +240,11 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 .addcell {
   display: inline-flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 10px 16px;
-  color: var(--vscode-foreground, #d4d4d8); font: inherit; font-size: 12px; cursor: pointer;
+  font: inherit; font-size: 12px; cursor: pointer;
   opacity: 0.6; transition: opacity 120ms, background 120ms, border-color 120ms, color 120ms;
 }
 .cell.add:hover .addcell, .addcell:hover, .addcell:focus-visible { opacity: 1; }
-.addcell:hover { background: rgba(255, 255, 255, 0.14); color: #fff; border-color: rgba(255, 255, 255, 0.28); }
+.addcell:hover { background: var(--vpe-hover); border-color: var(--vpe-bd-active); }
 #cells.dense .addcell {
   box-sizing: border-box; max-width: 100%; gap: 3px; padding: 4px 8px; border-radius: 6px; font-size: 11px;
 }
@@ -275,24 +256,6 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
   position: absolute; top: 50%; width: 26px; height: 26px; margin-top: -13px; box-sizing: border-box; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; color: #fff;
   background: rgba(20, 20, 20, 0.86); border: 2px solid rgba(255, 255, 255, 0.85);
-}
-
-/* Add popover anchored above the Compare capsule in the player bar (the shared card surface, docs/DESIGN.md). */
-.add-pop {
-  position: fixed; bottom: 52px; right: 120px; z-index: 15; width: 240px; box-sizing: border-box;
-  color: var(--vpe-panel-fg, var(--vscode-foreground, #e4e4e7)); padding: 5px;
-  box-shadow: var(--vpe-shadow-high);
-}
-.add-pop button {
-  width: 100%; text-align: left; background: transparent; border: 0; color: inherit;
-  padding: 7px 9px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer;
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
-}
-.add-pop button:hover, .add-pop button:focus-visible { background: var(--vpe-row-hover, rgba(255, 255, 255, 0.09)); }
-.add-pop .kbd { font-size: 10.5px; color: var(--vpe-dim, #94a3b8); font-family: var(--vpe-mono, monospace); }
-.add-pop .note {
-  font-size: 11px; color: var(--vpe-dim, #94a3b8); padding: 6px 9px 4px;
-  border-top: 1px solid var(--vpe-sep, rgba(255, 255, 255, 0.08)); margin-top: 4px; line-height: 1.35;
 }
 
 /* The Compare capsule (src/bar.js #cmpGroup, shown with two videos or more): the layouts, Swap, Sync and the panel button
@@ -349,14 +312,12 @@ body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
   background: var(--vpe-chip-bg); color: var(--vpe-chip-fg); border: 1px solid var(--vpe-panel-border);
 }
 .panel.info .seg button[aria-pressed="true"] { background: var(--vpe-on-bg); color: var(--vpe-on-fg); border-color: var(--vpe-accent); }
-.panel .unitrow { display: flex; align-items: center; gap: 10px; padding: 8px 12px 0; }
-.panel .unitrow .seg { flex: 1; }
 .panel .readout.off { font-size: 18px; }
 
 /* A tile's right-click menu (the shared card surface, docs/DESIGN.md). */
 #menu {
   position: fixed; z-index: 16; min-width: 250px; padding: 4px 0; display: flex; flex-direction: column;
-  color: var(--vpe-panel-fg, var(--vscode-foreground)); box-shadow: var(--vpe-shadow-high);
+  box-shadow: var(--vpe-shadow-high);
   font-size: 13px;
 }
 #menu .mi {
@@ -378,7 +339,7 @@ body.vscode-high-contrast-light #cells.dense :is(.pill, .sync-pill) {
   outline: 1px solid var(--vscode-contrastBorder, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
-  .ov, .addcell, .skeleton, .skeleton-sub { transition: none; }
+  .ov, .addcell, .skeleton { transition: none; }
 }
 
 /* ---- The folder rail in Compare (media/folder-rail.css has the rail; docs/notes/folder-rail.md): beside or over the

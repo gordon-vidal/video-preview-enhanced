@@ -54,7 +54,8 @@ What exists today; build new UI from these first.
 | `--vpe-panel-border` | VS Code menu / widget border | The 1 px border of every card |
 | `--vpe-panel-fg` | VS Code menu foreground | Text on cards |
 
-Change a value here, never per surface. The one exception is the overlay Folder Rail's side shadow (it falls to one
+Change a value here, never per surface. Every class and id in the style sheets must still be made by the page's code
+(`unified_css_test.js` fails on a dead rule). The one exception is the overlay Folder Rail's side shadow (it falls to one
 side only).
 
 **The card rule.** One rule near the top of `player.css` lists every card (`#notice, #toast, #overlay.error, .panel,
@@ -73,8 +74,12 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
 
 - **Accent blue only from VS Code:** `--vscode-button-background` for the one main action of a notice or dialog,
   `--vscode-focusBorder` for focus rings and "a mode is on" marks (the Add mode dot, the drop frame).
-- No hard-coded colours on cards. Exceptions that sit on the picture itself: the drop frame and the shortcut sheet's
-  backdrop (dimmers, not cards), the Compare divider and the A–B pins.
+- No hard-coded colours on cards or the bar, and a card's text colour comes only from the card rule
+  (`--vpe-panel-fg`; a member does not repaint it). Fixed black and white are allowed only on the picture itself:
+  the picture's own black (video, tile canvases, seek thumbnails, scope plots), dimmers over it (drop frame, shortcut
+  sheet backdrop, play flash, the ended-clip matte) and marks drawn on it (Compare divider, Spotlight splitter, tile
+  edges, a lifted tile's shadow, A–B pins, pixel grid, subtitles, status text). `unified_css_test.js` holds that list.
+- A mismatch or warning highlight inside a card uses VS Code's token (`--vscode-editorWarning-foreground`).
 - Warnings and errors are said in words; a notice has no accent colour or icon.
 
 ## Buttons

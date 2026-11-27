@@ -2499,7 +2499,7 @@
       return [-1, 1].map((d) => {
         const label = `Move ${esc(clipName(id))} ${d < 0 ? 'earlier' : 'later'}`;
         const dis = pos + d < 0 || pos + d >= t.tiles.length ? ' disabled' : '';
-        return `<button type="button" data-act="move" data-i="${v}" data-d="${d}" aria-label="${label}" title="${label}"${dis}>${d < 0 ? ICONS.up : ICONS.down}</button>`;
+        return `<button type="button" class="tbtn" data-act="move" data-i="${v}" data-d="${d}" aria-label="${label}" title="${label}"${dis}>${d < 0 ? ICONS.up : ICONS.down}</button>`;
       }).join('');
     }
 

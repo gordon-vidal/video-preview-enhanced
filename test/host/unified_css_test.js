@@ -172,7 +172,7 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   // scoped to Compare (body.compare, a high-contrast body, a Compare-only ancestor, or a #stage state Compare sets).
   const PLAYER_OWNED = /^(html|body|:root|\*|video|canvas|\[hidden\]|#stage|#canvas|#bar|#row|#toast|#overlay|#message|#hint|#action|#seekRow|#seek|#tip|#notice|#subs|#main|#panel|#sheet|#ctxmenu)(?![\w-])/;
   const COMPARE_STATE = /#stage\.(tile-dragging|pannable|panning|zoomed|sync-mode)\b/;
-  const COMPARE_ANCESTOR = /(^|[\s>+~])(\.(cell|ov|pill|tile-[\w-]+|sync-pill|nudge|splitter|skeleton|add-pop|cmp-group)\b|#(cells|divider|splitter|menu|cmpGroup)\b)/;
+  const COMPARE_ANCESTOR = /(^|[\s>+~])(\.(cell|ov|pill|tile-[\w-]+|sync-pill|nudge|splitter|skeleton|cmp-group)\b|#(cells|divider|splitter|menu|cmpGroup)\b)/;
   const scoped = (sel) => /body\.(compare|vscode-high-contrast(-light)?)\b/.test(sel) || COMPARE_STATE.test(sel)
     || COMPARE_ANCESTOR.test(splitTop(sel, /[\s>+~]/).slice(0, -1).join(' '));
   const leaks = [];
@@ -305,7 +305,7 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.ok(z(PLAYER, '.panel') > z(RAIL, '.rail'), '.panel above .rail');
   assert.ok(z(PLAYER, '.panel') > z(RAIL, '.edge-zone'), '.panel above the rail edge tab');
   const overlays = [[PLAYER, '.panel'], [PLAYER, '#ctxmenu'], [COMPARE, '#menu'], [RAIL, '.rail'], [RAIL, '.rail-collapse-tab'],
-    [RAIL, '.vpe-pop'], [RAIL, '.hover-pop'], [COMPARE, '.add-pop'], [COMPARE, '.cell.lifted'], [COMPARE, '.splitter']];
+    [RAIL, '.vpe-pop'], [RAIL, '.hover-pop'], [COMPARE, '.cell.lifted'], [COMPARE, '.splitter']];
   for (const [css, sel] of overlays) assert.ok(z(PLAYER, '#sheet') > z(css, sel), `#sheet above ${sel}`);
   // One #pxread-only layer rule (besides the shared #pxread, #stats, #goto base): a duplicate drifted out of sync before.
   const pxRules = rules(PLAYER).filter((x) => !x.at && x.selectors.length === 1 && norm(x.selectors[0]) === '#pxread'
@@ -345,8 +345,8 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   assert.strictEqual(root['--vpe-card-radius'], '8px');
   for (const k of ['--vpe-shadow-low', '--vpe-shadow-high']) assert.match(root[k] || '', /var\(--vscode-widget-shadow\b/, k);
   const MEMBERS = ['#notice', '#toast', '#overlay.error', '#pxread', '#stats', '#goto', '#scopes', '.panel', '#sheet .sheet',
-    '#ctxmenu', '#menu', '.vpe-pop', '.hover-pop', '.add-pop', '.tile-stats', '.sync-pill', '.nudge', '.pill',
-    '.tile-bottom-pill', '.tbtn', '.addcell', '.skeleton-label', '.edge-shelf', '.rail-collapse-tab'];
+    '#ctxmenu', '#menu', '.vpe-pop', '.hover-pop', '.tile-stats', '.sync-pill', '.nudge', '.pill',
+    '.tile-bottom-pill', '.tbtn', '.addcell', '.skeleton-label', '.ended-badge', '.edge-shelf', '.rail-collapse-tab'];
   // Side panels share the card background but are not cards (full height, no corners): their own rule.
   const SIDE_PANELS = new Set(['.rail.overlay', '.rail.dock']);
   const SHADOW_EXCEPTIONS = new Set(['.rail.overlay']); // a side panel: its shadow falls to one side only
@@ -432,6 +432,84 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
     assert.match(d.background, /^var\(--vscode-/, `${sel}: a VS Code colour`);
     assert.ok(!/#[0-9a-f]{3,6}|rgba?\(/i.test(`${d.background} ${d['border-color'] || ''} ${d.color || ''}`.replace(/var\([^)]*\)/g, '')),
       `${sel}: no fixed colours outside a var() fallback`);
+  }
+}
+
+{ // No dead rules: every class and id the three style sheets name is still made by the page's code (media/, src/).
+  // The Start Compare dialog, the Add popover and the Add mode Stop button lingered in the CSS after their markup went.
+  const RAIL = read('folder-rail.css');
+  const files = [];
+  const walk = (d) => {
+    for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, f.name);
+      if (f.isDirectory()) { if (!/^(dist|libav-vpe|probe|vendor)$/.test(f.name)) walk(p); } else if (/\.(js|ts|tsx)$/.test(f.name)) files.push(p);
+    }
+  };
+  walk(MEDIA);
+  walk(path.join(__dirname, '..', '..', 'src'));
+  const code = files.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  const FROM_VS_CODE = new Set(['vscode-high-contrast', 'vscode-high-contrast-light', 'vscode-light', 'vscode-dark']);
+  const dead = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    const names = new Set(rules(css).flatMap((r) => r.selectors).flatMap((sel) => [...sel.replace(/\[[^\]]*\]/g, '')
+      .matchAll(/[.#]([a-zA-Z][\w-]*)/g)].map((m) => m[1])));
+    for (const n of names) {
+      if (FROM_VS_CODE.has(n)) continue;
+      if (!new RegExp(`(^|[^\w-])${n.replace(/-/g, '\-')}(?![\w-])`).test(code)) dead.push(`${name}: ${n}`);
+    }
+  }
+  assert.deepStrictEqual(dead, [], `selectors no code makes:\n${dead.join('\n')}`);
+}
+
+{ // Card text colour comes from the card rule only (--vpe-panel-fg): a member's own rule does not repaint it with
+  // --vscode-foreground or a fixed colour (docs/DESIGN.md, The card rule).
+  const RAIL = read('folder-rail.css');
+  const card = rules(PLAYER).find((r) => !r.at && /var\(--vpe-surface-float\)/.test(r.body));
+  const members = new Set(card.selectors.map(norm));
+  const own = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    for (const r of rules(css)) {
+      if ((css === PLAYER && r.body === card.body) || r.at) continue;
+      const hit = r.selectors.map(norm).filter((x) => members.has(x));
+      if (hit.length && /(^|;)\s*color\s*:/.test(r.body)) own.push(`${name}: ${hit.join(', ')}`);
+    }
+  }
+  assert.deepStrictEqual(own, [], `card members that set their own text colour:\n${own.join('\n')}`);
+}
+
+{ // Fixed colours (outside a var() fallback) only on the picture itself, never on a card or the bar (docs/DESIGN.md,
+  // Colour): the picture's black, dimmers over it, and marks drawn on it.
+  const RAIL = read('folder-rail.css');
+  const stripVars = (s) => {
+    let out = '', i = 0;
+    while (i < s.length) {
+      if (s.startsWith('var(', i)) {
+        let depth = 0, j = i + 3;
+        for (; j < s.length; j++) { if (s[j] === '(') depth++; else if (s[j] === ')' && --depth === 0) break; }
+        i = j + 1;
+      } else out += s[i++];
+    }
+    return out;
+  };
+  const ON_PICTURE = /^(video|canvas|:root:fullscreen body|body:fullscreen|body\.maxi|body\.compare #stage|#playFlash|#overlay|#stage:has\(.*\) #overlay:not\(\.error\)|#dropHint|\.ab-pin\b.*|#ab[AB] span|#pxgrid|#subs|#thumb\b.*|#seekRow canvas\.seek-thumb|#stage #scopes canvas|#sheet|\.cell-border|\.cell\.lifted|\.ended-ov|\.oor|\.splitter-bar|#divider\b.*)$/;
+  const fixed = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    for (const r of rules(css)) {
+      if (!/#[0-9a-f]{3,8}\b|rgba?\(/i.test(stripVars(r.body))) continue;
+      const off = r.selectors.map(norm).filter((x) => !ON_PICTURE.test(x));
+      if (off.length) fixed.push(`${name}: ${off.join(', ')}`);
+    }
+  }
+  assert.deepStrictEqual(fixed, [], `fixed colours off the picture:\n${fixed.join('\n')}`);
+}
+
+{ // The tiles' keyboard reorder arrows are tile buttons (.tbtn), not a look-alike with its own colours and size.
+  const ui = fs.readFileSync(path.join(MEDIA, 'player-ui.js'), 'utf8');
+  assert.match(ui, /<button type="button" class="tbtn" data-act="move"/, 'the arrows are .tbtn');
+  for (const r of rules(COMPARE)) {
+    if (r.selectors.some((x) => /^\.move button\b/.test(norm(x)))) {
+      assert.ok(!/(^|;)\s*(background|color|border-radius|height|width)\s*:/.test(r.body), `${r.selectors.join(', ')}: no own button look`);
+    }
   }
 }
 
