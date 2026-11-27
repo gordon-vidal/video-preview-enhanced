@@ -332,6 +332,12 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
   const toast = merged(PLAYER, '#toast');
   assert.strictEqual(toast['font-size'], merged(PLAYER, '#notice')['font-size'], 'the notice text size');
   assert.ok(!toast['font-weight'] || Number(toast['font-weight']) < 600, 'not bold');
+  // ... in every layout: no scoped rule (a dense Compare) gives it another size.
+  for (const r of rules(COMPARE).concat(rules(PLAYER))) {
+    if (r.selectors.some((x) => /#toast$/.test(norm(x))) && /font-size/.test(r.body)) {
+      assert.match(r.body, /font-size:\s*12px/, `${r.selectors.join(', ')}: the toast stays 12 px`);
+    }
+  }
   assert.ok(!anySelector(PLAYER, (s) => /\.cap-banner|#addHint/.test(s)), 'no capture pill or #addHint rules left');
 }
 
@@ -511,6 +517,21 @@ const anySelector = (css, test) => [...selectorsOf(css)].some(test);
       assert.ok(!/(^|;)\s*(background|color|border-radius|height|width)\s*:/.test(r.body), `${r.selectors.join(', ')}: no own button look`);
     }
   }
+}
+
+{ // Motion (docs/DESIGN.md): every transition and animation has an off switch under prefers-reduced-motion.
+  const RAIL = read('folder-rail.css');
+  const missing = [];
+  for (const [name, css] of [['player.css', PLAYER], ['compare.css', COMPARE], ['folder-rail.css', RAIL]]) {
+    const all = rules(css);
+    const off = new Set(all.filter((r) => /prefers-reduced-motion:\s*reduce/.test(r.at)
+      && /(transition|animation)\s*:\s*none/.test(r.body)).flatMap((r) => r.selectors.map(norm)));
+    for (const r of all) {
+      if (r.at || !/(^|;)\s*(transition|animation)\s*:\s*(?!none)/.test(r.body)) continue;
+      for (const x of r.selectors.map(norm)) if (!off.has(x)) missing.push(`${name}: ${x}`);
+    }
+  }
+  assert.deepStrictEqual(missing, [], `moves without a reduced-motion off switch:\n${missing.join('\n')}`);
 }
 
 console.log('unified_css: ok');

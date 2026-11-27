@@ -95,6 +95,33 @@ Side panels (the overlay Folder Rail) share the background but are not cards.
 - **Containers never restyle "all their buttons".** A generic `.x button` rule skips the shared ones
   (`:not(.vpe-btn)`); `unified_css_test.js` checks it. (The rail's menu rows once turned a callout's buttons into rows.)
 
+## Icons
+
+- Bar icons are inline SVG in `src/bar.js` (shared ones in `media/ui-primitives.js` `ICONS`): an **18 px** box on a
+  24-unit grid, `stroke="currentColor"`, stroke width **1.6**, round caps and joins, no fill (except a mode's tint),
+  `aria-hidden="true"`; the button carries the name. Smaller marks (chevrons 14 px, badges 9 px) keep the same
+  stroke style. Colour comes from the button's text colour, never from the icon.
+
+## Focus
+
+- Every focusable control shows keyboard focus as a **1 px `--vscode-focusBorder` outline** (`:focus-visible`, one
+  rule near the top of `player.css`); a mouse click shows none. Sliders keep 2 px of offset so the ring clears the
+  thumb. A rule may hide the outline only where it draws the focus some other way (a list's cursor row).
+
+## Motion
+
+- Short and quiet: hover and fade transitions 120–260 ms, ease-out. Every `transition` and `animation` has an off
+  switch under `prefers-reduced-motion: reduce` (`unified_css_test.js` checks it).
+
+## Layering (z-index)
+
+Inside the page, lowest first (`player.css` keeps the same list as a comment, `unified_css_test.js` checks the order):
+subtitles 1 · inspection readouts 2 · toast 3 (12 in Compare, above the tile controls) · notice, pixel readout, tile overlays 4 · error card, drop frame 5 ·
+Folder Rail 5 (its collapse tab 8) · ⚙ panel 7 · seek thumbnail 9 · seek tip 10 · popovers (rail hover card 12, rail
+menus 14, tile menu 16) · context menu 20 · drag and split overlays up to 30 · shortcut sheet 40 (modal). Menus,
+popovers, panels and callouts opened through the overlay engine (`showTopLayer`) go to the browser's top layer, where
+the order of opening replaces z-index.
+
 ## Messages
 
 Which channel to use: [notes/notifications.md](notes/notifications.md) (ownership matrix, priority queue, placement).
@@ -109,9 +136,14 @@ buttons: `.claude/skills/ui-notices/SKILL.md`.
 
 Known gaps, each to be settled with the maintainer and then written down above:
 
-- **Type:** sizes still drift (10.5 and 11.5 px next to the 11 / 12 / 13 scale), including the bar's time readout.
-- **Spacing, icons, focus rings, motion and layering (z-index):** in use but not written down; the z-index order is
-  only checked in `unified_css_test.js`.
+- **Type:** sizes still drift (9, 9.5, 10, 10.5, 11.5, 12.5 px next to the 11 / 12 / 13 scale), including the bar's
+  time and speed readouts (11.5 px).
+- **Spacing:** paddings and gaps use many near values (2-7, 9, 10, 12, 14 px); no scale yet.
+- **Corners besides the card and button tokens:** bar buttons 6 px, A–B and range boxes 2-3 px, the switch 9 px.
+- **Menu rows:** hover and keyboard focus look different in the right-click menu (grey border), the tile menu (VS
+  Code's blue selection) and the rail's menus (fill only).
+- **The bar's narrow-pane ladder:** Compare's bar needs about 824 px, so 721-824 px clips Picture size and
+  Fullscreen; the single player clips by 9 px at 721-736 px.
 
 ## Adding or changing a surface
 

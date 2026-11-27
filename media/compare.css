@@ -292,7 +292,6 @@ body.compare .cell:not(.add):not(.split), .cell:not(.add):not(.split):not(:only-
 
 /* Leave room above the shared toast for Compare's mode hint. */
 body.compare #toast { --toast-top: 36px; z-index: 12; }
-body.compare:has(#cells.dense) #toast { font-size: 13px; padding: 4px 10px; }
 
 /* The Compare panel and its per-video page (media/controls.js pages added by media/compare.js). */
 .panel.cmp, .panel.cmpVid { width: 340px; }
@@ -339,7 +338,7 @@ body.vscode-high-contrast-light #cells.dense :is(.pill, .sync-pill) {
   outline: 1px solid var(--vscode-contrastBorder, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
-  .ov, .addcell, .skeleton { transition: none; }
+  .ov, .addcell, .skeleton, .tbtn, .tbtn.spot svg rect, .mute-mini, .splitter-bar { transition: none; }
 }
 
 /* ---- The folder rail in Compare (media/folder-rail.css has the rail; docs/notes/folder-rail.md): beside or over the
