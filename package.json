@@ -325,23 +325,23 @@
         },
         {
           "command": "videoPreviewEnhanced.exportRange",
-          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/"
+          "when": "videoPreviewEnhanced.activeSingle"
         },
         {
           "command": "videoPreviewEnhanced.copyFfmpegRange",
-          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/"
+          "when": "videoPreviewEnhanced.activeSingle"
         },
         {
           "command": "videoPreviewEnhanced.exportVideoRange",
-          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/"
+          "when": "videoPreviewEnhanced.activeSingle"
         },
         {
           "command": "videoPreviewEnhanced.exportCompareVideoRange",
-          "when": "activeWebviewPanelId == 'videoPreviewEnhanced.compare'"
+          "when": "videoPreviewEnhanced.activeCompare"
         },
         {
           "command": "videoPreviewEnhanced.addFromExplorer",
-          "when": "activeCustomEditorId =~ /^videoPreviewEnhanced\\.player/ || activeWebviewPanelId == 'videoPreviewEnhanced.compare'"
+          "when": "videoPreviewEnhanced.activeSingle || videoPreviewEnhanced.activeCompare"
         },
         {
           "command": "videoPreviewEnhanced.stopAddFromExplorer",
@@ -361,18 +361,18 @@
         },
         {
           "command": "videoPreviewEnhanced.addToCompareFromPlayer",
-          "when": "videoPreviewEnhanced.compareOpen && (activeCustomEditorId == videoPreviewEnhanced.player || activeCustomEditorId == videoPreviewEnhanced.playerOptional)"
+          "when": "videoPreviewEnhanced.compareOpen && videoPreviewEnhanced.activeSingle"
         }
       ],
       "editor/title": [
         {
           "command": "videoPreviewEnhanced.compareWith",
-          "when": "!videoPreviewEnhanced.compareOpen && (activeCustomEditorId == videoPreviewEnhanced.player || activeCustomEditorId == videoPreviewEnhanced.playerOptional)",
+          "when": "!videoPreviewEnhanced.compareOpen && videoPreviewEnhanced.activeSingle",
           "group": "navigation@90"
         },
         {
           "command": "videoPreviewEnhanced.addToCompareFromPlayer",
-          "when": "videoPreviewEnhanced.compareOpen && (activeCustomEditorId == videoPreviewEnhanced.player || activeCustomEditorId == videoPreviewEnhanced.playerOptional)",
+          "when": "videoPreviewEnhanced.compareOpen && videoPreviewEnhanced.activeSingle",
           "group": "navigation@90"
         }
       ]

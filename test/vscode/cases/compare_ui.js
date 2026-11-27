@@ -65,19 +65,15 @@ module.exports = [{
 
     let ok = null;
     try {
-    // ---- starting a compare: key D (quick pick) and a dropped video (docs/notes/compare-ui.md) ----
-    ok = t('start/key-d');
+    // ---- starting a compare: plain D is no key any more (maintainer, 2026-11-27); a dropped video ----
+    ok = t('start/no-plain-d');
     let from = await h.openClip(vs, files[0]);
     await vs.waitLog(new RegExp(`\\[${tagA}\\] webview: first frame shown`), { from, timeout: 45000, what: 'first frame' });
     from = vs.mark();
-    vs.send({ pickCompare: CLIPS[1] });
     vs.send({ name: CLIPS[0], action: 'key', key: 'd' });
-    const rows = JSON.parse(/debug comparepick (\[.*\])/.exec(await vs.waitLog(/debug comparepick \[/, { from, timeout: 20000, what: 'the quick pick' }))[1]);
-    ok(rows[0] === 'Same folder' && !rows.includes(CLIPS[0]) && rows.includes(CLIPS[1]) && rows[rows.length - 1].includes('Browse'), `quick pick rows: ${rows}`);
-    await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened by key D' });
-    ok(!vs.lines.slice(from).some((l) => l.includes(`[${tagA}] session closed`)), 'the player tab closed instead of growing in place');
-    let r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
-    ok(r.synced === 'true', `compare after key D: ${JSON.stringify(r)}`);
+    await h.sleep(1500);
+    ok(!vs.lines.slice(from).some((l) => /debug comparepick|tiles: 2\b/.test(l)), 'plain D opens no quick pick and no compare');
+    let r;
     vs.send({ command: 'workbench.action.closeActiveEditor' });
     await h.sleep(800);
     ok = t('start/drop');

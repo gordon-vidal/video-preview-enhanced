@@ -134,8 +134,8 @@
       case 'c': case 'C': return shift ? null : a('cc');
       case 'w': case 'W': return shift ? null : a('scopes');
       case 'x': case 'X': return shift ? null : a('swap');
-      case 'd': return a('pickVideo');
-      case 'D': return a(shift ? 'capture' : 'pickVideo');
+      // Shift+D only: plain D (a quick pick) is gone (maintainer, 2026-11-27); + Add video / Compare › Add video… pick.
+      case 'D': return shift ? a('capture') : null;
       case '?': return a('keys');
       case 'Escape': return a('escape');
       default: return /^[0-9]$/.test(e.key) ? a('seekTenth', Number(e.key)) : null;
@@ -166,7 +166,7 @@
   }
 
   /**
-   * What D ("pick another video") asks of the host, per surface:
+   * What "pick another video" (+ Add video, Compare › Add video…) asks of the host, per surface:
    *   'player'  production single player: { type: 'comparePick', t } (a quick pick; Compare then takes the tab)
    *   'compare' production Compare: null (plain D has no handler; Compare › Add video posts startAddMode)
    *   'unified' create() proposal, any N: { type: 'pickVideo', exclude } (the host answers with openVideo)
@@ -1243,7 +1243,8 @@
             case 'setClock': act.setClock(id); break;
             case 'setSound': act.setSound(id); break;
             case 'offset': act.openTile(id); break;
-            case 'copyFrame': postHost({ type: 'copyFrame', clipId: id }); toast(c.dense ? `Tile ${c.letter} copied` : `Frame ${c.letter} copied`); break;
+            // The page copies the tile's PNG itself (the host has no image clipboard); it toasts, or saves instead.
+            case 'copyFrame': if (frameExport && hasSnapshot) void frameExport.copyFrame(id); else postHost({ type: 'saveFrame', clipId: id }); break;
             case 'copyTime': act.copyTileTime(id); break;
             case 'replace': act.replace(id); break;
             case 'remove': act.removeTile(id); break;
@@ -1437,8 +1438,8 @@
         setPicture(PICTURE_MODES[(PICTURE_MODES.indexOf(/** @type {any} */ (t.picMode)) + 1) % PICTURE_MODES.length]);
       },
       copyFrame: () => {
-        // The page copies the PNG itself where the clipboard API is there; else the host copies it.
-        if (frameExport && hasSnapshot && single() && canClip()) { void frameExport.copyFrame(); return; }
+        // The page copies the PNG itself (the host has no image clipboard); without a clipboard it saves instead.
+        if (frameExport && hasSnapshot && single()) { void frameExport.copyFrame(); return; }
         postHost({ type: 'copyFrame' }); toast(tab().tiles.length > 1 ? 'View copied' : 'Frame copied');
       },
       /** C (one video): subtitles on / off; the CC button (ccClick) opens Settings › Subtitles when there are none. */
@@ -1455,7 +1456,8 @@
       gotoBox: () => { if (gotoBox) gotoBox.open(); else return false; return true; },
       /**
        * Esc closes one thing, innermost first: a tile drag, a pending "Remove?", the tile menu, the panels and the
-       * player menu, the notice banner, the inspection tools (inspector, scopes, X-ray), Sync offsets, the Spotlight.
+       * player menu, the notice banner, the inspection tools (inspector, scopes, X-ray), Sync offsets, the Spotlight,
+       * last Capture (Add from the Explorer, docs/PRODUCT.md "Add Mode": Esc turns it off; the host is told).
        * Nothing left: false, and the key goes on (Zen Mode's Esc Esc, then VS Code).
        */
       escape: () => {
@@ -1469,6 +1471,7 @@
         if (insp && insp.handleEscape()) { controls.refresh(); return true; }
         if (t.syncMode) { commit(S.toggleSyncMode(ws), 'Sync offsets off'); return true; }
         if (t.layout === 'spotlight' && t.spotlightId) { withGlide(() => commit(S.toggleEnlarge(ws, t.spotlightId))); return true; }
+        if (t.capture) { const r = S.toggleCapture(ws); commit(r.state, r.toast); return true; }
         return false;
       },
       capture: () => { const r = S.toggleCapture(ws); commit(r.state, r.toast); },
@@ -1911,7 +1914,6 @@
     // ---- tools (media/player-ui-tools.js): the notice banner, inspection, subtitles, frame save / copy / export ----
     const hostPort = { postMessage: (/** @type {any} */ m) => postHost(m) };
     const hasSnapshot = typeof engine.snapshot === 'function';
-    const canClip = () => !!(win.navigator && win.navigator.clipboard && typeof win.ClipboardItem === 'function');
     /** An optional engine method as a plain function (missing ones stay undefined: the tools then say so). */
     const engineFn = (/** @type {string} */ name) => {
       const e = /** @type {any} */ (engine);
@@ -2219,7 +2221,12 @@
     const dropHintEl = $('dropHint');
     let dragDepth = 0;
     const hasDropUri = (/** @type {any} */ dt) => {
-      if (!dt || !dt.types) return false;
+      // URLs and image sequences compare with nothing (the host refuses too): no hint, the drop goes on to VS Code.
+      const fileOnly = tab().tiles.every((/** @type {string} */ id) => {
+        const c = /** @type {any} */ (engine.getClip(id) || {});
+        return (c.sourceKind || c.kind || 'file') === 'file';
+      });
+      if (!fileOnly || !dt || !dt.types) return false;
       const types = Array.from(dt.types);
       return types.includes('text/uri-list') || types.includes('application/vnd.code.uri-list') || types.includes('resourceurls');
     };
@@ -2263,6 +2270,7 @@
     listen(doc, 'drop', (/** @type {any} */ e) => {
       dragDepth = 0;
       if (dropHintEl) dropHintEl.hidden = true;
+      if (!hasDropUri(e.dataTransfer)) return;
       const uris = dropUris(e.dataTransfer);
       if (!uris.length) return;
       e.preventDefault();
@@ -2840,6 +2848,14 @@
         const ms = Number(msg.ms);
         const text = String(msg.text || '');
         if (Number.isFinite(ms) && ms > 0) toast(text, Math.min(10000, Math.max(1, ms))); else toast(text);
+        return;
+      }
+      // Capture changed in the host (Command Palette, Esc in VS Code, an editor switch): the banner and the Compare
+      // button follow, and the change is not posted back (lastPostedCapture already says so).
+      if (msg.type === 'capture') {
+        const on = !!msg.on;
+        lastPostedCapture = on;
+        if (!!tab().capture !== on) { const r = S.toggleCapture(ws); commit(r.state, r.toast); }
         return;
       }
       if (msg.type === 'focusMode') { if (zen) zen.setActive(!!msg.active); return; }

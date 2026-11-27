@@ -35,7 +35,8 @@ const ROOT = path.join(__dirname, '..', '..');
   assert.strictEqual(k('?'), 'keys');
   assert.strictEqual(k('Escape'), 'escape');
   assert.strictEqual(k('D', { shiftKey: true }), 'capture');
-  assert.strictEqual(k('D'), 'pickVideo', 'D without Shift (Caps Lock) picks, as d does');
+  assert.strictEqual(k('D'), null, 'plain D is not a key any more (Caps Lock too); Shift+D is Capture');
+  assert.strictEqual(k('d'), null);
   assert.strictEqual(k('N', { shiftKey: true }), 'nextVideo');
   assert.strictEqual(k('N'), null);
   assert.strictEqual(k('P', { shiftKey: true }), 'prevVideo');
@@ -788,12 +789,13 @@ const withGlobals = (dom, fn) => {
     key('Escape');
     assert.strictEqual(tab().layout, 'grid', 'Esc collapses Spotlight once the panels and Sync are closed');
 
-    // D in Compare: the unified proposal picks another video through the host (production Compare has no plain-D
-    // key: section 1 checks that separately).
+    // "+ Add video" in Compare picks another video through the host (plain D no longer does: section 1).
     const picks0 = host.log.filter((m) => m.type === 'pickVideo').length;
     key('d');
+    assert.strictEqual(host.log.filter((m) => m.type === 'pickVideo').length, picks0, 'plain D asks nothing');
+    ui.dispatch('pickVideo');
     const pick = host.log.filter((m) => m.type === 'pickVideo');
-    assert.strictEqual(pick.length, picks0 + 1, 'proposal: D asks the host for another video');
+    assert.strictEqual(pick.length, picks0 + 1, '+ Add video asks the host for another video');
     assert.deepStrictEqual(pick[pick.length - 1], PUI.pickVideoMessage('unified', { exclude: ['clip-2', 'clip-0'] }), 'it excludes the shown videos');
     assert.strictEqual(tab().tiles.length, 3, '+ Add video asks the host and joins its answer');
     ui.dispatch('nudge', 'clip-0', 2);
@@ -1142,6 +1144,10 @@ const withGlobals = (dom, fn) => {
     cellOf('clip-2').querySelector('canvas').fire('contextmenu', { clientX: 40, clientY: 40, button: 2 });
     $('menu').querySelector('[data-action="copyTime"]').fire('click');
     assert.strictEqual(last(host.log, 'copyText').text, 'C 0:02.00');
+    // Copy frame of a tile: the page copies (or saves) it; the host has no image clipboard and is never asked to.
+    cellOf('clip-2').querySelector('canvas').fire('contextmenu', { clientX: 40, clientY: 40, button: 2 });
+    $('menu').querySelector('[data-action="copyFrame"]').fire('click');
+    assert.ok(!host.log.some((m) => m.type === 'copyFrame'), 'a tile copy is not left to the host');
     // Esc closes the tile menu.
     cellOf('clip-2').querySelector('canvas').fire('contextmenu', { clientX: 40, clientY: 40, button: 2 });
     $('menu').querySelector('.mi').fire('keydown', { key: 'Escape' });
@@ -1778,8 +1784,12 @@ async function phase34() {
     const save = last('saveFrame');
     assert.ok(save && save.frame === 48 && save.data instanceof Uint8Array && save.data[1] === 0x50, 'S saves the shown frame as PNG bytes');
     const copies = count('copyFrame');
+    const saves = count('saveFrame');
     key('c', { ctrlKey: true });
-    assert.strictEqual(count('copyFrame'), copies + 1, 'Ctrl+C without a clipboard API: the host copies');
+    await tick(); await tick();
+    // The host has no image clipboard (it never handled 'copyFrame'): the page saves the frame instead.
+    assert.strictEqual(count('copyFrame'), copies, 'Ctrl+C never asks the host to copy');
+    assert.strictEqual(count('saveFrame'), saves + 1, 'Ctrl+C without a clipboard API: saved instead');
     key('Escape');
     ui.onHostMessage({ type: 'abQuery' });
     assert.deepStrictEqual(last('exportRange'), { type: 'exportRange', range: null }, 'abQuery with no range: the host says so');

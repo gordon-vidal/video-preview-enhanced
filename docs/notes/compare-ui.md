@@ -113,7 +113,9 @@ arrows or drag, in Side by side and Split.
 
 Added without changing the player's look except a drop hint (a dashed frame with "Drop to compare").
 
-- **Key D** in the player (not in compare) posts `comparePick`; the host (`src/compare.js` `comparePick`, rows in
+- **Key D: removed (maintainer, 2026-11-27).** Plain D no longer does anything; Shift+D (Capture) stays. "+ Add video"
+  and Compare › Add video… pick through the host (`pickVideo`). What follows is the history of the old key.
+  Key D in the player (not in compare) posted `comparePick`; the host (`src/compare.js` `comparePick`, rows in
   `src/comparepick.js`) shows a quick pick: "Same folder" (`workspace.fs.readDirectory`), "Workspace"
   (`workspace.findFiles`, 300 at most), then **Browse…** which runs Compare With… (the open dialog, several files).
   Recently compared videos (globalState `videoPreviewEnhanced.compareRecent`, 20) come first in each part, then natural
@@ -176,7 +178,7 @@ Add Mode turns on only on an explicit "add more" intent (maintainer decision 202
 |---|---|
 | the toolbar Compare button's **Start comparison** confirm (`origin: 'toolbar-start'`, built on another branch) | a drag and drop of several videos, **Open With…** on a selection (`'burst'`) |
 | a player armed by **Shift+D** or the D pick's Explorer row that took its next video (`'armed'`: the mode carries on) | **Add to Compare** on several files, a folder or a mix (`'selection'`), **Compare Videos in Folder** |
-| right-click **Start / Add to Compare** on one video that makes a one-video Compare (`'start-single'`) | the D quick pick, Shift+drop on a player, **Compare With…**; one file added to an open player (two videos) |
+| right-click **Start / Add to Compare** on one video that makes a one-video Compare (`'start-single'`) | Shift+drop on a player, **Compare With…**; one file added to an open player (two videos) |
 
 Videos chosen at once are the whole set the user wanted, so nothing waits for more. Later, **Shift+D**, **Add video…**,
 the Compare panel's **Add from the Explorer** switch or the palette command toggle the mode. **Add video…** starts it. **Shift+D** in a file player and the **Click videos in the

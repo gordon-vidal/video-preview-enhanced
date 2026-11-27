@@ -142,7 +142,7 @@ One feature: compare becomes multi-view. The difference view is dropped.
 - **Entering:** the player's **Compare** button (2026-11-22) asks for confirmation before starting with this one video
   and Add Mode on. If a Compare is open, the button becomes **Add to Compare** and adds the video to the most recently
   active Compare at once.
-  Other entry points are **D** (quick pick of other videos, same folder first), Shift+drop from the Explorer,
+  Other entry points are Shift+drop from the Explorer (not on a URL or an image sequence),
   **Shift+D** or ⚙ › Tools › **Compare** (wait for an Explorer open), and **Start Compare** / **Add to Compare** in the
   player's right-click menu (the same as the bar's Compare button). Compare takes the player's tab and starts at its position.
   **Leave compare** restores the player at the kept video's position.
@@ -159,10 +159,10 @@ One feature: compare becomes multi-view. The difference view is dropped.
 - **Add Mode:** while it is on, opening videos from the Explorer adds tiles. It turns on only when the user asks to
   add more: **Shift+D**, **Add video…**, the Compare panel's switch, the toolbar Compare button's **Start comparison**
   and a right-click **Start / Add to Compare** on one video that makes a one-video Compare. A Compare started from
-  several files at once (a drop or Open Together, a multi-selection or folder, **Compare Videos in Folder**, the D
-  quick pick, **Compare With…**) opens with Add Mode off: those videos are the whole set. Playback, scrubbing and
-  stepping keep the mode on. **Stop** in the hint, Esc, Shift+D, reaching the maximum or switching editors turns it
-  off. **Add to Compare** also works while the mode is off.
+  several files at once (a drop or Open Together, a multi-selection or folder, **Compare Videos in Folder**,
+  **Compare With…**) opens with Add Mode off: those videos are the whole set. Playback, scrubbing and
+  stepping keep the mode on. **Stop** in the hint, Esc (in the page or in VS Code), Shift+D, reaching the maximum or
+  switching to any other editor tab turns it off. Plain **D** is no shortcut (removed 2026-11-27). **Add to Compare** also works while the mode is off.
 - **Picture size in compare:** one mode for every tile (the same button, Z and ⚙ page), and zoom and pan in lockstep:
   the same relative zoom and position in each tile, like a magnifier over all videos.
 - Each video has its own offset, by **time or frame number** (hover nudge and the panel only).

@@ -1,5 +1,5 @@
 'use strict';
-// "Compare with…" quick pick (key D) and dropped videos: row order, recent list, drop parsing, and the commands
+// The "Add video" quick pick rows and dropped videos: row order, recent list, drop parsing, and the commands
 // that put videos side by side in a viewer (src/extension.js).
 const assert = require('assert');
 const path = require('path');
@@ -150,37 +150,34 @@ const walks = (async () => {
       : []);
     V.workspace.findFiles = async () => [V.Uri.file(path.join(folder, 'other', 'w.mp4'))];
     V.workspace.asRelativePath = (u) => path.basename(u.fsPath);
-    const pick = V._commands['videoPreviewEnhanced.comparePick'];
     const uriA = V.Uri.file(a);
     const ctx = (key) => ((V.executed || []).filter((c) => c[0] === 'setContext' && c[1] === key).pop() || [])[2] === true;
+    // Plain D and its command are gone (maintainer, 2026-11-27); the page's "+ Add video" asks the same rows.
+    assert.ok(!V._commands['videoPreviewEnhanced.comparePick'], 'no comparePick command');
 
-    // Key D's quick pick from the command: its rows; a picked video opens a comparison of the two.
+    // "+ Add video" in a viewer (pickVideo): the test hook answers from the quick pick's rows; the video joins.
+    const viewerA = h.open(a);
+    await viewerA.send({ type: 'ready' });
     let items = null;
     setPickHook(async (it) => { items = it; return it.find((i) => i.uri && i.label === path.basename(b)); });
-    await pick(uriA);
+    await viewerA.send({ type: 'pickVideo', exclude: [] });
     assert.deepStrictEqual(items.map((i) => i.label), ['Same folder', path.basename(b), 'Workspace', 'w.mp4', '', '$(list-tree) Click videos in the Explorer…', '$(folder-opened) Browse…'], 'rows');
     assert.strictEqual(items[0].kind, -1, 'sections are separators');
-    assert.strictEqual(panels.length, 1, 'picking a video opens a comparison');
-    assert.deepStrictEqual(names(panels[0]), [path.basename(a), path.basename(b)]);
+    assert.deepStrictEqual(joined(viewerA), [path.basename(b)], 'the picked video joins the viewer');
     assert.ok(ctx('videoPreviewEnhanced.compareOpen'), 'the compare-open context key is on');
-    assert.ok(!ctx('videoPreviewEnhanced.addMode'), 'a picked pair opens with Capture off');
-    const recent = h.context.globalState.get('videoPreviewEnhanced.compareRecent');
-    assert.ok(recent.includes(uriA.toString()) && recent.some((u) => u.includes(path.basename(b))), `recent: ${recent}`);
+    assert.ok(!ctx('videoPreviewEnhanced.addMode'), 'a picked video joins with Capture off');
 
-    // Browse… goes to the open dialog (several files); cancelled there: nothing. Escape: nothing either.
+    // Browse… goes to the open dialog; cancelled there: nothing. Escape: nothing either.
     let dialogs = 0;
     V.window.showOpenDialog = async () => { dialogs++; return undefined; };
     setPickHook(async (it) => it.find((i) => i.browse));
-    await pick(uriA);
+    await viewerA.send({ type: 'pickVideo', exclude: [] });
     assert.strictEqual(dialogs, 1, 'Browse… opens the dialog');
     setPickHook(async () => undefined);
-    await pick(uriA);
-    assert.strictEqual(panels.length, 1);
+    await viewerA.send({ type: 'pickVideo', exclude: [] });
+    assert.deepStrictEqual(joined(viewerA), [path.basename(b)]);
     setPickHook(null);
-
-    // The page's "Add video" in a viewer asks the same hook (tests) instead of the dialog.
-    await panels[0].send({ type: 'ready' });
-    panels[0].panel.dispose();
+    viewerA.panel.dispose();
 
     // Folder, file and mixed Explorer selections all route through the same command.
     const infos = [];
@@ -190,7 +187,7 @@ const walks = (async () => {
     const add = V._commands['videoPreviewEnhanced.addToCompare'];
     await V._commands['videoPreviewEnhanced.compareFolder'](folderUri);
     let current = panels.at(-1);
-    assert.strictEqual(panels.length, 2, 'the folder opens in one viewer');
+    assert.strictEqual(panels.length, 1, 'the folder opens in one viewer');
     assert.deepStrictEqual(names(current), [path.basename(b), path.basename(a)], 'in natural order');
     assert.deepStrictEqual(infos, [], 'no message for two videos');
     await current.send({ type: 'ready' });
@@ -202,7 +199,7 @@ const walks = (async () => {
     const one = V.Uri.file(path.join(folder, 'one.mp4'));
     require('fs').copyFileSync(a, one.fsPath);
     await add(one, [one, folderUri]);
-    assert.strictEqual(panels.length, 2, 'the mixed selection joins the active viewer');
+    assert.strictEqual(panels.length, 1, 'the mixed selection joins the active viewer');
     assert.deepStrictEqual(shown(current), [path.basename(b), path.basename(a), 'one.mp4'], 'folder overlap is skipped');
 
     // None: said so. Beyond the space: says how many were skipped and adds what fits.
