@@ -22,6 +22,9 @@ const vscode = [
   { name: 'perf-invisible-bench', env: { VPE_PERF_BENCH: '1' }, steps: [{ case: 'perf-invisible-bench' }] },
   // CPU per process while 4K HEVC 10-bit plays natively, per ffmpeg method (docs/notes/cpu-4k.md).
   ...['default', 'cuda', 'd3d11va', 'auto'].map((v) => ({ name: `cpu-4k-${v}`, env: { VPE_CPU_BENCH: '1' }, steps: [{ case: `cpu-4k-${v}` }] })),
+  // The background seek-bar preview pass (docs/notes/seek-preview.md): 4K HEVC playback with the pass off and on;
+  // time and CPU to a full bar for 20 s / 5 min / 1 h.
+  ...['native', 'wasm'].map((p) => ({ name: `seek-pass-${p}`, env: { VPE_SEEK_PASS_BENCH: '1' }, steps: [{ case: `seek-pass-play-${p}` }, { case: `seek-pass-fill-${p}` }] })),
   // Remote stream soak: lag and sound lead over 150 s.
   { name: 'remote-stream-soak', steps: [{ case: 'remote_stream_long' }] },
   // Host -> webview message throughput.

@@ -16,7 +16,7 @@ async function run(repeat, attempt = 1) {
   const codeVersion = JSON.parse(fs.readFileSync(path.join(path.dirname(code.cli), '..', 'package.json'), 'utf8'))
     .version;
   const vs = new H.HiddenCode({ code, tag: 'vpe-gpu-research',
-    env: { PATH: H.pathWithoutFfmpeg(), VPE_THUMB_STRIP: '0' }, settings: {
+    env: { PATH: H.pathWithoutFfmpeg(), VPE_THUMB_PASS: '0' }, settings: {
       'videoPreviewEnhanced.autoplay': false, 'videoPreviewEnhanced.loop': false,
     } });
   try {

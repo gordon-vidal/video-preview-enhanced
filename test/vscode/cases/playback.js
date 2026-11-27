@@ -240,8 +240,8 @@ module.exports = [{
         ok(s.audioChannels === 2, `${s.audioChannels} channels for WebAudio`);
       } finally { await P.close(); }
     });
-    // Seek-bar previews from shown frames (docs/notes/seek-preview.md) cost playback nothing: 4K H.264 plays with the
-    // same dropped and late frames with capture off and on; reports what a 4K capture cost the frame loop.
+    // Seek-bar previews (docs/notes/seek-preview.md) cost playback nothing: 4K H.264 plays with the same dropped and
+    // late frames with capture and the background pass off and on; reports what a 4K capture cost the frame loop.
     if (!h.ffmpeg) R.skip('thumbs/capture-4k', 'no ffmpeg (clip generator)');
     else await R.run('thumbs/capture-4k', async (ok, r) => {
       const file = path.join(h.MEDIA, 'cases', 'pb_4k_h264.mp4');
@@ -255,6 +255,7 @@ module.exports = [{
         await P.waitFirstFrame();
         const run = async (on) => {
           await P.ask('capture', { on });
+          await P.ask('thumbPass', { on });
           P.seek(0);
           await P.waitState((x) => !x.seekPending && x.t < 0.1, { timeout: 15000, what: 'at the start' });
           const a = await P.state();
@@ -267,7 +268,7 @@ module.exports = [{
         const off = await run(false);
         const on = await run(true);
         r.off = { dropped: off.dropped, late: off.late, shown: off.shown };
-        r.on = { dropped: on.dropped, late: on.late, shown: on.shown, captured: on.strip && on.strip.captured };
+        r.on = { dropped: on.dropped, late: on.late, shown: on.shown, captured: on.strip && on.strip.captured, pass: on.strip && on.strip.pass };
         r.captureMs = on.strip && on.strip.captureMs;
         ok(on.strip && on.strip.frames >= 5, `played frames became previews (${on.strip && on.strip.frames})`);
         ok(on.dropped <= off.dropped + 3, `no new dropped frames (${off.dropped} off, ${on.dropped} on)`);

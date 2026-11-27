@@ -242,7 +242,7 @@ const shown = (s) => { if (!s.firstShown) throw new Error(`no picture: ${s.messa
 const bench = {
   name: 'perf-invisible-bench',
   ffmpeg: true,
-  env: { VPE_THUMB_STRIP: '0' },
+  env: { VPE_THUMB_PASS: '0' },
   async run(vs, h) {
     const out = [];
     const secs = Number(process.env.VPE_PERF_SECONDS || 15);

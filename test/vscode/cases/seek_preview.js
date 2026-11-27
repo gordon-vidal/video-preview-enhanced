@@ -1,5 +1,9 @@
 'use strict';
-// Seek-bar previews (docs/notes/seek-preview.md) in a real VS Code, simple mode (the default). Lazy:
+// Seek-bar previews (docs/notes/seek-preview.md) in a real VS Code, simple mode (the default).
+//   pass:    without any hover, the background keyframe pass gives every place on the bar a picture, then closes
+//            its worker (or ends its ffmpeg); a hover then draws at once with no request
+//   pass-hidden: a tab hidden before the pass starts does no pass work until it is shown again
+// With the pass turned off (debug probe 'thumbPass'), so the hover checks stay about the hover:
 //   idle:    after open nothing is decoded (no request, no worker, no ffmpeg thumbnail process) until the
 //            first hover, also not 4 s after the first frame; the shown frame may already be a preview (capture)
 //   hover:   a thumbnail shows up on hover (the exact keyframe; neighbours fill while the pointer stays)
@@ -35,7 +39,8 @@ async function previewChecks(vs, h, file, R, label) {
     const P = await lib.open(vs, h, file);
     try {
       await P.waitFirstFrame();
-      // 1. Idle: nothing decodes on its own (longer than the old 2 s strip start).
+      await P.ask('thumbPass', { on: false });
+      // 1. Idle: with the pass off, nothing decodes on its own (longer than the pass's 3 s start delay).
       await lib.sleep(4000);
       const idle = await P.state();
       ok(!idle.strip || (idle.strip.requests === 0 && !idle.strip.worker), `no request or worker before the first hover (${JSON.stringify(idle.strip)})`);
@@ -100,11 +105,60 @@ async function previewChecks(vs, h, file, R, label) {
   });
 }
 
+async function passChecks(vs, h, file, other, R, label) {
+  await R.run(`${label}/pass`, async (ok, r) => {
+    const P = await lib.open(vs, h, file);
+    try {
+      await P.waitFirstFrame();
+      const t0 = Date.now();
+      const done = await P.waitState((x) => x.strip && x.strip.pass && /^done/.test(x.strip.pass.state), { timeout: 30000, what: 'the background pass' });
+      r.fullBarS = (Date.now() - t0) / 1000;
+      r.pass = done.strip.pass;
+      r.bar = `${done.strip.bar}/${done.strip.n}`;
+      ok(done.strip.pass.state === 'done:complete', `the pass completes (${done.strip.pass.state})`);
+      ok(done.strip.bar === done.strip.n, `every place has a picture without a hover (${r.bar})`);
+      ok(!done.strip.hovering && done.strip.pass.requests > 0, `pictures came from the pass (${done.strip.pass.requests} asks)`);
+      const idle = await P.waitState((x) => !x.strip.worker && x.strip.state === 'off', { timeout: 3000, what: 'worker closed after the pass' });
+      const [sx, sy, sw, sh] = idle.seekRect;
+      const n0 = idle.strip.requests;
+      const th0 = Date.now();
+      P.dom('mousemove', sx + sw * 0.63, sy + sh / 2);
+      await P.waitState((x) => !x.thumb.hidden && x.thumb.w > 0, { timeout: 3000, what: 'hover picture', interval: 50 });
+      r.hoverMs = Date.now() - th0;
+      await lib.sleep(600);
+      const after = (await P.state()).strip.requests;
+      ok(after === n0, `the hover needs no request (${n0} -> ${after})`);
+      P.dom('mouseleave', sx + sw / 2, sy - 200, { target: 'seek' });
+      r.log = lib.lines(vs, /thumbs: pass /, P.fromMark).slice(0, 1);
+    } finally { await P.close(); }
+  });
+  await R.run(`${label}/pass-hidden`, async (ok, r) => {
+    const A = await lib.open(vs, h, file);
+    try {
+      await A.waitFirstFrame();
+      const B = await lib.open(vs, h, other); // in front: A is hidden before its pass starts (3 s)
+      const m = vs.mark();
+      await B.waitFirstFrame();
+      await lib.sleep(6000);
+      const mine = new RegExp(`\\[${lib.esc(A.name)}\\].*(thumbs: starting worker|thumb ffmpeg)`);
+      const hiddenWork = lib.lines(vs, mine, m);
+      await B.close();
+      const s = await A.state();
+      r.atShow = s.strip && s.strip.pass;
+      ok(!hiddenWork.length, `no pass work while hidden (${hiddenWork.slice(0, 2)})`);
+      ok(!s.strip || !s.strip.pass || s.strip.pass.requests <= 1, `no pass requests while hidden (${JSON.stringify(r.atShow)})`);
+      const done = await A.waitState((x) => x.strip && x.strip.pass && /^done/.test(x.strip.pass.state), { timeout: 30000, what: 'the pass after showing' });
+      ok(done.strip.bar === done.strip.n, `the pass fills the bar once shown (${done.strip.bar} of ${done.strip.n})`);
+    } finally { await A.close(); }
+  });
+}
+
 async function captureChecks(vs, h, file, R, label) {
   await R.run(`${label}/capture`, async (ok, r) => {
     const P = await lib.open(vs, h, file);
     try {
       await P.waitFirstFrame();
+      await P.ask('thumbPass', { on: false });
       P.play();
       await P.waitState((x) => x.t >= 5.2, { timeout: 20000, what: 'played 5 s' });
       P.pause();
@@ -161,6 +215,7 @@ module.exports = [{
     const file = makeClip(h, 'sp_mpeg2_20s.mpg', ['-c:v', 'mpeg2video', '-g', '25', '-q:v', '4']);
     await previewChecks(vs, h, file, R, 'wasm');
     const gop = makeClip(h, 'sp_mpeg2_gop10.mpg', ['-c:v', 'mpeg2video', '-g', '300', '-bf', '0', '-q:v', '4']);
+    await passChecks(vs, h, file, gop, R, 'wasm');
     await captureChecks(vs, h, gop, R, 'wasm');
     await refineChecks(vs, h, gop, R, 'wasm');
     return R.out;
@@ -175,6 +230,7 @@ module.exports = [{
     const file = makeClip(h, 'sp_hevc_20s.mp4', ['-c:v', 'libx265', '-x265-params', 'keyint=25:min-keyint=25:log-level=error', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p']);
     await previewChecks(vs, h, file, R, 'native');
     const gop = makeClip(h, 'sp_hevc_gop10.mp4', ['-c:v', 'libx265', '-x265-params', 'keyint=300:min-keyint=300:scenecut=0:log-level=error', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p']);
+    await passChecks(vs, h, file, gop, R, 'native');
     await captureChecks(vs, h, gop, R, 'native');
     await refineChecks(vs, h, gop, R, 'native');
     return R.out;
