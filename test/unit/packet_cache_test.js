@@ -2,7 +2,7 @@
 // media/packet-cache.js: the H.264 packets a remote Live transcode page keeps for paused seeks and steps back.
 
 const assert = require('node:assert/strict');
-const { create } = require('../../media/packet-cache');
+const { create, trimSound } = require('../../media/packet-cache');
 
 const FPS = 15;
 const at = (i) => i / FPS;
@@ -169,6 +169,67 @@ test('a fill and the read-ahead arriving in turns each keep their own GOP', () =
   assert.equal(c.find(at(39)).keyT, at(30), 'the read-ahead GOP grew through the fill packets');
   assert.equal(c.find(at(29) + 0.01).keyT, at(25), 'the fill GOP too');
   assert.equal(c.find(at(30) - 0.5 / FPS).frameT, at(29));
+});
+
+
+// ---- sound (play after a seek served from the packets) ------------------------------------------------------------
+const RATE = 48000;
+/** Opus as src/stream-buffer.js takeAudio sends it: 20 ms packets with 80 ms of preroll, skip and samples. */
+const opus = (t, sec) => ({ kind: 'opus', t, sampleRate: RATE, head: new Uint8Array(19), skip: 3840,
+  samples: Math.round(sec * RATE), packets: Array.from({ length: Math.ceil(sec * 50) + 4 }, () => new Uint8Array(100)) });
+/** 16-bit stereo PCM, sample i of channel 0 holding i (to see where a cut lands). */
+const pcm = (t, sec) => {
+  const n = Math.round(sec * RATE);
+  const d = new DataView(new ArrayBuffer(n * 4));
+  for (let i = 0; i < n; i++) d.setInt16(i * 4, i % 30000, true);
+  return { kind: 's16', t, sampleRate: RATE, data: new Uint8Array(d.buffer) };
+};
+
+test('sound: the received batches chain from t without a gap, cut to start exactly there', () => {
+  const c = create();
+  for (let k = 0; k < 6; k++) c.addSound(opus(10 + k * 0.5, 0.5));
+  const got = c.soundFrom(10.8);
+  assert.equal(got.items.length, 5, 'the batch holding 10.8 s and the four after it');
+  assert.equal(got.end, 13);
+  assert.equal(got.items[0].t, 10.8);
+  assert.equal(got.items[0].skip, 3840 + 0.3 * RATE, 'the cut moves the trim: Opus decodes from its first packet anyway');
+  assert.equal(got.items[0].samples, 0.2 * RATE);
+  assert.equal(got.items[1].t, 11, 'the next ones whole');
+  assert.equal(got.items[1].skip, 3840);
+  assert.equal(c.soundFrom(9.9), null, 'nothing held at 9.9 s');
+  assert.equal(c.soundFrom(10.2, 11).end, 11, 'up to `until` (whole batches)');
+  // A gap ends the chain.
+  c.addSound(opus(14, 0.5));
+  assert.equal(c.soundFrom(12).end, 13);
+});
+
+test('sound: PCM is cut by samples; batches of another read overlapping are cut where the chain is', () => {
+  const c = create();
+  c.addSound(pcm(5, 0.5));
+  c.addSound(pcm(5.3, 0.5)); // a later read starting elsewhere
+  const got = c.soundFrom(5.1);
+  assert.equal(got.end, 5.8);
+  assert.equal(got.items[0].t, 5.1);
+  assert.equal(new DataView(got.items[0].data.buffer, got.items[0].data.byteOffset).getInt16(0, true), 0.1 * RATE);
+  assert.equal(got.items[1].t, 5.5, 'the second cut where the first ends');
+  assert.equal(got.items[1].data.byteLength, 0.3 * RATE * 4);
+  assert.equal(new DataView(got.items[1].data.buffer, got.items[1].data.byteOffset).getInt16(0, true), 0.2 * RATE);
+  assert.equal(trimSound(pcm(1, 0.1), 1.2), null, 'nothing left after the end');
+});
+
+test('sound: the same sound read again replaces the old copy; it shares the budget with the packets', () => {
+  const c = create({ cap: 1e6 });
+  c.addSound(pcm(0, 0.5));
+  c.addSound(pcm(0, 0.5));
+  assert.equal(c.stats().sound, 1);
+  assert.equal(c.stats().bytes, 0.5 * RATE * 4);
+  read(c, 1, 0, 30, 30, 20000); // 600 KB of packets
+  c.addSound(pcm(0.5, 2)); // 384 KB: over the budget, the least recently used goes
+  assert.ok(c.stats().bytes <= 1e6, JSON.stringify(c.stats()));
+  assert.equal(c.soundFrom(0.1), null, 'the oldest sound went');
+  assert.ok(c.find(at(10)), 'the packets used more recently stayed');
+  c.clear();
+  assert.deepEqual([c.stats().sound, c.stats().bytes], [0, 0]);
 });
 
 console.log(`packet_cache: ${n} passed`);

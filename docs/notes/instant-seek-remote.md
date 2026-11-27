@@ -429,6 +429,42 @@ The quick encode is a cold ffmpeg (open, decode to the target, NVENC init: ~300 
 machine was loaded, hence the 709 ms one. The test hook's link throttle delays each message by its own size, so the
 real link adds the quick picture's ~0.13 s at 2 Mb/s to the stream's frame as well.
 
+## Play from the page's packets with sound (built 2026-11-27)
+
+Maintainer decision of 2026-11-27 (item 6 of "With more resources"). Play after a paused seek served from the page's
+packets already offered the host the target's GOP (`seek.have`, host `skipHeld`), so the picture moved at once; the
+sound still came from the host, so on a slow link the clock ran on the timer and the sound joined late.
+
+- **Kept** (`media/packet-cache.js` addSound / soundFrom): every sound item as received (`receiveRemoteBatch`, before
+  decoding): Opus batches (packets with their 80 ms preroll, `skip` / `samples` trims) or 16-bit PCM, by time, in the
+  same budget as the packets (`liveTranscodeCacheMB`; the least recently used GOP or sound chunk goes first). The same
+  sound read again replaces the old copy.
+- **Offered** (`media/engine.js` seekAbs): with the GOP, the sound held without a gap from the play position on, at
+  most a second past the held packets, cut to start exactly there (Opus: `skip` grows; PCM: samples cut). The seek
+  carries `have.audioUntil`.
+- **Host** (`src/stream.js` skipHeld): when it skips the page's packets, it also sends sound from `audioUntil` (or from
+  as far as its history has it; never back).
+- **Page** (takeHeld): PCM goes in with the held packets; Opus is decoded first (the WebAssembly decoder), and the
+  host's next batches wait for it (`soundGate`), so sound stays in time order. Sound the host sends again anyway is cut
+  where the page's ends (`audioKeepUntil`, now for PCM too). Video-only files: nothing changes.
+- **A/V sync**: the held sound starts at the play position on the same timeline as the host's (its own times); the
+  clock anchors on it when the seek lands, as with the host's sound.
+- **Limits**: only plays that take the page path (the seek served from the page's packets and the host still holding
+  that GOP). A seek served from the decoded frames kept, or a host that restarts there, sends everything as before.
+
+Layer 3 `remote-stream-packets` › `play-cached-sound` (1080p25 clip with Opus sound, link throttled to 250 000 B/s with
+the test hook; page time from play): the picture moves after ~45 ms either way. The hidden desktop gives the page no
+user gesture, so its AudioContext stays suspended and nothing is heard; measured instead is when decoded sound covering
+the play position is in the page's queue (what a running AudioContext would start from):
+
+| | before (held sound not used) | after |
+| --- | --- | --- |
+| Sound ready from the play position | 555-567 ms (3 plays) | 13 ms (1 of 3 plays took the page path; see Limits) |
+| Picture moving | 45-48 ms | 45 ms |
+
+`play from X s: picture moving after N ms, sound ready after M ms, heard after K ms from S s past the start` is now
+logged on every play (`media/engine.js` notePlayStart) for measuring with a real AudioContext.
+
 ## Kept-running decoder (built 2026-11-27)
 
 Maintainer decisions of 2026-11-27: a single video gets one; in Compare only the video that sets the clock (the others
@@ -546,7 +582,7 @@ variable-frame-rate MP4 checked against ffmpeg's own accurate seek).
 5. **GPU tone-mapping on NVIDIA** (libplacebo with a Vulkan device and CUDA interop, or a CUDA tone-mapper): removes
    the ~57 fps CPU tone-mapping limit for 4K60 HDR.
 6. **Play from the page's packets with sound**: keep audio packets too, so play after a page-served seek starts at once
-   while the host catches up.
+   while the host catches up. **Built 2026-11-27** (section above).
 7. **Scrub stream**: while dragging, show keyframes only (I-frame trick play) and seek exactly on release.
 
 ## Setting (draft)

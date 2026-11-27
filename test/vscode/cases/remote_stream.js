@@ -450,6 +450,94 @@ module.exports = [{
         await h.closeClip(vs);
       }
     });
+    // Play after a paused seek served from the page's packets: the page keeps the sound it received too
+    // (media/packet-cache.js addSound), so play starts with the picture and sound it holds while the host sends what
+    // follows them (media/engine.js takeHeld, src/stream.js skipHeld). Page times from play to the picture moving and to
+    // the sound playing, and where that sound starts; before = the held sound not used (test hook). Asserted: every
+    // seek served from the page, the held sound offered and skipped by the host, sound from the play position.
+    await run('play-cached-sound', async (ok, r) => {
+      const file = makeLinkClip(h.ffmpeg, true);
+      const p = await lib.open(vs, h, file);
+      const fps = 25;
+      const playFrom = async (sec) => {
+        const frame = Math.round(sec * fps);
+        let from = vs.mark();
+        p.seek(sec + 0.5 / fps);
+        await p.waitState((x) => !x.playing && x.frame === frame, { timeout: 30000, interval: 50, what: `frame ${frame}` });
+        const local = vs.lines.slice(from).some((l) => l.includes(`[${p.name}] webview: seek to`) && l.includes("from the page's packets"));
+        await h.sleep(600);
+        from = vs.mark();
+        p.play();
+        const line = await vs.waitLog(new RegExp(`\\[${p.name}\\] webview: play from [\\d.]+ s: picture moving after \\d+ ms`), { from, timeout: 15000, what: 'play start' });
+        const m = /picture moving after (\d+) ms(?:, sound ready after (\d+) ms)?(?:, no sound from the start)?(?:, heard after (\d+) ms from (-?[\d.]+) s past the start)?/.exec(line);
+        await h.sleep(1000);
+        const s = await p.state();
+        p.pause();
+        const lines = vs.lines.slice(from).filter((l) => l.includes(`[${p.name}]`));
+        await h.sleep(400);
+        return {
+          frame, local, pictureMs: Number(m[1]), soundReadyMs: m[2] ? Number(m[2]) : null, soundMs: m[3] ? Number(m[3]) : null,
+          soundFromS: m[4] ? Number(m[4]) : null,
+          pageSound: lines.some((l) => /webview: seek to .* from the page and sound to/.test(l)),
+          hostSkipped: lines.some((l) => /remote stream: the page holds /.test(l)),
+          hostSkippedSound: lines.some((l) => /remote stream: the page holds .* and sound to/.test(l)),
+          audioMaster: s.audioMaster, ac: s.ac, driftMs: s.drift === null ? null : Math.round(s.drift * 1000),
+        };
+      };
+      try {
+        await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown);
+        p.pause();
+        await h.sleep(1500);
+        // Receive 4..~11 s with sound: a paused seek there, then 6 s of play.
+        p.seek(4 + 0.5 / fps);
+        await p.waitState((x) => !x.playing && x.frame === 100, { timeout: 30000, interval: 50, what: 'frame 100' });
+        p.play();
+        await h.sleep(6000);
+        r.ac = (await p.state()).ac;
+        p.pause();
+        await h.sleep(500);
+        // Over a 2 Mb/s link (the host's sound takes its time there); backwards, so each seek is behind what was read.
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 250000 });
+        p.act({ action: 'packetCache', sound: false });
+        r.before = [];
+        for (const sec of [8.2, 6.6, 5]) r.before.push(await playFrom(sec));
+        p.act({ action: 'packetCache', sound: true });
+        // Past the places measured next, so the first of them is behind the playhead too.
+        p.seek(9.6 + 0.5 / fps);
+        await p.waitState((x) => !x.playing && x.frame === 240, { timeout: 30000, interval: 50, what: 'frame 240' });
+        await h.sleep(600);
+        r.after = [];
+        for (const sec of [8.6, 7, 5.4]) r.after.push(await playFrom(sec));
+        // The page path: the seek served from the page's packets and the host still holding that GOP (it skips the
+        // packets the page offers: src/stream.js skipHeld). Otherwise the host restarts there and sends everything.
+        const paged = (a) => a.filter((x) => x.local && x.hostSkipped);
+        ok(r.before.every((x) => !x.pageSound), 'before: the held sound was used');
+        ok(paged(r.after).length > 0, `after: no play took the page path: ${JSON.stringify(r.after)}`);
+        ok(paged(r.after).every((x) => x.pageSound && x.hostSkippedSound), `after: the held sound was not used: ${JSON.stringify(r.after)}`);
+        // Sound ready from the play position at once (the hidden desktop gives no user gesture, so the AudioContext
+        // stays suspended and nothing is heard: where it is running, heard from the play position too).
+        ok(paged(r.after).every((x) => x.soundReadyMs !== null && x.soundReadyMs < 300), `after: the sound was not ready at once: ${JSON.stringify(r.after)}`);
+        const ran = r.after.filter((x) => x.ac === 'running');
+        ok(ran.every((x) => x.soundFromS !== null && x.soundFromS < 0.1), `after: the sound started past the play position: ${JSON.stringify(ran)}`);
+        const med = (a) => { const v = a.filter((x) => Number.isFinite(x)).sort((x, y) => x - y); return v.length ? v[v.length >> 1] : null; };
+        const B = paged(r.before);
+        const A = paged(r.after);
+        r.summary = {
+          pagePath: `${B.length}/${r.before.length} before, ${A.length}/${r.after.length} after`,
+          pictureBeforeMs: med(B.map((x) => x.pictureMs)), pictureAfterMs: med(A.map((x) => x.pictureMs)),
+          soundReadyBeforeMs: med(B.map((x) => x.soundReadyMs)), soundReadyAfterMs: med(A.map((x) => x.soundReadyMs)),
+          soundBeforeMs: med(r.before.map((x) => x.soundMs)), soundAfterMs: med(r.after.map((x) => x.soundMs)),
+          soundFromBeforeS: med(r.before.map((x) => x.soundFromS)), soundFromAfterS: med(r.after.map((x) => x.soundFromS)),
+          driftBeforeMs: med(r.before.map((x) => x.driftMs)), driftAfterMs: med(r.after.map((x) => x.driftMs)),
+        };
+      } finally {
+        p.act({ action: 'packetCache', sound: true });
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
+        r.notes = vs.lines.filter((l) => l.includes(`[${p.name}]`) && /play from|page holds|from the page/.test(l) && !/webview: state /.test(l))
+          .map((l) => l.replace(/^.*\] /, '')).slice(-12);
+        await h.closeClip(vs);
+      }
+    });
     await run('slow-link-seek-back', async (ok, r) => {
       const file = makeLinkClip(h.ffmpeg);
       const p = await lib.open(vs, h, file);

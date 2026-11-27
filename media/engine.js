@@ -715,7 +715,11 @@ function createEngine(env) {
             return;
           }
         } else this.remoteFragment = null;
+        // The sound as received goes into the packet cache too (takeHeld: play after a seek served from there).
+        if (this.packetCache) for (const it of m.audio) this.packetCache.addSound(it);
         try {
+          // Sound held by the page goes first (takeHeld): what the host sends follows it.
+          if (this.soundGate) { await this.soundGate; if (this.disposed || m.gen !== this.gen) return; }
           if (m.audio.some((it) => it.kind === 'opus')) m.audio = await this.decodeRemoteAudio(m.audio);
           if (this.disposed || m.gen !== this.gen) return;
           this.remoteVideoEnd = m.eof || m.videoEnd;
@@ -815,7 +819,7 @@ function createEngine(env) {
           this.addFrame({ t, yuv: it, bytes: it.data.byteLength });
         }
       }
-      for (const it of m.audio) {
+      for (let it of m.audio) {
         if (it.aid !== undefined && it.aid !== this.audioId) continue; // a track switched away from
         if (it.kind === 'packet') {
           if (!this.adec || this.adec.state !== 'configured' || it.t === null) continue;
@@ -825,6 +829,12 @@ function createEngine(env) {
             this.aSubmitT = Math.max(this.aSubmitT === undefined ? -Infinity : this.aSubmitT, it.t);
           } catch (e) { log(`audio decode: ${e.message}`); }
         } else if (it.kind === 's16') {
+          // After takeHeld: sound the page already holds may come again from the host; keep only what follows it.
+          if (this.audioKeepUntil !== undefined && it.t < this.audioKeepUntil - 1e-4) {
+            const cut = typeof VpePacketCache !== 'undefined' ? VpePacketCache.trimSound(it, this.audioKeepUntil) : null;
+            if (!cut) continue;
+            it = cut;
+          }
           const samples = new DataView(it.data.buffer, it.data.byteOffset, it.data.byteLength);
           const planes = [new Float32Array(it.data.byteLength / 4), new Float32Array(it.data.byteLength / 4)];
           for (let i = 0; i < planes[0].length; i++) {
@@ -1164,6 +1174,12 @@ function createEngine(env) {
       // Container times are often rounded to the ms: a chunk within 5 ms of the previous one's end continues it exactly.
       const prev = this.audio[this.audio.length - 1];
       if (prev && Math.abs(t - (prev.t + prev.dur)) < 0.005) t = prev.t + prev.dur;
+      // Play's sound is ready once decoded sound covers the play position (notePlayStart), whatever the AudioContext.
+      const ps = this.playStart;
+      if (ps && ps.soundReadyMs === undefined && t <= ps.from + 0.02 && t + planes[0].length / sampleRate > ps.from + 0.02) {
+        ps.soundReadyMs = Math.round(performance.now() - ps.t0);
+        this.notePlayStart();
+      }
       // Tiny chunks (TrueHD: 40 samples, under a millisecond) join the previous one while it is short
       // and not playing yet: a source node per chunk was 1200 nodes a second.
       if (prev && !prev.src && t === prev.t + prev.dur && prev.dur < 0.05 && prev.buf.sampleRate === sampleRate && prev.buf.numberOfChannels === planes.length) {
@@ -1634,7 +1650,32 @@ function createEngine(env) {
         src.onended = () => this.sources.delete(src);
         this.sources.add(src);
         a.src = src;
+        const ps = this.playStart;
+        if (ps && this.playing && ps.soundMs === undefined) {
+          ps.soundMs = Math.round(performance.now() - ps.t0);
+          ps.soundFromS = Math.max(a.t, now) - ps.from; // sound before this was never heard
+          this.notePlayStart();
+        }
       }
+    }
+
+    /** Play got going: the picture moves and (with sound) the sound plays. Logged once, kept for the debug probe. */
+    notePlayStart() {
+      const ps = this.playStart;
+      if (!ps || ps.pictureMs === undefined) return;
+      // Waits for the sound to be ready from the play position; heard (soundMs) only with a running AudioContext.
+      // No sound 3 s after the picture moved (sound that never came): logged without it.
+      if (ps.sound && (ps.soundReadyMs === undefined || (ps.soundMs === undefined && this.ac.state === 'running')) && !ps.late) {
+        if (!ps.timer) ps.timer = setTimeout(() => { if (this.playStart === ps) { ps.late = true; this.notePlayStart(); } }, 3000);
+        return;
+      }
+      clearTimeout(ps.timer);
+      this.playStart = null;
+      this.playStats = { from: ps.from, pictureMs: ps.pictureMs, soundReadyMs: ps.soundReadyMs, soundMs: ps.soundMs, soundFromS: ps.soundFromS };
+      const ready = ps.soundReadyMs !== undefined ? `, sound ready after ${ps.soundReadyMs} ms` : ps.sound ? ', no sound from the start' : '';
+      log(`play from ${this.rel(ps.from).toFixed(3)} s: picture moving after ${ps.pictureMs} ms${ready}`
+        + `${ps.soundMs !== undefined ? `, heard after ${ps.soundMs} ms from ${ps.soundFromS.toFixed(3)} s past the start`
+          : ps.sound ? ` (AudioContext ${this.ac ? this.ac.state : 'none'})` : ''}`);
     }
 
     /** Rates other than 1x: decoded chunks go through one TimeStretch, output plays back to back. */
@@ -1810,6 +1851,11 @@ function createEngine(env) {
         this.shownT = show.t;
         this.shownStale = false;
         this.shownCount = (this.shownCount || 0) + 1;
+        const ps = this.playStart;
+        if (ps && this.playing && ps.pictureMs === undefined && show.t > ps.from + 0.5 / (this.fps || 30)) {
+          ps.pictureMs = Math.round(performance.now() - ps.t0);
+          this.notePlayStart();
+        }
         // Another picture: a sharp one asked for the last is no longer wanted; paused, this one may become sharp.
         if (this.remoteStream) { if (this.playing) this.cancelSharp(); else this.scheduleSharp(); }
         // The clock held for this first picture (now()): it runs from here, not from when playback was asked for.
@@ -1945,6 +1991,8 @@ function createEngine(env) {
       }
       this.playing = true;
       if (this.remoteStream) this.worker.postMessage({ type: 'playback', playing: true });
+      // How long play takes to get going (notePlayStart): the picture moving, and the sound.
+      this.playStart = { t0: performance.now(), from: this.shownT ?? this.pauseT, sound: this.amode !== 'none' && !!this.ac };
       this.endSteps();
       // A read served from the page's packets has no sound and no producer: the host goes on from the shown frame.
       if (this.localGen === this.gen) { this.seekAbs(this.shownT ?? this.pauseT, true); return; }
@@ -2036,9 +2084,13 @@ function createEngine(env) {
       // Playing (play after a seek served from the packets, or a seek while playing): offer the host what the page
       // holds of the target's GOP, so it sends only what follows (seeked.have, then onSeeked feeds them).
       const have = this.remoteStream && wasPlaying && !recoverTransport ? this.packetsHeld(t) : null;
-      this.pendingHave = have ? { gen: this.gen, packets: have.packets } : null;
+      // ...and the sound it holds from t on (a second past those packets at most), so play starts with it at once.
+      const sound = have && !this.soundCacheOff && this.amode !== 'none' ? this.packetCache.soundFrom(t, have.lastT + 1) : null;
+      if (have && sound) have.audioUntil = sound.end;
+      this.pendingHave = have ? { gen: this.gen, packets: have.packets, sound: sound ? sound.items : [], audioUntil: sound ? sound.end : undefined } : null;
       if (this.fill) this.fill = null; // the host stops its fill on a seek
-      this.worker.postMessage({ type: 'seek', gen: this.gen, t, ...(have ? { have: { keyT: have.keyT, lastT: have.lastT } } : {}),
+      this.worker.postMessage({ type: 'seek', gen: this.gen, t,
+        ...(have ? { have: { keyT: have.keyT, lastT: have.lastT, ...(have.audioUntil !== undefined ? { audioUntil: have.audioUntil } : {}) } } : {}),
         ...(this.remoteStream ? { playing: this.playing, warm: this.warmHook !== undefined ? this.warmHook : !!isClock() } : {}),
         ...(this.remoteStream && this.fastFirstHook !== undefined ? { fastFirst: this.fastFirstHook } : {}),
         ...(this.remoteStream && this.quickHook !== undefined ? { quick: this.quickHook } : {}),
@@ -2363,9 +2415,20 @@ function createEngine(env) {
       this.pendingHave = null;
       if (!held || held.gen !== m.gen || !m.have) return;
       const bytes = held.packets.reduce((n, p) => n + p.data.byteLength, 0);
-      log(`seek to ${this.rel(m.t).toFixed(3)} s: ${held.packets.length} packets (${(bytes / 1024).toFixed(0)} KiB) from the page, `
-        + 'the host sends what follows');
-      this.onBatch({ gen: m.gen, video: held.packets, audio: [], local: true });
+      log(`seek to ${this.rel(m.t).toFixed(3)} s: ${held.packets.length} packets (${(bytes / 1024).toFixed(0)} KiB) from the page`
+        + `${held.sound.length ? ` and sound to ${this.rel(held.audioUntil).toFixed(3)} s` : ''}, the host sends what follows`);
+      // PCM goes in with the picture; Opus decodes first, and the host's next batches wait for it (soundGate). Sound the
+      // host sends again anyway (it did not hold that far) is cut where the page's ends (audioKeepUntil, onBatch).
+      const opus = held.sound.filter((it) => it.kind === 'opus');
+      const keep = () => { if (held.sound.length && this.gen === m.gen) this.audioKeepUntil = held.audioUntil; };
+      this.onBatch({ gen: m.gen, video: held.packets, audio: held.sound.filter((it) => it.kind !== 'opus'), local: true });
+      if (!opus.length) { keep(); return; }
+      const gate = this.decodeRemoteAudio(opus).then((audio) => {
+        if (this.disposed || this.gen !== m.gen) return;
+        this.onBatch({ gen: m.gen, video: [], audio, local: true });
+        keep();
+      }, (e) => log(`held sound decode failed: ${e && e.message || e}`)).finally(() => { if (this.soundGate === gate) this.soundGate = null; });
+      this.soundGate = gate;
     }
 
     /** Real-time catch-up: continue from the first keyframe at or after t, clock untouched. */

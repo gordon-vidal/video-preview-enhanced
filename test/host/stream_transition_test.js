@@ -468,4 +468,15 @@ console.log('stream transition tests passed');
   assert.deepStrictEqual(held(50, { keyT: 2, lastT: 120 / fps }), { ok: false, vNext: 50 });
   // A lastT between frames (not a packet the history sent): not skipped.
   assert.deepStrictEqual(held(50, { keyT: 2, lastT: 60.5 / fps }), { ok: false, vNext: 50 });
+  // With the sound the page holds from the seek on (audioUntil): the sound goes on from there, or from as far as the
+  // history has it (the page cuts the rest), never back.
+  const sound = (have, { aNext = 96000, aEnd = 240000, hasAudio = true } = {}) => {
+    const s = { vAll, vNext: 50, log: () => {}, buf: { hasAudio }, base: 0, aNext, aEnd };
+    return { ok: EncodedStream.prototype.skipHeld.call(s, have), vNext: s.vNext, aNext: s.aNext };
+  };
+  assert.deepStrictEqual(sound({ keyT: 2, lastT: 71 / fps, audioUntil: 3.5 }), { ok: true, vNext: 72, aNext: 168000 });
+  assert.deepStrictEqual(sound({ keyT: 2, lastT: 71 / fps, audioUntil: 9 }), { ok: true, vNext: 72, aNext: 240000 }, 'held only to 5 s');
+  assert.deepStrictEqual(sound({ keyT: 2, lastT: 71 / fps, audioUntil: 1 }), { ok: true, vNext: 72, aNext: 96000 }, 'never back');
+  assert.deepStrictEqual(sound({ keyT: 2, lastT: 71 / fps, audioUntil: 3.5 }, { hasAudio: false }), { ok: true, vNext: 72, aNext: 96000 });
+  assert.deepStrictEqual(sound({ keyT: 2, lastT: 60.5 / fps, audioUntil: 3.5 }), { ok: false, vNext: 50, aNext: 96000 }, 'picture not skipped: sound neither');
 }

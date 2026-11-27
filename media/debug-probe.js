@@ -521,6 +521,7 @@
               lastSeekMs: p.lastSeekMs !== undefined ? Math.round(p.lastSeekMs) : null,
               sharp: p.sharpStats ? { ...p.sharpStats, pending: !!p.sharp } : null,
               quick: p.quickStats ? { ...p.quickStats } : null,
+              play: p.playStats || null,
             });
             if (p.gl && p.gl.gl && p.gl.prog) { try { s.tf = p.gl.gl.getUniform(p.gl.prog, p.gl.uTf); } catch { /* not WebGL */ } }
           }
@@ -676,7 +677,9 @@
       // Tests: the page's packet cache for paused seeks (media/packet-cache.js) off (mb 0) or at this size.
       if (m.action === 'packetCache' && player.remoteStream) {
         const PC = /** @type {any} */ (globalThis).VpePacketCache;
-        player.packetCache = m.mb > 0 && PC ? PC.create({ cap: m.mb * 1e6 }) : null;
+        if (m.mb !== undefined) player.packetCache = m.mb > 0 && PC ? PC.create({ cap: m.mb * 1e6 }) : null;
+        // The sound kept with the packets used (play after a seek served from them) or not; it is kept either way.
+        if (m.sound !== undefined) player.soundCacheOff = !m.sound;
       }
       // Tests: Live transcode's paused fast first picture (host) and sharp frame (page) on or off, for before/after.
       if (m.action === 'pausedSharp' && player.remoteStream) {

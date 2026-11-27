@@ -2,6 +2,8 @@
 // Live transcode over a remote link: the H.264 packets the page received, kept by GOP (docs/notes/instant-seek-remote.md).
 // A paused seek or step back into a GOP held here decodes from these packets instead of asking the host to send the
 // GOP again over the link (1-3 MB at 1080p: seconds on a slow SSH link). Compressed, so a small budget holds minutes.
+// The sound received is kept too, as it came (Opus batches or 16-bit PCM), within the same budget: play after a seek
+// served from here starts at once with the picture and sound held, while the host sends what follows (engine takeHeld).
 // Pure: the engine (media/engine.js) feeds it packets and asks it for runs; Node tests load it directly.
 'use strict';
 
@@ -10,7 +12,31 @@
    * @typedef {{ t: number, key: boolean, idr?: boolean, data: Uint8Array, discard?: boolean }} Packet
    * @typedef {{ keyT: number, lastT: number, endT?: number, packets: Packet[], bytes: number, used: number, open: boolean,
    *   params: string }} Gop
+   * A remote stream's sound item as src/stream-buffer.js takeAudio sends it: Opus (packets with 80 ms of preroll; skip
+   * and samples trim the decoded output) or interleaved 16-bit stereo PCM.
+   * @typedef {{ kind: 'opus', t: number, sampleRate: number, head: Uint8Array, packets: Uint8Array[], skip: number,
+   *   samples: number } | { kind: 's16', t: number, sampleRate: number, data: Uint8Array }} Sound
+   * @typedef {{ t: number, end: number, item: Sound, bytes: number, used: number }} SoundChunk
    */
+
+  /** @param {Sound} it */
+  const soundSamples = (it) => (it.kind === 'opus' ? it.samples : Math.floor(it.data.byteLength / 4));
+
+  /**
+   * The item from time `from` on (the samples before it cut off), or null when nothing is left. Opus decodes from its
+   * first packet anyway: only the trim moves.
+   * @param {Sound} it @param {number} from
+   * @returns {Sound | null}
+   */
+  function trimSound(it, from) {
+    const k = Math.max(0, Math.round((from - it.t) * it.sampleRate));
+    const n = soundSamples(it);
+    if (k >= n) return null;
+    if (!k) return it;
+    const t = it.t + k / it.sampleRate;
+    if (it.kind === 'opus') return { ...it, t, skip: it.skip + k, samples: it.samples - k };
+    return { ...it, t, data: it.data.subarray(k * 4) };
+  }
 
   /**
    * The SPS and PPS of an Annex B keyframe (the host puts them on every IDR: src/stream.js spliceKeyframe), as a string
@@ -45,6 +71,8 @@
      */
     const runs = new Map();
     const MAX_RUNS = 4;
+    /** @type {SoundChunk[]} in time order */
+    let sound = [];
     let bytes = 0;
     let clock = 0;
     let hits = 0;
@@ -59,13 +87,67 @@
     }
     const appending = (g) => { for (const r of runs.values()) if (r === g) return true; return false; };
 
+    function dropSound(c) {
+      const i = sound.indexOf(c);
+      if (i < 0) return;
+      sound.splice(i, 1);
+      bytes -= c.bytes;
+    }
+
+    /** Over the budget: the least recently used GOP or sound chunk goes first (never the GOP a read appends to). */
     function evict() {
-      while (bytes > cap && gops.length > 1) {
+      while (bytes > cap && gops.length + sound.length > 1) {
         let old = null;
         for (const g of gops) if (!appending(g) && (!old || g.used < old.used)) old = g;
+        let oldSound = null;
+        for (const c of sound) if (!oldSound || c.used < oldSound.used) oldSound = c;
+        if (oldSound && (!old || oldSound.used < old.used)) { dropSound(oldSound); continue; }
         if (!old) break;
         drop(old);
       }
+    }
+
+    /**
+     * A sound item as received (src/stream-buffer.js takeAudio). One the new item covers whole (the same sound read
+     * again) goes.
+     * @param {Sound} it
+     */
+    function addSound(it) {
+      if (!it || (it.kind !== 'opus' && it.kind !== 's16') || !Number.isFinite(it.t) || !(it.sampleRate > 0)) return;
+      const n = soundSamples(it);
+      if (!(n > 0)) return;
+      const end = it.t + n / it.sampleRate;
+      const eps = 0.5 / it.sampleRate;
+      for (const c of sound.slice()) if (c.t >= it.t - eps && c.end <= end + eps) dropSound(c);
+      const size = it.kind === 'opus' ? it.packets.reduce((x, p) => x + p.byteLength, it.head ? it.head.byteLength : 0) : it.data.byteLength;
+      const c = { t: it.t, end, item: it, bytes: size, used: ++clock };
+      let i = sound.length;
+      while (i > 0 && sound[i - 1].t > c.t) i--;
+      sound.splice(i, 0, c);
+      bytes += size;
+      evict();
+    }
+
+    /**
+     * The sound held from t on without a gap, up to `until`: items trimmed to start exactly at t (each next one cut
+     * where the previous ends), and where they end. Null when nothing held starts at or before t.
+     * @param {number} t @param {number} [until] @param {number} [eps]
+     * @returns {{ items: Sound[], end: number } | null}
+     */
+    function soundFrom(t, until = Infinity, eps = 0.002) {
+      const items = [];
+      let x = t;
+      while (x < until - 1e-6) {
+        let best = null;
+        for (const c of sound) if (c.t <= x + eps && c.end > x + 1e-6 && (!best || c.end > best.end)) best = c;
+        if (!best) break;
+        const it = trimSound(best.item, x);
+        if (!it) break;
+        best.used = ++clock;
+        items.push(it);
+        x = best.end;
+      }
+      return items.length ? { items, end: x } : null;
     }
 
     /**
@@ -153,17 +235,17 @@
       return g ? g.packets.filter((p) => p.t > t + eps) : [];
     }
 
-    function clear() { gops = []; runs.clear(); bytes = 0; }
+    function clear() { gops = []; sound = []; runs.clear(); bytes = 0; }
 
     return {
-      add, find, after, close, clear,
-      stats: () => ({ gops: gops.length, bytes, cap, hits, misses }),
+      add, find, after, close, clear, addSound, soundFrom,
+      stats: () => ({ gops: gops.length, sound: sound.length, bytes, cap, hits, misses }),
       /** Covered spans [keyT, lastT], for the debug probe and tests. */
       spans: () => gops.map((g) => [g.keyT, g.lastT, g.packets.length]).sort((a, b) => a[0] - b[0]),
     };
   }
 
-  const api = { create };
+  const api = { create, trimSound };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else /** @type {any} */ (root).VpePacketCache = api;
 }(typeof self !== 'undefined' ? self : this));

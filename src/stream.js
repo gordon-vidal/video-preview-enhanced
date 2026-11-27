@@ -1240,7 +1240,15 @@ class EncodedStream {
     while (j < this.vAll.length && !this.vAll[j].key && this.vAll[j].t <= have.lastT + eps) j++;
     if (Math.abs(this.vAll[j - 1].t - have.lastT) > eps) return false;
     this.vNext = j;
-    this.log(`remote stream: the page holds ${j - k} packets (${have.keyT.toFixed(3)}-${have.lastT.toFixed(3)} s); sending from the next`);
+    // The sound it holds from the seek on (have.audioUntil): send from there, or from as far as this history has it
+    // (the page cuts what it already holds: media/engine.js takeHeld).
+    let sound = '';
+    if (Number.isFinite(have.audioUntil) && this.buf.hasAudio) {
+      const s = Math.round((have.audioUntil - this.base) * AUDIO_RATE);
+      const to = Math.min(s, this.aEnd);
+      if (to > this.aNext) { this.aNext = to; sound = ` and sound to ${(this.base + to / AUDIO_RATE).toFixed(3)} s`; }
+    }
+    this.log(`remote stream: the page holds ${j - k} packets (${have.keyT.toFixed(3)}-${have.lastT.toFixed(3)} s)${sound}; sending from the next`);
     return true;
   }
 
