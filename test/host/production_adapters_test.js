@@ -195,6 +195,18 @@ function makeBridge(/** @type {{ page?: string, boot?: string }} */ env = { page
     assert.deepStrictEqual([cv.style.width, cv.style.height], ['', ''], 'a real thumbnail takes its own size again');
   }
 
+  // ---- engine: a drag reaches the player as a scrub, so it skips the neighbour prefetch (media/thumbs.js hover) ----
+  {
+    const { engine, players } = makeEngine();
+    /** @type {any[]} */
+    const flags = [];
+    players.A.thumbnail = (/** @type {number} */ _t, /** @type {any} */ cb, /** @type {boolean} */ scrub) => { flags.push(scrub); cb(null); return true; };
+    engine.thumbnail('A', 1, () => {});
+    engine.thumbnail('A', 2, () => {}, true);
+    await Promise.resolve();
+    assert.deepStrictEqual(flags, [false, true], 'hover: not a scrub; drag: a scrub');
+  }
+
   // ---- engine: snapshot from an exact-frame grabber, else the shown picture ----
   {
     const { engine, players } = makeEngine();

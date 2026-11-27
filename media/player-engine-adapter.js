@@ -405,10 +405,10 @@
     }
 
     // ---- seek-bar hover preview: a scrub is coalesced to one microtask so thumbnailLeave() can cancel it ----
-    /** @type {{ clipId: string, seconds: number, cb: any } | null} */
+    /** @type {{ clipId: string, seconds: number, cb: any, scrub?: boolean } | null} */
     let pendingThumb = null;
     let thumbGen = 0;
-    /** @param {{ clipId: string, seconds: number, cb: any }} q */
+    /** @param {{ clipId: string, seconds: number, cb: any, scrub?: boolean }} q */
     function deliverThumb(q) {
       const c = clipOrFirst(q.clipId);
       if (!c) return;
@@ -439,7 +439,7 @@
       };
       let asked = false;
       if (p && typeof p.thumbnail === 'function') {
-        try { asked = p.thumbnail(seconds, give, false) !== false; } catch { asked = false; }
+        try { asked = p.thumbnail(seconds, give, !!q.scrub) !== false; } catch { asked = false; }
       }
       if (!asked) give(null);
     }
@@ -450,7 +450,7 @@
     function thumbnail(clipId, seconds, cb, scrubbing) {
       if (!scrubbing) { pendingThumb = null; deliverThumb({ clipId, seconds, cb }); return; }
       const first = !pendingThumb;
-      pendingThumb = { clipId, seconds, cb };
+      pendingThumb = { clipId, seconds, cb, scrub: true };
       if (!first) return;
       const gen = thumbGen;
       Promise.resolve().then(() => {
