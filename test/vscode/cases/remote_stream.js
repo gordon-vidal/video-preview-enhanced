@@ -683,10 +683,11 @@ module.exports = [{
         p.act({ action: 'pausedSharp', sharp: false, fastFirst: false });
         p.act({ action: 'warmDecoder', on: false });
         await h.sleep(1500);
-        // Places 4.8 s apart, never visited before (the host holds about 2 s ahead of a jump, the page's fill 2 s behind
-        // it), past the first seconds read at the start; at different depths into their 50-frame GOPs.
-        const before = [90, 234, 378, 522, 666, 810];
-        const after = [162, 306, 450, 594, 738, 882];
+        // Places 4 s apart, never visited before (the host holds about 2 s ahead of a jump, the page's fill 2 s behind
+        // it), at different depths into their 50-frame GOPs. All past 14.8 s: a single video's stream keeps its size when
+        // the stage grows (no restart), so what it read from the open (6 s and more) stays in the host's history.
+        const before = [222, 342, 462, 582, 702, 822];
+        const after = [282, 402, 522, 642, 762, 882];
         r.before = [];
         for (const f of before) { r.before.push(await jump(f)); await h.sleep(1500); }
         p.act({ action: 'warmDecoder', on: true });
