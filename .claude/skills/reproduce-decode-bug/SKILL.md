@@ -1,6 +1,8 @@
 ---
 name: reproduce-decode-bug
 description: Reproduce and isolate a playback or decode problem for a given video file (wrong picture, no sound, stalls, wrong frame, plays in one decoder only). Use when a bug report or the user names a file that plays badly.
+metadata:
+  internal: true
 ---
 
 # Reproduce a decode bug

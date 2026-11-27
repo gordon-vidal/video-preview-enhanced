@@ -1,6 +1,8 @@
 ---
 name: update-docs
 description: Update documentation for a change in Video Preview Enhanced while keeping README short (README is the Marketplace page). Use when behaviour, settings, formats, numbers or claims change.
+metadata:
+  internal: true
 ---
 
 # Update docs without bloating README

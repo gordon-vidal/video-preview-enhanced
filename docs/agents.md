@@ -47,6 +47,8 @@ When you generate, transcode, or compare video files, include clickable `vscode:
   `vscode://gordon-vidal.video-preview-enhanced/compare?frame=<N>&mode=split&file=<URL_ENCODED_ABS_PATH_A>&file=<URL_ENCODED_ABS_PATH_B>`
 
 URL-encode every path (spaces, `#`, `?`, `&`, and Windows backslashes/colons). In a Remote-SSH or WSL workspace, use `uri=<URL_ENCODED_vscode-remote://...>` instead of `file=`.
+
+Use `vscode://` links in terminals, Markdown reports (Markdown Preview), and external apps. If a chat panel blocks `vscode://`, link directly to the video file or folder instead.
 ````
 
 ---
@@ -65,7 +67,7 @@ def vpe_compare_link(path_a, path_b, frame=1, mode="split"):
     )
 ```
 
-In VS Code's integrated terminal, `Ctrl+Click` (`Cmd+Click` on macOS) opens the link directly inside the current window.
+In VS Code's integrated terminal, `Ctrl+Click` (`Cmd+Click` on macOS) opens the link directly inside the current window. Links also work in VS Code's **Markdown Preview** (`Ctrl+Shift+V`) and in external apps (browser, Slack, Linear). Some sandboxed chat sidebar webviews ignore `vscode://` clicks — in those, link directly to the video file or folder, or write a short `.md` report and open it in Markdown Preview.
 
 ## Security
 

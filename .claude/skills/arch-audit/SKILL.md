@@ -1,6 +1,8 @@
 ---
 name: arch-audit
 description: Run a read-only architectural health audit (dependency boundaries, dead code, code duplication, git churn/coupling, and ADR alignment) and present a visual Health Report. Use periodically, before milestones, or when checking for structural drift and anti-patterns.
+metadata:
+  internal: true
 ---
 
 # Architectural Health Audit (Read-Only)

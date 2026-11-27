@@ -1,6 +1,8 @@
 ---
 name: release-checklist
 description: Prepare (never publish) a Video Preview Enhanced release. Use when asked to get a version ready, check release readiness or draft release notes. Publishing is always the maintainer's decision.
+metadata:
+  internal: true
 ---
 
 # Prepare a release

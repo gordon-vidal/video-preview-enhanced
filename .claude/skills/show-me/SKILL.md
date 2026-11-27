@@ -1,6 +1,8 @@
 ---
 name: show-me
 description: Explain architectures, data flows, state transitions, or proposed changes visually using concise diagrams and focused HTML artifacts instead of walls of text. Use when explaining how a subsystem works, before implementing changes touching >2 files or a new UI surface, or when the user asks to visualize something.
+metadata:
+  internal: true
 ---
 
 # Show Me — Visual Architecture & Design Checks

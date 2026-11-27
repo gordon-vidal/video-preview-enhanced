@@ -1,6 +1,8 @@
 ﻿---
 name: run-tests
 description: Choose and run the right test layer for a change in Video Preview Enhanced (host/engine Node tests, hidden-desktop real VS Code scenarios, performance). Use when verifying a change, before a PR or merge, or when a test fails.
+metadata:
+  internal: true
 ---
 
 # Run the right tests

@@ -193,12 +193,17 @@
       },
       {
         "command": "videoPreviewEnhanced.copyAgentSnippet",
-        "title": "Copy AI Tool Video-Link Instructions",
+        "title": "Show AI Tool Video-Link Instructions",
         "category": "Video Preview"
       },
       {
         "command": "videoPreviewEnhanced.installAgentSkill",
         "title": "Install AI Tool Video-Link Skill (npx skills)",
+        "category": "Video Preview"
+      },
+      {
+        "command": "videoPreviewEnhanced.openSampleVideo",
+        "title": "Open Sample Video",
         "category": "Video Preview"
       },
       {
@@ -799,7 +804,7 @@
           {
             "id": "agents",
             "title": "Optional: links from AI tools",
-            "description": "If you use an AI coding tool such as Claude Code, Codex, Cursor or Copilot, you can tell it how to give you links that open a video here, at an exact frame or side by side with another. Copy the instructions into your AGENTS.md or CLAUDE.md, or install them as a skill if you use npx skills.\n[Copy instructions](command:videoPreviewEnhanced.copyAgentSnippet)\n[Install with npx skills](command:videoPreviewEnhanced.installAgentSkill)\n[Skip](command:videoPreviewEnhanced.setupNext?%5B%22agents%22%5D)",
+            "description": "If you use an AI coding tool such as Claude Code, Codex, Cursor or Copilot, you can tell it how to give you links that open a video here, at an exact frame or side by side with another. View the short instructions to paste into AGENTS.md or CLAUDE.md, or install them as a skill if you use npx skills.\n[Show instructions](command:videoPreviewEnhanced.copyAgentSnippet)\n[Install with npx skills](command:videoPreviewEnhanced.installAgentSkill)\n[Skip](command:videoPreviewEnhanced.setupNext?%5B%22agents%22%5D)",
             "media": {
               "markdown": "media/walkthrough/agents.md"
             },
@@ -812,7 +817,7 @@
           {
             "id": "later",
             "title": "Try it out",
-            "description": "Click any video in the Explorer to play it. To change anything later, click ⚙ on the player bar, search Video Preview Enhanced in Settings, or run **Video Preview: Open Setup Guide** to come back here.\n[Done](command:videoPreviewEnhanced.setupNext?%5B%22later%22%5D)",
+            "description": "Open the bundled sample clip right now, or click any video in the Explorer. To change anything later, click ⚙ on the player bar, search Video Preview Enhanced in Settings, or run **Video Preview: Open Setup Guide** to come back here.\n[Try it out](command:videoPreviewEnhanced.openSampleVideo)\n[Done](command:videoPreviewEnhanced.setupNext?%5B%22later%22%5D)",
             "media": {
               "markdown": "media/walkthrough/later.md"
             },

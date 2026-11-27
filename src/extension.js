@@ -33,6 +33,7 @@ const decide = require('./decide'); // native ffmpeg or built-in, per file
 const localff = lazy(() => require('./localff')); // "Use an ffmpeg I already have…"
 const remoteff = lazy(() => require('./remoteff')); // ffmpeg downloaded on the remote host, for the remote stream
 const walkthrough = lazy(() => require('./walkthrough')); // Setup Guide walkthrough + AI agent snippet
+const agentInstructions = lazy(() => require('./agent-instructions')); // Themed instructions tab with Copy buttons
 const proxy = lazy(() => require('./proxy'));
 const { rotationOf } = require('./rotation');
 const { createUnifiedRegistry, sourceKindOf } = require('./unified-session'); // which viewer takes a newly opened video (capture)
@@ -80,6 +81,7 @@ let globalState;
 let storageDir = '';
 let toolsPromise = null;
 let extensionDir = '';
+let agentInstructionsPanel = null;
 let hwPromise = null; // hardware.detect(), once per session (Re-test detects again)
 let probeRun = null; // the running probe (one at a time)
 let probeChecked = false; // fingerprint compared this session
@@ -993,9 +995,38 @@ function activate(context) {
       term.show();
       term.sendText(walkthrough.SKILL_COMMAND, false);
     }),
-    vscode.commands.registerCommand('videoPreviewEnhanced.copyAgentSnippet', async () => {
-      await vscode.env.clipboard.writeText(walkthrough.AGENT_SNIPPET);
-      vscode.window.showInformationMessage('AI agent video-link instructions copied. Paste them into AGENTS.md, CLAUDE.md, or .cursorrules.');
+    vscode.commands.registerCommand('videoPreviewEnhanced.copyAgentSnippet', () => {
+      if (agentInstructionsPanel) {
+        agentInstructionsPanel.reveal(vscode.ViewColumn.Active);
+        return;
+      }
+      const panel = vscode.window.createWebviewPanel(
+        'videoPreviewEnhanced.agentInstructions',
+        'AI Tool Video-Link Instructions',
+        vscode.ViewColumn.Active,
+        { enableScripts: true, localResourceRoots: [] },
+      );
+      agentInstructionsPanel = panel;
+      panel.onDidDispose(() => { if (agentInstructionsPanel === panel) agentInstructionsPanel = null; });
+      const nonce = require('crypto').randomBytes(16).toString('hex');
+      panel.webview.html = agentInstructions.renderHtml({
+        snippet: walkthrough.AGENT_SNIPPET,
+        skillCommand: walkthrough.SKILL_COMMAND,
+        nonce,
+      });
+      panel.webview.onDidReceiveMessage(async (msg) => {
+        if (!msg || typeof msg !== 'object') return;
+        if (msg.type === 'copy') {
+          const text = msg.which === 'skill' ? walkthrough.SKILL_COMMAND : walkthrough.AGENT_SNIPPET;
+          await vscode.env.clipboard.writeText(text);
+        } else if (msg.type === 'runSkill') {
+          await vscode.commands.executeCommand('videoPreviewEnhanced.installAgentSkill');
+        }
+      });
+    }),
+    vscode.commands.registerCommand('videoPreviewEnhanced.openSampleVideo', async () => {
+      const sample = vscode.Uri.joinPath(context.extensionUri, 'media', 'probe', 'h264_8_1080.mkv');
+      await vscode.commands.executeCommand('vscode.openWith', sample, 'videoPreviewEnhanced.player');
     }),
     vscode.commands.registerCommand('videoPreviewEnhanced.loadSubtitles', () => {
       const v = activeViewer();

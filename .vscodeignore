@@ -12,6 +12,7 @@ node_modules/**
 .husky/**
 .github/**
 .claude/**
+skills/**
 .private-context/**
 AGENTS.md
 CLAUDE.md

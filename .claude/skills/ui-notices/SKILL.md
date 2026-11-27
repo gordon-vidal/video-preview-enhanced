@@ -1,6 +1,8 @@
 ---
 name: ui-notices
 description: Write and review user-facing notices, banners, modals, and VS Code notifications in Video Preview Enhanced. Use whenever adding, editing, or auditing any popup, in-player notice, or warning dialog.
+metadata:
+  internal: true
 ---
 
 # User-Facing Notices & Popups

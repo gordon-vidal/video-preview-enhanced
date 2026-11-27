@@ -1,6 +1,8 @@
 ---
 name: add-format
 description: Add support for a new container extension or codec to Video Preview Enhanced (file association, decoder build, tests, docs). Use when asked to support a new file type or codec.
+metadata:
+  internal: true
 ---
 
 # Add a container or codec

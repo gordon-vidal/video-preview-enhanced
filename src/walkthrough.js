@@ -15,10 +15,12 @@ const AGENT_SNIPPET = [
   '  `vscode://gordon-vidal.video-preview-enhanced/compare?frame=<N>&mode=split&file=<URL_ENCODED_ABS_PATH_A>&file=<URL_ENCODED_ABS_PATH_B>`',
   '',
   'URL-encode every path (spaces, `#`, `?`, `&`, and Windows backslashes/colons). In a Remote-SSH or WSL workspace, use `uri=<URL_ENCODED_vscode-remote://...>` instead of `file=`.',
+  '',
+  'Use `vscode://` links in terminals, Markdown reports (Markdown Preview), and external apps. If a chat panel blocks `vscode://`, link directly to the video file or folder instead.',
 ].join('\n');
 
 /** Installs the video-preview-links agent skill globally via skills.sh (skills/video-preview-links/SKILL.md). */
-const SKILL_COMMAND = 'npx skills add gordon-vidal/video-preview-enhanced -g';
+const SKILL_COMMAND = 'npx skills add gordon-vidal/video-preview-enhanced --skill video-preview-links -g';
 
 /** globalState key: when the extension opened the setup guide by itself (once per machine). */
 const GUIDE_KEY = 'videoPreviewEnhanced.setupGuideOpened';

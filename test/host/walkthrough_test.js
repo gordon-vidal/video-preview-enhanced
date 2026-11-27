@@ -39,6 +39,7 @@ for (const step of wt.steps) {
 }
 
 assert.ok(agentsDoc.includes(walkthrough.AGENT_SNIPPET), 'AGENT_SNIPPET matches docs/agents.md');
+assert.ok(fs.readFileSync(path.join(ROOT, 'media', 'walkthrough', 'agents.md'), 'utf8').includes(walkthrough.AGENT_SNIPPET), 'AGENT_SNIPPET is shown verbatim in media/walkthrough/agents.md');
 
 // Every step has its own Next / Got it / Done button (setupNext with the step's id), and that marks it done.
 for (const cmd of ['videoPreviewEnhanced.setupNext', 'videoPreviewEnhanced.setupFfmpegFromGuide', 'videoPreviewEnhanced.chooseTranscode']) {
@@ -49,7 +50,10 @@ for (const step of wt.steps) {
   assert.ok(step.description.includes(link), `step ${step.id} has its own next button`);
   assert.ok(step.completionEvents.includes('onContext:' + walkthrough.doneKey(step.id)), `step ${step.id} is done after its button`);
 }
-assert.ok(/\[Copy instructions\]/.test(wt.steps.find((x) => x.id === 'agents').description.split('\n')[1]), 'copying the instructions is the first button');
+assert.ok(/\[Show instructions\]/.test(wt.steps.find((x) => x.id === 'agents').description.split('\n')[1]), 'showing the instructions is the first button');
+assert.ok(registered.has('videoPreviewEnhanced.openSampleVideo'), 'openSampleVideo command registered');
+assert.ok(/\[Try it out\]\(command:videoPreviewEnhanced\.openSampleVideo\)/.test(wt.steps.find((x) => x.id === 'later').description), 'final step has Try it out button');
+assert.ok(fs.existsSync(path.join(ROOT, 'media', 'probe', 'h264_8_1080.mkv')), 'bundled sample clip exists');
 
 // Next goes to the next step this window shows; after the last one the guide closes (null).
 const order = (remote) => { const out = ['start']; for (let id = 'start'; (id = walkthrough.nextStep(wt.steps, id, remote));) out.push(id); return out; };
@@ -79,7 +83,14 @@ for (const step of wt.steps) {
 
 // The agents step offers both the skill install and the copy-paste snippet.
 assert.ok(registered.has('videoPreviewEnhanced.installAgentSkill'), 'installAgentSkill command registered');
-assert.strictEqual(walkthrough.SKILL_COMMAND, 'npx skills add gordon-vidal/video-preview-enhanced -g');
+assert.strictEqual(walkthrough.SKILL_COMMAND, 'npx skills add gordon-vidal/video-preview-enhanced --skill video-preview-links -g');
+assert.ok(fs.existsSync(path.join(ROOT, 'skills', 'video-preview-links', 'SKILL.md')), 'public video-preview-links skill exists');
+for (const dir of fs.readdirSync(path.join(ROOT, '.claude', 'skills'))) {
+  const skillFile = path.join(ROOT, '.claude', 'skills', dir, 'SKILL.md');
+  if (!fs.existsSync(skillFile)) continue;
+  const fm = fs.readFileSync(skillFile, 'utf8').match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/);
+  assert.ok(fm && /\binternal:\s*true\b/.test(fm[1]), `internal skill ${dir} is hidden from npx skills`);
+}
 
 // First start: the guide opens once, never for earlier users or with VS Code's "open walkthroughs on install" off.
 const open = walkthrough.shouldOpenGuide;

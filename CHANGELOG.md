@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Setup guide & AI tool video links:** published the `video-preview-links` skill for `npx skills` (hiding repo-internal skills), added a themed **Show instructions** tab with Copy buttons, and added a **Try it out** button on the last walkthrough step that opens the bundled 1080p sample clip.
 - **Fewer pop-ups:** the one-time "Live transcode is on" and "opened N videos together" VS Code notices are gone; both features work as before.
 
 ## 0.13.0 (2026-11-27)

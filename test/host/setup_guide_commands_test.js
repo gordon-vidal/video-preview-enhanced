@@ -50,6 +50,28 @@ const walkthrough = require('../../src/walkthrough');
   await cmd('videoPreviewEnhanced.setupNext', 'ffmpeg');
   assert.strictEqual(h.context.globalState.get('videoPreviewEnhanced.onboarding').choice, 'builtin');
 
+  // Show AI agent instructions: opens a themed webview tab showing the exact snippet + Copy buttons, no blind copy.
+  h.vscode.env.clipboard.text = '';
+  const instrPanel = h.nextPanel();
+  await cmd('videoPreviewEnhanced.copyAgentSnippet');
+  assert.strictEqual(instrPanel.viewType, 'videoPreviewEnhanced.agentInstructions');
+  assert.ok(instrPanel.panel.webview.html.includes('Video inspection links (VS Code)'), 'webview shows the snippet');
+  assert.ok(instrPanel.panel.webview.html.includes(walkthrough.SKILL_COMMAND), 'webview shows the npx skills command');
+  assert.strictEqual(h.vscode.env.clipboard.text, '', 'opening the tab does not touch clipboard');
+  await instrPanel.send({ type: 'copy', which: 'snippet' });
+  assert.strictEqual(h.vscode.env.clipboard.text, walkthrough.AGENT_SNIPPET, 'Copy button writes snippet to clipboard');
+  await instrPanel.send({ type: 'copy', which: 'skill' });
+  assert.strictEqual(h.vscode.env.clipboard.text, walkthrough.SKILL_COMMAND, 'Copy skill button writes command to clipboard');
+  instrPanel.panel.dispose();
+
+  // Try it out: opens the bundled real-footage sample clip in Video Preview Enhanced.
+  ran();
+  await cmd('videoPreviewEnhanced.openSampleVideo');
+  const openCalls = ran();
+  assert.strictEqual(openCalls.length, 1);
+  assert.strictEqual(openCalls[0][0], 'vscode.openWith');
+  assert.match(openCalls[0][1].fsPath, /media[\\/]probe[\\/]h264_8_1080\.mkv$/);
+  assert.strictEqual(openCalls[0][2], 'videoPreviewEnhanced.player');
   h.dispose();
   console.log('setup guide commands: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

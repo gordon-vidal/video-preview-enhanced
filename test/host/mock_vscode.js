@@ -144,11 +144,12 @@ function load({ settings, env, setup, state: sharedState } = {}) {
       send: async (m) => {
         await h.shown;
         if (!listeners.msg) return undefined; // no viewer (the tab closed, or another viewer took the video)
-        if (m && typeof m === 'object' && m.page === undefined && panel.webview.html) {
+        const hasCfg = Boolean(panel.webview.html && panel.webview.html.includes('id="cfg"'));
+        if (m && typeof m === 'object' && m.page === undefined && hasCfg) {
           m = { page: webviewConfig(panel.webview).page, ...(m.type === 'ready' ? { boot: 'mock-document' } : {}), ...m };
         }
         // The page's decoders tag what they send with their clip (media/player-unified.js defaultCreatePlayer).
-        const clips = panel.webview.html ? webviewConfig(panel.webview).clips || [] : [];
+        const clips = hasCfg ? webviewConfig(panel.webview).clips || [] : [];
         if (m && typeof m === 'object' && DECODER_MESSAGES.has(m.type) && m.clipId === undefined && clips.length === 1) {
           m = { ...m, clipId: clips[0].id, key: clips[0].id };
         }

@@ -73,7 +73,11 @@ before releases or in performance work.
 - `.claude/settings.json` denies `git add` of `.private-context` and `git add -f`, and runs
   `tools/hooks/block-visible-launch.js` to block commands that open a visible VS Code or browser.
   Other agents: obey the same rule (`review.cmd` / `review.sh` is for humans; automated VS Code
-  runs go only through the hidden-desktop runner in `test/vscode/`).
+  runs go only through the hidden-desktop runner in `test/vscode/`). When handing changes to a
+  human to try out, always give a ready-to-run `review.cmd` / `review.sh` command targeting the
+  exact branch/commit — include `--dirty` for uncommitted edits and any scenario flags needed to
+  land straight on the change (e.g. `--first-run` for the setup guide, `--no-ffmpeg` for ffmpeg
+  setup, `--link <preset>` for Remote-SSH; see [docs/REVIEW.md](docs/REVIEW.md)).
 - CI runs gitleaks (secret scan of full history) and the personal-data check. Optional local hook:
   `git config core.hooksPath .githooks` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 

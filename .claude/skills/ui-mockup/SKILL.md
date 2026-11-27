@@ -1,6 +1,8 @@
 ---
 name: ui-mockup
 description: Build, update, and preview realistic interactive UI mockups using the real CSS, bar markup, and pure PlayerState module. Use whenever proposing, changing, or reviewing player or Compare UI/UX.
+metadata:
+  internal: true
 ---
 
 # Realistic UI Mockups & Millisecond State Verification
