@@ -24,7 +24,8 @@ const MAX_QUEUED_AUDIO = 4 * AUDIO_RATE * 4; // four seconds of unsent stereo s1
 const MAX_REGIONS = 4;
 
 /**
- * @typedef {{ kind: 'packet', t: number, key: boolean, idr: boolean, data: Uint8Array }} VideoPacket
+ * enc: the encode (one ffmpeg run or fill, src/stream.js) the packet came from.
+ * @typedef {{ kind: 'packet', t: number, key: boolean, idr: boolean, data: Uint8Array, enc: number }} VideoPacket
  * @typedef {{ base: number, vBase: number, frameIndex: number, vAll: VideoPacket[], aStore: any[],
  *   aEnd: number, head: Uint8Array | undefined, videoEnded: boolean, audioEnded: boolean, bytes: number }} Region
  */
@@ -57,6 +58,7 @@ class SeekHistoryBuffer {
     this.regionBytes = 0;
     this.configuration = '';
     this.seekT = 0; // the last seek target (trim keeps SEEK_KEEP_S before it)
+    this.enc = 0; // the encode the packets cut now come from (the stream sets it per ffmpeg run)
     this.reset(0);
   }
 
@@ -245,7 +247,8 @@ class SeekHistoryBuffer {
     }
     const t = pts !== undefined && Number.isFinite(pts) ? pts : this.vBase + this.frameIndex / this.fps;
     this.frameIndex++;
-    this.vAll.push({ kind: 'packet', t, key, idr: key, data: new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.length)) });
+    this.vAll.push({ kind: 'packet', t, key, idr: key, data: new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.length)),
+      enc: this.enc });
   }
 
   /** Adds sound bytes from ffmpeg. True when enough is queued ahead that the caller should pause the pipe. */

@@ -334,7 +334,12 @@ them (`stream.js` skipHeld), so play after a page-served seek does not send the 
   per page request, so a seek sent meanwhile waits behind little; a seek, play or hide stops it. At most 2 fills run
   per host (each holds a GPU encoder session); a Direct Stream copy is never filled (its GOPs are not cached). The
   packet cache keeps a run per read, so the fill and the read-ahead arriving in turns do not cut each other's GOPs,
-  and `close()` marks the fill as reaching the held packets.
+  and `close()` marks the fill as reaching the held packets, only when it arrived whole: a fill whose ffmpeg failed
+  or ended short is reported as failed (whole frames only) and the page keeps just what arrived (review 2026-11-27 #3).
+- **Encode ids.** Every encode (a live ffmpeg run, a kept-running decoder's segment, a fill) stamps its packets with
+  an id (`enc`); the packet cache keeps it per GOP and a play seek offers it with the held GOP. The host skips the
+  offered packets (`skipHeld`) only when its history's GOP is the same encode: two encodes of the same frame times
+  have different reference pictures (review 2026-11-27 #4).
 - **Paused encodes use 0.5 s GOPs** (2 s while playing): a step back across a keyframe decodes at most 13 frames at
   25 fps on the page instead of 50.
 - Layer 3 `remote-stream-packets` (1080p25, link throttled to 2 Mb/s after the fill): fill of 50 frames in ~170 ms
@@ -509,8 +514,10 @@ free: no warm process, the stream behaves as before); remote and local Live tran
 - **Ends:** 60 s without a segment (`WARM_IDLE_MS`), hidden tab, dispose, a changed configuration (size, bitrate, encoder,
   tone-mapper: the argv is its key), the source's end (its last frames come out only when stdin closes; the next jump
   starts a new process), a clock about to wrap (33-bit MPEG-TS times: a new process, practically never). A failure (a
-  segment's checks, the process or a remux exiting, no picture 5 s after the target was fed) logs why, turns it off for
-  that video and restarts from the first frame not sent, as ffmpeg per seek.
+  segment's checks, the process or a remux exiting) logs why, turns it off for that video and restarts from the first
+  frame not sent, as ffmpeg per seek. A stall (no picture 5 s after the target was fed, seen under heavy CPU load) is
+  slow, not broken: that jump restarts the same way, but ffmpeg per seek lasts only 30 s (doubling per stall in a row,
+  5 min at most; a picture from it resets), and it never marks an HDR tone-mapper bad (review 2026-11-27 #7).
 - **Not used for:** a seek while playing (keeps the per-seek path's 2 s keyframes; the warm process encodes with the
   paused 0.5 s spacing), the fast first picture (an x264 encode with a small first keyframe needs a fresh encoder: on a
   slow link that wins), sources other than H.264 / HEVC, a variable frame rate (`r_frame_rate` ≠ `avg_frame_rate`),

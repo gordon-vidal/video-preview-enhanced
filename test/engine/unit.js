@@ -1644,6 +1644,108 @@ test('playbackPhase(): one source of truth for a held or running clock', () => {
   assert.strictEqual(P.audioMayRun.call(player({ scrubHeldT: 1, playing: true, shownT: 0 })), false);
 });
 
+// ---- Review findings 2026-11-27 (Live transcode / Remote-SSH) ----------------------------------------------------
+
+test('remote Live transcode: play from the page\'s packets asks the host once for what follows', async () => {
+  // The host's reply to a seek that offered the held GOP (seeked.have): the held packets and sound feed in, and one
+  // request goes out for what follows. Two in flight could arrive out of order.
+  for (const sound of [[], [{ kind: 'opus', t: 2, sampleRate: 48000, head: new Uint8Array(1), packets: [], skip: 0, samples: 960 }]]) {
+    const p = player({
+      remoteStream: true, vmode: 'webcodecs', amode: sound.length ? 'soft' : 'none', playing: true, gen: 3, seekTarget: 2,
+      pauseT: 2, firstShown: true, requesting: true,
+      pendingHave: { gen: 3, packets: [{ kind: 'packet', t: 2, key: true, data: new Uint8Array(4) }], sound, audioUntil: 2.02 },
+      decodeRemoteAudio: async () => [],
+    });
+    P.onWorker.call(p, { type: 'seeked', gen: 3, t: 2, have: true });
+    await settle();
+    await settle();
+    const mores = p.worker.msgs.filter((m) => m.type === 'more');
+    assert.strictEqual(mores.length, 1, `${sound.length ? 'Opus' : 'no'} sound held: ${mores.length} requests in flight`);
+  }
+});
+
+test('a paused seek whose first frame is just after an exact target shows that frame before it counts as landed', () => {
+  ctx.perfNow = 100;
+  const f = 1 / 30;
+  const p = player({ remoteStream: true, vmode: 'webcodecs', amode: 'none', gen: 1, seekTarget: 2, pauseT: 2, shownT: 1,
+    shownStale: true, seekStartMs: 0, firstShown: true, pump: noop });
+  P.addFrame.call(p, frame(2 + 0.6 * f)); // nothing earlier decoded: the source's next frame sits 0.6 frame after
+  assert.strictEqual(p.lastSeekMs, undefined, 'not landed until its picture is shown');
+  P.tick.call(p);
+  assert.strictEqual(p.shownT, 2 + 0.6 * f, 'the frame is drawn');
+  assert.strictEqual(p.shownStale, false, 'no ring left up');
+  assert.strictEqual(p.lastSeekMs, 100, 'landed once shown');
+  assert.strictEqual(p.syncState().current, true, 'the picture shown is current');
+});
+
+test('remote Live transcode: a fill that stops short is held only as far as its packets reach', () => {
+  const cache = require('../../media/packet-cache').create();
+  const fps = 30;
+  const pk = (i) => ({ t: i / fps, key: i % 15 === 0, idr: i % 15 === 0, data: new Uint8Array(10) });
+  for (const done of [{ error: 'ffmpeg exit 1' }, {}]) {
+    cache.clear();
+    const p = player({ remoteStream: true, packetCache: cache, fill: { id: 1, gen: 'fill:1', from: 1, to: 3, t0: 0, n: 0 } });
+    P.onFillBatch.call(p, { id: 1, video: Array.from({ length: 20 }, (_, i) => pk(30 + i)), done: false }); // 1.000-1.633 s
+    P.onFillBatch.call(p, { id: 1, video: [], done: true, ...done });
+    assert.ok(cache.find(1.5), 'what arrived is held');
+    assert.strictEqual(cache.find(2.5), null, `${done.error || 'no error'}: the missing tail is not claimed as held`);
+  }
+});
+
+test('remote Live transcode: a play seek offers the held GOP with the encode it came from', () => {
+  const cache = require('../../media/packet-cache').create();
+  for (let i = 0; i < 20; i++) cache.add(5, { t: 2 + i / 30, key: i === 0, idr: i === 0, data: new Uint8Array(10), enc: 7 });
+  const p = player({ remoteStream: true, vmode: 'webcodecs', amode: 'none', packetCache: cache, playing: true, soundCacheOff: true });
+  P.seekAbs.call(p, 2.2, true);
+  const seek = seeksOf(p).at(-1);
+  assert.ok(seek.have, 'the held GOP is offered');
+  assert.strictEqual(seek.have.enc, 7, 'with its encode');
+});
+
+test('remote Live transcode: an old sharp-frame result neither cancels nor stands in for the current request', () => {
+  const oldDecoder = ctx.VideoDecoder;
+  const oldChunk = ctx.EncodedVideoChunk;
+  const decoders = [];
+  ctx.VideoDecoder = class {
+    constructor({ output }) { this.output = output; this.state = 'unconfigured'; this.chunks = []; decoders.push(this); }
+    configure() { this.state = 'configured'; }
+    decode(c) { this.chunks.push(c); }
+    flush() { return Promise.resolve(); }
+    close() { this.state = 'closed'; }
+  };
+  ctx.EncodedVideoChunk = class { constructor(o) { Object.assign(this, o); } };
+  const drawn = [];
+  const vf = (t) => ({ timestamp: Math.round(t * 1e6), closed: false, close() { this.closed = true; } });
+  try {
+    for (const t2 of [3, 2]) { // a newer request for another frame, and for the same frame again
+      const p = player({ remoteStream: true, nativeLossy: true, vmode: 'webcodecs', vconf: {}, shownT: 2, shownCount: 1,
+        pendingStep: () => false, gl: { drawFrame: (f) => drawn.push(f.timestamp), drawYuv: noop } });
+      drawn.length = 0;
+      P.requestSharp.call(p, { t: 2, shown: 1, gen: 0 });
+      P.onSharpFrame.call(p, { id: p.sharp.id, t: 2, data: new Uint8Array(4), done: true });
+      // Another picture is shown (or the same frame again after a seek away and back): a new request goes out.
+      P.cancelSharp.call(p);
+      p.gen++;
+      p.shownT = t2;
+      p.shownCount = 2;
+      P.requestSharp.call(p, { t: t2, shown: 2, gen: p.gen });
+      const current = p.sharp;
+      P.onSharpFrame.call(p, { id: current.id, t: t2, data: new Uint8Array(4), done: true });
+      const dec = decoders.at(-1);
+      dec.output(vf(2)); // the first request's picture comes out now
+      assert.strictEqual(p.sharp, current, `t ${t2}: the old result leaves the current request alone`);
+      assert.deepStrictEqual(drawn, [], `t ${t2}: the old result is not drawn`);
+      dec.output(vf(t2));
+      assert.deepStrictEqual(drawn, [Math.round(t2 * 1e6)], `t ${t2}: the current one is`);
+      assert.strictEqual(p.sharp, null);
+      assert.strictEqual(p.sharpStats.shown, 1);
+    }
+  } finally {
+    ctx.VideoDecoder = oldDecoder;
+    ctx.EncodedVideoChunk = oldChunk;
+  }
+});
+
 (async () => {
   // A pending promise alone doesn't keep Node alive. Require the suite to finish.
   process.exitCode = 1;

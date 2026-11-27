@@ -145,6 +145,19 @@ const sizeIn = (argv) => /scale\w*=(?:w=)?(\d+):(?:h=)?(\d+)/.exec(argv.join(' '
     assert.ok(posted.some((m) => m.type === 'batch'), 'the stream goes at once, not after the wait');
     s.dispose();
   }
+  { // Play while the page's request waits behind the quick picture: play drops the wait and answers that request at once
+    // (the page asks nothing more until it is answered).
+    const { s, posted } = make();
+    s.seek({ gen: 1, t: 4, playing: false });
+    s.vAll.push({ t: 4, key: true, data: new Uint8Array(1000) });
+    s.vNext = 0;
+    s.more({ gen: 1, limit: 1e6 });
+    assert.ok(!posted.some((m) => m.type === 'batch'), 'paused: the request waits for the quick picture');
+    await s.handle({ type: 'playback', playing: true });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.ok(posted.some((m) => m.type === 'batch' && m.gen === 1), 'the waiting request is answered');
+    s.dispose();
+  }
   { // Over the GPU encoder session budget: skipped (the streams' own encoders come first).
     const gpu = createGpuSessions(1);
     gpu.acquire('stream'); // another video's encoder holds the only one

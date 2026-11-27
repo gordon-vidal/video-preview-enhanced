@@ -337,6 +337,7 @@ class WarmSegment extends EventEmitter {
     this.remux = null;
     /** @type {any} */
     this.stallTimer = null;
+    this.stalled = false; // ended by the stall limit (no picture in time), not by a fault
     /** @type {TsFeed | null} */
     this.feed = null;
     const seg = this;
@@ -511,7 +512,9 @@ class WarmDecoder {
       this.write(seg, seg.feed.push(d));
       if (seg.feed && seg.feed.post > 0 && seg.n === 0 && !seg.stallTimer) {
         seg.stallTimer = setTimeout(() => {
-          if (!seg.closed && seg.n === 0) seg.finish(1, `no picture ${this.stallMs} ms after the target was fed`);
+          if (seg.closed || seg.n !== 0) return;
+          seg.stalled = true; // slow, perhaps only for now (src/stream.js warmStalled): not a fault of the decoder
+          seg.finish(1, `no picture ${this.stallMs} ms after the target was fed`);
         }, this.stallMs);
       }
     });

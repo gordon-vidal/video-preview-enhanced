@@ -326,6 +326,44 @@ const tick = () => new Promise((r) => setImmediate(r));
     s.dispose();
   }
 
+  { // A stall (no picture stallMs after the target was fed, as under heavy CPU load) is temporary: this seek goes to
+    // ffmpeg at once, and after a while the kept-running decoder is tried again; a tone-mapper is not blamed for it.
+    const stall = async (s, warmProcs) => {
+      s.warmStallMs = 30; // the stream's test hook for the 5 s stall limit
+      s.handle({ type: 'open', view: { w: 1920, h: 1080 } });
+      warmProcs[0].stdin.resume();
+      for (let i = 0; i <= 3; i++) warmProcs[1].stdout.write(tsPacket(0x100, { pes: { pts: W.firstS(25) + i / 25 } }));
+      await new Promise((r) => setTimeout(r, 100));
+    };
+    const { s, logs, launched, warmProcs } = make();
+    await stall(s, warmProcs);
+    assert.ok(logs.some((l) => /no picture 30 ms/.test(l)), logs.join('\n'));
+    assert.strictEqual(launched.length, 1, 'this seek: ffmpeg at once');
+    assert.strictEqual(launched[0].t, 0);
+    quiet(s); s.handle({ type: 'seek', gen: 1, t: 20, playing: false });
+    assert.strictEqual(launched.length, 2, 'right after it: ffmpeg per seek');
+    const realNow = Date.now;
+    Date.now = () => realNow() + 10 * 60 * 1000;
+    try { quiet(s); s.handle({ type: 'seek', gen: 2, t: 30, playing: false }); } finally { Date.now = realNow; }
+    assert.strictEqual(launched.length, 2, 'minutes later: the kept-running decoder again');
+    assert.ok(s.proc && s.proc.warm);
+    s.dispose();
+    // HDR on a hardware tone-mapper that has not given a frame yet: a stall does not mark it bad.
+    const tools = { ffmpeg: 'ffmpeg', gpuFilters: new Set(['scale_cuda', 'hwdownload', 'hwupload', 'libplacebo', 'tonemap_opencl']) };
+    const h = new EncodedStream({
+      tools, file: 'in.mp4', post: () => {}, log: () => {}, remote: false, maxHeight: 1080, encoder: 'h264_nvenc', cpuEncoder: 'libx264',
+      gpuSessions: createGpuSessions(8), probed: PROBED({ pixFmt: 'yuv420p10le', colorTransfer: 'smpte2084', colorPrimaries: 'bt2020' }),
+    });
+    h.fps = 25;
+    h.sizeVideo();
+    h.launch = (t) => { const p = fakeProc([]); p.t = t; p.err = { text: '' }; return p; };
+    const hw = [];
+    h.spawnWarm = (cmd, a) => { const p = fakeProc(a); hw.push(p); return p; };
+    await stall(h, hw);
+    assert.strictEqual(h.badTonemap.size, 0, 'the tone-mapper is not blamed for a stall');
+    h.dispose();
+  }
+
   { // HDR: a hardware tone-mapper that never gave a frame fails the warm process (libplacebo without a Vulkan device, seen
     // with a 2024 ffmpeg and NVENC): the tone-mapper is dropped, not the warm process, and no per-seek ffmpeg tries it again.
     // Every stream with the same ffmpeg (one tools object per check) skips it from then on: no second failed start.

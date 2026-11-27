@@ -36,6 +36,10 @@ const SEEK_QUIET_MS = 60;
 // ...and at most once per this while it goes on, never deferring a seek longer than SEEK_MAX_DEFER_MS.
 const SPAWN_GAP_MS = 200;
 const SEEK_MAX_DEFER_MS = 400;
+// The kept-running decoder stalled (no picture within its limit, as under a burst of CPU load): this stream starts
+// ffmpeg per seek for a while, then tries it again; each stall in a row doubles the wait, up to the maximum.
+const WARM_RETRY_MS = 30000;
+const WARM_RETRY_MAX_MS = 5 * 60000;
 // A seek back by at most STEP_BACK_SPAN_S from the stream's start restarts STEP_BACK_LEAD_S (REMOTE_STEP_BACK_LEAD_S on
 // remote links) before the target, so the next backward steps (wheel notches) are served from the packets held.
 const STEP_BACK_SPAN_S = 4;
@@ -51,6 +55,9 @@ const PAUSED_GOP_S = 0.5;
 const MAX_FILLS = 2;
 const FILL_PIECE_BYTES = 96 * 1024;
 let fillsRunning = 0;
+// Each encode (a video ffmpeg run, a kept-running decoder's segment, a fill) gets its own id, stamped on its packets: the
+// same frame times from two encodes have different reference pictures (skipHeld, media/packet-cache.js).
+let encodeSeq = 0;
 // A paused frame made sharp (sharp): sent in pieces of at most this many bytes, one per page request, like a fill.
 const SHARP_PIECE_BYTES = 96 * 1024;
 // Fast first picture (fastFirstBits): a paused start's first keyframe is made about this share of a full one, unless the
@@ -162,6 +169,10 @@ class EncodedStream {
     /** @type {any} */
     this.warm = null;
     this.warmOff = '';
+    this.warmStalls = 0; // stalls in a row (a picture from it resets)
+    this.warmRetryAt = 0; // after a stall: no kept-running decoder before this time (Date.now)
+    /** @type {number | undefined} tests: the stall limit of the kept-running decoder (src/warm-decoder.js STALL_MS) */
+    this.warmStallMs = undefined;
     this.post = post;
     this.log = log;
     this.maxHeight = maxHeight || 1080;
@@ -387,7 +398,18 @@ class EncodedStream {
         this.setView(m.view);
         return this.open();
       case 'view': return this.setView(m, !!m.playing);
-      case 'playback': this.playing = !!m.playing; if (this.playing) { this.stopFill(); this.stopSharp(); this.stopQuick(); } return undefined;
+      case 'playback':
+        this.playing = !!m.playing;
+        if (this.playing) {
+          this.stopFill();
+          this.stopSharp();
+          // A request held behind the quick picture (answer) had only its timer or the quick job's end to answer it:
+          // both go with it, so it is answered now.
+          const held = !!this.quick;
+          this.stopQuick();
+          if (held) this.answer();
+        }
+        return undefined;
       case 'remoteAudioFailed':
         if (!this.audioEncoder) return;
         this.audioFallback(m.message);
@@ -781,6 +803,7 @@ class EncodedStream {
 
   watchVideo(proc, overlap = null) {
     const t0 = Date.now();
+    const enc = ++encodeSeq;
     const first = this.vAll.length;
     let checkedStart = false;
     const checkDirectStart = () => {
@@ -796,6 +819,7 @@ class EncodedStream {
     proc.stdout.on('data', (d) => {
       if (overlap && overlap === this.overlap) {
         const { buf } = overlap;
+        buf.enc = enc;
         buf.pending = buf.pending.length ? Buffer.concat([buf.pending, d]) : d;
         buf.split(false);
         if (buf.vAll.length) {
@@ -807,6 +831,7 @@ class EncodedStream {
       }
       if (proc !== this.proc) return;
       this.tonemapOk = this.tonemapKind;
+      if (proc.warm) this.warmStalls = 0;
       if (!this.gotOutput) {
         this.log(`live transcode: first bytes ${Date.now() - t0} ms after start${proc.adopted ? ' (prepared at the end)' : ''}${proc.warm ? ' (kept-running decoder)' : ''}`);
         this.link.noteFirstOutput(Date.now());
@@ -814,6 +839,7 @@ class EncodedStream {
       }
       this.gotOutput = true;
       this.pending = this.pending.length ? Buffer.concat([this.pending, d]) : d;
+      this.buf.enc = enc;
       if (proc.directStream) {
         this.buf.splitMpegTs(false);
         if (!checkDirectStart()) return;
@@ -832,6 +858,8 @@ class EncodedStream {
       this.proc = null;
       if ((code !== 0 || signal) && proc.warm) {
         const why = this.exitReason(proc, code, signal);
+        // Slow, not broken (a busy machine): no tone-mapper or the decoder is blamed for it for good.
+        if (proc.stalled) { this.warmStalled(why); return; }
         // A hardware tone-mapper that has not given a frame yet is the likelier cause: drop it, keep the warm process
         // (a new one with the next path), rather than turning the warm process off and failing again per seek.
         if (this.tonemapUnproven()) {
@@ -878,6 +906,7 @@ class EncodedStream {
         else this.fail(why);
         return;
       }
+      this.buf.enc = enc;
       if (proc.directStream) {
         this.buf.splitMpegTs(true);
         if (!checkDirectStart()) return;
@@ -1295,10 +1324,13 @@ class EncodedStream {
     const eps = 1e-4;
     const k = this.vNext;
     const first = this.vAll[k];
-    if (!first || !first.key || Math.abs(first.t - have.keyT) > eps) return false;
+    // The page's packets must be this history's own encode: another encode of the same frames (a fill, an earlier run)
+    // has other reference pictures, and this history's frames after them would decode corrupt until the next keyframe.
+    if (!first || !first.key || Math.abs(first.t - have.keyT) > eps || first.enc !== have.enc) return false;
     let j = k + 1;
     while (j < this.vAll.length && !this.vAll[j].key && this.vAll[j].t <= have.lastT + eps) j++;
     if (Math.abs(this.vAll[j - 1].t - have.lastT) > eps) return false;
+    for (let i = k + 1; i < j; i++) if (this.vAll[i].enc !== have.enc) return false;
     this.vNext = j;
     // The sound it holds from the seek on (have.audioUntil): send from there, or from as far as this history has it
     // (the page cuts what it already holds: media/engine.js takeHeld).
@@ -1347,6 +1379,7 @@ class EncodedStream {
     fillsRunning++;
     const buf = new SeekHistoryBuffer({ fps, hasAudio: false, remote: this.remote });
     buf.reset(from);
+    buf.enc = ++encodeSeq;
     const f = { id, proc, buf, sent: 0, ended: false, waiting: false, failed: '', t0: Date.now(), from, frames, bytes: 0 };
     this.filling = f;
     let err = '';
@@ -1360,9 +1393,12 @@ class EncodedStream {
     proc.on('close', (code) => {
       fillsRunning = Math.max(0, fillsRunning - 1);
       this.gpu.release(token);
-      buf.split(true);
+      // A failed run's last bytes may be a frame cut off: only whole frames (each ended by the next one's delimiter).
+      buf.split(code === 0);
       f.ended = true;
-      if (code !== 0 && !buf.vAll.length) f.failed = err.trim().split(/\r?\n/).pop() || `ffmpeg exit ${code}`;
+      // Part way is a failure too: the page holds only what arrived (media/engine.js onFillBatch), never the range asked.
+      if (code !== 0) f.failed = err.trim().split(/\r?\n/).pop() || `ffmpeg exit ${code}`;
+      else if (buf.vAll.length < frames) f.failed = `only ${buf.vAll.length} of ${frames} frames`;
       if (this.filling === f && f.waiting) this.fillMore({ id });
     });
     this.log(`remote stream: filling ${from.toFixed(3)}-${(from + frames / fps).toFixed(3)} s behind the paused frame (${frames} frames)`);
@@ -1391,9 +1427,10 @@ class EncodedStream {
     const done = f.ended && end === vAll.length;
     if (done) {
       this.filling = null;
-      this.log(`remote stream: filled ${f.sent} frames behind the paused frame, ${(f.bytes / 1024).toFixed(0)} KiB in ${Date.now() - f.t0} ms`);
+      this.log(`remote stream: filled ${f.sent} frames behind the paused frame, ${(f.bytes / 1024).toFixed(0)} KiB in ${Date.now() - f.t0} ms`
+        + `${f.failed ? ` (failed part way: ${f.failed})` : ''}`);
     }
-    this.post({ type: 'fillBatch', id: f.id, video, done });
+    this.post({ type: 'fillBatch', id: f.id, video, done, ...(done && f.failed ? { error: f.failed } : {}) });
   }
 
   stopFill() {
@@ -1551,6 +1588,7 @@ class EncodedStream {
   warmRefusal() {
     if (!this.warmWanted) return 'not the clock';
     if (this.warmOff) return this.warmOff;
+    if (Date.now() < this.warmRetryAt) return 'stalled a moment ago';
     if (this.disposed || this.failed || this.hidden) return 'stopped';
     if (!this.tools || !this.tools.ffmpeg || this.tools.legacy) return 'this ffmpeg';
     if (!WARM_ENCODERS.includes(this.encoder)) return `encoder ${this.encoder}`;
@@ -1597,7 +1635,7 @@ class EncodedStream {
     try {
       w = new WarmDecoder({
         ffmpeg: this.tools.ffmpeg, argv, key, file: this.file, streamIndex: v.index, fps: this.fps, fileStart: v.fileStart,
-        duration: this.pr.duration, codec: v.codec, spawn: (cmd, a) => this.spawnWarm(cmd, a),
+        duration: this.pr.duration, codec: v.codec, spawn: (cmd, a) => this.spawnWarm(cmd, a), stallMs: this.warmStallMs,
         release: () => this.gpu.release(token),
         onEnd: (why) => {
           if (this.warm === w) this.warm = null;
@@ -1644,6 +1682,20 @@ class EncodedStream {
     this.log(`live transcode: kept-running decoder failed (${why}); ffmpeg starts per seek for this video`);
     this.warmOff = 'failed';
     this.disposeWarm('failed');
+    this.restartVideo();
+  }
+
+  /**
+   * The kept-running decoder gave no picture in time (src/warm-decoder.js STALL_MS): a stall under load, not a fault.
+   * This seek goes to ffmpeg at once, as for a failure, but only for a while (WARM_RETRY_MS, doubling per stall in a row).
+   * @param {string} why
+   */
+  warmStalled(why) {
+    this.warmStalls++;
+    const ms = Math.min(WARM_RETRY_MAX_MS, WARM_RETRY_MS * 2 ** (this.warmStalls - 1));
+    this.warmRetryAt = Date.now() + ms;
+    this.log(`live transcode: kept-running decoder stalled (${why}); ffmpeg starts per seek, the kept-running decoder again in ${Math.round(ms / 1000)} s`);
+    this.disposeWarm('stalled');
     this.restartVideo();
   }
 

@@ -151,6 +151,25 @@ function drawnFrame(y, w, h) {
 }
 
 /**
+ * Whether `spans` ([from, to, ...] in time order: the page's packet cache, media/debug-probe.js state.packets) cover
+ * [from, to] without a gap wider than `gap` (consecutive GOPs: the next keyframe a frame after the last frame).
+ * @param {number[][] | undefined} spans @param {number} from @param {number} to @param {number} gap
+ */
+function covers(spans, from, to, gap) {
+  // Runs of spans joined within `gap`; one run must hold all of [from, to] (runs before or after it do not matter).
+  let start = Infinity;
+  let reach = -Infinity;
+  for (const [a, b] of [...(spans || [])].sort((x, y) => x[0] - y[0])) {
+    if (a > reach + gap) {
+      if (start <= from + 1e-3 && reach >= to - 1e-3) return true;
+      start = a;
+      reach = b;
+    } else reach = Math.max(reach, b);
+  }
+  return start <= from + 1e-3 && reach >= to - 1e-3;
+}
+
+/**
  * The source's frames n-1, n, n+1 of `file` as luma (BT.709 limited range, like media/engine.js sharpThumb): scaled to
  * the stream's size as the host does (bilinear), cropped to the thumb's rectangle. Mean absolute difference of each to
  * the page's sharp frame, each with its mean removed (the page's colour conversion shifts the level a little).
@@ -331,7 +350,7 @@ module.exports = [{
         const start = lines.find((l) => /remote stream from /.test(l)) || '';
         const key = /first keyframe ~(\d+) KiB/.exec(start);
         return {
-          frame, ms: Date.now() - t0, firstPictureMs: landed.length ? Number(landed[0][1]) : null, hostSeek: !!start,
+          frame, gen: s.gen, ms: Date.now() - t0, firstPictureMs: landed.length ? Number(landed[0][1]) : null, hostSeek: !!start,
           encoder: (/-> H\.264 \d+x\d+ \(([^,)]+)/.exec(start) || [])[1] || '', firstKeyKiB: key ? Number(key[1]) : 0,
           asked: s0.sharp ? s0.sharp.asked : 0, shown: s0.sharp ? s0.sharp.shown : 0,
         };
@@ -357,11 +376,15 @@ module.exports = [{
         r.after = [];
         for (const sec of [24, 44]) {
           const x = await seekTo(sec);
-          const s = await p.waitState((y) => y.sharp && y.sharp.shown > x.shown, { timeout: 30000, interval: 50, what: `sharp frame ${x.frame}` });
+          // The sharp frame of this seek (its generation) and this frame: a late picture of the previous request does not count.
+          const s = await p.waitState((y) => y.sharp && y.sharp.last && y.sharp.last.gen === x.gen && y.sharp.last.frame === x.frame
+            && y.frame === x.frame && !y.sharp.pending, { timeout: 30000, interval: 50, what: `sharp frame ${x.frame} of gen ${x.gen}` });
           const last = s.sharp.last;
           Object.assign(x, { sharpFrame: last.frame, sharpKiB: Math.round(last.bytes / 1024), sharpAfterSeekMs: last.sinceSeekMs,
             sharpAskedToShownMs: last.ms, sharpLinkMs: last.linkMs, frameAfter: s.frame });
           const th = await p.ask('sharpThumb');
+          // The thumbnail and the stats read apart must be the same sharp request (nothing is asked while paused here).
+          ok(th.req === last.req && th.gen === last.gen, `the thumbnail is of request ${th.req} (gen ${th.gen}), the stats of ${last.req} (gen ${last.gen})`);
           x.mad = whichFrame(h.ffmpeg, file, x.frame, th); // to the source's frames n-1, n, n+1
           r.after.push(x);
           ok(x.hostSeek, `after: the seek to ${sec} s did not go to the host`);
@@ -372,7 +395,8 @@ module.exports = [{
         {
           const s0 = await p.state();
           for (let i = 0; i < 6; i++) { p.step(1); await h.sleep(40); }
-          const s = await p.waitState((y) => y.sharp && y.sharp.shown > s0.sharp.shown && !y.sharp.pending, { timeout: 30000, interval: 50, what: 'sharp after steps' });
+          const s = await p.waitState((y) => y.sharp && y.sharp.shown > s0.sharp.shown && !y.sharp.pending && y.sharp.last.frame === y.frame
+            && y.sharp.last.gen === y.gen, { timeout: 30000, interval: 50, what: 'sharp after steps, of the frame rested on' });
           r.steps = { asked: s.sharp.asked - s0.sharp.asked, frame: s.frame, sharpFrame: s.sharp.last.frame, dropped: s.sharp.dropped - s0.sharp.dropped };
           ok(r.steps.sharpFrame === s.frame, `after the steps the sharp frame is ${r.steps.sharpFrame}, shown ${s.frame}`);
           ok(r.steps.asked <= 2, `steps 40 ms apart asked for ${r.steps.asked} sharp frames`);
@@ -500,12 +524,14 @@ module.exports = [{
         await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown);
         p.pause();
         await h.sleep(1500);
-        // Receive 4..~11 s with sound: a paused seek there, then 6 s of play.
+        // Receive 4..10 s with sound: a paused seek there, then play until the playhead is past 10 s (every place
+        // measured below is behind it, not in the decoded queue ahead) and the page holds that range's picture and sound.
         p.seek(4 + 0.5 / fps);
         await p.waitState((x) => !x.playing && x.frame === 100, { timeout: 30000, interval: 50, what: 'frame 100' });
         p.play();
-        await h.sleep(6000);
-        r.ac = (await p.state()).ac;
+        const held = await p.waitState((x) => x.t >= 10 && !!x.packets && covers(x.packets.video, 4, 10, 1.5 / fps)
+          && covers(x.packets.sound, 4, 10, 0.01), { timeout: 30000, interval: 100, what: 'played past 10 s, 4-10 s held by the page' });
+        r.ac = held.ac;
         p.pause();
         await h.sleep(500);
         // Over a 2 Mb/s link (the host's sound takes its time there); backwards, so each seek is behind what was read.
@@ -749,14 +775,17 @@ module.exports = [{
         p.seek(10.0 + 0.5 / fps);
         await p.waitState((s) => !s.playing && s.frame === 250, { timeout: 30000 });
         p.play();
-        await h.sleep(4000);
+        await p.waitState((s) => !!s.packets && covers(s.packets.video, 10, 14, 1.5 / fps),
+          { timeout: 30000, interval: 100, what: 'the packets of 10-14 s held by the page' });
         p.pause();
         p.seek(30.0 + 0.5 / fps);
         await p.waitState((s) => !s.playing && s.frame === 750, { timeout: 30000 });
         // (a) The host's seek over a 2 Mb/s link: play pressed while it loads.
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 250000 });
+        const g0 = (await p.state()).gen;
         p.seek(45.0 + 0.5 / fps);
-        await h.sleep(150);
+        // Play while that seek is still loading (its target pending), not after a fixed wait.
+        await p.waitState((s) => s.gen > g0 && s.seekPending, { timeout: 15000, interval: 20, what: 'the seek to 45 s under way' });
         p.play();
         r.host = await sampleAfterPlay(45, 2500);
         ok(r.host.below.length === 0, `play during the host's seek: the bar went back before 45 s (${JSON.stringify(r.host)})`);

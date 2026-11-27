@@ -249,4 +249,21 @@ test('sound: the same sound read again replaces the old copy; it shares the budg
   assert.deepEqual([c.stats().sound, c.stats().bytes], [0, 0]);
 });
 
+test('a GOP keeps the encode its keyframe came from (the host checks it before continuing the held packets)', () => {
+  const c = create();
+  for (let i = 0; i < 30; i++) c.add(1, { t: at(i), key: i === 0, idr: i === 0, data: new Uint8Array(10), enc: 3 });
+  for (let i = 30; i < 45; i++) c.add('fill:1', { t: at(i), key: i === 30, idr: i === 30, data: new Uint8Array(10), enc: 8 });
+  assert.equal(c.find(at(10)).enc, 3);
+  assert.equal(c.find(at(40)).enc, 8);
+});
+
+test('the sound held, as joined spans (the debug state)', () => {
+  const c = create();
+  const s16 = (t, sec) => ({ kind: 's16', t, sampleRate: 48000, data: new Uint8Array(Math.round(sec * 48000) * 4) });
+  c.addSound(s16(1, 0.5));
+  c.addSound(s16(1.5, 0.5));
+  c.addSound(s16(3, 0.5));
+  assert.deepEqual(c.soundSpans(), [[1, 2], [3, 3.5]]);
+});
+
 console.log(`packet_cache: ${n} passed`);
