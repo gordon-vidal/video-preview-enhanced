@@ -1947,7 +1947,7 @@ function openTogether() {
  * @param {any} uri @param {{ panel?: any, tab?: any, changed?: boolean }} source
  */
 function noteOpen(uri, source) {
-  if (!burst || !COMPARE_VIDEO_EXT.test(uri.path) || !openTogether() || unifiedRegistry.capturing()) return false;
+  if (!burst || !uri || !unifiedViewer.isViewable(uri) || !COMPARE_VIDEO_EXT.test(uri.path) || !openTogether() || unifiedRegistry.capturing()) return false;
   burst.add(uri.toString(), uri, source);
   return true;
 }
@@ -2001,14 +2001,16 @@ const capturedTabs = new WeakSet();
 
 /**
  * A video opened in another editor (VS Code's own preview when this extension is not the default, a text tab) while
- * a viewer captures: that viewer takes it. The caller closes its tab.
+ * `target` captures: once prepared, close its tab only if `target` still owns Capture and accepts it.
  */
-async function captureOpened(uri) {
+async function captureOpened(uri, tab, target) {
   let clip;
   try { clip = await unifiedViewer.prepareClip(uri, prepDeps(true)); }
   catch (e) { log(`capture: cannot open ${path.basename(uri.fsPath)}: ${e && e.message || e}`); return; }
-  const routed = unifiedRegistry.routeOpen(clip);
-  if (routed.captured) log(`${clip.label} ${routed.added ? 'joined' : 'not added to'} ${routed.session.title} (from another editor)`);
+  if (!target || target.disposed || !target.shouldCapture() || unifiedRegistry.capturing() !== target) return;
+  const added = target.addClip(clip);
+  log(`${clip.label} ${added ? 'joined' : 'not added to'} ${target.title} (from another editor)`);
+  closeTab(tab);
 }
 
 /**
@@ -2065,17 +2067,16 @@ function watchTabs(context) {
       const uri = tab.input && tab.input.uri;
       if (!uri) continue;
       const video = FS_SCHEMES.has(uri.scheme) && COMPARE_VIDEO_EXT.test(uri.path);
-      const capturing = video && !!unifiedRegistry.capturing();
-      if (capturing) capturedTabs.add(tab);
+      const target = video ? unifiedRegistry.capturing() : null;
+      if (target) capturedTabs.add(tab);
       if (isPlayerTab(tab)) {
         previewState.set(tab, tab.isPreview);
         noteOpen(uri, { tab });
         continue;
       }
-      // Our editor is not the default for this file: the capturing viewer takes it all the same.
-      if (capturing) {
-        closeTab(tab);
-        captureOpened(uri).catch((err) => log(`capture failed: ${err && err.stack || err}`));
+      // Our editor is not the default for this file: the capturing viewer takes it once prepared.
+      if (target) {
+        captureOpened(uri, tab, target).catch((err) => log(`capture failed: ${err && err.stack || err}`));
       }
     }
     scheduleCaptureCheck();

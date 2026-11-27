@@ -180,6 +180,34 @@ function slowProbe(delays) {
       await v.send({ type: 'capture', on: true });
       await V._commands['videoPreviewEnhanced.stopAddFromExplorer']();
       assert.deepStrictEqual(captures(), [true, false, false], 'Esc in VS Code: off in the page too (no echo of Shift+D)');
+      // Stopping Capture while another editor's video is still being probed leaves its tab open.
+      await v.send({ type: 'capture', on: true });
+      let releaseProbe;
+      const probeGate = new Promise((r) => { releaseProbe = r; });
+      const realPrep = unifiedViewer.prepareClip;
+      unifiedViewer.prepareClip = async (uri, deps) => { await probeGate; return realPrep(uri, deps); };
+      let cancelledTab;
+      try {
+        cancelledTab = tabs.open(U(d), 'vscode.videoPreview');
+        await sleep(10);
+        assert.ok(!tabs.closed.includes(cancelledTab), 'source tab stays open while probe is in flight');
+        await V._commands['videoPreviewEnhanced.stopAddFromExplorer']();
+        releaseProbe();
+        await sleep(50);
+      } finally { unifiedViewer.prepareClip = realPrep; }
+      assert.ok(!tabs.closed.includes(cancelledTab), 'source tab stays open when Capture ended mid-probe');
+      assert.ok(!joined(v).includes('fourth.mp4'), 'video does not join after Capture ended');
+      closeAll();
+    }
+
+    // ---- Open Together: virtual-scheme player tabs (git:, vscode-vfs:) never enter a burst ----
+    {
+      const gitUri = U(a).with({ scheme: 'git' });
+      tabs.open(gitUri, PLAYER);
+      const pb = openPlayer(b);
+      await pb.shown;
+      await sleep(150);
+      assert.deepStrictEqual(shown(pb), ['rotated.mp4'], 'a git: tab cannot pull the working-tree file into a burst');
       closeAll();
     }
 
