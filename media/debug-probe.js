@@ -517,6 +517,9 @@
               audioSeconds: Array.isArray(p.audio) ? p.audio.reduce((/** @type {number} */ x, /** @type {any} */ a) => x + a.dur, 0) : null,
               drift: p.audioMaster && p.audioMaster() && p.shownT !== null ? p.now() - p.shownT : null,
               tracks: p.tracks ? p.tracks() : null,
+              // Live transcode, paused: the last seek's first picture (ms) and the sharp frames (media/engine.js requestSharp).
+              lastSeekMs: p.lastSeekMs !== undefined ? Math.round(p.lastSeekMs) : null,
+              sharp: p.sharpStats ? { ...p.sharpStats, pending: !!p.sharp } : null,
             });
             if (p.gl && p.gl.gl && p.gl.prog) { try { s.tf = p.gl.gl.getUniform(p.gl.prog, p.gl.uTf); } catch { /* not WebGL */ } }
           }
@@ -674,6 +677,13 @@
         const PC = /** @type {any} */ (globalThis).VpePacketCache;
         player.packetCache = m.mb > 0 && PC ? PC.create({ cap: m.mb * 1e6 }) : null;
       }
+      // Tests: Live transcode's paused fast first picture (host) and sharp frame (page) on or off, for before/after.
+      if (m.action === 'pausedSharp' && player.remoteStream) {
+        if (m.sharp !== undefined) { player.sharpOff = !m.sharp; if (!m.sharp && player.cancelSharp) player.cancelSharp(); }
+        if (m.fastFirst !== undefined) player.fastFirstHook = !!m.fastFirst; // sent with the next seek (host: on or off)
+      }
+      // Tests: the last sharp frame's centre crop (media/engine.js sharpThumb), to tell which frame it is.
+      if (m.action === 'sharpThumb') log(`sharpThumb ${JSON.stringify({ id: m.id, ...(player.sharpThumb || { error: 'no sharp frame yet' }) })}`);
       // A page with a controller over its decoders (the unified viewer) seeks / plays through it, so its state and
       // every decoder follow; a bare player is told directly.
       if (m.action === 'seek') { if (deps.seek) deps.seek(Number(m.t) || 0); else player.seekTime(m.t); wake(); }

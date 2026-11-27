@@ -39,6 +39,32 @@ function createEngine(env) {
   const FILL_SPAN_S = 2;
   const FILL_AHEAD_S = 1.5;
   const FILL_CHECK_MS = 250;
+  // Live transcode, paused: once a frame has stayed shown this long, the host sends it visually lossless (requestSharp).
+  // Steps and scrolls faster than this ask for nothing.
+  const SHARP_WAIT_MS = 150;
+  /**
+   * Tests (debug only): the luma of the top-left 320x180 of a sharp frame (test clips move there), at full size, for
+   * test/vscode to compare with the source's frames (which frame it is). BT.709 limited range, as ffmpeg's gray output.
+   */
+  const sharpThumb = (vf, t) => {
+    try {
+      const w = Math.min(320, vf.displayWidth);
+      const h = Math.min(180, vf.displayHeight);
+      const cv = new OffscreenCanvas(w, h);
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      const sx = 0;
+      const sy = 0;
+      cx.drawImage(vf, sx, sy, w, h, 0, 0, w, h);
+      const px = cx.getImageData(0, 0, w, h).data;
+      const y = new Uint8Array(w * h);
+      for (let i = 0; i < y.length; i++) {
+        y[i] = Math.round(16 + (0.2126 * px[i * 4] + 0.7152 * px[i * 4 + 1] + 0.0722 * px[i * 4 + 2]) * 219 / 255);
+      }
+      let bin = '';
+      for (let i = 0; i < y.length; i++) bin += String.fromCharCode(y[i]);
+      return { t, w, h, x: sx, y: sy, size: [vf.displayWidth, vf.displayHeight], luma: btoa(bin) };
+    } catch (e) { return { t, error: String(e && e.message || e) }; }
+  };
   const SPEED_WARMUP_MS = 1500; // decode speed samples (sampleSpeed): ignore the start
   const SPEED_SAMPLE_MS = 3000;
   const FAST_CODECS = new Set(['hevc', 'h264']); // decoders that honour skip_loop_filter (fast preview)
@@ -234,6 +260,7 @@ function createEngine(env) {
           break;
         case 'configured': mark('configured'); this.onConfigured(m); break;
         case 'fillBatch': this.onFillBatch(m); break;
+        case 'sharpFrame': this.onSharpFrame(m); break;
         case 'batch':
           if (this.remoteStream) this.receiveRemoteBatch(m);
           else this.onBatch(m);
@@ -1291,7 +1318,7 @@ function createEngine(env) {
       wake();
       if (h === !!this.hidden || this.vmode === undefined) return;
       this.hidden = h;
-      if (h) this.cancelFill();
+      if (h) { this.cancelFill(); this.cancelSharp(); }
       if (h) this.thumbnailLeave(true);
       if (h && this.ac && !this.playing) this.restAudioLater(0);
       // A live stream (Open Video URL…) can't seek back to where it was: its ffmpeg keeps running.
@@ -1779,6 +1806,8 @@ function createEngine(env) {
         this.shownT = show.t;
         this.shownStale = false;
         this.shownCount = (this.shownCount || 0) + 1;
+        // Another picture: a sharp one asked for the last is no longer wanted; paused, this one may become sharp.
+        if (this.remoteStream) { if (this.playing) this.cancelSharp(); else this.scheduleSharp(); }
         // The clock held for this first picture (now()): it runs from here, not from when playback was asked for.
         if (firstPending) { this.stopAudio(); this.anchor(now); }
         if (!this.firstShown) {
@@ -1899,6 +1928,7 @@ function createEngine(env) {
       this.seekGoalFrame = null;
       if (this.playing) return;
       this.cancelFill();
+      this.cancelSharp();
       clearTimeout(this.acTimer);
       if (this.ac && (this.acRest || (this.acUnlocked && this.ac.state === 'suspended'))) this.wakeAudio();
       else if (this.ac && this.ac.state === 'suspended') {
@@ -1996,6 +2026,7 @@ function createEngine(env) {
       if (this.adec) { try { this.adec.close(); } catch { /* closed */ } this.makeAudioDecoder(); }
       this.playing = wasPlaying;
       this.anchor(t);
+      this.cancelSharp(); // the host stops it on the seek too
       log(`seek to ${this.rel(t).toFixed(3)} s (gen ${this.gen})`);
       if (this.remoteStream && !wasPlaying && !recoverTransport && this.seekFromPackets(t)) return;
       // Playing (play after a seek served from the packets, or a seek while playing): offer the host what the page
@@ -2004,7 +2035,8 @@ function createEngine(env) {
       this.pendingHave = have ? { gen: this.gen, packets: have.packets } : null;
       if (this.fill) this.fill = null; // the host stops its fill on a seek
       this.worker.postMessage({ type: 'seek', gen: this.gen, t, ...(have ? { have: { keyT: have.keyT, lastT: have.lastT } } : {}),
-        ...(this.remoteStream ? { playing: this.playing } : {}), ...(recoverTransport ? { recoverTransport: true } : {}) });
+        ...(this.remoteStream ? { playing: this.playing } : {}), ...(this.remoteStream && this.fastFirstHook !== undefined ? { fastFirst: this.fastFirstHook } : {}),
+        ...(recoverTransport ? { recoverTransport: true } : {}) });
     }
 
     /**
@@ -2107,6 +2139,140 @@ function createEngine(env) {
       this.worker.postMessage({ type: 'fillStop' });
     }
 
+    /**
+     * Live transcode, paused: a frame just drawn (tick). Once it has stayed shown SHARP_WAIT_MS, ask the host for it
+     * visually lossless (requestSharp); every new picture, seek, play or hide before that cancels the wait, so steps and
+     * scrolls ask for nothing until they rest. The frames from the page's packets and decoded memory count the same.
+     */
+    scheduleSharp() {
+      this.cancelSharp();
+      if (!this.sharpWanted()) return;
+      const r = { t: this.shownT, shown: this.shownCount || 0, gen: this.gen };
+      this.sharpTimer = setTimeout(() => { this.sharpTimer = 0; this.requestSharp(r); }, SHARP_WAIT_MS);
+    }
+
+    /** A lossy Live transcode picture (not Direct Stream), paused and visible, decoded by WebCodecs. */
+    sharpWanted() {
+      return !!this.remoteStream && !!this.nativeLossy && !this.sharpOff && !this.playing && !this.hidden && !this.disposed
+        && this.vmode === 'webcodecs' && !!this.vconf && typeof VideoDecoder !== 'undefined';
+    }
+
+    /** Still paused on the frame the sharp one was asked for: nothing else shown, sought or stepped since. */
+    sharpStill(r) {
+      return this.sharpWanted() && this.seekTarget === null && this.gen === r.gen && (this.shownCount || 0) === r.shown
+        && this.shownT === r.t && !this.pendingStep();
+    }
+
+    requestSharp(r) {
+      if (!this.sharpStill(r)) return;
+      r.id = (this.sharpSeq = (this.sharpSeq || 0) + 1);
+      r.t0 = performance.now();
+      r.pieces = [];
+      r.bytes = 0;
+      this.sharp = r;
+      const st = this.sharpStats || (this.sharpStats = { asked: 0, shown: 0, dropped: 0, failed: 0 });
+      st.asked++;
+      this.worker.postMessage({ type: 'sharp', id: r.id, t: r.t });
+    }
+
+    /**
+     * A piece of the sharp frame (requestSharp; src/stream.js sharp). The whole picture decodes in a VideoDecoder of its
+     * own (sharpDecoder): an IDR fed to the main decoder would break the references of the P-frames after it. It is
+     * drawn only while the page is still paused on that frame, and kept nowhere (not the packets, the frames kept for
+     * steps back, nor the queue): the next picture shown replaces it as usual.
+     */
+    onSharpFrame(m) {
+      const r = this.sharp;
+      if (!r || m.id !== r.id) return;
+      const st = this.sharpStats;
+      if (m.error) {
+        this.sharp = null;
+        st.failed++;
+        log(`sharp frame: none (${m.error})`);
+        return;
+      }
+      const receive = () => {
+        if (this.sharp !== r) return;
+        if (!this.sharpStill(r)) { this.cancelSharp(); st.dropped++; return; }
+        r.pieces.push(m.data);
+        r.bytes += m.data.byteLength;
+        if (!m.done) { this.worker.postMessage({ type: 'sharpMore', id: r.id }); return; }
+        const data = new Uint8Array(r.bytes);
+        let at = 0;
+        for (const x of r.pieces) { data.set(x, at); at += x.byteLength; }
+        r.pieces = [];
+        r.arrivedMs = performance.now();
+        const dec = this.sharpDecoder();
+        if (!dec) { this.sharp = null; st.failed++; return; }
+        try {
+          dec.decode(new EncodedVideoChunk({ type: 'key', timestamp: Math.round(r.t * 1e6), data }));
+          dec.flush().catch(() => {});
+        } catch (e) {
+          this.sharp = null;
+          st.failed++;
+          log(`sharp frame: decode failed (${e && e.message || e})`);
+        }
+      };
+      // The VS Code test hook paces delivery at its fixed rate, as for the stream's batches (receiveRemoteBatch).
+      if (this.debugRemoteRate > 0) setTimeout(receive, m.data.byteLength * 1000 / this.debugRemoteRate);
+      else receive();
+    }
+
+    /** The sharp frames' own decoder (onSharpFrame), made once and kept. */
+    sharpDecoder() {
+      const d = this.sharpDec;
+      if (d && d.state === 'configured') return d;
+      try {
+        const dec = new VideoDecoder({
+          output: (vf) => this.showSharp(vf),
+          error: (e) => { log(`sharp frame decoder: ${e && e.message || e}`); if (this.sharpDec === dec) this.sharpDec = null; },
+        });
+        dec.configure(this.vconf);
+        this.sharpDec = dec;
+        return dec;
+      } catch (e) {
+        log(`sharp frame decoder unavailable: ${e && e.message || e}`);
+        this.sharpOff = true;
+        return null;
+      }
+    }
+
+    showSharp(vf) {
+      const r = this.sharp;
+      wake();
+      if (!r || Math.round(r.t * 1e6) !== vf.timestamp || !this.sharpStill(r)) {
+        vf.close();
+        if (r && this.sharp === r) { this.sharp = null; this.sharpStats.dropped++; }
+        return;
+      }
+      this.sharp = null;
+      try {
+        if (this.cfg.debug || env.debug) this.sharpThumb = sharpThumb(vf, r.t);
+        this.gl.drawFrame(vf);
+      } finally { vf.close(); }
+      const now = performance.now();
+      const st = this.sharpStats;
+      st.shown++;
+      st.last = {
+        t: r.t, frame: this.frameAt(r.t), bytes: r.bytes,
+        ms: Math.round(now - r.t0), linkMs: Math.round(r.arrivedMs - r.t0), decodeMs: Math.round(now - r.arrivedMs),
+        // From the seek that started the paused frame (its first picture is lastSeekMs after it): a seek's whole story.
+        sinceSeekMs: this.seekStartMs !== undefined ? Math.round(now - this.seekStartMs) : null,
+      };
+      log(`sharp frame shown at ${this.rel(r.t).toFixed(3)} s: ${(r.bytes / 1024).toFixed(0)} KiB, ${st.last.ms} ms after asking `
+        + `(${st.last.linkMs} ms to arrive)`);
+    }
+
+    /** Drop a sharp frame waited for or on its way (a new picture, seek, play, hide): the host kills its encode. */
+    cancelSharp() {
+      if (this.sharpTimer) clearTimeout(this.sharpTimer);
+      this.sharpTimer = 0;
+      const r = this.sharp;
+      if (!r) return;
+      this.sharp = null;
+      this.worker.postMessage({ type: 'sharpStop' });
+    }
+
     /** The kept packets of the GOP holding t, from its keyframe to the last one held (null: none, or not WebCodecs). */
     packetsHeld(t) {
       const cache = this.packetCache;
@@ -2133,6 +2299,7 @@ function createEngine(env) {
       const end = this.startT !== null && this.meta.duration ? this.startT + this.meta.duration : Infinity;
       if (t > end - 0.5) { this.autoEvery = true; return; } // nothing left to skip to
       this.skipping = true;
+      this.cancelSharp();
       this.gen++;
       this.loopCache = null;
       this.resetRate();
@@ -2862,6 +3029,9 @@ function createEngine(env) {
     dispose() {
       if (this.disposed) return;
       clearTimeout(this.fillTimer);
+      if (this.sharpTimer) clearTimeout(this.sharpTimer);
+      this.sharp = null;
+      if (this.sharpDec) { try { this.sharpDec.close(); } catch { /* closed */ } this.sharpDec = null; }
       this.disposed = true;
       this.remoteFragment = null;
       this.loopCache = null;

@@ -15,13 +15,21 @@ const GPU_ENCODERS = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'h264_mf', 'h264_vid
  * @param {number} fps
  * @param {number} [maxKbps] Strict ceiling in kb/s (0 or omitted -> default 20000 kb/s).
  * @param {number} [gopS] seconds between keyframes (an encode started paused uses PAUSED_GOP_S: src/stream.js)
+ * @param {{ sharp?: boolean, firstKeyBits?: number }} [opts]
+ *   sharp: one visually lossless picture (src/stream.js sharp: a paused frame made sharp), no rate cap;
+ *   firstKeyBits: start with the rate buffer this full (bits), so the first keyframe is about that small and the frames
+ *   after it refill the buffer (src/stream.js fastFirstBits). Only libx264 honours it (measured: NVENC ignores it in
+ *   this mode); the other encoders get their usual arguments. The SPS/PPS stay the same, so the page keeps both.
  * @returns {string[]}
  */
-function encoderArgs(enc, fps, maxKbps, gopS = 2) {
+function encoderArgs(enc, fps, maxKbps, gopS = 2, opts = {}) {
   const g = String(Math.max(1, Math.round((fps || 30) * (gopS > 0 ? gopS : 2))));
   const cap = maxKbps > 0 ? Math.round(maxKbps) : 20000;
   const capStr = `${cap}k`;
   const bufStr = `${Math.max(1, Math.round(cap))}k`;
+  if (opts && opts.sharp) return sharpArgs(enc, g);
+  const first = opts && opts.firstKeyBits > 0 && enc === 'libx264'
+    ? ['-rc_init_occupancy', String(Math.max(8000, Math.min(Math.round(opts.firstKeyBits), cap * 1000)))] : [];
   switch (enc) {
     case 'h264_nvenc':
       return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'll', '-rc', 'vbr', '-cq', '22', '-b:v', '0',
@@ -49,7 +57,38 @@ function encoderArgs(enc, fps, maxKbps, gopS = 2) {
         '-allow_skip_frames', '0', '-threads', '4', '-slices', '4', '-g', g, '-profile:v', 'high'];
     default:
       return ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '22',
-        '-maxrate', capStr, '-bufsize', bufStr, '-g', g, '-profile:v', 'high'];
+        '-maxrate', capStr, '-bufsize', bufStr, ...first, '-g', g, '-profile:v', 'high'];
+  }
+}
+
+/**
+ * One picture, visually lossless (x264 CRF 11, NVENC CQ 13, the same order elsewhere), as an IDR with SPS/PPS: a paused
+ * frame made sharp (src/stream.js sharp). No rate cap: it is a single picture, decoded by its own decoder on the page.
+ * @param {string} enc @param {string} g
+ */
+function sharpArgs(enc, g) {
+  switch (enc) {
+    case 'h264_nvenc':
+      return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'hq', '-rc', 'vbr', '-cq', '13', '-b:v', '0',
+        '-bf', '0', '-g', g, '-profile:v', 'high'];
+    case 'h264_qsv':
+      return ['-c:v', 'h264_qsv', '-preset', 'medium', '-global_quality', '14', '-look_ahead', '0', '-bf', '0', '-g', g,
+        '-profile:v', 'high'];
+    case 'h264_amf':
+      return ['-c:v', 'h264_amf', '-usage', 'transcoding', '-quality', 'quality', '-rc', 'cqp', '-qp_i', '13', '-qp_p', '13',
+        '-bf', '0', '-g', g, '-profile:v', 'high'];
+    case 'h264_mf':
+      return ['-c:v', 'h264_mf', '-hw_encoding', '1', '-rate_control', 'quality', '-quality', '95', '-bf', '0', '-g', g,
+        '-profile:v', 'high'];
+    case 'h264_videotoolbox':
+      return ['-c:v', 'h264_videotoolbox', '-b:v', '100M', '-bf', '0', '-g', g, '-profile:v', 'high'];
+    case 'h264_vaapi':
+      return ['-c:v', 'h264_vaapi', '-qp', '12', '-bf', '0', '-g', g, '-profile:v', 'high'];
+    case 'libopenh264':
+      return ['-c:v', 'libopenh264', '-rc_mode', 'quality', '-b:v', '100M', '-allow_skip_frames', '0', '-g', g,
+        '-profile:v', 'high'];
+    default:
+      return ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-crf', '11', '-g', g, '-profile:v', 'high'];
   }
 }
 
@@ -212,13 +251,15 @@ function buildHdrPipeline(o, encArgs, isCpu, wantGpuDec) {
  *   fps: number,
  *   maxKbps?: number,
  *   gopS?: number,
+ *   sharp?: boolean,
+ *   firstKeyBits?: number,
  *   badTonemap?: Set<string>,
  * }} o
  * @returns {{ pre: string[], vf: string, encArgs: string[], mode: 'gpu-full'|'gpu-encode'|'cpu', tonemap: string|null }}
  */
 function buildVideoPipeline(o) {
   const { encoder, device, decodeMethod, gpuFilters, video, w, h, fps, maxKbps } = o;
-  const encArgs = encoderArgs(encoder, fps, maxKbps, o.gopS);
+  const encArgs = encoderArgs(encoder, fps, maxKbps, o.gopS, { sharp: o.sharp, firstKeyBits: o.firstKeyBits });
   const isCpu = CPU_ENCODERS.includes(encoder);
   const wantGpuDec = decodeMethod && decodeMethod !== 'none';
 

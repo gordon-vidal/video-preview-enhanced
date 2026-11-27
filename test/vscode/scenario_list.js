@@ -204,8 +204,8 @@ module.exports = [
   },
   {
     name: 'remote-stream-packets',
-    journey: 'Remote windows on a slow link: a paused seek back to a place already seen, and steps back, decode from the packets the page kept',
-    sources: ['media/packet-cache.js', 'src/stream.js', ...ENGINE_CORE, 'media/debug-probe.js'],
+    journey: 'Remote windows on a slow link: a paused jump shows a small first picture, then the frame sharp; a paused seek back to a place already seen, and steps back, decode from the packets the page kept',
+    sources: ['media/packet-cache.js', 'src/stream.js', 'src/transcode_args.js', 'src/gpu-sessions.js', ...ENGINE_CORE, 'media/debug-probe.js'],
     steps: [{ case: 'remote_stream_packets' }],
   },
   {

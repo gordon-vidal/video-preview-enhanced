@@ -110,6 +110,33 @@ function makeLinkClip(ffmpeg, sound = false) {
   return out;
 }
 
+/**
+ * The source's frames n-1, n, n+1 of `file` as luma (BT.709 limited range, like media/engine.js sharpThumb): scaled to
+ * the stream's size as the host does (bilinear), cropped to the thumb's rectangle. Mean absolute difference of each to
+ * the page's sharp frame, each with its mean removed (the page's colour conversion shifts the level a little).
+ */
+function whichFrame(ffmpeg, file, n, th) {
+  const [W, H] = th.size;
+  const r = spawnSync(ffmpeg, ['-v', 'error', '-i', file, '-vf',
+    `select='between(n,${n - 1},${n + 1})',scale=${W}:${H}:flags=bilinear,crop=${th.w}:${th.h}:${th.x}:${th.y},format=gray`,
+    '-fps_mode', 'passthrough', '-f', 'rawvideo', 'pipe:1'], { maxBuffer: 1 << 24, windowsHide: true });
+  if (r.status !== 0) throw new Error(`reference frames: ${r.stderr}`);
+  const y = Buffer.from(th.luma, 'base64');
+  const k = th.w * th.h;
+  const mad = [];
+  const mean = (b) => { let m = 0; for (let i = 0; i < k; i++) m += b[i]; return m / k; };
+  const my = mean(y);
+  for (let f = 0; f < 3; f++) {
+    const ref = r.stdout.subarray(f * k, (f + 1) * k);
+    const mr = mean(ref);
+    let d = 0;
+    for (let i = 0; i < k; i++) d += Math.abs(y[i] - my - (ref[i] - mr));
+    mad.push(Math.round((d / k) * 100) / 100);
+  }
+  if (r.stdout.length !== 3 * k) throw new Error(`reference frames: ${r.stdout.length} bytes for 3 x ${k}`);
+  return mad; // [n-1, n, n+1]
+}
+
 /** Plays an open clip for `seconds` and checks it keeps time. Exported for test/vscode/remote_ssh.js. */
 async function longChecks(vs, h, name, seconds) {
   const r = { ok: true, problems: [] };
@@ -235,6 +262,84 @@ module.exports = [{
   settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.loop': false, 'videoPreviewEnhanced.sizeFramesToView': false, 'workbench.editorAssociations': ASSOC },
   async run(vs, h) {
     const { out, run } = lib.recorder();
+    // Paused over a slow link (2 Mb/s): a seek the host serves shows a small first keyframe (fast first picture), and
+    // once the page has rested on the frame for 150 ms the host sends that frame visually lossless, which replaces it
+    // only while the page is still on it (media/engine.js requestSharp, src/stream.js sharp). Measured before (both
+    // off) and after on fresh places; the sharp frame must be the frame shown, checked against the source's frames.
+    // First in this case: no link estimate from an earlier clip in this session.
+    await run('paused-sharp', async (ok, r) => {
+      const file = makeLinkClip(h.ffmpeg);
+      const p = await lib.open(vs, h, file);
+      const fps = 25;
+      const seekTo = async (sec) => {
+        const frame = sec * fps;
+        const s0 = await p.state();
+        const from = vs.mark();
+        const t0 = Date.now();
+        p.seek(sec + 0.5 / fps);
+        const s = await p.waitState((x) => !x.playing && x.frame === frame && x.gen > s0.gen, { timeout: 30000, interval: 50, what: `frame ${frame}` });
+        const lines = vs.lines.slice(from).filter((l) => l.includes(`[${p.name}]`));
+        const landed = lines.map((l) => /webview: seek landed in (\d+) ms \(gen (\d+)\)/.exec(l)).filter((x) => x && Number(x[2]) === s.gen);
+        const start = lines.find((l) => /remote stream from /.test(l)) || '';
+        const key = /first keyframe ~(\d+) KiB/.exec(start);
+        return {
+          frame, ms: Date.now() - t0, firstPictureMs: landed.length ? Number(landed[0][1]) : null, hostSeek: !!start,
+          encoder: (/-> H\.264 \d+x\d+ \(([^,)]+)/.exec(start) || [])[1] || '', firstKeyKiB: key ? Number(key[1]) : 0,
+          asked: s0.sharp ? s0.sharp.asked : 0, shown: s0.sharp ? s0.sharp.shown : 0,
+        };
+      };
+      try {
+        await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown);
+        p.pause();
+        // The picture at full size (the stream follows the view: the hidden window alone would make it ~786x442).
+        p.act({ action: 'stageSize', w: 1920, h: 1080 });
+        await h.sleep(1500);
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 250000 }); // 2 Mb/s
+        p.act({ action: 'pausedSharp', sharp: false, fastFirst: false });
+        r.before = [];
+        for (const sec of [20, 36]) {
+          const x = await seekTo(sec);
+          await h.sleep(1500);
+          const s = await p.state();
+          x.sharpShown = (s.sharp ? s.sharp.shown : 0) - x.shown;
+          r.before.push(x);
+        }
+        ok(r.before.every((x) => x.hostSeek && x.sharpShown === 0 && x.firstKeyKiB === 0), `before: ${JSON.stringify(r.before)}`);
+        p.act({ action: 'pausedSharp', sharp: true, fastFirst: true });
+        r.after = [];
+        for (const sec of [24, 44]) {
+          const x = await seekTo(sec);
+          const s = await p.waitState((y) => y.sharp && y.sharp.shown > x.shown, { timeout: 30000, interval: 50, what: `sharp frame ${x.frame}` });
+          const last = s.sharp.last;
+          Object.assign(x, { sharpFrame: last.frame, sharpKiB: Math.round(last.bytes / 1024), sharpAfterSeekMs: last.sinceSeekMs,
+            sharpAskedToShownMs: last.ms, sharpLinkMs: last.linkMs, frameAfter: s.frame });
+          const th = await p.ask('sharpThumb');
+          x.mad = whichFrame(h.ffmpeg, file, x.frame, th); // to the source's frames n-1, n, n+1
+          r.after.push(x);
+          ok(x.hostSeek, `after: the seek to ${sec} s did not go to the host`);
+          ok(last.frame === x.frame && s.frame === x.frame, `the sharp frame is ${last.frame}, shown ${s.frame}, asked ${x.frame}`);
+          ok(x.mad[1] < x.mad[0] && x.mad[1] < x.mad[2], `the sharp picture is not frame ${x.frame} of the source: ${JSON.stringify(x.mad)}`);
+        }
+        // Rapid steps (40 ms apart) ask for nothing until the page rests: then one request, for the frame it rests on.
+        {
+          const s0 = await p.state();
+          for (let i = 0; i < 6; i++) { p.step(1); await h.sleep(40); }
+          const s = await p.waitState((y) => y.sharp && y.sharp.shown > s0.sharp.shown && !y.sharp.pending, { timeout: 30000, interval: 50, what: 'sharp after steps' });
+          r.steps = { asked: s.sharp.asked - s0.sharp.asked, frame: s.frame, sharpFrame: s.sharp.last.frame, dropped: s.sharp.dropped - s0.sharp.dropped };
+          ok(r.steps.sharpFrame === s.frame, `after the steps the sharp frame is ${r.steps.sharpFrame}, shown ${s.frame}`);
+          ok(r.steps.asked <= 2, `steps 40 ms apart asked for ${r.steps.asked} sharp frames`);
+        }
+        const avg = (a, k) => Math.round(a.reduce((n, x) => n + x[k], 0) / a.length);
+        r.summary = { firstPictureBeforeMs: avg(r.before, 'firstPictureMs'), firstPictureAfterMs: avg(r.after, 'firstPictureMs'),
+          sharpAfterSeekMs: avg(r.after, 'sharpAfterSeekMs'), encoder: r.after[0] && r.after[0].encoder };
+      } finally {
+        p.act({ action: 'stageSize' });
+        r.notes = vs.lines.filter((l) => l.includes(`[${p.name}]`) && /sharp frame|first keyframe|remote stream from /.test(l) && !/webview: state /.test(l))
+          .map((l) => l.replace(/^.*\] /, '')).slice(-16);
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
+        await h.closeClip(vs);
+      }
+    });
     await run('slow-link-seek-back', async (ok, r) => {
       const file = makeLinkClip(h.ffmpeg);
       const p = await lib.open(vs, h, file);

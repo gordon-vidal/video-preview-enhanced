@@ -341,6 +341,53 @@ them (`stream.js` skipHeld), so play after a page-served seek does not send the 
   on the full-speed link; the first step back after a jump 47-60 ms page time (was a host seek, seconds); 30 steps
   back 40 ms apart: 0 host seeks, settled 1.9 s after the first (1.2 s of input).
 
+## Paused frame: fast, then sharp (built 2026-11-27)
+
+Maintainer decisions of 2026-11-27, built on the remote Live transcode path (paused, WebCodecs):
+
+- **Fast first picture** (`src/stream.js` fastFirstBits, `transcode_args.js` encoderArgs `firstKeyBits`): an encode
+  started paused begins with its rate buffer nearly empty (`-rc_init_occupancy`), so its first keyframe is about a
+  quarter of a full one; the frames after it refill the buffer within a few frames. Same size, encoder and SPS/PPS
+  (checked: the page's packet cache keeps both). Skipped while playing, in a local window, and when the link estimate
+  (`stream-adapt.js` fastKbps / slowKbps) would carry a full keyframe (the largest measured at this size, else 0.1 byte
+  per pixel) within 100 ms. **Only libx264 honours it.** Measured on an RTX 4070 (driver 581): NVENC in its
+  `-rc vbr -cq` low-latency mode ignores the initial buffer fullness, a small `-bufsize`, `-init_qpI` and ROI side data
+  (`addroi`) for the first IDR; only `-multipass` makes it respect the buffer, and that changes every frame's rate
+  control. So on NVENC hosts the first picture is unchanged; the sharp frame below still applies. The other GPU
+  encoders keep their arguments (not measured here).
+- **Then sharp** (`media/engine.js` scheduleSharp / requestSharp / onSharpFrame, `src/stream.js` sharp / sharpMore):
+  once a paused frame has stayed shown 150 ms (a landed seek, a step from the queue, the packets or decoded memory),
+  the page asks the host for that frame (`-ss` on the stream's frame grid, `-frames:v 1`) visually lossless
+  (`transcode_args.js` sharpArgs: x264 CRF 11, NVENC CQ 13, no rate cap) as one IDR, built by `args()` with the
+  stream's size, pipeline and tone-mapping; the stream's recorded pipeline state is saved and restored as for a fill.
+  It goes out in pieces of at most 96 KiB the page pulls one at a time (each in its own ArrayBuffer: a view on a larger
+  one crosses to the webview as the whole buffer), so a seek meanwhile waits behind one piece. The page decodes it with
+  a second VideoDecoder (an IDR fed to the main one would break the following P-frames' references) and draws it only
+  while still paused on that frame (same generation, nothing shown, sought or stepped since). It never enters the
+  packet cache, the frames kept for steps back or the queue. A step, seek, play or hide drops a pending one and the
+  host kills its ffmpeg. Steps and scrolls faster than 150 ms ask for nothing. Direct Stream (the source's own H.264)
+  is not sharpened. Pixel tools and Exact Frame are unchanged.
+- **GPU encoder sessions** (`src/gpu-sessions.js`, setting `videoPreviewEnhanced.gpuEncoderSessions`, machine-scoped,
+  default 8, minimum 1): one host-wide budget counts every GPU encode (NVENC, QSV, AMF, VA-API, VideoToolbox, Media
+  Foundation): live streams (held while the encoder runs, given back when the tab is hidden or the stream ends), fills
+  (on top of `MAX_FILLS`) and sharp frames. A live stream that would go over it encodes with the CPU encoder (the
+  existing fallback path) and the user gets one toast per session naming the video; a fill or a sharp frame over it is
+  skipped (the soft picture stays). The loop standby process is not counted (it lives at most 20 s at the end of a
+  file). A future kept-running decoder would take a session the same way.
+
+Layer 3 `remote-stream-packets` › `paused-sharp` (1080p25 noisy test clip, link throttled to 2 Mb/s with the test
+hook, libx264 because this machine's NVENC needs a newer driver; page times from the seek):
+
+| | before (both off) | after |
+| --- | --- | --- |
+| First picture of a paused seek the host serves | 1144-1180 ms | 197-235 ms (first keyframe 21-63 KiB) |
+| Sharp frame replaces it | never | 4.9 s after the seek (1.0-1.1 MB over 2 Mb/s; 87-311 ms to encode) |
+| Sharp frame is the frame shown | | yes: same frame number, and its pixels match the source's frame n, not n-1 or n+1 |
+| 6 steps 40 ms apart | | at most 2 requests, the last for the frame it rests on |
+
+The clip is temporal noise on testsrc2, the worst case for size: a visually lossless 1080p frame of it is ~1 MB, so on
+a 2 Mb/s link "sharp" takes seconds; ordinary footage is several times smaller.
+
 ## How others do it (research, 2026-11-27)
 
 - **Jellyfin / Plex** restart ffmpeg on a seek outside what was transcoded, force keyframes on segment boundaries,
@@ -363,7 +410,8 @@ them (`stream.js` skipHeld), so play after a page-served seek does not send the 
    GPU, kept on the host's disk. A seek or step anywhere then costs one small keyframe instead of ~2 s of source
    decode. Disk: ~2-4 GB per hour at 1080p. The pro-tool approach.
 2. **Paused frame: fast then sharp** (display mode): after a paused seek, send the target as a small low-QP-capped
-   keyframe at once and a sharper one after; the remote-desktop model. Halves the first picture on a slow link.
+   keyframe at once and a sharper one after; the remote-desktop model. **Built 2026-11-27** (section above): first
+   picture 1.16 s -> 0.22 s on a 2 Mb/s link with x264; NVENC has no per-frame lever in stock ffmpeg.
 3. **Host pushes the GOPs around the playhead while paused** (level 3), within a share of the link, so the first step
    back after a jump hits the page's packets.
 4. **A kept-running decoder on the host** (prototype above): ~134 ms instead of 340-470 ms per jump, no ffmpeg start.

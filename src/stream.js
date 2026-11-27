@@ -25,6 +25,7 @@ const { encoderCacheKey } = require('./transcode_probe');
 const { effectiveMaxKbps, isHdr, canDirectStreamVideo, resolutionOf } = require('./transcode_policy');
 const { LinkAdaptController, LINK_TIERS, LINK_SETTLE_MS } = require('./stream-adapt');
 const { SeekHistoryBuffer, AUDIO_RATE, MAX_QUEUED_AUDIO } = require('./stream-buffer');
+const { sessions: hostGpuSessions, isGpuEncoder } = require('./gpu-sessions');
 
 const MAX_QUEUED_SECONDS = 2; // packets read ahead of the webview before ffmpeg is paused
 const OVERLAP_LEAD_S = 1;
@@ -48,6 +49,14 @@ const PAUSED_GOP_S = 0.5;
 const MAX_FILLS = 2;
 const FILL_PIECE_BYTES = 96 * 1024;
 let fillsRunning = 0;
+// A paused frame made sharp (sharp): sent in pieces of at most this many bytes, one per page request, like a fill.
+const SHARP_PIECE_BYTES = 96 * 1024;
+// Fast first picture (fastFirstBits): a paused start's first keyframe is made about this share of a full one, unless the
+// link would carry a full one within FAST_FIRST_SKIP_MS anyway.
+const FAST_FIRST_SHARE = 0.25;
+const FAST_FIRST_SKIP_MS = 100;
+// A full keyframe's size before one was measured, in bytes per pixel (1080p: ~200 KB).
+const KEY_BYTES_PER_PIXEL = 0.1;
 // Sound sent at most this far past the picture sent.
 const AUDIO_LEAD_S = 2;
 const MAX_AUDIO_BATCH = 256 * 1024;
@@ -112,13 +121,16 @@ class EncodedStream {
     cpuEncoder: cpu, decodeMethod = 'none', onEncoderFail, audioEncoder = null,
     fitView = true, maxKbps = 0, maxBitrateMbps = 0, allowLinkAdapt = true, remote = true,
     allowSoftwareFallback = true, hidden = false, allowOverlap = true, rotation = 0, resolution = 0,
-    initialLink = undefined, onLinkUpdate = undefined,
+    initialLink = undefined, onLinkUpdate = undefined, gpuSessions = hostGpuSessions,
   }) {
     // Packets and sound read, and the history for seeks back (src/stream-buffer.js). The fields it owns are
     // reachable as this.vAll, this.aNext ... (accessors below the class).
     this.buf = new SeekHistoryBuffer({ hasAudio: !!(probed && probed.audio), audioEncoder, remote: !!remote });
     this.tools = tools;
     this.file = file;
+    // This host's GPU encoder sessions (src/gpu-sessions.js): the live encode holds one while it runs on a GPU encoder.
+    this.gpu = gpuSessions;
+    this.gpuToken = null;
     this.post = post;
     this.log = log;
     this.maxHeight = maxHeight || 1080;
@@ -341,7 +353,7 @@ class EncodedStream {
         this.setView(m.view);
         return this.open();
       case 'view': return this.setView(m, !!m.playing);
-      case 'playback': this.playing = !!m.playing; if (this.playing) this.stopFill(); return undefined;
+      case 'playback': this.playing = !!m.playing; if (this.playing) { this.stopFill(); this.stopSharp(); } return undefined;
       case 'remoteAudioFailed':
         if (!this.audioEncoder) return;
         this.audioFallback(m.message);
@@ -357,6 +369,9 @@ class EncodedStream {
       case 'fill': return this.fill(m);
       case 'fillMore': return this.fillMore(m);
       case 'fillStop': return this.stopFill();
+      case 'sharp': return this.sharp(m);
+      case 'sharpMore': return this.sharpMore(m);
+      case 'sharpStop': return this.stopSharp();
       default: return undefined; // recycle: nothing held here
     }
   }
@@ -368,7 +383,7 @@ class EncodedStream {
   setHidden(on) {
     const wasHidden = this.hidden;
     this.hidden = !!on;
-    if (on) this.stopFill();
+    if (on) { this.stopFill(); this.stopSharp(); }
     if (!this.fps) return;
     if (!on) {
       this.hiddenRefresh = false;
@@ -384,6 +399,7 @@ class EncodedStream {
     this.takeStandby(NaN);
     this.buf.invalidateRegions();
     this.reset(this.base);
+    this.releaseGpu(); // its encoder stopped: another video may use the session meanwhile
     if (had) this.log('live transcode: tab hidden, ffmpeg stopped until it is shown');
   }
 
@@ -471,7 +487,12 @@ class EncodedStream {
     this.growQueued = false;
   }
 
-  args(t, audio, { exactAudio = false } = {}) {
+  /**
+   * @param {number} t @param {boolean} audio
+   * @param {{ exactAudio?: boolean, sharp?: boolean, firstKeyBits?: number }} [opts]
+   *   sharp: one visually lossless picture (sharp); firstKeyBits: a small first keyframe (fastFirstBits)
+   */
+  args(t, audio, { exactAudio = false, sharp = false, firstKeyBits = 0 } = {}) {
     const v = this.pr.video;
     if (!audio && this.useDirectStream()) {
       this.pipelineMode = 'direct-stream';
@@ -490,6 +511,8 @@ class EncodedStream {
       maxKbps: cap,
       // Started paused (a jump or a step): keyframes every PAUSED_GOP_S, so a step back decodes few frames on the page.
       gopS: this.playing ? PLAY_GOP_S : PAUSED_GOP_S,
+      sharp,
+      firstKeyBits,
       badTonemap: this.badTonemap,
     });
     if (!audio) { this.pipelineMode = pipe.mode; this.tonemapKind = pipe.tonemap; this.gpuDecode = !!pipe.gpuDecode; }
@@ -599,15 +622,68 @@ class EncodedStream {
     if (this.failed || this.disposed) return false;
     const t = this.vBase;
     let proc;
-    try { proc = this.takeStandby(t) || this.launch(t); }
-    catch (e) { this.fail(e.message); return false; }
+    let firstKeyBits = 0;
+    try {
+      proc = this.takeStandby(t);
+      if (!proc) {
+        firstKeyBits = this.fastFirstBits();
+        proc = this.launch(t, false, firstKeyBits ? { firstKeyBits } : undefined);
+        if (this.encoder !== 'libx264') firstKeyBits = 0; // only x264 honours it (transcode_args.js encoderArgs)
+        proc.firstKeyBits = firstKeyBits;
+      }
+    } catch (e) { this.fail(e.message); return false; }
     this.proc = proc;
     this.spawns++;
     this.lastSpawnAt = Date.now();
     this.watchVideo(proc);
     const cap = this.activeCapKbps();
-    this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${this.gpuDecode ? ', GPU decode' : ''}${this.hdr && this.tonemapKind ? `, ${this.tonemapKind} tone-mapping` : ''}${cap ? `, ${cap} kb/s cap` : ''})`);
+    this.log(`remote stream from ${t.toFixed(3)} s: ${this.pr.video.codec} ${this.pr.video.pixFmt} ${this.pr.video.width}x${this.pr.video.height} -> H.264 ${this.w}x${this.h} (${this.videoEncoder}, ${this.pipelineMode}${this.gpuDecode ? ', GPU decode' : ''}${this.hdr && this.tonemapKind ? `, ${this.tonemapKind} tone-mapping` : ''}${cap ? `, ${cap} kb/s cap` : ''}${firstKeyBits ? `, first keyframe ~${Math.round(firstKeyBits / 8192)} KiB for a fast first picture` : ''})`);
     return true;
+  }
+
+  /**
+   * Fast first picture: an encode started paused (a jump, a step the page could not serve) starts with its rate buffer
+   * nearly empty, so its first keyframe is about FAST_FIRST_SHARE of a full one and shows sooner over a slow link; the
+   * frames after it refill the buffer within a few frames, and the page asks for the frame it stays on sharp (sharp).
+   * Same size, encoder and SPS/PPS as the rest of the stream (the page's packet cache keeps both). 0 (off) while playing,
+   * on a local window, or when the link estimate (stream-adapt.js) carries a full keyframe within FAST_FIRST_SKIP_MS.
+   * @returns {number} the first keyframe's size in bits, or 0
+   */
+  fastFirstBits() {
+    if (this.playing || !this.remote || this.fastFirstHook === false || !this.w || !this.h) return 0;
+    const key = this.keyBytes > 0 && this.keyBytesFor === `${this.w}x${this.h}` ? this.keyBytes
+      : Math.round(this.w * this.h * KEY_BYTES_PER_PIXEL);
+    const kbps = Math.min(this.link.fastKbps || 0, this.link.slowKbps || this.link.fastKbps || 0);
+    if (kbps > 0 && (key * 8) / kbps <= FAST_FIRST_SKIP_MS && this.fastFirstHook !== true) return 0; // bits / (kb/s) = ms
+    return Math.round(key * 8 * FAST_FIRST_SHARE);
+  }
+
+  /**
+   * A live encode on a GPU encoder holds one of this host's GPU encoder sessions (src/gpu-sessions.js). With all of them
+   * in use (other videos, Compare tiles, fills), this stream encodes on the CPU instead and the user is told once per
+   * session which video and why. Called before every video encode starts (launch); a CPU encoder holds none.
+   */
+  holdGpu() {
+    if (this.gpuToken || !isGpuEncoder(this.encoder) || this.pipelineMode === 'direct-stream' || this.useDirectStream()) return;
+    this.gpuToken = this.gpu.acquire('stream');
+    if (this.gpuToken || !this.cpuEncoder || !this.allowSoftwareFallback) return; // no CPU encoder: try the GPU anyway
+    const enc = this.encoder;
+    const name = String(this.file || '').split(/[\\/]/).pop();
+    this.log(`live transcode: all ${this.gpu.limit} GPU encoder sessions on this host are in use (${JSON.stringify(this.gpu.counts())}); `
+      + `encoding with ${this.cpuEncoder} instead of ${enc} (videoPreviewEnhanced.gpuEncoderSessions)`);
+    this.encoder = this.cpuEncoder;
+    this.decodeMethod = 'none';
+    this.device = undefined;
+    this.pipelineMode = this.defaultPipelineMode();
+    if (this.gpu.firstNotice()) {
+      this.post({ type: 'remoteNotice', kind: 'gpuSessions', text: `${name} is transcoded on the processor: the GPU is already `
+        + `encoding ${this.gpu.limit} videos, its limit here. It may play less smoothly. Settings: GPU Encoder Sessions.` });
+    }
+  }
+
+  releaseGpu() {
+    this.gpu.release(this.gpuToken);
+    this.gpuToken = null;
   }
 
   watchVideo(proc, overlap = null) {
@@ -648,6 +724,7 @@ class EncodedStream {
         this.buf.splitMpegTs(false);
         if (!checkDirectStart()) return;
       } else this.buf.split(false);
+      if (proc.firstKeyBits && !proc.markedSmall && this.vAll[first]) { proc.markedSmall = true; this.vAll[first].small = true; }
       if (this.spliceVideo()) return;
       if (this.vAll.length - this.vNext > MAX_QUEUED_SECONDS * this.fps) proc.stdout.pause();
       this.answer();
@@ -728,6 +805,7 @@ class EncodedStream {
     this.kill();
     this.takeStandby(NaN);
     this.waiting = null;
+    this.releaseGpu();
     this.onFail(why);
   }
 
@@ -737,6 +815,7 @@ class EncodedStream {
     this.encoder = this.cpuEncoder;
     this.decodeMethod = 'none';
     this.device = undefined;
+    this.releaseGpu();
     this.onEncoderFail(enc);
     this.restartVideo();
   }
@@ -883,6 +962,7 @@ class EncodedStream {
   }
 
   launch(t, audio = false, opts = undefined) {
+    if (!audio) this.holdGpu();
     const argv = this.args(t, audio, opts);
     const proc = lowerPriority(spawn(this.tools.ffmpeg, argv, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
     proc.t = t;
@@ -975,6 +1055,13 @@ class EncodedStream {
     let bytes = lastPiece ? lastPiece.video[0].data.byteLength : 0;
     while (!lastPiece && end < this.vAll.length && this.vAll[end].t < boundary && end - this.vNext < frameLimit
       && (end === this.vNext || (this.vAll[end].t <= videoUntil && bytes + this.vAll[end].data.length <= limit))) bytes += this.vAll[end++].data.length;
+    // A full keyframe's size at this picture size (fastFirstBits): the largest sent, as the ones right after a small
+    // first keyframe (fast first picture) are still held down by the rate buffer; the small one does not count.
+    const size = `${this.w}x${this.h}`;
+    if (this.keyBytesFor !== size) { this.keyBytes = 0; this.keyBytesFor = size; }
+    for (let i = this.vNext; i < end; i++) {
+      if (this.vAll[i].key && !this.vAll[i].small) this.keyBytes = Math.max(this.keyBytes, this.vAll[i].data.byteLength);
+    }
     const vT = end > 0 ? this.vAll[end - 1].t + 1 / this.fps : this.base;
     const tail = this.videoEnded && this.vNext === this.vAll.length;
     const aCap = tail ? this.aNext + Math.max(1, Math.floor(Math.min(limit, MAX_AUDIO_BATCH) / 4))
@@ -1026,6 +1113,9 @@ class EncodedStream {
   seek(m) {
     if (this.disposed) return;
     this.stopFill();
+    this.stopSharp();
+    // The page's test hook (media/debug-probe.js pausedSharp): false off, true on whatever the link estimate says.
+    if (m.fastFirst !== undefined) this.fastFirstHook = !!m.fastFirst;
     this.videoFragment = null;
     const interruptedOverlap = !!this.overlap;
     this.cancelOverlap();
@@ -1105,6 +1195,8 @@ class EncodedStream {
     // A copy of the source's own GOPs (B-frames, sparse keyframes) is not kept by the page: nothing to gain.
     if (this.pipelineMode === 'direct-stream' || this.useDirectStream()) return no('direct stream');
     if (fillsRunning >= MAX_FILLS) return no('busy');
+    const token = isGpuEncoder(this.encoder) ? this.gpu.acquire('fill') : null;
+    if (isGpuEncoder(this.encoder) && !token) return no('busy'); // every GPU encoder session is in use
     // args() records the pipeline it builds on this stream: the fill must not change what the live stream reports.
     const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode, this.playing];
     let argv;
@@ -1113,8 +1205,8 @@ class EncodedStream {
     argv.splice(argv.length - 1, 0, '-frames:v', String(frames));
     let proc;
     try {
-      proc = lowerPriority(spawn(this.tools.ffmpeg, argv, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
-    } catch (e) { return no(String(e && e.message || e)); }
+      proc = this.spawnJob(argv);
+    } catch (e) { this.gpu.release(token); return no(String(e && e.message || e)); }
     fillsRunning++;
     const buf = new SeekHistoryBuffer({ fps, hasAudio: false, remote: this.remote });
     buf.reset(from);
@@ -1130,6 +1222,7 @@ class EncodedStream {
     });
     proc.on('close', (code) => {
       fillsRunning = Math.max(0, fillsRunning - 1);
+      this.gpu.release(token);
       buf.split(true);
       f.ended = true;
       if (code !== 0 && !buf.vAll.length) f.failed = err.trim().split(/\r?\n/).pop() || `ffmpeg exit ${code}`;
@@ -1171,6 +1264,86 @@ class EncodedStream {
     if (!f) return;
     this.filling = null;
     if (!f.ended) this.stopProcess(f.proc);
+  }
+
+  /** A short ffmpeg job beside the live stream (a fill, a sharp frame); tests replace it. @param {string[]} argv */
+  spawnJob(argv) {
+    return lowerPriority(spawn(this.tools.ffmpeg, argv, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
+  }
+
+  /**
+   * Paused, the page stayed on frame t for a moment (media/engine.js scheduleSharp): encode that one frame visually
+   * lossless (transcode_args.js sharpArgs) as one IDR, at the stream's size, with its pipeline and tone-mapping (the
+   * same frame grid: -ss t, constant rate), and send it in pieces the page pulls (sharpMore). The page decodes it with a
+   * decoder of its own and shows it only if it is still paused on that frame; it never enters a cache. A seek, play or
+   * hide stops it (its ffmpeg is killed). Replies 'sharpFrame' { id, t, data, done, total?, error? }.
+   */
+  sharp(m) {
+    this.stopSharp();
+    const id = m.id;
+    const fps = this.fps;
+    const no = (error) => this.post({ type: 'sharpFrame', id, done: true, error });
+    if (this.disposed || this.failed || this.hidden || !this.pr || !this.pr.video || !(fps > 0)) return no('unavailable');
+    if (this.playing) return no('playing');
+    // A copy of the source's own H.264 is already its own pictures: nothing to sharpen.
+    if (this.pipelineMode === 'direct-stream' || this.useDirectStream()) return no('direct stream');
+    const t = Math.max(0, Math.floor(Number(m.t) * fps + 1e-6)) / fps;
+    const gpu = isGpuEncoder(this.encoder);
+    const token = gpu ? this.gpu.acquire('sharp') : null;
+    if (gpu && !token) return no('busy'); // every GPU encoder session is in use: the soft picture stays
+    // args() records the pipeline it builds on this stream: the sharp frame must not change what the live stream reports.
+    const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode];
+    let argv;
+    try { argv = this.args(t, false, { sharp: true }); } catch (e) { this.gpu.release(token); return no(String(e && e.message || e)); }
+    finally { [this.pipelineMode, this.tonemapKind, this.gpuDecode] = keep; }
+    argv.splice(argv.length - 1, 0, '-frames:v', '1');
+    let proc;
+    try { proc = this.spawnJob(argv); } catch (e) { this.gpu.release(token); return no(String(e && e.message || e)); }
+    const s = { id, t, proc, chunks: [], data: null, sent: 0, waiting: true, ended: false, failed: '', t0: Date.now(), token };
+    this.sharping = s;
+    let err = '';
+    proc.on('error', (e) => { err += String(e); });
+    if (proc.stderr) proc.stderr.on('data', (d) => { err = (err + d).slice(-500); });
+    proc.stdout.on('data', (d) => { s.chunks.push(d); });
+    proc.on('close', (code) => {
+      this.gpu.release(token);
+      s.ended = true;
+      s.data = Buffer.concat(s.chunks);
+      s.chunks = [];
+      if (code !== 0 || !s.data.length) s.failed = err.trim().split(/\r?\n/).pop() || `ffmpeg exit ${code}`;
+      if (this.sharping !== s) return;
+      if (!s.failed) this.log(`remote stream: sharp frame at ${t.toFixed(3)} s, ${(s.data.length / 1024).toFixed(0)} KiB in ${Date.now() - s.t0} ms`);
+      if (s.waiting) this.sharpMore({ id });
+    });
+  }
+
+  /** The page asks for the next piece of the sharp frame (see sharp). */
+  sharpMore(m) {
+    const s = this.sharping;
+    if (!s || s.id !== m.id) return;
+    if (!s.ended) { s.waiting = true; return; }
+    s.waiting = false;
+    if (s.failed) {
+      this.sharping = null;
+      this.log(`remote stream: sharp frame failed (${s.failed})`);
+      this.post({ type: 'sharpFrame', id: s.id, done: true, error: s.failed });
+      return;
+    }
+    const total = s.data.length;
+    // Its own ArrayBuffer: a view on a larger one crosses to the webview as the whole buffer (as stream-buffer.js copies).
+    const end = Math.min(total, s.sent + SHARP_PIECE_BYTES);
+    const data = new Uint8Array(s.data.buffer.slice(s.data.byteOffset + s.sent, s.data.byteOffset + end));
+    s.sent = end;
+    const done = s.sent >= total;
+    if (done) this.sharping = null;
+    this.post({ type: 'sharpFrame', id: s.id, t: s.t, data, offset: s.sent - data.length, total, done });
+  }
+
+  stopSharp() {
+    const s = this.sharping;
+    if (!s) return;
+    this.sharping = null;
+    if (!s.ended) this.stopProcess(s.proc);
   }
 
   /** A seek served from the packets held: no ffmpeg restart. */
@@ -1242,12 +1415,14 @@ class EncodedStream {
   dispose() {
     if (this.disposed) return;
     this.stopFill();
+    this.stopSharp();
     this.disposed = true;
     this.videoFragment = null;
     clearTimeout(this.startTimer);
     this.startTimer = null;
     this.kill();
     this.takeStandby(NaN);
+    this.releaseGpu();
     this.buf.clear();
     this.waiting = null;
   }
@@ -1274,6 +1449,8 @@ module.exports = {
   REMOTE_STEP_BACK_LEAD_S,
   PAUSED_GOP_S,
   PLAY_GOP_S,
+  FAST_FIRST_SHARE,
+  FAST_FIRST_SKIP_MS,
   stepBackStart,
   audioEncoderFor,
   opusArgs,
