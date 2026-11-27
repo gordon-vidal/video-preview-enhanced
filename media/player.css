@@ -481,7 +481,7 @@ body.idle { cursor: none; }
 .stepw { position: relative; display: inline-flex; flex: none; }
 #row button.stepsz {
   position: absolute; top: -4px; left: 50%; transform: translateX(-50%); z-index: 1;
-  height: 13px; min-width: 0; padding: 0 3px; border-radius: 6px; border: 1px solid var(--vpe-sep);
+  height: 13px; min-width: calc(100% - 8px); padding: 0 5px; border-radius: 6px; border: 1px solid var(--vpe-sep);
   font: 600 9px/11px var(--vpe-mono); color: var(--vpe-dim); background: var(--vscode-editor-background, #1e1e1e);
   opacity: 0; pointer-events: none; transition: opacity 120ms ease-out;
 }
@@ -520,7 +520,7 @@ body.idle { cursor: none; }
 .ratew { position: relative; display: inline-flex; flex: none; }
 #row button.ratereset {
   position: absolute; top: -5px; left: 50%; transform: translateX(-50%); z-index: 1;
-  height: 13px; min-width: 0; width: 19px; padding: 0; border-radius: 6px; border: 1px solid var(--vpe-sep);
+  height: 13px; min-width: 0; width: calc(100% - 6px); padding: 0; border-radius: 6px; border: 1px solid var(--vpe-sep);
   color: var(--vpe-dim); background: var(--vscode-editor-background, #1e1e1e);
 }
 #row button.ratereset:hover, #row button.ratereset:focus-visible { color: var(--vscode-foreground); background: var(--vscode-editor-background, #1e1e1e); border-color: var(--vpe-accent); }

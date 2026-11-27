@@ -21,6 +21,8 @@ from 1× to 2× took 20 notches, and there was no quick way back to 1×. An off-
   leaves keyboard focus on the speed button. Name: "Reset speed to 1×"; tooltip names `\`.
 - **Speed panel:** the slider stays. The track labels became a 5 + 4 grid of preset chips (the jump-size chip
   style) with `aria-pressed` on the current one.
+- **Wider badges** (maintainer, 2026-11-27): the reset badge spans nearly the speed button's width, and the
+  step-size badges on ◀| / |▶ are at least the button's width minus 8 px, so both are easier to hit.
 
 Mock-up: `node tools/mockup/render.js --scenario speed-off-normal --out .tmp/mockup.html` (single video at
 1.5×; scroll over the speed button for the overlay).

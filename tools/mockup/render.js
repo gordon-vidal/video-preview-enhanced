@@ -103,6 +103,7 @@ function buildMockupHtml(opts = {}) {
     'media/autoplay.js',
     'media/timefmt.js',
     'media/modes.js',
+    'media/range-drag.js',
     'media/controls.js',
     'media/ctxmenu.js',
     'media/folder-rail.js',
