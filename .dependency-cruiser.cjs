@@ -22,6 +22,22 @@ module.exports = {
       to: { path: '^media/(?:[^/]+-worker\\.js$|libav-vpe/)' },
     },
     {
+      name: 'webview-ui-isolated',
+      comment: 'media/ui/ is bundled for the browser (ADR 0004): no host code and no decoder modules.',
+      severity: 'error',
+      from: { path: '^media/ui/' },
+      to: {
+        path: '^(?:src/|media/(?:[^/]+-worker\.js$|engine\.js$|frame-player\.js$|gl-renderer\.js$|compare-compositor\.js$|decoder-[^/]*\.js$|libav-vpe/))',
+      },
+    },
+    {
+      name: 'webview-ui-no-core',
+      comment: 'Node builtins do not exist in the webview.',
+      severity: 'error',
+      from: { path: '^media/ui/' },
+      to: { dependencyTypes: ['core'] },
+    },
+    {
       name: 'no-media-node-builtins',
       severity: 'error',
       from: { path: '^media/' },

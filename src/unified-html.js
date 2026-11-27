@@ -42,6 +42,8 @@ const UNIFIED_SCRIPTS = [
   'exactframe.js', 'reduced-res-notice.js', 'slow-notice.js', 'subtitles.js', 'tracks-menu.js', 'xray.js', 'modes.js',
   'range-drag.js', 'controls.js', 'ctxmenu.js', 'timefmt.js', 'abloop.js', 'autoplay.js', 'folder-rail.js',
   'debug-probe.js', 'frame-player.js',
+  // Preact, Signals and Floating UI bundled from media/ui/ (npm run build:ui): the globalThis.VpeWebviewUi bridge.
+  'dist/webview-ui.js',
   // ... plus Compare's tiles (stepgoal.js: VpeStepGoal, read by player-unified.js).
   'stepgoal.js', 'compare-grid.js', 'compare-compositor.js', 'compare-metrics.js',
   'compare-debug.js',

@@ -96,6 +96,7 @@ function buildMockupHtml(opts = {}) {
 
   // Real production UI & pure state scripts (in dependency order).
   const scriptFiles = [
+    'media/dist/webview-ui.js',
     'media/compare-grid.js',
     'media/player-state.js',
     'media/picture.js',
