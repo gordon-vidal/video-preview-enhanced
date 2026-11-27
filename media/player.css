@@ -176,11 +176,9 @@ body.idle { cursor: none; }
   z-index: 10;
 }
 
-/* The banner reads as a message, not a strip of buttons (docs/notes/notifications.md, "Banner layout"): an info icon
-   and an accent edge, the text on its own line, the buttons on a row under it starting where the text starts (main
-   action filled), x in the corner. Errors and refused clips take the error / warning colour. */
+/* The banner reads as a message, not a strip of buttons (docs/notes/notifications.md, "Banner layout"): the text on its
+   own line, the buttons on a row under it starting where the text starts (main action filled), x in the corner. */
 #notice {
-  --vpe-notice-accent: var(--vscode-focusBorder, #3794ff);
   box-sizing: border-box;
   overflow-wrap: anywhere;
   position: absolute;
@@ -193,7 +191,7 @@ body.idle { cursor: none; }
   justify-content: flex-start;
   gap: 8px 6px;
   width: min(460px, calc(100% - 32px));
-  padding: 10px 12px 10px 36px;
+  padding: 10px 12px;
   border-radius: 8px;
   font-size: 12px;
   text-align: left;
@@ -201,28 +199,10 @@ body.idle { cursor: none; }
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--vpe-panel-border);
-  border-left: 3px solid var(--vpe-notice-accent);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   /* Above a passing #toast (3) should they ever meet: the banner has buttons, the toast is pointer-events: none. */
   z-index: 4;
 }
-#notice[data-kind="error"] { --vpe-notice-accent: var(--vscode-editorError-foreground, #f14c4c); }
-#notice[data-kind="clipRefusal"] { --vpe-notice-accent: var(--vscode-editorWarning-foreground, #cca700); }
-#notice::before {
-  content: 'i';
-  position: absolute;
-  left: 11px;
-  top: 10px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font: italic bold 11px/1 Georgia, serif;
-  background: var(--vpe-notice-accent);
-  color: var(--vscode-editor-background, #1e1e1e);
-}
-#notice[data-kind="error"]::before, #notice[data-kind="clipRefusal"]::before { content: '!'; font-style: normal; }
 #noticeText { flex: 1 0 100%; box-sizing: border-box; line-height: 1.45; padding-right: 22px; }
 #notice button {
   font: inherit;

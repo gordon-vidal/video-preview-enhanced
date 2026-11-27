@@ -24,10 +24,29 @@ const SCENARIOS = {
   'split-wipe': { tiles: ['clip-0', 'clip-1'], capture: true, layout: 'split', railOpen: false, label: 'Split Wipe (2 videos)' },
   // The speed off 1×: the reset badge above the speed button; scroll over it for the compact speed overlay.
   'speed-off-normal': { tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, rate: 1.5, label: 'Single video at 1.5× (speed reset badge)' },
-  // The #notice banner as the host opens it (F fell back to Zen Mode): layout, buttons, Esc, × (docs/notes/notifications.md).
+  // Every #notice banner the player has, built by its production helper (docs/notes/notifications.md): `host` arrives as
+  // the host sends it, `slow` / `reducedRes` go through media/slow-notice.js / media/reduced-res-notice.js, `clipRefusal`
+  // through the notice controller.
   notice: {
-    tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, hostMessage: { type: 'zenLayoutOffer' },
-    label: 'Notice banner (Zen Mode full width offer)',
+    tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, notice: { host: { type: 'zenLayoutOffer' } },
+    label: 'Notice: Zen Mode full width (F)',
+  },
+  'notice-reduced-res': {
+    tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false,
+    notice: { reducedRes: { width: 1920, height: 1080, sourceWidth: 3840, sourceHeight: 2160, pixFmt: 'yuv420p10le' } },
+    label: 'Notice: reduced picture (W / X on a 4K 10-bit video)',
+  },
+  'notice-slow': {
+    tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, notice: { slow: 'every' },
+    label: 'Notice: slow playback (every frame shown)',
+  },
+  'notice-ffmpeg': {
+    tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, notice: { slow: 'setupFfmpeg' },
+    label: 'Notice: set up optional ffmpeg',
+  },
+  'notice-clip-refusal': {
+    tiles: ['clip-0'], capture: false, layout: 'grid', railOpen: false, notice: { clipRefusal: { transcoded: true } },
+    label: 'Notice: A–B clip refused (Live transcode)',
   },
 };
 
@@ -442,10 +461,16 @@ ${inlinedScripts}
     if (sc.railOpen) ui$.rail.show();
     else if (ui$.rail.isOpen()) ui$.rail.close();
     if ((sc.rate || 1) !== ui$.getPrefs().rate) ui$.dispatch('rateSet', sc.rate || 1);
-    // A scenario's host message (e.g. a notice) arrives as production delivers it; switching away clears the banner.
+    // A scenario's notice, built as production builds it; switching away clears the banner.
     const notices = ui$.parts && ui$.parts.notices;
     if (notices) notices.hide();
-    if (sc.hostMessage) ui$.onHostMessage(sc.hostMessage);
+    const n = sc.notice;
+    if (n && notices) {
+      if (n.host) ui$.onHostMessage(n.host);
+      else if (n.slow) notices.show({ kind: 'slowPlayback', ...globalThis.VpeSlowNotice(n.slow) });
+      else if (n.reducedRes) notices.show({ kind: 'reducedRes', ...globalThis.VpeReducedResNotice(n.reducedRes) });
+      else if (n.clipRefusal) notices.showClipRefusal(n.clipRefusal);
+    }
   }
   scenarioSel.onchange = () => loadScenario(scenarioSel.value);
   $('resetBtn').onclick = () => loadScenario(scenarioSel.value);
