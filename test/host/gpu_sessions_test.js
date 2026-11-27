@@ -127,6 +127,25 @@ function stream(gpu, { encoder = 'h264_nvenc', file = '/v/clip.mkv' } = {}) {
     a.s.dispose();
     assert.strictEqual(gpu.used, 0);
   }
+  { // A fill whose arguments cannot be built (HDR with no tone-mapping filter in this ffmpeg) gives its session back and
+    // says why, as a sharp frame does; nothing escapes the message handler.
+    const gpu = createGpuSessions(8);
+    const posted = [];
+    const s = new EncodedStream({
+      tools: { ffmpeg: 'ffmpeg', gpuFilters: new Set() }, file: '/v/hdr.mkv', post: (m) => posted.push(m), log: () => {}, remote: true,
+      maxHeight: 1080, encoder: 'h264_nvenc', cpuEncoder: 'libx264', gpuSessions: gpu,
+      probed: { duration: 60, audio: null, video: { index: 0, codec: 'hevc', pixFmt: 'yuv420p10le', width: 1920, height: 1080, fps: 25,
+        colorTransfer: 'smpte2084', colorPrimaries: 'bt2020' } },
+    });
+    s.fps = 25;
+    s.sizeVideo();
+    s.spawnJob = () => { throw new Error('no ffmpeg in this test'); };
+    await s.handle({ type: 'fill', id: 3, from: 8, to: 10 });
+    const reply = posted.find((m) => m.type === 'fillBatch');
+    assert.ok(reply && reply.done && /tone-mapping/.test(reply.error), JSON.stringify(reply));
+    assert.strictEqual(gpu.used, 0, 'its session went back');
+    s.dispose();
+  }
   { // A stream already on the CPU encoder needs no session for its sharp frames.
     const gpu = createGpuSessions(1);
     gpu.acquire('stream');

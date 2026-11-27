@@ -1337,6 +1337,7 @@ class EncodedStream {
     const keep = [this.pipelineMode, this.tonemapKind, this.gpuDecode, this.playing];
     let argv;
     try { this.playing = false; argv = this.args(from, false); }
+    catch (e) { this.gpu.release(token); return no(String(e && e.message || e)); }
     finally { [this.pipelineMode, this.tonemapKind, this.gpuDecode, this.playing] = keep; }
     argv.splice(argv.length - 1, 0, '-frames:v', String(frames));
     let proc;
