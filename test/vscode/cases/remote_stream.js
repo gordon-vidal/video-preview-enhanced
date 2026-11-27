@@ -705,6 +705,65 @@ module.exports = [{
     return out;
   },
 }, {
+  // Play pressed while a paused seek is still on its way (slow link: the host's; or the page's own packets): the bar
+  // keeps the seek's target and plays on from there. It never shows the frame still on screen from before the seek.
+  name: 'remote_stream_play_during_seek',
+  ffmpeg: true,
+  settings: { 'videoPreviewEnhanced.remoteStream': 'on', 'videoPreviewEnhanced.loop': false, 'videoPreviewEnhanced.sizeFramesToView': false, 'workbench.editorAssociations': ASSOC },
+  async run(vs, h) {
+    const { out, run } = lib.recorder();
+    await run('bar-keeps-target', async (ok, r) => {
+      const file = makeLinkClip(h.ffmpeg);
+      const p = await lib.open(vs, h, file);
+      const fps = 25;
+      const barSec = (s) => {
+        const m = /(\d+):(\d+(?:\.\d+)?)/.exec(s.timeText || '');
+        return m ? Number(m[1]) * 60 + Number(m[2]) : NaN;
+      };
+      /** Bar times while playing for `ms` after play was pressed during the seek to `target` s. */
+      const sampleAfterPlay = async (target, ms) => {
+        const t0 = Date.now();
+        const seen = [];
+        while (Date.now() - t0 < ms) { seen.push(Number(barSec(await p.state()).toFixed(3))); await h.sleep(60); }
+        return { min: Math.min(...seen), max: Math.max(...seen), n: seen.length, below: seen.filter((x) => x < target - 0.5) };
+      };
+      try {
+        await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown);
+        p.pause();
+        // Receive 10..14 s (the page keeps those packets), then stand far away at 30 s.
+        p.seek(10.0 + 0.5 / fps);
+        await p.waitState((s) => !s.playing && s.frame === 250, { timeout: 30000 });
+        p.play();
+        await h.sleep(4000);
+        p.pause();
+        p.seek(30.0 + 0.5 / fps);
+        await p.waitState((s) => !s.playing && s.frame === 750, { timeout: 30000 });
+        // (a) The host's seek over a 2 Mb/s link: play pressed while it loads.
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 250000 });
+        p.seek(45.0 + 0.5 / fps);
+        await h.sleep(150);
+        p.play();
+        r.host = await sampleAfterPlay(45, 2500);
+        ok(r.host.below.length === 0, `play during the host's seek: the bar went back before 45 s (${JSON.stringify(r.host)})`);
+        p.pause();
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
+        await h.sleep(500);
+        p.seek(30.0 + 0.5 / fps);
+        await p.waitState((s) => !s.playing && s.frame === 750, { timeout: 30000 });
+        // (b) A seek served from the page's packets, play pressed at once (the decode is still running).
+        p.seek(11.0 + 0.5 / fps);
+        p.play();
+        r.local = await sampleAfterPlay(11, 2000);
+        ok(r.local.below.length === 0 && r.local.max < 20, `play during a seek from the page's packets: the bar left 11 s (${JSON.stringify(r.local)})`);
+        p.pause();
+      } finally {
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
+        await h.closeClip(vs);
+      }
+    });
+    return out;
+  },
+}, {
   // HDR over Live transcode: tone-mapped on the host; on an NVIDIA host NVDEC decodes and scales before the tone-mapper
   // (src/transcode_args.js cudaDecodeDownload), also when the encoder is the CPU one. Seeks and a step land exactly.
   name: 'remote_stream_hdr',

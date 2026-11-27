@@ -209,6 +209,12 @@ module.exports = [
     steps: [{ case: 'remote_stream_packets' }],
   },
   {
+    name: 'remote-stream-play-during-seek',
+    journey: 'Play pressed while a paused seek is still loading (slow link, or the page packets): the bar keeps the target',
+    sources: ['media/engine.js', 'media/player-unified.js', 'media/packet-cache.js', 'src/stream.js'],
+    steps: [{ case: 'remote_stream_play_during_seek' }],
+  },
+  {
     name: 'remote-stream-hdr',
     journey: 'HDR over Live transcode: tone-mapped on the host (NVDEC in front on NVIDIA), a seek and a step land exactly',
     sources: ['src/stream.js', 'src/warm-decoder.js', 'src/transcode_args.js', ...ENGINE_CORE],
