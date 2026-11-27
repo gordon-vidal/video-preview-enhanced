@@ -13,6 +13,7 @@
 - **Unified viewer visual & interaction polish:** fixed Split Wipe right-side canvas transparency, letterboxed tile overlay insets (`--pic-*`), missing Capture banner styling, narrow-toolbar button collapse rules, distinct Compare panel list icon, and spare `+ Add video` tile resting opacity; restored tab-swap folder rail navigation (single-video Next/Previous opens in a fresh tab with rail carry and closes the previous one cleanly).
 - **One viewer, Compare and AVI fixes:** dragging a video over the player shows the dashed "Drop to compare" frame again; a video whose container header states a wrong frame rate or length (an AVI saying 600 fps for a 30 fps video) now gets the rate and frame count the decoder measures, so the seek bar, stepping and Compare count its real frames.
 - **Compare:** the bar's time shows the letter of the video that sets the clock (`A 0:01.000 / 0:03.000`); Swap in Split Wipe no longer leaves the new left video drawn over the whole picture (the right side showed the wrong video); ⚙ › Inspection names only the tools Compare has (no pixel inspector, X swaps sides there).
+- **One viewer, Live transcode fixes:** a single video with `sizeFramesToView` off keeps its full Live transcode size and bitrate again (it was cut to the picture's size at half the bitrate, as in Compare); ⓘ About offers **Use original video** again while Live transcode plays; and the pixel inspector (X) reads the exact full-resolution frame from the extension host again when paused.
 
 ## 0.12.0 (2026-11-25)
 
