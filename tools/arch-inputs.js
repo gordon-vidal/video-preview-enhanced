@@ -28,13 +28,17 @@ for (const commit of history.split(/\0{2,}/)) {
   }
 }
 
+const SOURCE_EXT = /\.(?:[cm]?js|tsx?|css)$/i;
+
 function sourceSizes(directory) {
   const result = [];
   for (const entry of readdirSync(path.join(root, directory), { withFileTypes: true })) {
     const file = `${directory}/${entry.name}`;
-    if (file === 'media/libav-vpe') continue;
+    if (file === 'media/libav-vpe' || file === 'media/dist') continue;
     if (entry.isDirectory()) result.push(...sourceSizes(file));
-    if (entry.isFile()) result.push([file, statSync(path.join(root, file)).size]);
+    if (entry.isFile() && SOURCE_EXT.test(entry.name)) {
+      result.push([file, statSync(path.join(root, file)).size]);
+    }
   }
   return result;
 }

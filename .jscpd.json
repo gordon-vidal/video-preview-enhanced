@@ -1,0 +1,14 @@
+{
+  "minLines": 15,
+  "minTokens": 70,
+  "gitignore": true,
+  "reporters": ["console"],
+  "ignore": [
+    "media/libav-vpe/**",
+    "media/dist/**",
+    "node_modules/**",
+    "test/out/**",
+    "test/vscode/.code/**",
+    "test/vscode/out/**"
+  ]
+}

@@ -48,6 +48,8 @@ live there and in [test/vscode/README.md](test/vscode/README.md), not here. If t
 the docs. Quick reference:
 
 ```
+npm run verify:fast                     # typecheck, dependency-cruiser, knip, syntax, personal-data, links
+npm run arch:check                      # verify:fast + jscpd duplication scan
 node test/run.js unit engine            # layers 1-2 (what CI runs), all cores
 node test/run.js vscode                 # layer 3, Windows only, hidden desktop
 node test/run.js vscode --grep <re>     # only matching scenarios / cases
@@ -75,26 +77,17 @@ before releases or in performance work.
 
 ## Rules
 
-- **Fix with the smallest run**: while fixing, run only the failing test **through
-  `node test/run.js <layer> --grep <re>`** (never bare `node test/host/<file>.js`, which bypasses
-  the runner's timeout and stall kill); run the full layer once at the end. Do not retry flaky
-  tests silently; report them.
-- **Red → green → refactor**:
-  - *Bug fixes & regressions:* write a minimal test reproducing the bug, run it via
-    `node test/run.js <layer> --grep <re>`, and confirm it **fails for the right reason** on the
-    pre-fix code (if you already edited code, briefly revert/stash the fix to prove it fails); then
-    apply the fix, confirm green, and report the red → green check in your handoff/PR.
-  - *Refactors:* lock in observable behavior at the public boundary first (adding characterization
-    tests if missing), then refactor while keeping those tests green untouched.
-  - *New features:* red → green is optional — use it when it helps clarify the contract.
-- **Test public behavior, not internals**: drive tests through exported public APIs, host↔webview
-  messages, or user-visible state/a11y — never export private helpers just for tests, inspect
-  internal fields, or assert internal call order. Mock only external boundaries (VS Code API,
-  timers, I/O), never internal collaborators. Details: [docs/TESTING.md](docs/TESTING.md#test-design-and-red-green-refactor).
-- **Updating or deleting tests**: never weaken or delete a failing test just to make a run pass.
-  Pure **change-detector tests** (tests that only mirror internals and break on clean refactors)
-  *should* be deleted or replaced once their observable behavior is covered at the public boundary
-  — note why in the commit/handoff.
+- **Diagram + pushback before big edits**: before implementing changes touching >2 files or a new UI
+  surface, show a compact architecture/flow diagram (`.claude/skills/show-me/SKILL.md`) plus a
+  "Reuses vs. Introduces" check. If you catch yourself duplicating a helper, adding imperative DOM/CSS
+  syncing, or working around an `AGENTS.md` constraint, stop and flag it first.
+- **Retrospective rule**: whenever a recurring bug class, architectural smell, or workflow
+  misalignment surfaces, propose a concrete update to `AGENTS.md`, a skill, or an automated check
+  (and prune any obsolete rule).
+- **Testing & red → green**: run single tests via `node test/run.js <layer> --grep <re>` (never bare
+  `node test/host/...`). Bug fixes require a failing reproduction first (red → green); refactors lock
+  observable public behavior first; never test internals or weaken/delete failing tests. Full rules:
+  `.claude/skills/run-tests/SKILL.md` and [docs/TESTING.md](docs/TESTING.md#test-design-and-red-green-refactor).
 - Do not run layer 4 or several VS Code instances while another run is active.
 - **No personal data in tracked files, commits, PRs or issues**: no e-mail addresses, home-directory
   paths (`C:\Users\<name>`, `/home/<name>`), machine names, tokens, private notes. CI scans for it.
@@ -149,5 +142,6 @@ chat shared outside this machine. If it is absent, work from the public docs onl
 
 Project skills live in `.claude/skills/<name>/SKILL.md` (auto-discovered by Claude Code; other
 agents should read the relevant `SKILL.md` directly before running tests, debugging decode issues,
-adding a format, releasing, updating docs, writing user-facing notices, or building UI mockups): `run-tests`,
-`reproduce-decode-bug`, `add-format`, `release-checklist`, `update-docs`, `ui-notices`, `ui-mockup`.
+adding a format, releasing, updating docs, writing user-facing notices, building UI mockups,
+explaining architectures visually, or auditing codebase health): `run-tests`, `reproduce-decode-bug`,
+`add-format`, `release-checklist`, `update-docs`, `ui-notices`, `ui-mockup`, `show-me`, `arch-audit`.

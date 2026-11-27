@@ -822,13 +822,16 @@
     "test:vscode": "node test/run.js vscode",
     "test:perf": "node test/run.js perf",
     "package": "npx --yes @vscode/vsce@4.1.1 package",
-    "verify:fast": "npm run typecheck && dependency-cruiser --config .dependency-cruiser.cjs src media && knip && node tools/check-syntax.js && node tools/check-personal-data.js && node tools/check-links.js"
+    "verify:fast": "npm run typecheck && dependency-cruiser --config .dependency-cruiser.cjs src media && knip && node tools/check-syntax.js && node tools/check-personal-data.js && node tools/check-links.js",
+    "arch:dupes": "jscpd src media",
+    "arch:check": "npm run verify:fast && npm run arch:dupes"
   },
   "icon": "media/icon.png",
   "qna": false,
   "pricing": "Free",
   "devDependencies": {
     "dependency-cruiser": "^17.4.3",
+    "jscpd": "^5.4.3",
     "knip": "^6.48.0",
     "typescript": "5.9.3"
   }
