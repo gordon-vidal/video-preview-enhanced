@@ -68,6 +68,10 @@ function createEngine(env) {
   const SPEED_WARMUP_MS = 1500; // decode speed samples (sampleSpeed): ignore the start
   const SPEED_SAMPLE_MS = 3000;
   const FAST_CODECS = new Set(['hevc', 'h264']); // decoders that honour skip_loop_filter (fast preview)
+  // Reading and decoding (decoder-worker.js 'more', 'seek', the pool's 'segment'): an error there is asked again on the
+  // next tick; this many in a row at one spot stop playback there instead (a frozen picture that re-asks for ever).
+  const DECODE_STEPS = new Set(['more', 'seek', 'segment']);
+  const DECODE_TRIES = 3;
   const SETUP_NOTICE_RATIO = 0.5; // below this decode speed (x real time), prioritize the ffmpeg setup notice
   const onTracks = env.onTracks || (() => {}); // (player) when the track list or a selection changes
   // Live transcode: whether this video sets the clock (a single video, Compare's clock tile): only it keeps a decoder
@@ -290,6 +294,7 @@ function createEngine(env) {
         case 'log': log(m.msg); break;
         case 'error':
           this.loopCache = null;
+          if (DECODE_STEPS.has(m.where) && this.decodeError(m)) break;
           log(`worker ${m.where} error: ${m.message}`);
           if (m.where === 'open') showMessage('This file could not be opened.', 'It may be damaged or incomplete (for example a recording that was cut off before it finished), or not a video file.');
           else if (m.where === 'init') showMessage('The decoder could not be loaded.', m.message);
@@ -1208,6 +1213,7 @@ function createEngine(env) {
       if (this.scrubHeldT !== undefined || this.requesting || this.eof || !this.worker || this.vmode === undefined) return;
       if (this.localGen === this.gen) return; // served from the page's packets (seekFromPackets): no producer to ask
       if (this.vReread === this.gen) return; // the worker is rewinding the picture after a decoder error (onVideoReread reads on)
+      if (this.stuckGen === this.gen) return; // the decoder failed here again and again (decodeError): a seek or play tries again
       const now = this.now();
       // A paused remote stream can fill its decode cache far past the shown frame and evict
       // that frame's seek history on the host. Leave room in the host's 20 s window for steps back.
@@ -1943,6 +1949,23 @@ function createEngine(env) {
       onEnded(this, { natural: false, stopped: true, ran, terminal: false, t });
     }
 
+    /**
+     * A read or decode failed in the worker. Errors in a row at one spot (no new generation, nothing read since) are
+     * counted: after DECODE_TRIES, playback stops there (stopped) and the worker is not asked again until a seek or
+     * play. Returns true when the error was handled (and logged, or kept out of the log once stopped).
+     */
+    decodeError(m) {
+      const spot = `${this.gen}:${this.readVT}`;
+      this.decodeErrors = this.decodeErrors && this.decodeErrors.spot === spot ? { spot, n: this.decodeErrors.n + 1 } : { spot, n: 1 };
+      this.requesting = false;
+      if (this.stuckGen === this.gen) return true;
+      log(`worker ${m.where} error: ${m.message}`);
+      if (this.decodeErrors.n < DECODE_TRIES) return true;
+      this.stuckGen = this.gen;
+      this.stopped(this.shownT ?? this.now(), `the decoder failed ${this.decodeErrors.n} times here`);
+      return true;
+    }
+
     /** End of what was decoded: the last frame's end or the end of the sound, whichever is later. */
     endT() {
       const a = this.audio[this.audio.length - 1];
@@ -2032,6 +2055,8 @@ function createEngine(env) {
       // A read served from the page's packets has no sound and no producer: the host goes on from there. From the
       // seek's target while it is still decoding (play pressed at once): the frame on screen is the one before the seek.
       if (this.localGen === this.gen) { this.seekAbs(this.seekTarget ?? this.shownT ?? this.pauseT, true); return; }
+      // Stopped where the decoder kept failing (decodeError): try again from the picture on screen.
+      if (this.stuckGen === this.gen) { this.seekAbs(this.shownT ?? this.pauseT, true); return; }
       // At the end (loop off): play starts over.
       if (this.eof && !this.queue.length && this.seekTarget === null && this.pauseT >= this.endT() - 1e-6) { this.seekAbs(this.startT || 0, true); return; }
       this.runFromT = this.pauseT; // Autoplay: how far playback ran before reaching the end (ended)
