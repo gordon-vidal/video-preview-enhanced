@@ -29,51 +29,44 @@ const clip = path.join(__dirname, '..', '..', 'media', 'probe', 'hevc_10_2160.mk
   assert.equal(native.hide.label, "Don't show again");
 
   for (const centerLayout of [true, false]) {
-    const notices = [];
-    let noticeAnswer;
-    const h = load({
-      settings: { 'zenMode.centerLayout': centerLayout },
-      setup: (v) => {
-        v.window.showInformationMessage = async (msg, ...buttons) => {
-          notices.push([msg, ...buttons]);
-          return noticeAnswer;
-        };
-      },
-    });
+    const h = load({ settings: { 'zenMode.centerLayout': centerLayout } });
     const s = h.open(clip);
     await s.send({ type: 'ready' });
     h.vscode.executed = [];
+    h.vscode._updates.length = 0;
     const zen = ['workbench.action.toggleZenMode'];
-    const centered = ['workbench.action.toggleCenteredLayout'];
     // Overlapping second click during the OS fullscreen settle window is ignored.
-    // Never toggles Centered Layout blindly (prevents normal-mode Centered Layout corruption on desync).
-    noticeAnswer = 'Got it';
+    // Temporarily disables zenMode.centerLayout around toggleZenMode and restores it in finally;
+    // never calls toggleCenteredLayout (which would corrupt normal VS Code layout on desync).
     const first = s.send({ type: 'focusMode' });
     await s.send({ type: 'focusMode' });
     await first;
-    assert.deepEqual(h.vscode.executed, [zen], 'never blindly calls toggleCenteredLayout');
+    assert.deepEqual(h.vscode.executed, [zen], 'never calls toggleCenteredLayout');
     assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, true);
-    assert.equal(notices.length, centerLayout ? 1 : 0, 'one-time notice only when zenMode.centerLayout is on');
+    assert.deepEqual(
+      h.vscode._updates,
+      centerLayout ? [['zenMode.centerLayout', false], ['zenMode.centerLayout', true]] : [],
+      'temporarily disables zenMode.centerLayout around toggleZenMode and restores it',
+    );
     h.vscode.executed = [];
+    h.vscode._updates.length = 0;
     await s.send({ type: 'focusMode' });
     assert.deepEqual(h.vscode.executed, [zen]);
     assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, false);
     if (centerLayout) {
-      // Exiting Zen Mode outside the button (Esc Esc) resets zenActive; re-entering still never blindly toggles Centered Layout.
+      // Exiting Zen Mode outside the button (Esc Esc) resets zenActive; re-entering still expands full-width without toggleCenteredLayout.
       h.vscode.executed = [];
+      h.vscode._updates.length = 0;
       await s.send({ type: 'focusMode' });
       assert.deepEqual(h.vscode.executed, [zen]);
-      assert.equal(notices.length, 1, 'notice is shown at most once');
+      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', false], ['zenMode.centerLayout', true]]);
       await s.send({ type: 'focusModeExited' });
       assert.equal(s.posted.filter((m) => m.type === 'focusMode').pop()?.active, false);
-      // Clicking "Turn Off Centered Layout" disables zenMode.centerLayout and expands the active Zen Mode once.
-      await h.context.globalState.update('videoPreviewEnhanced.zenCenterNoticed', undefined);
-      noticeAnswer = 'Turn Off Centered Layout';
       h.vscode.executed = [];
+      h.vscode._updates.length = 0;
       await s.send({ type: 'focusMode' });
-      await new Promise((r) => setImmediate(r));
-      assert.ok(h.vscode._updates.some(([k, v]) => k === 'zenMode.centerLayout' && v === false), 'user opted to turn off zenMode.centerLayout');
-      assert.deepEqual(h.vscode.executed, [zen, centered], 'expands current Zen Mode once after user clicks');
+      assert.deepEqual(h.vscode.executed, [zen]);
+      assert.deepEqual(h.vscode._updates, [['zenMode.centerLayout', false], ['zenMode.centerLayout', true]]);
       await s.send({ type: 'focusMode' });
     }
 
