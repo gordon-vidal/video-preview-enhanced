@@ -328,15 +328,24 @@ function createUnifiedSession(deps) {
   /**
    * Adds a video after the ones shown. A duplicate or a full panel only says so (a toast).
    * @param {Partial<UnifiedClip> & { uri?: UriLike | string }} clip
-   * @param {{ compare?: boolean }} [o] compare: the page shows the clips side by side (else it may swap the view)
+   * @param {{ compare?: boolean, allowDuplicate?: boolean }} [o] compare: the page shows the clips side by side (else
+   *   it may swap the view). allowDuplicate: a file already shown joins again under a fresh clip id (an explicit
+   *   list that names the same file twice, e.g. to check that identical pictures measure as identical); everything
+   *   else (the Explorer, Add video, Add Mode) declines a duplicate.
    * @returns {boolean} added
    */
-  function addClip(clip, { compare = true } = {}) {
+  function addClip(clip, { compare = true, allowDuplicate = false } = {}) {
     if (disposed || !clip) return false;
     const dup = duplicateOf(clip);
-    if (dup) { toast(`${dup.label} is in compare already`, 2000); return false; }
+    if (dup && !allowDuplicate) { toast(`${dup.label} is in compare already`, 2000); return false; }
     if (clips.length >= maxVideos) { toast(`Compare is full (${maxVideos} videos)`, 2500); return false; }
-    const c = normalize(clip);
+    let fresh = clip;
+    if (dup && isId(clip.id) && clipOf(/** @type {string} */ (clip.id))) {
+      let k = 2;
+      while (clipOf(`${clip.id}s${k}`)) k++;
+      fresh = { ...clip, id: `${clip.id}s${k}` };
+    }
+    const c = normalize(fresh);
     clips = [...clips, c];
     order = [...order, c.id];
     pendingAdds.add(c.id);

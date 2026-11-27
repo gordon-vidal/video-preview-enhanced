@@ -867,6 +867,40 @@ const withGlobals = (dom, fn) => {
     assert.strictEqual(ui.tileMenu.isOpen(), false, 'one video: no tile menu');
   });
 
+  // The time readout (#time) leads with the clock video's letter in Compare and follows the clock; one video: the time
+  // alone (layer 3 compare_ui bar, panel/video-page).
+  mount({ tiles: ['clip-0'] }, ({ $ }) => {
+    assert.match($('time').textContent, /^\d+:\d\d\.\d{3} \/ \d+:\d\d\.\d{3}$/, 'one video: no letter');
+  });
+  mount({ tiles: ['clip-0', 'clip-1'] }, ({ $, ui, tab }) => {
+    assert.match($('time').textContent, /^A \d+:\d\d\.\d{3} \/ \d+:\d\d\.\d{3}$/, 'Compare: A sets the clock');
+    assert.strictEqual($('time').firstChild.getAttribute('id'), 'timeLetter');
+    assert.strictEqual($('time').firstChild.getAttribute('aria-hidden'), 'true', 'the button\'s aria-label has the letter already');
+    assert.match($('time').getAttribute('aria-label'), /^Position A \d/);
+    ui.dispatch('setClock', 'clip-1');
+    ui.render();
+    assert.strictEqual(tab().clockId, 'clip-1');
+    assert.match($('time').textContent, /^B \d/, 'B sets the clock: B leads');
+    ui.dispatch('leaveCompare');
+    ui.render();
+    assert.match($('time').textContent, /^\d/, 'back to one video: the letter goes');
+    assert.strictEqual($('time').querySelectorAll('#timeLetter').length, 1, 'one letter element');
+  });
+
+  // Split Wipe: the left half (split-a, under) and the right (split-b, drawn clipped on top) are built in the order shown,
+  // so a Swap builds them again: else the new A would stay on top unclipped and hide B (layer 3 spotlight-and-split).
+  mount({ tiles: ['clip-0', 'clip-1'], layout: 'split' }, ({ $, key, tab, cellOf }) => {
+    const roles = () => [...$('cells').children].map((c) => `${c.dataset.clip}:${c.dataset.role}`);
+    assert.strictEqual(tab().layout, 'split');
+    assert.deepStrictEqual(roles(), ['clip-0:split-a', 'clip-1:split-b']);
+    key('x');
+    assert.deepStrictEqual(tab().tiles, ['clip-1', 'clip-0'], 'X swaps the sides');
+    assert.deepStrictEqual(roles(), ['clip-1:split-a', 'clip-0:split-b'], 'split-b (on top) is the new B');
+    assert.ok(cellOf('clip-0').querySelector('.oor'), 'the "no picture" note moved with the right half');
+    assert.strictEqual(cellOf('clip-1').querySelector('.oor'), null);
+    assert.match(cellOf('clip-1').querySelector('.pill').textContent, /A/, 'the left pill is A');
+  });
+
   // What the real VS Code checks of the bar and the picture (test/vscode/cases/ui.js, ctxmenu.js), over the real
   // media/range-drag.js: names and states, a click on the picture, Loop, the menu's "Set", wheel and drags off the edge.
   {
@@ -1632,13 +1666,24 @@ async function phase34() {
     assert.strictEqual(insp.getState().xray, false, 'then X-ray');
     assert.strictEqual(key('Escape').defaultPrevented, false, 'then nothing: Esc goes on');
   });
-  await mountTools({ tiles: ['clip-0', 'clip-1'] }, async ({ ui, tab, key }) => {
+  await mountTools({ tiles: ['clip-0', 'clip-1'] }, async ({ ui, tab, key, $ }) => {
     key('x');
     assert.deepStrictEqual(tab().tiles, ['clip-1', 'clip-0'], 'X is still Swap with two videos');
     assert.strictEqual(ui.parts.insp.getState().inspector, null);
     key('X', { shiftKey: true });
     await tick();
     assert.strictEqual(ui.parts.insp.getState().xray, true, 'Shift+X works in Compare too');
+    // ⚙ in Compare has Inspection too (layer 3 compare_ui panel/compare): its name and page list what Compare offers.
+    ui.controls.show('main', $('cog'));
+    const row = [...$('panel').querySelectorAll('button')].find((b) => /^Inspection/.test(b.getAttribute('aria-label') || ''));
+    assert.strictEqual(row && row.getAttribute('aria-label'), 'Inspection: scopes, stats, codec X-ray', 'no pixel inspector in its name');
+    ui.controls.show('inspect', $('cog'));
+    assert.deepStrictEqual([...$('panel').querySelectorAll('[data-tool]')].map((b) => b.dataset.tool), ['Scopes', 'Stats', 'Codec X-ray']);
+  });
+  await mountTools({ tiles: ['clip-0'] }, async ({ ui, $ }) => {
+    ui.controls.show('main', $('cog'));
+    const row = [...$('panel').querySelectorAll('button')].find((b) => /^Inspection/.test(b.getAttribute('aria-label') || ''));
+    assert.strictEqual(row && row.getAttribute('aria-label'), 'Inspection: scopes, pixel inspector, stats, codec X-ray', 'one video: all four');
   });
 
   // Subtitles: C / V / Shift+V / G / H, the CC button, the host's tracks, the cue over the picture, the panel.

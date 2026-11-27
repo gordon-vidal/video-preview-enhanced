@@ -1756,7 +1756,7 @@ let captureWhy = '';
  * A viewer in `panel` showing `clip` first (and `more` beside it). `openTarget`: a frame link's moment or the saved
  * position. Resolves the viewer, or null when the panel closed meanwhile.
  */
-async function showViewer(context, panel, clip, openTarget = null, more = []) {
+async function showViewer(context, panel, clip, openTarget = null, more = [], { allowDuplicate = false } = {}) {
   const closed = closeWatch(panel);
   const framePort = await framePortForPage();
   if (closed()) return null;
@@ -1764,7 +1764,7 @@ async function showViewer(context, panel, clip, openTarget = null, more = []) {
   const viewer = unifiedViewer.createUnifiedViewer({
     vscode, context, panel, clip, registry: unifiedRegistry, openTarget, deps: { ...unifiedDeps, framePort },
   });
-  for (const c of more) viewer.session.addClip(c, { compare: true });
+  for (const c of more) viewer.session.addClip(c, { compare: true, allowDuplicate });
   unifiedViewers.add(viewer);
   panelViewers.set(panel, viewer);
   lastViewer = viewer;
@@ -1995,8 +1995,11 @@ function rememberRecent(uris) {
   globalState.update(RECENT_KEY, recent);
 }
 
-/** A new viewer tab with `uris` side by side (up to compare.maxVideos). `goto`: a compare link's moment. */
-async function openCompare(context, uris, { goto = null } = {}) {
+/**
+ * A new viewer tab with `uris` side by side (up to compare.maxVideos). `goto`: a compare link's moment. `allowDuplicate`:
+ * a file named twice shows twice (an explicit list, e.g. identical pictures for the metrics); otherwise once.
+ */
+async function openCompare(context, uris, { goto = null, allowDuplicate = false } = {}) {
   const max = maxVideos();
   if (uris.length > max) vscode.window.showWarningMessage(`Video Preview: compare shows up to ${max} videos; showing the first ${max}.`);
   const clips = await prepareUris(uris.slice(0, max));
@@ -2005,7 +2008,7 @@ async function openCompare(context, uris, { goto = null } = {}) {
   rememberRecent(uris.slice(0, max));
   const panel = vscode.window.createWebviewPanel(COMPARE_VIEW_TYPE, clips.map((c) => c.label).join(' · '), vscode.ViewColumn.Active, { retainContextWhenHidden: true });
   panel.iconPath = new vscode.ThemeIcon('split-horizontal');
-  return showViewer(context, panel, clips[0], goto ? { goto } : null, clips.slice(1));
+  return showViewer(context, panel, clips[0], goto ? { goto } : null, clips.slice(1), { allowDuplicate });
 }
 
 /** `uris` join `viewer` (no duplicates, up to compare.maxVideos); the page says what happened. */
@@ -2070,10 +2073,10 @@ async function compareSelection(context, uri, uris) {
   return viewer;
 }
 
-/** The internal 'compare' command (tests): a new viewer with the list, or two picked files. */
+/** The internal 'compare' command (tests): a new viewer with the list as given (the same file twice too), or two picked files. */
 async function compareList(context, uri, uris) {
   const list = (Array.isArray(uris) && uris.length ? uris : uri ? [uri] : []).filter((u) => COMPARE_VIDEO_EXT.test(u.path));
-  if (list.length >= 2) return openCompare(context, list);
+  if (list.length >= 2) return openCompare(context, list, { allowDuplicate: true });
   const a = list[0] || activeVideo() || (await pickVideos('Compare: video A', undefined, false) || [])[0];
   if (!a) return null;
   const b = (await pickVideos(`Compare with ${path.basename(a.fsPath)} (B)`, vscode.Uri.joinPath(a, '..'), false) || [])[0];

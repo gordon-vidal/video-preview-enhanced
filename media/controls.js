@@ -451,7 +451,8 @@ const VpeControls = (() => {
         f.appendChild(ab);
       }
       const insp = inspectTools(s);
-      if (insp.length) f.appendChild(btn('row', 'Inspection', () => show('inspect'), { icon: ICON.inspect, value: insp.map((t) => t.key).join(' '), chev: true, aria: { 'aria-label': 'Inspection: pixel inspector, scopes, stats, codec X-ray' } }));
+      // The name lists the tools this page offers (Compare has no pixel inspector: X swaps sides there).
+      if (insp.length) f.appendChild(btn('row', 'Inspection', () => show('inspect'), { icon: ICON.inspect, value: insp.map((t) => t.key).join(' '), chev: true, aria: { 'aria-label': `Inspection: ${insp.map((t) => { const n = t.title || t.label; return n.charAt(0).toLowerCase() + n.slice(1); }).join(', ')}` } }));
       f.appendChild(el('div', 'sep'));
       // Plays an http(s) link or HLS / DASH stream in a new tab (docs/notes/url-stream.md); the URL is typed in VS Code's input box.
       if (env.act.openUrl) f.appendChild(btn('row', 'Open video URL…', () => { close(false); env.act.openUrl(); }, { icon: ICON.globe }));

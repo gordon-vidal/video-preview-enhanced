@@ -163,9 +163,12 @@ module.exports = [{
     }
     const problems = [];
     if (loops.length < 3) problems.push(`expected three clock wraps, saw ${loops.length}`);
-    if (!vs.lines.slice(from).some((l) => /webview: \[A\] loop: replaying \d+ cached frames/.test(l))) {
-      problems.push('the clock did not replay cached frames');
-    }
+    // Compare loops as one: every decoder runs with its own loop off and the clock's end wraps them all together (media/
+    // player-unified.js onPlayerEnded: "end of file: loop", then the controller seeks to 0 and plays on). One such end per
+    // wrap; a decoder that wrapped on its own would show as a wrap without one.
+    const ends = vs.lines.slice(from).filter((l) => /\[compare [^\]]*\] webview: end of file: loop/.test(l)).length;
+    if (ends < 3 || ends < loops.length) problems.push(`the clock's end drove ${ends} shared wraps, the report saw ${loops.length}`);
+    if (vs.lines.slice(from).some((l) => /webview: \[[AB]\] loop: replaying/.test(l))) problems.push('a decoder looped on its own in Compare');
     // A seek may still be settling right at the wrap. Check sync twice during each new pass that was sampled twice.
     let checked = 0;
     loops.forEach((samples, i) => {
@@ -773,20 +776,22 @@ module.exports = [{
       u = await ui();
       const addedOrder = order(u);
       from = vs.mark();
-      act({ action: 'remove', tile: 0 });
+      // Tiles are numbered as shown (C, A, B, D): remove A, the second. The report's per-tile values follow the shown
+      // order; a cell's `tile` is its video's own number (A 0, B 1, C 2, D 3), which does not change.
+      act({ action: 'remove', tile: 1 });
       await vs.waitLog(opened(3), { from, timeout: 30000 });
       const r = await until((x) => x.synced === 'true');
       u = await ui();
       await results.run('reorder/restore', (ok) => {
         ok(addedOrder === '2,0,1,3', `added video should go last: ${addedOrder}`);
-        ok(order(u) === '1,0,2,add', `removal should keep the other videos' order: ${order(u)}`);
-        ok(r.synced === 'true' && r.clock === '1' && r.sound === '0' && r.offsets === '3f,0f,0f',
-          `restored sync, clock, sound and offset: ${JSON.stringify(r)}`);
+        ok(order(u) === '2,1,3,add', `removal should keep the other videos' order: ${order(u)}`);
+        ok(r.synced === 'true' && r.clock === '0' && r.sound === '1' && r.offsets === '0f,3f,0f',
+          `kept sync, clock (C), sound (B) and B's offset: ${JSON.stringify(r)}`);
       });
       // A letterboxed grid (5 tiles, 3x2): each tile's arrows sit on its own picture, not in the black bars of the cell.
       // Two videos not shown yet (Compare declines a video it shows already): the removed one and a fifth.
       from = vs.mark();
-      vs.send({ compareAdd: [files[2], path.join(h.MEDIA, 'av1_8_1080p.mp4')] });
+      vs.send({ compareAdd: [files[0], path.join(h.MEDIA, 'av1_8_1080p.mp4')] });
       await vs.waitLog(opened(5), { from, timeout: 30000 });
       act({ action: 'stageSize', w: 1000, h: 700 });
       await until((x) => x.n === '5' && x.grid === '3x2', 20000);

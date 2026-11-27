@@ -2139,6 +2139,139 @@ testAsync('Compare metrics (debug): the paused pair is logged once per pair, the
   });
 });
 
+test('debug cellGroups: cells in layout order (a lifted tile where it is dragged), Split Wipe\'s halves as one cell', () => {
+  const { cellGroups } = require('../../media/compare-debug');
+  const dom = createDom('<div id="cells"></div>');
+  const cell = (clip, left, top, more = {}) => {
+    const d = dom.doc.createElement('div');
+    d.setAttribute('class', more.cls || 'cell');
+    d.dataset.clip = clip;
+    if (more.role) d.dataset.role = more.role;
+    Object.assign(d.style, { left: `${left}px`, top: `${top}px`, ...(more.style || {}) });
+    dom.$('cells').appendChild(d);
+    return d;
+  };
+  // Made A, B, C, D; shown (after a reorder) C A / B D, the add cell last.
+  cell('A', 340, 0); cell('B', 0, 185); cell('C', 0, 0); cell('D', 340, 185.4); cell('+', 680, 185, { cls: 'cell add' });
+  const ids = (gs) => gs.map((g) => g.map((d) => d.dataset.clip).join('+'));
+  assert.deepStrictEqual(ids(cellGroups(dom.$('cells').children)), ['C', 'A', 'B', 'D', '+']);
+  // Dragging A (340, 0) over C's place: it counts there, before C (equal place: the one made first).
+  dom.$('cells').children[0].style.zIndex = '5';
+  dom.$('cells').children[0].style.transform = 'translate(-340px, 0px)';
+  assert.deepStrictEqual(ids(cellGroups(dom.$('cells').children)), ['A', 'C', 'B', 'D', '+']);
+  // A glide's transform (no lift) does not count: the layout's place does.
+  dom.$('cells').children[0].style.zIndex = '';
+  assert.deepStrictEqual(ids(cellGroups(dom.$('cells').children)), ['C', 'A', 'B', 'D', '+']);
+  const split = createDom('<div id="cells"></div>');
+  for (const [clip, role] of [['B', 'split-b'], ['A', 'split-a']]) {
+    const d = split.doc.createElement('div');
+    d.setAttribute('class', 'cell split');
+    d.dataset.clip = clip;
+    d.dataset.role = role;
+    split.$('cells').appendChild(d);
+  }
+  assert.deepStrictEqual(ids(cellGroups(split.$('cells').children)), ['A+B'], 'one cell, the left half first');
+  assert.deepStrictEqual(cellGroups([]), []);
+});
+
+testAsync('debug hooks in Compare: cells as shown, Swap in the report, Split as one cell, divider drag, − / + under the pointer', async () => {
+  const VpeCompareDebug = require('../../media/compare-debug');
+  const { FakeEvent } = require('./fake-dom');
+  class PointerEvent extends FakeEvent {}
+  class KeyboardEvent extends FakeEvent {}
+  const reportable = (clip, host, hooks) => Object.assign(stubPlayer(clip, host, hooks), {
+    shownCount: 1, shownT: 0, startT: 0, pauseT: 0, fps: 25, cv: { width: 1280, height: 720 }, cfg: { native: false }, info: {},
+    rel(t) { return t; }, shownMarkTime() { return this.frame / 25; }, currentTime() { return this.frame / 25; },
+  });
+  const saved = Object.fromEntries(['PointerEvent', 'KeyboardEvent', 'getComputedStyle'].map((k) => [k, Object.getOwnPropertyDescriptor(global, k)]));
+  try {
+    await withPage(async ({ win, app, send, posted, $, setRect }) => {
+      win.PointerEvent = PointerEvent;
+      Object.assign(global, { PointerEvent, KeyboardEvent, getComputedStyle: (e) => e.style });
+      setRect($('cells'), { width: 680, height: 370 });
+      /** The fake DOM has no layout: each cell's box is where the layout put it (style left / top / size). */
+      const layout = () => {
+        app.ui.render();
+        for (const d of $('cells').children) {
+          const n = (k) => parseFloat(d.style[k]) || 0;
+          setRect(d, { left: n('left'), top: n('top'), width: n('width'), height: n('height') });
+        }
+        const dv = $('divider');
+        setRect(dv, { left: parseFloat(dv.style.left) || 0, top: 0, width: 8, height: 370 });
+      };
+      const wait = () => new Promise((r) => setTimeout(r, 5));
+      const kv = (line) => Object.fromEntries([...line.matchAll(/(\w+)=(\S+)/g)].map((m) => [m[1], m[2]]));
+      const report = async () => {
+        send({ type: 'debug', action: 'report', delay: 1 });
+        await wait();
+        return kv(logsOf(posted).filter((l) => l.startsWith('compare report ')).pop());
+      };
+      let uiId = 0;
+      const uiState = async () => {
+        const id = ++uiId;
+        send({ type: 'debug', action: 'ui', id, delay: 1 });
+        await wait();
+        const line = logsOf(posted).find((l) => l.startsWith(`compare ui {"id":${id},`));
+        assert.ok(line, `ui ${id} answered: ${logsOf(posted).slice(-3)}`);
+        return JSON.parse(line.slice('compare ui '.length));
+      };
+      const tab = () => S.getTab(app.ui.getState());
+      const dbg = (m) => { send({ type: 'debug', ...m }); layout(); };
+
+      send({ type: 'open' });
+      send({ type: 'openVideo', clipId: 'B', compare: true, clip: CLIPS[1] });
+      layout();
+      let u = await uiState();
+      assert.deepStrictEqual(u.cells.map((c) => c.enlarge), ['Enlarge tile', 'Enlarge tile'], 'the grid: Enlarge on each tile');
+      assert.match(u.cells[0].pills[0], /Aa\.mp4/);
+      assert.strictEqual((await report()).swap, 'false');
+
+      // X swaps: B shows first (as A) and the report says so; the cells are listed as shown, not as made.
+      dbg({ action: 'key', key: 'x' });
+      assert.deepStrictEqual(tab().tiles, ['B', 'A']);
+      assert.strictEqual((await report()).swap, 'true');
+      u = await uiState();
+      assert.ok(/Ab\.mp4/.test(u.cells[0].pills[0]) && /Ba\.mp4/.test(u.cells[1].pills[0]), `after Swap: ${JSON.stringify(u.cells.map((c) => c.pills))}`);
+
+      // Spotlight: the main tile first, its button goes back to the grid.
+      dbg({ action: 'mode', mode: 'spotlight' });
+      u = await uiState();
+      assert.deepStrictEqual(u.cells.map((c) => c.enlarge), ['Back to grid', 'Enlarge tile']);
+
+      // Split Wipe: one cell with both pills, the divider is the stage's (#divider), dragged to 25 %.
+      dbg({ action: 'mode', mode: 'split' });
+      let r = await report();
+      assert.deepStrictEqual([r.mode, r.cells, r.divider], ['split', '1', 'true']);
+      u = await uiState();
+      assert.strictEqual(u.cells.length, 1);
+      assert.strictEqual(u.cells[0].pills.length, 2, `both pills: ${JSON.stringify(u.cells[0].pills)}`);
+      assert.match(u.cells[0].pills[0], /Ab\.mp4/, 'the left pill first');
+      assert.strictEqual(u.divider && u.divider.value, '50');
+      dbg({ action: 'drag', x: 0.25 });
+      r = await report();
+      assert.ok(Math.abs(Number(r.split) - 0.25) < 0.01, `divider dragged to 25 %: split=${r.split}`);
+      u = await uiState();
+      assert.strictEqual(u.divider.value, '25', 'the divider says 25 %');
+
+      // − / + nudge the tile under the pointer (the hover hook moves the pointer there), in the grid and in Split.
+      dbg({ action: 'hover', tile: 1 });
+      dbg({ action: 'key', key: '+' });
+      assert.deepStrictEqual([S.getOffset(tab(), 'A').v, S.getOffset(tab(), 'B').v], [1, 0], 'Split: + on the right half (A)');
+      dbg({ action: 'mode', mode: 'grid' });
+      dbg({ action: 'hover', tile: 0 });
+      dbg({ action: 'key', key: '+' });
+      assert.deepStrictEqual([S.getOffset(tab(), 'A').v, S.getOffset(tab(), 'B').v], [1, 1], '+ on the first tile (B)');
+      dbg({ action: 'hover', tile: 1 });
+      dbg({ action: 'key', key: '-' });
+      assert.deepStrictEqual([S.getOffset(tab(), 'A').v, S.getOffset(tab(), 'B').v], [0, 1], '− on the second tile (A)');
+      dbg({ action: 'hover', tile: null });
+      assert.strictEqual(app.ui.parts.hover.current(), null, 'the pointer left the tiles');
+    }, { cfg: { debug: true }, createPlayer: reportable, extraWidgets: { VpeCompareDebug } });
+  } finally {
+    for (const [k, d] of Object.entries(saved)) { if (d) Object.defineProperty(global, k, d); else delete global[k]; }
+  }
+});
+
 (async () => {
   for (const [name, fn] of asyncTests) {
     try { await fn(); count++; } catch (e) { e.message = `${name}: ${e.message}`; console.error(e); process.exit(1); }

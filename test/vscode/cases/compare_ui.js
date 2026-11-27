@@ -183,7 +183,15 @@ module.exports = [{
     ok(u.panel && u.panel.view === 'main' && /Sound/.test(panelText(u)) && /from A/.test(panelText(u)) && /Copy view/.test(panelText(u)) && /Compare/.test(panelText(u)), `⚙ panel: ${panelText(u)}`);
     ok(!/Subtitles|Audio track/.test(panelText(u)), `⚙ panel shows player-only rows: ${panelText(u)}`);
     ok(u.panel?.rows.some((r) => /A–B Range/.test(r.label)), 'Compare Settings has the shared A–B Range row');
-    ok(!/Inspection/.test(panelText(u)), 'Compare has no Inspection row (no inspection tools there)');
+    // Inspection in Compare: scopes, stats and the codec X-ray (of the clock video); no pixel inspector, X swaps sides.
+    ok(u.panel?.rows.some((r) => r.label === 'Inspection: scopes, stats, codec X-ray'), `Compare's Inspection row: ${JSON.stringify(u.panel?.rows.map((r) => r.label))}`);
+    await click({ text: 'Inspection' });
+    u = await ui();
+    const inspRows = (u.panel?.rows || []).map((r) => r.label);
+    ok(u.panel?.view === 'inspect' && ['Scopes', 'Stats', 'Codec X-ray'].every((w) => inspRows.some((l) => l.startsWith(w)))
+      && !inspRows.some((l) => /inspector/i.test(l)), `Compare's Inspection page: ${u.panel?.view} ${JSON.stringify(inspRows)}`);
+    await click({ sel: '#cog' }); // back to the main page
+    u = await ui();
     await click({ text: 'A–B Range' });
     u = await ui();
     ok(u.panel?.view === 'ab' && u.panel.rows.some((r) => r.label === 'Export A–B video for all Compare tiles'), 'Compare clip export accessible name on the A–B Range page');
@@ -235,7 +243,8 @@ module.exports = [{
     ok = t('tiles/pills-and-nudge');
     r = await until((x) => x.synced === 'true', 10000);
     u = await ui();
-    ok(u.cells.length === 2 && u.cells.every((c) => c.pills.length === 1 && !c.hasSpot), `cells: ${JSON.stringify(u.cells.map((c) => [c.tile, c.pills.length, c.hasSpot]))}`);
+    // The grid: every tile's Enlarge button puts it in Spotlight.
+    ok(u.cells.length === 2 && u.cells.every((c) => c.pills.length === 1 && c.enlarge === 'Enlarge tile'), `cells: ${JSON.stringify(u.cells.map((c) => [c.tile, c.pills.length, c.enlarge]))}`);
     ok(u.cells[0].pills[0].includes('A') && u.cells[0].pills[0].includes(CLIPS[0]) && /#\d+/.test(u.cells[0].pills[0]), `A's pill: ${u.cells[0].pills[0]}`);
     ok(u.syncMode === false, 'Sync mode should be off by default');
     await click({ sel: '#syncBtn' });
@@ -276,7 +285,8 @@ module.exports = [{
     r = await until((x) => x.mode === 'spotlight', 5000);
     u = await ui();
     ok(r.mode === 'spotlight' && u.splitter && u.splitter.dir === 'h', `Spotlight: mode=${r.mode} splitter=${JSON.stringify(u.splitter)}`);
-    ok(!u.cells[0].hasSpot && u.cells[1].hasSpot, `Spotlight button only on non-main tile: ${JSON.stringify(u.cells.map((c) => c.hasSpot))}`);
+    // The main tile's button goes back to the grid; the other tile's swaps it into Spotlight.
+    ok(u.cells[0].enlarge === 'Back to grid' && u.cells[1].enlarge === 'Enlarge tile', `Spotlight buttons (main tile first): ${JSON.stringify(u.cells.map((c) => c.enlarge))}`);
     act({ action: 'dock', dock: 'left' });
     u = await ui();
     ok(u.spotlight.dock === 'left' && u.splitter && u.splitter.dir === 'v', `dock left: ${JSON.stringify(u.spotlight)} ${JSON.stringify(u.splitter)}`);
@@ -300,7 +310,7 @@ module.exports = [{
     ok(u.cells[0].pills[0].includes(`A${CLIPS[1]}`) || u.cells[0].pills[0].includes(CLIPS[1]), `after Swap the left pill is ${u.cells[0].pills[0]}`);
     await click({ sel: '#gridBtn' });
     u = await ui();
-    ok(u.cells[0].pills[0].includes(CLIPS[1]) && u.cells.every((c) => !c.hasSpot), `Equal Grid kept ${u.cells[0].pills[0]} on the left with no Spotlight button`);
+    ok(u.cells[0].pills[0].includes(CLIPS[1]) && u.cells.every((c) => c.enlarge === 'Enlarge tile'), `Equal Grid kept ${u.cells[0].pills[0]} on the left, buttons ${JSON.stringify(u.cells.map((c) => c.enlarge))}`);
     await click({ text: `Move ${CLIPS[1]} later` });
     r = await until((x) => x.mode === 'grid' && x.divider === 'false' && x.swap === 'false', 5000);
     ok(r.mode === 'grid' && r.cells === '2', `back to grid: mode=${r.mode} cells=${r.cells}`);

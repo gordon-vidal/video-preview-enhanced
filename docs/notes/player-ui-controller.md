@@ -77,7 +77,10 @@ Autoplay menu all work end to end in the mockup.
 Bar: play/pause, ‹/› frame, step-size badges, mute/volume, the time format cycle, A/B buttons and draggable pins,
 CC, the Folder capsule (hidden at N ≥ 2), the unified Compare/Capture toggle, Split Wipe (N = 2), Sync offsets
 (N ≥ 2), ⓘ, Speed, ⚙, Picture size, Fullscreen. `src/bar.js` has no Split/Sync buttons yet, so the controller adds
-`#splitBtn` / `#syncBtn` beside `#startCompareBtn` when they are missing.
+`#splitBtn` / `#syncBtn` beside `#startCompareBtn` when they are missing. In Compare the time readout leads with the clock video's
+letter (`A 0:01.000 / 0:03.000`, then `B …` when B sets the clock): the controller adds `#timeLetter` in front of `#now`
+(aria-hidden: the button's `aria-label` and the seek bar's `aria-valuetext` already say the letter); with one video it is
+empty.
 
 Panels: every `VpeControls` page, plus `cmp` (videos with offsets, Add video, Open new videos here, Layout,
 Sync, Leave compare) and `cmpVid` (offset −/+/Reset, Enlarge, Remove) over the unified state; About shows one tab

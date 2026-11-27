@@ -103,6 +103,21 @@ const { fileOfKey } = require('../../src/comparepick');
     for (const m of [null, undefined, 0, 7, 'ready', true, NaN]) await s.send(m);
     assert.strictEqual(s.posted.length, 0, 'null and primitive envelopes are ignored');
     s.panel.dispose();
+
+    // The same file twice (the internal compare command, layer 3 compare_metrics same-file): two tiles, each its own
+    // clip id, each read on its own; Start Compare on a selection still shows a file once.
+    const s2 = h.nextPanel();
+    const twice = await h.vscode._commands['videoPreviewEnhanced.compare'](null, [files[0], files[0]].map(h.vscode.Uri.file));
+    await s2.send({ type: 'ready' });
+    const ids = twice.session.clips.map((c) => c.id);
+    assert.strictEqual(ids.length, 2, `two tiles: ${ids}`);
+    assert.notStrictEqual(ids[0], ids[1], 'each tile has its own clip id');
+    assert.deepStrictEqual(twice.session.clips.map((c) => c.label), ['c0.mp4', 'c0.mp4']);
+    s2.posted.length = 0;
+    for (const id of ids) await s2.send({ type: 'readBlock', clipId: id, pos: 0, len: 16 });
+    const got = s2.posted.filter((m) => m.type === 'block');
+    assert.deepStrictEqual(got.map((b) => [b.clipId, Buffer.from(b.data).equals(bytes[0].subarray(0, 16))]), [[ids[0], true], [ids[1], true]]);
+    s2.panel.dispose();
   } finally {
     fs.promises.open = origOpen;
     h.dispose();

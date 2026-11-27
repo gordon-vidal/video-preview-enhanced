@@ -86,6 +86,26 @@ const toasts = (posts) => posts.filter((m) => m.type === 'toast').map((m) => m.t
     assert.deepStrictEqual(toasts(posts), ['a.mp4 is in compare already', 'a.mp4 is in compare already', 'Compare is full (4 videos)']);
   }
 
+  { // An explicit list may name the same file twice (layer 3 compare_metrics same-file: identical pictures measure as
+    // identical): allowDuplicate shows it again under a fresh clip id; without it (Explorer, Add video) it only toasts.
+    const { s, posts, panel } = make();
+    await s.onMessage({ type: 'ready' });
+    assert.strictEqual(s.addClip(clip('a.mp4'), { allowDuplicate: true }), true);
+    assert.deepStrictEqual(s.order, ['a.mp4', 'a.mp4s2'], 'the second a.mp4 has its own id');
+    assert.strictEqual(panel.title, 'a.mp4 ↔ a.mp4');
+    const open = posts.filter((m) => m.type === 'openVideo').pop();
+    assert.deepStrictEqual([open.clipId, open.clip.clipId, open.label], ['a.mp4s2', 'a.mp4s2', 'a.mp4']);
+    assert.strictEqual(s.addClip(clip('a.mp4'), { allowDuplicate: true }), true);
+    assert.deepStrictEqual(s.order, ['a.mp4', 'a.mp4s2', 'a.mp4s3'], 'a third copy: the next free id');
+    assert.strictEqual(s.addClip(clip('a.mp4')), false, 'without it a duplicate is declined');
+    assert.deepStrictEqual(toasts(posts), ['a.mp4 is in compare already']);
+    assert.strictEqual(s.addClip(clip('b.mp4'), { allowDuplicate: true }), true, 'a new file joins as usual');
+    assert.strictEqual(s.addClip(clip('c.mp4'), { allowDuplicate: true }), false, 'a full panel still declines');
+    assert.deepStrictEqual(s.order, ['a.mp4', 'a.mp4s2', 'a.mp4s3', 'b.mp4']);
+    assert.ok(s.removeClip('a.mp4s2'), 'each copy is removed on its own');
+    assert.deepStrictEqual(s.order, ['a.mp4', 'a.mp4s3', 'b.mp4']);
+  }
+
   { // Add video and Replace video through the page.
     let excluded = null;
     const { s, posts } = make({

@@ -611,6 +611,14 @@
     const cellsEl = $('cells') || stageEl.appendChild(Object.assign(doc.createElement('div'), { id: 'cells' }));
     const capBanner = $('capBanner'), splitterEl = $('splitter'), dividerEl = $('divider');
     const seekEl = need('seek'), nowEl = $('now'), durEl = $('dur'), timeEl = $('time'), tipEl = $('tip');
+    // Compare: the readout is the clock video's time, so the clock's letter leads it ("A 0:01.000 / 0:03.000", as the
+    // seek bar's aria-valuetext); src/bar.js has no place for it, the controller adds it in front of #now.
+    const timeLetterEl = $('timeLetter')
+      || (timeEl && nowEl && nowEl.parentNode === timeEl ? timeEl.insertBefore(doc.createElement('span'), nowEl) : null);
+    if (timeLetterEl) {
+      timeLetterEl.setAttribute('id', 'timeLetter');
+      timeLetterEl.setAttribute('aria-hidden', 'true');
+    }
     const tracksBtn = $('tracks'), cmpBtn = need('startCompareBtn');
     // Here the Compare button is the Capture toggle (aria-pressed, set when it renders), not a start dialog: the
     // dialog attributes src/bar.js gives it would point at nothing.
@@ -2491,7 +2499,10 @@
       stageEl.classList.toggle('sync-mode', t.syncMode && ui.isMulti);
       cellsEl.classList.toggle('dense', ui.n >= DENSE_FROM);
       // The structure: which clips, single or multi, Split or not, whether there is a "+ Add video" cell.
-      const key = `${ui.isMulti ? 1 : 0}|${ui.effectiveLayout === 'split' ? 1 : 0}|${ui.addSlot ? 1 : 0}|${t.tiles.slice().sort().join(',')}`;
+      // Split Wipe's two cells differ by side (split-b is drawn clipped, on top, with the "no picture" note), so a Swap
+      // there builds them again in the new order; elsewhere the same cells glide to their new places.
+      const split = ui.effectiveLayout === 'split';
+      const key = `${ui.isMulti ? 1 : 0}|${split ? 1 : 0}|${ui.addSlot ? 1 : 0}|${(split ? t.tiles.slice() : t.tiles.slice().sort()).join(',')}`;
       if (key !== lastCellsKey) { lastCellsKey = key; buildCells(ui); }
       // A drag preview lays the cells out as the drop would (the state changes only on the drop).
       const lay = preview && ui.effectiveLayout !== 'split' ? S.deriveUi({ ...t, tiles: preview.order, dock: preview.dock, spotlightId: t.layout === 'spotlight' ? preview.order[0] : null }, stageSize()) : ui;
@@ -2728,6 +2739,8 @@
       if (durEl) durEl.textContent = rd.dur;
       // The seek slider speaks the clock tile's time (Compare: with its letter first).
       const letter = ui.isMulti ? letterOf(t, t.clockId) : undefined;
+      // Empty (not hidden) with one video: the button's text is then the time alone.
+      if (timeLetterEl) timeLetterEl.textContent = letter ? `${letter} ` : '';
       const aria = Input
         ? Input.formatSeekAria({ letter, timeText: clockText(t.frame / fps()), durText: clockText(t.maxFrame / fps()), frame: t.frame })
         : `${letter ? `${letter} ` : ''}${clockText(t.frame / fps())} of ${clockText(t.maxFrame / fps())}, frame ${t.frame + 1}`;

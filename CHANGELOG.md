@@ -11,6 +11,7 @@
 - **Compare:** the per-tile ⓘ clip details card has a × close button in its top-right corner (it closes the card like the ⓘ button does). The host log now says per tile why Live transcode was used or skipped, so a Compare that mixes Live transcode and "your GPU (built into VS Code)" tiles can be explained.
 - **Unified viewer visual & interaction polish:** fixed Split Wipe right-side canvas transparency, letterboxed tile overlay insets (`--pic-*`), missing Capture banner styling, narrow-toolbar button collapse rules, distinct Compare panel list icon, and spare `+ Add video` tile resting opacity; restored tab-swap folder rail navigation (single-video Next/Previous opens in a fresh tab with rail carry and closes the previous one cleanly).
 - **One viewer, Compare and AVI fixes:** dragging a video over the player shows the dashed "Drop to compare" frame again; a video whose container header states a wrong frame rate or length (an AVI saying 600 fps for a 30 fps video) now gets the rate and frame count the decoder measures, so the seek bar, stepping and Compare count its real frames.
+- **Compare:** the bar's time shows the letter of the video that sets the clock (`A 0:01.000 / 0:03.000`); Swap in Split Wipe no longer leaves the new left video drawn over the whole picture (the right side showed the wrong video); ⚙ › Inspection names only the tools Compare has (no pixel inspector, X swaps sides there).
 
 ## 0.12.0 (2026-11-25)
 

@@ -295,6 +295,17 @@
     // ---- clips and their decoders ----
     /** @type {Map<string, ClipSpec>} */
     const specs = new Map(clipsOf(cfg).map((c) => [c.id, c]));
+    /**
+     * Clip ids in the order the videos joined this page (a replaced video keeps its place): the debug report's
+     * `swap` compares the shown order with it. @type {string[]}
+     */
+    let joined = clipsOf(cfg).map((c) => c.id);
+    /** Each of `tiles`' place in the joining order (0-based, ranks among `tiles`). @param {string[]} tiles */
+    const loadOrder = (tiles) => {
+      const at = (/** @type {string} */ id) => { const i = joined.indexOf(id); return i < 0 ? joined.length + tiles.indexOf(id) : i; };
+      const ranked = tiles.slice().sort((a, b) => at(a) - at(b));
+      return tiles.map((id) => ranked.indexOf(id));
+    };
     /** @type {Map<string, any>} */
     const players = new Map();
     let disposed = false;
@@ -2023,6 +2034,8 @@
       if (m.type === 'openVideo' || m.type === 'replaceTile') {
         const id = m.type === 'replaceTile' ? m.newId : m.clipId;
         if (typeof id === 'string') {
+          if (m.type === 'replaceTile' && joined.includes(m.oldId)) joined = joined.map((x) => (x === m.oldId ? id : x));
+          else if (!joined.includes(id)) joined = [...joined, id];
           addSpec({ ...m, clipId: id });
           ensurePlayer(id);
         }
@@ -2581,7 +2594,9 @@
         get mode() { return t().layout; }, get dock() { return t().dock; }, get heroRatio() { return t().heroRatio; },
         get clock() { return Math.max(0, indexOf(clockIdOf(t()))); }, get sound() { return indexOf(t().soundId); },
         get muted() { return !!(prefsNow() || {}).muted; }, get split() { return t().split; },
-        get order() { return t().tiles.map((/** @type {string} */ _id, /** @type {number} */ i) => i); },
+        // Each shown tile's place in the order the videos joined (media/compare.js kept its tiles in that order and
+        // reordered a separate list): Swap or a move shows as order[0] !== 0 (the report's `swap`).
+        get order() { return loadOrder(t().tiles); },
         get offsets() { return t().tiles.map((/** @type {string} */ id) => (S.getOffset ? S.getOffset(t(), id) : { v: 0, unit: 'frames' })); },
         get pic() { return { mode: t().picMode, zoom: t().zoom, cx: 0.5, cy: 0.5 }; },
         get rate() { return ratePrefs(); }, get loop() { return loopPref(prefsNow()); },
@@ -2596,21 +2611,25 @@
         const r = engine.pictureRect(cid, box.w, box.h, tab.picMode, tab.zoom, tab.panX, tab.panY);
         return r && r.w > 0 ? { x: box.x + r.x, y: box.y + r.y, w: r.w, h: r.h } : { ...box };
       };
+      // The cells as shown (layout order; Split Wipe's halves as one), the same grouping as the debug `ui` answer.
+      const groups = () => (typeof CD.cellGroups === 'function' ? CD.cellGroups(cellsEl.children)
+        : Array.from(cellsEl.children || []).map((/** @type {any} */ d) => [d]));
       const cells = () => {
         const o = cellsEl.getBoundingClientRect();
         const tab = t();
         if (tab.layout === 'split' && tab.tiles.length === 2) {
-          const first = cellsEl.children[0];
+          const first = (groups()[0] || [])[0];
           const r = first ? first.getBoundingClientRect() : o;
           const box = { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
           const full = picRectFor(tab.tiles[0], box);
           return [/** @type {any} */ ({ ...box, tiles: [0, 1], full, pic: { ...box } })];
         }
-        return Array.from(cellsEl.children || []).map((/** @type {any} */ d, /** @type {number} */ i) => {
+        return groups().map(([/** @type {any} */ d]) => {
           const r = d.getBoundingClientRect();
           const box = { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
           const add = !!(d.classList && d.classList.contains('add'));
-          const full = add ? { ...box } : picRectFor(tab.tiles[i], box);
+          const i = add ? -1 : tab.tiles.indexOf(d.dataset && d.dataset.clip);
+          const full = add || i < 0 ? { ...box } : picRectFor(tab.tiles[i], box);
           return /** @type {any} */ ({ ...box, ...(add ? { add: true } : { tiles: [i] }), full, pic: { ...box } });
         });
       };
@@ -2631,7 +2650,25 @@
             statsIds: new Set(t().statsOpen.map(indexOf)),
           }),
           contextCount: () => 0,
-          setHover: () => {},
+          // The pointer over a tile, as the hover tracker (media/player-ui-tiles.js) hears it: a pointermove at the
+          // tile's centre (Split Wipe: the middle of its side of the divider); null: the pointer leaves the tiles.
+          setHover: (/** @type {number | null} */ i) => {
+            const Ev = win && (win.PointerEvent || win.MouseEvent);
+            if (!Ev) return;
+            if (i === null || i === undefined) { cellsEl.dispatchEvent(new Ev('pointerleave', { bubbles: false })); return; }
+            const tab = t();
+            const id = tileId(i);
+            const split = tab.layout === 'split' && tab.tiles.length === 2;
+            const el = Array.from(cellsEl.children || []).find((/** @type {any} */ d) => (split
+              ? d.classList && d.classList.contains('split') : d.dataset && d.dataset.clip === id));
+            if (!el) return;
+            const r = el.getBoundingClientRect();
+            const s = Math.max(0, Math.min(1, Number(tab.split) || 0.5));
+            const fx = !split ? 0.5 : tab.tiles.indexOf(id) === 0 ? s / 2 : s + (1 - s) / 2;
+            el.dispatchEvent(new Ev('pointermove', {
+              bubbles: true, cancelable: true, clientX: r.left + r.width * fx, clientY: r.top + r.height / 2, pointerId: 1, isPrimary: true,
+            }));
+          },
           frameOf: (/** @type {any} */ p) => (p && typeof p.currentFrame === 'function' ? Number(p.currentFrame()) : 0),
           fpsOf: (/** @type {any} */ p) => Number(p && p.fps) || t().fps,
           synced: () => t().tiles.every((/** @type {string} */ id) => {
