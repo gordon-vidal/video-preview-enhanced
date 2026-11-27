@@ -1009,7 +1009,7 @@
       scopesHost.tick(now);
       exactHost.tick(now);
       // Tiles still working on the frame asked for: a spinner after a short wait (media/player-ui.js setLoading).
-      if (ui && !disposed && typeof ui.setLoading === 'function') ui.setLoading(waitingTiles(S.getTab(ui.getState())));
+      if (ui && !disposed && typeof ui.setLoading === 'function') ui.setLoading(waitingTiles(S.getTab(ui.getState())), now); // the frame's time: performance.now()'s clock
       if (debugMetrics) debugMetrics.check();
     }
     /**
@@ -1029,9 +1029,20 @@
             if (phase === 'playing') return !!p.waitPic;
             if (phase !== 'paused') return false;
           } else if (typeof p.isPlaying === 'function' ? p.isPlaying() : p.playing) return false;
-          return busy(p);
+          return owesFrame(p);
         } catch { return false; }
       }).map((e) => e[0]);
+    }
+    /**
+     * A paused decoder has not shown the frame asked for yet: a seek or step in flight, a stale picture, or no first
+     * frame. Not its other work (busy(): the read-ahead still requesting over a slow link, queued frames), which keeps
+     * the loop running but owes the user nothing on screen. Decoders without these fields: busy().
+     * @param {any} p
+     */
+    function owesFrame(p) {
+      if (!('seekTarget' in p)) return busy(p);
+      return (p.seekTarget !== null && p.seekTarget !== undefined) || !!p.shownStale || !!p.catchUp || !!p.skipping
+        || (p.firstShown === false && !p.eof);
     }
     /** The shared loop's work, for the debug probe's state: animation frames that ticked, and the times it rested. */
     const loopStats = { frames: 0, rests: 0 };

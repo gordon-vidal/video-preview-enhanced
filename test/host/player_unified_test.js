@@ -632,6 +632,34 @@ function enginePlayer(clip, host, hooks) {
   return p;
 }
 
+test('loading spinner: on while a paused seek owes its frame, off once it shows even while the read-ahead goes on', () => {
+  // media/engine.js: settled() stays false while the paused read-ahead is still requesting (a slow remote link), but
+  // the frame asked for is on screen: no spinner and no seek-bar pulse for that (docs/notes/seek-pending-feedback.md).
+  const reading = (clip, host, hooks) => {
+    const p = enginePlayer(clip, host, hooks);
+    p.requesting = false;
+    p.settled = () => p.seekTarget === null && !p.shownStale && !p.requesting && !p.playing;
+    p.playbackPhase = () => (p.playing ? 'playing' : 'paused');
+    return p;
+  };
+  withPage(({ doc, app, send, made, frames }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    frames(5);
+    const cell = doc.getElementById('cells').querySelector('.cell');
+    const row = doc.getElementById('seekRow');
+    p.settleTicks = 12; // the seek takes 12 animation frames (480 ms) to show its frame
+    p.requesting = true; // and the read-ahead behind it goes on after that
+    app.ui.dispatch('seek', 40);
+    frames(8);
+    assert.ok(cell.classList.contains('loading') && row.classList.contains('seeking'), 'the frame is still owed: spinner and pulse');
+    frames(10);
+    assert.strictEqual(p.seekTarget, null, 'the seek landed');
+    assert.ok(!cell.classList.contains('loading'), 'no spinner once the frame shows, though the read-ahead goes on');
+    assert.ok(!row.classList.contains('seeking'), 'and no pulse');
+  }, { createPlayer: reading, raf: true });
+});
+
 test('tick loop: decoders tick on animation frames until they settle; wake starts it again', () => {
   withPage(({ doc, app, send, made, frames, rafQueue }) => {
     send({ type: 'open' });
