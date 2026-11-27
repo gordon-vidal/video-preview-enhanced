@@ -4,6 +4,7 @@
 // test can drive it (test/host/settings_test.js); src/extension.js wires the real objects.
 
 const { resolveOnEnd, LAYOUTS } = require('./folder-rail');
+const { limitOf: gpuSessionsLimit } = require('./gpu-sessions');
 
 /** The jump sizes the page shows and changes: only the values package.json declares. */
 const JUMPS = ['frame', 1, 5, 10, 30];
@@ -151,6 +152,8 @@ function createSettings({ vscode, getState, log, transcodePolicy, pages }) {
       transcodeSplitBitrate: settingOr(c, 'transcodeSplitBitrate', true),
       // The packets a Live transcode page keeps per video for paused seeks and steps back (media/packet-cache.js).
       liveTranscodeCacheMB: cacheMB(settingOr(c, 'liveTranscodeCacheMB', 64)),
+      // Live transcode encodes at once on this machine's GPU (src/gpu-sessions.js); more go to the CPU encoder.
+      gpuEncoderSessions: Math.min(64, gpuSessionsLimit(settingOr(c, 'gpuEncoderSessions', 8))),
       transcodeResolution: transcodePolicy.resolutionOf(settingOr(c, 'transcodeResolution', 0)),
       hdrOutput: c.get('hdrOutput', 'auto') === 'off' ? 'off' : 'auto',
       pictureSize: ['fit', 'fill', 'stretch', 'actual'].includes(c.get('pictureSize')) ? c.get('pictureSize') : 'fit',

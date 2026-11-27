@@ -1229,6 +1229,8 @@ async function nativeFailed(c, error, rejectedMedia) {
 /** A Live transcode stream for a clip whose decision has one (src/unified-viewer.js startStream). */
 function createStream(c, o) {
   const d = o.decision;
+  // The GPU encoder session budget is host-wide (src/gpu-sessions.js): the setting applies to the streams started from now.
+  require('./gpu-sessions').sessions.setLimit(config().gpuEncoderSessions);
   const stream = new remotestream.EncodedStream({
     ...d.stream, tools: d.tools, file: c.fsPath, probed: d.probed, hidden: o.hidden, rotation: o.rotation || 0,
     allowOverlap: false, maxHeight: o.maxHeight, maxKbps: o.maxKbps, fitView: !!o.fitView, allowLinkAdapt: !!d.stream.remote,
