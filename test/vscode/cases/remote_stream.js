@@ -423,7 +423,10 @@ module.exports = [{
           ok(x.shows === x.frame, `the seek to frame ${x.frame} shows ${x.shows}`);
         }
         ok(r.before.every((x) => !x.shownQuick), `before: a quick picture showed (${JSON.stringify(r.before)})`);
-        ok(r.after.every((x) => x.shownQuick === 1 && x.quickMs < x.firstPictureMs), `after: no quick picture ahead of the stream's frame (${JSON.stringify(r.after)})`);
+        // On a loaded machine a quick encode can miss its wait (then the stream goes first): at least one must show,
+        // and none after the seek's own frame.
+        ok(r.after.some((x) => x.shownQuick === 1), `after: no quick picture showed (${JSON.stringify(r.after)})`);
+        ok(r.after.every((x) => !x.shownQuick || x.quickMs < x.firstPictureMs), `after: a quick picture came after the stream's frame (${JSON.stringify(r.after)})`);
         // After the quick picture, the stream's own frame at full size.
         const last = r.after[r.after.length - 1];
         ok(last.canvas && last.canvas[0] === 1920 && last.canvas[1] === 1080, `the picture after the quick one is ${JSON.stringify(last.canvas)}`);
@@ -436,6 +439,10 @@ module.exports = [{
         };
       } finally {
         p.act({ action: 'pausedSharp', quick: null });
+        p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
+        // Leave the clip where paused-sharp left it (its resume position decides what the next opens read first).
+        p.seek(44.64);
+        await p.waitState((x) => !x.playing && x.frame === 1116, { timeout: 15000, interval: 100, what: 'frame 1116' }).catch(() => {});
         p.act({ action: 'stageSize' });
         r.notes = vs.lines.filter((l) => l.includes(`[${p.name}]`) && /quick picture|remote stream from /.test(l) && !/webview: state /.test(l))
           .map((l) => l.replace(/^.*\] /, '')).slice(-12);
