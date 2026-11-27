@@ -387,7 +387,7 @@ class EncodedStream {
         this.setView(m.view);
         return this.open();
       case 'view': return this.setView(m, !!m.playing);
-      case 'playback': this.playing = !!m.playing; if (this.playing) { this.stopFill(); this.stopSharp(); } return undefined;
+      case 'playback': this.playing = !!m.playing; if (this.playing) { this.stopFill(); this.stopSharp(); this.stopQuick(); } return undefined;
       case 'remoteAudioFailed':
         if (!this.audioEncoder) return;
         this.audioFallback(m.message);

@@ -131,6 +131,20 @@ const sizeIn = (argv) => /scale\w*=(?:w=)?(\d+):(?:h=)?(\d+)/.exec(argv.join(' '
     assert.strictEqual(jobs.length, before, 'no quick picture for a restart');
     s.dispose();
   }
+  { // Play while it is pending: it stops at once, and picture and sound are not held back for it.
+    const { s, posted, jobs } = make();
+    s.seek({ gen: 1, t: 4, playing: false });
+    const q = quickOf(jobs);
+    s.vAll.push({ t: 4, key: true, data: new Uint8Array(1000) });
+    s.vNext = 0;
+    s.more({ gen: 1, limit: 1e6 });
+    assert.ok(!posted.some((m) => m.type === 'batch'), 'paused: the frames wait for the quick picture');
+    await s.handle({ type: 'playback', playing: true });
+    assert.strictEqual(q.signalCode, 'SIGKILL', 'play stops the quick encode');
+    s.more({ gen: 1, limit: 1e6 });
+    assert.ok(posted.some((m) => m.type === 'batch'), 'the stream goes at once, not after the wait');
+    s.dispose();
+  }
   { // Over the GPU encoder session budget: skipped (the streams' own encoders come first).
     const gpu = createGpuSessions(1);
     gpu.acquire('stream'); // another video's encoder holds the only one
