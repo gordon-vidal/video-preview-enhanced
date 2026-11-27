@@ -111,6 +111,42 @@ function makeLinkClip(ffmpeg, sound = false) {
 }
 
 /**
+ * A 60 s 4K HEVC clip (15 fps, a keyframe every 50 frames, B-frames, open GOP) whose frame n carries n in binary: ten
+ * white boxes in a black band at the top (box k for bit k). Made once into test/vscode/out (libx265, ~25 s).
+ */
+function makeWarmClip(ffmpeg) {
+  const dir = path.join(__dirname, '..', 'out');
+  fs.mkdirSync(dir, { recursive: true });
+  const out = path.join(dir, 'rs_warm_2160p_hevc_60s.mp4');
+  if (fs.existsSync(out)) return out;
+  const pending = path.join(dir, 'rs_warm_2160p_hevc_60s.part.mp4');
+  const boxes = ['drawbox=x=0:y=0:w=3840:h=216:color=black:t=fill'];
+  for (let k = 0; k < 10; k++) boxes.push(`drawbox=x=${k * 384 + 32}:y=24:w=320:h=168:color=white:t=fill:enable='gt(bitand(n,${1 << k}),0)'`);
+  const r = spawnSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=3840x2160:r=15:d=60', '-vf', boxes.join(','),
+    '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'keyint=50:min-keyint=50:bframes=3:open-gop=1:scenecut=0:log-level=error',
+    '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1', pending], { encoding: 'utf8', windowsHide: true });
+  if (r.status !== 0) throw new Error(`making the warm-decoder clip: ${r.stderr}`);
+  fs.renameSync(pending, out);
+  return out;
+}
+
+/** The frame number drawn by makeWarmClip, read from a w x h luma thumbnail of the picture (-1: no band). */
+function drawnFrame(y, w, h) {
+  let n = 0;
+  const row0 = Math.round(h * 0.03);
+  const row1 = Math.round(h * 0.08);
+  for (let k = 0; k < 10; k++) {
+    const x0 = Math.round(((k * 384 + 96) / 3840) * w);
+    const x1 = Math.round(((k * 384 + 288) / 3840) * w);
+    let sum = 0;
+    let count = 0;
+    for (let row = row0; row < row1; row++) for (let x = x0; x < x1; x++) { sum += y[row * w + x]; count++; }
+    if (sum / count > 128) n |= 1 << k;
+  }
+  return n;
+}
+
+/**
  * The source's frames n-1, n, n+1 of `file` as luma (BT.709 limited range, like media/engine.js sharpThumb): scaled to
  * the stream's size as the host does (bilinear), cropped to the thumb's rectangle. Mean absolute difference of each to
  * the page's sharp frame, each with its mean removed (the page's colour conversion shifts the level a little).
@@ -441,6 +477,66 @@ module.exports = [{
         r.notes = vs.lines.filter((l) => l.includes(`[${p.name}]`) && /frames stay on the GPU|frame copy failed|step back from memory|page's packets/.test(l))
           .map((l) => l.replace(/^.*webview: /, '')).slice(-14);
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
+        await h.closeClip(vs);
+      }
+    });
+    // The kept-running decoder (src/warm-decoder.js): paused jumps to places the host does not hold, on a 4K HEVC clip
+    // (B-frames, open GOP, 50-frame GOPs), with ffmpeg started per jump (before) and fed by the warm process (after).
+    // Page time from the seek to its frame decoded and the host's time to its first bytes are reported (not asserted:
+    // this machine is shared); every landing must show the exact frame (its number is drawn in the picture).
+    await run('warm-decoder', async (ok, r) => {
+      const file = makeWarmClip(h.ffmpeg);
+      const p = await lib.open(vs, h, file);
+      const fps = 15;
+      const jump = async (frame) => {
+        const from = vs.mark();
+        p.seek(frame / fps + 0.5 / fps);
+        const s = await p.waitState((x) => !x.playing && x.frame === frame, { timeout: 30000, interval: 50, what: `frame ${frame}` });
+        const lines = vs.lines.slice(from).filter((l) => l.includes(`[${p.name}]`));
+        const landed = lines.map((l) => /webview: seek landed in (\d+) ms \(gen (\d+)\)/.exec(l)).filter((x) => x && Number(x[2]) === s.gen);
+        const first = lines.map((l) => /live transcode: first bytes (\d+) ms after start( \(kept-running decoder\))?/.exec(l)).filter(Boolean).pop();
+        const th = await p.ask('thumb', { w: 320, h: 180 });
+        return {
+          frame, pageMs: landed.length ? Number(landed[0][1]) : null, hostMs: first ? Number(first[1]) : null, warm: !!(first && first[2]),
+          hostSeek: lines.some((l) => /remote stream from /.test(l)), shows: drawnFrame(Buffer.from(th.y, 'base64'), 320, 180),
+        };
+      };
+      try {
+        await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown, { timeout: 45000, what: 'first frame' });
+        p.pause();
+        p.act({ action: 'stageSize', w: 1920, h: 1080 });
+        // Same conditions both times: no small first keyframe (it needs a fresh encoder), no sharp frame after landing.
+        p.act({ action: 'pausedSharp', sharp: false, fastFirst: false });
+        p.act({ action: 'warmDecoder', on: false });
+        await h.sleep(1500);
+        // Places 4.8 s apart, never visited before (the host holds about 2 s ahead of a jump, the page's fill 2 s behind
+        // it), past the first seconds read at the start; at different depths into their 50-frame GOPs.
+        const before = [90, 234, 378, 522, 666, 810];
+        const after = [162, 306, 450, 594, 738, 882];
+        r.before = [];
+        for (const f of before) { r.before.push(await jump(f)); await h.sleep(1500); }
+        p.act({ action: 'warmDecoder', on: true });
+        r.after = [];
+        for (const f of after) { r.after.push(await jump(f)); await h.sleep(1500); }
+        for (const x of [...r.before, ...r.after]) {
+          ok(x.hostSeek, `the jump to frame ${x.frame} did not go to the host`);
+          ok(x.shows === x.frame, `the jump to frame ${x.frame} shows frame ${x.shows}`);
+        }
+        ok(r.before.every((x) => !x.warm), 'before: a jump used the kept-running decoder');
+        ok(r.after.every((x) => x.warm), `after: a jump started ffmpeg instead (${JSON.stringify(r.after.map((x) => x.warm))})`);
+        const med = (a) => { const v = a.filter((x) => Number.isFinite(x)).sort((x, y) => x - y); return v.length ? v[v.length >> 1] : null; };
+        // The first jump after turning it on starts the warm process (once per video); the median is over the rest.
+        r.summary = {
+          pageMsBefore: med(r.before.map((x) => x.pageMs)), pageMsAfter: med(r.after.slice(1).map((x) => x.pageMs)), pageMsAfterFirst: r.after[0].pageMs,
+          hostMsBefore: med(r.before.map((x) => x.hostMs)), hostMsAfter: med(r.after.slice(1).map((x) => x.hostMs)), hostMsAfterFirst: r.after[0].hostMs,
+        };
+        const failed = vs.lines.find((l) => l.includes(`[${p.name}]`) && /kept-running decoder failed/.test(l));
+        ok(!failed, `the kept-running decoder failed: ${failed}`);
+      } finally {
+        r.notes = vs.lines.filter((l) => l.includes(`[${p.name}]`) && /kept-running decoder|remote stream from /.test(l) && !/webview: state /.test(l))
+          .map((l) => l.replace(/^.*\] /, '')).slice(-8);
+        p.act({ action: 'warmDecoder' });
+        p.act({ action: 'stageSize' });
         await h.closeClip(vs);
       }
     });

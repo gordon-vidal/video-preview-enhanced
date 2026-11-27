@@ -373,7 +373,7 @@ Maintainer decisions of 2026-11-27, built on the remote Live transcode path (pau
   (on top of `MAX_FILLS`) and sharp frames. A live stream that would go over it encodes with the CPU encoder (the
   existing fallback path) and the user gets one toast per session naming the video; a fill or a sharp frame over it is
   skipped (the soft picture stays). The loop standby process is not counted (it lives at most 20 s at the end of a
-  file). A future kept-running decoder would take a session the same way.
+  file). The kept-running decoder (below) takes a session the same way.
 
 Layer 3 `remote-stream-packets` › `paused-sharp` (1080p25 noisy test clip, link throttled to 2 Mb/s with the test
 hook, libx264 because this machine's NVENC needs a newer driver; page times from the seek):
@@ -387,6 +387,63 @@ hook, libx264 because this machine's NVENC needs a newer driver; page times from
 
 The clip is temporal noise on testsrc2, the worst case for size: a visually lossless 1080p frame of it is ~1 MB, so on
 a 2 Mb/s link "sharp" takes seconds; ordinary footage is several times smaller.
+
+## Kept-running decoder (built 2026-11-27)
+
+Maintainer decisions of 2026-11-27: a single video gets one; in Compare only the video that sets the clock (the others
+start ffmpeg per seek as before); it ends after 60 s without use; it counts against the GPU encoder session budget (none
+free: no warm process, the stream behaves as before); remote and local Live transcode both qualify, Direct Stream does not.
+
+**How it works** (`src/warm-decoder.js`, used by `src/stream.js` warmSegment):
+
+- One ffmpeg per stream runs the stream's own pipeline (decode, scale, tone-map, encode; `args(..., { warm: true })`)
+  with MPEG-TS on stdin and stdout. A paused start (the open, a paused jump, a restored region continuing) is a
+  *segment*: a copy remux (`-ss t+¼ frame -copyts -c copy -f mpegts`, no decoder, ~25 ms to its first bytes) from the
+  keyframe at or before the target, fed in by the host. Seeking a quarter frame past the target makes a target on a
+  keyframe start there (`-ss t-0.0005`, as the per-seek path does, decodes the whole previous GOP: on a 4K H.264 clip
+  with 12 s GOPs, 1.8-2.5 s instead of 0.34-0.62 s; worth fixing in the per-seek path separately).
+- **Times decide everything.** The remux's `setts` moves each packet onto a "warm clock": the target at S (past
+  everything fed so far), the frames after it at their exact offset from S, the frames before it (decoded only as
+  references) to whole frames half a frame off the grid. A `select` right after the decoder keeps on-grid frames only,
+  `force_key_frames` makes the first frame after a jump of the clock an IDR (`-forced-idr 1` on NVENC), and the
+  output's MPEG-TS times say which segment and which frame each packet is; packets of an older segment are dropped. A
+  frame off its slot (VFR, a lost frame) or a first frame that is not an IDR with SPS/PPS fails the segment.
+- **End of sequence before each jump.** The host puts a one-NAL PES (H.264 type 10, HEVC type 36) before a segment's
+  first frame. Without it an open-GOP CRA after the previous segment is decoded as if its leading pictures' references
+  existed, and the frames up to the next keyframe were lost (seen on an open-GOP HEVC MKV); with it the CRA starts like
+  after a real seek and the old segment's held pictures come out (and are dropped by time).
+- **Whole frames in.** The host forwards a video PES only once the next one begins, rewrites the continuity counters
+  across segments, and cuts a segment only at a PES boundary, so no half frame is left in the pipe.
+- **Flow.** ffmpeg holds ~8-12 frames (demuxer, decoder reordering, CLI queues); the remux keeps feeding, so the target
+  comes out after ~12 more frames are decoded. When the stream holds 2 s ahead it pauses the remux (not the process's
+  output), so a paused jump leaves only those held frames to flush (decoded and encoded, then dropped) at the next one.
+- **Ends:** 60 s without a segment (`WARM_IDLE_MS`), hidden tab, dispose, a changed configuration (size, bitrate, encoder,
+  tone-mapper: the argv is its key), the source's end (its last frames come out only when stdin closes; the next jump
+  starts a new process), a clock about to wrap (33-bit MPEG-TS times: a new process, practically never). A failure (a
+  segment's checks, the process or a remux exiting, no picture 5 s after the target was fed) logs why, turns it off for
+  that video and restarts from the first frame not sent, as ffmpeg per seek.
+- **Not used for:** a seek while playing (keeps the per-seek path's 2 s keyframes; the warm process encodes with the
+  paused 0.5 s spacing), the fast first picture (an x264 encode with a small first keyframe needs a fresh encoder: on a
+  slow link that wins), sources other than H.264 / HEVC, a variable frame rate (`r_frame_rate` ≠ `avg_frame_rate`),
+  interlaced, containers without packet times (AVI), frames off the file's start grid, encoders other than libx264 and
+  NVENC (QSV, AMF, Media Foundation, VideoToolbox, VA-API, OpenH264: not checkable here; they keep ffmpeg per seek).
+- Compare: the page sends `warm` with each seek (`media/engine.js`, from `player-unified.js` isClock): true for a
+  single video and the clock tile. A tile that stops being the clock gives its idle process back at once.
+
+**Measured** (RTX 4070, NVDEC decode, libx264 encode since this machine's NVENC needs a newer driver for ffmpeg 9):
+
+| | ffmpeg per jump | kept-running |
+| --- | --- | --- |
+| Layer 3 `remote-stream-packets` › `warm-decoder`: generated 4K HEVC, 15 fps, 50-frame GOPs, B-frames, open GOP; 6 paused jumps each to places not held; page time from the seek to its frame decoded (median) | 279 ms | 153 ms (first jump, starting the process: 329 ms) |
+| Same, host "first bytes N ms after start" (median) | 260 ms | 138 ms (first: 309 ms) |
+| Same, every landing the exact frame (its number drawn in the picture) | 6/6 | 6/6 |
+| Scratch, 4K HEVC 60 fps 120 Mb/s, 2 s GOPs, NVDEC → x264 / NVDEC → NVENC (2024 ffmpeg), 10 jumps, first bytes (median) | 535 / 536 ms | 422 / 425 ms, 10/10 exact each |
+| Scratch, 4K H.264 25 fps, B-frames, 12 s GOPs, 8 jumps | 1112 ms | 1007 ms, 8/8 exact |
+| Scratch, 1080p HEVC open GOP MKV, CPU decode | 465 ms | 462 ms, 8/8 exact |
+
+The saving is ffmpeg's start-up (open, probe, CUDA init: ~100-250 ms); the decode from the keyframe to the target stays
+and dominates long GOPs (levels 3-4 remove it). CPU-decoded sources gain little. A new process costs ~50-100 ms more
+than one ffmpeg per jump once (remux plus probing its input), paid at the first paused start of a video.
 
 ## How others do it (research, 2026-11-27)
 
@@ -415,6 +472,7 @@ a 2 Mb/s link "sharp" takes seconds; ordinary footage is several times smaller.
 3. **Host pushes the GOPs around the playhead while paused** (level 3), within a share of the link, so the first step
    back after a jump hits the page's packets.
 4. **A kept-running decoder on the host** (prototype above): ~134 ms instead of 340-470 ms per jump, no ffmpeg start.
+   **Built 2026-11-27** (section below).
 5. **GPU tone-mapping on NVIDIA** (libplacebo with a Vulkan device and CUDA interop, or a CUDA tone-mapper): removes
    the ~57 fps CPU tone-mapping limit for 4K60 HDR.
 6. **Play from the page's packets with sound**: keep audio packets too, so play after a page-served seek starts at once

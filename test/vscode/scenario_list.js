@@ -119,7 +119,7 @@ module.exports = [
   {
     name: 'multiview-transcode-packets',
     journey: 'Compare on Live transcode: a paused seek and steps back into what played come from the packets each tile kept',
-    sources: [...COMPARE, 'media/packet-cache.js', 'src/stream.js'],
+    sources: [...COMPARE, 'media/packet-cache.js', 'src/stream.js', 'src/warm-decoder.js'],
     steps: [{ case: 'multiview-transcode-packets' }],
   },
   {
@@ -204,14 +204,14 @@ module.exports = [
   },
   {
     name: 'remote-stream-packets',
-    journey: 'Remote windows on a slow link: a paused jump shows a small first picture, then the frame sharp; a paused seek back to a place already seen, and steps back, decode from the packets the page kept',
-    sources: ['media/packet-cache.js', 'src/stream.js', 'src/transcode_args.js', 'src/gpu-sessions.js', ...ENGINE_CORE, 'media/debug-probe.js'],
+    journey: 'Remote windows on a slow link: a paused jump shows a small first picture, then the frame sharp; a paused seek back to a place already seen, and steps back, decode from the packets the page kept; paused jumps to new places come from the host kept-running decoder, frame-exact',
+    sources: ['media/packet-cache.js', 'src/stream.js', 'src/transcode_args.js', 'src/gpu-sessions.js', 'src/warm-decoder.js', ...ENGINE_CORE, 'media/debug-probe.js'],
     steps: [{ case: 'remote_stream_packets' }],
   },
   {
     name: 'remote-stream-hdr',
     journey: 'HDR over Live transcode: tone-mapped on the host (NVDEC in front on NVIDIA), a seek and a step land exactly',
-    sources: ['src/stream.js', 'src/transcode_args.js', ...ENGINE_CORE],
+    sources: ['src/stream.js', 'src/warm-decoder.js', 'src/transcode_args.js', ...ENGINE_CORE],
     steps: [{ case: 'remote_stream_hdr' }],
   },
   {
