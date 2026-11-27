@@ -66,21 +66,35 @@ before releases or in performance work.
 
 ## Guard rails
 
-- `.claude/settings.json` (shared Claude Code settings) denies `git add` of `.private-context` and
-  `git add -f`, and runs the hook `tools/hooks/block-visible-launch.js`, which blocks shell commands that
-  open a visible VS Code or a browser (`code`, `Code.exe`, `msedge`, `chrome`, `start`/`Start-Process` on
-  URLs or HTML ...). `node test/vscode/...` (hidden desktop) is unaffected. Other agents: obey the same rule.
-- CI runs gitleaks (secret scan of the full history) and the personal-data check. Optional local hook:
+- `.claude/settings.json` denies `git add` of `.private-context` and `git add -f`, and runs
+  `tools/hooks/block-visible-launch.js` to block commands that open a visible VS Code or browser.
+  Other agents: obey the same rule (`review.cmd` / `review.sh` is for humans; automated VS Code
+  runs go only through the hidden-desktop runner in `test/vscode/`).
+- CI runs gitleaks (secret scan of full history) and the personal-data check. Optional local hook:
   `git config core.hooksPath .githooks` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Rules
 
-- **Never open a visible VS Code window or a browser** in automated runs. Real-VS-Code tests go only
-  through the hidden-desktop runner (`test/vscode/`). `review.cmd` / `review.sh` is for a human.
 - **Fix with the smallest run**: while fixing, run only the failing test **through
   `node test/run.js <layer> --grep <re>`** (never bare `node test/host/<file>.js`, which bypasses
   the runner's timeout and stall kill); run the full layer once at the end. Do not retry flaky
   tests silently; report them.
+- **Red → green → refactor**:
+  - *Bug fixes & regressions:* write a minimal test reproducing the bug, run it via
+    `node test/run.js <layer> --grep <re>`, and confirm it **fails for the right reason** on the
+    pre-fix code (if you already edited code, briefly revert/stash the fix to prove it fails); then
+    apply the fix, confirm green, and report the red → green check in your handoff/PR.
+  - *Refactors:* lock in observable behavior at the public boundary first (adding characterization
+    tests if missing), then refactor while keeping those tests green untouched.
+  - *New features:* red → green is optional — use it when it helps clarify the contract.
+- **Test public behavior, not internals**: drive tests through exported public APIs, host↔webview
+  messages, or user-visible state/a11y — never export private helpers just for tests, inspect
+  internal fields, or assert internal call order. Mock only external boundaries (VS Code API,
+  timers, I/O), never internal collaborators. Details: [docs/TESTING.md](docs/TESTING.md#test-design-and-red-green-refactor).
+- **Updating or deleting tests**: never weaken or delete a failing test just to make a run pass.
+  Pure **change-detector tests** (tests that only mirror internals and break on clean refactors)
+  *should* be deleted or replaced once their observable behavior is covered at the public boundary
+  — note why in the commit/handoff.
 - Do not run layer 4 or several VS Code instances while another run is active.
 - **No personal data in tracked files, commits, PRs or issues**: no e-mail addresses, home-directory
   paths (`C:\Users\<name>`, `/home/<name>`), machine names, tokens, private notes. CI scans for it.
@@ -91,7 +105,13 @@ before releases or in performance work.
   `CHANGELOG.md`. README claims and numbers must match a measured run.
 - `docs/PRODUCT.md` is the product source of truth. A change that contradicts it needs the
   maintainer's decision first.
-- **UI changes & testable 3-way separation**: keep **UI shell** (`src/bar.js`, `media/player.css`, `media/compare.css`), **pure state** (`media/player-state.js`, zero DOM/VS Code/decoder — verified in milliseconds in Node via `test/host/player_state_test.js`), and **decoder/host engine** cleanly separated. Do not restyle or rearrange the player on your own. Whenever you do UI/UX work, **always contribute to the reusable mockup harness (`tools/mockup/render.js`)** (which inlines the real CSS, bar markup, `player-state.js` and mounts the shared UI controller `media/player-ui.js` over `tools/mockup/fake-engine.js` + `fake-host.js`; UI wiring goes into `player-ui.js`, never into the harness) rather than hand-crafting throwaway HTML, and follow `.claude/skills/ui-mockup/SKILL.md`. Describe the change in a design note in `docs/notes/` (problem, mock-up or screenshot via `tools/mockup/` or the hidden-desktop `test/vscode/screenshot.js`, keys and a11y names) and open it as a PR for review, or ask first.
+- **UI changes & 3-way separation**: keep **UI shell** (`src/bar.js`, `media/player.css`,
+  `media/compare.css`), **pure state** (`media/player-state.js`), and **decoder/host engine**
+  cleanly separated (see [docs/TESTING.md](docs/TESTING.md)). Do not restyle or rearrange the
+  player on your own. Always contribute UI/UX work to the reusable mockup harness
+  (`tools/mockup/render.js`, UI wiring in `media/player-ui.js`, following
+  `.claude/skills/ui-mockup/SKILL.md`), document changes in `docs/notes/` with visuals, keys and
+  a11y names, and open a PR or ask first.
 - Code: `'use strict'`, 2 spaces, LF, about 120 columns; comments say why. No new runtime
   dependencies. Put logic in small modules a Node test can load without VS Code or a browser.
 - Test media must be openly licensed (no NC/ND) and credited in `test/media/LICENSES.md`;

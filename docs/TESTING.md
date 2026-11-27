@@ -39,6 +39,37 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 | Folder rail, the bar's capsule, Autoplay, folder navigation (`src/folder-rail.js`, `media/folder-rail.js`, `media/autoplay.js`) | `folder-rail`, `ui`, `compare` |
 - **GitHub Actions:** layers 1-2 on every push and pull request. Layer 3 stays local for now (needs a GPU).
 
+## Test design and red-green-refactor
+
+### Red → green → refactor
+- **Bug fix (red → green, required):**
+  1. Write a minimal test at the lowest layer that faithfully reproduces the failure.
+  2. Run it (`node test/run.js <layer> --grep <re>`) against the unfixed code and verify it fails
+     for the actual bug (if you already edited code, briefly stash/revert the fix to prove it fails).
+  3. Implement the fix and re-run to confirm green.
+  4. Mention the red → green verification in the PR / handoff.
+- **Refactor (green → refactor → green):**
+  1. Lock in the current contract with public-boundary tests before moving or rewriting internals.
+  2. Refactor freely without editing those tests. If a boundary test breaks during a pure refactor,
+     either behavior regressed or the test was coupled to internals.
+- **New features:** red → green is optional — use it when it helps clarify the contract.
+- **Deleting or updating existing tests:** never delete or loosen a failing test just to make a
+  run pass. Only update a test when the product contract itself intentionally changed; pure
+  **change-detector tests** *should* be removed or replaced once their observable behavior is
+  covered at the public boundary (say why in the commit / handoff).
+
+### Test public behavior, not implementation details
+- **Target public seams only:** exported module functions, `player-state.js` transitions,
+  `player-ui.js` DOM/a11y interactions + host messages, `extension.js` commands/events over
+  `mock_vscode.js`, or real VS Code in Layer 3.
+- **No change-detector tests:** do not export private helpers solely for tests, inspect private
+  fields/caches, or assert that internal helpers were called N times in a specific order. A clean
+  internal rewrite should leave tests untouched.
+- **Mock only external boundaries:** fake VS Code APIs, clocks/timers, filesystem, or network/links
+  — not internal sibling modules of the unit under test.
+- **Litmus test:** *"If I rewrite the internals of this module cleanly without changing what callers
+  or users observe, does this test still pass?"* If not, test one level higher at the public seam.
+
 ## UI and gesture tests without video
 
 The webview UI is split three ways (AGENTS.md, Rules): **pure state** (`media/player-state.js`), the **shared UI
