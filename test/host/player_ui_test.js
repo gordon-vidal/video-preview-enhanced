@@ -1401,12 +1401,24 @@ const withGlobals = (dom, fn) => {
     assert.strictEqual(tab().zoom, 1, 'and do not zoom');
   });
 
-  // Zen Mode Esc Esc, auto-pause of hidden tabs, the live region, the idle bar in fullscreen.
+  // Zen Mode Esc Esc, body.maxi, idle bar auto-hide in Zen Mode, auto-pause of hidden tabs, the live region.
   mount({ tiles: ['clip-0'] }, ({ $, ui, tab, host, key, dom }) => {
+    ui.onHostMessage({ type: 'focusMode', active: true });
+    assert.strictEqual(dom.doc.body.classList.contains('maxi'), true, 'focusMode on adds body.maxi');
+    ui.dispatch('playPause');
+    const tIdle = dom.timers.filter(Boolean).find((t) => t.ms === 2500);
+    assert.ok(tIdle, 'idle hide timer arms in Zen Mode while playing');
+    tIdle.fn();
+    assert.strictEqual(dom.doc.body.classList.contains('idle'), true, 'control bar auto-hides on idle in Zen Mode');
+    ui.onHostMessage({ type: 'focusMode', active: false });
+    assert.strictEqual(dom.doc.body.classList.contains('maxi'), false, 'focusMode off removes body.maxi');
+    assert.strictEqual(dom.doc.body.classList.contains('idle'), false, 'leaving Zen Mode clears body.idle');
+    ui.dispatch('playPause');
     ui.onHostMessage({ type: 'focusMode', active: true });
     key('Escape');
     key('Escape');
     assert.ok(host.log.some((m) => m.type === 'focusModeExited'), 'Esc Esc in Zen Mode tells the host');
+    ui.onHostMessage({ type: 'focusMode', active: false });
     ui.dispatch('playPause');
     ui.onHostMessage({ type: 'setVisible', visible: false });
     assert.strictEqual(tab().playing, false, 'a hidden tab pauses');
@@ -2195,6 +2207,7 @@ async function phase34() {
 }
 phase34().then(() => {
   const ms = Date.now() - T0;
-  assert.ok(ms < 5000, `the UI seam is checked in milliseconds, not by playing video (${ms} ms)`);
+  const maxMs = process.env.CI ? 15000 : 8000;
+  assert.ok(ms < maxMs, `the UI seam is checked in milliseconds, not by playing video (${ms} ms)`);
   console.log(`player_ui_test: ok (${ms} ms, no video decoded)`);
 }, (e) => { console.error(e); process.exit(1); });

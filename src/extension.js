@@ -1073,7 +1073,7 @@ function activate(context) {
     libavBuild: () => libavBuild(context.extensionUri), prefs: () => prefsOf(config()), maxVideos,
     pick: (label, defaultUri, many) => pickVideos(label, defaultUri, many),
     setPlaybackPrefs: (m, from) => rememberPlaybackPrefs(m, from),
-    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode) : noteFocusModeExited()),
+    focusMode: (what) => (what === 'toggle' ? toggleFocusMode(vscode, { globalState }) : noteFocusModeExited()),
     rail: {
       cache: railMeta, probe: railProbe, prefs: railPrefs, layout: () => config().railLayout,
       caseless: process.platform === 'win32' || process.platform === 'darwin',
