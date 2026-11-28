@@ -340,7 +340,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   };
   /**
    * A decoder's log line. One video: "[name] native decode from ..." (what the tests and a bug report read); beside
-   * others the clip's name leads, so the lines of a comparison's tiles stay apart.
+   * others the tile's letter leads ("tile B: ..."), so the lines of a comparison's tiles stay apart.
    * @param {ViewerClip} c @param {string} m
    */
   const clipLog = (c, m) => {

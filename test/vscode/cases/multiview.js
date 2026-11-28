@@ -473,8 +473,12 @@ module.exports = [{
     const from = vs.mark();
     vs.send({ compareFiles: NATIVE_CLIPS.map((c) => path.join(h.MEDIA, c)) });
     await vs.waitLog(opened(4), { from, timeout: 60000, what: 'compare opened with 4' });
-    const decided = vs.lines.slice(from).filter((l) => /\] (?:tile [A-D]: )?(?:native ffmpeg|built-in)/.test(l));
-    ok(decided.length === 4 && decided.every((l) => /native ffmpeg/.test(l)), `decisions: ${decided.map((l) => l.replace(/^.*\] tile/, 'tile')).join(' | ') || 'none'}`);
+    // Each tile logs its decoder once the page has reported its tile size, after "opened".
+    for (const key of 'ABCD') {
+      await vs.waitLog(new RegExp(`\\] tile ${key}: native ffmpeg \\(`), { from, timeout: 20000 }).catch(() => {});
+    }
+    const decided = vs.lines.slice(from).filter((l) => /\] tile [A-D]: native ffmpeg \(/.test(l));
+    ok(decided.length === 4, `decisions: ${decided.map((l) => l.replace(/^.*\] tile/, 'tile')).join(' | ') || 'none'}`);
     let r = await until(allShown, 60000);
     ok(allShown(r), `not every tile shows a frame (${r && r.frames})`);
     ok(r.native === '1,1,1,1', `native=${r.native}`);
