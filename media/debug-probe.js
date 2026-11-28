@@ -19,7 +19,7 @@
 
   const DEBUG_PROBES = new Set([
     'state', 'thumb', 'pixels', 'scopesDump', 'dom', 'gotoText', 'track',
-    'click', 'a11y', 'scrub', 'hdrcaps', 'hdrpixels', 'telemetry', 'trace', 'capture', 'thumbPass',
+    'click', 'a11y', 'scrub', 'hdrcaps', 'hdrpixels', 'telemetry', 'trace', 'capture', 'thumbPass', 'previewDecoder',
   ]);
 
   /**
