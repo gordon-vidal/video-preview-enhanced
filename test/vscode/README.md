@@ -3,7 +3,10 @@
 ```
 node test/run.js vscode                             # layer 3: every scenario (docs/TESTING.md)
 node test/run.js vscode --changed                   # the scenarios that cover your changes (scenario_map.js)
-node test/run.js vscode --grep '^seeking$'          # one scenario; --list shows them
+node test/run.js vscode --grep '^seeking$'          # one scenario; --list shows the selected steps
+node test/run.js vscode --grep '^playback/playback/resume/position$'
+node test/run.js vscode --rerun-failed
+node test/run.js vscode --nightly                   # full serial run, then history report
 node test/run.js vscode --parallel 2                # instances side by side (see "Parallel" below)
 node test/run.js perf                               # layer 4: start-up, CPU, memory, fps (test/perf/run.js)
 node test/vscode/get_code.js                        # once: a pinned portable VS Code in test/vscode/.code
@@ -26,8 +29,24 @@ case the runner closes all editors and, through the extension's test hook, sets 
 (`settings` hook), the extension host's environment (`env` hook: the `VPE_*` test switches, PATH with or
 without ffmpeg) and clears the stored state (`resetState`), so every case starts as on a fresh profile. A
 step's `only` / `skip` (regex on the case's result names) leave out results that live in layer 2 or 4
-(`lib.setFilter`: they are not run at all). Results are named `<scenario>/<case>/<result>`; the JSON goes to
+from the result list. Results are named `<scenario>/<case>/<result>`; the JSON goes to
 `out/scenarios-<time>.json`.
+
+An anchored scenario or case name selects everything under that name. An exact result path selects its step and
+result. Broader result regexes can enter additional steps to evaluate dynamically named results.
+`--sub <re>` matches full result names and intersects with `--grep`. A check can still run setup shared
+with other results in its case. `--rerun-failed` uses the latest saved report and selects case or scenario
+scope for failures recorded at those levels. Generated media is prepared by the cases on demand.
+
+The JSON records the first line of `ffmpeg -version`. Before starting a scenario, the runner waits up to five
+minutes for CPU load to fall to 25% or less. It names the busiest processes when refusing to start. `--force`
+bypasses the wait. Failed checks with at least two failures in their last ten appearances get a flaky label.
+`node tools/l3-flakes.js` reports fail rates over this worktree's saved history, excluding skips.
+
+To schedule a nightly run, configure Windows Task Scheduler to run Node with arguments
+`test/run.js vscode --nightly` and the checkout as the working directory. Use a session with GPU access and
+the same PATH as a manual run. Nightly mode uses the shared VS Code lock and prints the history report even
+when checks fail.
 
 Correctness only: no case judges fps or how long something takes. Waits are generous and end as soon as the
 condition holds; a page error (uncaught error, unhandled rejection) ends a wait at once (`lib.pageError`), and

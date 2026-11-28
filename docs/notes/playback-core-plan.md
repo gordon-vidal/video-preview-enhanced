@@ -13,8 +13,7 @@ Inputs: every file in `test/vscode/cases/`, `test/vscode/scenario_list.js`, the 
 **Problem.** Layer 3 has 34 scenarios and 301 checks, takes 31-42 min serially (1,850-2,500 s in the five full runs on
 record), and 164 of the 338 result names on record failed at least once in 105 runs (many of those runs predate fixes
 such as 08eb884, so the rates are upper bounds). The case files have 207 `sleep(` calls and about 520 hard-coded timeout
-literals, and 26 of them call `waitLog` or match free log text. A scenario is one VS Code instance; `--grep` picks whole
-scenarios (`test/vscode/scenarios.js:212`), so no check can be rerun alone. The real reason for the weight: the playback
+literals, and 26 of them call `waitLog` or match free log text. A scenario is one VS Code instance. Before S0, the runner could only select whole scenarios. The playback
 decisions (seek, step, landing, end, loop, Compare sync) live in `media/player-unified.js` 795-1427, in
 `media/engine.js` (`addFrame`, `tick`, `seekTime`, `play`) and in `media/player-ui.js` (`decoderFrame`, `decoderEnded`,
 `restartAt`, visibility), plus a host half in `src/stream.js` / `src/native.js`. They read `performance.now()` /
@@ -90,12 +89,12 @@ carried from an earlier result or case, **P** pixel- or timing-sensitive. **Flak
 recorded runs (blank: never failed; `*` = counted under an older result name). Flake rates include runs before recent
 fixes (for example 08eb884 for `sync/offsets`), so they mark where to look, not current failure rates.
 
-Systemic, not repeated per row: `tightFirstFrame` (`test/vscode/hidden.js:248-251`) caps every first-frame wait at 15 s,
+Systemic, not repeated per row: before S0, `tightFirstFrame` capped ordinary first-frame waits at 15 s,
 a hidden speed check (T) in every case that opens a clip; `expectFrame` (`test/vscode/lib.js:184`) compares by NCC
 against ffmpeg (P); per step the runner sleeps 500 + 300 ms (`scenarios.js:114,129`) and `closeClip` 700 ms
 (`hidden.js:275`).
 
-### 1.1 Totals
+### 1.1 Totals before S0
 
 "Results (rows expanded)" expands each row's result pattern; "last full run" is the per-scenario result count of the
 2026-11-28 13:42 run. They differ where a row lists results compactly (hdr, inspect, subtitles, file-icons: same class
@@ -144,7 +143,7 @@ for all) and where the run ended early (`multiview-large` reported one TIMEOUT b
 
 From the 105 runs (checks with at least 8 runs, infrastructure buckets left out). Most failures are timeouts on log
 text or on a fixed deadline, not wrong pictures; the rest are the playback decisions the core will own. S0 replaces the
-log waits of the first ten with probe fields.
+timing and log assertions of the first ten with probe observations where possible.
 
 | Check | Fails | Cause class | Fix in this plan |
 |---|---|---|---|
@@ -170,7 +169,7 @@ log waits of the first ten with probe fields.
 | folder-rail/folder-rail/compare/rail (+3 cascades) | 3/8 TO3 | one failure cascades through the shared tab chain (C) | per-check fixtures (S11) |
 | compare (scenario) | 3/3 TO3 | `compare_metrics` waits ate the 255 s budget | metrics leave L3 (S0) |
 
-### 1.3 Per scenario
+### 1.3 Per scenario (before S0)
 
 
 ### open-formats
@@ -358,7 +357,7 @@ Counts (11): KEEP-L3 1 · MOVE-DOWN 5 · DUPLICATE 5.
 ### picture-size
 
 
-`player/*` share one player (C); `compare/*` use `R.t` (not `R.run`: `--sub` and `setFilter` do not skip them) and share one Compare.
+`player/*` share one player (C); `compare/*` use `R.t` and share one Compare, so a result selection still runs their shared setup.
 
 | Case | Result | What it checks (<=15 words) | Class | Anti-patterns | Flaky |
 |---|---|---|---|---|---|
@@ -601,7 +600,7 @@ Cases `open-native` and `ui_info_native` (same scenario):
 ### onboarding
 
 
-Raw result arrays (no recorder: `--sub` ignored). Popup counts read the whole instance log from line 0 (C across cases).
+Raw result arrays (filtered by full name in the runner since S0). Popup counts read the whole instance log from line 0 (C across cases).
 
 | Case | Result | What it checks (<=15 words) | Class | Anti-patterns | Flaky |
 |---|---|---|---|---|---|
@@ -754,10 +753,7 @@ Counts (7): KEEP-L3 6 · DUPLICATE 1.
 - **Log text is the second flake source**: `short_loop`'s only assertion is a log line; `playClip` (`suite.js`) derives
   first frame, decoder and streams from the log; clip export parses "compare report" lines; startup-restore is all log
   regex; native decision checks count log lines. Each becomes a probe field (section 5.3), the top ten in S0.
-- **Docs are stale**: AGENTS.md and docs/TESTING.md promise `--grep "^scenario/case$"` reruns one case; the runner keeps
-  whole scenarios and runs all their steps (`scenarios.js:212`). `--sub` works only for `R.run` results.
-  `docs/notes/test-inventory.md` Appendix A still describes the old `ctxmenu` and lacks `folder_rail.js` and
-  `picture_size.js`. S0 fixes the runner and these docs together.
+- **S0 runner and retirements** are tracked in the [test inventory](test-inventory.md#s0-duplicate-retirements).
 
 ## 2. Code map
 
@@ -1118,6 +1114,12 @@ size restart only at the next seek). `slow_link_ux_test.js`, `stream_fill_test.j
 
 ## 4. Migration plan
 
+**S0 status: partial.** Exact path selection, failed-result reruns, history, load guard, nightly mode, and
+the first batch of probe changes are implemented. Shared fixture sequences still need to be split so every result can run in
+isolation. The [retirement ledger](test-inventory.md#s0-duplicate-retirements) records completed removals.
+The FFmpeg luma metric comparison moved to layer 2. RGB readback and offset-driven scanning still use the
+real webview. The other retirement candidates remain open.
+
 Rules for every step: characterization tests at a boundary that survives the step are written first and pass against
 the current code; the move does not edit them; each step is mergeable alone, lands on `main` with CI (layers 1-2) plus
 the named layer-3 scenarios, and is reverted as a whole if a regression shows. No feature flags. The characterization
@@ -1217,10 +1219,8 @@ sessions** (S4 and S1's fix-ups are the uncertain ones).
 - **Fixed media folder**: Git LFS clips + generated clips with their stamp (`make_cases_media.js`); a missing or changed
   clip is regenerated before the run, only for the selected checks.
 - **Load guard**: `test/loadmon.js` (`sample()`) before every scenario; above a threshold (other processes > 25 % CPU)
-  the runner waits up to 5 min, then refuses with the top processes named (`--force` overrides). Today it only records
-  `loadBefore`.
-- **Nightly / background**: a Windows scheduled task on the maintainer's machine runs `node test/run.js vscode
-  --nightly` (10 scenarios, serial); `tools/l3-flakes.js` prints per-check fail rates over `out/` (the script behind
+  the runner waits up to 5 min, then refuses with the top processes named (`--force` overrides).
+- **Nightly / background**: the maintainer can schedule `node test/run.js vscode --nightly` (full layer, serial); `tools/l3-flakes.js` prints per-check fail rates over `out/` (the script behind
   section 1.2); a check failing twice in 10 nights is fixed or quarantined, never retried silently.
 
 **Time targets**: CI fast net (layers 1-2 + simulator) ~3 min on GitHub's runners (today layer 1 ~30 s and layer 2

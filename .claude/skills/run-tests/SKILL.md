@@ -30,7 +30,7 @@ node test/run.js unit engine --changed           # only what the changed files n
 node test/run.js unit --grep <name>              # one failing host test (guarded with timeout + stall kill; never run bare `node test/host/...`)
 node test/vscode/get_code.js                     # once: pinned portable VS Code into test/vscode/.code
 node test/run.js vscode --smoke                  # fast-merge layer-3 preset (~3-4 min)
-node test/run.js vscode --grep "^seeking/"       # one scenario or case; see test/vscode/README.md
+node test/run.js vscode --grep "^seeking$"       # one scenario or case; see test/vscode/README.md
 npm test                                         # full layers 1-3, before a release only (not before every merge)
 node test/run.js perf                            # layer 4 only: holds the lock, run alone
 ```
@@ -38,7 +38,8 @@ node test/run.js perf                            # layer 4 only: holds the lock,
 ## 3. Workflow
 
 1. Run the one failing test until it passes. For layer 3, pick **1–3 targeted scenarios** covering the exact behavior you changed (~5 min for small fixes, 10 min max) — do **not** run the whole layer 3 before a merge.
-2. When a single layer-3 case fails, re-run only its scenario with `--grep "^scenario$" --sub "<case>"` (today `--grep` selects whole scenarios and every step still runs; `--sub <re>` only filters results — a real per-check rerun is step S0 of docs/notes/playback-core-plan.md), not the whole layer. Avoid running layer 3 while parallel delegates are pegging CPU.
+2. Rerun an individual layer-3 case or result with `--grep "^scenario/case$"` or `--grep "^scenario/case/result$"`.
+   `--rerun-failed` uses the newest saved run. The CPU load guard runs before each scenario.
 3. Layer 3 is Windows only and runs on a hidden desktop. Never start VS Code or a browser visibly.
    Where there is no GPU or desktop (CI, Linux), do not run it: say so in the PR instead.
 4. Test videos are Git LFS: if a test fails on a tiny "pointer" file, run `git lfs pull`.
