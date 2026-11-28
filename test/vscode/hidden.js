@@ -197,13 +197,8 @@ class HiddenCode {
     return w ? `${w.what} (${((Date.now() - w.t0) / 1000).toFixed(0)} s so far)` : null;
   }
 
-  /**
-   * The first log line from index `from` on that matches; rejects after `timeout` ms. A first-frame wait is capped at
-   * FIRST_FRAME_MS unless it is slow by nature (4K, native ffmpeg, remote, URL, HDR): a normal first frame takes
-   * under 5 s, so a hung open shows in seconds (docs/TESTING.md, "Time limits").
-   */
-  waitLog(re, { from = 0, timeout = 20000, what, slow = false } = {}) {
-    if (!slow) timeout = tightFirstFrame(timeout, `${re.source} ${what || ''}`);
+  /** The first log line from index `from` on that matches; rejects after `timeout` ms. */
+  waitLog(re, { from = 0, timeout = 20000, what } = {}) {
     // Startup can report the broken GPU before the caller installs its first wait.
     const broken = this.lines.find((l) => NO_WEBGL.test(l));
     if (broken) return Promise.reject(new Error(`no WebGL2 in this VS Code instance: ${broken.replace(/^.*?webview: /, '')}`));
@@ -243,13 +238,6 @@ class HiddenCode {
 // and compare tiles report it only there).
 const NO_WEBGL = /webview: .*WebGL2 is not available/;
 
-// A first frame normally shows in under 5 s: 15 s caps the wait for ordinary clips. Slow by nature (keep the
-// caller's longer wait): 4K, native ffmpeg, remote windows, URLs, HDR, many-video grids.
-const FIRST_FRAME_MS = 15000;
-const SLOW_WAIT = /2160|4k|uhd|native|remote|url|stream|hdr|hevc_10|av1_10|_pq|_hlg|large|multiview/i;
-/** `timeout` capped to FIRST_FRAME_MS when `text` (the wait's pattern and name) is an ordinary first-frame wait. */
-const tightFirstFrame = (timeout, text) => (/first frame/i.test(text) && !SLOW_WAIT.test(text) ? Math.min(timeout, FIRST_FRAME_MS) : timeout);
-
 /** Keeps an instance's VS Code logs (main.log and the rest: GPU process exits) and our log in out/ for later. */
 function saveGpuLogs(vs, name, attempt) {
   const dest = path.join(OUT, `nogl-${new Date().toISOString().replace(/[:.]/g, '-')}-${name}-${attempt}`);
@@ -284,4 +272,4 @@ function updaterRunning() {
 }
 
 
-module.exports = { HiddenCode, findCode, findFfmpeg, pathWithoutFfmpeg, saveGpuLogs, updaterRunning, openClip, closeClip, NO_WEBGL, tightFirstFrame, STRIP, ROOT, MEDIA, OUT, sleep, fwd };
+module.exports = { HiddenCode, findCode, findFfmpeg, pathWithoutFfmpeg, saveGpuLogs, updaterRunning, openClip, closeClip, NO_WEBGL, STRIP, ROOT, MEDIA, OUT, sleep, fwd };
