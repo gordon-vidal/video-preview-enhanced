@@ -2707,7 +2707,7 @@
             const exact = exactHost.of(p);
             return {
               playback: {
-                decision: p ? (p.cfg.native ? 'native' : p.vmode || null) : null,
+                decision: p?.cfg?.native ? 'native' : p?.vmode || null,
                 restored: debugRestored.get(id) || null,
                 exactSize: exact ? [exact.w, exact.h] : null,
                 nativeDepth: p?.nativeColour?.depth || null,

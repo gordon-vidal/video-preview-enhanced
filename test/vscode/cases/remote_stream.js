@@ -917,10 +917,11 @@ module.exports = [{
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 550000 });
         const reduced = await p.waitState((s) => s.playing && s.canvas[1] === 720, { timeout: 60000, what: 'a 720p frame' });
         ok(reduced.gen === first.gen && reduced.t > first.t, 'quality drop interrupted the playback timeline');
+        const observationEnds = Date.now() + 4500;
         await p.waitState((s) => {
           if (!s.playing || s.canvas[1] !== 720) throw new Error(`720p playback did not stay steady: ${s.canvas}`);
-          return s.frame - reduced.frame >= s.fps;
-        }, { timeout: 60000, what: 'one second of media advances at 720p' });
+          return Date.now() >= observationEnds && s.frame - reduced.frame >= s.fps;
+        }, { timeout: 60000, what: 'steady playback at 720p under the throttle' });
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
         const restored = await p.waitState((s) => s.playing && s.canvas[1] === 1080, { timeout: 35000, what: 'full quality after link recovery' });
         ok(restored.gen === first.gen && restored.t > reduced.t, 'quality recovery interrupted the playback timeline');

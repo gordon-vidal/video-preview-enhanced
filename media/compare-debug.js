@@ -97,8 +97,8 @@
         tiles: getState().tiles.map((p) => ({
           frame: p.shownT === null ? null : frameOf(p) + 1,
           playing: !!p.playing,
-          decision: p.cfg.native ? 'native' : p.vmode,
-          transport: p.frameStream ? 'stream' : p.cfg.native ? 'message' : null,
+          decision: p.cfg?.native ? 'native' : p.vmode || null,
+          transport: p.frameStream ? 'stream' : p.cfg?.native ? 'message' : null,
           size: [p.cv.width, p.cv.height],
         })),
       };
