@@ -242,6 +242,7 @@ const engine = [
   { file: 'test/xray/index_test.js', needs: ['ffmpeg'], media: ['s_h264.mp4', 's_hevc.mp4', 's_vp9.webm', 's_mpeg2.mpg'], args: ['--check', '--order=both', 'test/media/cases/s_h264.mp4', 'test/media/cases/s_hevc.mp4', 'test/media/cases/s_vp9.webm', 'test/media/cases/s_mpeg2.mpg'], sources: ['media/xray-worker.js', 'media/libav-vpe'] },
   { file: 'test/pool/harness.js', needs: ['ffmpeg'], media: ['s_hevc.mp4'], args: ['--check', '--seek', 'test/media/cases/s_hevc.mp4', 'test/media/hevc_8_1080p.mp4'], sources: ['media/pool.js', 'media/decoder-worker.js', 'media/libav-vpe'] },
   { file: 'test/thumbs/service.js', needs: ['ffmpeg'], media: ['s_hevc.mp4'], args: ['test/media/cases/s_hevc.mp4'], sources: ['media/thumbs.js', 'media/thumbs-worker.js', 'media/libav-vpe'] },
+  { file: 'test/thumbs/hw_sweep.js', needs: ['ffmpeg'], sources: ['media/thumbs-worker.js', 'media/libav-vpe', 'test/thumbs/fake_webcodecs.js', 'test/pool/worker-shim.js'] },
 ].filter((e) => fs.existsSync(path.join(ROOT, e.file)));
 
 for (const e of [...unit, ...engine]) Object.assign(e, limits(e.file), e.timeout ? { timeout: e.timeout } : {});

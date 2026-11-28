@@ -612,6 +612,11 @@
           log(`thumbPass ${JSON.stringify({ id: m.id, on: !!(player && !player.thumbPassOff) })}`);
           break;
         }
+        case 'previewDecoder': { // seek-bar preview sweeps on the WebCodecs preview decoder (default) or the software worker
+          if (player) player.previewDecoderOff = !m.on;
+          log(`previewDecoder ${JSON.stringify({ id: m.id, on: !!(player && !player.previewDecoderOff) })}`);
+          break;
+        }
         case 'gotoText': { // Ctrl+G, type, Enter
           doc.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', ctrlKey: true }));
           const input = doc.querySelector('#goto input');

@@ -7,7 +7,8 @@
 // - 'between': cheap decode (skip_frame noref, no loop filter, flags2 fast) from the keyframe up to t, keeping the
 //   last frame at or before t;
 // - 'sweep' (between pass): the same cheap decode from the keyframe at or before t on, keeping the first frame at or
-//   after each of t, t + step, ... before `to`.
+//   after each of t, t + step, ... before `to`. For files playback decodes with WebCodecs (open's hw), on the GPU in
+//   a VideoDecoder of the sweep's own (hwSink), never playback's.
 'use strict';
 
 const AVMEDIA_TYPE_VIDEO = 0;
@@ -17,11 +18,15 @@ const SWS_BILINEAR = 2;
 const BLOCK = 1 << 20;
 const MAX_PACKETS = 400; // packets read looking for a keyframe before giving up
 const MAX_BETWEEN = 3000; // packets read at most for one 'between' picture
+const HW_QUEUE = 16; // chunks waiting in the preview decoder at most
+const HW_FLUSH_MS = 10e3;
 
 let libav = null;
 let fmt = 0;
 let pkt = 0;
 const V = { idx: -1, c: 0, pkt: 0, frame: 0, tb: [1, 1], sws: 0, swsKey: '', dst: 0 };
+/** The preview decoder's config (null: none or failed) and why there is none. */
+const HW = { conf: null, why: '' };
 const known = new Set(); // keyframe times main already has (it says when it drops one)
 let cancelBelow = 0; // requests with a smaller id are stale
 
@@ -112,7 +117,18 @@ async function open(m) {
   V.dst = await libav.av_frame_alloc();
   const d = await libav.AVFormatContext_duration(fmt);
   const st0 = await libav.AVFormatContext_start_time(fmt);
-  post({ type: 'opened', ok: true, codec: V.codec, duration: d > 0 && d < 1e15 ? d / 1e6 : 0, start: st0 > 0 && st0 < 1e15 ? st0 / 1e6 : 0 });
+  if (m.hw) await hwOpen(m.hw);
+  post({ type: 'opened', ok: true, hw: !!HW.conf, hwWhy: HW.why, codec: V.codec, duration: d > 0 && d < 1e15 ? d / 1e6 : 0, start: st0 > 0 && st0 < 1e15 ? st0 / 1e6 : 0 });
+}
+
+/** Playback's WebCodecs config, checked for a hardware decoder in this worker. */
+async function hwOpen(conf) {
+  if (typeof VideoDecoder !== 'function') { HW.why = 'no VideoDecoder in workers'; return; }
+  const c = { ...conf, hardwareAcceleration: 'prefer-hardware' };
+  try {
+    const r = await VideoDecoder.isConfigSupported(c);
+    if (r.supported) HW.conf = r.config || c; else HW.why = `${c.codec} not supported`;
+  } catch (e) { HW.why = String(e && e.message || e); }
 }
 
 function packetTime(p) {
@@ -294,47 +310,78 @@ async function between(m) {
   }
 }
 
+/** Which frames a sweep keeps: the first at or after each of t, t + step, ... before `to`, in presentation order. */
+function picker(m) {
+  const a = m.t - 0.001;
+  let k = 0;
+  const pk = {
+    done: false,
+    /** @param {number | null} ft */
+    want(ft) {
+      if (pk.done || ft === null || ft < a + k * m.step) return false;
+      if (ft >= m.to) { pk.done = true; return false; }
+      k = Math.floor((ft - a) / m.step) + 1;
+      if (a + k * m.step >= m.to) pk.done = true;
+      return true;
+    },
+  };
+  return pk;
+}
+
 /**
- * Between-pass stretch: m = {id, t, to, step, w, h}. Replies {kt, data, more: [{kt, data}], w, h, frames: packets
- * decoded, end: the file ended}, like the host's 'run'; nothing when no frame was at or after t.
+ * Between-pass stretch: m = {id, t, to, step, w, h, hw?}. Replies {kt, data, more: [{kt, data}], w, h, frames: packets
+ * decoded, end: the file ended}, like the host's 'run'; nothing when no frame was at or after t. With m.hw and a
+ * preview decoder (open's hw) the packets go to a hardware VideoDecoder of the sweep's own, and the pictures come
+ * back as ImageBitmaps (bmp instead of data, gpu: 'webcodecs'). When it fails, the stretch is decoded in software,
+ * the reply says why (hwFailed), and this worker does not try it again.
  */
 async function sweep(m) {
   const t0 = Date.now();
-  const stale = () => m.id < cancelBelow;
-  if (stale()) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
+  if (m.id < cancelBelow) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
+  let hwFailed;
+  if (m.hw && HW.conf) {
+    const r = await sweepWith(m, hwSink);
+    if (!r.failed) { reply(m, r, t0, { gpu: 'webcodecs' }); return; }
+    hwFailed = r.failed;
+    HW.conf = null;
+    log(`preview decoder failed (${hwFailed}); sweeps in software from now on`);
+  }
   await setCheap(true);
-  const a = m.t - 0.001;
-  const pics = [];
-  let k = 0;
-  let done = false;
+  try { reply(m, await sweepWith(m, swSink), t0, hwFailed ? { hwFailed } : {}); } finally { await setCheap(false); }
+}
+
+function reply(m, r, t0, extra) {
+  if (r.cancelled) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
+  const ms = Date.now() - t0;
+  const pics = r.pics;
+  if (!pics.length) { post({ type: 'thumb', id: m.id, kt: null, frames: r.n, end: r.atEnd, ms, ...extra }); return; }
+  const pic = (x) => (x.bmp ? { kt: x.kt, bmp: x.bmp } : { kt: x.kt, data: x.data });
+  post({ type: 'thumb', id: m.id, ...pic(pics[0]), w: r.size.w, h: r.size.h, more: pics.slice(1).map(pic), frames: r.n, end: r.atEnd, ms, ...extra },
+    pics.map((x) => x.bmp || x.data.buffer));
+}
+
+/**
+ * Reads the stretch's packets from the keyframe at or before m.t into a sink (swSink, hwSink). Resolves {pics, size,
+ * n, atEnd}, {cancelled}, or {failed: why} when the hardware sink failed.
+ */
+async function sweepWith(m, makeSink) {
+  const pick = picker(m);
+  const sink = makeSink(m, pick);
+  const stale = () => m.id < cancelBelow;
   let n = 0;
-  let size = null;
-  const take = async (frames) => {
-    for (const f of frames) {
-      try {
-        const ft = done ? null : await frameTime(f);
-        if (ft === null || ft < a + k * m.step) continue;
-        if (ft >= m.to) { done = true; continue; }
-        const out = await scale(f, m.w, m.h);
-        size = { w: out.w, h: out.h };
-        pics.push({ kt: ft, data: out.data });
-        k = Math.floor((ft - a) / m.step) + 1;
-        if (a + k * m.step >= m.to) done = true;
-      } finally { await libav.av_frame_free_js(f); }
-    }
-  };
   let atEnd = false;
+  let ok = false;
   try {
     // Formats without an index (MPEG-PS/TS) can land past the keyframe: step back as between() does.
     for (let back = 0, tries = 0; tries < 6; tries++) {
       const t = m.t - back;
       const landed = await seekTo(Math.max(0, t), t > 0 ? 'max' : 'min');
       if (landed < 0 && t > 0) await seekTo(t, 'min');
-      await libav.avcodec_flush_buffers(V.c);
+      await sink.reset();
       let started = false;
       let missed = false;
-      while (!done && !missed) {
-        if (stale()) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
+      while (!pick.done && !missed) {
+        if (stale()) return { cancelled: true };
         const [res, packets] = await libav.ff_read_frame_multi(fmt, pkt, { limit: 1 });
         atEnd = res === libav.AVERROR_EOF || (res < 0 && res !== -libav.EAGAIN);
         const vp = [];
@@ -353,21 +400,116 @@ async function sweep(m) {
         n += vp.length;
         // Packets 2 s past the stretch: any reordering is shorter.
         const end = atEnd || (pt !== null && pt > m.to + 2);
-        if (vp.length || end) await take(await libav.ff_decode_multi(V.c, V.pkt, V.frame, vp, { fin: end, ignoreErrors: true, copyoutFrame: 'ptr' }));
+        if (vp.length || end) await sink.push(vp, end);
         if (end) break;
       }
       if (!missed) break;
       back = back * 2 + 2;
     }
+    await sink.finish();
+    if (stale()) return { cancelled: true };
+    ok = true;
+    return { pics: sink.pics, size: sink.size, n, atEnd };
+  } catch (e) {
+    if (!sink.hw) throw e;
+    return { failed: String(e && e.message || e) };
   } finally {
-    await libav.avcodec_flush_buffers(V.c);
-    await setCheap(false);
+    await sink.close();
+    if (!ok) for (const x of sink.pics) if (x.bmp) x.bmp.close();
   }
-  const ms = Date.now() - t0;
-  if (!pics.length) { post({ type: 'thumb', id: m.id, kt: null, frames: n, end: atEnd, ms }); return; }
-  const more = pics.slice(1);
-  post({ type: 'thumb', id: m.id, kt: pics[0].kt, data: pics[0].data, w: size.w, h: size.h, more, frames: n, end: atEnd, ms },
-    pics.map((x) => x.data.buffer));
+}
+
+/** Software sink: libav.js with the cheap flags, swscale to RGBA. */
+function swSink(m, pick) {
+  const s = {
+    hw: false, pics: [], size: null,
+    reset: () => libav.avcodec_flush_buffers(V.c),
+    async push(vp, end) {
+      const frames = await libav.ff_decode_multi(V.c, V.pkt, V.frame, vp, { fin: end, ignoreErrors: true, copyoutFrame: 'ptr' });
+      for (const f of frames) {
+        try {
+          const ft = pick.done ? null : await frameTime(f);
+          if (!pick.want(ft)) continue;
+          const out = await scale(f, m.w, m.h);
+          s.size = { w: out.w, h: out.h };
+          s.pics.push({ kt: ft, data: out.data });
+        } finally { await libav.av_frame_free_js(f); }
+      }
+    },
+    finish: async () => {},
+    close: () => libav.avcodec_flush_buffers(V.c),
+  };
+  return s;
+}
+
+/** Waits until `dec` took a chunk (or a short while, where 'dequeue' is missing). */
+const dequeued = (dec) => new Promise((r) => {
+  const tm = setTimeout(r, 20);
+  dec.addEventListener('dequeue', () => { clearTimeout(tm); r(); }, { once: true });
+});
+
+const within = (p, ms, what) => {
+  let tm;
+  const late = new Promise((_, no) => { tm = setTimeout(() => no(new Error(`${what} took over ${ms} ms`)), ms); });
+  return Promise.race([p, late]).finally(() => clearTimeout(tm));
+};
+
+/**
+ * Hardware sink: a VideoDecoder of its own (never playback's), made per sweep and closed after it, so nothing holds
+ * the GPU decoder between sweeps. Every frame is closed at once, a kept one after its small ImageBitmap is made.
+ */
+function hwSink(m, pick) {
+  let dec = null;
+  let err = null;
+  const pending = new Set();
+  const close = () => { if (dec && dec.state !== 'closed') dec.close(); };
+  const s = {
+    hw: true, pics: [], size: null,
+    async reset() {
+      close();
+      dec = new VideoDecoder({
+        output: (vf) => {
+          const ft = vf.timestamp / 1e6;
+          if (err || !pick.want(ft)) { vf.close(); return; }
+          const b = fit(vf.displayWidth, vf.displayHeight, m.w, m.h);
+          const p = createImageBitmap(vf, { resizeWidth: b.w, resizeHeight: b.h, resizeQuality: 'low' }).then((bmp) => {
+            s.pics.push({ kt: ft, bmp });
+            s.size = b;
+          }, (e) => { err = err || e; }).finally(() => { vf.close(); pending.delete(p); });
+          pending.add(p);
+        },
+        error: (e) => { err = err || e; },
+      });
+      dec.configure(HW.conf);
+    },
+    async push(vp) {
+      for (const p of vp) {
+        const t = packetTime(p);
+        if (t === null) throw new Error('a packet without a time');
+        while (dec.decodeQueueSize >= HW_QUEUE && !err) await dequeued(dec);
+        if (err) throw err;
+        dec.decode(new EncodedVideoChunk({ type: p.flags & AV_PKT_FLAG_KEY ? 'key' : 'delta', timestamp: Math.round(t * 1e6), data: p.data }));
+      }
+      if (err) throw err;
+    },
+    async finish() {
+      if (!pick.done && m.id >= cancelBelow) await within(dec.flush(), HW_FLUSH_MS, 'flush');
+      await Promise.all([...pending]);
+      if (err) throw err;
+      s.pics.sort((x, y) => x.kt - y.kt);
+    },
+    async close() { close(); await Promise.all([...pending]); },
+  };
+  return s;
+}
+
+/** The largest even size inside the box with the aspect of `dw` x `dh`. */
+function fit(dw, dh, boxW, boxH) {
+  const aspect = dw / dh;
+  let w = boxW;
+  let h = Math.round(w / aspect);
+  if (h > boxH) { h = boxH; w = Math.round(h * aspect); }
+  return { w: Math.max(2, w & ~1), h: Math.max(2, h & ~1) };
 }
 
 /** swscale to RGBA inside the box, keeping the display aspect (sample aspect ratio). */
@@ -378,12 +520,7 @@ async function scale(src, boxW, boxH) {
   const sarN = await libav.AVFrame_sample_aspect_ratio_num(src);
   const sarD = await libav.AVFrame_sample_aspect_ratio_den(src);
   const sar = sarN > 0 && sarD > 0 ? sarN / sarD : 1;
-  const aspect = (sw * sar) / sh;
-  let w = boxW;
-  let h = Math.round(w / aspect);
-  if (h > boxH) { h = boxH; w = Math.round(h * aspect); }
-  w = Math.max(2, w & ~1);
-  h = Math.max(2, h & ~1);
+  const { w, h } = fit(sw * sar, sh, boxW, boxH);
   const key = `${sw}x${sh}:${sf}>${w}x${h}`;
   if (key !== V.swsKey) {
     if (V.sws) await libav.sws_freeContext(V.sws);

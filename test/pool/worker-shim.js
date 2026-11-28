@@ -9,4 +9,5 @@ globalThis.importScripts = (f) => require(f);
 parentPort.on('message', (d) => { if (globalThis.onmessage) globalThis.onmessage({ data: d }); });
 console.error = () => {}; // libav's log chatter
 console.warn = () => {};
+if (workerData.preload) require(workerData.preload); // test stand-ins (e.g. test/thumbs/fake_webcodecs.js)
 vm.runInThisContext(fs.readFileSync(workerData.script, 'utf8'), { filename: workerData.script });

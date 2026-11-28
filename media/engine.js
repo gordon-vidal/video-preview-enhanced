@@ -3108,6 +3108,9 @@ function createEngine(env) {
         passOn: () => !this.thumbPassOff && isClock(),
         pass: this.cfg.thumbPass === false ? undefined : {},
         playing: () => !!this.playing,
+        // Files playback decodes with WebCodecs (H.264, VP8): sweeps on a hardware decoder of the worker's own.
+        hw: !this.cfg.native && this.vmode === 'webcodecs' && this.vconf ? this.vconf : null,
+        hwOn: () => !this.previewDecoderOff,
         // First guess per frame between keyframes, refined by replies: about 1 ns per source pixel for native ffmpeg
         // with the cheap flags (2 threads), PER_PX_WASM for the single-threaded worker (docs/notes/seek-preview.md).
         // Native and Live transcode decode the source, not the smaller picture they send the page.

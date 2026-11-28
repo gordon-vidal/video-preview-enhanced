@@ -11,7 +11,8 @@
 //   picture, then the fill ('sweep' requests, decoded cheaply or on the GPU): first the floor (min(N, FLOOR) evenly
 //   spread slots get a picture of their own), then every other slot coarse to fine until each has one. One request
 //   at a time, paced to PASS_DUTY of the time (PASS_DUTY_HOVER while the pointer rests on the bar), paused while
-//   busy, hidden, dragging or another tile sets the clock.
+//   busy, hidden, dragging or another tile sets the clock. For files playback decodes with WebCodecs (o.hw), the
+//   worker's sweeps run on a hardware VideoDecoder of their own, paused while playing; software after a failure.
 // The bar is a grid of N slots of X seconds (interval()); one picture per slot is enough. Pictures are kept
 // as small JPEGs; a few near the pointer also as ready-to-draw ImageBitmaps (HOT). Not used for MJPEG
 // AVI/image sequences (FramePlayer, no libav) or audio-only files.
@@ -82,6 +83,8 @@ class ThumbService {
    * @param {{delayMs?: number}} [o.pass] the background pass (passArm)
    * @param {() => boolean} [o.hidden] the page is hidden (no pass work)
    * @param {() => boolean} [o.passOn] the pass may run (this tile sets the clock, not turned off by a test)
+   * @param {object | null} [o.hw] playback's WebCodecs VideoDecoderConfig: the worker's sweeps decode on the GPU
+   * @param {() => boolean} [o.hwOn] the preview decoder may be used now (a bench compares it with the software one)
    */
   constructor(o) {
     this.o = o;
@@ -123,6 +126,10 @@ class ThumbService {
     this.ps = null;
     /** @type {Set<number>} slots that had a picture inside them (an evicted one is not decoded again) */
     this.owned = new Set();
+    /** Why the preview decoder is not used for this file ('' while it may be); kept across worker restarts. */
+    this.hwFailed = '';
+    /** The running worker has the preview decoder. */
+    this.hwReady = false;
   }
 
   /**
@@ -153,6 +160,7 @@ class ThumbService {
       keys: this.keys.length, frameMs: Math.round(this.frameMs * 100) / 100,
       shown: this.shown && { t: this.shown.t - this.o.startT, kind: this.shown.kind, refined: this.shown.refined },
       bar: this.answered(), pass: this.passStats(),
+      previewDecoder: !this.o.hw ? 'none' : this.hwFailed ? `failed: ${this.hwFailed}` : this.hwReady ? 'ready' : 'not started',
       state: this.state, worker: !!this.worker, hovering: this.want !== null,
       // The pointer's slot and its neighbourhood have their pictures (nothing left to ask for there).
       filled: this.want !== null && !this.inflight && !this.need(this.want) && this.nextNear() === null,
@@ -520,6 +528,7 @@ class ThumbService {
     this.restTimer = 0;
     if (this.worker) this.worker.terminate();
     this.worker = null;
+    this.hwReady = false;
     this.inflight = null;
     if (this.state !== 'failed') this.state = 'off';
     if (this.o.onIdle) this.o.onIdle();
@@ -541,12 +550,14 @@ class ThumbService {
 
   onMessage(m) {
     switch (m.type) {
-      case 'ready': this.post({ type: 'open', size: this.o.size }); break;
+      case 'ready': this.post({ type: 'open', size: this.o.size, ...(this.o.hw && !this.hwFailed ? { hw: this.o.hw } : {}) }); break;
       case 'read': this.o.onRead(m.pos, m.len); break;
       case 'opened':
         if (!m.ok) { this.fail(m.why); return; }
         this.state = 'ready';
-        this.log(`worker ready in ${Math.round(performance.now() - this.t0)} ms (${m.codec})`);
+        this.hwReady = !!m.hw;
+        if (this.o.hw && !m.hw && !this.hwFailed) this.hwFailed = m.hwWhy || 'not available';
+        this.log(`worker ready in ${Math.round(performance.now() - this.t0)} ms (${m.codec}${this.o.hw ? `, preview decoder ${m.hw ? 'on the GPU' : `off: ${this.hwFailed}`}` : ''})`);
         this.kick();
         break;
       case 'thumb': this.onThumb(m); break;
@@ -616,7 +627,9 @@ class ThumbService {
       this.requestHost(this.inflight);
       return;
     }
+    /** @type {{to?: number, step?: number, hw?: boolean}} */
     const sweep = kind.sweep ? { to, step: this.X } : {};
+    if (kind.sweep && this.hwOn()) sweep.hw = true;
     this.worker.postMessage({ type: 'thumb', id: this.id, t, w: this.box.w, h: this.box.h, mode: kind.refine ? 'between' : mode, ...sweep });
   }
 
@@ -644,14 +657,22 @@ class ThumbService {
     ps.timer = setTimeout(() => { ps.timer = 0; this.passStep(); }, Math.max(0, ms));
   }
 
-  /** Why the pass waits now ('' when it may decode). */
-  passWhy() {
+  /** Why the pass waits now ('' when it may decode); `sweep`: for a sweep, which also waits while playing on the GPU. */
+  passWhy(sweep = false) {
     if (this.o.passOn && !this.o.passOn()) return 'off';
     if (this.o.hidden && this.o.hidden()) return 'hidden';
     if (this.want !== null && this.scrub) return 'pointer';
     if (this.o.busy && this.o.busy()) return 'busy';
+    // The preview decoder shares the GPU's video decoder with playback.
+    if (sweep && this.hwSweeps() && this.o.playing && this.o.playing()) return 'playing';
     return '';
   }
+
+  /** Sweeps would use the preview decoder (as far as known before the worker opened). */
+  hwSweeps() { return !!this.o.hw && !this.hwFailed && (!this.o.hwOn || this.o.hwOn()) && !this.o.request; }
+
+  /** The next sweep goes to the preview decoder. */
+  hwOn() { return this.hwReady && this.hwSweeps(); }
 
   passPause(why) {
     const ps = this.ps;
@@ -675,7 +696,7 @@ class ThumbService {
     if (!ps || ps.done || this.disposed) return;
     const req = this.inflight;
     if (req) {
-      if (req.pass && this.passWhy()) this.cancel(req);
+      if (req.pass && this.passWhy(req.mode === 'sweep')) this.cancel(req);
       if (req.pass) this.passLater(PASS_WATCH_MS);
       return; // its reply kicks
     }
@@ -684,7 +705,10 @@ class ThumbService {
     if (this.state !== 'off') return;
     const why = this.passWhy();
     if (why) { this.passPause(why); this.passLater(PASS_RETRY_MS); return; }
-    if (this.passNext() === null && !this.fillNext()) { this.passDone('complete'); return; }
+    const sweep = this.passNext() === null;
+    if (sweep && !this.fillNext()) { this.passDone('complete'); return; }
+    const waits = sweep && this.passWhy(true);
+    if (waits) { this.passPause(waits); this.passLater(PASS_RETRY_MS); return; }
     this.start();
   }
 
@@ -708,6 +732,12 @@ class ThumbService {
     // Looked at again within the retry: the pointer coming or going changes the pace.
     if (at > now) { this.passLater(Math.min(at - now, PASS_RETRY_MS)); return true; }
     if (sweep) {
+      const waits = this.passWhy(true);
+      if (waits) {
+        this.passPause(waits);
+        this.passLater(PASS_RETRY_MS);
+        return now - ps.since < (this.o.idleMs ?? 20e3);
+      }
       this.send(sweep.slot, { pass: true, sweep });
       this.passLater(PASS_WATCH_MS);
       return true;
@@ -872,19 +902,26 @@ class ThumbService {
   async onSweep(req, m) {
     const bw = this.ps && this.ps.bw;
     const ok = !m.cancelled && !req.cancelSent;
+    if (m.hwFailed && !this.hwFailed) { this.hwFailed = String(m.hwFailed); this.log(`preview decoder off: ${this.hwFailed}`); }
     const pics = [];
-    if (ok && Number.isFinite(m.kt)) {
-      pics.push({ kt: m.kt, data: m.data });
+    if (Number.isFinite(m.kt)) {
+      pics.push({ kt: m.kt, data: m.data, bmp: m.bmp });
       for (const x of m.more || []) if (x && Number.isFinite(x.kt)) pics.push(x);
     }
     // Decided before adding: the reply's own pictures do not stand in for each other.
-    const fill = pics.filter((x) => {
+    const fill = ok ? pics.filter((x) => {
       const rel = x.kt - this.o.startT;
       return rel >= 0 && this.ownNeed(this.slotOf(rel));
-    });
-    for (const x of fill) {
-      const p = await this.picture({ data: x.data, w: m.w, h: m.h, fmt: m.fmt });
-      if (this.inflight !== req) { if (p) p.bmp.close(); return; }
+    }) : [];
+    for (const x of pics) if (x.bmp && !fill.includes(x)) x.bmp.close();
+    for (let i = 0; i < fill.length; i++) {
+      const x = fill[i];
+      const p = await this.picture({ data: x.data, bmp: x.bmp, w: m.w, h: m.h, fmt: m.fmt });
+      if (this.inflight !== req) {
+        if (p) p.bmp.close();
+        for (const y of fill.slice(i + 1)) if (y.bmp) y.bmp.close();
+        return;
+      }
       if (p) { this.add(x.kt, 'frame', p, m.w, m.h); if (bw) bw.pictures++; }
     }
     if (bw && ok) {
@@ -959,8 +996,14 @@ class ThumbService {
     return e && e.t === kt && e.kind === 'key' ? e : null;
   }
 
-  /** A reply's picture as a bitmap and its JPEG (null for RGBA), or null when the reply has none that fits. */
+  /** A reply's picture as a bitmap and its JPEG (null for RGBA or a bitmap), or null when the reply has none that fits. */
   async picture(m) {
+    if (m.bmp) {
+      const fits = m.bmp.width === m.w && m.bmp.height === m.h && m.w > 0 && m.w <= this.box.w && m.h > 0 && m.h <= this.box.h;
+      if (fits) return { bmp: m.bmp, blob: null };
+      m.bmp.close();
+      return null;
+    }
     const jpeg = m.fmt === 'jpeg';
     if (!m.data || !Number.isInteger(m.w) || !Number.isInteger(m.h) ||
         !(m.w > 0 && m.w <= this.box.w && m.h > 0 && m.h <= this.box.h) ||
