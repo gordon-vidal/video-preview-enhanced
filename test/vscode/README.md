@@ -36,7 +36,8 @@ An anchored scenario or case name selects everything under that name. An exact r
 result. Broader result regexes can enter additional steps to evaluate dynamically named results.
 `--sub <re>` matches full result names and intersects with `--grep`. A check can still run setup shared
 with other results in its case. `--rerun-failed` uses the latest saved report and selects case or scenario
-scope for failures recorded at those levels. Generated media is prepared by the cases on demand.
+scope for failures recorded at those levels. Reports also record scenarios left unstarted by a load refusal,
+so a rerun can pick them up. Generated media is prepared by the cases on demand.
 
 The JSON records the first line of `ffmpeg -version`. Before starting a scenario, the runner waits up to five
 minutes for CPU load to fall to 25% or less. It names the busiest processes when refusing to start. `--force`
@@ -64,7 +65,7 @@ results say `retried`); twice in a row is a failure.
 | `scopes-export` | scopes_export | Waveform, parade, vectorscope and histogram; A-B frame export and Save Frame | 77 s, 11 |
 | `subtitles` | subtitles | Picture subtitles (PGS, DVD, DVB) and embedded text subtitles with sound-track switching | 59 s, 4 |
 | `ui` | ui, ui_jumps, ui_jumps_settings, ui_info, ctxmenu | The bar and panels: accessibility, keys, panels, speed, time formats, jump sizes (panel and settings), About this video, the context menu | 132 s, 21 |
-| `compare` | modes, compare_ui, compare_metrics | Compare mode: entering and leaving, the bar, tiles, views, the Tools grid, PSNR / SSIM against ffmpeg | 90 s, 17 |
+| `compare` | modes, compare_ui, compare_metrics | Compare mode: entering and leaving, the bar, tiles, views, the Tools grid, identical-picture RGB readback, offset-driven difference scanning | 90 s, 17 |
 | `multiview` | multiview, multiview-short-loop | Play together: grids of 2-4, lockstep, offsets, the sync clock and sound, a short loop | 68 s, 11 |
 | `multiview-transcode` | multiview-transcode | Live transcode in Compare, shared bitrate and returning one tile to original video | — |
 | `multiview-native` | multiview-native, multiview-native-fallback | Play together with native ffmpeg: tile sizes, the frame server and its budget, resizing, the message fallback | 38 s, 7 |
@@ -82,7 +83,7 @@ results say `retried`); twice in a row is a failure.
 | `remote-stream` | remote_stream, remote_stream_long, remote_stream_fallback | Remote windows: formats the GPU decoder can't play are re-encoded to H.264 by ffmpeg; seeks, scrubbing, the quality ladder, pixel tools | 139 s, 11 |
 | `file-icons` | file_icons, file_icons_pixels_dark-100, file_icons_pixels_light-100, file_icons_pixels_dark-120, file_icons_pixels_dark-m1, file_icons_pixels_dark-z2 | Explorer icons for the formats VS Code has none for, as Seti draws .mp4 / .avi (dark, light, zoom -1..2); .mkv still opens in the player | 46 s, 7 |
 
-Times and result counts: the full run of 2026-11-20 (3 instances at once, while other processes used about 40 % of the CPU and a game the GPU; `docs/TESTING.md` has the totals).
+Historical times and result counts: the full run of 2026-11-20 (3 instances at once, while other processes used about 40 % of the CPU and a game the GPU; `docs/TESTING.md` has the totals).
 
 **--changed:** `scenario_map.js` picks the scenarios whose `sources` (in `scenario_list.js`) contain a changed
 file, or that run a changed case file. A changed file under `src/` or `media/` that no scenario names, or the

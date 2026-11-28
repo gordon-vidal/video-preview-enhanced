@@ -25,7 +25,7 @@ const { spawnSync } = require('child_process');
 const H = require('./hidden');
 const lib = require('./lib');
 const T = require('./timing');
-const { selectScenarios } = require('./selection');
+const { selectScenarios, collectResults, rerunTargets, unstartedScenarios } = require('./selection');
 const { readHistory, rates, printReport } = require('../../tools/l3-flakes');
 const loadmon = require('../loadmon');
 const { BUDGETS, DEFAULT: DEFAULT_BUDGET } = require('./budgets');
@@ -106,11 +106,15 @@ async function runScenario(sc, ctx, attempt = 1, carry = { t0: Date.now(), retry
       phase('resetMs');
       const c = cases[step.case];
       const base = `${sc.name}/${step.case}`;
-      if (!c) { add({ name: base, ok: false, problems: [`no case named ${step.case}`] }); continue; }
-      const useFf = step.ffmpeg !== undefined ? step.ffmpeg : !!c.ffmpeg;
-      if (useFf && !ff) { add({ name: base, ok: true, skipped: 'no ffmpeg', problems: [] }); continue; }
       const ts = Date.now();
       try {
+        if (!c) throw new Error(`no case named ${step.case}`);
+        const useFf = step.ffmpeg !== undefined ? step.ffmpeg : !!c.ffmpeg;
+        if (useFf && !ff) {
+          const skipped = [{ ok: true, skipped: 'no ffmpeg', problems: [] }];
+          for (const result of collectResults(base, skipped, () => true, step.expected)) add(result);
+          continue;
+        }
         vs.send({ command: 'workbench.action.closeAllEditors' });
         await sleep(500);
         // Settings: the case's and the step's; what the last step set and this one doesn't goes back to the default.
@@ -143,17 +147,12 @@ async function runScenario(sc, ctx, attempt = 1, carry = { t0: Date.now(), retry
         phase('execMs');
         const run = lib.withSelection(selected, () => c.run(vs, h));
         const rs = await withTimeout(Promise.race([run, gl.promise]).finally(gl.stop), step.timeout || 15 * 60e3, `${base} did not finish`);
-        const before = results.length;
-        for (const r of rs) {
-          const name = r.name ? `${base}/${r.name}` : base;
-          if (!r.skipped && !selected(r.name)) continue;
-          add({ ...r, name, ...(attempt > 1 ? { retried: 'the first instance had no WebGL2 (GPU process)' } : {}) });
-        }
-        if (step.expectResult && results.length === before) {
-          add({ name: base, ok: false, problems: ['the selected result was not returned by the case'] });
+        for (const result of collectResults(base, rs, selected, step.expected)) {
+          add({ ...result, ...(attempt > 1 ? { retried: 'the first instance had no WebGL2 (GPU process)' } : {}) });
         }
       } catch (e) {
-        add({ name: base, ok: false, problems: [e && e.message || String(e)] });
+        const failed = [{ ok: false, problems: [e && e.message || String(e)] }];
+        for (const result of collectResults(base, failed, () => true, step.expected)) add(result);
       } finally {
         phase('resetMs');
         if (meter) { vs.meter = null; caseRecs.push(meter.finish(base, { attempts: attempt })); meter = null; }
@@ -224,7 +223,7 @@ async function main() {
   let failedNames;
   if (flag('--rerun-failed')) {
     if (!history.length) throw new Error('No saved layer-3 run to rerun');
-    failedNames = history[0].tests.filter((r) => !r.ok).map((r) => r.name.replace(/\/webgl2$/, ''));
+    failedNames = rerunTargets(history[0]);
   }
   let todo = selectScenarios(list, grep, sub, failedNames);
   const wantSmoke = flag('--smoke');
@@ -288,7 +287,8 @@ async function main() {
   const res = {
     started: new Date(t0).toISOString(), seconds: Math.round((Date.now() - t0) / 1000), parallel, code: code.exe, host: os.hostname(), cpus: os.cpus().length,
     ffmpegVersion: (ffVersion && ffVersion.stdout || '').split(/\r?\n/, 1)[0] || null,
-    loadBefore: loadBefore ?? null, refusal, noWebGl: out.filter((s) => s.attempts > 1 || s.noGl).map((s) => s.name),
+    loadBefore: loadBefore ?? null, refusal, unstarted: unstartedScenarios(todo, out),
+    noWebGl: out.filter((s) => s.attempts > 1 || s.noGl).map((s) => s.name),
     phases: T.summarize(out).total,
     scenarios: out.map((s) => ({ name: s.name, ms: s.ms, attempts: s.attempts, ...pickTiming(s), failed: s.results.filter((x) => !x.ok).length, timeouts: s.results.filter((x) => x.timeout).length, results: s.results.length })),
     cases: caseTimings, // per case: ms, openMs, waitMs, sleepMs, retries, clips

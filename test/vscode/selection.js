@@ -23,20 +23,37 @@ function selectScenarios(list, grep, sub, failed) {
       if ((!all && !mightMatch(base, grep)) || !mightMatch(base, sub)) return [];
       const keep = step.only && new RegExp(step.only);
       const drop = step.skip && new RegExp(step.skip);
-      const selected = (result) => {
-        const name = result ? `${base}/${result}` : base;
-        return (!keep || keep.test(result)) && (!drop || !drop.test(result)) &&
-          (all || grep.test(name)) && (!sub || sub.test(name)) &&
-          (!targets || targets.some((target) => includes(name, target)));
-      };
-      const exactResult = [grep, sub].some((re) => {
-        const match = literal(re);
-        return match?.[2] && match[1].replace(/\\\./g, '.').startsWith(base + '/');
-      });
-      return [{ ...step, selected, expectResult: exactResult || targets?.some((name) => name.startsWith(base + '/')) }];
+      const requested = (name) => (all || grep.test(name)) && (!sub || sub.test(name)) &&
+        (!targets || targets.some((target) => includes(name, target)));
+      const selected = (result) => (!keep || keep.test(result)) && (!drop || !drop.test(result)) &&
+        requested(result ? `${base}/${result}` : base);
+      const exact = [grep, sub].map(literal).filter((match) => match?.[2])
+        .map((match) => match[1].replace(/\\\./g, '.'));
+      const expected = [...new Set([...exact, ...(targets || [])])].filter((name) =>
+        name.startsWith(base + '/') && requested(name));
+      return [{ ...step, selected, expected }];
     });
     return steps.length ? [{ ...scenario, steps }] : [];
   });
 }
 
-module.exports = { selectScenarios };
+function collectResults(base, results, selected, expected = []) {
+  const kept = results.filter((r) => !r.ok || r.skipped || selected(r.name))
+    .map((r) => ({ ...r, name: r.name ? `${base}/${r.name}` : base }));
+  const ran = new Set(kept.filter((r) => !r.skipped).map((r) => r.name));
+  for (const name of expected) {
+    if (!ran.has(name)) kept.push({ name, ok: false, problems: ['the selected result did not run'] });
+  }
+  return kept;
+}
+
+function rerunTargets(report) {
+  return [...(report.unstarted || []), ...report.tests.filter((r) => !r.ok).map((r) => r.name.replace(/\/webgl2$/, ''))];
+}
+
+function unstartedScenarios(selected, completed) {
+  const ran = new Set(completed.map((s) => s.name));
+  return selected.filter((s) => !ran.has(s.name)).map((s) => s.name);
+}
+
+module.exports = { selectScenarios, collectResults, rerunTargets, unstartedScenarios };

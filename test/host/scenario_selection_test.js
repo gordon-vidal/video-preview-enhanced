@@ -31,3 +31,27 @@ lib.withSelection((name) => name === 'keep', () => {
   assert.equal(ran, false);
   assert.deepEqual(R.out.map((r) => r.name), ['keep']);
 });
+const { selectScenarios, collectResults, rerunTargets, unstartedScenarios } = require('../vscode/selection');
+const scenarios = [{ name: 'demo', steps: [{ case: 'raw' }] }, { name: 'later', steps: [{ case: 'other' }] }];
+
+const [[broad]] = selectScenarios(scenarios, /requested/).map((s) => s.steps);
+const aborted = { name: 'earlier', ok: false, problems: ['setup broke'] };
+assert.deepEqual(collectResults('demo/raw', [aborted], broad.selected, broad.expected),
+  [{ ...aborted, name: 'demo/raw/earlier' }]);
+
+const targets = ['demo/raw/one', 'demo/raw/two', 'demo/raw/three'];
+const [rerun] = selectScenarios(scenarios, null, null, targets);
+const step = rerun.steps[0];
+const results = collectResults('demo/raw', [
+  { name: 'one', ok: true }, { name: 'two', ok: true, skipped: 'unavailable' },
+  { name: 'unrelated', ok: true, skipped: 'unavailable' },
+], step.selected, step.expected);
+assert.deepEqual(results.filter((r) => !r.ok).map((r) => r.name), targets.slice(1));
+assert.ok(results.filter((r) => !r.ok).every((r) => /did not run/.test(r.problems[0])));
+
+for (const completed of [[], [{ name: 'demo' }]]) {
+  const unstarted = unstartedScenarios(scenarios, completed);
+  assert.deepEqual(unstarted, completed.length ? ['later'] : ['demo', 'later']);
+  const report = { tests: [], unstarted };
+  assert.deepEqual(selectScenarios(scenarios, null, null, rerunTargets(report)).map((s) => s.name), unstarted);
+}

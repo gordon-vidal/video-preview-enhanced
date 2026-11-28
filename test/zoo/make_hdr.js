@@ -76,14 +76,29 @@ const requested = process.argv.slice(3);
 let failed = 0;
 for (const [name, kind, bits, trc, enc] of jobs) {
   if (requested.length && !requested.includes(name)) continue;
-  const raw = path.join(out, `${name}.yuv`);
-  fs.writeFileSync(raw, frame(kind, bits));
-  const pix = bits > 8 ? 'yuv420p10le' : 'yuv420p';
-  const tags = ['-color_primaries', 'bt2020', '-color_trc', trc, '-colorspace', 'bt2020nc', '-color_range', 'tv'];
-  const r = spawnSync(ff, ['-hide_banner', '-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', pix, '-s', `${W}x${H}`, '-framerate', '30', '-stream_loop', '119', ...tags, '-i', raw,
-    ...enc, '-pix_fmt', pix, ...tags, path.join(out, name)], { encoding: 'utf8', windowsHide: true });
-  fs.unlinkSync(raw);
-  if (r.status !== 0) failed++;
-  console.log(name, r.status === 0 ? 'ok' : r.stderr || r.error);
+  const temp = fs.mkdtempSync(path.join(out, '.hdr-'));
+  const raw = path.join(temp, 'frame.yuv');
+  const encoded = path.join(temp, name);
+  const final = path.join(out, name);
+  try {
+    fs.writeFileSync(raw, frame(kind, bits));
+    const pix = bits > 8 ? 'yuv420p10le' : 'yuv420p';
+    const tags = ['-color_primaries', 'bt2020', '-color_trc', trc, '-colorspace', 'bt2020nc', '-color_range', 'tv'];
+    const r = spawnSync(ff, ['-hide_banner', '-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', pix,
+      '-s', `${W}x${H}`, '-framerate', '30', '-stream_loop', '119', ...tags, '-i', raw,
+      ...enc, '-pix_fmt', pix, ...tags, encoded], { encoding: 'utf8', windowsHide: true });
+    if (r.status !== 0) throw new Error(r.stderr || r.error || `FFmpeg exited with status ${r.status}`);
+    try { fs.renameSync(encoded, final); }
+    catch (error) {
+      // Windows can deny replacement while another run is reading the published clip.
+      if (!['EEXIST', 'EPERM', 'EACCES'].includes(error.code) || !fs.existsSync(final)) throw error;
+    }
+    console.log(name, 'ok');
+  } catch (error) {
+    failed++;
+    console.error(name, error.message);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 }
 process.exit(failed ? 1 : 0);
