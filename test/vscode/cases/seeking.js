@@ -170,6 +170,29 @@ module.exports = [{
       } finally { await P.close(); }
     });
 
+    // Frames 20-21, 45-47 and 70-73 missing: '.', ',' and the wheel go to the next / previous picture over each gap.
+    await R.run('gap-steps/gapped_wide_30fps.mkv', async (ok) => {
+      const P = await lib.open(vs, h, lib.clip('gapped_wide_30fps.mkv'));
+      try {
+        const r0 = await P.waitFirstFrame();
+        const wheel = async (d) => {
+          const [x, y, w, hh] = (await P.state()).canvasRect;
+          P.dom('wheel', x + w / 2, y + hh / 2, { deltaY: d > 0 ? 100 : -100 });
+        };
+        P.seek(18.5 / r0.fps);
+        await P.expectFrame(18, 'seek to 18');
+        for (const [move, k] of [['.', 19], ['.', 22], [1, 23], [',', 22], [-1, 19], [',', 18]]) {
+          if (typeof move === 'number') await wheel(move); else P.key(move);
+          await P.expectFrame(k, `${typeof move === 'number' ? `wheel ${move > 0 ? 'forward' : 'back'}` : `key ${move}`} to ${k}`);
+        }
+        P.seek(69.5 / r0.fps);
+        await P.expectFrame(69, 'seek to 69');
+        P.key('.'); await P.expectFrame(74, 'key . over 4 missing frames');
+        P.key(','); await P.expectFrame(69, 'key , back over them');
+        ok((await P.state()).frameText.startsWith('#70/'), `frame counter "${(await P.state()).frameText}", expected #70/...`);
+      } finally { await P.close(); }
+    });
+
     // The end of the file: End shows the last picture even when the sound is longer.
     await R.run('end-key/audio_longer.mp4', async (ok) => {
       const P = await lib.open(vs, h, lib.clip('audio_longer.mp4'));

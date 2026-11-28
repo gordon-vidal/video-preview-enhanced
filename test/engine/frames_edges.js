@@ -21,6 +21,22 @@ runJobs('engine frames: edges, end of file, A-B loop, rounded times', [
     await P.expectFrame(1, 'step +1');
     await J.endKey(P, 9);
   }, { waitRate: false }],
+  // The single viewer steps with paused frame seeks to the bar's frame ± 1 (media/player-unified.js seekTo, the step's
+  // direction as `land`) and the bar takes the decoder's frame: every actual picture, forward and back, over gaps of
+  // 1-4 frames and a rate that drops from 60 to 15 fps.
+  ...['gapped_30fps.mkv', 'gapped_wide_30fps.mkv', 'fmt/h264_vfr.mkv'].map((clip) => [`gap-steps/${clip}`, clip, async (P) => {
+    const pics = [...new Set(await P.slots())].sort((a, b) => a - b);
+    P.pause();
+    P.seekFrame(0);
+    await P.expectFrame(0, 'Home');
+    for (const dir of [1, -1]) {
+      const order = dir > 0 ? pics : [...pics].reverse();
+      for (let i = 1; i < order.length; i++) {
+        P.player.seekFrame(P.frame() + dir, false, dir);
+        await P.expectFrame(order[i], `step ${dir > 0 ? 'forward' : 'back'} from ${order[i - 1]}`, 5000);
+      }
+    }
+  }]),
   ['abloop/s_h264.mp4', 's_h264.mp4', J.abloop],
   ['abloop/s_mpeg2.mpg', 's_mpeg2.mpg', J.abloop],
   ['step-ms-rounded/h264_60fps.mkv', 'h264_60fps.mkv', (P) => J.msRounded(P, 60)],

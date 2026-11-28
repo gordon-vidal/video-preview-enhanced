@@ -1073,7 +1073,8 @@ function createEngine(env) {
             this.hold = fr;
             return;
           }
-          if (this.hold && at > want) this.insert(this.hold);
+          // A paused step forward (seekLand > 0) into a gap goes on to the next picture instead of keeping the last one.
+          if (this.hold && at > want && !(this.seekLand > 0 && !this.playing)) this.insert(this.hold);
           else {
             if (this.hold) this.keepBack(this.hold);
             // Paused, a picture past the target is the one to show (late in its slot, an exact frame time from the
@@ -2141,6 +2142,7 @@ function createEngine(env) {
       this.eof = false;
       this.requesting = true;
       this.seekTarget = this.vmode === 'none' ? null : t; // no picture: nothing would clear it
+      this.seekLand = 0;
       this.shownStale = true;
       this.seekBefore = null;
       this.seekStartMs = performance.now();
@@ -2555,13 +2557,19 @@ function createEngine(env) {
       this.worker.postMessage({ type: 'seek', gen: this.gen, t, fast: true });
     }
 
-    seekTime(rel, stepping = false, force = false) {
+    /** land: a paused frame step's direction (+1: a target in a gap lands on the next picture, not the one before). */
+    seekTime(rel, stepping = false, force = false, land = 0) {
       if (this.vmode === undefined) return; // keys before the decoder is ready
       if (this.meta.live) return; // a live stream plays from the live edge (Open Video URL…)
       if (!stepping) this.clearStepGoal();
       const dur = this.meta.duration || 0;
       const r = Math.max(0, dur ? Math.min(rel, dur - 0.5 / (this.fps || 30)) : rel);
-      const t = (this.startT || 0) + r;
+      let t = (this.startT || 0) + r;
+      if (land > 0 && !force && !this.playing) {
+        const want = this.frameAt(t);
+        const next = this.queue.find((x) => this.frameAt(x.t) >= want);
+        if (next && next.t > t) t = next.t;
+      }
       // Forward within what is already decoded: no seek needed.
       if (!force && this.queue.length && t >= this.queue[0].t - 1e-3 && t <= this.queue[this.queue.length - 1].t && (this.shownT === null || t >= this.shownT)) {
         while (this.queue.length > 1 && this.queue[1].t <= t + 1e-3) this.release(this.queue.shift());
@@ -2583,9 +2591,10 @@ function createEngine(env) {
         if (j >= 0 && this.stepBack(back.length - j, this.shownT) !== null) return;
       }
       this.seekAbs(t);
+      this.seekLand = land;
     }
     frameSeekTime(i) { return (Math.max(0, i) + 0.5) / this.frameNumberRate(); }
-    seekFrame(i, force = false) { this.seekTime(this.frameSeekTime(i), false, force); }
+    seekFrame(i, force = false, land = 0) { this.seekTime(this.frameSeekTime(i), false, force, land); }
     /** The requested step stays active until its picture shows or something else moves the player. */
     pendingStep() {
       const st = this.stepTo;

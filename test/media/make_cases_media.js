@@ -80,6 +80,8 @@ const JOBS = {
   'bars75_sd_untagged.mp4': ['-f', 'lavfi', '-i', 'pal75bars=size=640x360:rate=25:duration=1',
     '-vf', 'setparams=colorspace=unknown:color_primaries=unknown:color_trc=unknown', ...X264, '-crf', '12'],
   'gapped_30fps.mkv': [...pic(S, 3), '-vf', "select='not(eq(mod(n,5),2))'", '-fps_mode', 'passthrough', '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p'],
+  // Stepping: 30 fps with gaps of 2, 3 and 4 frames (frames 20-21, 45-47 and 70-73 missing).
+  'gapped_wide_30fps.mkv': [...pic(S, 3), '-vf', "select='not(between(n,20,21)+between(n,45,47)+between(n,70,73))'", '-fps_mode', 'passthrough', ...X264],
   // Sound.
   'truehd_51side.mkv': [...pic('320x180', 6), ...tone(6), '-filter_complex', '[1:a]aformat=channel_layouts=5.1(side)[a]', '-map', '0:v', '-map', '[a]',
     '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'truehd', '-strict', '-2'],

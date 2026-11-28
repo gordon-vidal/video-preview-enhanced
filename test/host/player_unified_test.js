@@ -758,6 +758,37 @@ test('frame steps while a paused seek decodes: one seek on its way, then the new
   }, { createPlayer: enginePlayer, raf: true });
 });
 
+test('single video, gapped timestamps: frame steps move to the next / previous actual picture, never stick', () => {
+  // A file with frames 20-21 missing. media/engine.js: a paused seek into the gap keeps the picture before it (the one
+  // on screen at that time) unless the seek says it steps forward (land > 0): then the next picture.
+  const pics = [...Array(20).keys(), ...Array.from({ length: 30 }, (_, i) => 22 + i)];
+  const gapped = (clip, host, hooks) => {
+    const p = enginePlayer(clip, host, hooks);
+    p.seekFrame = (f, force, land) => {
+      p.calls.push(['seek', f, land]);
+      p.seekTarget = land > 0 ? pics.find((x) => x >= f) : pics.filter((x) => x <= f).pop();
+      p.shownStale = true;
+      p.wait = p.settleTicks;
+      hooks.wake();
+    };
+    return p;
+  };
+  withPage(({ app, send, frames }) => {
+    send({ type: 'open' });
+    frames(5);
+    app.ui.dispatch('seek', 19);
+    frames(5);
+    const bar = () => S.getTab(app.ui.getState()).frame;
+    const seen = [];
+    for (const key of ['nextFrame', 'nextFrame', 'prevFrame', 'prevFrame', 'prevFrame']) {
+      app.ui.dispatch(key);
+      frames(5);
+      seen.push(bar());
+    }
+    assert.deepStrictEqual(seen, [22, 23, 22, 19, 18]);
+  }, { createPlayer: gapped, raf: true });
+});
+
 test('a seek held back while the opening seek lands: the landing does not move the bar back', () => {
   withPage(({ app, send, made, frames }) => {
     send({ type: 'open' });

@@ -1116,24 +1116,26 @@
     /**
      * Seek one decoder to its frame. A plain frame seek, never seekTime(t, stepping = true): that flag (media/engine.js
      * seekTime) keeps a frame step's goal alive, it does not mean "keep playing" (a playing decoder plays on anyway).
-     * @param {string} id @param {any} p @param {number} target
+     * `land` +1 / -1: a single video's paused move forward / back, which lands on the next / previous actual picture
+     * when the target falls in a gap of the timestamps (media/engine.js seekTime).
+     * @param {string} id @param {any} p @param {number} target @param {boolean} [now] @param {number} [land]
      */
-    function seekTo(id, p, target, now = false) {
+    function seekTo(id, p, target, now = false, land = 0) {
       endedAt.delete(id);
       sought.set(id, target);
       // A paused decoder still decoding toward its last target takes only the newest one, sent when that lands
       // (sendDeferred): each restart drops the frames decoded so far (engine seekAbs) and, native, starts another ffmpeg.
       if (!now && playingOf(p) === false && seekPending(p)) {
         const was = deferred.get(id);
-        deferred.set(id, { p, target, since: was && was.p === p ? was.since : Date.now() });
+        deferred.set(id, { p, target, land, since: was && was.p === p ? was.since : Date.now() });
         return;
       }
       deferred.delete(id);
-      if (typeof p.seekFrame === 'function') p.seekFrame(target);
-      else if (typeof p.seekTime === 'function' && typeof p.frameSeekTime === 'function') p.seekTime(p.frameSeekTime(target));
+      if (typeof p.seekFrame === 'function') p.seekFrame(target, false, land);
+      else if (typeof p.seekTime === 'function' && typeof p.frameSeekTime === 'function') p.seekTime(p.frameSeekTime(target), false, false, land);
     }
 
-    /** Per tile: the newest frame target held back while its paused decoder's seek is on its way (seekTo). @type {Map<string, { p: any, target: number, since: number }>} */
+    /** Per tile: the newest frame target held back while its paused decoder's seek is on its way (seekTo). @type {Map<string, { p: any, target: number, land: number, since: number }>} */
     const deferred = new Map();
     /** A seek still not landed after this long is taken over by the held target anyway (a seek that never lands). */
     const DEFER_MAX_MS = 8000;
@@ -1142,7 +1144,7 @@
       const at = Date.now();
       for (const [id, d] of [...deferred]) {
         if (players.get(id) !== d.p) deferred.delete(id);
-        else if (!seekPending(d.p) || playingOf(d.p) !== false || at - d.since > DEFER_MAX_MS) seekTo(id, d.p, d.target, true);
+        else if (!seekPending(d.p) || playingOf(d.p) !== false || at - d.since > DEFER_MAX_MS) seekTo(id, d.p, d.target, true, d.land);
       }
     }
 
@@ -1285,7 +1287,9 @@
           let movedNow = false;
           if (o.record) sought.set(id, target);
           else if (o.force || o.seek) {
-            if (target !== null && (o.force || before !== target)) { seekTo(id, p, target); movedNow = true; }
+            // A single video's paused step lands on the next / previous actual picture; Compare keeps frame numbers.
+            const land = t.tiles.length < 2 && !playing && typeof before === 'number' && target !== null ? Math.sign(target - before) : 0;
+            if (target !== null && (o.force || before !== target)) { seekTo(id, p, target, false, land); movedNow = true; }
             else sought.set(id, target); // outside its clip: noted, so coming back in seeks it
           }
           const is = playingOf(p);

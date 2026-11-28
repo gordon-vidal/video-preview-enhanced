@@ -108,7 +108,7 @@ test/media/make_cases_media.js [--force] [regex]` rebuilds them (kept when prese
 missing ones on demand). Groups: `s_*` (3 s step/seek clips, one per decoder path), `*_60fps.mkv` /
 `ntsc_2997.mkv`, `start3600*.mts`, `audio_longer*`, `sine_only.mkv`, `vp8_2s.webm`, `long_20s.mp4`,
 `rotated.mp4`, `damaged_h264*.mkv` (one slice overwritten with noise), `trunc*.{mp4,mkv}` (cut files),
-`bars75_709.mp4`, `gapped_30fps.mkv`, `truehd_51side.mkv`, `flac_71_centre.mkv`, `tracks_multi.mkv`,
+`bars75_709.mp4`, `gapped_30fps.mkv`, `gapped_wide_30fps.mkv`, `truehd_51side.mkv`, `flac_71_centre.mkv`, `tracks_multi.mkv`,
 `neigh/` (three 1 s clips), `cmp/` (compare metrics), `fmt/` (1 s clips of many codecs and containers),
 `bitmapsubs/` (PGS, DVD, DVB picture subtitles), `hdr/` (PQ / HLG test patches).
 
