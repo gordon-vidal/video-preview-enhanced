@@ -42,8 +42,12 @@ module.exports = [{
       const from = vs.mark();
       vs.send({ compareFiles: [a, b] });
       await vs.waitLog(/\[compare [^\]]*\] opened/, { from, timeout: 40000, what: 'compare opened' });
+      // The page's test hook takes commands once both tiles show: a seek sent before then is lost.
+      await vs.waitLog(/\[compare [^\]]*\] webview: first pictures shown/, { from, timeout: 40000, what: 'both tiles shown' });
+      let first = true; // frame 1's pair is measured as the page opens, before the first query's mark
       return async (k, { want = k + 1, timeout = 30000 } = {}) => {
-        const m0 = vs.mark();
+        const m0 = first ? from : vs.mark();
+        first = false;
         act({ action: 'seek', t: (k + 0.5) / 30 });
         const line = await vs.waitLog(new RegExp(`webview: metrics frameA=${k + 1} frameB=${want} `), { from: m0, timeout, what: `metrics at frame ${k + 1}` });
         const m = METRICS.exec(line);
