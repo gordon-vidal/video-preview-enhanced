@@ -27,7 +27,7 @@ Select up to **16 videos**, right-click and choose **Start Compare**, or click *
 
 ## Seek‑bar previews
 
-Hover over the seek bar to see the picture at that moment, and drag to scrub through the video live. Release and you land on the exact frame. A few seconds after a video opens, a low-priority background pass fills the bar with keyframe pictures (and, for short videos, pictures between keyframes too), pausing whenever playback needs the computer. Where no picture is ready yet, the nearest keyframe shows at once and, when the pointer rests, the exact moment if that is quick to decode. Previews never slow playback down.
+Hover over the seek bar to see the picture at that moment, and drag to scrub through the video live. Release and you land on the exact frame. A few seconds after a video opens, a low-priority background pass fills the bar with pictures (keyframes first, then a picture of its own for every place on the bar, on the GPU when FFmpeg is installed), pausing whenever playback needs the computer. Where no picture is ready yet, the nearest keyframe shows at once and, when the pointer rests, the exact moment if that is quick to decode. Previews never slow playback down.
 
 ![Hovering along the seek bar shows a live thumbnail preview and exact frame number](media/marketing/seek-preview.gif)
 
