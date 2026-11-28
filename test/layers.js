@@ -205,7 +205,10 @@ const DEFAULT_TIMEOUT = 60000; // a file with no recorded runs yet
 const DEFAULT_STALL = 30000; // longest silence (no output) before a file counts as hung
 const limits = (f) => ({ timeout: TIMEOUTS[f] || DEFAULT_TIMEOUT, stall: STALLS[f] || DEFAULT_STALL });
 
+const simDir = path.join(__dirname, 'sim');
+const simTests = fs.existsSync(simDir) ? fs.readdirSync(simDir).filter((f) => f.endsWith('_test.js')).sort() : [];
 const unit = [
+  ...simTests.map((f) => ({ file: rel('test/sim', f) })),
   ...hostTests.map((f) => ({ file: rel('test/host', f), args: HOST_ARGS[f], media: HOST_MEDIA[f], needs: HOST_NEEDS[f] })),
   { file: 'test/engine/unit.js', sources: ['media/engine.js', 'media/codec-utils.js', 'media/decoder-boot.js', 'media/block-cache.js', 'media/gl-renderer.js', 'media/pool.js', 'media/timestretch.js', 'media/membudget.js', 'media/decoder-worker.js'] },
   { file: 'test/inspect/inspect_test.js', sources: ['media/inspect.js'] },
