@@ -1060,18 +1060,27 @@ function createEngine(env) {
           this.seekTarget = null;
           this.seekBefore = null;
         } else {
-          // Seek targets sit mid-frame; anything starting 3/4 of a frame earlier is a previous frame.
+          // Seek targets sit mid-frame; playing, anything starting 3/4 of a frame earlier is a previous frame. Paused,
+          // the picture to land on is the one currentFrame() numbers as the target's frame: after a gap in the
+          // timestamps (clips joined together) pictures start late in their slots, and one 3/4 of a frame before the
+          // target is the previous frame's, so a step forward would show the same picture again.
           const f = 1 / (this.fps || 30);
-          if (fr.t < this.seekTarget - 0.75 * f) {
+          const want = this.playing ? 0 : this.frameAt(this.seekTarget);
+          const at = this.playing ? (fr.t < this.seekTarget - 0.75 * f ? -1 : fr.t > this.seekTarget + 0.25 * f ? 1 : 0)
+            : this.frameAt(fr.t);
+          if (at < want) {
             if (this.hold) this.keepBack(this.hold);
             this.hold = fr;
             return;
           }
-          if (this.hold && fr.t > this.seekTarget + 0.25 * f) this.insert(this.hold); else if (this.hold) this.keepBack(this.hold);
-          // The first frame decoded is past the target and nothing earlier came (an exact frame time from the host whose
-          // source frame sits a little later, a gap in a variable rate): paused, it is the picture to show, so the clock
-          // moves to it. Held at the target, tick would never draw a frame more than a quarter frame ahead of it.
-          else if (!this.playing && fr.t > this.seekTarget + 0.25 * f) this.pauseT = fr.t;
+          if (this.hold && at > want) this.insert(this.hold);
+          else {
+            if (this.hold) this.keepBack(this.hold);
+            // Paused, a picture past the target is the one to show (late in its slot, an exact frame time from the
+            // host whose source frame sits a little later, a gap in a variable rate), so the clock moves to it: held
+            // at the target, tick would never draw a frame more than a quarter frame ahead of it.
+            if (!this.playing && fr.t > this.seekTarget + 0.25 * f) this.pauseT = fr.t;
+          }
           this.hold = null;
           this.seekTarget = null;
         }

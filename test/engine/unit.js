@@ -124,6 +124,27 @@ test('shown frame numbers tolerate rounded PTS without advancing for snapped rat
   assert.strictEqual(player({ shownT: 12 / 30, info: { video: { fps: 600 } } }).currentFrame(), 12);
 });
 
+test('a paused seek to frame i shows the picture numbered i, also when pictures sit late in their slots', () => {
+  // A file joined from clips (or with a gap): after the gap every picture starts 0.88 of a frame into its slot.
+  ctx.perfNow = 0;
+  const slot = (k) => (k + 0.88) / 30;
+  const p = player({ shownT: slot(98), pauseT: slot(98) });
+  P.anchor.call(p, slot(98));
+  assert.strictEqual(p.currentFrame(), 98);
+  P.seekFrame.call(p, 99, true);
+  for (const k of [97, 98, 99, 100]) P.addFrame.call(p, frame(slot(k)));
+  assert.strictEqual(p.seekTarget, null);
+  P.tick.call(p);
+  assert.strictEqual(p.currentFrame(), 99, 'a step forward moves to the next picture');
+  // Pictures on their slots are unchanged: frame i is the picture at i / fps.
+  const q = player({ shownT: 10 / 30, pauseT: 10 / 30 });
+  P.anchor.call(q, 10 / 30);
+  P.seekFrame.call(q, 11, true);
+  for (const k of [9, 10, 11, 12]) P.addFrame.call(q, frame(k / 30));
+  P.tick.call(q);
+  assert.strictEqual(q.currentFrame(), 11);
+});
+
 test('#5 ms-rounded audio chunks are placed back to back', () => {
   const p = player({ ac: fakeAc() });
   const n = 1024;
