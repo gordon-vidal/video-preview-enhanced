@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Frame steps in joined or gapped videos:** in a file whose timestamps jump (clips joined together, a recording with a gap), stepping forward while paused showed the same picture again and stopped there. It now moves to the next picture.
+- **Compare with 5 to 16 videos:** tiles beyond the fourth share one WebGL context again, so a 16-video Compare no longer reaches the webview's limit of 16, where a tile could go black; with native ffmpeg, the 7th and later tiles get their frames over WebSockets again instead of waiting 3 s and falling back to a slower path.
+
 ## 0.13.1 (2026-11-28)
 
 Seek-bar previews for every video: the whole bar fills with a picture of each moment in the background, using the GPU where it can (native ffmpeg, and a hardware decoder of its own for H.264 and VP8), without slowing playback. Also: frame steps backwards no longer restart on every key repeat, playback that stops early is no longer treated as the end, and a smoother FFmpeg setup when ffmpeg is already installed.
