@@ -90,9 +90,19 @@ async function viewerContract() {
         clipId: urlClip.id, key: urlClip.id, quality: { pick: 'auto', current: 0,
           variants: variants.map((v, id) => ({ ...v, id })) } });
 
+      await send({ type: 'ready' });
+      await send({ type: 'nd', m: { type: 'open' } });
+      assert.equal(callbacks.length, 2, 'a new page document opens a new decoder for the same clip');
+      const start = posts.length;
+      const oldFrame = { type: 'ndv', gen: 0, t: 0, w: 2, h: 2, ys: 4, data: new Uint8Array(6) };
+      const newFrame = { ...oldFrame, data: new Uint8Array(6).fill(1) };
+      callbacks[0].postRaw(oldFrame);
+      callbacks[1].postRaw(newFrame);
+      assert.deepEqual(posts.slice(start), [{ ...newFrame, ...route }]);
+
       await viewer.session.removeClip(clip.id);
       const after = posts.length;
-      callbacks[0].postRaw({ type: 'ndv', gen: 7, data: Uint8Array.of(1) });
+      callbacks[1].postRaw(newFrame);
       assert.equal(posts.length, after, 'a removed decoder cannot send to the remaining tile');
     } finally {
       exact.dispose();
