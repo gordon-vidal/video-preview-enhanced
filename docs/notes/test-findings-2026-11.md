@@ -38,7 +38,7 @@ Layer 3 grew from 225 checks in 21 scenarios (2026-11-20) to 301 in 34. In the 1
 | T5 | Tests decide by log text: 26 case files read `vs.lines` / `waitLog`. A changed message breaks the test; a broken product with the old message passes. | e.g. multiview-native "decisions: none" (log line came 0.8 s later than read). | plan (probe state only) |
 | T6 | Not hermetic: layer 3 shares the desktop with other work and agents; ffmpeg on PATH changes (9.0.2 now); clips in the temp folder. Two failures on 2026-11-28 came from parallel unit tests. | | plan (pinned LGPL ffmpeg, fixed media folder, load guard via test/loadmon.js) |
 | T7 | One check cannot run alone: `--grep` selects whole scenarios and runs all steps (test/vscode/scenarios.js:212); `--sub` only hides results. docs/TESTING.md and AGENTS.md promise otherwise. | Rerunning compare/offset-3 ran 35 checks. | plan (S0) — docs stale until then |
-| T8 | Flaky tests are not tracked: TESTING.md lists one quarantined test while time/formats and compare offset-3 flipped for days. The history to detect flakes exists (test/vscode/out/scenarios-*.json, field `tests`) but nothing reads it. | | plan (S0) |
+| T8 | Flaky tests are not tracked: TESTING.md lists one quarantined test while time/formats and compare offset-3 flipped for days. The history to detect flakes exists (test/vscode/out/scenarios-*.json, field `tests`) but the old runner did not read it. | | implemented in S0 |
 | T9 | Parallel layer 3 loses WebGL2 (decided serial 2026-11-21), so runs are slow, so they are run less. | | plan (thin layer 3 meets 10 min serially) |
 | T10 | High churn: 165 of 726 commits in two weeks touched layer-3 test code. | git log since 2026-11-14 | plan |
 | T11 | Layer-2 step and A-B tests drive paths production does not use: the harness calls the engine's own `stepFrame` (test/engine/harness.js:195); A-B wrap is a test-local driver (test/engine/journeys.js:91-121) while production wraps in media/player-ui.js. | Second-opinion review of the plan. | plan (S1) |
@@ -97,4 +97,3 @@ scrub-back regression it found in its own change) is recorded in CHANGELOG 0.13.
 - `seek_preview` `wasm/refine` timed out once; not reproduced.
 - Layer 4 was not run for 0.13.1.
 - Files read by the WASM worker over Remote-SSH get no background preview pass (bandwidth), by design.
-- docs/TESTING.md "re-run only that case (`--grep "^scenario/case$"`)" is not true until the runner change (T7).

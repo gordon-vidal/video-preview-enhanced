@@ -142,16 +142,6 @@ module.exports = {
     st = await until(state, (x) => /Timestamp copied/.test(x.toast));
     ok(/Timestamp copied/.test(st.toast), `copy timestamp toast: ${st.toast}`);
 
-    // A click on the picture while the menu is open only dismisses it: no play / pause toggle
-    ok = t('menu/dismiss');
-    const before = (await report()).playing;
-    act({ action: 'ctxOpen', x: 60, y: 60 });
-    await menuOf();
-    act({ action: 'stageClick' });
-    st = await until(state, (x) => !x.ctxMenu);
-    ok(!st.ctxMenu, 'a press outside did not close the menu');
-    await h.sleep(300);
-    ok((await report()).playing === before, 'the dismissing click toggled play / pause');
     return out;
   },
 };

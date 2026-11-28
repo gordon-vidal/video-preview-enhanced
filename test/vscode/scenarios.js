@@ -2,15 +2,12 @@
 'use strict';
 // Layer 3 (docs/TESTING.md): user scenarios in real VS Code on hidden desktops, correctness only.
 //
-//   node test/vscode/scenarios.js [--grep re] [--parallel N] [--list] [--keep] [--json file]
-//                                 [--smoke] [--changed-files <json array>] [--explain]
-//                                 (node test/run.js vscode [--smoke] [--changed])
+// See test/vscode/README.md for the command-line options and selection rules.
 //
 // A scenario (test/vscode/scenario_list.js) is one VS Code instance that runs several cases from
-// test/vscode/cases one after another: before each, the test hook (src/extension.js, VPE_LOG only) sets
+// test/vscode/cases one after another: before each, the test hook (src/debug-cmd.js, VPE_LOG only) sets
 // that case's settings and environment, clears the stored state (as a fresh profile) and closes all
-// editors. Results are named <scenario>/<case>/<result>. Cases run only the results the scenario keeps
-// (the others moved to layers 2 and 4: docs/notes/test-inventory.md).
+// editors. Results are named <scenario>/<case>/<result>.
 //
 // --parallel N   instances at once (default 1; see docs/TESTING.md for the measured result), each with
 //                its own profile and hidden desktop
@@ -24,9 +21,13 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 const H = require('./hidden');
 const lib = require('./lib');
 const T = require('./timing');
+const { selectScenarios, collectResults, rerunTargets, unstartedScenarios } = require('./selection');
+const { readHistory, rates, printReport } = require('../../tools/l3-flakes');
+const loadmon = require('../loadmon');
 const { BUDGETS, DEFAULT: DEFAULT_BUDGET } = require('./budgets');
 const TIMEOUT_RE = /TIMEOUT after|did not finish within/;
 
@@ -105,11 +106,15 @@ async function runScenario(sc, ctx, attempt = 1, carry = { t0: Date.now(), retry
       phase('resetMs');
       const c = cases[step.case];
       const base = `${sc.name}/${step.case}`;
-      if (!c) { add({ name: base, ok: false, problems: [`no case named ${step.case}`] }); continue; }
-      const useFf = step.ffmpeg !== undefined ? step.ffmpeg : !!c.ffmpeg;
-      if (useFf && !ff) { add({ name: base, ok: true, skipped: 'no ffmpeg', problems: [] }); continue; }
       const ts = Date.now();
       try {
+        if (!c) throw new Error(`no case named ${step.case}`);
+        const useFf = step.ffmpeg !== undefined ? step.ffmpeg : !!c.ffmpeg;
+        if (useFf && !ff) {
+          const skipped = [{ ok: true, skipped: 'no ffmpeg', problems: [] }];
+          for (const result of collectResults(base, skipped, () => true, step.expected)) add(result);
+          continue;
+        }
         vs.send({ command: 'workbench.action.closeAllEditors' });
         await sleep(500);
         // Settings: the case's and the step's; what the last step set and this one doesn't goes back to the default.
@@ -127,9 +132,9 @@ async function runScenario(sc, ctx, attempt = 1, carry = { t0: Date.now(), retry
         envApplied = env;
         if (step.keepState !== true) await hook(vs, { resetState: true });
         await sleep(300);
-        const keep = step.only ? new RegExp(step.only) : null;
-        const drop = step.skip ? new RegExp(step.skip) : null;
-        lib.setFilter((n) => (!keep || keep.test(n)) && (!drop || !drop.test(n)));
+        const keep = step.only && new RegExp(step.only);
+        const drop = step.skip && new RegExp(step.skip);
+        const selected = step.selected || ((n) => (!keep || keep.test(n)) && (!drop || !drop.test(n)));
         // Per-case timing (test/vscode/timing.js): the case's own run, not the reset above; no effect on its results.
         meter = T.caseMeter();
         vs.meter = meter;
@@ -140,16 +145,16 @@ async function runScenario(sc, ctx, attempt = 1, carry = { t0: Date.now(), retry
         const h = { MEDIA: H.MEDIA, sleep: timedSleep, fwd, esc: lib.esc, openClip, closeClip, playClip: ctx.playClip, seconds: ctx.perf ? 5 : 2, quick: !ctx.perf, ffmpeg: ff, scenario: ctx.perf ? undefined : sc.name };
         const gl = brokenGl(vs);
         phase('execMs');
-        const rs = await withTimeout(Promise.race([c.run(vs, h), gl.promise]).finally(gl.stop), step.timeout || 15 * 60e3, `${base} did not finish`);
-        for (const r of rs) {
-          const name = r.name ? `${base}/${r.name}` : base;
-          if ((keep || drop) && r.name && !((!keep || keep.test(r.name)) && (!drop || !drop.test(r.name)))) continue; // moved to another layer
-          add({ ...r, name, ...(attempt > 1 ? { retried: 'the first instance had no WebGL2 (GPU process)' } : {}) });
+        const run = lib.withSelection(selected, () => c.run(vs, h));
+        const rs = await withTimeout(Promise.race([run, gl.promise]).finally(gl.stop), step.timeout || 15 * 60e3, `${base} did not finish`);
+        for (const result of collectResults(base, rs, selected, step.expected)) {
+          add({ ...result, ...(attempt > 1 ? { retried: 'the first instance had no WebGL2 (GPU process)' } : {}) });
         }
       } catch (e) {
-        add({ name: base, ok: false, problems: [e && e.message || String(e)] });
+        const failed = [{ ok: false, abort: true, problems: [e && e.message || String(e)] }];
+        for (const result of collectResults(base, failed, () => true, step.expected)) add(result);
       } finally {
-        lib.setFilter(null); phase('resetMs');
+        phase('resetMs');
         if (meter) { vs.meter = null; caseRecs.push(meter.finish(base, { attempts: attempt })); meter = null; }
       }
       if (vs.lines.some((l) => H.NO_WEBGL.test(l))) { noGl = true; break; }
@@ -209,7 +214,18 @@ async function main() {
   const list = require('./scenario_list');
   const cases = loadCases();
   const grep = opt('--grep') ? new RegExp(opt('--grep')) : null;
-  let todo = list.filter((s) => !grep || grep.test(s.name) || s.steps.some((st) => grep.test(`${s.name}/${st.case}`)));
+  const sub = opt('--sub') ? new RegExp(opt('--sub')) : null;
+  const history = readHistory(H.OUT);
+  const nightly = flag('--nightly');
+  if (nightly && (grep || sub || flag('--rerun-failed') || flag('--smoke') || opt('--changed-files'))) {
+    throw new Error('--nightly runs all layer-3 checks; remove selection options');
+  }
+  let failedNames;
+  if (flag('--rerun-failed')) {
+    if (!history.length) throw new Error('No saved layer-3 run to rerun');
+    failedNames = rerunTargets(history[0]);
+  }
+  let todo = selectScenarios(list, grep, sub, failedNames);
   const wantSmoke = flag('--smoke');
   const changedArg = opt('--changed-files');
   if (wantSmoke || changedArg) {
@@ -232,28 +248,32 @@ async function main() {
     if (flag('--explain')) return 0;
   }
   if (flag('--list')) { for (const s of todo) console.log(`${s.name.padEnd(22)} ${s.steps.map((x) => x.case).join(', ')}`); return 0; }
+  if (!todo.length) { console.log('layer vscode: no checks selected'); return 0; }
   if (process.platform !== 'win32') { console.error('layer 3 runs on Windows only (hidden desktops)'); return 2; }
   const code = H.findCode();
   const ff = H.findFfmpeg();
-  const parallel = Math.max(1, Number(opt('--parallel', process.env.VPE_PARALLEL || 1)));
+  const parallel = nightly ? 1 : Number(opt('--parallel', process.env.VPE_PARALLEL || 1));
+  if (!Number.isSafeInteger(parallel) || parallel < 1) throw new Error('--parallel must be a positive integer');
   const { playClip } = require('./suite');
   const ctx = { code, ff, cases, playClip };
   fs.mkdirSync(H.OUT, { recursive: true });
-  // Clips the cases make with ffmpeg: once, before instances run in parallel.
-  try { require('../media/make_cases_media').ensure(); } catch { /* each case makes what it needs */ }
   // Longest first by the last run, so a long one doesn't start last.
   const last = lastTimes();
   todo.sort((a, b) => (last[b.name] || 120000) - (last[a.name] || 120000));
   const t0 = Date.now();
-  let lm = null; try { lm = require('../loadmon'); } catch { /* none */ }
-  const loadBefore = lm ? await lm.sample(2).catch(() => null) : null;
-  console.log(`layer vscode: ${todo.length} scenarios, ${parallel} instance${parallel > 1 ? 's' : ''} at a time${loadBefore ? `; CPU load of other processes ${Math.round(loadBefore.load)} %` : ''}`);
+  console.log(`layer vscode: ${todo.length} scenarios, ${parallel} instance${parallel > 1 ? 's' : ''} at a time`);
   const out = [];
   let next = 0;
+  let refusal;
+  let loadBefore;
   await Promise.all(Array.from({ length: Math.min(parallel, todo.length) }, async (_, w) => {
     if (w) await sleep(w * 4000); // staggered starts
-    while (next < todo.length) {
+    while (!refusal && next < todo.length) {
       const sc = todo[next++];
+      const load = await scenarioLoad(sc.name);
+      if (load.error) { refusal = load.error; break; }
+      if (refusal) break;
+      loadBefore ??= load.load;
       console.log(`--- ${sc.name} (${sc.steps.map((x) => x.case).join(', ')})`);
       const r = await runScenario(sc, ctx);
       console.log(`--- ${sc.name}: ${r.results.filter((x) => !x.ok).length} failed of ${r.results.length}, ${(r.ms / 1000).toFixed(0)} s${r.attempts > 1 ? ' (second instance: the first had no WebGL2)' : ''}`);
@@ -263,15 +283,23 @@ async function main() {
   const all = out.flatMap((s) => s.results);
   const failed = all.filter((r) => !r.ok);
   const caseTimings = out.flatMap((s) => s.cases || []);
+  const ffVersion = ff && spawnSync(ff, ['-version'], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
   const res = {
     started: new Date(t0).toISOString(), seconds: Math.round((Date.now() - t0) / 1000), parallel, code: code.exe, host: os.hostname(), cpus: os.cpus().length,
-    loadBefore: loadBefore && Math.round(loadBefore.load), noWebGl: out.filter((s) => s.attempts > 1 || s.noGl).map((s) => s.name),
+    ffmpegVersion: (ffVersion && ffVersion.stdout || '').split(/\r?\n/, 1)[0] || null,
+    loadBefore: loadBefore ?? null, refusal, unstarted: unstartedScenarios(todo, out),
+    noWebGl: out.filter((s) => s.attempts > 1 || s.noGl).map((s) => s.name),
     phases: T.summarize(out).total,
     scenarios: out.map((s) => ({ name: s.name, ms: s.ms, attempts: s.attempts, ...pickTiming(s), failed: s.results.filter((x) => !x.ok).length, timeouts: s.results.filter((x) => x.timeout).length, results: s.results.length })),
     cases: caseTimings, // per case: ms, openMs, waitMs, sleepMs, retries, clips
     clips: T.clipTotals(caseTimings), // per clip file over all cases
     tests: all,
   };
+  const recent = rates([res, ...history], 10);
+  for (const r of failed) {
+    const count = recent.get(r.name);
+    if (count.failed >= 2) r.flaky = `flaky (${count.failed}/${count.total} recent runs)`;
+  }
   const file = opt('--json') || path.join(H.OUT, `scenarios-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
   fs.writeFileSync(file, JSON.stringify(res, null, 1));
   console.log('\nscenario               s    results  failed');
@@ -279,10 +307,26 @@ async function main() {
   console.log(`
 ${T.summaryLine(out, Date.now() - t0)}`);
   for (const l of T.topLines(caseTimings, 10)) console.log(l);
-  for (const r of failed) console.log(`${r.timeout ? 'TIMEOUT' : 'FAIL'} ${r.name}: ${(r.problems || []).join('; ')}`);
+  for (const r of failed) console.log(`${r.timeout ? 'TIMEOUT' : 'FAIL'} ${r.name}${r.flaky ? ` [${r.flaky}]` : ''}: ${(r.problems || []).join('; ')}`);
   const hung = failed.filter((r) => r.timeout);
   console.log(`\nlayer vscode: ${all.length - failed.length} passed, ${failed.length} failed${hung.length ? ` (${hung.length} TIMEOUT)` : ''} of ${all.length} in ${out.length} scenarios, ${res.seconds} s wall, ${parallel} at a time${res.noWebGl.length ? `; instances without WebGL2: ${res.noWebGl.join(', ')}` : ''}; ${file}`);
-  return failed.length ? 1 : 0;
+  if (nightly) printReport([res, ...history]);
+  if (refusal) console.error(refusal);
+  return failed.length || refusal ? 1 : 0;
+}
+
+async function scenarioLoad(name) {
+  const started = Date.now();
+  let sample = await loadmon.sample(1);
+  if (flag('--force') || sample.load <= loadmon.NOISY) return sample;
+  console.log(`${name}: waiting for CPU load to drop below ${loadmon.NOISY}% (${sample.load}% now)`);
+  while (sample.load > loadmon.NOISY && Date.now() - started < 300000) {
+    await sleep(1000);
+    sample = await loadmon.sample(1);
+  }
+  if (sample.load <= loadmon.NOISY) return sample;
+  const top = loadmon.topProcesses().map(({ name, pct }) => `${name} (${pct}% of one core)`).join(', ');
+  return { ...sample, error: `${name}: CPU load still ${sample.load}% after 5 min; busiest: ${top || 'unavailable'}. Use --force to override.` };
 }
 
 /** The phase timings of a scenario record, for the JSON. */

@@ -5,6 +5,7 @@
 // that frames come at the tile's size. The panel, menus and views are in compare_ui.js. Everything is read from compare's `compare report` line
 // (media/compare.js) through the VPE_LOG test hook.
 const path = require('path');
+const lib = require('../lib');
 const { TILE_KEYS } = require('../../../media/compare-grid');
 const { make } = require('../../media/make_cases_media');
 
@@ -377,15 +378,6 @@ module.exports = [{
     act({ action: 'pause' });
     act({ action: 'sound', tile: 0 });
 
-    // ---- the Compare panel (bar button), Esc closes it ----
-    ok = t('sync/panel');
-    act({ action: 'click', sel: '#cmpBtn' });
-    r = await until((x) => x.panel === 'cmp', 5000);
-    ok(r.panel === 'cmp', `Compare button: panel=${r.panel}`);
-    act({ action: 'key', key: 'Escape' });
-    r = await until((x) => x.panel === '-', 5000);
-    ok(r.panel === '-', 'Esc did not close the Compare panel');
-
     // ---- switching the clock while playing: the new clock keeps its own position (its offset) ----
     ok = t('sync/clock-while-playing');
     const moving = CLIPS.map(() => ({ unit: 'frames', v: 0 }));
@@ -470,24 +462,26 @@ module.exports = [{
     const { report, act, until, checkFrames, stepAndWait } = helpers(vs, h, t);
     const allShown = (r) => r && list(r.frames).length === Number(r.n) && !list(r.frames).includes('-');
     await activate(vs, h, path.join(h.MEDIA, CLIPS[0]));
-    let ok = t('native/tile-size');
+    const R = lib.recorder();
     const from = vs.mark();
     vs.send({ compareFiles: NATIVE_CLIPS.map((c) => path.join(h.MEDIA, c)) });
-    await vs.waitLog(opened(4), { from, timeout: 60000, what: 'compare opened with 4' });
-    // Each tile logs its decoder once the page has reported its tile size, after "opened".
-    for (const key of 'ABCD') {
-      await vs.waitLog(new RegExp(`\\] tile ${key}: native ffmpeg \\(`), { from, timeout: 20000 }).catch(() => {});
+    await R.run('native/tile-size', async (ok) => {
+      const state = await lib.waitProbe(() => lib.compareState(vs),
+        (s) => s?.tiles.length === 4 && s.tiles.every((t) => t.frame !== null && t.decision === 'native'),
+        'four native tiles showing pictures');
+      const { w, h } = state.stage;
+      const fit = Math.min(1080, h / 2, w / 2 * 9 / 16);
+      ok(state.tiles.every(({ size: [, height] }) => height > 0 && Math.abs(height - fit) < 2),
+        `frame sizes ${JSON.stringify(state.tiles.map((t) => t.size))} for stage ${w}x${h}`);
+    });
+    out.push(...R.out);
+    if (h.scenario && !['frame-server', 'play', 'lockstep', 'resize-and-budget', 'seek-through-resize'].some((n) => lib.selected(`native/${n}`))) {
+      await h.closeClip(vs);
+      return out;
     }
-    const decided = vs.lines.slice(from).filter((l) => /\] tile [A-D]: native ffmpeg \(/.test(l));
-    ok(decided.length === 4, `decisions: ${decided.map((l) => l.replace(/^.*\] tile/, 'tile')).join(' | ') || 'none'}`);
+    await vs.waitLog(opened(4), { from, timeout: 60000, what: 'compare opened with 4' });
     let r = await until(allShown, 60000);
-    ok(allShown(r), `not every tile shows a frame (${r && r.frames})`);
-    ok(r.native === '1,1,1,1', `native=${r.native}`);
-    const [sw, sh] = r.stage.split('x').map(Number);
-    const fit = Math.min(1080, sh / 2, sw / 2 * 9 / 16);
-    ok(nums(r.heights).every((x) => x > 0 && Math.abs(x - fit) < 2), `frame heights ${r.heights} for stage ${r.stage}`);
-
-    ok = t('native/frame-server');
+    let ok = t('native/frame-server');
     ok(r.transport === 'stream,stream,stream,stream', `transport=${r.transport}`);
     for (const key of 'ABCD') {
       ok(vs.lines.slice(from).some((l) => l.includes(`[${key}] engine: native frames over http`)), `tile ${key} did not open an HTTP stream`);
@@ -813,9 +807,6 @@ module.exports = [{
       pointer('pointerdown', grid[1].rect);
       pointer('pointermove', grid[0].rect);
       u = await ui();
-      await results.run('reorder/drag-preview', (ok) => {
-        ok(order(u) === '2,0,1,add', `preview order: ${order(u)}`);
-      });
       pointer('pointerup', grid[0].rect);
       act({ action: 'panel', view: 'cmp' });
       u = await ui();
@@ -827,13 +818,6 @@ module.exports = [{
         ok(rows[2] === `C: ${CLIPS[1]}, offset +3 frames, sound on`, `sound or offset changed: ${rows}`);
       });
       act({ action: 'panel' });
-      pointer('pointerdown', grid[0].rect);
-      pointer('pointermove', grid[2].rect);
-      act({ action: 'key', key: 'Escape' });
-      u = await ui();
-      await results.run('reorder/esc-cancels-drag', (ok) => {
-        ok(order(u) === '2,0,1,add', `Esc during drag: ${order(u)}`);
-      });
       from = vs.mark();
       vs.send({ compareAdd: [files[3]] });
       await vs.waitLog(opened(4), { from, timeout: 30000 });

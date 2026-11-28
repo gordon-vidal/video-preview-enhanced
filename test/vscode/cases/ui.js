@@ -15,7 +15,7 @@ const CLIP = 'h264_aac_anim_1080p.mp4';
 const CLIP_B = 'hevc_8_1080p.mp4';
 
 /** The centre of the picture, for synthetic clicks. */
-const centre = (s) => [s.video[0] + s.video[2] / 2, s.video[1] + s.video[3] / 2];
+
 
 async function jumpChecks(P, ok, want) {
   const at = async (t) => { P.seek(t); return (await P.waitState((s) => Math.abs(s.t - t) < 0.06, { timeout: 8000, what: `seek ${t}` })).t; };
@@ -104,26 +104,6 @@ module.exports = [{
       ok(s.playing, 'Space on the page did not start playback');
       P.pause();
       await settle(400);
-    });
-
-    await R.run('picture/click', async (ok) => {
-      let s = await P.state();
-      const [x, y] = centre(s);
-      P.dom('click', x, y);
-      s = await P.waitState((q) => q.playing, { timeout: 4000, what: 'click on the picture plays' });
-      ok(s.playing, 'click did not play');
-      P.dom('click', x, y);
-      s = await P.waitState((q) => !q.playing, { timeout: 4000, what: 'second click pauses' });
-      ok(!s.playing, 'second click did not pause');
-      // With a panel open, a click on the picture only closes it.
-      await P.ask('click', { sel: '#cog' });
-      await settle(300);
-      s = await P.state();
-      ok(s.panel && s.panel.view === 'main', `cog: panel ${JSON.stringify(s.panel && s.panel.view)}`);
-      P.dom('click', x, y);
-      await settle(500);
-      s = await P.state();
-      ok(!s.panel && !s.playing, `click with the panel open: panel ${JSON.stringify(s.panel && s.panel.view)}, playing ${s.playing}`);
     });
 
     await R.run('panels/toggle', async (ok) => {

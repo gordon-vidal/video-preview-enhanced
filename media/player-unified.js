@@ -669,6 +669,7 @@
     let pendingResumeSec = !cfg.goto ? resumeSecOf(cfg.savedPos) : null;
     /** Pending { frame, playing } to restore after restartPlayer (e.g. HLS quality switch) once the new decoder opens. @type {Map<string, { frame: number, playing: boolean }>} */
     const pendingRestore = new Map();
+    const debugRestored = new Map();
     /** Autoplay on open (setting videoPreviewEnhanced.autoplay, or Autoplay "Play next in folder"): start playing once firstShown. */
     let pendingAutoPlay = !cfg.goto && (!!cfg.fromAutoNext || !!(cfg.prefs && cfg.prefs.autoplay));
     let lastPosAt = 0;
@@ -753,6 +754,7 @@
     function disposePlayer(id) {
       const p = players.get(id);
       players.delete(id);
+      if (cfg.debug) debugRestored.delete(id);
       const ex = exacts.get(id);
       if (ex) { exacts.delete(id); try { ex.invalidate(); } catch { /* nothing pending */ } }
       // The cues were this decoder's reads (picture cues carry its worker's gen): a new decoder reads them again.
@@ -982,6 +984,7 @@
         if (pendingRestore.has(id) && shownNow) {
           const r = /** @type {{ frame: number, playing: boolean }} */ (pendingRestore.get(id));
           pendingRestore.delete(id);
+          if (cfg.debug) debugRestored.set(id, r);
           sought.delete(id);
           endedAt.delete(id);
           const cur = S.getTab(ui.getState());
@@ -2699,7 +2702,16 @@
           getToolCount: () => (tabNow().tiles.length >= 2 ? 4 : 5),
           getState: () => {
             const pr = prefsNow() || {};
+            const id = clockIdOf(tabNow());
+            const p = clockPlayer();
+            const exact = exactHost.of(p);
             return {
+              playback: {
+                decision: p?.cfg?.native ? 'native' : p?.vmode || null,
+                restored: debugRestored.get(id) || null,
+                exactSize: exact ? [exact.w, exact.h] : null,
+                nativeDepth: p?.nativeColour?.depth || null,
+              },
               prefs: pr, volume: Number(pr.volume) || 0, muted: !!pr.muted, loop: loopPref(pr), onEnd: pr.onEnd,
               rail: ux().rail && typeof ux().rail.snapshot === 'function' ? ux().rail.snapshot() : null,
               streamQ: streams.get(clockIdOf(tabNow())) || null, loopStats: { ...loopStats },

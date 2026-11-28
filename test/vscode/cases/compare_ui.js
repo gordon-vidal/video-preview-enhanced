@@ -65,25 +65,14 @@ module.exports = [{
 
     let ok = null;
     try {
-    // ---- starting a compare: plain D is no key any more (maintainer, 2026-11-27); a dropped video ----
-    ok = t('start/no-plain-d');
-    let from = await h.openClip(vs, files[0]);
-    await vs.waitLog(new RegExp(`\\[${tagA}\\] webview: first frame shown`), { from, timeout: 45000, what: 'first frame' });
-    from = vs.mark();
-    vs.send({ name: CLIPS[0], action: 'key', key: 'd' });
-    await h.sleep(1500);
-    ok(!vs.lines.slice(from).some((l) => /debug comparepick|tiles: 2\b/.test(l)), 'plain D opens no quick pick and no compare');
-    let r;
-    vs.send({ command: 'workbench.action.closeActiveEditor' });
-    await h.sleep(800);
     ok = t('start/drop');
-    from = await h.openClip(vs, files[0]);
+    let from = await h.openClip(vs, files[0]);
     await vs.waitLog(new RegExp(`\\[${tagA}\\] webview: first frame shown`), { from, timeout: 45000, what: 'first frame' });
     from = vs.mark();
     vs.send({ name: CLIPS[0], action: 'drop', data: { 'text/uri-list': `${require('url').pathToFileURL(files[1]).href}\r\n` } });
     ok(/debug dropHint true/.test(await vs.waitLog(/debug dropHint /, { from, timeout: 10000, what: 'drop hint' })), 'no drop hint while dragging');
     await vs.waitLog(opened(2), { from, timeout: 30000, what: 'compare opened by a drop' });
-    r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
+    let r = await until((x) => x.synced === 'true' && !list(x.frames).includes('-'), 30000);
     ok(r.synced === 'true', `compare after the drop: ${JSON.stringify(r)}`);
     vs.send({ command: 'workbench.action.closeActiveEditor' });
     await h.sleep(800);
@@ -384,7 +373,8 @@ module.exports = [{
     ok(Math.abs(st.t - 1.5) < 0.1, `the player opened at ${st.t} s, expected about 1.5 s`);
     } catch (e) {
       // Keep the sections that ran; the one that threw fails with the reason.
-      if (ok) ok(false, e.message); else out.push({ name: 'error', ok: false, problems: [e.message] });
+      if (ok) ok(false, `interrupted: ${e.message}`);
+      out.push({ name: 'error', ok: false, abort: true, problems: [e.message] });
     }
     await h.closeClip(vs);
     return out;

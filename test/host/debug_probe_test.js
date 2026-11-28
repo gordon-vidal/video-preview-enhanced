@@ -173,6 +173,7 @@ function createHarness(initialPlayer = null) {
       muted: true,
       loop: true,
       streamQ: null,
+      playback: { decision: 'native', restored: { frame: 20, playing: false }, exactSize: [3840, 2160] },
       loopStats: { frames: 12, rests: 1 },
       loopBusy: '',
       picturePct: 100,
@@ -263,6 +264,11 @@ function createHarness(initialPlayer = null) {
 })().then(() => {
   // 2. Installation, command dispatch, and probe queries (before and after a player is attached).
   const h = createHarness(null);
+  h.sendDebug({ action: 'state', id: 1 });
+  const state = JSON.parse(h.logs.find((line) => line.startsWith('state ')).slice(6));
+  assert.deepEqual(state.playback, {
+    decision: 'native', restored: { frame: 20, playing: false }, exactSize: [3840, 2160],
+  });
   assert.match(h.logs[0], /^webview env: crossOriginIsolated=false/);
   assert.equal(h.intervals.size, 1, 'status interval installed');
   assert.equal(h.rafQueue.size, 0, 'no RAF loop scheduled when no player is playing');

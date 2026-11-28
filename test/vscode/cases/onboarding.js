@@ -5,6 +5,7 @@
 //   onboarding:        without ffmpeg, the first-open popup once (the log line), then, after it
 //                      is dismissed, the "falling behind" reminder for 4K HEVC 10-bit.
 const path = require('path');
+const { selected } = require('../lib');
 
 const res = (name, problems, extra = {}) => ({ name, ok: !problems.length, problems, ...extra });
 
@@ -25,6 +26,7 @@ module.exports = [
         ['h264_8_1080p.mp4', /decoder: built-in: 8-bit H\.264: the editor's GPU decoder \(WebCodecs\)/, 'webcodecs'],
         ['hevc_8_1080p.mp4', /decoder: native ffmpeg \(/, null],
       ]) {
+        if (!selected(`decision/${file}`) && !selected('no-popup-with-ffmpeg')) continue;
         const p = [];
         let decision = null;
         try {
@@ -64,6 +66,7 @@ module.exports = [
         if (n !== 1) p.push(`popup shown ${n} times, expected once`);
       } catch (e) { p.push(e.message); }
       out.push(res('popup-once', p));
+      if (!selected('reminder-4k-hevc10')) return out;
       // Dismiss it (no one answers on the hidden desktop), then a 4K HEVC 10-bit clip falls behind.
       p = [];
       let hint = null;

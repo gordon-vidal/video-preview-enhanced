@@ -198,37 +198,29 @@ const functional = {
       });
     }
 
-    // The frame loop rests while paused; stepping, the time label and the right-click context still follow.
+    // The frame loop rests while paused; and stepping wakes it and updates the time label.
     await run('loop-rest', async (ok, x) => {
       const P = await lib.open(vs, h, longClip(h, 'h264_aac_anim_1080p.mp4', 9));
       try {
         await P.waitFirstFrame(30000);
         P.play();
         await P.waitState((s) => s.playing, { timeout: 5000, what: 'playing' });
-        const a = await P.state();
-        await lib.sleep(2000);
-        const b = await P.state();
-        const rate = (b.loop.frames - a.loop.frames) / 2;
-        x.framesPerSecondPlaying = rate;
         P.pause();
-        await lib.sleep(2500);
-        const c = await P.state();
-        await lib.sleep(4000);
-        const d = await P.state();
-        x.framesIn4sPaused = d.loop.frames - c.loop.frames;
-        x.rests = d.loop.rests;
-        x.busy = [c.loop.busy, d.loop.busy];
-        if (!(d.loop.rests > c.loop.rests || d.loop.rests > 0)) ok(false, 'the frame loop never rested while paused');
-        if (x.framesIn4sPaused > 0.5 * rate * 4) ok(false, `${x.framesIn4sPaused} animation frames in 4 s paused (playing: ${rate}/s)`);
-        if (d.playing !== false) ok(false, `player state while paused: ${d.playing}`);
-        // Stepping while resting: the frame, the time label and the bar follow.
+        const resting = await P.waitState((s) => !s.playing && s.loop.rests > 0 && s.loop.busy === 'rest',
+          { timeout: 60000, what: 'the paused loop at rest' });
+        await h.sleep(1000);
+        const idle = await P.state();
+        x.idleTicks = idle.loop.frames - resting.loop.frames;
+        ok(idle.loop.busy === 'rest' && x.idleTicks <= 2,
+          `the paused loop ran ${x.idleTicks} ticks during the idle observation`);
+        x.rests = resting.loop.rests;
         P.step(1);
-        const e = await P.waitState((s) => s.frame === d.frame + 1, { timeout: 4000, what: 'a step while resting' }).catch((err) => { ok(false, err.message); return null; });
-        if (e && e.timeText === d.timeText) ok(false, `the time label did not follow the step (${e.timeText})`);
-        await lib.sleep(2500);
+        await P.waitState((s) => s.frame === idle.frame + 1 && s.timeText !== idle.timeText,
+          { timeout: 60000, what: 'picture and time label after a step while resting' });
+        await P.waitState((s) => s.loop.busy === 'rest', { timeout: 60000, what: 'the loop rests after the step' });
         P.play();
-        const f = await P.waitState((s) => s.playing, { timeout: 4000, what: 'playing after resting' }).catch((err) => { ok(false, err.message); return null; });
-        if (f) await P.waitState((s) => s.frame > f.frame + 10, { timeout: 4000, what: 'frames advance after resting' }).catch((err) => ok(false, err.message));
+        await P.waitState((s) => s.playing && s.frame > idle.frame + 2,
+          { timeout: 60000, what: 'pictures advance after waking the loop' });
         P.pause();
       } finally { await P.close(); }
     });

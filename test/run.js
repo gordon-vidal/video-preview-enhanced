@@ -17,7 +17,7 @@ const TIME_SCALE = Number(process.env.VPE_TIME_SCALE) || (process.env.CI ? 3 : 1
 //   --smoke      fast-merge layer-3 preset (~3-4 min: representative scenarios covering every real-VS-Code
 //                boundary, defined in test/vscode/scenario_map.js); combines with --changed or --explain
 //   --explain    like --changed (or --smoke), for layer 3 only prints which scenarios were picked and why, and runs nothing
-//   --grep re    only test files / scenarios whose name matches
+//   --grep re    match test files, or layer-3 scenario, case and result names
 //   --jobs N     parallel processes for layers 1-2 (default: logical CPUs)
 //
 // Layers 1-2 run every file in its own process (killed with its children after its timeout) and

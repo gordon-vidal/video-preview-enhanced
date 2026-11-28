@@ -232,6 +232,7 @@ const engine = [
   // media/engine.js (the product's player), one file per clip set so they run in parallel.
   ...fs.readdirSync(path.join(__dirname, 'engine')).filter((f) => /^(frames|formats)_\w+\.js$/.test(f) && !/_lib\.js$/.test(f)).sort()
     .map((f) => ({ file: rel('test/engine', f), needs: ['ffmpeg'], sources: ENGINE_SRC })),
+  { file: 'test/engine/compare_metrics.js', needs: ['ffmpeg'], sources: [...ENGINE_SRC, 'media/compare-metrics.js'] },
   { file: 'test/engine/scrub.js', needs: ['ffmpeg'], media: ['s_h264.mp4'], sources: ENGINE_SRC },
   { file: 'test/engine/continuity_fuzz.js', needs: ['ffmpeg'], sources: ENGINE_SRC },
   { file: 'test/engine/chaos.js', needs: ['ffmpeg'], sources: [...ENGINE_SRC, 'test/media/make_heavy_media.js'],

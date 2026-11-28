@@ -1,27 +1,9 @@
 'use strict';
-// Compare with two videos in a real VS Code: PSNR / SSIM of B against A match ffmpeg's psnr and ssim filters
-// frame by frame, identical files give infinity, an offset lines B up with A (ported from test/browser/compare.js),
+// Compare with two videos in real VS Code: identical pictures give infinite RGB and luma PSNR,
 // and the first-difference search finds the next differing frame. Both have no UI for now (kept for a later
 // advanced mode, 2026-11-20): debug builds log the paused pair's metrics, the test hook starts the search.
 // Read from the webview's `metrics frameA=.. psnrY=..` log line (media/compare.js, debug only).
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { spawnSync } = require('child_process');
 const lib = require('../lib');
-
-/** ffmpeg per-frame luma PSNR and SSIM of b against a (stats files). */
-function ffmpegStats(h, a, b, dir) {
-  const esc = (f) => f.replace(/\\/g, '/').replace(/:/g, '\\\\:');
-  const out = {};
-  for (const [filter, re] of [['psnr', /psnr_y:(\S+)/], ['ssim', /Y:(\S+)/]]) {
-    const file = path.join(dir, `${path.basename(b)}.${filter}`);
-    const r = spawnSync(h.ffmpeg, ['-v', 'error', '-y', '-i', a, '-i', b, '-lavfi', `[0:v]format=yuv420p[a];[1:v]format=yuv420p[b];[a][b]${filter}=stats_file=${esc(file)}`, '-f', 'null', '-'], { windowsHide: true });
-    if (r.status !== 0) throw new Error(`ffmpeg ${filter}: ${r.stderr}`);
-    out[filter] = fs.readFileSync(file, 'utf8').trim().split(/\r?\n/).map((l) => Number((l.match(re) || [])[1]));
-  }
-  return out;
-}
 
 const METRICS = /webview: metrics frameA=(\d+) frameB=(\d+) psnrY=(\S+) psnrRGB=(\S+) ssimY=(\S+)/;
 const num = (s) => (s === 'Infinity' ? Infinity : Number(s));
@@ -31,10 +13,8 @@ module.exports = [{
   settings: { 'videoPreviewEnhanced.autoplay': false },
   async run(vs, h) {
     const R = lib.recorder();
-    if (!h.ffmpeg) { R.skip('all', 'no ffmpeg for the reference numbers'); return R.out; }
     // The extension activates when a video opens; the test hook (compareFiles) needs it.
     await (await lib.open(vs, h, lib.clip('s_h264.mp4'))).close();
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-cmp-'));
     const ref = lib.clip('cmp/ref.mp4');
     const act = (o) => vs.send({ compare: true, ...o });
     /** Opens the pair, returns a function that seeks A to frame k (0-based) and resolves with the metrics line for it. */
@@ -63,21 +43,6 @@ module.exports = [{
         }
         await h.closeClip(vs);
       });
-      await R.run('lowq-vs-ffmpeg', async (ok, r) => {
-        const b = lib.clip('cmp/lowq.mp4');
-        const st = ffmpegStats(h, ref, b, dir);
-        const at = await openPair(ref, b);
-        let worstY = 0; let worstS = 0;
-        for (const k of [0, 1, 2, 30, 59, 44]) {
-          const m = await at(k);
-          const dy = Math.abs(m.psnrY - st.psnr[k]); const ds = Math.abs(m.ssimY - st.ssim[k]);
-          worstY = Math.max(worstY, dy); worstS = Math.max(worstS, ds);
-          // ffmpeg prints 2 decimals for PSNR and 6 for SSIM (the 480x270 picture has partial 4x4 windows at the edge: SSIM may differ in the 6th place).
-          ok(dy < 0.006 && ds < 1e-5, `frame ${k + 1}: ours Y ${m.psnrY.toFixed(3)} SSIM ${m.ssimY.toFixed(6)} | ffmpeg Y ${st.psnr[k]} SSIM ${st.ssim[k]}`);
-        }
-        r.worst = `PSNR Y ${worstY.toFixed(4)} dB, SSIM ${worstS.toExponential(1)}`;
-        await h.closeClip(vs);
-      });
       await R.run('offset-3', async (ok) => {
         // B has its first 3 frames cut: with offset -3 frame B#38 sits against A#41 and the PSNR is high.
         const at = await openPair(ref, lib.clip('cmp/offset3.mp4'));
@@ -103,7 +68,7 @@ module.exports = [{
         ok(/scan: #42: PSNR Y/.test(found), `scan at offset 0 from #41: ${found.replace(/^.*webview: /, '')}`);
         await h.closeClip(vs);
       });
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { await h.closeClip(vs); }
     return R.out;
   },
 }];

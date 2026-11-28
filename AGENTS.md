@@ -56,7 +56,7 @@ npm run verify:fast                     # typecheck, dependency-cruiser, knip, s
 npm run arch:check                      # verify:fast + jscpd duplication scan
 node test/run.js unit engine            # layers 1-2 (what CI runs), all cores
 node test/run.js vscode                 # layer 3, Windows only, hidden desktop
-node test/run.js vscode --grep <re>     # only matching scenarios / cases
+node test/run.js vscode --grep <re>     # matching scenarios, cases or results
 node test/run.js unit engine vscode --changed   # a hint only: by file name, usually picks everything
 npm test                                # layers 1-3 (before a release, not before every merge)
 ```
@@ -66,9 +66,9 @@ npm test                                # layers 1-3 (before a release, not befo
 and **10 minutes at most** on larger changes (use the "Known dependencies" table in `docs/TESTING.md` as a
 guide, not a mandatory floor). List each chosen scenario with a one-line reason in your report or PR. Do not
 run the whole layer just to be safe: only a release has to have everything working, and the full run before a
-release catches what a merge missed. When a single layer-3 case fails, re-run only its scenario with
-`--grep "^scenario$" --sub "<case>"` (today `--grep` selects whole scenarios and every step still runs; `--sub <re>` only filters results — a real per-check rerun is step S0 of docs/notes/playback-core-plan.md), not the whole layer, and do not run layer 3 while parallel delegates are
-pegging CPU.
+release catches what a merge missed. Rerun a single case or result with
+`--grep "^scenario/case$"` or `--grep "^scenario/case/result$"`. Use `--rerun-failed` for failures in the
+newest saved report. Avoid running layer 3 alongside CPU-intensive work.
 
 Layer 4 (performance) runs only through `node test/run.js perf` (it holds the lock) and only
 before releases or in performance work.

@@ -12,17 +12,45 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { AsyncLocalStorage } = require('node:async_hooks');
 const media = require('../media/make_cases_media');
-const { tightFirstFrame } = require('./hidden');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const kv = (line) => Object.fromEntries([...line.matchAll(/(\w+)=(\S+)/g)].map((m) => [m[1], m[2]]));
 
+let probeId = 0;
+async function probe(vs, command, reply, timeout = 15000) {
+  const id = ++probeId;
+  const from = vs.mark();
+  vs.send({ ...command, id });
+  const pattern = new RegExp(`${esc(reply)} (\\{"id":${id}(?:,.*)?\\})`);
+  const line = await vs.waitLog(pattern, { from, timeout, what: reply });
+  return JSON.parse(pattern.exec(line)[1]);
+}
+
+const hostState = (vs, name) => probe(vs, { name, hostState: true }, 'debug host');
+
+async function compareState(vs) {
+  try { return await probe(vs, { compare: true, action: 'playbackState' }, 'compare playback', 2000); }
+  catch (e) { if (!e.message.startsWith('TIMEOUT')) throw e; return null; }
+}
+
+async function waitProbe(read, predicate, what, timeout = 60000) {
+  const end = Date.now() + timeout;
+  let state;
+  do {
+    state = await read();
+    if (predicate(state)) return state;
+    await sleep(200);
+  } while (Date.now() < end);
+  throw new Error(`TIMEOUT waiting for ${what}; last: ${JSON.stringify(state)}`);
+}
+
 /** Results a scenario keeps (test/vscode/scenarios.js); the others are not run. */
-let FILTER = null;
-const setFilter = (fn) => { FILTER = fn; };
-const SUB = (() => { const i = process.argv.indexOf('--sub'); return i >= 0 && process.argv[i + 1] ? new RegExp(process.argv[i + 1]) : null; })();
+const selection = new AsyncLocalStorage();
+const withSelection = (filter, run) => selection.run(filter, run);
+const selected = (name) => selection.getStore()?.(name) ?? true;
 
 // ---- results ------------------------------------------------------------------------------
 
@@ -33,6 +61,7 @@ const SUB = (() => { const i = process.argv.indexOf('--sub'); return i >= 0 && p
 function recorder() {
   const out = [];
   const t = (name, extra) => {
+    if (!selected(name)) return () => true;
     const r = { name, ok: true, problems: [], ...extra };
     out.push(r);
     const ok = (cond, msg) => { if (!cond) { r.ok = false; r.problems.push(msg); } return !!cond; };
@@ -40,14 +69,15 @@ function recorder() {
     return ok;
   };
   const run = async (name, fn) => {
-    if (SUB && !SUB.test(name)) return null; // --sub <re>: only the results whose name matches
-    if (FILTER && !FILTER(name)) return null; // moved to another layer
+    if (!selected(name)) return null;
     const ok = t(name);
     try { await fn(ok, ok.r); } catch (e) { ok(false, e && e.message ? e.message : String(e)); }
     return ok.r;
   };
-  const skip = (name, why) => out.push({ name, ok: true, skipped: why, problems: [] });
-  return { out, t, run, skip };
+  const skip = (name, why) => { if (selected(name)) out.push({ name, ok: true, skipped: why, problems: [] }); };
+  // A case-aborting error is kept whatever the filter selects (test/vscode/selection.js).
+  const abort = (name, detail) => { out.push({ name, ok: false, abort: true, problems: [detail] }); };
+  return { out, t, run, skip, abort };
 }
 
 // ---- media --------------------------------------------------------------------------------
@@ -162,7 +192,6 @@ class Player {
    * ("player says -1", "reading 'toFixed'") and hide why.
    */
   async waitFirstFrame(timeout = 30000, { allowError = false } = {}) {
-    timeout = tightFirstFrame(timeout, `${this.name} first frame`);
     const s = await this.waitState(pictureOrError, { timeout, what: 'first frame' });
     if (!allowError && !s.firstShown && ERR.test(s.message || '')) throw new Error(`${this.name}: no first frame; page says "${s.message}"${s.hint ? ` (${s.hint})` : ''}`);
     return s;
@@ -255,7 +284,6 @@ const pictureOrError = (s) => s.firstShown || (!s.engine && s.canvas[0] > 0 && !
  */
 async function open(vs, h, file, { until = pictureOrError, timeout = 40000 } = {}) {
   const P = new Player(vs, h, file);
-  if (until === pictureOrError) timeout = tightFirstFrame(timeout, `${P.name} first frame`);
   P.fromMark = await h.openClip(vs, P.file);
   if (until) {
     // The page answers `state` once its script runs; until then nothing comes back, so just poll.
@@ -275,4 +303,4 @@ async function open(vs, h, file, { until = pictureOrError, timeout = 40000 } = {
 /** The log lines of this instance from `from` on that match re. */
 const lines = (vs, re, from = 0) => { vs.mark(); return vs.lines.slice(from).filter((l) => re.test(l)); };
 
-module.exports = { setFilter, pageError, frames, pictureOrError, ERR, sleep, esc, kv, recorder, clip, media, refFrames, refSlots, ncc, Player, open, lines, brief };
+module.exports = { withSelection, selected, hostState, compareState, waitProbe, pageError, frames, pictureOrError, ERR, sleep, esc, kv, recorder, clip, media, refFrames, refSlots, ncc, Player, open, lines, brief };

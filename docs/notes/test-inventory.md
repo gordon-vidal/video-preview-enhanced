@@ -8,6 +8,29 @@ Reference: the last full run of the old runner (`test/vscode/run.js --quick`, 20
 47 min, one fresh VS Code per case). A full (non-quick) run also has 12 more `play/*` clips and one more
 `native/*`. The opt-in benchmarks (environment switches) are listed too.
 
+## S0 duplicate retirements
+
+The [playback-core plan](playback-core-plan.md#13-per-scenario-before-s0) holds the pre-S0 inventory.
+These results were retired after checking lower-layer assertions. Other candidates remain in layer 3. The aggregate counts in the plan are pre-S0 estimates.
+In particular, pure geometry tests do not cover real layout, mock host tests do not exercise VS Code tab
+switching, and a key or menu routing test alone does not assert playback effects.
+
+| Layer-3 result | Lower-layer coverage |
+|---|---|
+| `compare/compare_burst/one-video-alone` | `burst_test.js` asserts one video stays in its own viewer. |
+| `compare/compare_burst/two-apart` | `burst_test.js` asserts two opens outside the window stay in separate viewers. |
+| `compare/compare_burst/setting-off` | `burst_test.js` asserts two opens with openTogether disabled stay separate. |
+| `compare/compare_ui/start/no-plain-d` | `player_ui_test.js` asserts plain D produces no action or pick, and `comparepick_test.js` checks the old command is absent. |
+| `multiview/multiview/sync/panel` | `player_ui_test.js` clicks Compare and verifies Escape closes it. |
+| `multiview/multiview-reorder/reorder/drag-preview` | `player_ui_tiles_test.js` checks the preview order on pointer move. |
+| `multiview/multiview-reorder/reorder/esc-cancels-drag` | `player_ui_tiles_test.js` checks Escape cancels the preview without committing an order. |
+| `picture-size/picture_size/player/sheet` | `controls_test.js` checks the shortcut names. `player_ui_test.js` checks opening and dismissing the sheet. |
+| `ui/ctxmenu/menu/dismiss` | `ctxmenu_test.js` checks outside dismissal. `player_ui_test.js` checks that the dismissing click does not start playback. |
+| `ui/ui/picture/click` | `player_ui_test.js` checks that clicks toggle playback and only dismiss an open panel. |
+
+`compare/compare_metrics/lowq-vs-ffmpeg` now runs in `test/engine/compare_metrics.js`. The real-webview RGB
+readback and offset-driven scan still run in layer 3.
+
 ## Summary
 
 | Layer | Before | Now | Command |

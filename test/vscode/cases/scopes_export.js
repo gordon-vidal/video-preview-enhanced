@@ -157,7 +157,10 @@ module.exports = [{
       P.goto(String(b)); await P.expectFrame(b - 1, 'go to B');
       P.key('b');
     };
-    const exported = (n, total, from) => vs.waitLog(new RegExp(`exported ${n}/${total} frames`), { from, timeout: 60000, what: `exported ${n}/${total}` });
+    const exported = (name, total) => lib.waitProbe(async () => {
+      const state = await lib.hostState(vs, name);
+      return state.viewers.find((v) => v.exported?.total === total)?.exported;
+    }, Boolean, `export of ${total} frames to finish`);
 
     await R.run('export/range', async (ok, r) => {
       if (!h.ffmpeg) { r.skipped = 'no ffmpeg for the reference frames'; return; }
@@ -168,9 +171,9 @@ module.exports = [{
         await P.waitFirstFrame();
         const A = 12; const B = 21; // 0-based: frames #13..#22 as shown
         await markRange(P, A + 1, B + 1);
-        const from = vs.mark();
         vs.send({ command: 'videoPreviewEnhanced.exportRange' });
-        await exported(10, 10, from);
+        const progress = await exported(P.name, 10);
+        ok(progress.done === 10, `export wrote ${progress.done} of ${progress.total} frames`);
         const files = fs.readdirSync(EXPORT_DIR).sort();
         const base = path.parse(file).name;
         const want = Array.from({ length: 10 }, (_, i) => `${base}_f${String(A + i + 1).padStart(6, '0')}.png`);

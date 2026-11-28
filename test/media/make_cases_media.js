@@ -208,10 +208,11 @@ function bitmapSubs() {
 }
 
 /** The HDR pattern (test/zoo/make_hdr.js) in cases/hdr. */
-function hdr() {
+function hdr(names = ['hevc10_pq.mp4', 'hevc10_hlg.mp4', 'h264_pq.mp4']) {
   const dir = path.join(DIR, 'hdr');
-  if (['hevc10_pq.mp4', 'hevc10_hlg.mp4', 'h264_pq.mp4'].every((n) => fs.existsSync(path.join(dir, n)))) return dir;
-  const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'zoo', 'make_hdr.js'), DIR], { encoding: 'utf8', windowsHide: true });
+  const missing = names.filter((n) => !fs.existsSync(path.join(dir, n)));
+  if (!missing.length) return dir;
+  const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'zoo', 'make_hdr.js'), DIR, ...missing], { encoding: 'utf8', windowsHide: true });
   if (r.status !== 0) throw new Error(`make_hdr.js: ${r.stderr || r.stdout}`);
   return dir;
 }

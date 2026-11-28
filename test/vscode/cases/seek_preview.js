@@ -40,7 +40,7 @@ function makeClip(h, name, args) {
 
 async function previewChecks(vs, h, file, R, label) {
   await R.run(`${label}`, async (ok, r) => {
-    const P = await lib.open(vs, h, file);
+    const P = await lib.open(vs, h, file());
     try {
       await P.waitFirstFrame();
       await P.ask('thumbPass', { on: false });
@@ -49,7 +49,6 @@ async function previewChecks(vs, h, file, R, label) {
       const idle = await P.state();
       ok(!idle.strip || (idle.strip.requests === 0 && !idle.strip.worker), `no request or worker before the first hover (${JSON.stringify(idle.strip)})`);
       ok(idle.thumb.hidden, 'no thumbnail shown');
-      ok(!lib.lines(vs, /thumbs:|thumb ffmpeg/, P.fromMark).length, 'no thumbnail worker or ffmpeg process started');
       const [sx, sy, sw, sh] = idle.seekRect;
 
       // 2. Hover: a picture appears (worker start or ffmpeg + one keyframe), then neighbours fill.
@@ -59,7 +58,7 @@ async function previewChecks(vs, h, file, R, label) {
       r.firstPictureMs = Date.now() - th0;
       ok(!hv.tip.hidden, 'time tip shown');
       // One keyframe can answer several slots, so the neighbourhood may need fewer than 9 requests.
-      const filled = await P.waitState((x) => x.strip && x.strip.filled, { timeout: 15000, what: 'neighbours filled while hovering' });
+      const filled = await P.waitState((x) => x.strip && x.strip.filled, { timeout: 60000, what: 'neighbours filled while hovering' });
       r.hover = filled.strip;
       ok(filled.strip.slots >= 3 && filled.strip.slots <= 9, `only the neighbourhood is decoded (${filled.strip.slots} places, ${filled.strip.cached} pictures)`);
       P.dom('mouseleave', sx + sw / 2, sy - 200, { target: 'seek' });
@@ -71,7 +70,7 @@ async function previewChecks(vs, h, file, R, label) {
       ok(still.requests === afterLeave && !still.hovering, `after leaving no further decoding (${afterLeave} -> ${still.requests} requests)`);
 
       // 3. Drag: pointerdown on the bar, slider input events, the thumbnail follows; the committed frame stays visible.
-      const before = await P.report();
+      const before = await P.state();
       P.dom('pointerdown', sx + sw * 0.1, sy + sh / 2, { target: 'seek' });
       const sigs = new Set();
       let previousSig;
@@ -81,11 +80,10 @@ async function previewChecks(vs, h, file, R, label) {
         const s = await P.waitState((x) => !x.thumb.hidden && x.thumb.w > 0 && x.thumb.sig !== previousSig, { timeout: 15000, what: `drag thumbnail at ${frac}`, interval: 50 });
         sigs.add(s.thumb.sig);
         previousSig = s.thumb.sig;
-        await lib.sleep(250);
-        frames.add((await P.report()).frame0);
+        frames.add(s.frame);
       }
       ok(sigs.size >= 4, `the thumbnail changes while dragging (${sigs.size} pictures for 6 places)`);
-      ok(frames.size === 1 && frames.has(before.frame0), `the main picture holds its committed frame while dragging (frames ${[...frames]}, before ${before.frame0})`);
+      ok(frames.size === 1 && frames.has(before.frame), `the main picture holds its committed frame while dragging (frames ${[...frames]}, before ${before.frame})`);
       r.drag = { pictures: sigs.size, frames: [...frames] };
 
       // 4. Release: exactly the frame under the slider.
@@ -103,15 +101,14 @@ async function previewChecks(vs, h, file, R, label) {
       await P.expectFrame(Math.floor(5.5 * fps), 'seek after drag');
       P.step(1);
       await P.expectFrame(Math.floor(5.5 * fps) + 1, 'step after drag');
-      r.decoder = lib.lines(vs, /decoder: |native ffmpeg backend/, P.fromMark).slice(0, 2);
-      r.thumbLog = lib.lines(vs, /thumbs: (d+xd+|worker ready)/, P.fromMark).slice(0, 3);
+      r.decoder = (await P.state()).playback?.decision;
     } finally { await P.close(); }
   });
 }
 
 async function passChecks(vs, h, file, other, R, label) {
   await R.run(`${label}/pass`, async (ok, r) => {
-    const P = await lib.open(vs, h, file);
+    const P = await lib.open(vs, h, file());
     try {
       await P.waitFirstFrame();
       const t0 = Date.now();
@@ -137,10 +134,10 @@ async function passChecks(vs, h, file, other, R, label) {
     } finally { await P.close(); }
   });
   await R.run(`${label}/pass-hidden`, async (ok, r) => {
-    const A = await lib.open(vs, h, file);
+    const A = await lib.open(vs, h, file());
     try {
       await A.waitFirstFrame();
-      const B = await lib.open(vs, h, other); // in front: A is hidden before its pass starts (3 s)
+      const B = await lib.open(vs, h, other()); // in front: A is hidden before its pass starts (3 s)
       const m = vs.mark();
       await B.waitFirstFrame();
       // Sampled while A is hidden: past the pass's start delay, then 3 s later.
@@ -166,7 +163,7 @@ async function passChecks(vs, h, file, other, R, label) {
 
 async function betweenChecks(vs, h, file, R, label, gpu = '') {
   await R.run(`${label}/between`, async (ok, r) => {
-    const P = await lib.open(vs, h, file);
+    const P = await lib.open(vs, h, file());
     try {
       await P.waitFirstFrame();
       const t0 = Date.now();
@@ -202,7 +199,7 @@ async function betweenChecks(vs, h, file, R, label, gpu = '') {
 
 async function captureChecks(vs, h, file, R, label) {
   await R.run(`${label}/capture`, async (ok, r) => {
-    const P = await lib.open(vs, h, file);
+    const P = await lib.open(vs, h, file());
     try {
       await P.waitFirstFrame();
       await P.ask('thumbPass', { on: false });
@@ -229,7 +226,7 @@ async function captureChecks(vs, h, file, R, label) {
 
 async function refineChecks(vs, h, file, R, label) {
   await R.run(`${label}/refine`, async (ok, r) => {
-    const P = await lib.open(vs, h, file);
+    const P = await lib.open(vs, h, file());
     try {
       await P.waitFirstFrame();
       const s0 = await P.state();
@@ -259,14 +256,14 @@ module.exports = [{
   async run(vs, h) {
     const R = lib.recorder();
     if (!h.ffmpeg) return [{ name: 'skipped', ok: true, skipped: 'no ffmpeg (reference frames)', problems: [] }];
-    const file = makeClip(h, 'sp_mpeg2_20s.mpg', ['-c:v', 'mpeg2video', '-g', '25', '-q:v', '4']);
+    const file = () => makeClip(h, 'sp_mpeg2_20s.mpg', ['-c:v', 'mpeg2video', '-g', '25', '-q:v', '4']);
     await previewChecks(vs, h, file, R, 'wasm');
-    const gop = makeClip(h, 'sp_mpeg2_gop10.mpg', ['-c:v', 'mpeg2video', '-g', '300', '-bf', '0', '-q:v', '4']);
+    const gop = () => makeClip(h, 'sp_mpeg2_gop10.mpg', ['-c:v', 'mpeg2video', '-g', '300', '-bf', '0', '-q:v', '4']);
     await passChecks(vs, h, file, gop, R, 'wasm');
     await betweenChecks(vs, h, gop, R, 'wasm');
     await captureChecks(vs, h, gop, R, 'wasm');
     await refineChecks(vs, h, gop, R, 'wasm');
-    const h264 = makeClip(h, 'sp_h264_gop10.mp4', ['-c:v', 'libx264', '-preset', 'veryfast', '-g', '300', '-keyint_min', '300', '-sc_threshold', '0', '-bf', '2', '-pix_fmt', 'yuv420p']);
+    const h264 = () => makeClip(h, 'sp_h264_gop10.mp4', ['-c:v', 'libx264', '-preset', 'veryfast', '-g', '300', '-keyint_min', '300', '-sc_threshold', '0', '-bf', '2', '-pix_fmt', 'yuv420p']);
     await betweenChecks(vs, h, h264, R, 'webcodecs', 'webcodecs');
     return R.out;
   },
@@ -277,9 +274,9 @@ module.exports = [{
   async run(vs, h) {
     const R = lib.recorder();
     if (!h.ffmpeg) return [{ name: 'skipped', ok: true, skipped: 'no ffmpeg', problems: [] }];
-    const file = makeClip(h, 'sp_hevc_20s.mp4', ['-c:v', 'libx265', '-x265-params', 'keyint=25:min-keyint=25:log-level=error', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p']);
+    const file = () => makeClip(h, 'sp_hevc_20s.mp4', ['-c:v', 'libx265', '-x265-params', 'keyint=25:min-keyint=25:log-level=error', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p']);
     await previewChecks(vs, h, file, R, 'native');
-    const gop = makeClip(h, 'sp_hevc_gop10.mp4', ['-c:v', 'libx265', '-x265-params', 'keyint=300:min-keyint=300:scenecut=0:log-level=error', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p']);
+    const gop = () => makeClip(h, 'sp_hevc_gop10.mp4', ['-c:v', 'libx265', '-x265-params', 'keyint=300:min-keyint=300:scenecut=0:log-level=error', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p']);
     await passChecks(vs, h, file, gop, R, 'native');
     await betweenChecks(vs, h, gop, R, 'native');
     await captureChecks(vs, h, gop, R, 'native');

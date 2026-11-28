@@ -91,6 +91,19 @@
     } = deps;
     if (!cfg.debug) return;
 
+    function playbackState() {
+      return {
+        mode: st.mode, synced: synced(), stage: tileSize(),
+        tiles: getState().tiles.map((p) => ({
+          frame: p.shownT === null ? null : frameOf(p) + 1,
+          playing: !!p.playing,
+          decision: p.cfg?.native ? 'native' : p.vmode || null,
+          transport: p.frameStream ? 'stream' : p.cfg?.native ? 'message' : null,
+          size: [p.cv.width, p.cv.height],
+        })),
+      };
+    }
+
     // Test hook (VPE_LOG only): the host forwards debug messages from the test runner.
     function report() {
       const { tiles, clock, cells, syncMode } = getState();
@@ -260,6 +273,7 @@
           break;
         }
         case 'report': setTimeout(report, m.delay || 400); break;
+        case 'playbackState': log(`compare playback ${JSON.stringify({ id: m.id, ...playbackState() })}`); break;
         case 'ui': setTimeout(() => log(`compare ui ${JSON.stringify({ id: m.id, ...uiState() })}`), m.delay || 50); break;
         case 'a11y': { // names and states of the bar's buttons, the live region, focus
           if (m.focus) { const f = document.querySelector(m.focus); if (f) /** @type {any} */ (f).focus(); }

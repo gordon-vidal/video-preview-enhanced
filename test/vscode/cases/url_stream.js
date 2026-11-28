@@ -93,7 +93,7 @@ async function quality(vs, h, ok, b, { native = false } = {}) {
     let s = await P.waitState((x) => !!x.quality, { what: 'quality menu data' });
     const cur = s.quality.variants.find((v) => v.id === s.quality.current);
     ok(s.quality.pick === 'auto' && cur && cur.height === 360, `auto plays 360p in this panel: ${JSON.stringify(s.quality)}`);
-    ok(lib.lines(vs, /\[master_full\.m3u8\] url .*2 variants, auto: 640x360.*3 renditions, 1 I-frame playlists/, P.fromMark).length > 0, 'log: the master playlist with its renditions and I-frame playlist');
+    ok(s.quality.variants.length === 2, `quality variants: ${JSON.stringify(s.quality.variants)}`);
     await P.ask('click', { sel: '#cog' });
     s = await P.waitState((x) => x.panel && x.panel.view === 'main', { what: 'the ⚙ panel' });
     const row = s.panel && s.panel.rows.find((r) => /^Quality/.test(r.label));
@@ -103,17 +103,16 @@ async function quality(vs, h, ok, b, { native = false } = {}) {
     ok(s.panel && s.panel.view === 'quality' && JSON.stringify(s.tracksMenu.items) === JSON.stringify(['*Auto', '360p', '180p']), `Quality page: ${JSON.stringify(s.tracksMenu.items)} ${s.panel && s.panel.text}`);
     P.seek(120.5 / 30);
     await P.waitState((x) => x.frame === 120, { what: 'frame 120' });
-    const mark = vs.mark();
     await P.ask('click', { sel: 'button.radio', text: '180p' });
-    await vs.waitLog(/\[master_full\.m3u8\] quality: 320x180 400000 b\/s, reloading/, { from: mark, timeout: 10000, what: 'reload at 180p' });
-    s = await waitReloaded(P, (x) => x.quality && x.quality.pick !== 'auto', 'the 180p page');
+    s = await waitReloaded(P, (x) => x.quality?.pick !== 'auto' && x.playback?.restored?.frame === 120
+      && !x.playback.restored.playing, 'the 180p page restored paused at frame 120');
     const now = s.quality.variants.find((v) => v.id === s.quality.current);
     ok(now && now.height === 180 && s.quality.pick === s.quality.current, `plays 180p: ${JSON.stringify(s.quality)}`);
     s = await P.waitState((x) => Math.abs(x.frame - 120) <= 1, { timeout: 20000, what: 'back at frame 120' });
     ok(Math.abs(s.frame - 120) <= 1 && !s.playing, `same moment after the switch: frame ${s.frame}, playing ${s.playing}`);
     ok(s.canvas[0] === 320 && s.canvas[1] === 180, `the 320x180 picture: ${s.canvas}`);
-    if (!native) ok(lib.lines(vs, /\[master_full\.m3u8\] HLS for the built-in decoder: .*variant 320x180/, mark).length > 0, 'built-in decoder reads the 180p variant');
-    else ok(lib.lines(vs, /\[master_full\.m3u8\] decoder: native ffmpeg/, mark).length > 0, 'native ffmpeg again');
+    ok(native ? s.playback?.decision === 'native' : s.playback?.decision !== 'native',
+      `decoder after quality switch: ${s.playback?.decision}`);
     // Playing state is kept: play, then back to Auto.
     P.play();
     await P.waitState((x) => x.playing && x.t > 4.3, { what: 'playing at 180p' });
@@ -122,7 +121,7 @@ async function quality(vs, h, ok, b, { native = false } = {}) {
     await P.ask('click', { sel: 'button.row', text: 'Quality' });
     await P.waitState((x) => x.panel && x.panel.view === 'quality', { what: 'the Quality page again' });
     await P.ask('click', { sel: 'button.radio', text: 'Auto' });
-    s = await waitReloaded(P, (x) => x.quality && x.quality.pick === 'auto', 'the Auto page');
+    s = await waitReloaded(P, (x) => x.quality?.pick === 'auto' && x.playback?.restored?.playing, 'the Auto page restored playing');
     s = await P.waitState((x) => x.playing && x.t > 4.3, { timeout: 20000, what: 'plays on at Auto' });
     ok(s.playing && s.canvas[0] === 640, `Auto again, playing from ${s.t.toFixed(2)} s at ${s.canvas}`);
     const errs = lib.lines(vs, /\[master_full\.m3u8\] (error:|webview: (error:|unhandled rejection))/, P.fromMark);

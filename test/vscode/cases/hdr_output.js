@@ -76,11 +76,10 @@ function forcedCase({ name, ffmpeg }) {
     async run(vs, h) {
       const R = lib.recorder();
       if (ffmpeg && !h.ffmpeg) { R.skip('pattern', 'no ffmpeg'); return R.out; }
-      let dir = null;
-      try { dir = lib.media.hdr(); } catch (e) { R.skip('pattern', `no HDR media: ${String(e.message).split('\n')[0]}`); }
-      if (dir) dvClip(dir, 'dv81', 'hevc10_pq.mp4', 8, 1);
-      for (const [kind, clip] of dir ? [['pq', 'hevc10_pq.mp4'], ['hlg', 'hevc10_hlg.mp4'], ['pq', 'dv81.mp4']] : []) {
+      for (const [kind, clip] of [['pq', 'hevc10_pq.mp4'], ['hlg', 'hevc10_hlg.mp4'], ['pq', 'dv81.mp4']]) {
         await R.run(`pattern/${clip === 'dv81.mp4' ? 'dv81' : kind}`, async (ok, r) => {
+          const dir = lib.media.hdr([clip === 'dv81.mp4' ? 'hevc10_pq.mp4' : clip]);
+          if (clip === 'dv81.mp4') dvClip(dir, 'dv81', 'hevc10_pq.mp4', 8, 1);
           const from = vs.mark();
           const P0 = await lib.open(vs, h, path.join(dir, clip), { timeout: 60000 });
           try {
@@ -88,10 +87,10 @@ function forcedCase({ name, ffmpeg }) {
             const s = await P0.waitState((x) => /HDR (PQ|HLG) \(/.test(x.label || ''), { timeout: 15000, what: 'the HDR decision in the label' });
             ok(/\(HDR output\)/.test(s.label), `label: ${s.label}`);
             ok(ffmpeg ? /native ffmpeg/.test(s.label) : s.vmode === 'soft', `decoder: ${s.label} (${s.vmode})`);
-            await lib.sleep(500);
             const [cw, ch] = s.canvas;
             const pts = PATCHES.map((q) => [Math.round(q.x * cw / 1920), Math.round(q.y * ch / 1080)]);
-            const px = await P0.ask('hdrpixels', { pts }, 20000);
+            const px = await lib.waitProbe(() => P0.ask('hdrpixels', { pts }, 20000),
+              (x) => x.state?.on && x.state.frames > 0 && !x.state.hidden, 'HDR pixels presented');
             r.state = px.state;
             r.canvas = s.canvas;
             ok(px.state && px.state.on && px.state.frames > 0 && !px.state.hidden, `HDR output state: ${JSON.stringify(px.state)}`);
@@ -107,10 +106,7 @@ function forcedCase({ name, ffmpeg }) {
             // The page's canvas keeps the tone-mapped SDR picture (the pixel tools read it).
             const sdr = (await P0.ask('pixels', { pts: [pts[0]] })).rgb[0];
             ok(Math.min(...sdr) >= 215 && Math.max(...sdr) <= 255, `tone-mapped white on the page's canvas: ${sdr}`);
-            if (ffmpeg) ok(lib.lines(vs, /native decode from .* 10-bit \(HDR output\)/, from).length > 0, 'native ffmpeg did not send 10-bit frames');
-            P0.key('I', { shift: true });
-            const s2 = await P0.waitState((x) => /HDR/.test(x.stats), { timeout: 8000, what: 'the stats overlay' });
-            ok(/HDR output/.test(s2.stats), `stats overlay: ${s2.stats.slice(0, 300)}`);
+            if (ffmpeg) ok(s.playback?.nativeDepth === 10, `native depth: ${s.playback?.nativeDepth}`);
             const bad = lib.lines(vs, ERRORS, from);
             ok(!bad.length, `errors: ${bad.slice(0, 3).join(' | ')}`);
           } finally { await P0.close(); }

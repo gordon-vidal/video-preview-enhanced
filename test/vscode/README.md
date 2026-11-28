@@ -3,7 +3,10 @@
 ```
 node test/run.js vscode                             # layer 3: every scenario (docs/TESTING.md)
 node test/run.js vscode --changed                   # the scenarios that cover your changes (scenario_map.js)
-node test/run.js vscode --grep '^seeking$'          # one scenario; --list shows them
+node test/run.js vscode --grep '^seeking$'          # one scenario; --list shows the selected steps
+node test/run.js vscode --grep '^playback/playback/resume/position$'
+node test/run.js vscode --rerun-failed
+node test/run.js vscode --nightly                   # full serial run, then history report
 node test/run.js vscode --parallel 2                # instances side by side (see "Parallel" below)
 node test/run.js perf                               # layer 4: start-up, CPU, memory, fps (test/perf/run.js)
 node test/vscode/get_code.js                        # once: a pinned portable VS Code in test/vscode/.code
@@ -26,8 +29,25 @@ case the runner closes all editors and, through the extension's test hook, sets 
 (`settings` hook), the extension host's environment (`env` hook: the `VPE_*` test switches, PATH with or
 without ffmpeg) and clears the stored state (`resetState`), so every case starts as on a fresh profile. A
 step's `only` / `skip` (regex on the case's result names) leave out results that live in layer 2 or 4
-(`lib.setFilter`: they are not run at all). Results are named `<scenario>/<case>/<result>`; the JSON goes to
+from the result list. Results are named `<scenario>/<case>/<result>`; the JSON goes to
 `out/scenarios-<time>.json`.
+
+An anchored scenario or case name selects everything under that name. An exact result path selects its step and
+result. Broader result regexes can enter additional steps to evaluate dynamically named results.
+`--sub <re>` matches full result names and intersects with `--grep`. A check can still run setup shared
+with other results in its case. `--rerun-failed` uses the latest saved report and selects case or scenario
+scope for failures recorded at those levels. Reports also record scenarios left unstarted by a load refusal,
+so a rerun can pick them up. Generated media is prepared by the cases on demand.
+
+The JSON records the first line of `ffmpeg -version`. Before starting a scenario, the runner waits up to five
+minutes for CPU load to fall to 25% or less. It names the busiest processes when refusing to start. `--force`
+bypasses the wait. Failed checks with at least two failures in their last ten appearances get a flaky label.
+`node tools/l3-flakes.js` reports fail rates over this worktree's saved history, excluding skips.
+
+To schedule a nightly run, configure Windows Task Scheduler to run Node with arguments
+`test/run.js vscode --nightly` and the checkout as the working directory. Use a session with GPU access and
+the same PATH as a manual run. Nightly mode uses the shared VS Code lock and prints the history report even
+when checks fail.
 
 Correctness only: no case judges fps or how long something takes. Waits are generous and end as soon as the
 condition holds; a page error (uncaught error, unhandled rejection) ends a wait at once (`lib.pageError`), and
@@ -45,7 +65,7 @@ results say `retried`); twice in a row is a failure.
 | `scopes-export` | scopes_export | Waveform, parade, vectorscope and histogram; A-B frame export and Save Frame | 77 s, 11 |
 | `subtitles` | subtitles | Picture subtitles (PGS, DVD, DVB) and embedded text subtitles with sound-track switching | 59 s, 4 |
 | `ui` | ui, ui_jumps, ui_jumps_settings, ui_info, ctxmenu | The bar and panels: accessibility, keys, panels, speed, time formats, jump sizes (panel and settings), About this video, the context menu | 132 s, 21 |
-| `compare` | modes, compare_ui, compare_metrics | Compare mode: entering and leaving, the bar, tiles, views, the Tools grid, PSNR / SSIM against ffmpeg | 90 s, 17 |
+| `compare` | modes, compare_ui, compare_metrics | Compare mode: entering and leaving, the bar, tiles, views, the Tools grid, identical-picture RGB readback, offset-driven difference scanning | 90 s, 17 |
 | `multiview` | multiview, multiview-short-loop | Play together: grids of 2-4, lockstep, offsets, the sync clock and sound, a short loop | 68 s, 11 |
 | `multiview-transcode` | multiview-transcode | Live transcode in Compare, shared bitrate and returning one tile to original video | — |
 | `multiview-native` | multiview-native, multiview-native-fallback | Play together with native ffmpeg: tile sizes, the frame server and its budget, resizing, the message fallback | 38 s, 7 |
@@ -63,7 +83,7 @@ results say `retried`); twice in a row is a failure.
 | `remote-stream` | remote_stream, remote_stream_long, remote_stream_fallback | Remote windows: formats the GPU decoder can't play are re-encoded to H.264 by ffmpeg; seeks, scrubbing, the quality ladder, pixel tools | 139 s, 11 |
 | `file-icons` | file_icons, file_icons_pixels_dark-100, file_icons_pixels_light-100, file_icons_pixels_dark-120, file_icons_pixels_dark-m1, file_icons_pixels_dark-z2 | Explorer icons for the formats VS Code has none for, as Seti draws .mp4 / .avi (dark, light, zoom -1..2); .mkv still opens in the player | 46 s, 7 |
 
-Times and result counts: the full run of 2026-11-20 (3 instances at once, while other processes used about 40 % of the CPU and a game the GPU; `docs/TESTING.md` has the totals).
+Historical times and result counts: the full run of 2026-11-20 (3 instances at once, while other processes used about 40 % of the CPU and a game the GPU; `docs/TESTING.md` has the totals).
 
 **--changed:** `scenario_map.js` picks the scenarios whose `sources` (in `scenario_list.js`) contain a changed
 file, or that run a changed case file. A changed file under `src/` or `media/` that no scenario names, or the

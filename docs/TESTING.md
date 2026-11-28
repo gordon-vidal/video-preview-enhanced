@@ -15,9 +15,9 @@ Four layers, each with one job. Lower layers carry the detail; real VS Code prov
 - **Before a merge:** layers 1-2 (as CI runs them: `CI=true node test/run.js unit engine`) and **1–3 targeted
   layer-3 scenarios** covering the exact behavior you changed — aim for
   **~5 minutes** on small fixes and **10 minutes at most** on larger changes. Name each chosen scenario with a
-  one-line reason in your report or PR, so a reviewer can see what was left out. When a single layer-3 case fails,
-  re-run only its scenario with `--grep "^scenario$" --sub "<case>"` (today `--grep` selects whole scenarios and every step still runs; `--sub <re>` only filters results — a real per-check rerun is step S0 of docs/notes/playback-core-plan.md), not the whole layer, and avoid running layer 3 while
-  parallel delegates are pegging CPU. For a fast real-editor smoke pass (~3-4 min covering every real-VS-Code
+  one-line reason in your report or PR, so a reviewer can see what was left out. Rerun an individual layer-3 case or result with
+  `--grep "^scenario/case$"` or `--grep "^scenario/case/result$"`. `--rerun-failed` selects failures from the newest
+  saved report. The runner waits for CPU load to settle before each scenario. For a fast real-editor smoke pass (~3-4 min covering every real-VS-Code
   boundary: `seeking`, `multiview-native`, `picture-size`, `ui`), run `node test/run.js vscode --smoke`; keep the
   full layer-3 run for releases. `--changed` is only a hint: it selects by file name, and the core player files
   are in nearly every scenario, so it usually picks the whole layer.
@@ -162,9 +162,7 @@ was waited for.
 - **Layer 3** (`test/vscode/budgets.js`): each scenario has a time budget, about 2.5 x its typical time + 30 s
   (3.5 x for native, remote, URL, HDR and many-video scenarios; min 90 s). Past it the scenario ends and reports
   `TIMEOUT after N s in <scenario>/<case>; waiting for <thing>`. Waits: a hook answer 10 s, the extension
-  activating 45 s, the first frame of an ordinary clip 15 s (4K, native, remote, URL and HDR keep their longer
-  waits; the repeated-open `playback/resume/position` correctness case allows 30 s after an
-  intermittent 15 s open timeout), other waits as the case sets them. A page error still ends a wait at once;
+  activating 45 s, first-picture and other waits as the case sets them. A page error still ends a wait at once;
   an instance without WebGL2 is retried, not failed. `VPE_BUDGET_SCALE=2` doubles every budget on a slow machine.
 - The limits are measured on the maintainer's desktop. On CI (`CI` set) every timeout, stall limit and budget is
   multiplied by 3: GitHub's Windows runners take 2-3x as long per file (4 files at once). `VPE_TIME_SCALE=<n>`
