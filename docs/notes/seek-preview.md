@@ -3,7 +3,7 @@
 Goal: a picture over the seek bar on hover and while the seek bar is dragged, in every decode path and in simple mode.
 While dragging, the main picture holds; release lands on the exact frame.
 
-This note has two parts: how previews work today (checked against the code on 2026-11-28, after phase 3 of the plan)
+This note has two parts: how previews work today (checked against the code on 2026-11-28, after phase 4 of the plan)
 and the plan for pictures between keyframes, with the maintainer's decisions (see "Decisions").
 
 ## How it works today
@@ -31,12 +31,31 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   is on the bar (also dragging) and while another Compare tile sets the clock, and looks again every 500 ms. Pointer
   work always wins: a hover cancels a running pass request, and a pass request is cancelled within 100 ms when one of
   those pauses begins; a cancelled slot is asked for again first. Each slot is tried once, so pictures evicted under
-  `mem.thumbs` are not decoded again. The pass stops when every slot is answered (`done:complete`); the worker then
-  closes at once (the 20 s idle time counts from the last hover), and native ffmpeg has already exited. A short busy
-  spell keeps the worker; a pause longer than 20 s, hidden or another clock tile lets it close and start again later.
+  `mem.thumbs` are not decoded again. The pass stops when every slot is answered and the between pass below is done
+  or does not apply (`done:complete`); the worker then closes at once (the 20 s idle time counts from the last hover),
+  and native ffmpeg has already exited. A short busy spell keeps the worker; a pause longer than 20 s, hidden or
+  another clock tile lets it close and start again later.
   None for a remote file read by the worker (each keyframe would be a file block over the link), URLs, image
   sequences and audio-only files. `VPE_THUMB_PASS=0` (benches, with `VPE_LOG`) and the debug probe's `thumbPass`
-  turn it off.
+  turn it off, the between pass included.
+- **Between pass (phase 4).** When the keyframe pass has nothing left, the same pass state goes on for short or light
+  files (`ThumbService.sweepNext`, decided once per file): it fills the slots that have no picture within X of their
+  middle (keyframes, captures and refines all count). Estimate = frames from the keyframe before the first such slot
+  to the end x cost per frame + one keyframe request's median time; cost per frame is `frameMs` (the refines' measured
+  cost, else the engine's first guess: 1 ns per pixel native, `PER_PX_WASM` = 3.5 ns for the worker). The guess is
+  pessimistic, so the pass starts while the estimate is within 2x the budget; after each stretch the measured cost per
+  frame replaces it, and the pass stops (`done:budget`) once spent + the rest would pass 1.25x. Budget: 3 s of decoder
+  time (one thread, so about CPU time); 1 s on a far host (Live transcode, native in a remote window), with the far
+  host's slower pace. It works in stretches (`sweep` requests): from the first empty slot's middle to the first known
+  keyframe about 0.5 s of estimated decoding later (or the end), so a cancel loses at most one stretch and the next
+  starts on a keyframe; a cancelled stretch starts again from its first empty slot (restartable, not resumable within
+  a stretch); each slot is swept once. Each stretch decodes with `skip_frame noref`, `skip_loop_filter all` and
+  `flags2 fast` from the keyframe before it and keeps the first frame at or after each slot's middle (with `noref`
+  a frame or two later). Native ffmpeg: one process per stretch, `-threads 1`, below-normal priority, accurate seek,
+  a `select` filter (first frame in each step), `fast_bilinear`, mjpeg out, `-frames:v` = slots in the stretch; WASM:
+  one `sweep` job in the preview worker. Same pauses, cancellation, clock-tile rule and exclusions as the keyframe
+  pass. `pass.between` in `stats0()` reports it (`skip`, `done:complete`, `done:budget`; requests, pictures, ms).
+  Which files qualify: "Between pass cost" below.
 - **Native keyframe runs.** Once three keyframe intervals are known and their median g gives at most 1.25 keyframes
   per slot (X / g <= 1.25), native ffmpeg and Live transcode get `run` requests instead of one process per slot: one
   `-skip_frame nokey` ffmpeg decodes the next 8 keyframes from the first unanswered slot of a gap (one 37 ms process
@@ -58,6 +77,24 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   frames shown, CPU of the instance 38-43 % of one core off and 41-48 % on (the pass finished its 61 places in that
   window: 8 runs, 3.4 s of decoding). The WASM decoder cannot play this clip in real time (91-98 late frames, about
   150 shown, either way): the pass stayed mostly paused as busy (16-18 asks) and CPU was 115-127 % off, 118-121 % on.
+- **Between pass cost (measured 2026-11-28, layer 4 `seek-pass-native` / `seek-pass-wasm`, i7-9700K, Windows 10).**
+  Generated 1080p30 H.264 (x264 veryfast, B-frames) with a keyframe every 10 s, paused; decoder time of the between
+  pass (one thread, so about CPU time) and time to a full bar from the first frame:
+
+  | Clip | Native ffmpeg | WASM worker |
+  |---|---|---|
+  | 20 s | 1.06 s in 1 stretch (1.8 ms per frame), 17 pictures, full bar 4.4 s | 2.13 s in 2 stretches (3.4 ms per frame), 17 pictures, full bar 7.4 s |
+  | 60 s | 3.14 s in 5 stretches (1.9 ms per frame), 19 pictures, full bar 9.6 s | skipped (estimate 13 s from the 7.3 ms first guess) |
+
+  So at 1080p30 H.264, native qualifies up to about a minute and the worker up to about 27 s (twice the budget over
+  its first guess); 4K HEVC never (27.5 ms per frame in the worker, 8.5 ms native with 2 threads). On the 1080p HEVC clips with a
+  keyframe every 2 s, only the last slot of the 20 s clip (1.5 s from a keyframe) needed a sweep. The native first
+  guess counts the pixels of the picture native ffmpeg sends (1280 x 720 here), not the source's, so it was about half
+  the measured cost; the first stretch corrects it. Playback with the pass off and on, 15 s from 3.5 s after the first
+  frame, twice each: on the 20 s H.264 clip, where the between pass ran meanwhile, native 0 dropped and 0 late either
+  way, 481-490 frames shown, CPU of the instance 40-44 % off and 42-43 % on; WebCodecs playback (worker pass) 0 and 0,
+  482-487 shown, 19-22 % off and 21-22 % on. The 4K HEVC playback runs above did not change (the between pass does
+  not run there): native 0 and 0, 37-40 % off and 43-48 % on; WASM 89-96 late either way, 116-129 %.
 - **Keyframes at hover.** When the pointer's slot has no picture
   of its own, the backend returns the **nearer keyframe on either side** of the slot's middle (phase 2). A request
   whose keyframes are unknown is a `near` request: the worker finds the keyframe after through the demuxer index
@@ -141,11 +178,15 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   [test/lib/gop_clip.js](../../test/lib/gop_clip.js)),
   [test/host/seek_preview_pass_test.js](../../test/host/seek_preview_pass_test.js) (the pass: delay, coarse to fine,
   skips answered slots, pauses and cancels while busy / hidden / pointer / another clock tile, resumes, completes and
-  closes, far-host pace and budget, none for remote worker files, the run rule, ffmpeg runs on a real clip),
+  closes, far-host pace and budget, none for remote worker files, the run rule, ffmpeg runs on a real clip; the
+  between pass: qualifies or not by budget, far-host budget, stops on a measured cost, fills only slots without a
+  picture within X, pauses and cancels and restarts a stretch, never twice, one native ffmpeg per stretch against the
+  reference on a generated 1080p H.264 10 s-GOP clip),
+
   [test/thumbs/service.js](../../test/thumbs/service.js) (the real worker: sweep, neighbours, cache; `near` and
-  `between` on the 10 s-GOP clip against the reference),
+  `between` and `sweep` on the 10 s-GOP clip against the reference),
   [test/vscode/cases/seek_preview.js](../../test/vscode/cases/seek_preview.js) (`seek_preview` for WASM,
-  `seek_preview_native`, each with pass, pass-hidden, capture and refine cases; the hover cases turn the pass off),
+  `seek_preview_native`, each with pass, pass-hidden, between, capture and refine cases; the hover cases turn the pass off),
   `playback` thumbs/capture-4k (same dropped and late frames with capture and pass off and on), `inspect`
   thumbs/seek-bar (a full bar before the first hover), the layer 4 benches `seek-pass-native` / `seek-pass-wasm`
   ([test/vscode/cases/seek_pass_perf.js](../../test/vscode/cases/seek_pass_perf.js)), and the bench
@@ -153,7 +194,8 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
 ### Limits that motivate the plan
 
 1. Keyframe granularity: long GOPs (camera files, streaming encodes with 4-10 s GOPs) give a few distinct pictures
-   per minute. (Phase 2 shows the nearer keyframe and refines where the pointer rests, within a budget.)
+   per minute. (Phase 2 shows the nearer keyframe and refines where the pointer rests, within a budget; phase 4 fills
+   short or light files between keyframes after open.)
 2. (Solved in phase 3 for keyframes: the background pass fills the bar after open.)
 3. (Solved in phase 1: frames the player shows are kept as pictures.)
 4. Native and Live transcode start one process per picture (about 37 ms of process start on Windows, measured
@@ -247,7 +289,7 @@ What the numbers say:
   short GOPs). When slots are sparse relative to keyframes, one process per slot (37 ms start each) is cheaper than
   decoding every keyframe.
 
-## Plan (decided 2026-11-27; phases 1 to 3 built)
+## Plan (decided 2026-11-27; phases 1 to 4 built)
 
 ### Principles
 
@@ -405,7 +447,7 @@ during playback). Revisit only if measurements show re-opened long files are a r
 | 1 (built) | X/N grid, JPEG storage with a hot bitmap set, sorted entry list replacing `slotKt` / `coverage`, capture of played/seeked/stepped frames | no decoding change. Captured pictures are made before the first hover (implied decision A) | host: `ThumbService` with fake frames and a fake request (public API: `hover`, `offer`, `stats0`); layer 3 `seek_preview`: play 5 s, hover a between-keyframe time, assert the picture's time is within X; layer 3 `playback`: same dropped frames |
 | 2 (built) | Nearest keyframe on either side (index from the demuxer or `kt`), plus refine while resting (native `noref` + skip loop filter args, worker `between` request, cost budget) | no (work only while the pointer is on the bar) | host: `thumbArgs` exact mode decodes the right frame of a generated 10 s-GOP clip (ffmpeg reference); worker `between` mode via `scrub_bench`'s worker shim; layer 3: rest on a slot 5 s after a keyframe, the picture differs from the keyframe |
 | 3 (built) | Background keyframe pass, coarse to fine, pausing while busy or hidden | **yes** (decision 1) | host: pass order, pauses while `busy()`, stops when hidden; layer 3: full bar without hover (if approved), no work while hidden; `inspect` "no service before first hover" changes with the decision |
-| 4 | Between pass for short or light files | **yes** (decision 2) | as phase 3, plus a budget test with a fake cost |
+| 4 (built) | Between pass for short or light files | **yes** (decision 2) | as phase 3, plus a budget test with a fake cost |
 | 5 (optional) | WebCodecs GOP decode for H.264 between pictures while paused; disk cache only if decided | maybe | measure first |
 
 ### Bench and measurements to add
