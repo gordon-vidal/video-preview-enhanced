@@ -61,6 +61,7 @@ const NOTICES = new Set(['hideSlowPlaybackNotice', 'hideReducedResNotice', 'hide
  * @property {string} fsPath
  * @property {string} label
  * @property {number} size
+ * @property {number} [mtime]  the file's mtimeMs when it was read (the file watcher's baseline)
  * @property {number} rotation
  * @property {boolean} native  decoded on the host ('nd'): native ffmpeg, Live transcode, or the URL / sequence source
  * @property {boolean} [transcode]  Live transcode (EncodedStream) rather than raw native frames
@@ -113,7 +114,7 @@ const isFileClip = (c) => !!c && sourceKindOf(c) === 'file' && !!c.fsPath && !!c
  * ffmpeg decodes it (the same decision Compare asks for a tile). A Live transcode decision (decision.stream) is this
  * lane's only when the caller can start streams (deps.streams); else such a file plays through the built-in decoder.
  * @param {UriLike} uri
- * @param {{ fs?: { stat(p: string): Promise<{ size: number }> }, rotationOf?: (file: string) => Promise<number>,
+ * @param {{ fs?: { stat(p: string): Promise<{ size: number, mtimeMs?: number }> }, rotationOf?: (file: string) => Promise<number>,
  *   nativeFor?: ((file: string, transport: string, tile: any, o?: { compare: boolean }) => Promise<any>) | null,
  *   transport?: () => string, log?: (m: string) => void, streams?: boolean, skipNative?: boolean, compare?: boolean }} deps
  *   compare: the clip shows in a Compare (several videos), whose transcode policy differs from a single video's
@@ -138,6 +139,7 @@ async function prepareClip(uri, deps) {
   const video = (decision && decision.probed && decision.probed.video) || {};
   return {
     id: clipIdOf(uri), uri, fsPath: file, label: path.basename(file), size: st.size, rotation: Number(rotation) || 0,
+    ...(Number.isFinite(st.mtimeMs) ? { mtime: st.mtimeMs } : {}),
     native: native || transcode, transcode, decision: native || transcode ? decision : null,
     width: positive(video.width), height: positive(video.height), fps: positive(video.fps),
     duration: positive(decision && decision.probed && decision.probed.duration),
@@ -862,7 +864,9 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   function watch(c) {
     if (!deps.watchFile || watchers.has(c.id) || !isFileClip(c)) return;
     const file = c.fsPath;
-    nodeFs.promises.stat(file).then((st) => { if (!stamps.has(file)) stamps.set(file, st.mtimeMs); }, () => {});
+    // The mtime the clip was read at: a stat from here could already see a rewrite that comes right after opening.
+    if (Number.isFinite(c.mtime) && !stamps.has(file)) stamps.set(file, /** @type {number} */ (c.mtime));
+    else nodeFs.promises.stat(file).then((st) => { if (!stamps.has(file)) stamps.set(file, st.mtimeMs); }, () => {});
     try {
       const w = deps.watchFile(file, () => {
         if (disposed || !session.clipOf(c.id)) return;

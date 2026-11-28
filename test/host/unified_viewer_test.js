@@ -874,6 +874,29 @@ const context = { extensionUri: Uri.file(ROOT) };
       handlers.dispose();
     }
 
+    { // A file rewritten right after it was opened still reloads: the watcher knows the mtime the clip was read at.
+      const { panel, posts, handlers } = fakePanel();
+      const g = write('g.mp4', [1, 2, 3]);
+      const clipG = await prepareClip(g, {});
+      const watched = [];
+      // A slow disk (CI): the 4 libuv pool threads are busy, so the watcher's own stat runs after the rewrite.
+      const busy = Array.from({ length: 4 }, () => new Promise((r) => require('crypto').pbkdf2('x', 's', 300000, 32, 'sha256', r)));
+      createUnifiedViewer({ vscode, context, panel, clip: clipG, registry: null, deps: deps({
+        watchDelayMs: 0,
+        watchFile: (file, onChange) => { const w = { file, onChange, close() {} }; watched.push(w); return w; },
+      }) }).show();
+      fs.writeFileSync(g.fsPath, Buffer.from([1, 2, 3, 4]));
+      const later = new Date(Date.now() + 60000);
+      fs.utimesSync(g.fsPath, later, later);
+      await Promise.all(busy);
+      await open(handlers);
+      posts.length = 0;
+      watched[0].onChange();
+      await settle();
+      assert.ok(posts.some((m) => m.type === 'replaceTile' && m.reload), 'reloaded');
+      handlers.dispose();
+    }
+
     { // Offers and settings: actions, whenSlow, notices, ffmpeg state, external player, Open URL, rail handoff.
       const rv = recVscode();
       const { panel, posts, handlers } = fakePanel();
