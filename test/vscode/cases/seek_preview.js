@@ -4,7 +4,8 @@
 //            its worker (or ends its ffmpeg); a hover then draws at once with no request
 //   pass-hidden: a tab hidden before the pass starts does no pass work until it is shown again
 //   between: on a clip with a 10 s GOP, without any hover, the fill gives the floor and then every slot a frame of
-//            its own (not the keyframe, not a refine); hovers then need no request
+//            its own (not the keyframe, not a refine); hovers then need no request. webcodecs/between: the same on
+//            H.264 that plays through WebCodecs, whose fill decodes on the worker's own hardware VideoDecoder
 // With the pass turned off (debug probe 'thumbPass'), so the hover checks stay about the hover:
 //   idle:    after open nothing is decoded (no request, no worker, no ffmpeg thumbnail process) until the
 //            first hover, also not 4 s after the first frame; the shown frame may already be a preview (capture)
@@ -18,7 +19,8 @@
 //            frame within one slot (X) of it, not the keyframe; reports what a capture cost the frame loop
 //   refine:  on the same clip, rest 5 s after a keyframe: the exact frame (within X of the pointer), a different
 //            picture than the keyframe itself; reports the latency from the hover
-// Two decode paths: WebAssembly (MPEG-2, built-in decoder) and native ffmpeg (HEVC, ffmpeg: true).
+// Decode paths: WebAssembly (MPEG-2, built-in decoder), WebCodecs (H.264, between only) and native ffmpeg (HEVC,
+// ffmpeg: true).
 // The 20 s clips are made from long_20s.mp4 with a keyframe every second.
 const fs = require('fs');
 const path = require('path');
@@ -162,7 +164,7 @@ async function passChecks(vs, h, file, other, R, label) {
   });
 }
 
-async function betweenChecks(vs, h, file, R, label) {
+async function betweenChecks(vs, h, file, R, label, gpu = '') {
   await R.run(`${label}/between`, async (ok, r) => {
     const P = await lib.open(vs, h, file);
     try {
@@ -176,6 +178,9 @@ async function betweenChecks(vs, h, file, R, label) {
       const { floorS, fullS } = done.strip.pass;
       ok(floorS > 0 && fullS >= floorS, `the floor, then a full bar (${floorS} s, ${fullS} s)`);
       ok(!done.strip.hovering, 'without any hover');
+      if (gpu) {
+        ok(bw.gpu === gpu && done.strip.previewDecoder === 'ready', `the fill decoded on ${gpu} (${bw.gpu}, preview decoder ${done.strip.previewDecoder})`);
+      }
       const [sx, sy, sw, sh] = done.seekRect;
       const x = (t) => sx + (sw * t) / done.duration;
       const at = 15; // keyframes at 0, 10 and 20 s
@@ -261,6 +266,8 @@ module.exports = [{
     await betweenChecks(vs, h, gop, R, 'wasm');
     await captureChecks(vs, h, gop, R, 'wasm');
     await refineChecks(vs, h, gop, R, 'wasm');
+    const h264 = makeClip(h, 'sp_h264_gop10.mp4', ['-c:v', 'libx264', '-preset', 'veryfast', '-g', '300', '-keyint_min', '300', '-sc_threshold', '0', '-bf', '2', '-pix_fmt', 'yuv420p']);
+    await betweenChecks(vs, h, h264, R, 'webcodecs', 'webcodecs');
     return R.out;
   },
 }, {

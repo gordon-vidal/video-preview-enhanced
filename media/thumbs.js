@@ -128,7 +128,7 @@ class ThumbService {
     this.owned = new Set();
     /** Why the preview decoder is not used for this file ('' while it may be); kept across worker restarts. */
     this.hwFailed = '';
-    /** The running worker has the preview decoder. */
+    /** The worker had the preview decoder when it last opened (each open says again). */
     this.hwReady = false;
   }
 
@@ -528,7 +528,6 @@ class ThumbService {
     this.restTimer = 0;
     if (this.worker) this.worker.terminate();
     this.worker = null;
-    this.hwReady = false;
     this.inflight = null;
     if (this.state !== 'failed') this.state = 'off';
     if (this.o.onIdle) this.o.onIdle();

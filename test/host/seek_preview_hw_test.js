@@ -103,6 +103,8 @@ const done = (s) => /^done/.test(s.stats0().pass.state);
     const st = s.stats0();
     assert.strictEqual(st.bar, 30, 'the bar is complete');
     assert.strictEqual(st.pass.between.gpu, 'webcodecs', 'the fill says where it decoded');
+    assert.strictEqual(st.state, 'off', 'the worker closed after the pass');
+    assert.strictEqual(st.previewDecoder, 'ready', 'the stats still say the preview decoder was used');
     assert.ok(st.frames >= 20, `the sweeps' bitmaps became pictures (${st.frames} frames)`);
     s.dispose();
   }
