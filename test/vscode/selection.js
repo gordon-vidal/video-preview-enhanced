@@ -38,7 +38,7 @@ function selectScenarios(list, grep, sub, failed) {
 }
 
 function collectResults(base, results, selected, expected = []) {
-  const kept = results.filter((r) => !r.ok || r.skipped || selected(r.name))
+  const kept = results.filter((r) => r.abort || r.skipped || selected(r.name))
     .map((r) => ({ ...r, name: r.name ? `${base}/${r.name}` : base }));
   const ran = new Set(kept.filter((r) => !r.skipped).map((r) => r.name));
   for (const name of expected) {
@@ -48,7 +48,9 @@ function collectResults(base, results, selected, expected = []) {
 }
 
 function rerunTargets(report) {
-  return [...(report.unstarted || []), ...report.tests.filter((r) => !r.ok).map((r) => r.name.replace(/\/webgl2$/, ''))];
+  // An aborting error names no check of its own: rerun its case.
+  const owner = (r) => (r.abort ? r.name.split('/').slice(0, 2).join('/') : r.name.replace(/\/webgl2$/, ''));
+  return [...new Set([...(report.unstarted || []), ...report.tests.filter((r) => !r.ok).map(owner)])];
 }
 
 function unstartedScenarios(selected, completed) {

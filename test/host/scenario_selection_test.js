@@ -35,7 +35,7 @@ const { selectScenarios, collectResults, rerunTargets, unstartedScenarios } = re
 const scenarios = [{ name: 'demo', steps: [{ case: 'raw' }] }, { name: 'later', steps: [{ case: 'other' }] }];
 
 const [[broad]] = selectScenarios(scenarios, /requested/).map((s) => s.steps);
-const aborted = { name: 'earlier', ok: false, problems: ['setup broke'] };
+const aborted = { name: 'earlier', ok: false, abort: true, problems: ['setup broke'] };
 assert.deepEqual(collectResults('demo/raw', [aborted], broad.selected, broad.expected),
   [{ ...aborted, name: 'demo/raw/earlier' }]);
 
@@ -48,6 +48,31 @@ const results = collectResults('demo/raw', [
 ], step.selected, step.expected);
 assert.deepEqual(results.filter((r) => !r.ok).map((r) => r.name), targets.slice(1));
 assert.ok(results.filter((r) => !r.ok).every((r) => /did not run/.test(r.problems[0])));
+
+// An aborting error survives a filter that excludes its section (recorder level, like picture_size).
+lib.withSelection((name) => name === 'compare/panel-page', () => {
+  const R = lib.recorder();
+  R.t('compare/button-and-mode')(false, 'never recorded');
+  R.abort('compare/error', 'setup threw');
+  assert.deepEqual(R.out.map((r) => [r.name, r.ok, r.abort]), [['compare/error', false, true]]);
+});
+
+// An ordinary failure outside the selection is dropped (compare_ui continues after failed checks).
+const [[bar]] = selectScenarios([{ name: 'compare', steps: [{ case: 'compare_ui' }] }], /^compare\/compare_ui\/bar$/)
+  .map((s) => s.steps);
+const ui = collectResults('compare/compare_ui', [
+  { name: 'start/drop', ok: false, problems: ['x'] }, { name: 'bar', ok: true, problems: [] },
+], bar.selected, bar.expected);
+assert.deepEqual(ui.map((r) => [r.name, r.ok]), [['compare/compare_ui/bar', true]]);
+
+// A recovered setup error does not demand the error bucket on rerun: its case is the target.
+const failedReport = { tests: [{ name: 'compare/picture_size/compare/error', ok: false, abort: true }] };
+assert.deepEqual(rerunTargets(failedReport), ['compare/picture_size']);
+const [[again]] = selectScenarios([{ name: 'compare', steps: [{ case: 'picture_size' }] }], null, null,
+  rerunTargets(failedReport)).map((s) => s.steps);
+const recovered = collectResults('compare/picture_size', [{ name: 'compare/panel-page', ok: true, problems: [] }],
+  again.selected, again.expected);
+assert.ok(recovered.every((r) => r.ok));
 
 for (const completed of [[], [{ name: 'demo' }]]) {
   const unstarted = unstartedScenarios(scenarios, completed);

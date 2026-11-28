@@ -75,7 +75,9 @@ function recorder() {
     return ok.r;
   };
   const skip = (name, why) => { if (selected(name)) out.push({ name, ok: true, skipped: why, problems: [] }); };
-  return { out, t, run, skip };
+  // A case-aborting error is kept whatever the filter selects (test/vscode/selection.js).
+  const abort = (name, detail) => { out.push({ name, ok: false, abort: true, problems: [detail] }); };
+  return { out, t, run, skip, abort };
 }
 
 // ---- media --------------------------------------------------------------------------------

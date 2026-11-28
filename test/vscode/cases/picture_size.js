@@ -299,7 +299,7 @@ module.exports = [{
       await ui((x) => x.picture.mode === 'fit');
       act({ action: 'panel' });
     } catch (e) {
-      if (ok) ok(false, e.message); else R.out.push({ name: 'compare/error', ok: false, problems: [e.message] });
+      R.abort('compare/error', e.message);
     }
     await h.closeClip(vs);
     return R.out;

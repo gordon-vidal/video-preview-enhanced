@@ -151,7 +151,7 @@ async function runScenario(sc, ctx, attempt = 1, carry = { t0: Date.now(), retry
           add({ ...result, ...(attempt > 1 ? { retried: 'the first instance had no WebGL2 (GPU process)' } : {}) });
         }
       } catch (e) {
-        const failed = [{ ok: false, problems: [e && e.message || String(e)] }];
+        const failed = [{ ok: false, abort: true, problems: [e && e.message || String(e)] }];
         for (const result of collectResults(base, failed, () => true, step.expected)) add(result);
       } finally {
         phase('resetMs');

@@ -373,7 +373,7 @@ module.exports = [{
     ok(Math.abs(st.t - 1.5) < 0.1, `the player opened at ${st.t} s, expected about 1.5 s`);
     } catch (e) {
       // Keep the sections that ran; the one that threw fails with the reason.
-      if (ok) ok(false, e.message); else out.push({ name: 'error', ok: false, problems: [e.message] });
+      out.push({ name: 'error', ok: false, abort: true, problems: [e.message] });
     }
     await h.closeClip(vs);
     return out;
