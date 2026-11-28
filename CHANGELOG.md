@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.13.1 (2026-11-28)
+
+Seek-bar previews for every video: the whole bar fills with a picture of each moment in the background, using the GPU where it can (native ffmpeg, and a hardware decoder of its own for H.264 and VP8), without slowing playback. Also: frame steps backwards no longer restart on every key repeat, playback that stops early is no longer treated as the end, and a smoother FFmpeg setup when ffmpeg is already installed.
+
 - **Seek-bar previews fill faster for H.264 and VP8 videos that play on the GPU:** the pictures between keyframes are now decoded by a hardware decoder of their own instead of the built-in software decoder, without touching the one that plays the video, and they wait while the video plays (a 20 s 1080p H.264 clip: a full bar in 8 s instead of 18 s; 4K: 24 s instead of 75 s). Keyframe pictures for the bar come about twice as fast again (a 1 h video: 48 s instead of 93 s with native ffmpeg).
 - **Seek-bar previews ready before you hover:** a few seconds after a video opens, a low-priority background pass gives the whole seek bar keyframe pictures, one at a time and coarse to fine, so the first hover anywhere shows a picture at once. It pauses while playback needs the computer, the tab is hidden or you drag the seek bar, and stops when the bar is complete; native ffmpeg uses one thread and below-normal priority for it. Not for files read over Remote-SSH by the built-in decoder.
 - **Every video's seek bar fills with real pictures, without hovering:** after the keyframe pass, every place on the bar gets a picture of its own moment, so long-GOP clips no longer show the same keyframe across several seconds. Twenty evenly spread places come first, then the rest, for videos of any length and codec, locally, over Remote-SSH and with Live transcode. With native ffmpeg this decodes on the GPU when there is one (a 2 min 4K HEVC file: a full bar in 43 s for 3.5 s of CPU, instead of 157 s and 39 s of CPU in software). It decodes about a quarter of the time, half while the pointer rests on the seek bar, and adds no dropped frames to playback. Same pauses as the keyframe pass.
