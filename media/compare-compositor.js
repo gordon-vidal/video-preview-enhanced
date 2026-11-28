@@ -1,5 +1,5 @@
 // @ts-check
-// Compare tile textures and the shared WebGL renderer for large grids.
+// WebGL helpers for Compare's metrics, and the tiles' renderers (one shared beyond four tiles).
 'use strict';
 
 (() => {
@@ -44,105 +44,53 @@
     return t;
   }
 
-  // Each tile is drawn into its own rectangle of the stage-sized canvas (viewport), the split's second
-  // tile clipped to the right of the divider (scissor). Tile i's picture is texture slot i.
-  const DRAW_FS = `#version 300 es
-    precision highp float;
-    in vec2 uv; out vec4 o; uniform sampler2D t; uniform vec4 win;
-    void main() { o = vec4(texture(t, win.xy + uv * win.zw).rgb, 1.0); }`;
-
-  class Compositor {
-    /** @param {HTMLCanvasElement} cv */
-    constructor(cv, slots, grid) {
-      const gl = cv.getContext('webgl2', { preserveDrawingBuffer: true, alpha: false, antialias: false });
-      if (!gl) throw new Error('WebGL2 is not available');
-      this.gl = gl;
-      this.cv = cv;
-      this.grid = grid;
-      this.renderer = null;
-      this.scratch = null;
-      const { u } = glProgram(gl, DRAW_FS);
-      gl.uniform1i(u('t'), 0);
-      gl.uniform1f(u('flip'), 1);
-      this.uwin = u('win'); // the part of the picture a rectangle shows (zoomed in, only a crop of it is on screen)
-      this.tex = [];
-      this.size = [];
-      for (let i = 0; i < slots; i++) {
-        // Mipmapped: a 4K picture in a 960-pixel cell is averaged, not sampled every fourth pixel.
-        const t = glTexture(gl, 0, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-        this.tex.push(t);
-        this.size.push([0, 0]);
-      }
+  /**
+   * WebGL renderers for a page's video tiles. Chromium keeps 16 WebGL contexts per page and silently loses the oldest
+   * beyond that, so the first `maxOwn` live tiles get a renderer of their own and every further tile shares one
+   * renderer on a scratch canvas: its picture is drawn there and copied into the tile's canvas (a 2D canvas, no
+   * context of its own). With more than four tiles each picture is capped so all of them hold one 4K picture
+   * (media/compare-grid.js texturePixels).
+   * @param {{ doc: any, Grid: any, maxOwn?: number }} o
+   */
+  function createTileRenderers({ doc, Grid, maxOwn = 4 }) {
+    const own = new Set();
+    let shared = /** @type {any} */ (null);
+    let scratch = /** @type {any} */ (null);
+    let users = 0;
+    const maxPixels = () => Grid.texturePixels(own.size + users);
+    /** A renderer of its own on `cv`, its context lost when the tile goes. */
+    function ownRenderer(Renderer, cv) {
+      const r = new Renderer(cv);
+      Object.defineProperty(r, 'maxPixels', { get: maxPixels, set() {}, configurable: true });
+      own.add(r);
+      const dispose = r.dispose.bind(r);
+      r.dispose = (/** @type {any} */ opts) => { own.delete(r); dispose({ ...(opts || {}), loseContext: true }); };
+      return r;
     }
-    get contextCount() { return 1 + Number(!!this.renderer); }
-    hasPicture(slot) { return !!this.size[slot][0]; }
-
-    /** Uploads tile `slot`'s engine canvas. */
-    upload(slot, src) {
-      const gl = this.gl;
-      if (!src.width || !src.height || slot >= this.tex.length) return;
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, this.tex[slot]);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
-      gl.generateMipmap(gl.TEXTURE_2D);
-      this.size[slot] = [src.width, src.height];
-    }
-    /**
-     * @param {number} w canvas width (device pixels)
-     * @param {number} h canvas height
-     * @param {{slot: number, x: number, y: number, w: number, h: number, clipX?: number, win?: number[], nearest?: boolean}[]} rects device pixels from the top left
-     */
-    draw(w, h, rects) {
-      const gl = this.gl;
-      if (this.cv.width !== w || this.cv.height !== h) { this.cv.width = w; this.cv.height = h; }
-      gl.disable(gl.SCISSOR_TEST);
-      gl.viewport(0, 0, w, h);
-      gl.clearColor(0, 0, 0, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.activeTexture(gl.TEXTURE0);
-      for (const r of rects) {
-        if (!this.size[r.slot][0] || r.w < 1 || r.h < 1) continue;
-        const y = h - r.y - r.h;
-        gl.bindTexture(gl.TEXTURE_2D, this.tex[r.slot]);
-        // Enlarged to twice or more: single pixels, as the player's nearest-neighbour zoom.
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, r.nearest ? gl.NEAREST : gl.LINEAR);
-        const w4 = r.win || [0, 0, 1, 1];
-        gl.uniform4f(this.uwin, w4[0], w4[1], w4[2], w4[3]);
-        gl.viewport(Math.round(r.x), Math.round(y), Math.round(r.w), Math.round(r.h));
-        if (r.clipX !== undefined) {
-          gl.enable(gl.SCISSOR_TEST);
-          gl.scissor(Math.round(r.clipX), Math.round(y), Math.max(0, Math.round(r.x + r.w - r.clipX)), Math.round(r.h));
-        } else gl.disable(gl.SCISSOR_TEST);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    function sharedRenderer(Renderer, cv) {
+      const ctx = cv.getContext('2d', { alpha: false });
+      if (!ctx) return ownRenderer(Renderer, cv);
+      if (!shared) {
+        scratch = doc.createElement('canvas');
+        shared = new Renderer(scratch);
       }
-      gl.disable(gl.SCISSOR_TEST);
-    }
-    // A WebGL context per engine plus the compositor's would pass Chromium's 16 per page (the oldest is
-    // lost). From 5 tiles on, one renderer on a scratch canvas draws each tile's frame when its engine
-    // shows it, and the result goes straight into that tile's compositor texture; the engine's own
-    // canvas only keeps the size (no context). Buffer recycling and colour state stay per tile.
-    sharedRenderer(Renderer, cv, slot) {
-      const { grid } = this;
-      let { renderer, scratch } = this;
-      if (!renderer) {
-        scratch = this.scratch = this.cv.ownerDocument.createElement('canvas');
-        renderer = this.renderer = new Renderer(scratch);
-        renderer.maxPixels = grid.texturePixels(this.tex.length); // all tiles' textures together: one 4K picture
-      }
+      const renderer = shared;
+      users++;
       let rotation = 0;
-      let held = null;
+      let held = /** @type {any} */ (null);
+      let gone = false;
       const out = {
-        norm16: renderer.norm16, hdrPeak: 0, hdr: 0, onUploaded: null, onFrame: null, twin: null, gl: null,
+        cv, gl: null, norm16: renderer.norm16, hdrPeak: 0, hdr: 0,
+        onUploaded: /** @type {any} */ (null), onFrame: /** @type {any} */ (null), twin: /** @type {any} */ (null),
         get rot() { return rotation; },
-        setRotation(deg) { rotation = [90, 180, 270].includes(deg) ? deg : 0; },
-        prepareNative(w, h) {
+        setRotation(/** @type {number} */ deg) { rotation = [90, 180, 270].includes(deg) ? deg : 0; },
+        prepareNative(/** @type {number} */ w, /** @type {number} */ h) {
           const r = rotation % 180 ? [h, w] : [w, h];
-          const c = grid.capSize(r[0], r[1], renderer ? renderer.maxPixels : 0);
+          const c = Grid.capSize(r[0], r[1], maxPixels());
           if (cv.width !== c.w || cv.height !== c.h) { cv.width = c.w; cv.height = c.h; }
         },
-        drawYuv(f) { draw(() => renderer.drawYuv(f)); },
-        drawFrame(vf) { draw(() => renderer.drawFrame(vf)); },
+        drawYuv(/** @type {any} */ f) { draw(() => renderer.drawYuv(f)); },
+        drawFrame(/** @type {any} */ vf) { draw(() => renderer.drawFrame(vf)); },
         dispose() {
           if (out.onFrame) {
             const fn = out.onFrame;
@@ -152,32 +100,46 @@
           out.onUploaded = null;
           out.twin = null;
           held = null;
+          if (gone) return;
+          gone = true;
+          users--;
+          if (!users && shared === renderer) {
+            shared.dispose({ loseContext: true });
+            shared = scratch = null;
+          }
         },
       };
+      /** @param {() => void} render */
       const draw = (render) => {
-        if (!this.renderer) return;
+        if (gone || renderer.disposed) return;
         renderer.setRotation(rotation);
+        renderer.maxPixels = maxPixels();
         renderer.hdrPeak = out.hdrPeak;
         renderer.heldBuf = held;
         renderer.onUploaded = out.onUploaded;
         renderer.onFrame = out.onFrame;
+        renderer.twin = out.twin;
         render();
         renderer.onFrame = null;
+        renderer.twin = null;
         held = renderer.heldBuf;
+        renderer.heldBuf = null;
         out.hdr = renderer.hdr;
-        if (cv.width !== scratch.width || cv.height !== scratch.height) { cv.width = scratch.width; cv.height = scratch.height; }
-        this.upload(slot, scratch);
+        const src = renderer.cv;
+        if (cv.width !== src.width || cv.height !== src.height) { cv.width = src.width; cv.height = src.height; }
+        ctx.drawImage(src, 0, 0);
       };
       return out;
     }
-    dispose() {
-      this.renderer?.dispose({ loseContext: true });
-      this.renderer = this.scratch = null;
-      this.gl.getExtension('WEBGL_lose_context')?.loseContext();
-    }
+    return {
+      /** For media/engine.js's env.createRenderer. @param {any} Renderer media/gl-renderer.js GLRenderer @param {any} cv */
+      create(Renderer, cv) { return own.size < maxOwn ? ownRenderer(Renderer, cv) : sharedRenderer(Renderer, cv); },
+      /** 1 while the shared renderer's WebGL context is open (each own renderer's is its tile's p.gl.gl). */
+      get sharedContexts() { return shared ? 1 : 0; },
+    };
   }
 
-  const api = { Compositor, glProgram, glTexture };
+  const api = { createTileRenderers, glProgram, glTexture };
   const commonJs = /** @type {{ exports?: typeof api } | undefined} */ (
     // @ts-ignore The webview has no CommonJS globals.
     typeof module === 'undefined' ? undefined : module

@@ -39,7 +39,7 @@ nudge the tile under the pointer. Two to four videos retain their existing overl
 
 | Part | Before (2-4, unchanged) | 5-16 | Where |
 |---|---|---|---|
-| WebGL | a context per engine plus the compositor | one shared renderer on a scratch canvas draws each tile's frame straight into its compositor texture: 2 contexts for any count (Chromium keeps 16 per page) | `media/compare.js` `sharedRenderer` |
+| WebGL | a context per engine | the first 4 tiles keep their own; every further tile shares one renderer on a scratch canvas, its picture copied into the tile's 2D canvas: 5 contexts for any count (Chromium keeps 16 per page and loses the oldest beyond); a tile's context is released when it goes | `media/compare-compositor.js` `createTileRenderers` |
 | Tile texture | the engine's canvas size | all tiles together at most one 4K picture (16 tiles: 960×540 each) | `media/compare-grid.js` `texturePixels` |
 | Lockstep | paused view drawn once all tiles show their frame | the same; textures fill as engines draw, the view draws only a matching set | `present()` |
 | Decoded frames kept | 250 MB (2) / 120 MB (3-4) per tile at 32 GB | 480 MB shared (16: 30 MB each; 12 MB at 8 GB) | `tileMemory` |
@@ -47,12 +47,11 @@ nudge the tile under the pointer. Two to four videos retain their existing overl
 | File blocks | 4 MiB × 4 read ahead in remote windows | 1 MiB, one read ahead | `engine.js` `initBlocks` |
 | Built-in decoder batches | 96 KB of packets | one packet (a batch expands to full-size frames in every tile) | `engine.js` |
 | Remote window memory | the 32 GB defaults | from the client's `navigator.deviceMemory` | `media/membudget.js` |
-| Native transport | HTTP streams | WebSockets on the same frame-server port (6 HTTP streams per origin) | `src/compare.js` |
+| Native transport | HTTP streams | WebSockets on the same frame-server port (6 HTTP streams per origin) | `src/unified-viewer.js` `startNative` |
 | Native credits | 8 per request, 16 held | 2 per request, 4 held; no loop standby ffmpeg | `src/native.js` |
 | Native sizes | stage / 2 per side | stage / cols × rows; the first tile's aspect from the page when it is built-in; room for ffmpeg's even-width rounding | `tileHeights` |
 
 The host queue (12 frames at 32 GB) was already divided by the tile count with one frame minimum.
-Copy frame in a large grid copies the tile as drawn in the view (the engine canvases hold no picture).
 
 ## Measured
 
@@ -72,7 +71,7 @@ about 20-35 % CPU). Under heavy load (other agents near 100 % CPU) a run gave 23
 - Layer 1: `test/host/compare_grid_test.js` (the setting, grids, memory for 2-16 tiles and 8-32 GB, texture
   cap, native credits and queue, native heights for 9 and 16 tiles under both budgets, the page's scripts,
   the setting capping open and add).
-- Layer 3: `multiview-large` (9 GPU and built-in tiles: 2 WebGL contexts, lockstep, offsets, clock, play,
+- Layer 3: `multiview-large` (9 GPU and built-in tiles: 5 WebGL contexts, lockstep, offsets, clock, play,
   remove to 8, add to 16, close) and `multiview-large-native` (9 and 16 native tiles over WebSockets on one
   port, cell-sized frames, offsets, playing in step, a seek through a resize; fps recorded, not judged).
 

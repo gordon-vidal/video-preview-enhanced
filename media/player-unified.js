@@ -148,7 +148,11 @@
     const FP = framesApi && typeof framesApi.createFramePlayer === 'function' ? framesApi : null;
     const d = doc || (G && G.document);
     if ((typeof createEngine !== 'function' && !FP) || !d) return null;
-    return (clip, _host, hooks) => {
+    const C = (win && win.VpeCompareCompositor) || (G && G.VpeCompareCompositor);
+    const Grid = (win && win.CompareGrid) || (G && G.CompareGrid);
+    const tiles = C && typeof C.createTileRenderers === 'function' && Grid ? C.createTileRenderers({ doc: d, Grid }) : null;
+    /** @type {CreatePlayer & { tileRenderers?: any }} */
+    const create = (clip, _host, hooks) => {
       const cv = d.createElement('canvas');
       const envTag = {
         ...(cfg.page !== undefined ? { page: cfg.page } : {}),
@@ -192,6 +196,7 @@
         // The sound and subtitle streams (tracks-streams): the page lists them in the CC and Audio track panels.
         onTracks: (/** @type {any} */ pl) => { if (typeof hooks.onTracks === 'function') hooks.onTracks(pl); },
         isClock: () => (typeof hooks.isClock === 'function' ? hooks.isClock() : true),
+        ...(tiles ? { createRenderer: (/** @type {any} */ R) => tiles.create(R, cv) } : {}),
       });
       const meta = clip.meta && typeof clip.meta === 'object' ? clip.meta
         : { size: clip.size || 0, duration: clip.duration || 0, label: clip.name || '', native: !!clip.native };
@@ -200,6 +205,8 @@
       p.key = clip.id;
       return p;
     };
+    create.tileRenderers = tiles;
+    return create;
   }
 
   /**
@@ -2844,7 +2851,10 @@
             tiles: debugApi.tiles, clock: clockPlayer(), cells: cells(), hover: null, syncMode: !!t().syncMode,
             statsIds: new Set(t().statsOpen.map(indexOf)),
           }),
-          contextCount: () => 0,
+          contextCount: () => {
+            const tr = createPlayer && /** @type {any} */ (createPlayer).tileRenderers;
+            return tr ? tr.sharedContexts : 0;
+          },
           // The pointer over a tile, as the hover tracker (media/player-ui-tiles.js) hears it: a pointermove at the
           // tile's centre (Split Wipe: the middle of its side of the divider); null: the pointer leaves the tiles.
           setHover: (/** @type {number | null} */ i) => {
