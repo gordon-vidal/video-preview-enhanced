@@ -281,7 +281,7 @@ module.exports = [{
       const out = [{ name: h.scenario ? 'decision' : name, ...r }];
       if (lib.selected('seeks')) out.push({ name: 'seeks', ...(await seekChecks(vs, h, name, 25, LONG_TARGETS, 8, 1)) });
       return out;
-    } catch (e) { return [{ name, ok: false, problems: [e.message] }]; } finally { try { await h.closeClip(vs); } catch { /* gone */ } }
+    } finally { try { await h.closeClip(vs); } catch { /* gone */ } }
   },
 }, {
   name: 'remote_stream_size',

@@ -74,6 +74,47 @@ const recovered = collectResults('compare/picture_size', [{ name: 'compare/panel
   again.selected, again.expected);
 assert.ok(recovered.every((r) => r.ok));
 
+// remote_stream_long: an exception reaches the runner as an abort, which a (decision|seeks) filter keeps;
+// after recovery the rerun asks for the case, not for a bucket that never reappears.
+const longScenarios = [{ name: 'remote-stream', steps: [{ case: 'remote_stream_long' }] }];
+const [[longStep]] = selectScenarios(longScenarios, /^remote-stream\/remote_stream_long\/(decision|seeks)$/)
+  .map((s) => s.steps);
+const thrown = collectResults('remote-stream/remote_stream_long',
+  [{ ok: false, abort: true, problems: ['no first frame'] }], longStep.selected, longStep.expected);
+assert.deepEqual(thrown.map((r) => [r.name, r.ok]), [['remote-stream/remote_stream_long', false]]);
+const longReport = { tests: thrown };
+assert.deepEqual(rerunTargets(longReport), ['remote-stream/remote_stream_long']);
+const [[longAgain]] = selectScenarios(longScenarios, null, null, rerunTargets(longReport)).map((s) => s.steps);
+const longOk = collectResults('remote-stream/remote_stream_long',
+  [{ name: 'decision', ok: true, problems: [] }, { name: 'seeks', ok: true, problems: [] }],
+  longAgain.selected, longAgain.expected);
+assert.ok(longOk.length === 2 && longOk.every((r) => r.ok));
+
+// Reports saved before `abort` existed: their setup error buckets are recognised by name.
+for (const name of ['picture-size/picture_size/compare/error', 'compare/compare_ui/error']) {
+  const owner = name.split('/').slice(0, 2).join('/');
+  assert.deepEqual(rerunTargets({ tests: [{ name, ok: false }] }), [owner]);
+}
+
+// An interrupted section is failed next to the abort entry, never left passing.
+{
+  let start;
+  lib.withSelection(() => true, () => {
+    const R = lib.recorder();
+    const ok = R.t('compare/panel-page');
+    ok(false, 'interrupted: boom');
+    R.abort('compare/error', 'boom');
+    start = R.out;
+  });
+  assert.deepEqual(start.map((r) => [r.name, r.ok]), [['compare/panel-page', false], ['compare/error', false]]);
+}
+const fs = require('node:fs');
+const casesDir = path.join(__dirname, '../vscode/cases');
+for (const f of fs.readdirSync(casesDir)) {
+  const src = fs.readFileSync(path.join(casesDir, f), 'utf8');
+  assert.ok(!/name: '(?:compare\/)?error', ok: false(?!, abort)/.test(src), `${f}: error bucket without abort`);
+}
+
 for (const completed of [[], [{ name: 'demo' }]]) {
   const unstarted = unstartedScenarios(scenarios, completed);
   assert.deepEqual(unstarted, completed.length ? ['later'] : ['demo', 'later']);

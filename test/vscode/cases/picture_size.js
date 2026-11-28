@@ -299,6 +299,7 @@ module.exports = [{
       await ui((x) => x.picture.mode === 'fit');
       act({ action: 'panel' });
     } catch (e) {
+      if (ok) ok(false, `interrupted: ${e.message}`);
       R.abort('compare/error', e.message);
     }
     await h.closeClip(vs);

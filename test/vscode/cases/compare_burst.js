@@ -70,7 +70,9 @@ module.exports = [{
         `a video opened after the burst is a player beside the compare: ${JSON.stringify(tb)}`);
 
     } catch (e) {
-      if (ok) ok(false, String(e && e.message || e)); else out.push({ name: 'error', ok: false, problems: [String(e && e.message || e)] });
+      const why = String(e && e.message || e);
+      if (ok) ok(false, `interrupted: ${why}`);
+      out.push({ name: 'error', ok: false, abort: true, problems: [why] });
     }
     await h.closeClip(vs);
     return out;
