@@ -8,7 +8,9 @@
 // - refining: after the pointer rested REST_MS on a slot whose best picture is more than X away, one cheap
 //   decode of the exact picture, when its estimated cost fits the budget (never while dragging or busy);
 // - the background keyframe pass (passArm, after the first frame): coarse to fine over the slots still without a
-//   picture, one at a time, paced, paused while busy, hidden, the pointer is on the bar or another tile sets the clock.
+//   picture, one at a time, paced, paused while busy, hidden, the pointer is on the bar or another tile sets the clock;
+//   then, for short or light files, the between pass: cheap decodes of whole stretches ('sweep') that fill the slots
+//   with no picture within X of their middle.
 // The bar is a grid of N slots of X seconds (interval()); one picture per slot is enough. Pictures are kept
 // as small JPEGs; a few near the pointer also as ready-to-draw ImageBitmaps (HOT). Not used for MJPEG
 // AVI/image sequences (FramePlayer, no libav) or audio-only files.
@@ -32,6 +34,15 @@ const PASS_DUTY_FAR = 0.25;
 const PASS_BUDGET_FAR_MS = 20e3;
 /** Host runs: keyframes per ffmpeg, and the most keyframes per slot at which a run beats one ffmpeg per slot. */
 const RUN_KEYS_PER_SLOT = 1.25;
+/** Between pass: estimated decoder time (ms, one thread, so about CPU time) per file, here and on a far host. */
+const BETWEEN_BUDGET_MS = 3000;
+const BETWEEN_BUDGET_FAR_MS = 1000;
+/** A sweep ends at the first known keyframe past this much estimated decoding (what a cancel can lose). */
+const BETWEEN_CHUNK_MS = 500;
+/** The first per-frame guess is pessimistic: start while the estimate is within TRY x budget, go on while the
+ *  measured estimate stays within OVER x budget. */
+const BETWEEN_TRY = 2;
+const BETWEEN_OVER = 1.25;
 
 /**
  * @typedef {{ t: number, kind: 'key' | 'frame', end: number, jpeg: Blob | null, bmp: ImageBitmap | null,
@@ -62,16 +73,17 @@ class ThumbService {
    * @param {number} [o.radius] neighbouring slots filled each side of the pointer (default 4)
    * @param {(msg: string) => void} [o.log]
    * @param {number} [o.cap] bytes of pictures kept (JPEGs plus hot bitmaps)
-   * @param {(t: number, w: number, h: number, signal: AbortSignal, mode?: 'key' | 'near' | 'exact' | 'run',
-   *   opts?: {pass?: boolean}) => Promise<any>} [o.request]
+   * @param {(t: number, w: number, h: number, signal: AbortSignal, mode?: 'key' | 'near' | 'exact' | 'run' | 'sweep',
+   *   opts?: {pass?: boolean, to?: number, step?: number}) => Promise<any>} [o.request]
    *   decodes one thumbnail elsewhere (native ffmpeg in the extension host) instead of the libav.js
    *   worker; resolves {kt, w, h, data, fmt, next?: {kt, data}} (data is a JPEG when fmt is 'jpeg', else RGBA) or null;
-   *   'run': the next keyframes from t on, {kt, data, more: [{kt, data}], end} (end: no keyframe after the last)
+   *   'run': the next keyframes from t on, {kt, data, more: [{kt, data}], end} (end: no keyframe after the last);
+   *   'sweep': the first frame at or after each of t, t + step, ... before `to`, decoded cheaply, in the same shape
    * @param {() => boolean} [o.playing] playback runs (the smaller refine budget)
    * @param {number} [o.frameMs] first guess of what decoding one frame between keyframes costs (ms); replies refine it
    * @param {number} [o.restMs] rest before refining (default REST_MS)
-   * @param {{delayMs?: number, far?: boolean, budgetMs?: number}} [o.pass] the background keyframe pass (passArm);
-   *   far: decoding on a far host (slower pace, a total budget)
+   * @param {{delayMs?: number, far?: boolean, budgetMs?: number, betweenMs?: number}} [o.pass] the background pass
+   *   (passArm); far: decoding on a far host (slower pace, a total budget, a smaller between budget)
    * @param {() => boolean} [o.hidden] the page is hidden (no pass work)
    * @param {() => boolean} [o.passOn] the pass may run (this tile sets the clock, not turned off by a test)
    */
@@ -297,9 +309,7 @@ class ThumbService {
     const T = this.target(slot);
     const b = this.best(slot, T);
     if (!b || !b.exact || Math.abs(b.e.t - T) <= this.X) return null;
-    // From the latest known keyframe at or before T (the real one is never earlier).
-    let kp = this.o.startT;
-    for (const k of this.keys) { if (k.t <= T) kp = k.t; else break; }
+    const kp = this.keyBefore(T);
     const frames = Math.max(1, (T - kp) * (this.o.fps || 30));
     const fixed = this.medianMs();
     const cost = fixed + frames * this.frameMs;
@@ -497,7 +507,7 @@ class ThumbService {
   /** Frees the worker (and its WebAssembly memory); the next hover starts it again. */
   stop() {
     this.epoch++;
-    if (this.inflight && this.inflight.pass && this.ps) this.ps.retry = this.inflight.slot;
+    if (this.inflight && this.inflight.pass && this.inflight.mode !== 'sweep' && this.ps) this.ps.retry = this.inflight.slot;
     this.inflight?.abort?.abort();
     clearTimeout(this.idleTimer);
     clearTimeout(this.debounce);
@@ -582,26 +592,29 @@ class ThumbService {
 
   /**
    * Asks for `slot`'s picture: its known keyframe by time ('key'), the nearer keyframe ('near'), the exact picture
-   * (refine), or the keyframes from the slot's start on ('run', host only).
-   * @param {number} slot @param {{prefetch?: boolean, refine?: boolean, pass?: boolean, run?: boolean}} kind
+   * (refine), the keyframes from the slot's start on ('run', host only), or a between-pass stretch ('sweep').
+   * @param {number} slot
+   * @param {{prefetch?: boolean, refine?: boolean, pass?: boolean, run?: boolean, sweep?: {to: number}}} kind
    */
   send(slot, kind) {
     const T = this.target(slot);
     // A keyframe whose time is known is asked for by its time (+0.5 ms: under any frame, over rounding).
-    const k = kind.refine || kind.run ? null : this.nearerKey(T);
-    const mode = kind.run ? 'run' : kind.refine ? 'exact' : k !== null ? 'key' : 'near';
+    const k = kind.refine || kind.run || kind.sweep ? null : this.nearerKey(T);
+    const mode = kind.sweep ? 'sweep' : kind.run ? 'run' : kind.refine ? 'exact' : k !== null ? 'key' : 'near';
     const t = kind.run ? this.o.startT + slot * this.X + 0.0005 : k !== null ? k + 0.0005 : T;
-    this.inflight = { id: ++this.id, slot, prefetch: !!kind.prefetch, refine: !!kind.refine, pass: !!kind.pass, mode, at: t, t: performance.now() };
+    const to = kind.sweep ? kind.sweep.to : undefined;
+    this.inflight = { id: ++this.id, slot, prefetch: !!kind.prefetch, refine: !!kind.refine, pass: !!kind.pass, mode, at: t, to, t: performance.now() };
     this.stats.requests++;
     if (this.o.request) {
       this.inflight.abort = new AbortController();
       this.requestHost(this.inflight);
       return;
     }
-    this.worker.postMessage({ type: 'thumb', id: this.id, t, w: this.box.w, h: this.box.h, mode: kind.refine ? 'between' : mode });
+    const sweep = kind.sweep ? { to, step: this.X } : {};
+    this.worker.postMessage({ type: 'thumb', id: this.id, t, w: this.box.w, h: this.box.h, mode: kind.refine ? 'between' : mode, ...sweep });
   }
 
-  // ---- the background keyframe pass (docs/notes/seek-preview.md, phase 3) ----
+  // ---- the background pass (docs/notes/seek-preview.md, phases 3 and 4) ----
 
   /** Starts the pass once per file, after its delay; not for a remote file read by the worker (a block per keyframe). */
   passArm() {
@@ -611,6 +624,8 @@ class ThumbService {
       order: ThumbService.coarseToFine(this.n), at: 0, tried: new Set(), retry: /** @type {number | null} */ (null),
       timer: 0, notBefore: 0, ms: 0, requests: 0, runs: 0, done: '', paused: '', since: 0, t0: performance.now(),
       duty: p.far ? PASS_DUTY_FAR : PASS_DUTY, budget: p.budgetMs ?? (p.far ? PASS_BUDGET_FAR_MS : Infinity),
+      /** @type {any} the between pass, set once the keyframe pass has nothing left (sweepNext) */
+      bw: null,
     };
     this.passLater(p.delayMs ?? PASS_DELAY_MS);
   }
@@ -650,7 +665,7 @@ class ThumbService {
     if (this.state !== 'off') return;
     const why = this.passWhy();
     if (why) { this.passPause(why); this.passLater(PASS_RETRY_MS); return; }
-    if (this.passNext() === null) { this.passDone('complete'); return; }
+    if (this.passNext() === null && !this.sweepNext()) { this.passDone('complete'); return; }
     this.start();
   }
 
@@ -669,8 +684,14 @@ class ThumbService {
     ps.paused = '';
     if (ps.ms >= ps.budget) { this.passDone('budget'); return false; }
     const slot = this.passNext();
-    if (slot === null) { this.passDone('complete'); return false; }
+    const sweep = slot === null ? this.sweepNext() : null;
+    if (slot === null && !sweep) { this.passDone('complete'); return false; }
     if (ps.notBefore > now) { this.passLater(ps.notBefore - now); return true; }
+    if (sweep) {
+      this.send(sweep.slot, { pass: true, sweep });
+      this.passLater(PASS_WATCH_MS);
+      return true;
+    }
     const run = this.runMode();
     const from = run ? this.runFrom(slot) : slot;
     ps.tried.add(from);
@@ -713,13 +734,20 @@ class ThumbService {
     return s;
   }
 
-  /** After a pass reply: its cost counts against the budget and sets the pause before the next. */
+  /** After a pass reply: its cost counts against its budget and sets the pause before the next. */
   passAfter(req, m) {
     const ps = this.ps;
     if (!req.pass || !ps) return;
     const ms = performance.now() - req.t;
-    ps.ms += ms;
-    if (m.cancelled || req.cancelSent) { ps.tried.delete(req.slot); ps.retry = req.slot; } else ps.requests++;
+    const cancelled = m.cancelled || req.cancelSent;
+    if (req.mode === 'sweep') {
+      // A cancelled sweep starts again from its first slot still without a picture.
+      ps.bw.ms += ms;
+      if (!cancelled) ps.bw.requests++;
+    } else {
+      ps.ms += ms;
+      if (cancelled) { ps.tried.delete(req.slot); ps.retry = req.slot; } else ps.requests++;
+    }
     ps.notBefore = performance.now() + ms * (1 / ps.duty - 1);
   }
 
@@ -728,7 +756,90 @@ class ThumbService {
     ps.done = why;
     clearTimeout(ps.timer);
     ps.timer = 0;
-    this.log(`pass ${why}: ${this.answered()} of ${this.n} places, ${ps.requests} asks (${ps.runs} runs), ${Math.round(ps.ms)} ms decoding in ${Math.round(performance.now() - ps.t0)} ms`);
+    const bw = ps.bw;
+    const between = bw ? `; between ${bw.state} (estimate ${Math.round(bw.est)} ms): ${bw.requests} sweeps, ${bw.pictures} pictures, ${Math.round(bw.ms)} ms` : '';
+    this.log(`pass ${why}: ${this.answered()} of ${this.n} places, ${ps.requests} asks (${ps.runs} runs), ${Math.round(ps.ms)} ms decoding in ${Math.round(performance.now() - ps.t0)} ms${between}`);
+  }
+
+  /** Whether `slot` has no picture within X of its middle (what the between pass fills). */
+  betweenNeed(slot) {
+    const T = this.target(slot);
+    const i = this.index(T);
+    for (const e of [this.list[i - 1], this.list[i]]) if (e && Math.abs(e.t - T) <= this.X) return false;
+    return true;
+  }
+
+  /** The latest known keyframe at or before `time` (the real one is never earlier), else the start. */
+  keyBefore(time) {
+    let kp = this.o.startT;
+    for (const k of this.keys) { if (k.t <= time) kp = k.t; else break; }
+    return kp;
+  }
+
+  /**
+   * The between pass's next stretch once the keyframe pass has nothing left: from the first slot without a picture
+   * within X to the first known keyframe BETWEEN_CHUNK_MS of decoding later (or the end). Null when it is done, does
+   * not fit its budget, or ran out of it. Estimate = frames from the keyframe before that slot to the end x cost per
+   * frame + one keyframe request's measured time.
+   * @returns {{slot: number, t: number, to: number} | null}
+   */
+  sweepNext() {
+    const ps = this.ps;
+    const fps = this.o.fps || 30;
+    const end = this.o.startT + this.o.duration;
+    if (!ps.bw) {
+      const p = this.o.pass || {};
+      // Cost per frame: the refines' (or the engine's first guess) until a sweep measures it.
+      ps.bw = { state: 'running', budget: p.betweenMs ?? (p.far ? BETWEEN_BUDGET_FAR_MS : BETWEEN_BUDGET_MS),
+        frameMs: this.frameMs, measured: false, est: 0, ms: 0, requests: 0, pictures: 0, tried: new Set() };
+    }
+    const bw = ps.bw;
+    if (bw.state !== 'running') return null;
+    let slot = -1;
+    for (let s = 0; s < this.n; s++) if (!bw.tried.has(s) && this.betweenNeed(s)) { slot = s; break; }
+    if (slot < 0) { bw.state = 'done:complete'; return null; }
+    const t = this.target(slot);
+    const kp = this.keyBefore(t);
+    const left = (end - kp) * fps * bw.frameMs + this.medianMs();
+    if (!bw.requests) bw.est = left;
+    if (bw.ms + left > (bw.measured ? BETWEEN_OVER : BETWEEN_TRY) * bw.budget) {
+      bw.state = bw.requests ? 'done:budget' : 'skip';
+      return null;
+    }
+    let to = end + 1;
+    for (const k of this.keys) if (k.t > t && (k.t - kp) * fps * bw.frameMs >= BETWEEN_CHUNK_MS) { to = k.t; break; }
+    return { slot, t, to };
+  }
+
+  /** A sweep reply: pictures for slots still without one within X; its cost per frame replaces the guess. */
+  async onSweep(req, m) {
+    const bw = this.ps && this.ps.bw;
+    const ok = !m.cancelled && !req.cancelSent;
+    const pics = [];
+    if (ok && Number.isFinite(m.kt)) {
+      pics.push({ kt: m.kt, data: m.data });
+      for (const x of m.more || []) if (x && Number.isFinite(x.kt)) pics.push(x);
+    }
+    // Decided before adding: the reply's own pictures do not stand in for each other.
+    const fill = pics.filter((x) => {
+      const slot = this.slotOf(x.kt - this.o.startT);
+      return Math.abs(x.kt - this.target(slot)) <= this.X && this.betweenNeed(slot);
+    });
+    for (const x of fill) {
+      const p = await this.picture({ data: x.data, w: m.w, h: m.h, fmt: m.fmt });
+      if (this.inflight !== req) { if (p) p.bmp.close(); return; }
+      if (p) { this.add(x.kt, 'frame', p, m.w, m.h); if (bw) bw.pictures++; }
+    }
+    if (bw && ok) {
+      for (let s = req.slot; s < this.n && this.target(s) < req.to; s++) bw.tried.add(s);
+      // The host does not count frames: from the keyframe before the first picture to the last.
+      const last = pics.length ? pics[pics.length - 1].kt : req.at;
+      const frames = m.frames > 0 ? m.frames : (last - this.keyBefore(req.at)) * (this.o.fps || 30);
+      if (frames >= 10) { bw.frameMs = Math.max(0.05, (performance.now() - req.t) / frames); bw.measured = true; }
+    }
+    this.passAfter(req, m);
+    if (this.inflight === req) this.inflight = null;
+    this.kick();
   }
 
   /** Slots with a picture (or known to have none). */
@@ -742,7 +853,10 @@ class ThumbService {
     const ps = this.ps;
     if (!ps) return null;
     const state = ps.done ? `done:${ps.done}` : ps.paused ? `paused:${ps.paused}` : ps.requests || this.inflight?.pass ? 'running' : 'waiting';
-    return { state, requests: ps.requests, runs: ps.runs, ms: Math.round(ps.ms), s: Math.round((performance.now() - ps.t0) / 100) / 10 };
+    const bw = ps.bw;
+    const between = bw && { state: bw.state, est: Math.round(bw.est), requests: bw.requests, pictures: bw.pictures,
+      ms: Math.round(bw.ms), frameMs: Math.round(bw.frameMs * 100) / 100 };
+    return { state, requests: ps.requests, runs: ps.runs, ms: Math.round(ps.ms), s: Math.round((performance.now() - ps.t0) / 100) / 10, between };
   }
 
   /** 0..n-1 ordered so every prefix covers the range evenly (n/2, n/4, 3n/4, ...). */
@@ -763,7 +877,8 @@ class ThumbService {
   async requestHost(req) {
     let r = null;
     try {
-      r = await this.o.request(req.at, this.box.w, this.box.h, req.abort.signal, req.mode, req.pass ? { pass: true } : undefined);
+      const sweep = req.mode === 'sweep' ? { to: req.to, step: this.X } : {};
+      r = await this.o.request(req.at, this.box.w, this.box.h, req.abort.signal, req.mode, req.pass ? { pass: true, ...sweep } : undefined);
     } catch (e) { this.log(`host: ${e}`); }
     this.onThumb({ ...r, id: req.id, ms: Math.round(performance.now() - req.t) });
   }
@@ -861,6 +976,7 @@ class ThumbService {
     if (!req || req.id !== m.id) return;
     if (req.refine) { await this.onRefine(req, m); return; }
     if (req.mode === 'run') { await this.onRun(req, m); return; }
+    if (req.mode === 'sweep') { await this.onSweep(req, m); return; }
     if (!m.cancelled && !req.cancelSent) {
       const asked = req.at;
       // A timestamp-less picture stands for the asked time (this slot only).

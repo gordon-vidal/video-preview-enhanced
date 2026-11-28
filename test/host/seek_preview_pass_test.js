@@ -7,7 +7,11 @@
 //   pass request is cancelled when the pointer comes or playback gets busy; resumes on the 500 ms retry;
 // - stops when the bar is complete, and the service closes (worker / host job ends); pictures stay within the cap;
 // - none for a remote file read by the worker; a far host (Live transcode, remote native) has a total budget;
-// - native: with few keyframes per slot, keyframe runs (one ffmpeg for up to 8 keyframes) instead of per-slot asks.
+// - native: with few keyframes per slot, keyframe runs (one ffmpeg for up to 8 keyframes) instead of per-slot asks;
+// - the between pass (phase 4) after the keyframe pass: only when its estimate fits the budget (a smaller one on a far
+//   host), fills only slots without a picture within X, pauses and cancels like the keyframe pass, restarts a
+//   cancelled stretch from its first empty slot, stops when a measured cost runs over; a native sweep is one ffmpeg
+//   whose pictures match ffmpeg's reference frames on a generated 1080p H.264 clip with a 10 s GOP.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -36,7 +40,8 @@ const bmp = () => ({ width: 160, height: 90, close() {} });
 
 /**
  * A service over the host path. gop: keyframe every `gop` s (0: every asked time is a keyframe). Records each
- * request {slot, mode, t, aborted}; `ms` per request.
+ * request {slot, mode, t, to, aborted}; `ms` per request (`sweepMs` per sweep); a sweep answers the first 30 fps
+ * frame at or after each step (`sweepFrames`: the frames it says it decoded).
  */
 function mk(o = {}) {
   const calls = [];
@@ -48,15 +53,22 @@ function mk(o = {}) {
     duration: D, startT: 10, size: 1e9, fps: 30, cap: o.cap || 30e6, log: o.log || (() => {}), idleMs: o.idleMs ?? 50,
     busy: () => env.busy, hidden: () => env.hidden, passOn: () => env.on,
     pass: { delayMs: o.delayMs ?? 20, far: !!o.far, ...(o.budgetMs ? { budgetMs: o.budgetMs } : {}) },
-    remote: o.remote,
+    remote: o.remote, frameMs: o.frameMs,
     request: o.noRequest ? undefined : async (t, w, h, signal, mode, opts) => {
-      const c = { t, slot: Math.floor((t - 10) / s.X + 1e-9), mode, pass: !!(opts && opts.pass), aborted: false };
+      const c = { t, to: opts && opts.to, slot: Math.floor((t - 10) / s.X + 1e-9), mode, pass: !!(opts && opts.pass), aborted: false };
       calls.push(c);
       env.active++; env.max = Math.max(env.max, env.active);
-      if (o.ms === 0) await null;
-      else await new Promise((r) => { const tm = setTimeout(r, o.ms ?? 5); signal.addEventListener('abort', () => { clearTimeout(tm); r(); }, { once: true }); });
+      const ms = mode === 'sweep' && o.sweepMs !== undefined ? o.sweepMs : o.ms ?? 5;
+      if (ms === 0) await null;
+      else await new Promise((r) => { const tm = setTimeout(r, ms); signal.addEventListener('abort', () => { clearTimeout(tm); r(); }, { once: true }); });
       env.active--;
       if (signal.aborted) { c.aborted = true; return null; }
+      if (mode === 'sweep') {
+        const ts = [];
+        for (let g = t; g < opts.to && g < 10 + D; g += opts.step) ts.push(Math.ceil(g * 30 - 1e-6) / 30);
+        if (!ts.length) return null;
+        return { kt: ts[0], w, h, fmt: 'jpeg', data: jpeg(), more: ts.slice(1).map((kt) => ({ kt, data: jpeg() })), end: true, ...(o.sweepFrames ? { frames: o.sweepFrames } : {}) };
+      }
       if (mode === 'run') {
         const ks = [];
         for (let k = keyAt(t); k < 10 + D && ks.length < 8; k += gop) ks.push(k);
@@ -114,7 +126,8 @@ function mk(o = {}) {
     g.s.passArm();
     assert.ok(await until(() => /^done/.test(g.s.stats0().pass.state)));
     assert.strictEqual(g.s.stats0().bar, 30, 'the bar is complete');
-    assert.ok(g.calls.length <= 7, `a 60 s file with a 10 s GOP needs about one ask per keyframe (${g.calls.length} asks)`);
+    const keyAsks = g.calls.filter((c) => c.mode !== 'sweep').length;
+    assert.ok(keyAsks <= 7, `a 60 s file with a 10 s GOP needs about one ask per keyframe (${keyAsks} asks)`);
     g.s.dispose();
   }
 
@@ -219,6 +232,100 @@ function mk(o = {}) {
     many.s.dispose();
   }
 
+  // 9. The between pass: a 20 s file with keyframes at 0, 10 and 20 s (X = 1 s): after the keyframe pass, 17 slots
+  //    have no picture within X. Its estimate (600 frames x 2 ms) fits: two sweeps, one per GOP, fill exactly those.
+  const done = (s) => until(() => /^done/.test(s.stats0().pass.state), 5000);
+  const needy = [1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+  {
+    const { s, calls, env } = mk({ duration: 20, gop: 10, frameMs: 2 });
+    s.passArm();
+    assert.ok(await done(s), 'the pass finishes');
+    const st = s.stats0();
+    const sweeps = calls.filter((c) => c.mode === 'sweep');
+    assert.strictEqual(st.pass.state, 'done:complete', 'done:complete after both passes');
+    assert.strictEqual(st.pass.between.state, 'done:complete', `the between pass completes (${JSON.stringify(st.pass.between)})`);
+    assert.ok(calls.indexOf(sweeps[0]) > calls.findIndex((c) => c.mode !== 'sweep'), 'after the keyframe pass');
+    assert.deepStrictEqual(sweeps.map((c) => [c.t, c.to]), [[11.5, 20], [21.5, 31]], `one sweep per GOP, from the first empty slot to the next keyframe or the end (${JSON.stringify(sweeps.map((c) => [c.t, c.to]))})`);
+    assert.ok(sweeps.every((c) => c.pass && !c.aborted), 'pass requests (one thread, low priority)');
+    assert.strictEqual(env.max, 1, 'one request at a time');
+    assert.strictEqual(st.pass.between.pictures, needy.length, `exactly the slots without a picture within X (${st.pass.between.pictures})`);
+    assert.strictEqual(st.frames, needy.length, 'as frame pictures');
+    assert.strictEqual(st.state, 'off', 'the service closes after the pass');
+    let shown = null;
+    s.hover(5.5, (p) => { shown = p; });
+    assert.ok(shown && Math.abs(shown.t - 15.5) <= s.X, `a between slot shows its frame at once (${shown && shown.t})`);
+    s.leave(true);
+    const n = calls.length;
+    s.passArm();
+    await tick(300);
+    assert.strictEqual(calls.length, n, 'never twice per file');
+    s.dispose();
+  }
+
+  // 10. Fills only empty slots: captured frames are kept, and a stretch they fill is not decoded.
+  {
+    const { s, calls } = mk({ duration: 20, gop: 10, frameMs: 2 });
+    for (const slot of [1, 2, 3, 4, 5, 6, 7, 8, 15]) s.offer(10 + slot + 0.5, bmp());
+    s.passArm();
+    assert.ok(await done(s));
+    const sweeps = calls.filter((c) => c.mode === 'sweep');
+    assert.deepStrictEqual(sweeps.map((c) => c.t), [21.5], `only the second GOP is swept (${sweeps.map((c) => c.t)})`);
+    // The capture in slot 15 is also within X of slots 14 and 16.
+    assert.strictEqual(s.stats0().pass.between.pictures, needy.length - 11, `only slots with no picture within X (${s.stats0().pass.between.pictures})`);
+    assert.strictEqual(s.stats0().captured, 9);
+    s.dispose();
+  }
+
+  // 11. Does not qualify: 600 frames x 20 ms = 12 s, over twice the 3 s budget (the first guess is pessimistic).
+  //     On a far host the budget is 1 s: 600 x 4 ms runs here but not there.
+  {
+    const { s, calls } = mk({ duration: 20, gop: 10, frameMs: 20 });
+    s.passArm();
+    assert.ok(await done(s));
+    assert.strictEqual(calls.filter((c) => c.mode === 'sweep').length, 0, 'no sweep over budget');
+    assert.strictEqual(s.stats0().pass.between.state, 'skip', `skipped (${JSON.stringify(s.stats0().pass.between)})`);
+    assert.strictEqual(s.stats0().state, 'off', 'the service closes');
+    s.dispose();
+    const near = mk({ duration: 20, gop: 10, frameMs: 4 });
+    const far = mk({ duration: 20, gop: 10, frameMs: 4, far: true });
+    near.s.passArm(); far.s.passArm();
+    assert.ok(await done(near.s) && await done(far.s));
+    assert.strictEqual(near.s.stats0().pass.between.state, 'done:complete', 'near host: 2.4 s fits');
+    assert.strictEqual(far.s.stats0().pass.between.state, 'skip', 'far host: over its 1 s budget');
+    near.s.dispose(); far.s.dispose();
+  }
+
+  // 12. The measured cost decides after the first sweep: 200 ms for 10 frames is 20 ms per frame, so the rest
+  //     (300 frames) is over budget and the pass stops.
+  {
+    const { s, calls } = mk({ duration: 20, gop: 10, frameMs: 2, sweepMs: 200, sweepFrames: 10 });
+    s.passArm();
+    assert.ok(await done(s));
+    assert.strictEqual(calls.filter((c) => c.mode === 'sweep').length, 1, 'one sweep');
+    assert.strictEqual(s.stats0().pass.between.state, 'done:budget', `stops over budget (${JSON.stringify(s.stats0().pass.between)})`);
+    s.dispose();
+  }
+
+  // 13. Pauses and cancels like the keyframe pass: busy or hidden cancels a running sweep, so does a hover; it starts
+  //     again from its first empty slot.
+  for (const why of ['busy', 'hidden', 'pointer']) {
+    const { s, calls, env } = mk({ duration: 20, gop: 10, frameMs: 2, sweepMs: 400 });
+    s.passArm();
+    assert.ok(await until(() => calls.some((c) => c.mode === 'sweep'), 3000), 'a sweep starts');
+    const first = calls.find((c) => c.mode === 'sweep');
+    if (why === 'pointer') s.hover(3.5, () => {}, true); else env[why] = true; // a drag: no refine
+    assert.ok(await until(() => first.aborted, 300), `${why} cancels the running sweep`);
+    const n = calls.length;
+    await tick(700);
+    assert.ok(calls.slice(n).every((c) => c.mode !== 'sweep'), `no sweep while ${why}`);
+    if (why === 'pointer') s.leave(); else env[why] = false;
+    assert.ok(await done(s), 'resumes and finishes');
+    const again = calls.filter((c) => c.mode === 'sweep' && !c.aborted);
+    assert.strictEqual(again[0].t, first.t, `restarts from its first empty slot (${again[0].t})`);
+    assert.strictEqual(s.stats0().pass.between.state, 'done:complete');
+    s.dispose();
+  }
+
   // 8. thumbhost: pass requests use one decoder thread; a run decodes up to 8 keyframes in one process.
   const th = require('../../src/thumbhost.js');
   {
@@ -237,7 +344,42 @@ function mk(o = {}) {
       assert.strictEqual(r.end, true, 'fewer than 8: the run reached the end');
       assert.ok(r.more.every((m) => m.data.length > 0), 'each with its JPEG');
     }
+    const sw = th.thumbArgs('a.mp4', 0.5, 160, 90, false, 'v:0', 'jpeg', 'sweep', { pass: true, from: 0.5, step: 1, count: 12 });
+    assert.strictEqual(sw[sw.indexOf('-threads') + 1], '1', 'sweep: one thread');
+    assert.strictEqual(sw[sw.indexOf('-frames:v') + 1], '12', 'sweep: one picture per step');
+    for (const [k, v] of [['-skip_frame', 'noref'], ['-skip_loop_filter', 'all'], ['-flags2', 'fast']]) assert.strictEqual(sw[sw.indexOf(k) + 1], v, `sweep: ${k} ${v}`);
+    assert.ok(!sw.includes('-noaccurate_seek') && !sw.includes('-hwaccel'), 'sweep: accurate seek, software');
+    assert.ok(sw.some((a) => /^select=.*scale=160:90:flags=fast_bilinear/.test(a)), 'sweep: select, then fast_bilinear');
+    // One ffmpeg for a whole 12 s 1080p H.264 clip with keyframes at 0 and 10 s: a picture per second, each the frame
+    // at its step (or a frame or two after: skip_frame noref) by ffmpeg's reference; between keyframes they differ
+    // from the keyframe.
+    const gl = require('../lib/gop_clip');
+    const big = gl.make({ size: '1920x1080' });
+    if (spawnSync('ffmpeg', ['-version'], { windowsHide: true }).status === 0 && big) {
+      const decoder = { tools: { ffmpeg: 'ffmpeg' }, file: big, pr: { video: { width: 1920, height: 1080, index: 0, startTime: 0 } } };
+      const t0 = Date.now();
+      const r = await th.nativeThumb(decoder, { t: 0.5, to: 13, step: 1, w: 160, h: 90, mode: 'sweep', pass: true }, () => {});
+      const ms = Date.now() - t0;
+      assert.ok(r, 'a sweep reply');
+      const pics = [{ rel: r.rel, data: r.data }, ...r.more];
+      assert.strictEqual(pics.length, 12, `a picture per slot (${pics.length})`);
+      assert.strictEqual(r.end, true, 'reached the end of the file');
+      const rgba = (jpg) => spawnSync('ffmpeg', ['-v', 'error', '-f', 'mjpeg', '-i', 'pipe:0', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'],
+        { input: Buffer.from(jpg), windowsHide: true, maxBuffer: 1 << 24 }).stdout;
+      const key = rgba(pics[0].data);
+      for (let i = 0; i < pics.length; i++) {
+        const g = 0.5 + i;
+        const k = Math.round(g * 30);
+        assert.ok(pics[i].rel >= g - 0.002 && pics[i].rel <= g + 2 / 30 + 1e-6, `picture ${i} at ${pics[i].rel} s for ${g} s`);
+        const px = rgba(pics[i].data);
+        const f = await gl.frameOf(px, r.w, r.h, k, big);
+        assert.ok(f >= k && f <= k + 2, `picture ${i} shows frame ${f} (ffmpeg reference), want ${k}..${k + 2}`);
+        if (i > 0 && i < 9) assert.notDeepStrictEqual(px, key, `picture ${i} differs from the keyframe`);
+      }
+      console.log(`native sweep, 12 s 1080p H.264: 12 pictures in one ffmpeg, ${ms} ms`);
+    } else console.log('skip: ffmpeg missing (native sweep)');
   }
+
 
   console.log('seek_preview_pass_test: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

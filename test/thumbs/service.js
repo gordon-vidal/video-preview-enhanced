@@ -5,7 +5,8 @@
 // are filled (not while busy() says playback needs the CPU, not for remote
 // files), repeats come from the cache, and nothing decodes after the pointer left. On a generated 10 s-GOP clip
 // (test/lib/gop_clip.js) the worker's 'near' mode returns the closer keyframe and both keyframe times, and
-// 'between' returns the frame at the target (ffmpeg reference), not the keyframe.
+// 'between' returns the frame at the target (ffmpeg reference), not the keyframe; 'sweep' (the between pass)
+// returns the frame at each step of the stretch asked for.
 //
 //   node test/thumbs/service.js <video file>
 'use strict';
@@ -191,6 +192,23 @@ async function gopChecks(check) {
     // A key request after 'between' is a keyframe again (the cheap flags are reset).
     const key = await w.ask({ type: 'thumb', id: ++id, t: 5.5, w: 160, h: 120, mode: 'key' });
     check('key after between: the keyframe', key.kt === 0, JSON.stringify({ kt: key.kt }));
+    // The between pass's 'sweep': one job decodes the clip cheaply and keeps the first frame at or after each step.
+    const t1 = performance.now();
+    const sw = await w.ask({ type: 'thumb', id: ++id, t: 0.5, to: 13, step: 1, w: 160, h: 120, mode: 'sweep' });
+    const pics = sw.data ? [{ kt: sw.kt, data: sw.data }, ...(sw.more || [])] : [];
+    const bad = [];
+    for (let i = 0; i < pics.length; i++) {
+      const k = Math.round((0.5 + i) * gop.FPS);
+      const f = await gop.frameOf(pics[i].data, sw.w, sw.h, k, file);
+      if (!(pics[i].kt >= 0.5 + i - 0.002 && pics[i].kt <= 0.5 + i + 2 / gop.FPS + 1e-6 && f >= k && f <= k + 2)) bad.push({ i, kt: pics[i].kt, f, k });
+    }
+    check('sweep: a picture per step, each the frame at its step (ffmpeg reference)', pics.length === 12 && !bad.length && sw.end,
+      `${pics.length} pictures, ${sw.frames} packets, ${Math.round(performance.now() - t1)} ms${bad.length ? `, off: ${JSON.stringify(bad.slice(0, 3))}` : ''}`);
+    check('sweep: between keyframes they differ from the keyframe', pics.length === 12 && pics.slice(1, 9).every((x) => Buffer.compare(Buffer.from(x.data), Buffer.from(pics[0].data)) !== 0));
+    const cut = await w.ask({ type: 'thumb', id: ++id, t: 2.5, to: 5, step: 1, w: 160, h: 120, mode: 'sweep' });
+    check('sweep: only the stretch asked for', cut.kt > 2.49 && cut.kt < 2.6 && (cut.more || []).length === 2, JSON.stringify({ kt: cut.kt, more: (cut.more || []).map((x) => x.kt) }));
+    const key2 = await w.ask({ type: 'thumb', id: ++id, t: 5.5, w: 160, h: 120, mode: 'key' });
+    check('key after sweep: the keyframe', key2.kt === 0, JSON.stringify({ kt: key2.kt }));
   } finally { await w.close(); }
   // MPEG-PS has no index: a seek can land past the keyframe, which must not answer with the keyframe after.
   const ps = gop.make({ codec: 'mpeg2' });

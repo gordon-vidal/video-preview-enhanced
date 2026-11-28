@@ -5,7 +5,9 @@
 // - 'key': the latest keyframe at or before t (one packet decoded);
 // - 'near': the same, or the first keyframe after t when that one is closer (found through the demuxer index);
 // - 'between': cheap decode (skip_frame noref, no loop filter, flags2 fast) from the keyframe up to t, keeping the
-//   last frame at or before t.
+//   last frame at or before t;
+// - 'sweep' (between pass): the same cheap decode from the keyframe at or before t on, keeping the first frame at or
+//   after each of t, t + step, ... before `to`.
 'use strict';
 
 const AVMEDIA_TYPE_VIDEO = 0;
@@ -140,6 +142,7 @@ async function keyAfter(t) {
 /** One thumbnail: m = {id, t (absolute seconds), w, h (box), mode?: 'key' | 'near' | 'between'}. */
 async function thumb(m) {
   if (m.mode === 'between') { await between(m); return; }
+  if (m.mode === 'sweep') { await sweep(m); return; }
   const t0 = Date.now();
   const stale = () => m.id < cancelBelow;
   if (stale()) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
@@ -289,6 +292,70 @@ async function between(m) {
     await libav.avcodec_flush_buffers(V.c);
     await setCheap(false);
   }
+}
+
+/**
+ * Between-pass stretch: m = {id, t, to, step, w, h}. Replies {kt, data, more: [{kt, data}], w, h, frames: packets
+ * decoded, end: the file ended}, like the host's 'run'; nothing when no frame was at or after t.
+ */
+async function sweep(m) {
+  const t0 = Date.now();
+  const stale = () => m.id < cancelBelow;
+  if (stale()) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
+  await setCheap(true);
+  const a = m.t - 0.001;
+  const pics = [];
+  let k = 0;
+  let done = false;
+  let n = 0;
+  let size = null;
+  const take = async (frames) => {
+    for (const f of frames) {
+      try {
+        const ft = done ? null : await frameTime(f);
+        if (ft === null || ft < a + k * m.step) continue;
+        if (ft >= m.to) { done = true; continue; }
+        const out = await scale(f, m.w, m.h);
+        size = { w: out.w, h: out.h };
+        pics.push({ kt: ft, data: out.data });
+        k = Math.floor((ft - a) / m.step) + 1;
+        if (a + k * m.step >= m.to) done = true;
+      } finally { await libav.av_frame_free_js(f); }
+    }
+  };
+  let atEnd = false;
+  try {
+    const landed = await seekTo(Math.max(0, m.t), m.t > 0 ? 'max' : 'min');
+    if (landed < 0 && m.t > 0) await seekTo(m.t, 'min');
+    await libav.avcodec_flush_buffers(V.c);
+    let started = false;
+    while (!done) {
+      if (stale()) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
+      const [res, packets] = await libav.ff_read_frame_multi(fmt, pkt, { limit: 1 });
+      atEnd = res === libav.AVERROR_EOF || (res < 0 && res !== -libav.EAGAIN);
+      const vp = [];
+      let pt = null;
+      for (const p of packets[V.idx] || []) {
+        pt = packetTime(p);
+        if (!started && !(p.flags & AV_PKT_FLAG_KEY)) continue;
+        started = true;
+        vp.push(p);
+      }
+      n += vp.length;
+      // Packets 2 s past the stretch: any reordering is shorter.
+      const end = atEnd || (pt !== null && pt > m.to + 2);
+      if (vp.length || end) await take(await libav.ff_decode_multi(V.c, V.pkt, V.frame, vp, { fin: end, ignoreErrors: true, copyoutFrame: 'ptr' }));
+      if (end) break;
+    }
+  } finally {
+    await libav.avcodec_flush_buffers(V.c);
+    await setCheap(false);
+  }
+  const ms = Date.now() - t0;
+  if (!pics.length) { post({ type: 'thumb', id: m.id, kt: null, frames: n, end: atEnd, ms }); return; }
+  const more = pics.slice(1);
+  post({ type: 'thumb', id: m.id, kt: pics[0].kt, data: pics[0].data, w: size.w, h: size.h, more, frames: n, end: atEnd, ms },
+    pics.map((x) => x.data.buffer));
 }
 
 /** swscale to RGBA inside the box, keeping the display aspect (sample aspect ratio). */

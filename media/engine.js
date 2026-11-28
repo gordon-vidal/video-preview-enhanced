@@ -3082,8 +3082,8 @@ function createEngine(env) {
 
     // ---- seek-bar thumbnails (thumbs.js, thumbs-worker.js) -------------------
     // Shown frames become small previews for free (captureThumb). Keyframes come from the pointer on the seek bar and,
-    // after the first frame, from a low-priority background pass (clock tile only); exact pictures only where the
-    // pointer rests. They are decoded by a second libav.js worker whose file reads share the block cache above as
+    // after the first frame, from a low-priority background pass (clock tile only); exact pictures where the pointer
+    // rests and, for short or light files, from the pass's cheap decode of the whole file. They are decoded by a second libav.js worker whose file reads share the block cache above as
     // reader 'thumbs', or for native ffmpeg and Live transcode by a short ffmpeg on the extension host
     // (src/thumbhost.js, never the running stream). Not for URLs or audio-only files; MJPEG/image sequences use
     // FramePlayer and have no thumbnails (docs/notes/seek-preview.md).
@@ -3112,13 +3112,14 @@ function createEngine(env) {
         // the cheap flags (2 threads), PER_PX_WASM for the single-threaded worker (docs/notes/seek-preview.md).
         frameMs: (v.width * v.height || 2e6) * (this.cfg.native ? 1e-6 : PER_PX_WASM),
         request: this.cfg.native ? async (t, w, h, signal, mode, opts) => {
-          const r = await this.hostThumb(t - startT, w, h, signal, mode, !!(opts && opts.pass));
+          const o = opts || {};
+          const r = await this.hostThumb(t - startT, w, h, signal, mode, { pass: !!o.pass, ...(mode === 'sweep' ? { to: o.to - startT, step: o.step } : {}) });
           if (!r) return null;
           const abs = (rel) => (Number.isFinite(rel) ? startT + rel : undefined);
           const kt = abs(r.rel);
           const next = r.next && abs(r.next.rel) !== undefined ? { kt: abs(r.next.rel), data: r.next.data } : undefined;
           const more = r.more && r.more.map((x) => ({ kt: abs(x.rel), data: x.data }));
-          return { ...r, kt, next, more, covered: kt !== undefined && mode !== 'exact' && mode !== 'run' };
+          return { ...r, kt, next, more, covered: kt !== undefined && (mode === 'key' || mode === 'near') };
         } : undefined,
       });
       return this.thumbs;
@@ -3139,15 +3140,18 @@ function createEngine(env) {
     /**
      * Native and Live transcode backend: one thumbnail from the extension host ({rel, w, h, fmt: 'jpeg', data, next?,
      * more?, end?}, or null).
-     * @param {'key' | 'near' | 'exact' | 'run'} [mode] @param {boolean} [pass] a background pass request (one thread)
+     * @param {'key' | 'near' | 'exact' | 'run' | 'sweep'} [mode]
+     * @param {{pass?: boolean, to?: number, step?: number}} [opts] pass: a background pass request (one thread);
+     *   to, step: a sweep's end (seconds from the start) and step
      */
-    hostThumb(rel, w, h, signal, mode = 'key', pass = false) {
+    hostThumb(rel, w, h, signal, mode = 'key', opts = {}) {
       const id = (this.hostThumbId = (this.hostThumbId || 0) + 1);
       this.hostThumbWait = this.hostThumbWait || new Map();
       return new Promise((resolve) => {
         // checkJs: start
         const request = /** @satisfies {ThumbRequest} */ ({
-          type: 'thumb', page: env.page, id, t: Math.max(0, rel), w, h, mode, ...(pass ? { pass: true } : {}),
+          type: 'thumb', page: env.page, id, t: Math.max(0, rel), w, h, mode, ...(opts.pass ? { pass: true } : {}),
+          ...(mode === 'sweep' ? { to: opts.to, step: opts.step } : {}),
         });
         // checkJs: end
         const cancel = () => {
@@ -3160,7 +3164,7 @@ function createEngine(env) {
           this.hostThumbWait.delete(id);
           resolve(m);
         };
-        const timer = setTimeout(cancel, 10e3);
+        const timer = setTimeout(cancel, mode === 'sweep' ? 30e3 : 10e3);
         this.hostThumbWait.set(id, done);
         signal.addEventListener('abort', cancel, { once: true });
         vscode.postMessage(request);
