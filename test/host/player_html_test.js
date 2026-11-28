@@ -21,7 +21,7 @@ const csp = (html) => /Content-Security-Policy" content="([^"]*);"/.exec(html)[1
 
 { // Frame sources: the loopback frame server only for the transport in use, only with a port; tests allow both.
   assert.deepStrictEqual(frameSourcesOf({ framePort: 0, transport: 'ws', debug: true }), []);
-  assert.deepStrictEqual(frameSourcesOf({ framePort: 9, transport: 'http', debug: false }), ['http://127.0.0.1:9']);
+  assert.deepStrictEqual(frameSourcesOf({ framePort: 9, transport: 'http', debug: false }), ['http://127.0.0.1:9', 'ws://127.0.0.1:9']);
   assert.deepStrictEqual(frameSourcesOf({ framePort: 9, transport: 'message', debug: false }), []);
   assert.deepStrictEqual(frameSourcesOf({ framePort: 9, transport: 'message', debug: true }), ['http://127.0.0.1:9', 'ws://127.0.0.1:9']);
 }

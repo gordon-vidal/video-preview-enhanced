@@ -470,8 +470,10 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   /** @param {ViewerClip} c */
   function startNative(c) {
     const d = c.decision;
-    const transport = origin && deps.nativeTransport ? deps.nativeTransport() : 'message';
     const n = Math.max(1, session.clips.length);
+    const chosen = origin && deps.nativeTransport ? deps.nativeTransport() : 'message';
+    // Chromium opens only 6 HTTP streams per origin: a large grid's tiles take WebSockets.
+    const transport = chosen === 'http' && Grid.isLarge(n) ? 'ws' : chosen;
     // A tile size the page already reported: ffmpeg starts at it (no restart once the first frames show).
     const own = session.tileSize(c.id);
     const size = /** @type {any} */ (fitTiles() ? own || session.lastTileSize : null);

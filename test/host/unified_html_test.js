@@ -30,8 +30,9 @@ const srcsOf = (html, nonce = 'NONCE123') => [...html.matchAll(new RegExp(`<scri
 { // connect-src: the loopback frame server only for the transport in use, only with a port; tests allow both.
   assert.strictEqual(connect(unifiedHtml(input())), 'connect-src vsc-src: blob:');
   assert.strictEqual(connect(unifiedHtml(input({ transport: 'http' }))), 'connect-src vsc-src: blob:', 'no port: nothing');
+  // HTTP also lets a large Compare grid's tiles use WebSockets (6 HTTP streams per origin).
   assert.strictEqual(connect(unifiedHtml(input({ framePort: 4321, transport: 'http' }))),
-    'connect-src vsc-src: blob: http://127.0.0.1:4321');
+    'connect-src vsc-src: blob: http://127.0.0.1:4321 ws://127.0.0.1:4321');
   assert.strictEqual(connect(unifiedHtml(input({ framePort: 4321, transport: 'ws' }))),
     'connect-src vsc-src: blob: ws://127.0.0.1:4321');
   assert.strictEqual(connect(unifiedHtml(input({ framePort: 4321, transport: 'message' }))), 'connect-src vsc-src: blob:');

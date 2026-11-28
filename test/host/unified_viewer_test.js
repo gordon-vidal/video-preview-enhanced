@@ -487,6 +487,24 @@ const context = { extensionUri: Uri.file(ROOT) };
       handlers.dispose();
     }
 
+    { // A large grid's native tiles take WebSockets: Chromium opens only 6 HTTP streams per origin.
+      const { panel, handlers } = fakePanel();
+      const clipA = { ...(await prepareClip(a, {})), native: true, decision: nativeDecision };
+      const decoders = [];
+      const viewer = createUnifiedViewer({ vscode, context, panel, clip: clipA, registry: null,
+        deps: deps({ maxVideos: () => 8, nativeTransport: () => 'http', nativeFor: async () => nativeDecision,
+          createNative: (opts) => { const d = fakeDecoder(); d.opts = opts; decoders.push(d); return d; } }) });
+      viewer.show();
+      await handlers.message({ type: 'ready', page: 1, origin: 'vscode-webview://abc' });
+      await handlers.message({ type: 'nd', page: 1, clipId: clipA.id, m: { type: 'open' } });
+      assert.strictEqual(decoders[0].opts.transport, 'http', 'one video: HTTP');
+      for (const [i, n] of ['c', 'd', 'e', 'f'].entries()) assert.ok(await viewer.addUri(write(`${n}.mp4`, [i, 1, 2, 3])), n);
+      const last = viewer.session.clips[4];
+      await handlers.message({ type: 'nd', page: 1, clipId: last.id, m: { type: 'open' } });
+      assert.strictEqual(decoders[decoders.length - 1].opts.transport, 'ws', 'the 5th tile: a WebSocket');
+      handlers.dispose();
+    }
+
     { // tileSize: native tiles get their new output size; a tile that must seek to apply it gets 'resize'.
       const { panel, posts, handlers } = fakePanel();
       const clipA = { ...(await prepareClip(a, {})), native: true, decision: nativeDecision };

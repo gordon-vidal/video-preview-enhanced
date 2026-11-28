@@ -98,7 +98,8 @@ function frameSourcesOf({ framePort, transport, debug }) {
   if (!loopback) return [];
   return [
     ...((debug || transport === 'http') ? [`http://${loopback}`] : []),
-    ...((debug || transport === 'ws') ? [`ws://${loopback}`] : []),
+    // 'http' too: a Compare that grows to a large grid moves its new tiles to WebSockets.
+    ...((debug || transport === 'ws' || transport === 'http') ? [`ws://${loopback}`] : []),
   ];
 }
 // checkJs: end
