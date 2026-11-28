@@ -97,10 +97,12 @@ function ncc(a, b) {
   return da && db ? num / Math.sqrt(da * db) : 0;
 }
 
-/** The reference picture (searched within k±15) that best matches `y`, as its slot at `fps`, and the score. */
+/** The reference picture (searched within 15 pictures of slot k) that best matches `y`, as its slot at `fps`, and the score. */
 function match(y, refs, k, fps) {
   const slots = refSlots(refs, fps || 30);
-  const lo = Math.max(0, k - 15); const hi = Math.min(refs.length - 1, k + 15);
+  let at = slots.findIndex((s) => s >= k); // a gapped file has fewer pictures than slots
+  if (at < 0) at = refs.length - 1;
+  const lo = Math.max(0, at - 15); const hi = Math.min(refs.length - 1, at + 15);
   let best = -1; let bs = -2;
   for (let i = lo; i <= hi; i++) { const s = ncc(y, refs[i]); if (s > bs) { bs = s; best = i; } }
   return { slot: best >= 0 ? slots[best] : null, score: bs };

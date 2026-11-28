@@ -191,14 +191,7 @@ class Player {
       if (pe) throw new Error(`${what}: expected frame ${k}; page error: ${pe}`);
       const th = await this.thumb();
       let slot = null; let score = 0;
-      if (refs && refs.length) {
-        const fps = (await this.cachedFps()) || 30;
-        const slots = refSlots(refs, fps);
-        const lo = Math.max(0, k - 15); const hi = Math.min(refs.length - 1, k + 15);
-        let best = -1; let bs = -2;
-        for (let i = lo; i <= hi; i++) { const s = ncc(th.y, refs[i]); if (s > bs) { bs = s; best = i; } }
-        slot = best >= 0 ? slots[best] : null; score = bs;
-      }
+      if (refs && refs.length) ({ slot, score } = frames.match(th.y, refs, k, (await this.cachedFps()) || 30));
       if (th.frame === k && (!refs || slot === k)) return { frame: th.frame, slot, score };
       last = `player says ${th.frame}${refs ? `, picture matches ${slot} (ncc ${score.toFixed(4)})` : ''}`;
       if (Date.now() - t0 > timeout) break;
