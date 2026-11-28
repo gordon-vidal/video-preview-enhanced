@@ -85,6 +85,7 @@ const TIMEOUTS = {
   'test/host/review_test.js': 40000,
   'test/host/run_limits_test.js': 25000,
   'test/host/security_test.js': 20000,
+  'test/host/seek_preview_pass_test.js': 120000,
   'test/host/seek_preview_test.js': 20000,
   'test/host/send_frames_test.js': 20000,
   'test/host/setup_install_test.js': 20000,

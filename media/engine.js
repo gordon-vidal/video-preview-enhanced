@@ -3083,7 +3083,8 @@ function createEngine(env) {
     // ---- seek-bar thumbnails (thumbs.js, thumbs-worker.js) -------------------
     // Shown frames become small previews for free (captureThumb). Keyframes come from the pointer on the seek bar and,
     // after the first frame, from a low-priority background pass (clock tile only); exact pictures where the pointer
-    // rests and, for short or light files, from the pass's cheap decode of the whole file. They are decoded by a second libav.js worker whose file reads share the block cache above as
+    // rests and from the pass's fill, which gives every slot a frame of its own. They are decoded by a second
+    // libav.js worker whose file reads share the block cache above as
     // reader 'thumbs', or for native ffmpeg and Live transcode by a short ffmpeg on the extension host
     // (src/thumbhost.js, never the running stream). Not for URLs or audio-only files; MJPEG/image sequences use
     // FramePlayer and have no thumbnails (docs/notes/seek-preview.md).
@@ -3105,8 +3106,7 @@ function createEngine(env) {
         busy: () => this.thumbsBusy(),
         hidden: () => !!this.hidden || this.disposed,
         passOn: () => !this.thumbPassOff && isClock(),
-        // Live transcode and native in a remote window decode on a host that may be shared: a slower pass.
-        pass: this.cfg.thumbPass === false ? undefined : { far: !!(this.cfg.remote || this.remoteStream) },
+        pass: this.cfg.thumbPass === false ? undefined : {},
         playing: () => !!this.playing,
         // First guess per frame between keyframes, refined by replies: about 1 ns per source pixel for native ffmpeg
         // with the cheap flags (2 threads), PER_PX_WASM for the single-threaded worker (docs/notes/seek-preview.md).

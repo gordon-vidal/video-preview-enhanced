@@ -3,8 +3,8 @@
 //   pass:    without any hover, the background keyframe pass gives every place on the bar a picture, then closes
 //            its worker (or ends its ffmpeg); a hover then draws at once with no request
 //   pass-hidden: a tab hidden before the pass starts does no pass work until it is shown again
-//   between: on a clip with a 10 s GOP, without any hover, the between pass gives a slot between keyframes a frame
-//            within X of it (not the keyframe, not a refine); hovers then need no request
+//   between: on a clip with a 10 s GOP, without any hover, the fill gives the floor and then every slot a frame of
+//            its own (not the keyframe, not a refine); hovers then need no request
 // With the pass turned off (debug probe 'thumbPass'), so the hover checks stay about the hover:
 //   idle:    after open nothing is decoded (no request, no worker, no ffmpeg thumbnail process) until the
 //            first hover, also not 4 s after the first frame; the shown frame may already be a preview (capture)
@@ -172,7 +172,9 @@ async function betweenChecks(vs, h, file, R, label) {
       r.doneS = (Date.now() - t0) / 1000;
       r.pass = done.strip.pass;
       const bw = done.strip.pass.between;
-      ok(bw && bw.state === 'done:complete' && bw.requests > 0 && bw.pictures > 0, `the between pass ran after the keyframe pass (${JSON.stringify(bw)})`);
+      ok(bw && bw.state === 'done:complete' && bw.requests > 0 && bw.pictures > 0, `the fill ran after the keyframe pass (${JSON.stringify(bw)})`);
+      const { floorS, fullS } = done.strip.pass;
+      ok(floorS > 0 && fullS >= floorS, `the floor, then a full bar (${floorS} s, ${fullS} s)`);
       ok(!done.strip.hovering, 'without any hover');
       const [sx, sy, sw, sh] = done.seekRect;
       const x = (t) => sx + (sw * t) / done.duration;
