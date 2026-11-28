@@ -255,6 +255,7 @@ function applyNativeBudget(entries, opts = {}) {
  * @param {(a: { clip: ViewerClip, decoder: HostDecoder, t: number, reqId: number, isCurrent: () => boolean }) => Promise<any>} [o.deps.grabExactFrame]
  *   one full-resolution PNG ({ png, w, h, matrix } | { error } | { cancelled } | { stale })
  * @param {(c: ViewerClip, pos: SavedPos) => any} [o.deps.savePos]  the resume position of a file
+ * @param {() => any} [o.deps.previewGpu]  the GPUs for seek-bar preview sweeps (hardware.detect()'s shape), or null
  * @param {(file: string, onChange: () => void, onError: (e: any) => void) => { close(): void }} [o.deps.watchFile]
  * @param {number} [o.deps.watchDelayMs]
  * @param {(c: ViewerClip | null, viewer: any) => any} [o.deps.external]  open in the system player
@@ -713,7 +714,7 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     const decoder = isFileClip(c) && (kind === 'native' || kind === 'stream') ? natives.get(c.id) : null;
     let result = null;
     try {
-      if (decoder && panel.visible !== false) result = await thumbhost.nativeThumb(/** @type {any} */ (decoder), m, log, job.controller.signal);
+      if (decoder && panel.visible !== false) result = await thumbhost.nativeThumb(/** @type {any} */ (decoder), m, log, job.controller.signal, deps.previewGpu ? deps.previewGpu() : null);
     } catch (e) {
       log(`thumbnail: ${errText(e)}`);
     } finally {

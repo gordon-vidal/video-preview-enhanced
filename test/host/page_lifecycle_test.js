@@ -51,7 +51,7 @@ async function exportAndThumb(file) {
   let progressDisposals = 0;
   thumbhost.nativeThumb = (...args) => {
     thumbnailCalls++;
-    args.at(-1).addEventListener('abort', () => {
+    args[3].addEventListener('abort', () => { // (decoder, request, log, signal, hw)
       thumbCancels++;
       finished.resolve({ w: 1, h: 1, data: Buffer.alloc(4) });
     }, { once: true });

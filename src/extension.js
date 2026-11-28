@@ -202,6 +202,17 @@ let hwStale = false;
 // The first time ever, a video waits this long at most for the detection (it runs alongside ffprobe).
 const HW_WAIT_MS = 2500;
 
+// Linux: VA-API needs a DRM render node (hardware.detect() checks the same; the stored GPU record does not keep it).
+let vaapiNode = null;
+
+/** The GPUs for seek-bar preview sweeps (src/thumbhost.js): the stored ones, null while unknown or GPU decoding is off. */
+function previewGpu() {
+  if (!config().gpuDecoding) return null;
+  if (!hwKnown) { machine(); return null; }
+  if (vaapiNode === null) vaapiNode = process.platform === 'linux' && fs.existsSync('/dev/dri/renderD128');
+  return { ...hwKnown, vaapi: vaapiNode };
+}
+
 /**
  * The GPUs for choosing ffmpeg's method when no GPU test result fits (null when one does, or
  * GPU decoding is off): the stored ones at once (detected again in the background when they are
@@ -1153,6 +1164,7 @@ function activate(context) {
     exportAb: (kind, c, m, viewer) => exportAb(kind, c, m, viewer),
     grabExactFrame: (a) => grabExactFrame(a),
     savePos: (c, pos) => savePos(c.fsPath, pos),
+    previewGpu,
     watchFile: (file, onChange, onError) => watchFile(file, onChange, onError),
     external: (c, viewer) => openExternal(c, viewer),
     openUrl: async () => { const url = await promptUrl(); if (url) await openUrl(context, url); },

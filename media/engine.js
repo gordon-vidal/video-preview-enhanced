@@ -3141,7 +3141,7 @@ function createEngine(env) {
 
     /**
      * Native and Live transcode backend: one thumbnail from the extension host ({rel, w, h, fmt: 'jpeg', data, next?,
-     * more?, end?}, or null).
+     * more?, end?, cpu?: ms of CPU, gpu?: the method}, or null).
      * @param {'key' | 'near' | 'exact' | 'run' | 'sweep'} [mode]
      * @param {{pass?: boolean, to?: number, step?: number}} [opts] pass: a background pass request (one thread);
      *   to, step: a sweep's end (seconds from the start) and step
@@ -3180,7 +3180,8 @@ function createEngine(env) {
       if (!done) return;
       const next = m.next && m.next.data ? { rel: m.next.rel, data: new Uint8Array(m.next.data) } : undefined;
       const more = Array.isArray(m.more) ? m.more.filter((x) => x && x.data).map((x) => ({ rel: x.rel, data: new Uint8Array(x.data) })) : undefined;
-      done(m.data ? { rel: m.rel, w: m.w, h: m.h, fmt: m.fmt, data: new Uint8Array(m.data), next, kn: m.kn === null ? null : undefined, more, end: m.end === true } : null);
+      const cost = { cpu: Number.isFinite(m.cpu) ? m.cpu : undefined, gpu: typeof m.gpu === 'string' ? m.gpu : undefined };
+      done(m.data ? { rel: m.rel, w: m.w, h: m.h, fmt: m.fmt, data: new Uint8Array(m.data), next, kn: m.kn === null ? null : undefined, more, end: m.end === true, ...cost } : null);
     }
 
     /**

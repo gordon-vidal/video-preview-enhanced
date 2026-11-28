@@ -28,6 +28,20 @@ function methodOrder(hw) {
   return list;
 }
 
+/**
+ * Methods for the seek-bar preview pass (src/thumbhost.js), best first; empty: software only. Not playback's order:
+ * the pass is measured by CPU time, and d3d11va's copies cost several times what d3d12va or cuda cost (still far
+ * below software), so it comes last (docs/notes/seek-preview.md). hw: hardware.detect()'s shape, null when unknown.
+ */
+function previewMethods(hw) {
+  if (!hw) return [];
+  const v = new Set((hw.gpus || []).map((g) => g.vendor));
+  if (hw.os === 'win32') return ['d3d12va', ...(v.has('nvidia') ? ['cuda'] : []), 'd3d11va'];
+  if (hw.os === 'linux') return [...(hw.vaapi ? ['vaapi'] : []), ...(v.has('nvidia') ? ['cuda'] : [])];
+  if (hw.os === 'darwin') return ['videotoolbox'];
+  return [];
+}
+
 /** Codecs a method can decode on the GPU at all; others would only ever fall back (skipped by the probe). */
 function methodMayDecode(method, codec) {
   if (method === 'none' || method === 'auto') return true;
@@ -98,12 +112,8 @@ function checkFallback(method, stderr, multi) {
   const pixFmt = inputPixFmt(stderr, multi ? multi.rate : undefined);
   if (!method || method === 'none') return { hw: false, pixFmt, reason: 'software' };
   const lines = String(stderr || '').split(/\r?\n/);
-  const reasonOf = (l) => l.replace(/^\[[^\]]*\]\s*/g, '').trim().slice(0, 200);
-  const err = FALLBACK_RE.exec(stderr || '');
-  if (err && !multi) {
-    const line = lines.find((l) => l.includes(err[0])) || err[0];
-    return { hw: false, pixFmt, reason: reasonOf(line) };
-  }
+  const why = multi ? '' : fallbackReason(stderr);
+  if (why) return { hw: false, pixFmt, reason: why };
   if (multi && pixFmt && SOFT_FMT_RE.test(pixFmt)) {
     // Log lines of a decoder start with its name: "[av1 @ 0000...] Failed setup for format dxva2_vld".
     const line = lines.find((l) => FALLBACK_RE.test(l) && l.startsWith(`[${multi.codec} @`)) || lines.find((l) => FALLBACK_RE.test(l));
@@ -115,6 +125,16 @@ function checkFallback(method, stderr, multi) {
   }
   if (!pixFmt) return { hw: false, pixFmt, reason: 'no frame was decoded' };
   return { hw: true, pixFmt, reason: '' };
+}
+
+const reasonOf = (l) => l.replace(/^\[[^\]]*\]\s*/g, '').trim().slice(0, 200);
+
+/** The line of ffmpeg's log that says a hwaccel could not be used, or ''. */
+function fallbackReason(stderr) {
+  const err = FALLBACK_RE.exec(stderr || '');
+  if (!err) return '';
+  const line = String(stderr).split(/\r?\n/).find((l) => l.includes(err[0])) || err[0];
+  return reasonOf(line);
 }
 
 /** PSNR (dB) of two 8-bit frames of equal size; Infinity when identical. */
@@ -177,6 +197,6 @@ function bitrateFactor(method, clipBpp, v) {
 
 
 module.exports = {
-  methodOrder, methodMayDecode, inputArgs, gpuFilter, videoFilter, checkFallback, inputPixFmt, psnr, depthOf, classOf, CLASS_PIXELS,
+  methodOrder, previewMethods, fallbackReason, methodMayDecode, inputArgs, gpuFilter, videoFilter, checkFallback, inputPixFmt, psnr, depthOf, classOf, CLASS_PIXELS,
   videoBpp, bitrateFactor, TYPICAL_BPP,
 };

@@ -85,6 +85,9 @@ function mk(o = {}) {
 }
 
 (async () => {
+  const T0 = Date.now();
+  const step = (n) => console.log(`  ${n} (${Date.now() - T0} ms)`); // progress: the runner stops a file silent for 30 s
+  step('1');
   // 1. Not before it is armed, not before its delay; then coarse to fine, one at a time, until the bar is complete.
   {
     const { s, calls, env } = mk({ delayMs: 150, idleMs: 20e3 }); // the engine's idle time: closing must not wait for it
@@ -380,6 +383,65 @@ function mk(o = {}) {
     } else console.log('skip: ffmpeg missing (native sweep)');
   }
 
+
+  step('14');
+  // 14. GPU for background sweeps (native ffmpeg): the preview method order differs from playback's (d3d11va copies
+  //     cost more CPU: last on Windows); the kept frames are selected before the download; hover pictures and keyframe
+  //     runs stay software; a failing method falls back to software in the same request and is not tried again.
+  {
+    const hwa = require('../../src/hwaccel.js');
+    const nv = { os: 'win32', gpus: [{ vendor: 'nvidia' }, { vendor: 'intel' }] };
+    assert.deepStrictEqual(hwa.previewMethods(nv), ['d3d12va', 'cuda', 'd3d11va'], 'Windows with NVIDIA');
+    assert.deepStrictEqual(hwa.previewMethods({ os: 'win32', gpus: [{ vendor: 'amd' }] }), ['d3d12va', 'd3d11va'], 'Windows, other GPU');
+    assert.deepStrictEqual(hwa.previewMethods({ os: 'linux', vaapi: true, gpus: [{ vendor: 'nvidia' }] }), ['vaapi', 'cuda'], 'Linux');
+    assert.deepStrictEqual(hwa.previewMethods({ os: 'linux', gpus: [] }), [], 'Linux without a render node or NVIDIA');
+    assert.deepStrictEqual(hwa.previewMethods({ os: 'darwin', gpus: [] }), ['videotoolbox'], 'macOS');
+    assert.deepStrictEqual(hwa.previewMethods(null), [], 'GPUs not known (or GPU decoding off): software');
+
+    const opts = { pass: true, from: 0.5, step: 1, count: 12 };
+    const g = th.thumbArgs('a.mp4', 0.5, 160, 90, false, 'v:0', 'jpeg', 'sweep', { ...opts, hw: { method: 'd3d12va', depth: 10 } });
+    const at = (k) => g.indexOf(k);
+    assert.deepStrictEqual(g.slice(at('-hwaccel'), at('-hwaccel') + 4), ['-hwaccel', 'd3d12va', '-hwaccel_output_format', 'd3d12'], 'd3d12va surfaces stay on the GPU');
+    assert.ok(at('-hwaccel') < at('-i'), 'before the input');
+    assert.ok(!g.includes('-skip_frame') && !g.includes('-skip_loop_filter'), 'no software skip flags on the GPU');
+    assert.strictEqual(g[at('-threads') + 1], '1', 'one thread');
+    assert.ok(g.includes('-benchmark'), 'reports its CPU time');
+    assert.ok(g.some((a) => /^select=.*,hwdownload,format=p010le,scale=160:90:flags=fast_bilinear,showinfo$/.test(a)), `select before the download (${g[at('-vf') + 1]})`);
+    const c = th.thumbArgs('a.mp4', 0.5, 160, 90, false, 'v:0', 'jpeg', 'sweep', { ...opts, hw: { method: 'cuda', depth: 8, scaleCuda: true } });
+    assert.ok(c.some((a) => /^select=.*,scale_cuda=160:90:format=nv12,hwdownload,format=nv12,showinfo$/.test(a)), `cuda scales on the GPU (${c[c.indexOf('-vf') + 1]})`);
+    assert.strictEqual(c[c.indexOf('-hwaccel_output_format') + 1], 'cuda');
+
+    const gop = require('../lib/gop_clip').make();
+    if (spawnSync('ffmpeg', ['-version'], { windowsHide: true }).status === 0 && gop) {
+      const tools = { ffmpeg: 'ffmpeg', gpuFilters: new Set() };
+      const decoder = { tools, file: gop, pr: { video: { width: 320, height: 180, index: 0, startTime: 0, codec: 'h264', pixFmt: 'yuv420p' } } };
+      const tried = [];
+      const log = (m) => { if (/GPU/.test(m)) tried.push(m); };
+      // videotoolbox exists only on macOS: elsewhere it fails, and the same request comes back from software.
+      const mac = { os: 'darwin', gpus: [] };
+      const req = { t: 0.5, to: 12, step: 1, w: 160, h: 90, mode: 'sweep', pass: true };
+      if (process.platform !== 'darwin') {
+        const r = await th.nativeThumb(decoder, req, log, undefined, mac);
+        assert.ok(r && 1 + r.more.length === 12, `software answers after the GPU failed (${r && 1 + r.more.length} pictures)`);
+        assert.ok(!r.gpu, 'decoded in software');
+        assert.ok(tried.some((m) => /videotoolbox/.test(m)), `the failure is logged (${tried})`);
+        const n = tried.length;
+        const r2 = await th.nativeThumb(decoder, req, log, undefined, mac);
+        assert.ok(r2 && !r2.gpu && tried.length === n, `a failed method is not tried again (${tried.slice(n)})`);
+        assert.ok(r2.cpu >= 0, `the reply carries its CPU time (${r2.cpu} ms)`);
+      }
+      const hover = await th.nativeThumb(decoder, { t: 5, w: 160, h: 90, mode: 'exact' }, log, undefined, nv);
+      assert.ok(hover && !hover.gpu, 'a hover picture stays software');
+      const run = await th.nativeThumb(decoder, { t: 0, w: 160, h: 90, mode: 'run', pass: true }, log, undefined, nv);
+      assert.ok(run && !run.gpu, 'a keyframe run stays software');
+      // This machine's GPU, when it has one: the sweep's pictures are the same frames as software's.
+      const fresh = { ...decoder, tools: { ffmpeg: 'ffmpeg', gpuFilters: new Set(['scale_cuda']) } };
+      const local = await require('../../src/hardware.js').detect();
+      const hw = await th.nativeThumb(fresh, req, () => {}, undefined, local);
+      assert.ok(hw && 1 + hw.more.length === 12, 'GPU or its software fallback: a picture per slot');
+      console.log(`sweep on this machine: ${hw.gpu || 'software'} (${hw.cpu} ms CPU)`);
+    } else console.log('skip: ffmpeg missing (GPU fallback)');
+  }
 
   console.log('seek_preview_pass_test: ok');
 })().catch((e) => { console.error(e); process.exit(1); });
