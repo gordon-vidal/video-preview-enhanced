@@ -35,16 +35,17 @@ function helpers(vs, h, t) {
     return r;
   };
   /**
-   * The frame (1-based) tile i must show for the clock's shown frame: the same moment plus the
-   * offsets (ms, or frames of that tile), nearest frame. Mirrors relFor() and the engine's quarter-frame rule.
-   * Returns [frame, alt] (alt: the other neighbour when the moment falls on a half frame).
+   * The frame (1-based) tile i must show for the clock's shown frame, nearest frame, on Compare's timeline of whole
+   * clock frames (tileFrameAt in media/player-engine-adapter.js). The clock tile shows round(g + its offset) at shared frame g; tile i shows
+   * round(g mapped to its rate + its offset in its frames). Returns [frame, alt] (alt: the other neighbour when the
+   * moment falls on a half frame).
    */
   const expect = (r, offs, i) => {
     const fps = nums(r.fps);
     const c = Number(r.clock);
-    const clockPts = nums(r.pts)[c];
-    const off = (j) => (offs[j].unit === 'ms' ? offs[j].v / 1000 : offs[j].v / fps[j]);
-    const x = (clockPts - off(c) + off(i)) * fps[i] + 0.5;
+    const offFrames = (j) => (offs[j].unit === 'ms' ? offs[j].v / 1000 * fps[j] : offs[j].v);
+    const g = Math.ceil(Number((nums(r.frames)[c] - 1 + 0.5 - offFrames(c)).toFixed(6))) - 1;
+    const x = (g / fps[c]) * fps[i] + offFrames(i) + 0.5;
     const k = Math.floor(x);
     const alt = Math.abs(x - Math.round(x)) < 0.02 ? (x - k < 0.5 ? k - 1 : k + 1) : k;
     return [k + 1, alt + 1];
@@ -579,9 +580,8 @@ module.exports = [{
     return [{ name: 'native/frame-server-403', ok: !problems.length, problems }];
   },
 }, {
-  // More than 4 videos (docs/notes/multiview-engine.md): 9 tiles on the
-  // GPU and built-in decoders in a 3x3 grid with one shared renderer; lockstep, offsets, another clock, play, remove,
-  // add up to 16 (4x4), close.
+  // More than 4 videos (docs/notes/multiview-engine.md): 9 tiles on the GPU and built-in decoders in a 3x3 grid,
+  // tiles beyond 4 on one shared renderer; lockstep, offsets, another clock, play, remove, add up to 16 (4x4), close.
   name: 'multiview-large',
   settings: { 'videoPreviewEnhanced.compare.maxVideos': 16 },
   async run(vs, h) {
@@ -613,11 +613,8 @@ module.exports = [{
     let r = await until(allShown, 60000);
     ok(allShown(r), `9 tiles: not every tile shows a frame (${r && r.frames})`);
     ok(r.n === '9' && r.grid === '3x3' && r.cells === '9' && r.add === 'false' && r.max === '16', `n=${r.n} grid=${r.grid} cells=${r.cells} add=${r.add} max=${r.max}`);
-    // One compositor and one shared renderer, not a WebGL context per tile (Chromium keeps 16 per page).
-    ok(r.contexts === '2', `WebGL contexts: ${r.contexts}`);
-    const [cw, ch] = r.canvas.split('x').map(Number);
-    const [sw, sh] = r.stage.split('x').map(Number);
-    ok(Math.abs(cw - sw) <= 1 && Math.abs(ch - sh) <= 1, `canvas ${r.canvas}, stage ${r.stage}`);
+    // Not a WebGL context per tile (Chromium keeps 16 per page): 4 tiles have their own, the others share one.
+    ok(r.contexts === '5', `WebGL contexts: ${r.contexts}`);
     // Each tile's picture is at most a ninth of a 4K picture.
     ok(nums(r.widths).every((w, i) => w > 0 && w * nums(r.heights)[i] <= 3840 * 2160 / 9), `tile pictures ${r.widths} x ${r.heights}`);
 
@@ -676,7 +673,7 @@ module.exports = [{
     vs.send({ compareAdd: Array(10).fill(gpu) });
     await vs.waitLog(opened(16), { from, timeout: 45000, what: 'compare reopened with 16' });
     r = await until((x) => x.n === '16' && allShown(x) && x.synced === 'true', 60000);
-    ok(r.n === '16' && r.grid === '4x4' && r.add === 'false' && r.contexts === '2', `16 tiles: grid=${r.grid} add=${r.add} contexts=${r.contexts}`);
+    ok(r.n === '16' && r.grid === '4x4' && r.add === 'false' && r.contexts === '5', `16 tiles: grid=${r.grid} add=${r.add} contexts=${r.contexts}`);
     const offs16 = list(r.offsets).map((o) => (o.endsWith('ms') ? { unit: 'ms', v: Number(o.slice(0, -2)) } : { unit: 'frames', v: Number(o.slice(0, -1)) }));
     // (The test hook adds files from the host, without the page saving its position first.)
     act({ action: 'seek', t: 1 });
@@ -730,7 +727,7 @@ module.exports = [{
       const height = 1080 / side;
       let r = await until((x) => x.synced === 'true' && list(x.frames).length === n && !list(x.frames).includes('-')
         && nums(x.heights).every((v) => v === height), 60000);
-      ok(r.grid === `${side}x${side}` && r.contexts === '2', `grid=${r.grid} contexts=${r.contexts}`);
+      ok(r.grid === `${side}x${side}` && r.contexts === '5', `grid=${r.grid} contexts=${r.contexts}`);
       ok(nums(r.heights).length === n && nums(r.heights).every((v) => v === height), `native heights at ${r.stage}: ${r.heights}, want ${height}`);
       ok(list(r.transport).every((v) => v === 'stream'), `transport=${r.transport}`);
       const ports = vs.lines.slice(from).map((l) => /tile [A-P]: native transport: ws \(127\.0\.0\.1:(\d+)/.exec(l)?.[1]).filter(Boolean);

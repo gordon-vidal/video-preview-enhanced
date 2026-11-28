@@ -1047,12 +1047,12 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
   /**
    * Adds a file to this panel (the page shows it beside the others). False: not added (a duplicate or a full panel
    * says so in the page).
-   * @param {UriLike} uri
+   * @param {UriLike} uri @param {{ allowDuplicate?: boolean }} [o]
    */
-  async function addUri(uri) {
+  async function addUri(uri, o = {}) {
     if (disposed || !isViewable(uri)) return false;
     const c = await prepareClip(uri, prepDeps(uri, true));
-    const added = !disposed && session.addClip(c);
+    const added = !disposed && session.addClip(c, { compare: true, allowDuplicate: !!o.allowDuplicate });
     if (added) log(`add ${c.label}`);
     return added;
   }

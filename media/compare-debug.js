@@ -11,7 +11,7 @@
    *   log: (message: string) => void,
    *   Grid: {gridFor: (count: number, mode: string) => {cols: number, rows: number}},
    *   N: number,
-   *   MAX_TILES: number,
+   *   maxTiles: () => number,
    *   st: {mode: string, dock: string, heroRatio: number, clock: number, sound: number, muted: boolean, split: number, order: number[],
    *     offsets: {v: number, unit: string}[], pic: {mode: string, zoom: number, cx: number, cy: number},
    *     rate: number, loop: boolean, sel: number, thresh: number},
@@ -83,7 +83,7 @@
   /** @param {CompareDebugDeps} deps */
   function install(deps) {
     const {
-      cfg, log, Grid, N, MAX_TILES, st, canvas, stage, cellsEl, ui, controls,
+      cfg, log, Grid, N, maxTiles, st, canvas, stage, cellsEl, ui, controls,
       scanner, $, getState, contextCount, setHover,
       frameOf, fpsOf, synced, tileSize, frameFactor, picState, setMode, setDock, setHeroRatio, setSyncMode, setOffset,
       setClock, removeTile, setSound, step, play, pause, seekClock, setRate,
@@ -96,7 +96,7 @@
       const { tiles, clock, cells, syncMode } = getState();
       const per = (f) => tiles.map(f).join(',');
       const g = Grid.gridFor(N, st.mode);
-      log(`compare report n=${N} mode=${st.mode} dock=${st.dock} heroRatio=${st.heroRatio.toFixed(2)} syncMode=${syncMode} modes=${N > 2 ? 'spotlight,grid' : 'spotlight,grid,split'} canvas=${canvas.width}x${canvas.height} grid=${g.cols}x${g.rows} max=${MAX_TILES} now=${Math.round(performance.now())}`
+      log(`compare report n=${N} mode=${st.mode} dock=${st.dock} heroRatio=${st.heroRatio.toFixed(2)} syncMode=${syncMode} modes=${N > 2 ? 'spotlight,grid' : 'spotlight,grid,split'} canvas=${canvas.width}x${canvas.height} grid=${g.cols}x${g.rows} max=${maxTiles()} now=${Math.round(performance.now())}`
         // WebGL contexts in use: the compositor, the shared renderer (5+ tiles), each engine's own (2-4 tiles), metrics.
         + ` contexts=${contextCount() + tiles.filter((p) => p.gl && p.gl.gl).length}`
         + ` frame=${clock ? clock.currentFrame() + 1 : '-'} clock=${st.clock} sound=${st.sound} muted=${st.muted} split=${st.split.toFixed(3)} swap=${N === 2 && st.order[0] === 1}`

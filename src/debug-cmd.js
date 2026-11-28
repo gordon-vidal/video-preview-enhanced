@@ -132,7 +132,7 @@ function createDebugCommands(deps) {
                 continue;
               }
               if (c.compareAdd) {
-                for (const v of comparing()) for (const f of c.compareAdd) v.addUri(vscode.Uri.file(f)).catch((/** @type {any} */ e) => log(`debug compareAdd failed: ${e && e.message || e}`));
+                for (const v of comparing()) for (const f of c.compareAdd) v.addUri(vscode.Uri.file(f), { allowDuplicate: true }).catch((/** @type {any} */ e) => log(`debug compareAdd failed: ${e && e.message || e}`));
                 continue;
               }
               // Scenario tests (test/vscode/scenarios.js) run many checks in one VS Code: between them they change

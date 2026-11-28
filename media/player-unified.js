@@ -2838,7 +2838,7 @@
       try {
         CD.install({
           cfg: { debug: true, get page() { return gen === compareDebugGen && compareActive() ? cfg.page : off; } },
-          log, N: n, MAX_TILES: t().maxVideos,
+          log, N: n, maxTiles: () => t().maxVideos,
           Grid: Grid && typeof Grid.gridFor === 'function' ? Grid : { gridFor: () => ({ cols: n, rows: 1 }) },
           st, canvas: liveCanvas, stage: elOf('stage'), cellsEl, ui: uiEls,
           controls: {
