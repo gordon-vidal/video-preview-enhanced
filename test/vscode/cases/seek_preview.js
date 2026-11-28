@@ -3,6 +3,8 @@
 //   pass:    without any hover, the background keyframe pass gives every place on the bar a picture, then closes
 //            its worker (or ends its ffmpeg); a hover then draws at once with no request
 //   pass-hidden: a tab hidden before the pass starts does no pass work until it is shown again
+//   between: on a clip with a 10 s GOP, without any hover, the between pass gives a slot between keyframes a frame
+//            within X of it (not the keyframe, not a refine); hovers then need no request
 // With the pass turned off (debug probe 'thumbPass'), so the hover checks stay about the hover:
 //   idle:    after open nothing is decoded (no request, no worker, no ffmpeg thumbnail process) until the
 //            first hover, also not 4 s after the first frame; the shown frame may already be a preview (capture)
@@ -160,6 +162,37 @@ async function passChecks(vs, h, file, other, R, label) {
   });
 }
 
+async function betweenChecks(vs, h, file, R, label) {
+  await R.run(`${label}/between`, async (ok, r) => {
+    const P = await lib.open(vs, h, file);
+    try {
+      await P.waitFirstFrame();
+      const t0 = Date.now();
+      const done = await P.waitState((x) => x.strip && x.strip.pass && /^done/.test(x.strip.pass.state), { timeout: 40000, what: 'the background passes' });
+      r.doneS = (Date.now() - t0) / 1000;
+      r.pass = done.strip.pass;
+      const bw = done.strip.pass.between;
+      ok(bw && bw.state === 'done:complete' && bw.requests > 0 && bw.pictures > 0, `the between pass ran after the keyframe pass (${JSON.stringify(bw)})`);
+      ok(!done.strip.hovering, 'without any hover');
+      const [sx, sy, sw, sh] = done.seekRect;
+      const x = (t) => sx + (sw * t) / done.duration;
+      const at = 15; // keyframes at 0, 10 and 20 s
+      P.dom('mousemove', x(at), sy + sh / 2);
+      const mid = await P.waitState((v) => !v.thumb.hidden && v.strip && v.strip.shown, { timeout: 5000, what: 'hover picture', interval: 50 });
+      const shown = mid.strip.shown;
+      r.shown = shown;
+      ok(shown.kind === 'frame' && !shown.refined && Math.abs(shown.t - at) <= mid.strip.X + 0.05,
+        `a frame from the pass within X = ${mid.strip.X} s of ${at} s, not a keyframe or a refine (${JSON.stringify(shown)})`);
+      P.dom('mousemove', x(10.3), sy + sh / 2);
+      const key = await P.waitState((v) => !v.thumb.hidden && v.strip && v.strip.shown && v.strip.shown.kind === 'key', { timeout: 5000, what: 'keyframe picture', interval: 50 });
+      ok(mid.thumb.sig && key.thumb.sig && mid.thumb.sig !== key.thumb.sig, `the picture differs from the keyframe's (${JSON.stringify(key.strip.shown)})`);
+      ok(key.strip.requests === done.strip.requests, `the hovers need no request (${done.strip.requests} -> ${key.strip.requests})`);
+      P.dom('mouseleave', sx + sw / 2, sy - 200, { target: 'seek' });
+      r.log = lib.lines(vs, /thumbs: pass /, P.fromMark).slice(0, 1);
+    } finally { await P.close(); }
+  });
+}
+
 async function captureChecks(vs, h, file, R, label) {
   await R.run(`${label}/capture`, async (ok, r) => {
     const P = await lib.open(vs, h, file);
@@ -223,6 +256,7 @@ module.exports = [{
     await previewChecks(vs, h, file, R, 'wasm');
     const gop = makeClip(h, 'sp_mpeg2_gop10.mpg', ['-c:v', 'mpeg2video', '-g', '300', '-bf', '0', '-q:v', '4']);
     await passChecks(vs, h, file, gop, R, 'wasm');
+    await betweenChecks(vs, h, gop, R, 'wasm');
     await captureChecks(vs, h, gop, R, 'wasm');
     await refineChecks(vs, h, gop, R, 'wasm');
     return R.out;
@@ -238,6 +272,7 @@ module.exports = [{
     await previewChecks(vs, h, file, R, 'native');
     const gop = makeClip(h, 'sp_hevc_gop10.mp4', ['-c:v', 'libx265', '-x265-params', 'keyint=300:min-keyint=300:scenecut=0:log-level=error', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p']);
     await passChecks(vs, h, file, gop, R, 'native');
+    await betweenChecks(vs, h, gop, R, 'native');
     await captureChecks(vs, h, gop, R, 'native');
     await refineChecks(vs, h, gop, R, 'native');
     return R.out;
