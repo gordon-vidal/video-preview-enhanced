@@ -21,11 +21,11 @@ decisions (seek, step, landing, end, loop, Compare sync) live in `media/player-u
 `Date.now()` directly and reach into ~20 engine fields, so nothing below layer 3 can drive them. All 22 playback fixes
 since 2026-11-14 were in this logic (section 3.5).
 
-**A second finding: layer 2 does not test the production step and A-B paths.** `test/engine/harness.js:195` steps with
-the engine's own `stepFrame` when it exists (it does), while the unified viewer never calls it: production steps go
-`S.stepFrame` → `player-unified.js` `seekTo` / `deferred` (1121-1148) → `seekFrame`. `test/engine/journeys.js:91-121`
-wraps A-B with its own driver, while production wraps in `player-ui.js:2956-2961`. Layer 2 also runs WebAssembly only,
-so it says nothing about the WebCodecs path. Every inventory row that cited `test/engine/` was re-checked for this.
+**A second finding: dense VFR stepping skips an adjacent picture.** S1 aligned the layer-2 WASM harness with
+production's `S.stepFrame` → deferred directional `seekFrame`, and A-B playback now uses presented frame numbers
+and restarts with seek and play. The engine's nominal-rate frame seek skips a picture in the 60 fps segment of
+the VFR fixture, turning three checks in `chaos.js` KNOWN-red. See [the quarantine](../TESTING.md#known-issues-quarantined).
+The harness models single-decoder dispatch. Webview wiring and real WebCodecs still need layer 3.
 
 **Inventory result** (section 1): 293 results inventoried (the 301 of the last full run, a few listed compactly):
 **96 KEEP-L3 (33 %), 104 MOVE-DOWN (35 %), 93 DUPLICATE (32 %)**; 53 of the duplicates are clean fake-DOM / host-mock UI
@@ -84,7 +84,7 @@ Classification: **KEEP-L3** needs real VS Code (GPU/WebCodecs, WebGL/WebGPU, web
 commands, URI handler, context keys, native ffmpeg transport into the webview, Remote-SSH/transcode, file icons).
 **MOVE-DOWN** is logic a lower layer can own once extracted or once a lower test is extended (target named). A row that
 is only partly covered below is MOVE-DOWN, not DUPLICATE. **DUPLICATE** is fully proven by a lower-layer test (cited);
-rows that cited `test/engine/` for stepping or A-B were reclassified (S1 re-checks the rest). Anti-patterns:
+rows citing `test/engine/` were rechecked in S1. Anti-patterns:
 **S** fixed sleep (count), **T** tight timeout used as a speed check, **L** waits on or asserts free log text, **C** state
 carried from an earlier result or case, **P** pixel- or timing-sensitive. **Flaky** = failed runs / runs from the 105
 recorded runs (blank: never failed; `*` = counted under an older result name). Flake rates include runs before recent
@@ -181,7 +181,7 @@ log waits of the first ten with probe fields.
 | open-formats | wcprobe | Real webview page and worker report WebCodecs H.264 and VP8 support | KEEP-L3 (WebCodecs allowlist exists only in real VS Code webview) | L (JSON from log line) | |
 | open-formats | play/h264_8_2160p.mp4, play/h264_aac_anim_1080p.mp4 | GPU decoder chosen, plays, sound picked, two paused seeks land on frame | KEEP-L3 (WebCodecs GPU pick+play); seek landing part MOVE-DOWN→seek-planner | L (first frame/streams/decoder from log), S2 (poll 200/250 ms), T (15 s first frame) | |
 | open-formats | play/containers/h264_aac.{mkv,mov,m2ts,flv,avi}, play/containers/vp8_vorbis.webm | Each container: WebCodecs path, plays, sound, two paused seeks land | KEEP-L3 (WebCodecs container sweep, thin #1: layer 2 runs WASM only; the WebCodecs path (Annex-B / avcC) is proven only here) | L, S2, T | avi 3/14, m2ts 2/14, mkv 1/14, vp8_vorbis.webm 1/14 ("seek to frame 39 showed null": no-op/unpainted seek) |
-| open-formats | play/{mpeg2_1080p.mpg, hevc_10_2160p.mp4, av1_8_1080p.mp4, vp9_2160p.webm, prores_proxy_1080p.mov, hevc_8_1080p.mp4} | WebAssembly path chosen, plays, two paused seeks land | KEEP-L3 (the only 4K paused-seek check: test/engine/formats_4k.js checks the first picture only; thin #2 keeps HEVC 4K); other clips DUPLICATE→test/engine/formats_media.js | L, S2, T | mpeg2 1/14, prores 1/14 TO1 |
+| open-formats | play/{mpeg2_1080p.mpg, hevc_10_2160p.mp4, av1_8_1080p.mp4, vp9_2160p.webm, prores_proxy_1080p.mov, hevc_8_1080p.mp4} | WebAssembly path chosen, plays, two paused seeks land | KEEP-L3 (4K paused seeks: test/engine/formats_4k.js checks the first picture only; thin #2 keeps HEVC 4K); test/engine/formats_media.js covers one decoder seek per 1080p clip; the second seek and host routing remain | L, S2, T | mpeg2 1/14, prores 1/14 TO1 |
 
 
 ### playback
@@ -198,11 +198,11 @@ log waits of the first ten with probe fields.
 | playback | status/fully-decoded-stable | "Fully decoded" status stable paused and while playing; no notice | MOVE-DOWN→player (status derived from cache state) | P (2.0+2.5 s samples), T (25 s) | |
 | playback | resume/position | Position remembered per file across close/reopen; not near start | MOVE-DOWN→host test (DUP host/remember_pos_test.js store) + player (open-at-t) | S2 (2500 ms x2, no signal), T (30 s reopen opt-out) | 5/19 TO5 |
 | playback | damaged-h264/damaged_h264.mkv | Playback continues past one damaged picture, no error overlay | KEEP-L3 (real hardware WebCodecs error behaviour) | S1 (500), L (decoder lines recorded) | |
-| playback | damaged-h264/damaged_h264_b.mkv | Same, batch-read variant (regression) | DUPLICATE→test/engine/frames_webcodecs_error.js (DAMAGED=damaged_h264_b.mkv) | S1, L | 1/19 TO1 |
+| playback | damaged-h264/damaged_h264_b.mkv | Same, batch-read variant (regression) | DUPLICATE for engine recovery→test/engine/frames_webcodecs_error.js (stand-in VideoDecoder on the same clip); real device and overlay checks remain in layer 3 | S1, L | 1/19 TO1 |
 | playback | truncated/trunc_moov.mp4 | MP4 without index: clear "could not be opened" message, no hang | MOVE-DOWN→engine L2 (demux error path) | T (25 s) | |
-| playback | truncated/trunc_faststart.mp4, truncated/trunc.mkv | Cut file: first half opens and frames advance | MOVE-DOWN→engine L2 (trunc.mkv already used by test/engine/frames_onend.js early-end) | | |
-| playback | audio/truehd-51side | TrueHD 5.1: 6 channels, joined chunks, <200 sources, audio clock | MOVE-DOWN→engine L2 (extend test/engine/unit.js to assert channels, joined chunks and the audio clock); thin #2 keeps one WebAudio master-clock check | S1 (2500) | |
-| playback | audio/71-centre-downmix | 7.1 FLAC mixed to 2 channels for WebAudio | DUPLICATE→test/engine/unit.js (same test, downmix) | | |
+| playback | truncated/trunc_faststart.mp4, truncated/trunc.mkv | Cut file: first half opens and frames advance | MOVE-DOWN→engine L2 (test/engine/frames_onend.js covers trunc.mkv through early end; truncated fast-start MP4 still needs coverage) | | |
+| playback | audio/truehd-51side | TrueHD 5.1: 6 channels, joined chunks, <200 sources, audio clock | MOVE-DOWN→engine L2 (test/engine/unit.js covers six channels and joining; source count and real WebAudio clock still need coverage); thin #2 keeps one WebAudio master-clock check | S1 (2500) | |
+| playback | audio/71-centre-downmix | 7.1 FLAC mixed to 2 channels for WebAudio | DUPLICATE→test/engine/unit.js covers stereo downmix with synthetic samples; formats_cases.js covers playing the actual clip | | |
 | playback | thumbs/capture-4k | Preview capture/pass on: no extra dropped/late frames, played frames become previews | MOVE-DOWN→preview-scheduler (gating while playing); numbers L4 | P (drop/late +-3), T (20 s for 3.5 s) | |
 | (runner) | playback/webgl2 | Instance had no WebGL2 twice | infra (scenarios.js:184) | | 1/1 |
 | (runner) | playback/playback (scenario) | Scenario did not finish within 15 min | infra | | 1/1 |
@@ -214,8 +214,8 @@ log waits of the first ten with probe fields.
 | Case | Result | What it checks (<=15 words) | Class | Anti-patterns | Flaky |
 |---|---|---|---|---|---|
 | playback_autoplay | autoplay-late-start/{start3600.mts, start3600_mpeg2.mts} | First PTS 3600 s: autoplay starts, media time runs 0.3-3x | MOVE-DOWN→clock (start offset) + transport (autoplay); open DUP formats_cases.js | P (1.8 s sample) | |
-| playback_autoplay | end-of-sound/audio_longer.mp4 | Plays to sound end (>4.4 s), stops; play after end restarts <1.5 s | MOVE-DOWN→transport (ended→play restarts); partial DUP test/engine/unit.js #8a, #8c | P (busy poll 30 s) | 3/13 ("continued at 4.985 s") |
-| playback_loop | loop-sound-only/sine_only.mkv | Sound-only loop wraps at end of sound (>4.3 s of 5) | DUPLICATE→test/engine/unit.js "#8b sound only: the loop comes at the end" | P (busy poll 30 s) | 1/13 |
+| playback_autoplay | end-of-sound/audio_longer.mp4 | Plays to sound end (>4.4 s), stops; play after end restarts <1.5 s | MOVE-DOWN→transport (unified ended→play restart remains); test/engine/unit.js #8a, #8c cover end of sound and engine restart separately | P (busy poll 30 s) | 3/13 ("continued at 4.985 s") |
+| playback_loop | loop-sound-only/sine_only.mkv | Sound-only loop wraps at end of sound (>4.3 s of 5) | DUPLICATE of engine loop timing→test/engine/unit.js #8b; webview loop wiring and WebAudio still need coverage | P (busy poll 30 s) | 1/13 |
 | short_loop | soft | 2 s AV1 loop replays 48 cached frames (no re-decode) | MOVE-DOWN→transport (loop: replay vs re-seek) + engine L2 (block-cache replay) | L (only assertion is log line), S1 (suite sleep 4 s+2.5 s), L (fps from status lines) | |
 | short_loop | webcodecs | Same on H.264 WebCodecs | MOVE-DOWN→transport (same decision); 1 wiring check optional | L, S1 | |
 
@@ -226,14 +226,14 @@ log waits of the first ten with probe fields.
 | Case | Result | What it checks (<=15 words) | Class | Anti-patterns | Flaky |
 |---|---|---|---|---|---|
 | seeking | step/s_h264.mp4 | WebCodecs: +1/-1 steps, seek, steps across GOP, ',' '.' keys exact picture | KEEP-L3 (WebCodecs frame exactness); step planning → seek-planner | P | |
-| seeking | step/s_hevc.mp4 | WASM: seek and steps across a GOP exact | MOVE-DOWN→engine L2 once S1 makes test/engine/harness.js step like production (today it calls engine stepFrame, harness.js:195) | P | |
+| seeking | step/s_hevc.mp4 | WASM: seek and steps across a GOP exact | DUPLICATE→test/engine/frames_hevc_vp9.js covers exact pictures through the S1 step path; real WebGL and key bindings are layer 3 | P | |
 | seeking | step/s_mjpeg.avi | Frame player (MJPEG): steps/seek/keys exact picture | MOVE-DOWN→seek-planner + timeline (frame player; partial test/unit/frame_player_test.js) | P | |
 | seeking | seek/s_h264.mp4 | Seeks 45,10,59,60,0 exact; seek while playing lands near 1.0; continuity | KEEP-L3 (WebCodecs); seek-while-playing landing MOVE-DOWN→seek-planner (WASM DUP frames_mpeg4_h264.js) | C (reuses P), P | |
 | seeking | seek/s_mjpeg.avi | Same on the frame player | MOVE-DOWN→seek-planner | C, P | |
 | seeking | edges/s_h264.mp4 | Past end shows last; step at last/first stays; Home | KEEP-L3 (WebCodecs edges, thin #1; frames_edges.js runs WASM) | S2 (500 x2), C, P | |
-| seeking | abloop/s_h264.mp4 | A/B toast and marks; loop stays in A..B, 2 wraps; clear toast | MOVE-DOWN→transport (production wraps in player-ui.js:2956-2961; journeys.js:91-121 drives its own wrap, so layer 2 does not cover it); retire after S5 | C, P (overshoot <=0.25 s) | 3/21 ("played past B: max 2.825 s") |
+| seeking | abloop/s_h264.mp4 | A/B toast and marks; loop stays in A..B, 2 wraps; clear toast | MOVE-DOWN→transport (S1 covers presented-frame wrap and seek/play restart on WASM in test/engine/frames_edges.js; WebCodecs wrap and webview marks/toasts remain); revisit after S5 | C, P (overshoot <=0.25 s) | 3/21 ("played past B: max 2.825 s") |
 | seeking | open-gop/h264 | Backward seek on open-GOP H.264 falls back GPU→soft, exact frame | KEEP-L3 (real WebCodecs open-GOP); WASM side DUP frames_edges.js open-gop | L (waitLog "open-GOP H.264: no IDR"), P | 1/21 (picture matched 30, ncc 0) |
-| seeking | step-ms-rounded/ntsc_2997.mkv | fps exactly 30000/1001; steps across GOP; counter text | MOVE-DOWN→timeline (S3) + engine L2 after S1; WebCodecs part in thin #1 sweep | P | |
+| seeking | step-ms-rounded/ntsc_2997.mkv | fps exactly 30000/1001; steps across GOP; counter text | MOVE-DOWN→timeline (S3) for the counter; test/engine/frames_edges.js covers the rate and S1 WASM steps; WebCodecs part in thin #1 sweep | P | |
 | seeking | end-key/audio_longer.mp4 | End shows last of 60 frames, paused | KEEP-L3 (WebCodecs End key, thin #1; frames_mpeg4_h264.js runs WASM) | P | |
 | seeking | eof-flush/vp8_2s.webm | WebCodecs VP8: frames left in decoder shown at end, stops | KEEP-L3 (real WebCodecs flush); logic DUP engine/unit.js #8d, frames_edges.js eof/vp8_2s.webm | P | |
 
@@ -541,7 +541,7 @@ Cases `open-native` and `ui_info_native` (same scenario):
 | Case | Result | What it checks (<=15 words) | Class | Anti-patterns | Flaky |
 |---|---|---|---|---|---|
 | perf-invisible | hidden-native | Hidden tab stops ffmpeg (process count); shown: same frame, plays | KEEP-L3 (VS Code tab visibility + real ffmpeg process); stop logic DUP host/native_hidden_test.js | S2 (1500 x2), L (waitLog "tab hidden, ffmpeg stopped", "native decode from"), T (8/10 s) | 3/14 |
-| perf-invisible | paused-readahead/native, paused-readahead/webcodecs | Paused read-ahead <=2.2/4.5 s; 3 steps past it land | DUPLICATE→test/engine/unit.js "invisible: paused read-ahead is ~1 s…" | S2 (1000, 4500), L (parses status log line), T (5 s/step) | |
+| perf-invisible | paused-readahead/native, paused-readahead/webcodecs | Paused read-ahead <=2.2/4.5 s; 3 steps past it land | MOVE-DOWN (test/engine/unit.js covers the read-ahead threshold; stepping past it on native and WebCodecs still needs coverage) | S2 (1000, 4500), L (parses status log line), T (5 s/step) | |
 | perf-invisible | loop-rest | Paused frame loop rests; step/time label follow; resumes | MOVE-DOWN→clock (rest/wake scheduling; partial DUP engine/unit.js "settled() lets the page rest") | S4 (2000, 2500, 4000, 2500), T (4 s step), P (rAF counts) | 6/15 TO6 ("4 s waiting for a step while resting") |
 
 
@@ -550,7 +550,7 @@ Cases `open-native` and `ui_info_native` (same scenario):
 
 | Case | Result | What it checks (<=15 words) | Class | Anti-patterns | Flaky |
 |---|---|---|---|---|---|
-| perf-invisible | audio-rest | AudioContext rests on pause, resumes as clock, drift <=0.5 s (or just pause/play) | DUPLICATE→test/engine/unit.js "invisible: the AudioContext rests when paused…" (hidden desktop: AC never runs) | S3 (3500 or 1000+1500), P (drift) | |
+| perf-invisible | audio-rest | AudioContext rests on pause, resumes as clock, drift <=0.5 s (or just pause/play) | DUPLICATE of rest and clock handoff→test/engine/unit.js with a fake AudioContext; real WebAudio drift still needs coverage (hidden desktop: AudioContext never runs) | S3 (3500 or 1000+1500), P (drift) | |
 | startup-restore | background-probe | Window reload restores both tabs; background tab not decoding until shown | KEEP-L3 (VS Code reload / webview restore) | L (all checks on log regexes) | restore/startup-restore 1/1 TO1 (scenario level) |
 
 
@@ -975,7 +975,7 @@ Clock use in engine.js: 52 `performance.now` / `setTimeout` / `ac.currentTime` s
 passes to `tick(now)`. Policy timers (to the core via Clock): AC wake hold 691, pending-seek replay 1040, audio-live
 hysteresis 1561, media clock 1631-1643, behind/every/skip windows 1782-1854, 1909-1910, 1997, step coalescing and back
 wait 2636-2697, 2839. Pacing (adapter, may take the Clock): fill 2210-2269, sharp rest 2291, host thumb timeout 3181.
-The rest is telemetry. `test/engine/harness.js` 250-270 monkey-patches `performance.now` to get virtual time.
+The rest is telemetry. `virtualClock` in `test/engine/harness.js` overrides `performance.now` for virtual time.
 
 ### 2.4 Other page modules
 
@@ -1127,7 +1127,7 @@ decoder edge**: all three exist today and after the move.
 | Step | Characterization first | Move | New fast tests | L3 retired / shrunk | Risk, rollback | Size |
 |---|---|---|---|---|---|---|
 | **S0 Runner, probe, clean dedupe** | none (no product code except probe fields) | `scenarios.js` `--grep` filters steps and results (`scenario/case/result`); `--sub` full names; `R.t` and raw-array cases through the filter; `--rerun-failed`; drop `tightFirstFrame`; probe fields (`decision`, `transport`, frame size / pending restart, `restored`, stored position, `exported`) replace `waitLog` in the top-10 flaky checks; `ensure()` only the clips used; record `ffmpeg -version`; fix AGENTS.md, TESTING.md, run-tests skill, test-inventory.md | host test of the step/result filter; probe-field test in `debug_probe_test.js` | retire the 53 clean UI duplicates (1.4); `compare_metrics` → layer 2 | low; spot-check per batch; revert per batch | runner ~300, probe ~100, deletions ~1,500 test lines; 3 sessions |
-| **S1 Layer-2 harness like production** | run the current engine suites, record results | `test/engine/harness.js`: `P.step` = pause + `seekFrame` with the unified hold-back rule (one seek in flight, newest held; until S4 a small test-side copy of `seekTo`/`deferred`, replaced by `seek-planner` in S4); A-B through the same `ab.wrapTarget(frame / fps)` on presented frames and `restartAt` as `player-ui.js` 2956-2961 (replaced by `transport` in S5); remove the `p.stepFrame` branch (195) | the existing `frames_*.js`, `journeys.js`, `scrub.js`, `continuity_fuzz.js` now exercise the production path; differences found are bugs or quarantined KNOWN | re-inventory every row citing `test/engine/` (marked "re-verify after S1"); only then retire them | medium: suites may go red on the real path → that is the finding; quarantine per TESTING.md | ~150 harness lines; 1-2 sessions (+ fixes found) |
+| **S1 Layer-2 harness like production** (implemented) | baseline engine suites | `P.step` uses player state and a small copy of `seekTo`/`sendDeferred` until S4; A-B uses presented-frame wrap and a seek/play restart until S5 | HEVC, rounded timestamps and WASM A-B pass; dense VFR stepping is KNOWN-red | section 1.3 records the remaining coverage gaps | dense VFR needs adjacency-aware stepping | complete |
 | **S2a Page characterization** | this step is characterization | `test/sim/page.js`: unified + controller on fake-dom, `FakeDecoderPort` (legacy surface), virtual clock; extends `player_unified_test.js` 1915 fuzzer and `production_adapters_test.js` `stubPlayer`; scenarios for every "from S2" row of 3.5, the Compare oracle (`multiview.js` 42-52 + 08eb884 agreement), end/stop/loop/A-B matrix, held seeks, play during seek, resume/goto/restore, hide/show | ~40 scenarios + walks with invariants 1-9 (known failures quarantined) | none yet | medium: coupling to internals → assert only on the three boundary sides | ~1,500 test lines; 3-4 sessions |
 | **S2b Host-half characterization** | this step is characterization | `test/sim/host.js`: real `src/stream.js`, `src/native.js`, warm decoder with the fake ffmpeg and link-sim; `FakeHostPage`; protocol contract run from both sides | journeys for 79bb39a, 72d442f, 207ce7b, a2d9dd0, 3d31573, ba2fdb6 | none yet | medium (the fake ffmpeg must imitate ffmpeg output timing) | ~1,000 test lines; 3 sessions |
 | **S3 timeline** | table tests of today's frame rules on CFR, NTSC, ms-rounded, VFR, gaps, start offset; reproduce 08eb884's agreement test (playing follower shows floor(v + lead + nudge) = round(v); paused steps agree) | `timeline.js` with `Presentation {lead, followerNudge}`; engine `frameAt`/`frameSeekTime`/`measureRate`, frame-player `frameAt`, adapter mapping, unified `clockTimeFrame`/`tryApplyGoto` call it | property tests | multiview numeric `sync/*`, `large/clock`, `native/lockstep` → one wiring check; `export/vfr`, `xray/strip`, `time/formats`, `step-ms-rounded` | low-medium (any rule change needs sign-off, Q2) | ~350 lines + tests; 2 sessions |
@@ -1139,6 +1139,12 @@ decoder edge**: all three exist today and after the move.
 | **S9 preview-scheduler** (independent; any time after S0) | `seek_preview_test.js`, `seek_preview_pass_test.js` | scheduling half of `thumbs.js` on Clock | rest speed-up, pass pause while playing/hidden, pacing on the virtual clock | seek-preview → one wiring check | low | ~500 lines; 2 sessions |
 | **S10 MediaClock + catch-up** (optional) | S2a rate / audio-only / late-start / rest; `test/engine/unit.js` invisible and sound tests | engine `now`/`anchor`/`audioMaster`/`updateAudioLive`/`playbackPhase`/`settled` → MediaClock; audio as TimeSource with `onAnchor`; catch-up policy → transport | MediaClock with `FakeTimeSource` drift | `rate/speed`, `audio-only`, `loop-rest`, `autoplay-late-start/*` | **high** for A/V sync → layer 4 before/after; worth doing only if S2a/S4 show clock bugs | ~500 lines; 3-4 sessions |
 | **S11 Thin layer 3** | — | section 5 | — | remaining MOVE-DOWN rows retire as their step lands; KEEP set rewritten into 10 scenarios | medium (runner) → old scenarios kept until the new set passes 10 nightly runs | runner ~400, cases ~2,000 lines; 4-5 sessions |
+
+**S1 implemented.** Baseline: 19 of 19 engine suites passed. The first run with directional frame seeks
+passed 18 of 19 suites. The three KNOWN checks are the dense VFR fuzz and exact forward and backward
+journeys in `chaos.js`. The backward journey encounters the same skip during its forward setup. The rounded
+NTSC and cross-GOP HEVC steps and both WASM A-B journeys passed. Section 1.3 records the remaining
+layer-3 dependencies. No layer-3 checks were retired in S1.
 
 Order rationale: S0 removes the worst flake causes and the clean duplicates with no product risk; S1 makes layer 2
 test what ships (without it, later retirements rest on a path users never run); S2a/S2b are the safety net; S3 is small
@@ -1237,7 +1243,7 @@ sessions** (S4 and S1's fix-ups are the uncertain ones).
 | Q5 | Retire duplicates before the core work? | only the 53 clean UI duplicates in S0; host-test duplicates after a second look; engine-cited rows only after S1 |
 | Q6 | Fix the layer-2 harness to step and wrap like production (S1), accepting that suites may go red? | yes, before any retirement that cites `test/engine/`; red results are findings, quarantined as KNOWN per TESTING.md until fixed |
 | Q7 | Pinned ffmpeg for tests? | BtbN LGPL at a fixed release for every native and transcode check (what `src/setup.js` gives users); a GPL build only for generating clips and references, kept in the local test cache, never in the repo, CI artifacts or VSIX |
-| Q8 | Delete dead code (engine A-B branch in `tick`, engine `stepFrame`/`flushStep` path, `stepgoal.create`)? | yes, but `stepFrame` only after S1 removes the harness fallback (`harness.js:195`) and S4 moves stepping to the planner; knip + tests confirm no caller |
+| Q8 | Delete dead code (engine A-B branch in `tick`, engine `stepFrame`/`flushStep` path, `stepgoal.create`)? | S1 removed the harness fallback. Delete the engine step path after S4 moves stepping to the planner and knip + tests confirm no caller. |
 | Q9 | Real CSS layout checks need a browser | keep 2 checks in `compare-wiring`; a headless browser for the mockup harness is a dependency decision, defer |
 | Q10 | Is S10 (MediaClock + catch-up) needed? | optional; do it only if S2a/S4 show clock-side bugs or catch-up policy changes are planned |
 | Q11 | Change the core while other work touches `player-unified.js` / `engine.js`? | announce a short freeze for S4, S5, S7, S8 |
@@ -1260,8 +1266,8 @@ sessions** (S4 and S1's fix-ups are the uncertain ones).
 
 ## 7. Revision after review (2026-11-28)
 
-- Layer-2 harness steps with engine `stepFrame` (`harness.js:195`) and wraps A-B with a test copy (`journeys.js:91-121`):
-  new step S1 makes it production-like; rows citing engine stepping or A-B reclassified; Q6, Q8 updated.
+- S1 replaced the layer-2 engine stepping shortcut and the journey-specific A-B drivers. The inventory rows
+  now identify the WASM coverage and the remaining webview checks.
 - A-B rows (`seeking abloop`, `ctxmenu commands/ab-loop`) are MOVE-DOWN→transport, retired after S5.
 - WebCodecs claims re-judged against a WASM-only layer 2: container sweep (Annex-B and avcC), `playback open/fmt/{5}`,
   `edges`, `end-key` and the 4K paused seeks are KEEP-L3 in thin scenarios 1-2.

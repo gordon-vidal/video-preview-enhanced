@@ -5,10 +5,10 @@ const { open, checks } = require('./harness');
 const { execFileSync } = require('child_process');
 const { ffTool, ncc } = require('../lib/frames');
 const { makeStepping, makeLarge } = require('../media/make_heavy_media');
-const { create } = require('../../media/abloop');
 
 const SEED = Number(process.env.VPE_FUZZ_SEED) || 20261124;
 const c = checks(`engine chaos (seed ${SEED})`);
+const denseVfr = 'nominal-frame seek skips an adjacent picture in the 60 fps segment';
 
 function checkBudget(P) {
   const p = P.player;
@@ -47,13 +47,9 @@ async function fuzz(file, vfr) {
     const gaps = new Set(refs.slice(1).map((r, i) => Math.round(1000 * (r.t - refs[i].t))));
     assert.ok(refs.every((r, i) => Number.isFinite(r.t) && (!i || refs[i - 1].t < r.t)));
     if (vfr) assert.ok([17, 33, 67].every((ms) => gaps.has(ms)), 'fixture must have 15/30/60 fps cadences');
-    const ab = create();
+    const { ab } = P;
     let wraps = 0;
-    P.onTick = () => {
-      // Match the single-player tick in media/player.js.
-      const to = ab.wrapTarget(P.time(), P.playing());
-      if (to !== null) { wraps++; P.seek(to); }
-    };
+    P.onWrap = () => { wraps++; };
     const jump = async (index, action) => {
       P.pause();
       P.seek(refs[index].t + 0.002);
@@ -145,9 +141,9 @@ async function largeSeek() {
 
 (async () => {
   const { vfr, longGop } = makeStepping();
-  await c.run('VFR stepping, seeks, speed and A-B loop', () => fuzz(vfr, true));
-  await c.run('exact forward step in dense VFR', () => exactVfrSteps(vfr, 1));
-  await c.run('exact backward step in dense VFR', () => exactVfrSteps(vfr, -1));
+  await c.run('VFR stepping, seeks, speed and A-B loop', () => fuzz(vfr, true), denseVfr);
+  await c.run('exact forward step in dense VFR', () => exactVfrSteps(vfr, 1), denseVfr);
+  await c.run('exact backward step in dense VFR', () => exactVfrSteps(vfr, -1), denseVfr);
   await c.run('10-second GOP stepping, seeks, speed and A-B loop', () => fuzz(longGop, false));
   if (process.env.VPE_HEAVY_MEDIA === '1') await c.run('multi-GiB random access', largeSeek);
   await c.done();

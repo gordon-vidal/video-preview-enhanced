@@ -2,7 +2,6 @@
 // The frame-exactness checks of test/vscode/cases/seeking.js, on the engine in Node (test/engine/harness.js).
 // Each takes an opened player P; "frame k" always means the engine says k AND the picture is ffmpeg's frame k.
 const { sleep } = require('./harness');
-const AB = require('../../media/abloop');
 
 const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
 
@@ -85,20 +84,20 @@ async function eof(P, last) {
 }
 
 /**
- * A-B loop (media/abloop.js, as media/player.js drives it every frame): marks at frames 30 and 60, the
+ * A-B loop: marks at frames 30 and 60, the
  * loop plays only A..B and wraps at least twice; clearing both ends it.
  */
 async function abloop(P) {
-  const ab = AB.create();
+  const { ab } = P;
   P.seek(30.5 / P.fps); await P.expectFrame(30, 'seek A');
-  ab.set('a', P.time(), P.frame());
+  ab.set('a', P.frame() / P.fps, P.frame());
   P.seek(60.5 / P.fps); await P.expectFrame(60, 'seek B');
-  ab.set('b', P.time(), P.frame());
+  ab.set('b', P.frame() / P.fps, P.frame());
   assert(ab.isRange(), 'A and B set');
   const r = ab.exportRange(P.fps, P.n);
   assert(r && r.fa === 30 && r.fb === 60, `export range ${JSON.stringify(r)}`);
   const ts = [];
-  P.onTick = () => { const to = ab.wrapTarget(P.time(), P.playing()); if (to !== null) P.seek(to); ts.push(P.time()); };
+  P.onTick = () => ts.push(P.time());
   P.seek(1.5);
   P.play();
   let wraps = 0;

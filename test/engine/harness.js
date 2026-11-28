@@ -8,14 +8,14 @@
 //   P.seekFrame(45); await P.expectFrame(45);  // the engine says 45 and the picture is ffmpeg's frame 45
 //   P.close();
 //
-// The actions are the ones media/player.js maps the user's input to: seek bar / seek action ->
-// seekTime(t), , and . -> stepFrame(-1 / +1), Home -> seekFrame(0), End -> pause + seekFrame(n - 1),
-// A / B -> media/abloop.js. Node has no WebCodecs: every codec takes the WebAssembly decoder here
+// Node has no WebCodecs: every codec takes the WebAssembly decoder here
 // (H.264 and VP8 too, which VS Code decodes on the GPU; layer 3 checks those).
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const frames = require('../lib/frames');
+const S = require('../../media/player-state');
+const AB = require('../../media/abloop');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const MEDIA = path.join(ROOT, 'media');
@@ -106,7 +106,7 @@ async function open(file, o = {}) {
   const fd = fs.openSync(file, 'r');
   const logs = [];
   const messages = [];
-  const P = { file, name: path.basename(file), logs, messages, shown: null, uploads: 0 };
+  const P = { file, name: path.basename(file), logs, messages, shown: null, uploads: 0, ab: AB.create() };
   const gl = fakeGl((y, w, h, deep) => { P.shown = { y, w, h, deep }; P.uploads++; });
   const canvas = { getContext: () => gl, width: 0, height: 0, hidden: false, style: {}, getBoundingClientRect: () => ({ width: 640, height: 360 }) };
   if (o.pool === false) delete globalThis.DecoderPool; // eslint-disable-line no-param-reassign
@@ -135,13 +135,16 @@ async function open(file, o = {}) {
     onReady: () => { ready = true; },
     onMeta: () => {},
     onTracks: () => {},
-    // Playback paused at the end with loop off (media/player.js handleEnded): P.onEnded(info), set by a test.
     onEnded: (p, info) => { if (P.onEnded) P.onEnded(info); },
   });
   P.player = new engine.LibavPlayer({ size }, { workerUrl: 'decoder-worker.js', loader: 'libav.js', variant: 'vpe', whenSlow: 'every', mem: o.mem });
   P.player.setLoop && P.player.setLoop(!!o.loop);
   if ('loop' in P.player) P.player.loop = !!o.loop;
-  const tick = setInterval(() => { try { P.player.tick(performance.now() / 1000); } catch (e) { logs.push(`tick error: ${e && e.stack || e}`); } if (P.onTick) P.onTick(); }, 8);
+  const tick = setInterval(() => {
+    try { P.player.tick(performance.now() / 1000); } catch (e) { logs.push(`tick error: ${e && e.stack || e}`); }
+    P.afterTick?.();
+    P.onTick?.();
+  }, 8);
   P.close = () => { if (P.closed) return; P.closed = true; clearInterval(tick); if (P.clock) P.clock.release(); try { P.player.dispose(); } catch { /* gone */ } fs.closeSync(fd); };
 
   const fail = () => {
@@ -187,15 +190,71 @@ async function open(file, o = {}) {
 
   if (o.virtualClock) P.clock = virtualClock(P, tick, logs, o.realMs);
 
-  // ---- the user's actions (media/player.js) ----
+  const seekPending = () => p.seekTarget != null;
+  let stepState = S.createWorkspaceState({ frame: 0 });
+  let stepTarget = null;
+  let heldStep = null;
+  let lastFrame = p.currentFrame();
+
+  // Single-decoder copy of seekTo/sendDeferred in media/player-unified.js until S4.
+  function seekStep(target, land) {
+    if (seekPending() && !p.isPlaying()) {
+      heldStep = { target, land, since: heldStep?.since ?? Date.now() };
+      return;
+    }
+    heldStep = null;
+    p.seekFrame(target, false, land);
+  }
+
+  function sendHeldStep(land = heldStep.land) {
+    const { target } = heldStep;
+    heldStep = null;
+    p.seekFrame(target, false, land);
+  }
+
+  function clearStep() {
+    heldStep = stepTarget = null;
+  }
+
+  // media/player-ui.js decoderFrame/restartAt.
+  P.afterTick = () => {
+    if (!seekPending() && !heldStep) {
+      if (!p.shownStale && !p.catchUp && !p.skipping) stepTarget = null;
+      const frame = p.currentFrame();
+      if (frame !== lastFrame) {
+        lastFrame = frame;
+        const wrap = P.ab.wrapTarget(frame / P.fps, p.isPlaying());
+        if (wrap !== null) {
+          lastFrame = S.getTab(S.syncClockMeta(stepState, {
+            maxFrame: P.n - 1,
+            frame: Math.round(wrap * P.fps),
+          })).frame;
+          p.seekFrame(lastFrame);
+          p.play();
+          P.onWrap?.();
+        }
+      }
+    }
+    if (heldStep && (!seekPending() || p.isPlaying() || Date.now() - heldStep.since > 8000)) sendHeldStep();
+  };
+
   P.frame = () => p.currentFrame();
   P.time = () => p.currentTime();
-  P.seek = (t) => p.seekTime(t);
-  P.seekFrame = (k) => p.seekFrame(k);
-  P.step = (d) => { if (p.stepFrame) p.stepFrame(d); else { p.pause(); p.seekFrame(p.currentFrame() + d); } };
-  P.home = () => p.seekFrame(0);
-  P.end = () => { p.pause(); p.seekFrame(p.n - 1); };
-  P.play = () => p.play();
+  P.seek = (t) => { clearStep(); p.seekTime(t); };
+  P.seekFrame = (k) => { clearStep(); p.seekFrame(k); };
+  P.step = (d) => {
+    const frame = stepTarget ?? p.currentFrame();
+    stepState = S.syncClockMeta(stepState, { maxFrame: P.n - 1, frame });
+    stepState = S.stepFrame(stepState, d);
+    const target = S.getTab(stepState).frame;
+    if (p.isPlaying()) p.pause();
+    if (target === frame) return;
+    stepTarget = target;
+    seekStep(target, Math.sign(target - frame));
+  };
+  P.home = () => P.seekFrame(0);
+  P.end = () => { p.pause(); P.seekFrame(p.n - 1); };
+  P.play = () => { if (heldStep) sendHeldStep(0); p.play(); };
   P.pause = () => p.pause();
   P.playing = () => p.isPlaying();
   // player.js: the mute button and the speed menu call setVolume(volume, muted) and setRate(rate).
@@ -228,7 +287,7 @@ async function open(file, o = {}) {
     const refs = await P.refs();
     let last = '';
     const got = await P.until(() => {
-      if (p.seekTarget !== null && p.seekTarget !== undefined) return null;
+      if (seekPending() || heldStep) return null;
       if (!P.shown) return null;
       const m = frames.match(P.shown.y, refs, k, P.fps);
       last = `engine says ${p.currentFrame()}, picture matches ${m.slot} (ncc ${m.score.toFixed(4)})`;
@@ -260,6 +319,7 @@ function virtualClock(P, wallTick, logs, realMs = 2) {
       while (now < end && !P.closed) {
         now = Math.min(end, now + stepMs);
         try { P.player.tick(now / 1000); } catch (e) { logs.push(`tick error: ${e && e.stack || e}`); }
+        P.afterTick?.();
         if (P.onTick) P.onTick();
         await new Promise((r) => setImmediate(r));
         if (realMs) await sleep(realMs); // the decoder runs in real time: give it a slice per virtual step

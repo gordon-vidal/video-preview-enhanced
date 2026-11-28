@@ -239,7 +239,11 @@ reads bounded. CI uses only the small fixtures.
 Layer 2's `formats_cases.js` covers the playback format matrix. For the WASM formats covered only there,
 it checks the first picture, an advancing playback picture and a seek against ffmpeg, and requires decoded
 audio. The `frames_*.js` suites cover WASM seek and step sequences, rounded timestamps and the last picture
-when audio outlasts video. `frames_webcodecs_error.js` drives the WebCodecs path of the engine and the real
+when audio outlasts video. Since playback-core S1, the harness uses `player-state.js` to compute step targets
+and a single-decoder copy of unified's deferred seek rule to dispatch directional frame seeks. The A–B
+journeys use `abloop.js` on presented frame numbers and restart with a frame seek and play. These tests cover
+the WASM decoder behavior. Webview input, real WebCodecs, and browser presentation remain layer 3 coverage.
+`frames_webcodecs_error.js` drives the WebCodecs path of the engine and the real
 decoder worker with a stand-in `VideoDecoder` (Node has none) that fails as Chromium's does on a damaged
 picture: playback goes on at the next keyframe, the sound stays whole, and the third error falls back to the
 built-in decoder.
@@ -282,8 +286,10 @@ instances (`playback` and `scopes-export` twice in a row, `file-icons` once); ru
 
 Listed here, reported as KNOWN by the test (not failing it), and removed when the test reports that it passes.
 
-- `test/engine/chaos.js` checks exact backward adjacency after stepping forward into
-  the dense VFR segment. The nominal-rate back cache lookup can skip a 60 fps picture.
-  The fuzz test still checks monotonic direction and picture identity against FFmpeg.
+- `test/engine/chaos.js` reports KNOWN for VFR stepping fuzz and exact forward and backward VFR stepping.
+  In all three checks the forward step into the 60 fps segment lands at PTS 2.050 s with 2.016667 s expected.
+  The backward check hits this during its forward setup. The nominal-rate target in
+  [`engine.js` `frameSeekTime`](../media/engine.js#L2598) can skip pictures in a dense VFR segment.
+  The 10-second GOP fuzz remains required.
 
 Inventory of every test before the layers and where it lives now: [docs/notes/test-inventory.md](notes/test-inventory.md).
