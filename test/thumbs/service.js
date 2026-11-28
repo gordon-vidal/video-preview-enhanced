@@ -220,6 +220,10 @@ async function gopChecks(check) {
     check('MPEG-PS key at 5 s: the keyframe before, not after', Math.abs(key.kt - t0) < 0.05, JSON.stringify({ kt: key.kt, start: t0 }));
     const r = await p.ask({ type: 'thumb', id: 2, t: t0 + 7, w: 160, h: 120, mode: 'between' });
     check('MPEG-PS between at 7 s: from the keyframe before', Math.abs(r.kp - t0) < 0.05 && Math.abs(r.kt - t0 - 7) < 3 / gop.FPS, JSON.stringify({ kt: r.kt, kp: r.kp }));
+    // A one-slot sweep (the fill's floor) 7 s after the keyframe: decoded from the keyframe before, not empty.
+    const one = await p.ask({ type: 'thumb', id: 3, t: t0 + 7, to: t0 + 7.5, step: 1, w: 160, h: 120, mode: 'sweep' });
+    check('MPEG-PS one-slot sweep at 7 s: its frame', Number.isFinite(one.kt) && one.kt >= t0 + 7 - 1e-3 && one.kt < t0 + 7.5 && !(one.more || []).length,
+      JSON.stringify({ kt: one.kt, more: (one.more || []).length, frames: one.frames }));
   } finally { await p.close(); }
 }
 

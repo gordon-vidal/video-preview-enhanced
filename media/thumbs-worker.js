@@ -325,27 +325,39 @@ async function sweep(m) {
   };
   let atEnd = false;
   try {
-    const landed = await seekTo(Math.max(0, m.t), m.t > 0 ? 'max' : 'min');
-    if (landed < 0 && m.t > 0) await seekTo(m.t, 'min');
-    await libav.avcodec_flush_buffers(V.c);
-    let started = false;
-    while (!done) {
-      if (stale()) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
-      const [res, packets] = await libav.ff_read_frame_multi(fmt, pkt, { limit: 1 });
-      atEnd = res === libav.AVERROR_EOF || (res < 0 && res !== -libav.EAGAIN);
-      const vp = [];
-      let pt = null;
-      for (const p of packets[V.idx] || []) {
-        pt = packetTime(p);
-        if (!started && !(p.flags & AV_PKT_FLAG_KEY)) continue;
-        started = true;
-        vp.push(p);
+    // Formats without an index (MPEG-PS/TS) can land past the keyframe: step back as between() does.
+    for (let back = 0, tries = 0; tries < 6; tries++) {
+      const t = m.t - back;
+      const landed = await seekTo(Math.max(0, t), t > 0 ? 'max' : 'min');
+      if (landed < 0 && t > 0) await seekTo(t, 'min');
+      await libav.avcodec_flush_buffers(V.c);
+      let started = false;
+      let missed = false;
+      while (!done && !missed) {
+        if (stale()) { post({ type: 'thumb', id: m.id, cancelled: true }); return; }
+        const [res, packets] = await libav.ff_read_frame_multi(fmt, pkt, { limit: 1 });
+        atEnd = res === libav.AVERROR_EOF || (res < 0 && res !== -libav.EAGAIN);
+        const vp = [];
+        let pt = null;
+        for (const p of packets[V.idx] || []) {
+          pt = packetTime(p);
+          if (!started) {
+            const past = t > 0 && pt !== null && pt > m.t + 1e-6;
+            if (past) { missed = true; break; }
+            if (!(p.flags & AV_PKT_FLAG_KEY)) continue;
+          }
+          started = true;
+          vp.push(p);
+        }
+        if (missed) break;
+        n += vp.length;
+        // Packets 2 s past the stretch: any reordering is shorter.
+        const end = atEnd || (pt !== null && pt > m.to + 2);
+        if (vp.length || end) await take(await libav.ff_decode_multi(V.c, V.pkt, V.frame, vp, { fin: end, ignoreErrors: true, copyoutFrame: 'ptr' }));
+        if (end) break;
       }
-      n += vp.length;
-      // Packets 2 s past the stretch: any reordering is shorter.
-      const end = atEnd || (pt !== null && pt > m.to + 2);
-      if (vp.length || end) await take(await libav.ff_decode_multi(V.c, V.pkt, V.frame, vp, { fin: end, ignoreErrors: true, copyoutFrame: 'ptr' }));
-      if (end) break;
+      if (!missed) break;
+      back = back * 2 + 2;
     }
   } finally {
     await libav.avcodec_flush_buffers(V.c);
