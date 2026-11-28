@@ -106,17 +106,22 @@ async function playClip(vs, clip, { seconds, native, onShown, correctness = fals
     let rep0;
     while ((rep0 = await report()).playing && Date.now() - p0 < 5000) await sleep(200);
     if (correctness && rep0.playing) bad('clip did not pause before seeks');
+    r.pausedAt = rep0.frame;
     const seeks = [];
     // Within the clip: the ProRes one has 24 frames (a seek past the end shows the last frame).
     let shownBeforeSeek = rep0.shownCount;
-    for (const k of [Math.min(Math.round(r.fps * 1.2) + 3, rep0.frames - 2), 7]) {
+    // Never the frame it paused on: a seek there changes nothing and paints nothing new.
+    const k0 = Math.min(Math.round(r.fps * 1.2) + 3, rep0.frames - 2);
+    for (const k of [k0 === rep0.frame ? k0 - 4 : k0, 7]) {
       vs.send({ action: 'seek', name, t: (k + 0.5) / r.fps });
       const s0 = Date.now();
       let got = null;
+      let lastRep = null;
       try {
         for (;;) {
           await sleep(250);
           const rep = await report();
+          lastRep = rep;
           got = rep.frame;
           const painted = !correctness || (!rep.playing && rep.shownCount > shownBeforeSeek);
           if (got === k && painted) {
@@ -129,7 +134,7 @@ async function playClip(vs, clip, { seconds, native, onShown, correctness = fals
           }
         }
       } catch (e) { bad(e.message); }
-      seeks.push({ want: k, got, ms: Date.now() - s0 });
+      seeks.push({ want: k, got, ms: Date.now() - s0, last: lastRep });
       if (got !== k) bad(`seek to frame ${k} showed ${got} after ${((Date.now() - s0) / 1000).toFixed(1)} s`);
     }
     r.seeks = seeks;
