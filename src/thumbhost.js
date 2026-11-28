@@ -220,7 +220,7 @@ function nativeThumb(decoder, request, log, signal, hw = null) {
   const src = { w: v.sourceWidth || v.width, h: v.sourceHeight || v.height, index: v.index, lead: v.lead,
     start: Number.isFinite(v.startTime) ? v.startTime : 0 };
   const rel = (kt) => (Number.isFinite(kt) && Number.isFinite(v.startTime) ? kt - v.startTime : null);
-  const opts = { pass: !!request.pass, ...(mode === 'sweep' ? { step, count: Math.ceil((to - t) / step - 1e-9) } : {}) };
+  const opts = { pass: !!request.pass, ...(mode === 'sweep' ? { step, count: Math.ceil((to - t) / step - 1e-9), gpu: request.gpu !== false } : {}) };
   return decodeWith(decoder, v, src, rel, request, mode, opts, log, signal, hw);
 }
 
@@ -229,7 +229,8 @@ async function decodeWith(decoder, v, src, rel, { t, w, h }, mode, opts, log, si
   const tools = decoder.tools;
   const depth = hwaccel.depthOf(v.pixFmt, v.codec);
   const keyOf = (m) => `${m}|${v.codec || ''}|${depth}`;
-  const method = mode === 'sweep' && opts.pass
+  // The page marks short sweeps that start close to a keyframe gpu: false (start-up would cost more than the decode).
+  const method = mode === 'sweep' && opts.pass && opts.gpu !== false
     ? hwaccel.previewMethods(hw).find((m) => !failedGpu.get(tools)?.has(keyOf(m))) : undefined;
   const decode = (o) => decodeThumb(tools, decoder.file, src, t, w, h, log, signal, 'jpeg', mode, o);
   let r = null;

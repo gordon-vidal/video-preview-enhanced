@@ -10,8 +10,8 @@
 // - the background pass (passArm, after the first frame): keyframes coarse to fine over the slots still without a
 //   picture, then the fill ('sweep' requests, decoded cheaply or on the GPU): first the floor (min(N, FLOOR) evenly
 //   spread slots get a picture of their own), then every other slot coarse to fine until each has one. One request
-//   at a time, paced to PASS_DUTY of a core (PASS_DUTY_HOVER while the pointer rests on the bar), paused while busy,
-//   hidden, dragging or another tile sets the clock.
+//   at a time, paced to PASS_DUTY of the time (PASS_DUTY_HOVER while the pointer rests on the bar), paused while
+//   busy, hidden, dragging or another tile sets the clock.
 // The bar is a grid of N slots of X seconds (interval()); one picture per slot is enough. Pictures are kept
 // as small JPEGs; a few near the pointer also as ready-to-draw ImageBitmaps (HOT). Not used for MJPEG
 // AVI/image sequences (FramePlayer, no libav) or audio-only files.
@@ -28,8 +28,8 @@ const PASS_DELAY_MS = 3000;
 const PASS_RETRY_MS = 500;
 /** How often a running pass request checks whether it should give way. */
 const PASS_WATCH_MS = 100;
-/** Share of a core the pass may use (its requests' CPU time when they report it, else their wall time), and while the
- *  pointer rests on the bar, paused. */
+/** Share of the time the pass may decode (each request's wall time, or the CPU it reports when that is more), and
+ *  while the pointer rests on the bar, paused. */
 const PASS_DUTY = 0.25;
 const PASS_DUTY_HOVER = 0.5;
 /** Host runs: keyframes per ffmpeg, and the most keyframes per slot at which a run beats one ffmpeg per slot. */
@@ -38,6 +38,8 @@ const RUN_KEYS_PER_SLOT = 1.25;
 const FLOOR = 20;
 /** A fill stretch ends at the first known keyframe past this much estimated decoding (what a cancel can lose). */
 const FILL_CHUNK_MS = 1000;
+/** Native sweeps go to the GPU from this much estimated software decoding: GPU start-up costs about 0.2-0.3 s of CPU. */
+const GPU_WORTH_MS = 300;
 
 /**
  * @typedef {{ t: number, kind: 'key' | 'frame', end: number, jpeg: Blob | null, bmp: ImageBitmap | null,
@@ -597,7 +599,7 @@ class ThumbService {
    * Asks for `slot`'s picture: its known keyframe by time ('key'), the nearer keyframe ('near'), the exact picture
    * (refine), the keyframes from the slot's start on ('run', host only), or a between-pass stretch ('sweep').
    * @param {number} slot
-   * @param {{prefetch?: boolean, refine?: boolean, pass?: boolean, run?: boolean, sweep?: {to: number}}} kind
+   * @param {{prefetch?: boolean, refine?: boolean, pass?: boolean, run?: boolean, sweep?: {to: number, gpu?: boolean}}} kind
    */
   send(slot, kind) {
     const T = this.target(slot);
@@ -606,7 +608,8 @@ class ThumbService {
     const mode = kind.sweep ? 'sweep' : kind.run ? 'run' : kind.refine ? 'exact' : k !== null ? 'key' : 'near';
     const t = kind.run ? this.o.startT + slot * this.X + 0.0005 : k !== null ? k + 0.0005 : T;
     const to = kind.sweep ? kind.sweep.to : undefined;
-    this.inflight = { id: ++this.id, slot, prefetch: !!kind.prefetch, refine: !!kind.refine, pass: !!kind.pass, mode, at: t, to, t: performance.now() };
+    this.inflight = { id: ++this.id, slot, prefetch: !!kind.prefetch, refine: !!kind.refine, pass: !!kind.pass, mode, at: t, to,
+      gpu: !!(kind.sweep && kind.sweep.gpu), t: performance.now() };
     this.stats.requests++;
     if (this.o.request) {
       this.inflight.abort = new AbortController();
@@ -655,7 +658,7 @@ class ThumbService {
     if (ps.paused !== why) { ps.paused = why; ps.since = performance.now(); }
   }
 
-  /** Share of a core the pass may use now: more while the pointer rests on the bar, paused. */
+  /** Share of the time the pass may decode now: more while the pointer rests on the bar, paused. */
   passDuty() {
     return this.want !== null && !this.scrub && !(this.o.playing && this.o.playing()) ? PASS_DUTY_HOVER : PASS_DUTY;
   }
@@ -751,7 +754,7 @@ class ThumbService {
     return s;
   }
 
-  /** After a pass reply: its cost sets the pause before the next (CPU time when the reply has it, not while playing). */
+  /** After a pass reply: its cost (wall time, or the reported CPU when that is more) sets the pause before the next. */
   passAfter(req, m) {
     const ps = this.ps;
     if (!req.pass || !ps) return;
@@ -768,8 +771,7 @@ class ThumbService {
       ps.ms += ms;
       if (cancelled) { ps.tried.delete(req.slot); ps.retry = req.slot; } else ps.requests++;
     }
-    const playing = !!(this.o.playing && this.o.playing());
-    ps.last = { end: now, wall: ms, cost: Number.isFinite(m.cpu) && !playing ? m.cpu : ms };
+    ps.last = { end: now, wall: ms, cost: Math.max(ms, Number.isFinite(m.cpu) ? m.cpu : 0) };
   }
 
   passDone(why) {
@@ -801,10 +803,12 @@ class ThumbService {
   }
 
   /**
-   * The fill's next sweep once the keyframe pass has nothing left: first a floor slot without a picture of its own
-   * (that slot alone), then, coarse to fine, a stretch from the next such slot to the first known keyframe
-   * FILL_CHUNK_MS of estimated decoding later (or the end). Null when every slot has had a picture or was swept.
-   * @returns {{slot: number, t: number, to: number} | null}
+   * The fill's next sweep once the keyframe pass has nothing left: first the floor, coarse to fine, one sweep per GOP
+   * holding a floor slot without a picture, from the GOP's first slot without one to its last (the decode from the
+   * keyframe is paid once per GOP); then, coarse to fine, a stretch from the next such slot to the first known keyframe FILL_CHUNK_MS of
+   * estimated decoding later (or the end). gpu: worth starting the GPU for (native). Null when every slot has had a
+   * picture or was swept.
+   * @returns {{slot: number, t: number, to: number, gpu: boolean} | null}
    */
   fillNext() {
     const ps = this.ps;
@@ -817,8 +821,32 @@ class ThumbService {
     const bw = ps.bw;
     if (bw.state !== 'running') return null;
     const open = (s) => !bw.tried.has(s) && this.ownNeed(s);
+    const fps = this.o.fps || 30;
+    const sweep = (slot, to) => {
+      const t = this.target(slot);
+      // The software estimate (this.frameMs: the engine's guess, refined by refines), not the measured sweeps.
+      return { slot, t, to, gpu: (to - this.keyBefore(t)) * fps * this.frameMs >= GPU_WORTH_MS };
+    };
+    const end = this.o.startT + this.o.duration;
+    // The keyframe after `time` when known (end: none to the end of the file), else null.
+    const keyAfter = (time) => {
+      const k = this.keys.find((x) => x.t > time);
+      if (k) return k.t;
+      const g = this.gop(time);
+      return g && g.kn === null ? end + 1 : null;
+    };
+    const openIn = (a, b) => { for (let s = 0; s < this.n; s++) if (open(s) && this.target(s) >= a && this.target(s) < b) return true; return false; };
     const f = bw.floor.find(open);
-    if (f !== undefined) return { slot: f, t: this.target(f), to: this.o.startT + (f + 1) * this.X };
+    if (f !== undefined) {
+      const T = this.target(f);
+      const kp = this.keyBefore(T);
+      const kn = keyAfter(T);
+      let first = f;
+      for (let s = this.slotOf(kp - this.o.startT); s < f; s++) if (this.target(s) >= kp && open(s)) { first = s; break; }
+      let last = f;
+      if (kn !== null) for (let s = f + 1; s < this.n && this.target(s) < kn; s++) if (open(s)) last = s;
+      return sweep(first, this.o.startT + (last + 1) * this.X);
+    }
     if (ps.floorS === null) ps.floorS = Math.round((now - ps.t0) / 100) / 10;
     const slot = ps.order.find(open);
     if (slot === undefined) {
@@ -828,10 +856,16 @@ class ThumbService {
     }
     const t = this.target(slot);
     const kp = this.keyBefore(t);
-    const fps = this.o.fps || 30;
-    let to = this.o.startT + this.o.duration + 1;
-    for (const k of this.keys) if (k.t > t && (k.t - kp) * fps * bw.frameMs >= FILL_CHUNK_MS) { to = k.t; break; }
-    return { slot, t, to };
+    // Up to a known keyframe past the chunk, or one whose GOP has nothing left to fill; then to the last empty slot.
+    let to = end + 1;
+    for (const k of this.keys) {
+      if (k.t <= t) continue;
+      const kn = keyAfter(k.t);
+      if ((k.t - kp) * fps * bw.frameMs >= FILL_CHUNK_MS || (kn !== null && !openIn(k.t, kn))) { to = k.t; break; }
+    }
+    let last = slot;
+    for (let s = slot + 1; s < this.n && this.o.startT + s * this.X < to; s++) if (open(s)) last = s;
+    return sweep(slot, Math.min(to, this.o.startT + (last + 1) * this.X));
   }
 
   /** A sweep reply: pictures for slots that never had one; its cost per frame replaces the guess. */
@@ -901,7 +935,7 @@ class ThumbService {
   async requestHost(req) {
     let r = null;
     try {
-      const sweep = req.mode === 'sweep' ? { to: req.to, step: this.X } : {};
+      const sweep = req.mode === 'sweep' ? { to: req.to, step: this.X, gpu: req.gpu } : {};
       r = await this.o.request(req.at, this.box.w, this.box.h, req.abort.signal, req.mode, req.pass ? { pass: true, ...sweep } : undefined);
     } catch (e) { this.log(`host: ${e}`); }
     this.onThumb({ ...r, id: req.id, ms: Math.round(performance.now() - req.t) });

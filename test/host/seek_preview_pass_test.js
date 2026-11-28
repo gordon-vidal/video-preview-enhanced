@@ -59,7 +59,7 @@ function mk(o = {}) {
     pass: { delayMs: o.delayMs ?? 20 }, restMs: o.restMs,
     remote: o.remote, frameMs: o.frameMs,
     request: o.noRequest ? undefined : async (t, w, h, signal, mode, opts) => {
-      const c = { t, to: opts && opts.to, slot: Math.floor((t - 10) / s.X + 1e-9), mode, pass: !!(opts && opts.pass), aborted: false };
+      const c = { t, to: opts && opts.to, gpu: opts && opts.gpu, slot: Math.floor((t - 10) / s.X + 1e-9), mode, pass: !!(opts && opts.pass), aborted: false };
       calls.push(c);
       env.active++; env.max = Math.max(env.max, env.active);
       const sweepMs = typeof o.sweepMs === 'function' && mode === 'sweep' ? o.sweepMs() : o.sweepMs;
@@ -211,28 +211,27 @@ function mk(o = {}) {
   }
 
   step('4b');
-  // 4b. Pace: a quarter of a core idle, half a core while the pointer rests on the bar (the general fill, not the
-  //     pointer's slot). A reply's CPU time paces when it is known (GPU decoding: little CPU for its wall time);
-  //     while playing, wall time paces.
+  // 4b. Pace: a quarter of the time idle, half while the pointer rests on the bar (the general fill, not the
+  //     pointer's slot). Each request counts its wall time, or the CPU it reports when that is more (several
+  //     threads): a GPU request that reports little CPU does not run more often.
   {
     const asks = (x) => x.calls.filter((c) => c.pass && !c.aborted).length;
     const idle = mk({ ms: 30, duration: 7200 });
     const rest = mk({ ms: 30, duration: 7200 });
     const gpu = mk({ ms: 30, duration: 7200, cpu: 3 });
-    const play = mk({ ms: 30, duration: 7200, cpu: 3 });
-    play.env.playing = true;
-    for (const x of [idle, rest, gpu, play]) x.s.passArm();
+    const busy = mk({ ms: 30, duration: 7200, cpu: 90 });
+    for (const x of [idle, rest, gpu, busy]) x.s.passArm();
     rest.s.hover(3600, () => {});
     await until(() => rest.s.stats0().filled, 2000);
-    const a = [idle, rest, gpu, play].map(asks);
+    const a = [idle, rest, gpu, busy].map(asks);
     await tick(1500);
-    const [ni, nr, ng, np] = [idle, rest, gpu, play].map((x, i) => asks(x) - a[i]);
-    // 30 ms asks: one per 120 ms idle (12 in 1.5 s), one per 60 ms resting (25), back to back by CPU (50).
-    assert.ok(ni >= 8 && ni <= 16, `idle: a quarter of a core (${ni} asks in 1.5 s)`);
-    assert.ok(nr >= 1.6 * ni, `resting on the bar: about half a core (${nr} vs ${ni} asks)`);
-    assert.ok(ng >= 2.5 * ni, `paced by the reported CPU (${ng} vs ${ni} asks)`);
-    assert.ok(np <= 1.3 * ni, `while playing, wall time paces (${np} vs ${ni} asks)`);
-    for (const x of [idle, rest, gpu, play]) x.s.dispose();
+    const [ni, nr, ng, nb] = [idle, rest, gpu, busy].map((x, i) => asks(x) - a[i]);
+    // 30 ms asks: one per 120 ms idle (12 in 1.5 s), one per 60 ms resting (25), one per 360 ms at 90 ms CPU (4).
+    assert.ok(ni >= 8 && ni <= 16, `idle: a quarter of the time (${ni} asks in 1.5 s)`);
+    assert.ok(nr >= 1.6 * ni, `resting on the bar: about half (${nr} vs ${ni} asks)`);
+    assert.ok(ng >= 0.75 * ni && ng <= 1.3 * ni, `little reported CPU: still paced by wall time (${ng} vs ${ni} asks)`);
+    assert.ok(nb <= 0.55 * ni, `more CPU than wall time: paced by the CPU (${nb} vs ${ni} asks)`);
+    for (const x of [idle, rest, gpu, busy]) x.s.dispose();
   }
 
   step('5');
@@ -290,8 +289,9 @@ function mk(o = {}) {
 
   step('9');
   // 9. The fill: a 60 s file with a keyframe every 10 s (X = 2 s, 30 slots). After the keyframe pass, the floor: the 20
-  //    evenly spread slots get a picture of their own first (one slot per sweep; slots holding a keyframe already
-  //    count), then every other slot, coarse to fine, until each slot has its own picture.
+  //    evenly spread slots get a picture of their own first (slots holding a keyframe already count), one sweep per GOP
+  //    from its first empty slot through its last empty floor slot, so no GOP is decoded twice for the floor; then
+  //    every other slot, coarse to fine, until each slot has its own picture.
   const done = (s) => until(() => /^done/.test(s.stats0().pass.state), 5000);
   const floor20 = Array.from({ length: 20 }, (_, k) => Math.floor(((k + 0.5) / 20) * 30));
   const own = (s) => Array.from({ length: s.n }, (_, i) => i).filter((i) => s.inSlot(i, s.target(i)));
@@ -306,10 +306,13 @@ function mk(o = {}) {
     const floorNeed = floor20.filter((x) => !keySlots.includes(x));
     assert.ok(calls.indexOf(sweeps[0]) > calls.findIndex((c) => c.mode !== 'sweep'), 'after the keyframe pass');
     assert.ok(calls.slice(calls.indexOf(sweeps[0])).every((c) => c.mode === 'sweep'), 'then sweeps only');
-    const first = sweeps.slice(0, floorNeed.length);
-    assert.deepStrictEqual(first.map(slotOf).sort((a, b) => a - b), floorNeed, `the floor first (${first.map(slotOf)})`);
-    assert.ok(first.every((c) => c.to <= 10 + (slotOf(c) + 1) * 2 + 1e-9), 'one slot per floor sweep');
-    assert.deepStrictEqual(first.slice(0, 3).map(slotOf), [8, 23, 3], `coarse to fine over the floor (15 holds a keyframe): ${first.map(slotOf)}`);
+    const gopOf = (x) => Math.floor((x - 10) / 10 + 1e-9);
+    const span = sweeps.map((c) => [slotOf(c), Math.round((c.to - 10) / 2) - 1]);
+    const gops = sweeps.flatMap((c) => { const g = []; for (let x = gopOf(c.t); x <= gopOf(c.to - 1e-6); x++) g.push(x); return g; });
+    assert.strictEqual(new Set(gops).size, gops.length, `no GOP decoded twice (${JSON.stringify(span)})`);
+    assert.ok(sweeps.length <= 6, `one sweep per GOP covers floor and fill here (${sweeps.length}: ${JSON.stringify(span)})`);
+    assert.deepStrictEqual(span[0], [6, 9], `coarse to fine: the GOP of floor slot 8 first, from its first empty slot (${JSON.stringify(span[0])})`);
+    assert.ok(floorNeed.every((x) => span.some(([a, b]) => a <= x && x <= b)), 'every floor slot is swept');
     assert.deepStrictEqual(own(s).length, 30, `every slot has a picture of its own (${own(s)})`);
     assert.strictEqual(st.pass.state, 'done:complete');
     assert.strictEqual(st.pass.between.state, 'done:complete', `the fill completes (${JSON.stringify(st.pass.between)})`);
@@ -326,6 +329,23 @@ function mk(o = {}) {
     await tick(300);
     assert.strictEqual(calls.length, n, 'never twice per file');
     s.dispose();
+  }
+
+  step('9b');
+  // 9b. Short-GOP floor (20 s, a keyframe every 2 s, X = 1 s): each sweep starts close to its keyframe, so it stays in
+  //     software (GPU start-up would cost more than the decode); a long stretch (10 s GOP) asks for the GPU.
+  {
+    const short = mk({ duration: 20, gop: 2, frameMs: 2 });
+    const long = mk({ duration: 20, gop: 10, frameMs: 2 });
+    short.s.passArm(); long.s.passArm();
+    assert.ok(await done(short.s) && await done(long.s));
+    const ss = short.calls.filter((c) => c.mode === 'sweep');
+    const ls = long.calls.filter((c) => c.mode === 'sweep');
+    assert.ok(ss.length && ss.every((c) => c.gpu === false), `short stretches: software (${JSON.stringify(ss.map((c) => [c.t, c.to, c.gpu]))})`);
+    assert.ok(ls.length && ls.every((c) => c.gpu === true), `a 10 s GOP: the GPU (${JSON.stringify(ls.map((c) => [c.t, c.to, c.gpu]))})`);
+    assert.ok(ls.length <= 2, `one sweep per GOP (${ls.length})`);
+    assert.strictEqual(own(long.s).length, 20, 'the bar is full');
+    short.s.dispose(); long.s.dispose();
   }
 
   step('10');
@@ -493,6 +513,9 @@ function mk(o = {}) {
       assert.ok(hover && !hover.gpu, 'a hover picture stays software');
       const run = await th.nativeThumb(decoder, { t: 0, w: 160, h: 90, mode: 'run', pass: true }, log, undefined, nv);
       assert.ok(run && !run.gpu, 'a keyframe run stays software');
+      const n2 = tried.length;
+      const soft = await th.nativeThumb(decoder, { ...req, gpu: false }, log, undefined, { os: 'linux', vaapi: true, gpus: [] });
+      assert.ok(soft && !soft.gpu && tried.length === n2, 'a short sweep the page marks gpu: false stays software');
       // This machine's GPU, when it has one: the sweep's pictures are the same frames as software's.
       const fresh = { ...decoder, tools: { ffmpeg: 'ffmpeg', gpuFilters: new Set(['scale_cuda']) } };
       const local = await require('../../src/hardware.js').detect();

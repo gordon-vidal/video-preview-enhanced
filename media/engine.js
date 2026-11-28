@@ -3115,7 +3115,7 @@ function createEngine(env) {
           * (this.cfg.native ? 1e-6 : PER_PX_WASM),
         request: this.cfg.native ? async (t, w, h, signal, mode, opts) => {
           const o = opts || {};
-          const r = await this.hostThumb(t - startT, w, h, signal, mode, { pass: !!o.pass, ...(mode === 'sweep' ? { to: o.to - startT, step: o.step } : {}) });
+          const r = await this.hostThumb(t - startT, w, h, signal, mode, { pass: !!o.pass, ...(mode === 'sweep' ? { to: o.to - startT, step: o.step, gpu: !!o.gpu } : {}) });
           if (!r) return null;
           const abs = (rel) => (Number.isFinite(rel) ? startT + rel : undefined);
           const kt = abs(r.rel);
@@ -3143,8 +3143,8 @@ function createEngine(env) {
      * Native and Live transcode backend: one thumbnail from the extension host ({rel, w, h, fmt: 'jpeg', data, next?,
      * more?, end?, cpu?: ms of CPU, gpu?: the method}, or null).
      * @param {'key' | 'near' | 'exact' | 'run' | 'sweep'} [mode]
-     * @param {{pass?: boolean, to?: number, step?: number}} [opts] pass: a background pass request (one thread);
-     *   to, step: a sweep's end (seconds from the start) and step
+     * @param {{pass?: boolean, to?: number, step?: number, gpu?: boolean}} [opts] pass: a background pass request (one
+     *   thread); to, step: a sweep's end (seconds from the start) and step; gpu: the sweep is worth the GPU
      */
     hostThumb(rel, w, h, signal, mode = 'key', opts = {}) {
       const id = (this.hostThumbId = (this.hostThumbId || 0) + 1);
@@ -3153,7 +3153,7 @@ function createEngine(env) {
         // checkJs: start
         const request = /** @satisfies {ThumbRequest} */ ({
           type: 'thumb', page: env.page, id, t: Math.max(0, rel), w, h, mode, ...(opts.pass ? { pass: true } : {}),
-          ...(mode === 'sweep' ? { to: opts.to, step: opts.step } : {}),
+          ...(mode === 'sweep' ? { to: opts.to, step: opts.step, gpu: !!opts.gpu } : {}),
         });
         // checkJs: end
         const cancel = () => {
