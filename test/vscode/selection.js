@@ -48,8 +48,10 @@ function collectResults(base, results, selected, expected = []) {
 }
 
 function rerunTargets(report) {
-  // An aborting error names no check of its own: rerun its case.
-  const owner = (r) => (r.abort || /\/error$/.test(r.name) ?r.name.split('/').slice(0, 2).join('/') : r.name.replace(/\/webgl2$/, ''));
+  // An aborting error names no check of its own: rerun its case. The regex covers reports saved before `abort`.
+  const legacy = /\/(?:error|rs_sync_200s\.mkv)$/;
+  const owner = (r) => (r.abort || legacy.test(r.name)
+    ? r.name.split('/').slice(0, 2).join('/') : r.name.replace(/\/webgl2$/, ''));
   return [...new Set([...(report.unstarted || []), ...report.tests.filter((r) => !r.ok).map(owner)])];
 }
 

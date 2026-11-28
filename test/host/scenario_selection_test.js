@@ -79,8 +79,34 @@ assert.ok(recovered.every((r) => r.ok));
 const longScenarios = [{ name: 'remote-stream', steps: [{ case: 'remote_stream_long' }] }];
 const [[longStep]] = selectScenarios(longScenarios, /^remote-stream\/remote_stream_long\/(decision|seeks)$/)
   .map((s) => s.steps);
+// Run the real case with a throwing openClip: the exception must escape, as the runner then records it.
+const os = require('node:os');
+const fs = require('node:fs');
+
+// The case reuses a clip made in the temp dir; a placeholder there keeps this test off ffmpeg.
+async function longCaseRejection() {
+  const longCase = require('../vscode/cases/remote_stream').find((c) => c.name === 'remote_stream_long');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vpe-sel-'));
+  fs.mkdirSync(path.join(tmp, 'vpe-rs-case'));
+  fs.writeFileSync(path.join(tmp, 'vpe-rs-case', 'rs_sync_200s.mkv'), '');
+  const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+  Object.assign(process.env, { TMPDIR: tmp, TEMP: tmp, TMP: tmp });
+  const h = { scenario: 'remote-stream', closeClip: async () => {}, esc: lib.esc,
+    openClip: async () => { throw new Error('no first frame'); } };
+  try {
+    return await longCase.run({ lines: [], waitLog: async () => '' }, h).then(() => null, (e) => e);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+(async () => {
+const escaped = await longCaseRejection();
+assert.equal(escaped && escaped.message, 'no first frame');
+// What the runner (scenarios.js) records for that rejection.
 const thrown = collectResults('remote-stream/remote_stream_long',
-  [{ ok: false, abort: true, problems: ['no first frame'] }], longStep.selected, longStep.expected);
+  [{ ok: false, abort: true, problems: [escaped.message] }], longStep.selected, longStep.expected);
 assert.deepEqual(thrown.map((r) => [r.name, r.ok]), [['remote-stream/remote_stream_long', false]]);
 const longReport = { tests: thrown };
 assert.deepEqual(rerunTargets(longReport), ['remote-stream/remote_stream_long']);
@@ -91,7 +117,8 @@ const longOk = collectResults('remote-stream/remote_stream_long',
 assert.ok(longOk.length === 2 && longOk.every((r) => r.ok));
 
 // Reports saved before `abort` existed: their setup error buckets are recognised by name.
-for (const name of ['picture-size/picture_size/compare/error', 'compare/compare_ui/error']) {
+for (const name of ['picture-size/picture_size/compare/error', 'compare/compare_ui/error',
+  'remote-stream/remote_stream_long/rs_sync_200s.mkv']) {
   const owner = name.split('/').slice(0, 2).join('/');
   assert.deepEqual(rerunTargets({ tests: [{ name, ok: false }] }), [owner]);
 }
@@ -108,7 +135,6 @@ for (const name of ['picture-size/picture_size/compare/error', 'compare/compare_
   });
   assert.deepEqual(start.map((r) => [r.name, r.ok]), [['compare/panel-page', false], ['compare/error', false]]);
 }
-const fs = require('node:fs');
 const casesDir = path.join(__dirname, '../vscode/cases');
 for (const f of fs.readdirSync(casesDir)) {
   const src = fs.readFileSync(path.join(casesDir, f), 'utf8');
@@ -121,3 +147,4 @@ for (const completed of [[], [{ name: 'demo' }]]) {
   const report = { tests: [], unstarted };
   assert.deepEqual(selectScenarios(scenarios, null, null, rerunTargets(report)).map((s) => s.name), unstarted);
 }
+})();
