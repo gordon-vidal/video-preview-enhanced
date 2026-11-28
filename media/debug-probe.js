@@ -51,6 +51,7 @@
    *   onEnd?: string,
    *   rail?: any,
    *   streamQ: any,
+   *   playback?: {decision: string | null, restored: any, exactSize: number[] | null, nativeDepth?: number | null},
    *   loopStats: { frames: number, rests: number },
    *   loopBusy: string,
    *   picturePct: number | null,
@@ -468,6 +469,7 @@
           /** @type {Record<string, any>} */
           const s = {
             id: m.id,
+            playback: uiState.playback || null,
             toast: ui.toast.hidden ? '' : ui.toast.textContent, toastRect: ui.toast.hidden ? null : rect(ui.toast),
             status: p && p.status ? ((p.status() || {}).text || '') : '',
             // The loading feedback (media/player-ui.js setLoading): tiles with a spinner, and the seek bar's pulse.

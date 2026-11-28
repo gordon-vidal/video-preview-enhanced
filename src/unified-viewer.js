@@ -80,7 +80,7 @@ const NOTICES = new Set(['hideSlowPlaybackNotice', 'hideReducedResNotice', 'hide
  *   setCompareOutput?: Function, setView?: (v: { w: number, h: number }, playing?: boolean) => void,
  *   setMaxBitrateMbps?: (mbps: number) => void, setResolution?: (h: number) => void,
  *   setQuality?: (pick: 'auto' | number) => any, readBlock?: (pos: number, len: number) => Promise<Uint8Array | null>,
- *   busy?: () => boolean, w?: number, h?: number, videoSize?: () => { width: number, height: number } }} HostDecoder
+ *   busy?: () => boolean, debugState?: () => any, w?: number, h?: number, videoSize?: () => { width: number, height: number } }} HostDecoder
  * @typedef {{ post(m: any): void, postRaw(m: any): void, log(m: string): void, onFail(err: any): void, hidden: boolean,
  *   origin?: string | null, transport?: string }} DecoderIo
  */
@@ -1326,6 +1326,16 @@ function createUnifiedViewer({ vscode, context, panel, clip, registry, openTarge
     decoderOf: (clipId) => natives.get(clipId) || null,
     /** What a clip's host decoder is ('native', 'stream', 'source'), or null (decoded in the page). @param {string} clipId */
     decoderKind: (clipId) => kinds.get(clipId) || null,
+    /** @type {{ done: number, total: number } | null} */
+    debugExported: null,
+    debugState: () => ({
+      tiles: session.clips.map((c) => ({
+        decision: kinds.get(c.id) || 'builtin',
+        storedPosition: positions.get(c.id)?.saved || null,
+        stream: natives.get(c.id)?.debugState?.() || null,
+      })),
+      exported: viewer.debugExported,
+    }),
     /** Native ffmpeg is decoding for this panel right now (the GPU test waits for it). */
     busy: () => [...natives.values()].some((d) => typeof d.busy === 'function' && d.busy()),
     /** Every file clip prepared again (ffmpeg was set up or changed), followed by one clean webview refresh. @param {string} why */

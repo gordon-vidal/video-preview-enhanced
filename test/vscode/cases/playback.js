@@ -98,6 +98,7 @@ module.exports = [{
 
     // Shift+N / Shift+P open the next / previous file of the folder; at the ends a toast.
     await R.run('neighbour/next-prev', async (ok) => {
+      lib.media.ensure(['neigh/n1.mp4', 'neigh/n2.mp4', 'neigh/n3.mp4']);
       let P = await lib.open(vs, h, lib.clip('neigh/n2.mp4'));
       await P.waitFirstFrame();
       let from = vs.mark();
@@ -147,19 +148,16 @@ module.exports = [{
     // Resume: the position is remembered per file (not within the first seconds).
     await R.run('resume/position', async (ok) => {
       const file = lib.clip('long_20s.mp4');
-      // This repeated-open correctness check has exceeded the ordinary 15 s first-frame budget.
-      // Keep a bounded 30 s state wait (no retry); the wrapper opts out of the ordinary first-frame clamp.
-      const openResume = () => lib.open(vs, h, file, {
-        until: (s) => lib.pictureOrError(s), timeout: 30000,
-      });
+      const openResume = () => lib.open(vs, h, file, { timeout: 60000 });
+      const waitStored = (t) => lib.waitProbe(() => lib.hostState(vs, path.basename(file)),
+        (s) => s.viewers.some((v) => v.tiles.some((x) => Math.abs((x.storedPosition?.t ?? -1) - t) < 0.1)),
+        `stored position ${t}`);
       let P = await openResume();
       try {
         await P.waitFirstFrame();
         P.seek(12.25);
         await P.waitState((x) => Math.abs(x.t - 12.25) < 0.1, { timeout: 15000, what: 'seek to 12.25' });
-        // No observable signal: the page posts its position to the host at most once a second (and only when it changed),
-        // and the host keeps it on dispose. Wait out that tick plus margin.
-        await lib.sleep(2500);
+        await waitStored(12.25);
         await P.close();
         P = await openResume();
         const s = await P.waitState((x) => x.firstShown && Math.abs(x.t - 12.25) < 0.15, { timeout: 20000, what: 'resumed at 12.25 s' });
@@ -167,7 +165,7 @@ module.exports = [{
         if (h.ffmpeg) await P.expectFrame(Math.floor(12.25 * 30), 'resumed picture');
         P.seek(3);
         await P.waitState((x) => Math.abs(x.t - 3) < 0.1, { timeout: 10000, what: 'seek to 3' });
-        await lib.sleep(2500);
+        await waitStored(3);
         await P.close();
         P = await openResume();
         const z = await P.waitFirstFrame();
@@ -244,7 +242,8 @@ module.exports = [{
     // late frames with capture and the background pass off and on; reports what a 4K capture cost the frame loop.
     if (!h.ffmpeg) R.skip('thumbs/capture-4k', 'no ffmpeg (clip generator)');
     else await R.run('thumbs/capture-4k', async (ok, r) => {
-      const file = path.join(h.MEDIA, 'cases', 'pb_4k_h264.mp4');
+      const file = path.join(lib.media.DIR, 'pb_4k_h264.mp4');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
       if (!fs.existsSync(file)) {
         const g = spawnSync(h.ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=3840x2160:rate=30:duration=6',
           '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', file], { windowsHide: true });

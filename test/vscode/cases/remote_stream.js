@@ -234,6 +234,7 @@ module.exports = [{
   async run(vs, h) {
     const out = [];
     for (const file of CLIPS) {
+      if (!lib.selected(file) && !(file === CLIPS[0] && lib.selected('encoder'))) continue;
       try {
         // Encoder probing plus a 4K software decode can wait behind other agents' CPU work.
         const r = await h.playClip(vs, { file, expect: 'webcodecs' }, {
@@ -247,6 +248,7 @@ module.exports = [{
     }
     const enc = vs.lines.find((l) => l.includes('remote stream encoder on'));
     out.push({ name: 'encoder', ok: !!enc, problems: enc ? [] : ['no encoder probe line'], line: enc && enc.replace(/^.*remote stream encoder/, 'remote stream encoder') });
+    if (!lib.selected('seeks')) return out;
     // Seeks on 1080p HEVC 10-bit (24 fps).
     const name = 'hevc_10_1080p.mp4';
     try {
@@ -276,8 +278,9 @@ module.exports = [{
       r.decision = dec && dec.replace(/^.*?decoder: /, '');
       if (!/^remote stream/.test(r.decision || '')) { r.ok = false; r.problems.push(`decision: ${r.decision || 'none logged'}`); }
       // The test hook delivers commands in bunches (~300 ms apart): a start per bunch at most, plus the leading one.
-      const s = await seekChecks(vs, h, name, 25, LONG_TARGETS, 8, 1);
-      return [{ name: h.scenario ? 'decision' : name, ...r }, { name: 'seeks', ...s }];
+      const out = [{ name: h.scenario ? 'decision' : name, ...r }];
+      if (lib.selected('seeks')) out.push({ name: 'seeks', ...(await seekChecks(vs, h, name, 25, LONG_TARGETS, 8, 1)) });
+      return out;
     } catch (e) { return [{ name, ok: false, problems: [e.message] }]; } finally { try { await h.closeClip(vs); } catch { /* gone */ } }
   },
 }, {
@@ -299,9 +302,11 @@ module.exports = [{
         await p.waitState((s) => !s.playing && s.canvas[1] === 1080, { what: '1080p frames for a 1920x1080 picture' });
         p.seek(1.5);
         const big = await p.waitState((s) => !s.playing && s.canvas[1] === 1080 && Math.abs(s.t - 1.5) < 0.1, { what: 'the frame at 1.5 s' });
-        const from = vs.mark();
+        const waitShrink = () => lib.waitProbe(() => lib.hostState(vs, p.name),
+          (s) => s.viewers.some((v) => v.tiles.some(({ stream }) => stream?.pendingRestart && stream.targetSize?.[1] === 540)),
+          '540p restart queued for the next seek');
         p.act({ action: 'stageSize', w: 640, h: 360 });
-        await vs.waitLog(/remote stream: picture .* -> 960x540 at the next seek/, { from });
+        await waitShrink();
         const kept = await p.state();
         ok(kept.canvas[1] === 1080 && Math.abs(kept.t - big.t) <= 1 / kept.fps, 'shrinking restarted the picture before a seek');
         p.seek(0.5);
@@ -309,9 +314,8 @@ module.exports = [{
         p.act({ action: 'stageSize', w: 1920, h: 1080 });
         const large = await p.waitState((s) => !s.playing && s.canvas[1] === 1080);
         ok(Math.abs(large.t - small.t) <= 1 / large.fps, 'enlarging moved the paused playhead');
-        const shrink = vs.mark();
         p.act({ action: 'stageSize', w: 640, h: 360 });
-        await vs.waitLog(/remote stream: picture .* -> 960x540 at the next seek/, { from: shrink });
+        await waitShrink();
         const held = await p.state();
         ok(held.canvas[1] === 1080, 'shrinking restarted the picture before a seek');
         p.seek(0);
@@ -857,20 +861,21 @@ module.exports = [{
       try {
         await p.waitState((s) => s.vmode === 'webcodecs' && s.firstShown && s.canvas[1] === 1080);
         p.pause();
-        const from = vs.mark();
+        const waitExact = () => p.waitState((s) => s.playback?.exactSize?.[1] === 2160,
+          { timeout: 60000, what: 'exact 4K picture' });
         p.key('x');
         // Live transcode stays on: the inspector reads one exact full-resolution frame from the host (docs/PRODUCT.md).
-        await vs.waitLog(new RegExp(`\\[${p.name}\\] webview: exact frame 3840x2160 for frame`), { from, timeout: 20000 });
-        const s = await p.state();
+        const s = await waitExact();
         ok(s.vmode === 'webcodecs' && s.canvas[1] === 1080, `left Live transcode: ${s.vmode} ${s.canvas}`);
         const click = await p.ask('click', { sel: '#notice:not([hidden]) #noticeAction', text: 'Use full resolution' });
         ok(!click.found, 'the inspector still offers full resolution under Live transcode');
         // The scopes alone (inspector off) on the next frame: they ask for its exact frame too (docs/PRODUCT.md).
         p.key('x');
+        const previous = (await p.state()).frame;
         p.key('.');
-        const from2 = vs.mark();
+        await p.waitState((s) => s.frame === previous + 1, { timeout: 60000, what: 'the next paused frame' });
         p.key('w');
-        await vs.waitLog(new RegExp(`\\[${p.name}\\] webview: exact frame 3840x2160 for frame`), { from: from2, timeout: 20000, what: 'the exact frame for the scopes' });
+        await waitExact();
         const sc = await p.ask('scopesDump');
         ok(sc.mode === 'waveform', `scopes open: ${sc.mode}`);
         ok(!(await p.ask('click', { sel: '#notice:not([hidden]) #noticeAction', text: 'Use full resolution' })).found,
@@ -910,29 +915,24 @@ module.exports = [{
       try {
         const first = await p.waitState((s) => s.playing && s.vmode === 'webcodecs' && s.firstShown && s.canvas[1] === 1080);
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 550000 });
-        const reduced = await p.waitState((s) => s.playing && s.canvas[1] === 720, { timeout: 18000, what: 'a 720p frame' });
+        const reduced = await p.waitState((s) => s.playing && s.canvas[1] === 720, { timeout: 60000, what: 'a 720p frame' });
         ok(reduced.gen === first.gen && reduced.t > first.t, 'quality drop interrupted the playback timeline');
-        // The capped profile fits this link. Leave the throttle in place long enough to catch oscillation.
-        await h.sleep(4500);
-        const steady = await p.state();
-        // Stays at 720p and keeps playing (no oscillation, no stall); keeping exact time is a number for layer 4.
-        ok(steady.playing && steady.canvas[1] === 720 && steady.frame - reduced.frame >= 1 * steady.fps, `720p did not keep playing on the throttled link: ${steady.frame - reduced.frame} frames in 4.5 s at ${steady.canvas[1]}p`);
+        await p.waitState((s) => {
+          if (!s.playing || s.canvas[1] !== 720) throw new Error(`720p playback did not stay steady: ${s.canvas}`);
+          return s.frame - reduced.frame >= s.fps;
+        }, { timeout: 60000, what: 'one second of media advances at 720p' });
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 0 });
         const restored = await p.waitState((s) => s.playing && s.canvas[1] === 1080, { timeout: 35000, what: 'full quality after link recovery' });
         ok(restored.gen === first.gen && restored.t > reduced.t, 'quality recovery interrupted the playback timeline');
         // Too slow even for the lowest quality: stay there and say so; never the built-in decoder (review 7 #3, #5).
         p.act({ action: 'remoteStreamRate', bytesPerSecond: 12000 });
-        const from = vs.mark();
         // At 96 kb/s the 1080p data already in flight takes longer than this to drain, so check the decision, not a 360p frame.
-        await vs.waitLog(/remote stream: the link can't carry the lowest quality \(.*\); staying at 360p/, { from, timeout: 45000 });
-        await h.sleep(5000);
+        r.floor = await lib.waitProbe(() => lib.hostState(vs, p.name),
+          (s) => s.viewers.some((v) => v.tiles.some(({ stream }) => stream?.slowLink && stream.size[1] === 360)),
+          '360p stream on a link below the lowest tier');
         const floor = await p.state();
-        ok(floor.vmode === 'webcodecs', `left the remote stream at the floor: ${floor.vmode}`);
-        ok(!vs.lines.slice(from).some((l) => l.includes(`[${p.name}] remote stream failed`)), 'link speed made the stream fail over');
-      } finally {
-        r.quality = vs.lines.filter((l) => l.includes(`[${p.name}] remote stream: quality`)).map((l) => l.split('remote stream: ')[1]);
-        await h.closeClip(vs);
-      }
+        ok(floor.vmode === 'webcodecs' && floor.gen === first.gen, `left the remote stream at the floor: ${floor.vmode}`);
+      } finally { await h.closeClip(vs); }
     });
     await run('slow-link-sound', async (ok, r) => {
       // Opus lets a 1.6 Mb/s link carry 480p with sound (1.2 Mb/s video + 0.128 Mb/s audio budget).

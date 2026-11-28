@@ -500,6 +500,15 @@ class EncodedStream {
 
   setFit(on) { this.fitView = !!on; this.reSize(); }
 
+  debugState() {
+    const pendingRestart = !!this.resizePending;
+    const active = [this.w, this.h];
+    return {
+      size: active, pendingRestart, targetSize: pendingRestart ? this.debugResizeTarget ?? null : active,
+      tier: this.tier, slowLink: !!this.debugSlowLink,
+    };
+  }
+
   viewCap() {
     if (!this.fitView || !this.view) return Infinity;
     const r = this.pr.video.height / this.pr.video.width;
@@ -524,6 +533,7 @@ class EncodedStream {
       return;
     }
     this.resizePending = changed;
+    this.debugResizeTarget = changed ? [this.w, this.h] : null;
     this.w = w;
     this.h = h;
     // One page seek per growth: more view messages for the same size (zoom, resize jitter) add none.
@@ -1091,6 +1101,7 @@ class EncodedStream {
 
   /** At the lowest tier the link still can't keep up: stay there (no fallback) and tell the user once. */
   slowLink(detail) {
+    this.debugSlowLink = true;
     this.log(`remote stream: the link can't carry the lowest quality${this.pr.audio ? ' with its sound' : ''} (${detail}); staying at ${this.h}p`);
     this.notice('slow', `The connection is too slow for this video${this.pr.audio ? ' with its sound' : ''}, even at ${this.h}p. Playback may pause to load.`);
   }

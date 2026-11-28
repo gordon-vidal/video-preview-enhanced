@@ -31,6 +31,11 @@ async function probe(vs, command, reply, timeout = 15000) {
 
 const hostState = (vs, name) => probe(vs, { name, hostState: true }, 'debug host');
 
+async function compareState(vs) {
+  try { return await probe(vs, { compare: true, action: 'playbackState' }, 'compare playback', 2000); }
+  catch (e) { if (!e.message.startsWith('TIMEOUT')) throw e; return null; }
+}
+
 async function waitProbe(read, predicate, what, timeout = 60000) {
   const end = Date.now() + timeout;
   let state;
@@ -296,4 +301,4 @@ async function open(vs, h, file, { until = pictureOrError, timeout = 40000 } = {
 /** The log lines of this instance from `from` on that match re. */
 const lines = (vs, re, from = 0) => { vs.mark(); return vs.lines.slice(from).filter((l) => re.test(l)); };
 
-module.exports = { withSelection, selected, probe, hostState, waitProbe, pageError, frames, pictureOrError, ERR, sleep, esc, kv, recorder, clip, media, refFrames, refSlots, ncc, Player, open, lines, brief };
+module.exports = { withSelection, selected, hostState, compareState, waitProbe, pageError, frames, pictureOrError, ERR, sleep, esc, kv, recorder, clip, media, refFrames, refSlots, ncc, Player, open, lines, brief };

@@ -88,4 +88,17 @@ t('vfSample', () => {
   assert.strictEqual(I.vfSample('RGBA', i420, [{ offset: 0, stride: 8 }], 0, 0), null);
 });
 
+t('HDR stats label', () => {
+  const player = {
+    queue: [], audio: [], queuedBytes: () => 0,
+    meta: { width: 1920, height: 1080 },
+    info: { video: { codec: 'hevc', colorTrc: 16 } },
+    hdrOutput: { on: true },
+  };
+  for (const [trc, name] of [[16, 'PQ'], [18, 'HLG']]) {
+    player.info.video.colorTrc = trc;
+    assert.match(I.formatStats(player, 0).text, new RegExp(`^HDR\\s+${name} .* HDR output`, 'm'));
+  }
+});
+
 console.log(`inspect: ${n} groups passed`);

@@ -1602,6 +1602,7 @@ async function exportRange(viewer, c, range) {
   if (viewer.disposed || viewer.exporting) return; // another export started while the dialogs were open
   const job = new AbortController();
   viewer.exporting = job;
+  if (logFile) viewer.debugExported = null;
   // The page decodes and draws only while shown: bring it to the front.
   viewer.panel.reveal(undefined, true);
   let done = 0;
@@ -1669,6 +1670,7 @@ async function exportRange(viewer, c, range) {
     if (!viewer.disposed) viewer.post({ type: 'exportEnd' });
   }
   if (viewer.disposed) return;
+  if (logFile) viewer.debugExported = { done, total: count };
   log(`[${c.label}] exported ${done}/${count} frames to ${folder.toString()}${failed ? ` (stopped: ${failed})` : ''}`);
   if (failed) vscode.window.showErrorMessage(`Video Preview: exported ${done} of ${count} frames, then stopped: ${failed}`);
   else vscode.window.showInformationMessage(`Video Preview: exported ${done} of ${count} frames to ${where}`);

@@ -176,6 +176,10 @@ function createDebugCommands(deps) {
                 }
                 continue;
               }
+              if (c.hostState) {
+                log(`debug host ${JSON.stringify({ id: c.id, viewers: named(c).map((v) => v.debugState()) })}`);
+                continue;
+              }
               if (c.compare) { for (const v of comparing()) v.post({ ...c, type: 'debug' }); continue; }
               if (c.pickSubtitles) {
                 for (const v of viewers) if (nameOf(v) === c.name || nameOf(v).includes(c.name)) v.testPickSubtitles = c.pickSubtitles.map((/** @type {string} */ f) => vscode.Uri.file(f));
