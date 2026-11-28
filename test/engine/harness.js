@@ -192,7 +192,7 @@ async function open(file, o = {}) {
 
   const seekPending = () => p.seekTarget != null;
   let stepState = S.createWorkspaceState({ frame: 0 });
-  let stepTarget = null;
+  let timelineTarget = null;
   let heldStep = null;
   let lastFrame = p.currentFrame();
 
@@ -212,14 +212,10 @@ async function open(file, o = {}) {
     p.seekFrame(target, false, land);
   }
 
-  function clearStep() {
-    heldStep = stepTarget = null;
-  }
-
   // media/player-ui.js decoderFrame/restartAt.
   P.afterTick = () => {
     if (!seekPending() && !heldStep) {
-      if (!p.shownStale && !p.catchUp && !p.skipping) stepTarget = null;
+      if (!p.shownStale && !p.catchUp && !p.skipping) timelineTarget = null;
       const frame = p.currentFrame();
       if (frame !== lastFrame) {
         lastFrame = frame;
@@ -240,16 +236,20 @@ async function open(file, o = {}) {
 
   P.frame = () => p.currentFrame();
   P.time = () => p.currentTime();
-  P.seek = (t) => { clearStep(); p.seekTime(t); };
-  P.seekFrame = (k) => { clearStep(); p.seekFrame(k); };
+  P.seek = (t) => { heldStep = timelineTarget = null; p.seekTime(t); };
+  P.seekFrame = (k) => {
+    heldStep = null;
+    timelineTarget = k;
+    p.seekFrame(k);
+  };
   P.step = (d) => {
-    const frame = stepTarget ?? p.currentFrame();
-    stepState = S.syncClockMeta(stepState, { maxFrame: P.n - 1, frame });
+    stepState = S.syncClockMeta(stepState, { maxFrame: P.n - 1, frame: timelineTarget ?? p.currentFrame() });
+    const frame = S.getTab(stepState).frame;
     stepState = S.stepFrame(stepState, d);
     const target = S.getTab(stepState).frame;
     if (p.isPlaying()) p.pause();
     if (target === frame) return;
-    stepTarget = target;
+    timelineTarget = target;
     seekStep(target, Math.sign(target - frame));
   };
   P.home = () => P.seekFrame(0);
@@ -332,19 +332,18 @@ function virtualClock(P, wallTick, logs, realMs = 2) {
 
 /**
  * A tiny check recorder: `run(name, fn, known?)` catches throws; `done()` prints and exits.
- * `known` (a reason): a quarantined check (docs/TESTING.md, Known issues): a failure is printed as KNOWN and
- * doesn't fail the file; a pass says the issue is gone, so the entry can be removed.
+ * `known` is a { reason, matches(error) } quarantine for a specific failure.
  */
 function checks(title) {
   let failed = 0; let passed = 0; let known = 0;
   console.log(title);
-  const run = async (name, fn, why) => {
+  const run = async (name, fn, issue) => {
     const t1 = Date.now();
     try {
       await fn(); passed++;
-      console.log(`ok   ${name} (${((Date.now() - t1) / 1000).toFixed(1)} s)${why ? ` -- passes now: remove the known issue "${why}"` : ''}`);
+      console.log(`ok   ${name} (${((Date.now() - t1) / 1000).toFixed(1)} s)${issue ? ` -- passes now: remove the known issue "${issue.reason}"` : ''}`);
     } catch (e) {
-      if (why) { known++; console.log(`KNOWN ${name}: ${why}: ${e && e.message || e}`); } else { failed++; console.log(`FAIL ${name}: ${e && e.message || e}`); }
+      if (issue?.matches(e)) { known++; console.log(`KNOWN ${name}: ${issue.reason}: ${e && e.message || e}`); } else { failed++; console.log(`FAIL ${name}: ${e && e.message || e}`); }
     }
   };
   const done = async () => {

@@ -8,7 +8,11 @@ const { makeStepping, makeLarge } = require('../media/make_heavy_media');
 
 const SEED = Number(process.env.VPE_FUZZ_SEED) || 20261124;
 const c = checks(`engine chaos (seed ${SEED})`);
-const denseVfr = 'nominal-frame seek skips an adjacent picture in the 60 fps segment';
+class DenseVfrSkip extends Error {}
+const denseVfr = {
+  reason: 'nominal-frame seek skips an adjacent picture in the 60 fps segment',
+  matches: (error) => error instanceof DenseVfrSkip,
+};
 
 function checkBudget(P) {
   const p = P.player;
@@ -18,12 +22,21 @@ function checkBudget(P) {
   assert.ok(bytes + p.backBytes <= 2 * p.budget(), `frame buffers exceeded the batch allowance: ${bytes + p.backBytes}`);
 }
 
-async function expectPicture(P, refs, index, action) {
+async function expectPicture(P, refs, index, action, adjacency = false) {
   const p = P.player;
   assert.ok(index >= 0, action + ': shown PTS missing from FFmpeg reference');
   const t = refs[index].t + (p.startT || 0);
   const settled = await P.until(() => p.seekTarget === null && Math.abs(p.shownT - t) < 0.00025, action, 4000);
-  assert.ok(settled, `${action}: frame ${index}, expected PTS ${t}, shown ${p.shownT}`);
+  const mismatch = `${action}: frame ${index}, expected PTS ${t}, shown ${p.shownT}`;
+  if (!settled && adjacency && refs[index].t === 2.016667 && p.seekTarget === null) {
+    const skippedTo = refs.find((ref) => ref.t === 2.05);
+    if (skippedTo && Math.abs(p.shownT - ((p.startT || 0) + skippedTo.t)) < 0.00025) {
+      assert.ok(ncc(P.shown.y, skippedTo) > 0.98, `${action}: picture disagrees with FFmpeg at ${p.shownT}`);
+      checkBudget(P);
+      throw new DenseVfrSkip(mismatch);
+    }
+  }
+  assert.ok(settled, mismatch);
   assert.ok(ncc(P.shown.y, refs[index]) > 0.98, `${action}: picture disagrees with FFmpeg at ${t}`);
   checkBudget(P);
 }
@@ -37,7 +50,7 @@ function checkKeyframes(file) {
   assert.deepEqual(times, [0, 10, 20], 'expected closed 10-second GOPs');
 }
 
-async function fuzz(file, vfr) {
+async function fuzz(file, vfr, { step = true, loop = true } = {}) {
   if (!vfr) checkKeyframes(file);
   let state = SEED;
   const pick = (n) => Math.floor(((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32) * n);
@@ -63,25 +76,34 @@ async function fuzz(file, vfr) {
       await jump(index, `burst ${burst} seek`);
       for (const direction of pick(2) ? [-1, 1] : [1, -1]) {
         const steps = 2 + pick(4);
-        for (let i = 0; i < steps; i++) {
+        for (let i = 0; step && i < steps; i++) {
           const previous = P.player.shownT;
           P.step(direction);
           index += direction;
-          await expectPicture(P, refs, index, `burst ${burst} step ${direction} #${i}`);
+          await expectPicture(P, refs, index, `burst ${burst} step ${direction} #${i}`, vfr && direction === 1);
           assert.ok(direction * (P.player.shownT - previous) > 0, 'step went in the wrong direction');
         }
       }
-      if (burst % 3 === 0) {
-        ab.set('a', refs[index].t, index);
-        ab.set('b', refs[index + 4].t, index + 4);
+      if (loop && burst % 3 === 0) {
+        const p = P.player;
+        const a = P.frame();
+        ab.set('a', a / P.fps, a, p.rel(p.shownT));
+        await jump(index + 4, 'seek B');
+        const b = P.frame();
+        assert.ok(b > a, 'A-B marks must span distinct timeline frames');
+        ab.set('b', b / P.fps, b, p.rel(p.shownT));
         await jump(index + 2, 'inside A-B range');
         const before = wraps;
         P.play();
         assert.ok(await P.until(() => wraps > before, 'A-B wraps', 4000), 'A-B did not wrap');
         P.pause();
-        await expectPicture(P, refs, index, 'A-B wraps to A');
-        ab.set('b', refs[index + 4].t, index + 4);
-        ab.set('a', refs[index].t, index);
+        assert.ok(await P.until(() => p.seekTarget === null && P.frame() === a, 'A-B wraps to A', 4000),
+          `A-B wraps to frame ${a}, shown ${P.frame()}`);
+        const pts = p.rel(p.shownT);
+        const landed = refs.findIndex((ref) => Math.abs(ref.t - pts) < 0.00025);
+        await expectPicture(P, refs, landed, 'A-B restart picture');
+        ab.set('b', b / P.fps, b);
+        ab.set('a', a / P.fps, a);
         P.play();
         assert.ok(await P.until(() => P.player.shownT > refs[index + 4].t, 'cleared A-B range', 4000));
         P.pause();
@@ -104,10 +126,10 @@ async function exactVfrSteps(file, direction) {
     await expectPicture(P, refs, start, 'seek into 60 fps section');
     for (let i = start + 1; i <= index; i++) {
       P.step(1);
-      await expectPicture(P, refs, i, 'warm the dense VFR back cache');
+      await expectPicture(P, refs, i, 'warm the dense VFR back cache', true);
     }
     P.step(direction);
-    await expectPicture(P, refs, index + direction, 'one VFR picture');
+    await expectPicture(P, refs, index + direction, 'one VFR picture', direction === 1);
   } finally {
     P.close();
   }
@@ -141,7 +163,8 @@ async function largeSeek() {
 
 (async () => {
   const { vfr, longGop } = makeStepping();
-  await c.run('VFR stepping, seeks, speed and A-B loop', () => fuzz(vfr, true), denseVfr);
+  await c.run('VFR stepping fuzz', () => fuzz(vfr, true, { loop: false }), denseVfr);
+  await c.run('VFR seeks, speed and A-B loop', () => fuzz(vfr, true, { step: false }));
   await c.run('exact forward step in dense VFR', () => exactVfrSteps(vfr, 1), denseVfr);
   await c.run('exact backward step in dense VFR', () => exactVfrSteps(vfr, -1), denseVfr);
   await c.run('10-second GOP stepping, seeks, speed and A-B loop', () => fuzz(longGop, false));

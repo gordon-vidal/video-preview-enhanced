@@ -286,10 +286,11 @@ instances (`playback` and `scopes-export` twice in a row, `file-icons` once); ru
 
 Listed here, reported as KNOWN by the test (not failing it), and removed when the test reports that it passes.
 
-- `test/engine/chaos.js` reports KNOWN for VFR stepping fuzz and exact forward and backward VFR stepping.
-  In all three checks the forward step into the 60 fps segment lands at PTS 2.050 s with 2.016667 s expected.
-  The backward check hits this during its forward setup. The nominal-rate target in
+- `test/engine/chaos.js` reports KNOWN only for a forward adjacency check expecting PTS 2.016667 s
+  and landing on the verified picture at 2.050 s. This can occur in the VFR stepping fuzz, exact forward
+  check, and forward setup of the exact backward check. The nominal-rate target in
   [`engine.js` `frameSeekTime`](../media/engine.js#L2598) can skip pictures in a dense VFR segment.
-  The 10-second GOP fuzz remains required.
+  Other failures, including picture and memory budget assertions, fail the suite. VFR seek and A–B
+  fuzz runs independently, and the 10-second GOP fuzz remains required.
 
 Inventory of every test before the layers and where it lives now: [docs/notes/test-inventory.md](notes/test-inventory.md).

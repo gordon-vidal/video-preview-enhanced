@@ -6,6 +6,12 @@ const { runJobs, stepSeek, J } = require('./frames_lib');
 
 runJobs('engine frames: MPEG-4 Part 2, H.264', [
   ...stepSeek(['s_xvid.avi', 's_h264.mp4']),
+  ['steps-during-seek/long_20s.mp4', 'long_20s.mp4', async (P) => {
+    P.seekFrame(100);
+    P.step(1);
+    P.step(1);
+    await P.expectFrame(102, 'two steps from the requested seek frame', 4000);
+  }],
   ['end-key/audio_longer_soft.mkv', 'audio_longer_soft.mkv', (P) => J.endKey(P, 59)],
   ['end-key/audio_longer.mp4', 'audio_longer.mp4', (P) => J.endKey(P, 59)],
 ]);
