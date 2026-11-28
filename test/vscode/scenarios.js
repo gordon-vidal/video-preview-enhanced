@@ -2,15 +2,12 @@
 'use strict';
 // Layer 3 (docs/TESTING.md): user scenarios in real VS Code on hidden desktops, correctness only.
 //
-//   node test/vscode/scenarios.js [--grep re] [--parallel N] [--list] [--keep] [--json file]
-//                                 [--smoke] [--changed-files <json array>] [--explain]
-//                                 (node test/run.js vscode [--smoke] [--changed])
+// See test/vscode/README.md for the command-line options and selection rules.
 //
 // A scenario (test/vscode/scenario_list.js) is one VS Code instance that runs several cases from
-// test/vscode/cases one after another: before each, the test hook (src/extension.js, VPE_LOG only) sets
+// test/vscode/cases one after another: before each, the test hook (src/debug-cmd.js, VPE_LOG only) sets
 // that case's settings and environment, clears the stored state (as a fresh profile) and closes all
-// editors. Results are named <scenario>/<case>/<result>. Cases run only the results the scenario keeps
-// (the others moved to layers 2 and 4: docs/notes/test-inventory.md).
+// editors. Results are named <scenario>/<case>/<result>.
 //
 // --parallel N   instances at once (default 1; see docs/TESTING.md for the measured result), each with
 //                its own profile and hidden desktop

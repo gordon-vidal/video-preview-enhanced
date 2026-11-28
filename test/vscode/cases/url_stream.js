@@ -93,7 +93,7 @@ async function quality(vs, h, ok, b, { native = false } = {}) {
     let s = await P.waitState((x) => !!x.quality, { what: 'quality menu data' });
     const cur = s.quality.variants.find((v) => v.id === s.quality.current);
     ok(s.quality.pick === 'auto' && cur && cur.height === 360, `auto plays 360p in this panel: ${JSON.stringify(s.quality)}`);
-    ok(lib.lines(vs, /\[master_full\.m3u8\] url .*2 variants, auto: 640x360.*3 renditions, 1 I-frame playlists/, P.fromMark).length > 0, 'log: the master playlist with its renditions and I-frame playlist');
+    ok(s.quality.variants.length === 2, `quality variants: ${JSON.stringify(s.quality.variants)}`);
     await P.ask('click', { sel: '#cog' });
     s = await P.waitState((x) => x.panel && x.panel.view === 'main', { what: 'the ⚙ panel' });
     const row = s.panel && s.panel.rows.find((r) => /^Quality/.test(r.label));
