@@ -4,8 +4,10 @@ const assert = require('node:assert/strict');
 const { DECODER_TYPES } = require('../../media/player-unified');
 const { createUnifiedSession } = require('../../src/unified-session');
 const { serveBlock } = require('../../src/read-block');
-const { withPage, stubPlayer, CLIPS } = require('../host/unified-page-fixture');
+const { withPage, CLIPS } = require('../host/unified-page-fixture');
 const { arg, gop, withHost } = require('./host');
+const { viewerContract } = require('./protocol-viewer');
+const { engineContract } = require('./protocol-page');
 
 const data = Uint8Array.of(1, 3, 5, 7);
 const inner = { type: 'seeked', gen: 7, t: 2 };
@@ -30,23 +32,11 @@ const requests = [
 ];
 
 function pageContract() {
-  const ports = [];
-  const createEngine = ({ vscode }) => {
-    const clip = CLIPS[ports.length];
-    ports.push(vscode);
-    return { LibavPlayer: class { constructor() { return stubPlayer(clip); } } };
-  };
-  withPage(({ app, posted, send }) => {
+  withPage(({ app, send }) => {
     send({ type: 'open' });
     send({ type: 'openVideo', clipId: 'B', clip: CLIPS[1], compare: true });
     const a = app.players.get('A');
     const b = app.players.get('B');
-    assert.equal(ports.length, 2);
-    for (const request of requests) {
-      ports[1].postMessage(request);
-      assert.deepEqual(posted.at(-1), { ...request, page: 7, boot: 1, key: 'B', clipId: 'B' });
-    }
-
     assert.deepEqual([...DECODER_TYPES].sort(), replies.map((m) => m.type).sort());
     for (const reply of replies) {
       const wire = { ...reply, clipId: 'B', key: 'A' };
@@ -67,7 +57,7 @@ function pageContract() {
       assert.deepEqual(calls, [expected]);
       assert.equal(a.calls.filter(([type]) => type === reply.type).length, 0);
     }
-  }, { defaultFactory: true, createEngine });
+  });
 }
 
 function scriptedSession(page) {
@@ -88,10 +78,7 @@ function scriptedSession(page) {
   });
   const send = (m) => session.onMessage({ clipId: 'B', key: 'B', page: 7, boot: 1, ...m });
   const nd = (m) => send({ type: 'nd', m });
-  const transfer = (message) => {
-    if (message.type === 'ndv' || message.type === 'nda') session.post({ ...message, key: 'B', clipId: 'B' });
-    else session.postNativeReply('B', message);
-  };
+  const transfer = (message) => session.postNativeReply('B', message);
   return { session, wire, send, nd, transfer };
 }
 
@@ -148,37 +135,10 @@ async function encodedContract() {
   });
 }
 
-async function nativeContract() {
-  await withHost({ native: true, audio: true }, async ({ page, processes }) => {
-    const { session, wire, send, nd, transfer } = scriptedSession(page);
-    try {
-      await send({ type: 'ready' });
-      await nd({ type: 'open', view: { w: 320, h: 180 } });
-      await page.advance(10);
-      await page.advance(10);
-      const { width: w, height: h } = page.messages('streams')[0].info.video;
-      await send(requests[1]);
-      await send(requests[2]);
-      await page.advance(10);
-      const pixels = Buffer.alloc(w * h * 3 / 2, 42);
-      const pcm = Buffer.alloc(32, 12);
-      processes[1].output(1, pcm, 3);
-      processes[1].output(3, pixels);
-      await page.advance(100);
-      page.received.forEach(transfer);
-      assert.deepEqual(wire.find((m) => m.type === 'ndv'),
-        { type: 'ndv', gen: 7, t: 2, w, h, ys: w * h, data: new Uint8Array(pixels), key: 'B', clipId: 'B' });
-      assert.deepEqual(wire.find((m) => m.type === 'nda'),
-        { type: 'nda', gen: 7, t: 2, rate: 48000, n: 4, data: new Uint8Array(pcm), key: 'B', clipId: 'B' });
-    } finally {
-      session.dispose();
-    }
-  });
-}
-
 (async () => {
   pageContract();
   await encodedContract();
-  await nativeContract();
+  await engineContract();
+  await viewerContract();
   console.log('decoder protocol: page routing, encoded stream and native messages passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -15,6 +15,7 @@ try {
   cp.spawn = (cmd, args, options) => spawnScript(cmd, args, options);
   ({ EncodedStream } = require('../../src/stream'));
   ({ NativeDecoder } = require('../../src/native'));
+  require('../../src/unified-viewer');
 } finally {
   cp.spawn = spawn;
 }
@@ -130,7 +131,7 @@ async function withHost({ native = false, audio = false, options = {}, script = 
       ...options,
     };
     page.decoder = native ? new NativeDecoder(opts) : new EncodedStream(opts);
-    await run({ page, processes, clock });
+    await run({ page, processes, clock, spawn: spawnScript, createNative: (opts) => new NativeDecoder(opts) });
     assert.deepEqual(failures, []);
   } finally {
     try {

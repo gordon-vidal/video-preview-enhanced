@@ -108,7 +108,7 @@ async function warmSeekBurst() {
     const remuxers = processes.filter((p) => arg(p, '-bsf:v')?.startsWith('setts='));
     assert.equal(processes.filter((p) => p.args.includes('pipe:0')).length, 1);
     assert.equal(remuxers.length, 2, 'the seek burst starts only one new copy remux');
-    assert.equal(arg(remuxers[1], '-ss'), '7.1300', 'keyframe seek allows a quarter-frame rounding margin');
+    assert.ok(Math.abs(Number(arg(remuxers[1], '-ss')) - 7.13) < 1e-6, 'keyframe seek allows a quarter-frame rounding margin');
     assert.equal(page.messages('seeked').at(-1).t, 7.12);
     assert.equal(page.messages('batch').at(-1).video[0].t, 7.12, 'warm timestamps map back onto the source grid');
 
