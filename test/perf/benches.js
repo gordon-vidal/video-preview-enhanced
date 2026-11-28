@@ -25,6 +25,7 @@ const vscode = [
   // The background seek-bar preview pass (docs/notes/seek-preview.md): 4K HEVC and short 1080p H.264 playback with the
   // pass off and on; time and CPU to a full bar for 20 s / 5 min / 1 h, and the between pass on 20 s / 60 s H.264.
   ...['native', 'wasm'].map((p) => ({ name: `seek-pass-${p}`, env: { VPE_SEEK_PASS_BENCH: '1' }, steps: [{ case: `seek-pass-play-${p}` }, { case: `seek-pass-fill-${p}` }] })),
+  { name: 'seek-pass-native-cpu', env: { VPE_SEEK_PASS_BENCH: '1' }, steps: [{ case: 'seek-pass-fill-native-cpu' }] },
   // Remote stream soak: lag and sound lead over 150 s.
   { name: 'remote-stream-soak', steps: [{ case: 'remote_stream_long' }] },
   // Host -> webview message throughput.

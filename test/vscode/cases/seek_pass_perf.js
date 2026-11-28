@@ -6,10 +6,13 @@
 //     alternating, twice each, in one instance: dropped, late and shown frames, CPU per role (% of one core), and
 //     what the pass did meanwhile. The same on a generated 20 s 1080p H.264 clip with a keyframe every 10 s, where the
 //     between pass runs during playback.
-//   seek-pass-fill-<path>: paused, the time until the pass has given the whole bar pictures and the CPU it took, for
-//     1080p HEVC 8-bit of 20 s, 5 min and 1 h (stream copies of one generated 20 s clip, a keyframe every 2 s), and
-//     for 1080p H.264 of 20 s and 60 s with a keyframe every 10 s (the between pass's cases).
-// <path>: native (native ffmpeg) or wasm (the built-in decoder).
+//   seek-pass-fill-<path>: paused, the time until the pass has given the whole bar pictures (time to the floor and to
+//     a full bar) and the CPU it took, for 1080p HEVC 8-bit of 20 s, 5 min and 1 h (stream copies of one generated
+//     20 s clip, a keyframe every 2 s), for 1080p H.264 of 20 s and 60 s with a keyframe every 10 s, and for 4K HEVC
+//     10-bit of 2 min with keyframes 10 and 2 s apart (a generated 12 s clip looped; the fill decodes most of it; native
+//     paths only).
+// <path>: native (native ffmpeg, the fill on the GPU when there is one), native-cpu (native ffmpeg with GPU decoding
+//   off: the fill in software; fill only) or wasm (the built-in decoder).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -93,10 +96,12 @@ async function playRuns(vs, h, out, file, label) {
   out.push(res(label, [], { off: sum('off'), on: sum('on'), runs }));
 }
 
-async function fillRuns(vs, h, out) {
+async function fillRuns(vs, h, out, big = true) {
   const src = base1080();
   const clips = [['20s', 1], ['5min', 15], ['1h', 180]].map(([label, loops]) => [label, loops === 1 ? src : loop(src, `hevc_1080p_g60_${label}.mp4`, loops)]);
   for (const sec of [20, 60]) clips.push([`h264-${sec}s`, h264Gop10(sec)]);
+  const gop4k = require('../../lib/gop_clip').make({ size: '3840x2160', codec: 'hevc10' });
+  if (gop4k && big) clips.push(['hevc4k-2min', loop(gop4k, 'hevc10_2160p_gop10_2min.mp4', 10)]);
   for (const [label, file] of clips) {
     const p = [];
     const P = await lib.open(vs, h, file, { timeout: 60000 });
@@ -107,7 +112,9 @@ async function fillRuns(vs, h, out) {
       const ca = sample(vs.dir);
       const s = await P.waitState(done, { timeout: 10 * 60e3, interval: 500, what: `the pass over ${label}` });
       const cb = sample(vs.dir);
-      x = { fullBarS: s.strip.pass.s, waitedS: (Date.now() - t0) / 1000, pass: s.strip.pass, bar: `${s.strip.bar}/${s.strip.n}`, X: s.strip.X, cpu: cpuBetween(ca, cb) };
+      const pass = s.strip.pass;
+      x = { floorS: pass.floorS, fullS: pass.fullS, doneS: pass.s, waitedS: (Date.now() - t0) / 1000, gpu: pass.between && pass.between.gpu, pass,
+        bar: `${s.strip.bar}/${s.strip.n}`, X: s.strip.X, cpu: cpuBetween(ca, cb) };
       if (s.strip.bar !== s.strip.n) p.push(`bar ${x.bar}`);
       console.log(`  ${label}: ${JSON.stringify(x)}`);
     } catch (e) { p.push(e.message); }
@@ -118,7 +125,11 @@ async function fillRuns(vs, h, out) {
 }
 
 const PATHS = { native: { 'videoPreviewEnhanced.decoder': 'ffmpeg' }, wasm: { 'videoPreviewEnhanced.decoder': 'builtin' } };
-module.exports = !process.env.VPE_SEEK_PASS_BENCH ? [] : Object.entries(PATHS).flatMap(([p, settings]) => [
+const CPU = { 'videoPreviewEnhanced.decoder': 'ffmpeg', 'videoPreviewEnhanced.gpuDecoding': false };
+module.exports = !process.env.VPE_SEEK_PASS_BENCH ? [] : [
+  { name: 'seek-pass-fill-native-cpu', ffmpeg: true, settings: { ...CPU, 'videoPreviewEnhanced.autoplay': false },
+    async run(vs, h) { const out = []; await fillRuns(vs, h, out); return out; } },
+].concat(Object.entries(PATHS).flatMap(([p, settings]) => [
   { name: `seek-pass-play-${p}`, ffmpeg: p === 'native', settings: { ...settings, 'videoPreviewEnhanced.autoplay': false },
     async run(vs, h) {
       const out = [];
@@ -127,5 +138,6 @@ module.exports = !process.env.VPE_SEEK_PASS_BENCH ? [] : Object.entries(PATHS).f
       return out;
     } },
   { name: `seek-pass-fill-${p}`, ffmpeg: p === 'native', settings: { ...settings, 'videoPreviewEnhanced.autoplay': false },
-    async run(vs, h) { const out = []; await fillRuns(vs, h, out); return out; } },
-]);
+    // The 4K HEVC clip in the worker (software, about 100 s of decoding at a quarter of the time) outlasts the budget.
+    async run(vs, h) { const out = []; await fillRuns(vs, h, out, p !== 'wasm'); return out; } },
+]));
