@@ -53,6 +53,13 @@ const GPU_WORTH_MS = 300;
  *   keyframe there); rot: how the bitmap is turned when drawn (captures come from the canvas, already turned).
  */
 
+/** The ImageBitmaps a worker reply carries (GPU memory): closed when nothing takes them. */
+function closeBitmaps(m) {
+  if (!m) return;
+  if (m.bmp) m.bmp.close();
+  for (const x of m.more || []) if (x && x.bmp) x.bmp.close();
+}
+
 /* exported ThumbService */
 // eslint-disable-next-line no-unused-vars
 class ThumbService {
@@ -504,7 +511,7 @@ class ThumbService {
       if (epoch !== this.epoch) return;
       const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
       try { this.worker = new Worker(url); } finally { URL.revokeObjectURL(url); }
-      this.worker.onmessage = (e) => { if (epoch === this.epoch) this.onMessage(e.data); };
+      this.worker.onmessage = (e) => { if (epoch === this.epoch) this.onMessage(e.data); else closeBitmaps(e.data); };
       this.worker.onerror = (e) => { if (epoch === this.epoch) this.fail(`worker error: ${e.message}`); };
       this.log(`starting worker (source fetched in ${Math.round(performance.now() - this.t0)} ms)`);
       this.worker.postMessage({ type: 'init', ...this.o.libav });
@@ -1077,7 +1084,7 @@ class ThumbService {
 
   async onThumb(m) {
     const req = this.inflight;
-    if (!req || req.id !== m.id) return;
+    if (!req || req.id !== m.id) { closeBitmaps(m); return; }
     if (req.refine) { await this.onRefine(req, m); return; }
     if (req.mode === 'run') { await this.onRun(req, m); return; }
     if (req.mode === 'sweep') { await this.onSweep(req, m); return; }

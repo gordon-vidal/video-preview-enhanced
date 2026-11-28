@@ -213,5 +213,16 @@ const done = (s) => /^done/.test(s.stats0().pass.state);
     assert.strictEqual(env.bitmaps - env.closed, before, `every bitmap closed after dispose (${env.bitmaps - env.closed - before} open)`);
   }
 
+  // 8. A reply no request waits for (stale, or after the worker was replaced): its bitmaps are closed.
+  {
+    reset();
+    const { s } = mk();
+    const stale = [new FakeBitmap(160, 90), new FakeBitmap(160, 90)];
+    s.onMessage({ type: 'thumb', id: 987654, kt: 1, bmp: stale[0], w: 160, h: 90, more: [{ kt: 2, bmp: stale[1] }], gpu: 'webcodecs' });
+    await tick(5);
+    assert.ok(stale.every((b) => b.isClosed), 'the bitmaps of a stale reply are closed');
+    s.dispose();
+  }
+
   console.log('seek_preview_hw: all passed');
 })().catch((e) => { console.error(e); process.exit(1); });
