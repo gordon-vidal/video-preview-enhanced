@@ -608,6 +608,20 @@ test('#14 hidden before the asked frame shows: shown again, it seeks to that fra
   assert.strictEqual(reseek(stepped), 2 + 1.5 / 30, 'a step forward in the decoded frames');
 });
 
+test('a paused step forward takes the next decoded picture only when the shown one is before the target', () => {
+  // Scrubbing: the bar's previous target was lower, but the picture on screen (and its read-ahead) is past this one.
+  const p = player({ shownT: 39 / 30, firstShown: true });
+  for (let i = 40; i < 50; i++) p.queue.push(frame(i / 30));
+  P.seekFrame.call(p, 28, false, 1);
+  const seek = p.worker.msgs.find((m) => m.type === 'seek');
+  assert.ok(seek && Math.abs(seek.t - 28.5 / 30) < 1e-9, `no seek to frame 28 (${seek && seek.t}, pauseT ${p.pauseT})`);
+  // Shown before the target, the read-ahead continuing from it: the next picture at once (frames 21-22 missing).
+  const q = player({ shownT: 20 / 30, firstShown: true });
+  for (const k of [23, 24, 25]) q.queue.push(frame(k / 30));
+  P.seekFrame.call(q, 21, false, 1);
+  assert.ok(!q.worker.msgs.some((m) => m.type === 'seek') && q.pauseT === 23 / 30, `pauseT ${q.pauseT * 30}`);
+});
+
 test('#18 a block the host fails to read does not hang the reader', () => {
   const p = player();
   const before = posted.length;

@@ -2565,7 +2565,9 @@ function createEngine(env) {
       const dur = this.meta.duration || 0;
       const r = Math.max(0, dur ? Math.min(rel, dur - 0.5 / (this.fps || 30)) : rel);
       let t = (this.startT || 0) + r;
-      if (land > 0 && !force && !this.playing) {
+      // The decoded frames only when they continue from a picture shown before the target (a scrub back is no step).
+      if (land > 0 && !force && !this.playing && this.shownT !== null && this.shownT < t && this.queue.length
+        && this.queue[0].t > this.shownT) {
         const want = this.frameAt(t);
         const next = this.queue.find((x) => this.frameAt(x.t) >= want);
         if (next && next.t > t) t = next.t;
