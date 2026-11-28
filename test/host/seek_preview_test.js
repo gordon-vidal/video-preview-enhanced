@@ -527,5 +527,30 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
     }
   }
 
+  // The first cost guess per frame counts the source's pixels: native ffmpeg decodes the full 1080p picture even
+  // when it sends the page a smaller one.
+  {
+    const opts = [];
+    const ectx = { performance, ThumbService: class { constructor(o) { opts.push(o); } } };
+    ectx.VpeBlockCache = require('../../media/block-cache');
+    ectx.VpeGlRenderer = require('../../media/gl-renderer');
+    ectx.VpeCodecUtils = require('../../media/codec-utils');
+    ectx.VpeDecoderBoot = require('../../media/decoder-boot');
+    const engine = vm.runInNewContext(`${fs.readFileSync(path.join(root, 'media', 'engine.js'), 'utf8')}\ncreateEngine`, ectx);
+    const proto = engine({ log: () => {}, onMeta: () => {} }).LibavPlayer.prototype;
+    const guess = (video, cfg) => {
+      opts.length = 0;
+      Object.assign(Object.create(proto), {
+        info: { video }, meta: { duration: 60, size: 1e8 }, vmode: 'soft', startT: 0, fps: 30, mem: { thumbs: 30e6 },
+        cfg: { workerUrl: 'decoder-worker.js', ...cfg }, libavBlobs: {},
+      }).thumbService();
+      return opts[0].frameMs;
+    };
+    const sent = { width: 1280, height: 720, sourceWidth: 1920, sourceHeight: 1080 };
+    assert.ok(Math.abs(guess(sent, { native: true }) - 1920 * 1080 * 1e-6) < 1e-9,
+      `native 1080p sent at 720p: ${guess(sent, { native: true })} ms, expected the 1080p source's cost`);
+    assert.ok(Math.abs(guess({ width: 1920, height: 1080 }, { native: true }) - 1920 * 1080 * 1e-6) < 1e-9, 'native, no source size');
+  }
+
   console.log('seek_preview_test: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

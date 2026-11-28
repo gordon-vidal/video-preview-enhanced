@@ -42,8 +42,8 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   files (`ThumbService.sweepNext`, decided once per file): it fills the slots that have no picture within X of their
   middle (keyframes, captures and refines all count). Estimate = frames from the keyframe before the first such slot
   to the end x cost per frame + one keyframe request's median time; cost per frame is `frameMs` (the refines' measured
-  cost, else the engine's first guess: 1 ns per pixel native, `PER_PX_WASM` = 3.5 ns for the worker). The guess is
-  pessimistic, so the pass starts while the estimate is within 2x the budget; after each stretch the measured cost per
+  cost, else the engine's first guess: 1 ns per source pixel native, `PER_PX_WASM` = 3.5 ns for the worker). The
+  guess is pessimistic, so the pass starts while the estimate is within 2x the budget; after each stretch the measured cost per
   frame replaces it, and the pass stops (`done:budget`) once spent + the rest would pass 1.25x. Budget: 3 s of decoder
   time (one thread, so about CPU time); 1 s on a far host (Live transcode, native in a remote window), with the far
   host's slower pace. It works in stretches (`sweep` requests): from the first empty slot's middle to the first known
@@ -88,11 +88,9 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
 
   So at 1080p30 H.264, native qualifies up to about a minute and the worker up to about 27 s (twice the budget over
   its first guess); 4K HEVC never (27.5 ms per frame in the worker, 8.5 ms native with 2 threads). On the 1080p HEVC clips with a
-  keyframe every 2 s, only the last slot of the 20 s clip (1.5 s from a keyframe) needed a sweep. The native first
-  guess counts the pixels of the picture native ffmpeg sends (1280 x 720 here), not the source's, so it was about half
-  the measured cost; the first stretch corrects it. Playback with the pass off and on, 15 s from 3.5 s after the first
-  frame, twice each: on the 20 s H.264 clip, where the between pass ran meanwhile, native 0 dropped and 0 late either
-  way, 481-490 frames shown, CPU of the instance 40-44 % off and 42-43 % on; WebCodecs playback (worker pass) 0 and 0,
+  keyframe every 2 s, only the last slot of the 20 s clip (1.5 s from a keyframe) needed a sweep. Playback with the
+  pass off and on, 15 s from 3.5 s after the first frame, twice each: on the 20 s H.264 clip, where the between pass
+  ran meanwhile, native 0 dropped and 0 late either way, 481-490 frames shown, CPU of the instance 40-44 % off and 42-43 % on; WebCodecs playback (worker pass) 0 and 0,
   482-487 shown, 19-22 % off and 21-22 % on. The 4K HEVC playback runs above did not change (the between pass does
   not run there): native 0 and 0, 37-40 % off and 43-48 % on; WASM 89-96 late either way, 116-129 %.
 - **Keyframes at hover.** When the pointer's slot has no picture
@@ -108,9 +106,9 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   (worker `between` mode; native `-skip_frame noref -skip_loop_filter all -flags2 fast`, accurate seek,
   `fast_bilinear`), and the frame becomes a picture of its own. Only when the estimate fits the budget:
   cost = median keyframe request + frames from the keyframe to the target x `frameMs`; budget 0.5 s while playing,
-  2 s paused (estimated decoder wall time). `frameMs` starts at about 1 ns per pixel for native ffmpeg and 3.5 ns for
-  the worker (engine.js `PER_PX_WASM`) and follows each refine's measured cost. Moving to another slot cancels a
-  running refine; none while dragging, while `thumbsBusy()`, for slots refined before, or for a remote file read by
+  2 s paused (estimated decoder wall time). `frameMs` starts at about 1 ns per source pixel for native ffmpeg (not
+  the smaller picture it sends the page) and 3.5 ns for the worker (engine.js `PER_PX_WASM`) and follows each
+  refine's measured cost. Moving to another slot cancels a running refine; none while dragging, while `thumbsBusy()`, for slots refined before, or for a remote file read by
   the worker (a GOP of blocks over the link). Skips are counted (`stats0().skipped`).
 - **Order of work.** The slot under the pointer comes first (its keyframe), then its refine, then up to 4 neighbouring
   slots on each side; the newest position wins (40 ms debounce, one request in flight). Neighbours are filled only

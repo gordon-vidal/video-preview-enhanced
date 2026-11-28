@@ -3108,9 +3108,11 @@ function createEngine(env) {
         // Live transcode and native in a remote window decode on a host that may be shared: a slower pass.
         pass: this.cfg.thumbPass === false ? undefined : { far: !!(this.cfg.remote || this.remoteStream) },
         playing: () => !!this.playing,
-        // First guess per frame between keyframes, refined by replies: about 1 ns per pixel for native ffmpeg with
-        // the cheap flags (2 threads), PER_PX_WASM for the single-threaded worker (docs/notes/seek-preview.md).
-        frameMs: (v.width * v.height || 2e6) * (this.cfg.native ? 1e-6 : PER_PX_WASM),
+        // First guess per frame between keyframes, refined by replies: about 1 ns per source pixel for native ffmpeg
+        // with the cheap flags (2 threads), PER_PX_WASM for the single-threaded worker (docs/notes/seek-preview.md).
+        // Native and Live transcode decode the source, not the smaller picture they send the page.
+        frameMs: ((v.sourceWidth || v.width) * (v.sourceHeight || v.height) || 2e6)
+          * (this.cfg.native ? 1e-6 : PER_PX_WASM),
         request: this.cfg.native ? async (t, w, h, signal, mode, opts) => {
           const o = opts || {};
           const r = await this.hostThumb(t - startT, w, h, signal, mode, { pass: !!o.pass, ...(mode === 'sweep' ? { to: o.to - startT, step: o.step } : {}) });
