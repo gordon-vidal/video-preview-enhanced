@@ -589,6 +589,25 @@ test('#14 a hidden tab frees its frames and pool workers', () => {
   assert.strictEqual(pool.extras.length, 2, 'extra workers not restarted');
 });
 
+test('#14 hidden before the asked frame shows: shown again, it seeks to that frame, not the one before', () => {
+  // An A-B export hidden mid-frame: re-seeking to the frame still on screen skipped the frame asked for.
+  const reseek = (p) => {
+    P.setHidden.call(p, true);
+    p.worker.msgs.length = 0;
+    P.setHidden.call(p, false);
+    const seek = p.worker.msgs.find((m) => m.type === 'seek');
+    return seek && seek.t;
+  };
+  const seeking = player({ shownT: 2, firstShown: true });
+  P.seekTime.call(seeking, 3);
+  seeking.queue.push(frame(2.9)); // the seek's first frames arrived
+  assert.strictEqual(reseek(seeking), 3, 'a seek under way');
+  const stepped = player({ shownT: 2, firstShown: true });
+  for (let i = 0; i < 5; i++) stepped.queue.push(frame(2 + i / 30));
+  P.seekTime.call(stepped, 2 + 1.5 / 30); // served from the decoded frames: no seek
+  assert.strictEqual(reseek(stepped), 2 + 1.5 / 30, 'a step forward in the decoded frames');
+});
+
 test('#18 a block the host fails to read does not hang the reader', () => {
   const p = player();
   const before = posted.length;

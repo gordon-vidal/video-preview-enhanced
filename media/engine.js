@@ -1376,7 +1376,9 @@ function createEngine(env) {
         this.resyncOnShow = false;
         // Native: frames still in flight when the tab was hidden must not stand in for the seek that restarts ffmpeg.
         if (this.cfg.native) { for (const f of this.queue) this.release(f); this.queue = []; }
-        this.seekTime(this.rel(this.shownT !== null ? this.shownT : this.pauseT));
+        // Paused on a frame not shown yet (a seek or step under way): that frame, not the picture it was replacing.
+        const due = !this.playing && (this.seekTarget !== null || this.shownStale);
+        this.seekTime(this.rel(due || this.shownT === null ? this.pauseT : this.shownT), due);
       }
     }
 

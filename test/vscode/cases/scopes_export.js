@@ -234,7 +234,9 @@ module.exports = [{
         ok(n === 280 && /exported 280\/280 frames/.test(done), `${n} files; ${done}`);
         const files = fs.readdirSync(EXPORT_DIR).sort();
         const want = Array.from({ length: 280 }, (_, i) => `long_20s_f${String(i + 1).padStart(6, '0')}.png`);
-        ok(files.join(',') === want.join(','), 'hidden export did not write every frame from 1 through 280');
+        const missing = want.filter((f) => !files.includes(f));
+        const extra = files.filter((f) => !want.includes(f));
+        ok(!missing.length && !extra.length, `hidden export did not write every frame from 1 through 280: missing ${missing.join(',') || 'none'}, extra ${extra.join(',') || 'none'}; log: ${lib.lines(vs, /exported|seek to \d/, from).slice(-6).join(' | ')}`);
       } finally { await P.close(); }
     });
 
