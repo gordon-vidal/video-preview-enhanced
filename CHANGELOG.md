@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.13.2 (2026-11-28)
+
+Fixes found by a full test pass after 0.13.1: frame steps in videos with gaps or a changing frame rate, Compare with 5 to 16 videos, the time readout after pausing, and frame export while the player tab is hidden.
+
 - **The time readout after pausing:** pausing could leave the time, timecode or frame number one frame behind the picture on screen until the next seek.
 - **Frame steps in joined, gapped or variable-frame-rate videos:** in a file whose timestamps jump (clips joined together, a recording with a gap, a frame rate that drops), stepping forward while paused (keys, buttons or wheel) showed the same picture again and stopped there. Steps now go to the next or previous picture, over gaps of any length, and the frame counter shows that picture's number.
 - **Exporting frames A–B while the player is hidden:** switching to another tab during an export and back could leave out the frame being prepared at that moment (279 of 280 frames written). Every frame is written now.
