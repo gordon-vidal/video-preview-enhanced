@@ -79,14 +79,14 @@ const walkthrough = require('../../src/walkthrough');
   const hardware = require('../../src/hardware');
   const origLocate = ff.locateTools;
   const origChoose = setup.chooseBuild;
-  const origDetect = hardware.detectMachine;
+  const origDetect = hardware.detect;
   const fakeBuild = { source: 'BtbN/FFmpeg-Builds', label: 'ffmpeg 8.1 (win64, LGPL)', sizeMB: 77, note: 'GPU decoding via NVIDIA NVDEC', line: { major: 8, minor: 1 } };
   try {
     h.vscode.ProgressLocation = { Notification: 15 };
     h.vscode.window.withProgress = (_o, fn) => fn({ report() {} });
     ff.locateTools = async () => ({ ffmpeg: 'ffmpeg', ffprobe: 'ffprobe', version: 'ffmpeg version n8.1 Copyright (c) 2000-2026', legacy: false, gpuFilters: new Set(), stamp: 'x' });
     setup.chooseBuild = async () => fakeBuild;
-    hardware.detectMachine = async () => ({ gpus: [{ name: 'Test GPU', driver: '581.15' }], nvidiaDriver: '581.15' });
+    hardware.detect = async () => ({ os: 'win32', arch: 'x64', gpus: [{ vendor: 'nvidia', name: 'Test GPU', driver: '581.15' }], nvidiaDriver: '581.15', vaapi: false });
 
     // From the walkthrough: confirms the existing ffmpeg and advances without opening the download picker.
     let picked = false;
@@ -123,7 +123,7 @@ const walkthrough = require('../../src/walkthrough');
   } finally {
     ff.locateTools = origLocate;
     setup.chooseBuild = origChoose;
-    hardware.detectMachine = origDetect;
+    hardware.detect = origDetect;
   }
 
   h.dispose();
