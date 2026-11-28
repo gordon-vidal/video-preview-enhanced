@@ -78,8 +78,9 @@ ffmpeg installed is the best setup in general, but not strictly better everywher
   first video recommends setting it up, and it is used whenever it plays a file better than the built-in decoder.
   Exception, seek-bar previews (2026-11-27, widened 2026-11-28; replaces the lazy rule of 2026-11-20): after open a
   low-priority pass fills the bar with small pictures, keyframes first, then a picture of its own for every place on
-  the bar, and runs to the end for every file, local or remote. It must stay unnoticeable: one request at a time, about
-  a quarter of the time (half while the pointer rests on the bar), below-normal priority, native ffmpeg on the GPU where
+  the bar, and runs to the end for every file, local or remote. It must stay unnoticeable: one request at a time,
+  keyframes about half the time and the rest about a quarter (half while the pointer rests on the bar), below-normal
+  priority, native ffmpeg on the GPU where
   available (hover pictures stay software), paused while playback is behind or the tab is hidden. No preview pictures
   are stored on disk (docs/notes/seek-preview.md).
 

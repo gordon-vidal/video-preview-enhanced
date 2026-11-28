@@ -10,7 +10,8 @@
 // - the background pass (passArm, after the first frame): keyframes coarse to fine over the slots still without a
 //   picture, then the fill ('sweep' requests, decoded cheaply or on the GPU): first the floor (min(N, FLOOR) evenly
 //   spread slots get a picture of their own), then every other slot coarse to fine until each has one. One request
-//   at a time, paced to PASS_DUTY of the time (PASS_DUTY_HOVER while the pointer rests on the bar), paused while
+//   at a time, paced to PASS_DUTY_KEYS of the time for keyframes and PASS_DUTY for sweeps (PASS_DUTY_HOVER while the
+//   pointer rests on the bar), paused while
 //   busy, hidden, dragging or another tile sets the clock. For files playback decodes with WebCodecs (o.hw), the
 //   worker's sweeps run on a hardware VideoDecoder of their own, paused while playing; software after a failure.
 // The bar is a grid of N slots of X seconds (interval()); one picture per slot is enough. Pictures are kept
@@ -29,10 +30,12 @@ const PASS_DELAY_MS = 3000;
 const PASS_RETRY_MS = 500;
 /** How often a running pass request checks whether it should give way. */
 const PASS_WATCH_MS = 100;
-/** Share of the time the pass may decode (each request's wall time, or the CPU it reports when that is more), and
- *  while the pointer rests on the bar, paused. */
+/** Share of the time the pass may decode (each request's wall time, or the CPU it reports when that is more): sweeps,
+ *  sweeps while the pointer rests on the bar (paused), and keyframe asks, which are cheap per picture (at a quarter, a
+ *  1 h 1080p HEVC bar took 93 s instead of 46 s). */
 const PASS_DUTY = 0.25;
 const PASS_DUTY_HOVER = 0.5;
+const PASS_DUTY_KEYS = 0.5;
 /** Host runs: keyframes per ffmpeg, and the most keyframes per slot at which a run beats one ffmpeg per slot. */
 const RUN_KEYS_PER_SLOT = 1.25;
 /** Slots that get a picture of their own first, after the keyframes (all of them when there are fewer). */
@@ -641,8 +644,8 @@ class ThumbService {
     this.ps = {
       order: ThumbService.coarseToFine(this.n), at: 0, tried: new Set(), retry: /** @type {number | null} */ (null),
       timer: 0, ms: 0, requests: 0, runs: 0, done: '', paused: '', since: 0, t0: performance.now(),
-      /** the last reply: when it ended, its wall time and what it cost (CPU when reported) */
-      last: { end: 0, wall: 0, cost: 0 },
+      /** the last reply: when it ended, its wall time and what it cost (CPU when reported), a sweep or not */
+      last: { end: 0, wall: 0, cost: 0, sweep: false },
       floorS: /** @type {number | null} */ (null), fullS: /** @type {number | null} */ (null),
       /** @type {any} the fill, set once the keyframe pass has nothing left (fillNext) */
       bw: null,
@@ -678,15 +681,16 @@ class ThumbService {
     if (ps.paused !== why) { ps.paused = why; ps.since = performance.now(); }
   }
 
-  /** Share of the time the pass may decode now: more while the pointer rests on the bar, paused. */
-  passDuty() {
+  /** Share of the time the pass may decode after a request of this kind: sweeps more while the pointer rests on the bar, paused. */
+  passDuty(sweep) {
+    if (!sweep) return PASS_DUTY_KEYS;
     return this.want !== null && !this.scrub && !(this.o.playing && this.o.playing()) ? PASS_DUTY_HOVER : PASS_DUTY;
   }
 
   /** When the next pass request may start: the last one's cost spread over 1 / duty of the time since it began. */
   passNotBefore() {
     const l = this.ps.last;
-    return l.end + Math.max(0, l.cost / this.passDuty() - l.wall);
+    return l.end + Math.max(0, l.cost / this.passDuty(l.sweep) - l.wall);
   }
 
   /** Timer: watches a running pass request (cancelled when it should give way), or starts the next one. */
@@ -800,7 +804,7 @@ class ThumbService {
       ps.ms += ms;
       if (cancelled) { ps.tried.delete(req.slot); ps.retry = req.slot; } else ps.requests++;
     }
-    ps.last = { end: now, wall: ms, cost: Math.max(ms, Number.isFinite(m.cpu) ? m.cpu : 0) };
+    ps.last = { end: now, wall: ms, cost: Math.max(ms, Number.isFinite(m.cpu) ? m.cpu : 0), sweep: req.mode === 'sweep' };
   }
 
   passDone(why) {

@@ -5,8 +5,8 @@
 // - skips slots already answered (captured frames, keyframes known from earlier replies);
 // - pauses while busy, hidden, the pointer drags, or another tile sets the clock; a running pass request is cancelled
 //   then, or when the hovered slot needs work; resumes on the 500 ms retry;
-// - paced at a quarter of a core (by the CPU a reply reports, else its wall time; wall time while playing), half a
-//   core while the pointer rests on the bar;
+// - keyframe asks paced at half the time, sweeps at a quarter (by the CPU a reply reports, else its wall time; wall
+//   time while playing); sweeps at half while the pointer rests on the bar;
 // - stops when the bar is complete, and the service closes (worker / host job ends); pictures stay within the cap;
 // - none for a remote file read by the worker; Live transcode and remote native run like local files;
 // - native: with few keyframes per slot, keyframe runs (one ffmpeg for up to 8 keyframes) instead of per-slot asks;
@@ -59,7 +59,7 @@ function mk(o = {}) {
     pass: { delayMs: o.delayMs ?? 20 }, restMs: o.restMs,
     remote: o.remote, frameMs: o.frameMs,
     request: o.noRequest ? undefined : async (t, w, h, signal, mode, opts) => {
-      const c = { t, to: opts && opts.to, gpu: opts && opts.gpu, slot: Math.floor((t - 10) / s.X + 1e-9), mode, pass: !!(opts && opts.pass), aborted: false };
+      const c = { at: performance.now(), t, to: opts && opts.to, gpu: opts && opts.gpu, slot: Math.floor((t - 10) / s.X + 1e-9), mode, pass: !!(opts && opts.pass), aborted: false };
       calls.push(c);
       env.active++; env.max = Math.max(env.max, env.active);
       const sweepMs = typeof o.sweepMs === 'function' && mode === 'sweep' ? o.sweepMs() : o.sweepMs;
@@ -211,9 +211,9 @@ function mk(o = {}) {
   }
 
   step('4b');
-  // 4b. Pace: a quarter of the time idle, half while the pointer rests on the bar (the general fill, not the
-  //     pointer's slot). Each request counts its wall time, or the CPU it reports when that is more (several
-  //     threads): a GPU request that reports little CPU does not run more often.
+  // 4b. Keyframe asks pace at half the time, idle or while the pointer rests on the bar. Each request counts its wall
+  //     time, or the CPU it reports when that is more (several threads): a GPU request that reports little CPU does
+  //     not run more often.
   {
     const asks = (x) => x.calls.filter((c) => c.pass && !c.aborted).length;
     const idle = mk({ ms: 30, duration: 7200 });
@@ -226,12 +226,38 @@ function mk(o = {}) {
     const a = [idle, rest, gpu, busy].map(asks);
     await tick(1500);
     const [ni, nr, ng, nb] = [idle, rest, gpu, busy].map((x, i) => asks(x) - a[i]);
-    // 30 ms asks: one per 120 ms idle (12 in 1.5 s), one per 60 ms resting (25), one per 360 ms at 90 ms CPU (4).
-    assert.ok(ni >= 8 && ni <= 16, `idle: a quarter of the time (${ni} asks in 1.5 s)`);
-    assert.ok(nr >= 1.6 * ni, `resting on the bar: about half (${nr} vs ${ni} asks)`);
+    // 30 ms asks: one per 60 ms idle or resting (25 in 1.5 s; 15-16 with Windows' 16 ms timers, 9 at a quarter), one
+    // per 180 ms at 90 ms CPU (8).
+    assert.ok(ni >= 13 && ni <= 30, `idle: half the time (${ni} asks in 1.5 s)`);
+    assert.ok(nr >= 0.75 * ni && nr <= 1.3 * ni, `resting on the bar: the same (${nr} vs ${ni} asks)`);
     assert.ok(ng >= 0.75 * ni && ng <= 1.3 * ni, `little reported CPU: still paced by wall time (${ng} vs ${ni} asks)`);
-    assert.ok(nb <= 0.55 * ni, `more CPU than wall time: paced by the CPU (${nb} vs ${ni} asks)`);
+    assert.ok(nb <= 0.7 * ni, `more CPU than wall time: paced by the CPU (${nb} vs ${ni} asks)`);
     for (const x of [idle, rest, gpu, busy]) x.s.dispose();
+  }
+
+  step('4c');
+  // 4c. The pause after a request follows its kind: half the time after a keyframe ask, a quarter after a sweep (half
+  //     while the pointer rests on the bar).
+  {
+    const gaps = async (hover) => {
+      const { s, calls } = mk({ ms: 40, sweepMs: 40, duration: 60, gop: 10, frameMs: 2 });
+      s.passArm();
+      if (hover) { s.hover(59, () => {}); await until(() => s.stats0().filled, 2000); }
+      assert.ok(await until(() => /^done/.test(s.stats0().pass.state), 8000), `the pass finishes (${JSON.stringify(s.stats0().pass)})`);
+      const pass = calls.filter((c) => c.pass && !c.aborted);
+      const by = { key: [], sweep: [] };
+      for (let i = 0; i + 1 < pass.length; i++) by[pass[i].mode === 'sweep' ? 'sweep' : 'key'].push(pass[i + 1].at - pass[i].at);
+      s.dispose();
+      const med = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1];
+      return { key: med(by.key), sweep: med(by.sweep), n: { key: by.key.length, sweep: by.sweep.length } };
+    };
+    const idle = await gaps(false);
+    // 40 ms each: 80 ms after a keyframe ask, 160 ms after a sweep (timers add up to about 16 ms on Windows).
+    assert.ok(idle.n.key >= 2 && idle.n.sweep >= 2, `both kinds ran (${JSON.stringify(idle)})`);
+    assert.ok(idle.key >= 65 && idle.key <= 130, `after a keyframe ask: half the time (${JSON.stringify(idle)})`);
+    assert.ok(idle.sweep >= 1.5 * idle.key && idle.sweep <= 2.8 * idle.key, `after a sweep: a quarter, twice as long (${JSON.stringify(idle)})`);
+    const rest = await gaps(true);
+    assert.ok(rest.n.sweep >= 2 && rest.sweep <= 0.8 * idle.sweep, `sweeps while resting on the bar: half (${JSON.stringify(rest)} vs ${idle.sweep})`);
   }
 
   step('5');

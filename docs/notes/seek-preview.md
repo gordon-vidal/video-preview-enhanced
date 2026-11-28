@@ -25,12 +25,14 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   `engine.armThumbPass()` arms one pass per file (`ThumbService.passArm`); it starts 3 s later. It walks the slots
   coarse to fine (middle, quarters, eighths ...: `coarseToFine`), skipping slots that already have a picture or whose
   keyframe is known from earlier replies, and asks for each the same `near` / `key` request as a hover, one at a
-  time. **Pacing** (keyframe pass and fill alike): decoding about a quarter of the time (`PASS_DUTY`). A request that
-  took m ms of wall time and reported c ms of CPU counts max(m, c), and the next starts that / 0.25 after it began.
+  time. **Pacing**: keyframe asks (`key`, `near`, `run`) decode about half the time (`PASS_DUTY_KEYS`), the fill's
+  sweeps about a quarter (`PASS_DUTY`; at a quarter for keyframes too, the 1 h 1080p HEVC bar took 93 s instead of
+  46 s, maintainer 2026-11-28). A request that took m ms of wall time and reported c ms of CPU counts max(m, c), and
+  the next starts that / duty after it began, by the kind of the request that just ended.
   The CPU (native ffmpeg's `-benchmark`, plus 200 ms of GPU start-up for a GPU sweep) only counts when it is more than
   the wall time; a GPU sweep that uses little CPU is still paced by its wall time (the GPU decoder and the disk are
-  shared with playback). While the pointer rests on the bar (not dragging, not playing) it speeds up to half the time
-  (`PASS_DUTY_HOVER`): the general fill goes on, the pointer's own slot, its refine and its neighbours always come
+  shared with playback). While the pointer rests on the bar (not dragging, not playing) sweeps speed up to half the
+  time (`PASS_DUTY_HOVER`): the general fill goes on, the pointer's own slot, its refine and its neighbours always come
   first. No budget: Live transcode and native ffmpeg in a remote window pace and finish like a
   local file. It pauses while `thumbsBusy()`, while the tab is hidden, while the pointer drags and while another
   Compare tile sets the clock, and looks again every 500 ms. Pointer work always wins: a hover whose slot or
@@ -456,8 +458,8 @@ picture whose time lies inside the slot.
   existing memory or status warnings. It checks again every 500 ms (the existing busy retry) and never runs while
   the pointer drags.
 - Native processes stay at below-normal priority with `-threads 1` for passes and 2 for a single picture
-  (Jellyfin: 1 thread). The pass is paced between requests (decoding about a quarter of the time), never by
-  throttling a running process.
+  (Jellyfin: 1 thread). The pass is paced between requests (keyframes about half the time, sweeps about a quarter),
+  never by throttling a running process.
 - Capture (1) costs one small resize per X seconds of playback. Phase 1 verifies with layer 3 `playback` that the
   dropped-frame count does not change.
 
@@ -533,7 +535,8 @@ during playback). Revisit only if measurements show re-opened long files are a r
 2. **Pictures between keyframes after open: for every file** (2026-11-28; was: short or light files under about 3 s
    of CPU). First a floor of min(N, 20) evenly spread slots with a picture of their own, then every slot up to N,
    coarse to fine, until the bar is full, on every path (native GPU, native software, WASM worker). Pace about a
-   quarter of the time, half while the pointer rests on the bar; paused while hidden; out of playback's way (layer 4: no
+   quarter of the time, half while the pointer rests on the bar (keyframe asks: about half the time, maintainer
+   2026-11-28); paused while hidden; out of playback's way (layer 4: no
    extra dropped or late frames). Remote (Live transcode, native in a Remote-SSH window) the same as local.
 3. **Disk cache: no,** not now.
 4. **Interval rule:** `X = max(D / 240, min(2 s, D / 20))`, accepted.
