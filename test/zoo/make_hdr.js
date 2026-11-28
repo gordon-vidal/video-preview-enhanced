@@ -72,8 +72,10 @@ const jobs = [
   ['hevc10_hlg.mp4', 'hlg', 10, 'arib-std-b67', ['-c:v', 'libx265', '-preset', 'fast', '-crf', '12', '-tag:v', 'hvc1', '-x265-params', 'log-level=error:colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=limited']],
   ['h264_pq.mp4', 'pq', 8, 'smpte2084', ['-c:v', 'libx264', '-preset', 'fast', '-crf', '10', '-x264-params', 'colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc']],
 ];
+const requested = process.argv.slice(3);
 let failed = 0;
 for (const [name, kind, bits, trc, enc] of jobs) {
+  if (requested.length && !requested.includes(name)) continue;
   const raw = path.join(out, `${name}.yuv`);
   fs.writeFileSync(raw, frame(kind, bits));
   const pix = bits > 8 ? 'yuv420p10le' : 'yuv420p';

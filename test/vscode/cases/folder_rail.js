@@ -13,6 +13,7 @@ module.exports = [{
   settings: SETTINGS,
   async run(vs, h) {
     const R = lib.recorder();
+    lib.media.ensure(['neigh/n1.mp4', 'neigh/n2.mp4', 'neigh/n3.mp4']);
     const clip = (n) => lib.clip(`neigh/n${n}.mp4`);
     const player = (n) => new lib.Player(vs, h, clip(n));
     const railOf = (s) => s.rail || {};

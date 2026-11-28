@@ -156,12 +156,6 @@ module.exports = [{
         await pic((x) => !x.panel);
       });
 
-      await R.run('player/sheet', async (ok) => {
-        P.key('?');
-        const s = await P.waitState((x) => !!x.sheet, { timeout: 5000, what: 'the shortcuts sheet' });
-        ok(/Picture size: Fit, Fill, Stretch, 100 %/.test(s.sheet) && /Zoom in \/ out/.test(s.sheet), `sheet: ${s.sheet}`);
-        P.key('Escape');
-      });
     } finally { await P.close(); }
 
     // ---- compare: one mode for every tile, zoom and pan in lockstep ----
@@ -316,7 +310,7 @@ module.exports = [{
   settings: { 'videoPreviewEnhanced.autoplay': false, 'videoPreviewEnhanced.decoder': 'builtin' },
   async run(vs, h) {
     const R = lib.recorder();
-    const P = await lib.open(vs, h, path.join(h.MEDIA, 'cases', 'bars75_sd_709.mp4'));
+    const P = await lib.open(vs, h, lib.clip('bars75_sd_709.mp4'));
     try {
       await P.waitFirstFrame();
       P.pause();

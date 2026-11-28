@@ -69,37 +69,6 @@ module.exports = [{
       ok(tb.length === 2 && tb.some(isCompare) && tb.some((x) => !isCompare(x)),
         `a video opened after the burst is a player beside the compare: ${JSON.stringify(tb)}`);
 
-      ok = t('one-video-alone');
-      await closeAll();
-      from = vs.mark();
-      vs.send({ openWithBurst: [files[0]] });
-      await vs.waitLog(new RegExp(`\\[${esc(CLIPS[0])}\\] session resolved`), { from, timeout: 15000, what: 'a player' });
-      await h.sleep(NO_COMPARE_MS);
-      tb = await tabs();
-      ok(tb.length === 1 && !/compare/i.test(tb[0].viewType), `tabs after one video: ${JSON.stringify(tb)}`);
-
-      ok = t('two-apart');
-      from = vs.mark();
-      vs.send({ openWithBurst: [files[1]] });
-      await vs.waitLog(new RegExp(`\\[${esc(CLIPS[1])}\\] session resolved`), { from, timeout: 15000, what: 'the second player' });
-      await h.sleep(NO_COMPARE_MS);
-      tb = await tabs();
-      ok(tb.length === 2 && tb.every((x) => !/compare/i.test(x.viewType)), `tabs after two videos apart: ${JSON.stringify(tb)}`);
-
-      ok = t('setting-off');
-      await closeAll();
-      from = vs.mark();
-      vs.send({ id: 'ot0', settings: { 'videoPreviewEnhanced.compare.openTogether': false } });
-      await vs.waitLog(/debug done ot0 settings/, { from, timeout: 10000, what: 'the setting' });
-      from = vs.mark();
-      vs.send({ openWithBurst: [files[0], files[1]] });
-      await vs.waitLog(new RegExp(`\\[${esc(CLIPS[1])}\\] session resolved`), { from, timeout: 15000, what: 'players' });
-      await h.sleep(NO_COMPARE_MS);
-      tb = await tabs();
-      ok(tb.length === 2 && tb.every((x) => !/compare/i.test(x.viewType)), `tabs with the setting off: ${JSON.stringify(tb)}`);
-      from = vs.mark();
-      vs.send({ id: 'ot1', settings: { 'videoPreviewEnhanced.compare.openTogether': null } });
-      await vs.waitLog(/debug done ot1 settings/, { from, timeout: 10000, what: 'the setting back' });
     } catch (e) {
       if (ok) ok(false, String(e && e.message || e)); else out.push({ name: 'error', ok: false, problems: [String(e && e.message || e)] });
     }

@@ -13,6 +13,7 @@ const selected = list('^compare/compare_link/open/split-frame$');
 assert.match(selected, /compare\s+compare_link\b/);
 assert.doesNotMatch(selected, /compare_ui|compare_metrics/);
 assert.match(list('^remote-stream/remote_stream_size/size-to-picture$'), /remote-stream\s+remote_stream_size\s*$/);
+assert.match(list('^remote-stream/remote_stream_size/size.to.picture$'), /remote-stream\s+remote_stream_size\s*$/);
 
 const sub = execFileSync(process.execPath, [runner, 'vscode', '--list', '--sub', '^compare/compare_link/'], {
   encoding: 'utf8',

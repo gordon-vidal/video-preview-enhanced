@@ -6,9 +6,13 @@ function selectScenarios(list, grep, sub, failed) {
   const mightMatch = (base, re) => {
     if (!re) return true;
     const match = literal(re);
-    if (!match) return true;
-    const target = match[1].replace(/\\\./g, '.');
-    return includes(target, base) || (!match[2] && base.startsWith(target));
+    if (match) {
+      const target = match[1].replace(/\\\./g, '.');
+      return includes(target, base) || (!match[2] && base.startsWith(target));
+    }
+    const source = re.source.replace(/\\\//g, '/');
+    const stepPath = !source.includes('|') && /^\^([\w-]+\/[\w-]+)\/(?![?*+{])/.exec(source);
+    return !stepPath || base === stepPath[1];
   };
   return list.flatMap((scenario) => {
     const steps = scenario.steps.flatMap((step) => {
