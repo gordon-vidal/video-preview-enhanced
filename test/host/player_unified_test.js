@@ -661,6 +661,32 @@ test('loading spinner: on while a paused seek owes its frame, off once it shows 
   }, { createPlayer: reading, raf: true });
 });
 
+test('pause: the bar takes the picture the decoder shows, though the read-ahead goes on', () => {
+  // media/engine.js pause() stops the clock at now(), which can be in the next frame's slot: that frame is still
+  // presented on the next tick, while the paused read-ahead keeps settled() false for seconds.
+  const reading = (clip, host, hooks) => {
+    const p = enginePlayer(clip, host, hooks);
+    p.requesting = false;
+    p.settled = () => p.seekTarget === null && !p.shownStale && !p.requesting && !p.playing && !p.due;
+    const tick = p.tick;
+    p.tick = (now) => { if (p.due) { p.due = false; p.frame++; } tick(now); };
+    p.pause = () => { p.playing = false; p.due = true; p.requesting = true; };
+    return p;
+  };
+  withPage(({ app, send, made, frames }) => {
+    send({ type: 'open' });
+    const p = made[0];
+    frames(5);
+    app.ui.dispatch('playPause');
+    frames(5);
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 5);
+    app.ui.dispatch('playPause');
+    frames(5);
+    assert.strictEqual(p.frame, 6, 'the frame due at the pause is shown');
+    assert.strictEqual(S.getTab(app.ui.getState()).frame, 6, 'the bar says the frame on screen');
+  }, { createPlayer: reading, raf: true });
+});
+
 test('tick loop: decoders tick on animation frames until they settle; wake starts it again', () => {
   withPage(({ doc, app, send, made, frames, rafQueue }) => {
     send({ type: 'open' });

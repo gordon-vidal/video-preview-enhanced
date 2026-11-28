@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **The time readout after pausing:** pausing could leave the time, timecode or frame number one frame behind the picture on screen until the next seek.
 - **Frame steps in joined or gapped videos:** in a file whose timestamps jump (clips joined together, a recording with a gap), stepping forward while paused showed the same picture again and stopped there. It now moves to the next picture.
 - **Compare with 5 to 16 videos:** tiles beyond the fourth share one WebGL context again, so a 16-video Compare no longer reaches the webview's limit of 16, where a tile could go black; with native ffmpeg, the 7th and later tiles get their frames over WebSockets again instead of waiting 3 s and falling back to a slower path.
 
