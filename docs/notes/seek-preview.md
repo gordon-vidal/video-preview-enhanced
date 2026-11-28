@@ -3,7 +3,7 @@
 Goal: a picture over the seek bar on hover and while the seek bar is dragged, in every decode path and in simple mode.
 While dragging, the main picture holds; release lands on the exact frame.
 
-This note has two parts: how previews work today (checked against the code on 2026-11-28, after phase 5 of the plan)
+This note has two parts: how previews work today (checked against the code on 2026-11-28, after phase 6 of the plan)
 and the plan for pictures between keyframes, with the maintainer's decisions (see "Decisions").
 
 ## How it works today
@@ -66,7 +66,8 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   decode of the stretch (from its keyframe, with `frameMs`) is at least 300 ms (`GPU_WORTH_MS`: GPU start-up costs
   0.2-0.3 s of CPU, so short stretches close to a keyframe stay software), else in software with
   `skip_frame noref`, `skip_loop_filter all`, `flags2 fast` and `fast_bilinear` (with `noref` a frame or two later).
-  WASM: one `sweep` job in the preview worker (software, the same cheap flags). Same pauses, cancellation, clock-tile
+  WASM: one `sweep` job in the preview worker (software, the same cheap flags), or on the worker's own hardware
+  `VideoDecoder` for files playback decodes with WebCodecs (below). Same pauses, cancellation, clock-tile
   rule and exclusions as the keyframe pass. `stats0().pass` reports `floorS` and `fullS` (seconds from the pass's
   arming to the floor and to a full bar) and `between` (`state`, requests, pictures, ms, `cpu`, `gpu`).
 - **GPU for the fill (native ffmpeg and Live transcode, phase 5).** Sweeps decode with
@@ -82,6 +83,42 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   ffmpeg is in use (the next method in the order is tried on the next sweep). `scale_d3d11` failed with -22 in ffmpeg
   9.0.2, so D3D surfaces are scaled on the CPU after the download. Hover pictures (`key`, `near`, `exact`) and
   keyframe runs stay software: GPU start-up costs about as much as one picture or 8 keyframes (measured below).
+- **Preview decoder for WebCodecs-played files (phase 6).** When playback decodes the picture with WebCodecs (8-bit
+  H.264 4:2:0 and VP8, the only codecs VS Code's webviews allow there), the engine hands playback's
+  `VideoDecoderConfig` (`vconf`, with the avcC description) to `ThumbService` (`o.hw`). The worker checks it on open
+  with `VideoDecoder.isConfigSupported({...conf, hardwareAcceleration: 'prefer-hardware'})` and says whether it has
+  the preview decoder. Each fill sweep then reads the same packets as before (seek to the keyframe, the demuxer of the
+  worker), but feeds them as `EncodedVideoChunk`s (microsecond timestamps from the packet's pts) to a `VideoDecoder`
+  made for that sweep and closed after it (`hwSink`), never playback's, so playback's decoder is never flushed or
+  restarted and nothing holds the GPU decoder between sweeps. At most 16 chunks wait in it (`HW_QUEUE`, on its
+  `dequeue` event). Output comes in presentation order; the same picker as the software sweep keeps the first frame at
+  or after each step (exact, since every frame is decoded: software's `noref` lands up to 2 frames later). A kept frame
+  becomes a 160 px `ImageBitmap` (`createImageBitmap(vf, {resizeWidth, resizeHeight, resizeQuality: 'low'})`, the
+  display aspect) and is closed when that resolves; every other frame is closed at once. The bitmaps travel to the
+  page as transferables and are stored as JPEG like captures; ones the page does not need are closed. Fallback: no
+  `VideoDecoder` in the worker, an unsupported config, a decode error, a frame that cannot be scaled or a flush
+  over 10 s gives the same stretch in software in the same request (`hwFailed`), and the service remembers it for
+  the file (worker restarts open without the config). Hardware sweeps wait while playing (`paused:playing`; a
+  running one is cancelled when playback starts) since they share the GPU's video decoder with playback; keyframe
+  asks, hover pictures and refines stay software (one packet each, cheaper than starting a decoder). Every other file
+  (HEVC, VP9, AV1, 10-bit H.264, HDR, Live transcode, native ffmpeg) keeps its path. `stats0().previewDecoder` says
+  `none`, `ready`, `not started` or `failed: why`; the fill's `gpu` is `webcodecs`. The debug probe's
+  `previewDecoder` turns it off (a bench compares worker and preview decoder).
+
+  Measured 2026-11-28 (layer 4 `seek-pass-webcodecs`, i7-9700K + RTX 4070, built-in decoder setting, paused from the
+  first frame; CPU per role as % of one core over the wait, the renderer includes the page and the worker):
+
+  | Clip (slots) | WASM worker (software) | Preview decoder |
+  |---|---|---|
+  | 1080p H.264 20 s, 10 s GOP (20) | full bar 17.6 s; 5 sweeps, 4.3 s, 3.2 ms per frame; renderer 29 % | 8.4 s; 5 sweeps, 1.5 s, 1.1 ms per frame; renderer 22 %, GPU process 20 % |
+  | 1080p H.264 60 s, 10 s GOP (30) | 27.1 s; 8 sweeps, 6.6 s; renderer 28 % | 11.6 s; 8 sweeps, 2.3 s, 1.1 ms per frame; renderer 25 %, GPU 20 % |
+  | 4K H.264 20 s, 10 s GOP (20) | 75.1 s; 5 sweeps, 21.6 s, 17.3 ms per frame; renderer 32 % | 23.5 s; 5 sweeps, 5.9 s, 4.5 ms per frame; renderer 11 %, GPU 26 % |
+
+  In core-seconds over the whole wait (idle included): 5.3 against 3.7 at 1080p 20 s, 24.8 against 9.1 at 4K. The
+  floor and the full bar coincide (the floor's GOPs held every empty slot). Playback with the pass off and on (15 s
+  from 3.5 s after the first frame, twice each): 1080p H.264 20 s 0 dropped and 0 late in all four runs, 483-492 shown,
+  instance 18-19 % off / 18 % on; 4K H.264 20 s 0 and 0 in all four, 482-492 shown, 25-28 % / 20-21 %. The pass ran 1-3
+  hardware sweeps in the 3.5 s before play and then waited.
 - **Native keyframe runs.** Once three keyframe intervals are known and their median g gives at most 1.25 keyframes
   per slot (X / g <= 1.25), native ffmpeg and Live transcode get `run` requests instead of one process per slot: one
   `-skip_frame nokey` ffmpeg decodes the next 8 keyframes from the first unanswered slot of a gap (one 37 ms process
@@ -90,8 +127,9 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   GOP). A run that reached the end of the file says so (`end`), so the last keyframe covers the rest. Runs stay
   software: 8 keyframes of 4K HEVC 10-bit cost 0.33-0.39 s of CPU in software, 0.28-0.30 s with d3d12va and
   0.19-0.25 s with cuda (whole process, i7-9700K + RTX 4070), and less in software for lighter codecs.
-- **Pass cost (measured 2026-11-28 after phase 5, layer 4 `seek-pass-native` / `seek-pass-native-cpu` /
-  `seek-pass-wasm`, i7-9700K + RTX 4070, Windows 10, ffmpeg 9.0.2).** Paused, from the first frame (3 s of it is the
+- **Pass cost (measured 2026-11-28, layer 4 `seek-pass-native` after phase 6, `seek-pass-native-cpu` and
+  `seek-pass-wasm` after phase 5 with keyframe asks still at a quarter of the time, i7-9700K + RTX 4070, Windows 10,
+  ffmpeg 9.0.2).** Paused, from the first frame (3 s of it is the
   start delay): time to the floor and to a full bar (the same here: the floor's GOPs held every empty slot), decoder
   wall time of the keyframe pass and of the fill, and the fill's CPU as ffmpeg reports it (`-benchmark`, plus 200 ms
   per GPU sweep). Clips: generated 1080p HEVC 8-bit with a keyframe every 2 s; 1080p30 H.264 (x264 veryfast,
@@ -99,16 +137,17 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
 
   | Clip (slots) | Native, GPU (d3d12va) | Native, software (`gpuDecoding` off) | WASM worker |
   |---|---|---|---|
-  | HEVC 20 s (20) | 10.7 s; keys 0.45 s; fill 10 sweeps (all software: short), 1.6 s, 1.2 s CPU | 10.3 s; keys 0.43 s; fill 1.5 s, 1.0 s CPU | 11.9 s; keys 0.17 s; fill 2.2 s |
-  | HEVC 5 min (150) | 14.0 s; 23 asks (20 runs), 2.7 s; no fill needed | 13.8 s; same | 17.7 s; 149 asks, 3.5 s |
-  | HEVC 1 h (240) | 92.7 s; 239 asks, 22.1 s (24 % of the time) | 91.3 s; 21.6 s | 30.2 s; 239 asks, 6.5 s |
-  | H.264 20 s (20) | 6.8 s; fill 2 sweeps, 18 pictures, 1.3 s, 0.65 s CPU | 6.3 s; 2 sweeps, 1.1 s, 0.99 s CPU | 17.9 s; 5 sweeps, 4.3 s |
-  | H.264 60 s (30) | 17.9 s; 6 sweeps, 24 pictures, 3.9 s, 1.8 s CPU | 15.4 s; 6 sweeps, 3.1 s, 2.9 s CPU | 29.2 s; 8 sweeps, 7.0 s |
-  | 4K HEVC 10-bit 2 min (60) | 42.5 s; 10 sweeps, 40 pictures, 8.5 s, 3.5 s CPU | 157 s; 10 sweeps, 39.7 s, 39.2 s CPU | not measured (over the bench's 600 s budget: about 100 s of decoding at a quarter of the time) |
+  | HEVC 20 s (20) | 9.5 s; keys 0.43 s; fill 10 sweeps (all software: short), 1.5 s, 1.1 s CPU | 10.3 s; keys 0.43 s; fill 1.5 s, 1.0 s CPU | 11.9 s; keys 0.17 s; fill 2.2 s |
+  | HEVC 5 min (150) | 8.5 s; 23 asks (20 runs), 2.7 s; no fill needed | 13.8 s; same | 17.7 s; 149 asks, 3.5 s |
+  | HEVC 1 h (240) | 47.5 s; 239 asks, 21.1 s (44 % of the time; 92.7 s with keyframes at a quarter) | 91.3 s; 21.6 s | 30.2 s; 239 asks, 6.5 s |
+  | H.264 20 s (20) | 6.6 s; fill 2 sweeps, 18 pictures, 1.3 s, 0.57 s CPU | 6.3 s; 2 sweeps, 1.1 s, 0.99 s CPU | 17.9 s; 5 sweeps, 4.3 s |
+  | H.264 60 s (30) | 17.3 s; 6 sweeps, 24 pictures, 3.9 s, 1.7 s CPU | 15.4 s; 6 sweeps, 3.1 s, 2.9 s CPU | 29.2 s; 8 sweeps, 7.0 s |
+  | 4K HEVC 10-bit 2 min (60) | 38.3 s; 10 sweeps, 40 pictures, 8.5 s, 3.3 s CPU | 157 s; 10 sweeps, 39.7 s, 39.2 s CPU | not measured (over the bench's 600 s budget: about 100 s of decoding at a quarter of the time) |
 
   CPU of the extension and webview processes stayed at 2-7 % of a core during the native fills (the ffmpeg children
-  are too short-lived for the sampler; their CPU is the `-benchmark` figure above). The 1 h clip took 48 s before
-  phase 5 because pacing then allowed half the wall time.
+  are too short-lived for the sampler; their CPU is the `-benchmark` figure above). The WASM worker's H.264 rows are
+  its software sweeps (before phase 6; now only with the preview decoder off or failed): WebCodecs-played H.264 fills
+  on the preview decoder (below).
 
   Playback with the pass off and on (15 s of playback from 3.5 s after the first frame, twice each, one instance):
 
@@ -163,7 +202,8 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   3. without an own picture, the nearest entry anywhere, as a placeholder while the request runs.
 - **Backends.**
   - **WASM worker** ([thumbs-worker.js](../../media/thumbs-worker.js)) for every file played through libav.js or
-    WebCodecs. It is a second, single-threaded libav.js instance (`skip_frame nokey` between requests), reading
+    WebCodecs (whose sweeps go to its preview decoder, below). It is a second, single-threaded libav.js instance
+    (`skip_frame nokey` between requests), reading
     through the engine's block cache as reader `thumbs`. `key` / `near` decode one keyframe packet, scale it with
     swscale bilinear and post RGBA. For formats without an index (MPEG-PS/TS), where a seek can land past the
     keyframe, it steps back 2, 6, 14 ... s (a keyframe after T counts as a miss), in all modes. `between` switches
@@ -207,16 +247,23 @@ and the plan for pictures between keyframes, with the maintainer's decisions (se
   on a real clip; the fill: floor first and coarse to fine, every slot a picture of its own, captures count, no cost
   gate, evicted slots not swept again, pauses and cancels and restarts a stretch, never twice, one native ffmpeg per
   stretch against the reference on a generated 1080p H.264 10 s-GOP clip; the GPU: method order, arguments, software
-  for hover and runs, fallback to software and a failed method not tried again),
-
+  for hover and runs, fallback to software and a failed method not tried again; keyframe asks paced at half the time,
+  sweeps at a quarter),
+  [test/host/seek_preview_hw_test.js](../../test/host/seek_preview_hw_test.js) (the preview decoder with a stand-in
+  worker: which files open the worker with playback's config and send sweeps to it, software when the worker has no
+  decoder, after a failure (remembered across worker restarts) or with the debug toggle off, unused bitmaps closed,
+  hardware sweeps wait while playing and a running one is cancelled when playback starts),
+  [test/thumbs/hw_sweep.js](../../test/thumbs/hw_sweep.js) (the real worker with a stand-in `VideoDecoder`: the first
+  frame at or after each step, a key chunk first, every frame and decoder closed, a decoder error answered in software
+  in the same request and not tried again, cancel, no decoder in workers or an unsupported config),
   [test/thumbs/service.js](../../test/thumbs/service.js) (the real worker: sweep, neighbours, cache; `near` and
   `between` and `sweep` on the 10 s-GOP clip against the reference),
   [test/vscode/cases/seek_preview.js](../../test/vscode/cases/seek_preview.js) (`seek_preview` for WASM,
   `seek_preview_native`, each with pass, pass-hidden, between (the fill: floor, then a full bar), capture and refine
-  cases; the hover cases turn the pass off),
+  cases, and webcodecs/between (the fill on the preview decoder); the hover cases turn the pass off),
   `playback` thumbs/capture-4k (same dropped and late frames with capture and pass off and on), `inspect`
   thumbs/seek-bar (a full bar before the first hover), the layer 4 benches `seek-pass-native` / `seek-pass-wasm` /
-  `seek-pass-native-cpu` ([test/vscode/cases/seek_pass_perf.js](../../test/vscode/cases/seek_pass_perf.js)), and the bench
+  `seek-pass-native-cpu` / `seek-pass-webcodecs` ([test/vscode/cases/seek_pass_perf.js](../../test/vscode/cases/seek_pass_perf.js)), and the bench
   [test/thumbs/scrub_bench.js](../../test/thumbs/scrub_bench.js) (`key` and `between`).
 ### Limits that motivate the plan
 
@@ -443,7 +490,7 @@ picture whose time lies inside the slot.
 
 | Path | Keyframes | Between keyframes | Notes |
 |---|---|---|---|
-| WebCodecs (H.264, VP8) | WASM worker (software). A WebCodecs `VideoDecoder` in the worker could decode H.264 keyframes in hardware, but it shares the GPU decoder with playback; not worth it while a 1080p keyframe is cheap in software. | (1) capture, (3) WASM refine. Later: a hardware `VideoDecoder` for a whole GOP while paused (hundreds of fps) is the cheapest between source for H.264; measure before building (phase 5). | The worker decodes in software even when playback uses the GPU. |
+| WebCodecs (H.264, VP8) | WASM worker (software): one packet each, cheaper than starting a hardware decoder. | (1) capture, (3) WASM refine, (5) the fill on the worker's own hardware `VideoDecoder` (phase 6), waiting while playing. | Software in the worker after a preview decoder failure. |
 | WASM (HEVC, VP9, AV1, MPEG-2 ...) | WASM worker | (1) capture, (3) refine within budget (single-threaded WASM: tighter budget) | AV1 keyframes are 2-3x slower in WASM than native (bench). |
 | Native ffmpeg | per-slot process; one-process keyframe pass where cheap | (1) capture, (3) `noref` + skip loop filter process, (5) the fill in stretches, on the GPU where available | hover pictures and runs software, 1-2 threads, below-normal priority |
 | Live transcode (local or remote) | host process on the source file (today) | (1) capture of the transcoded frames, (3) host process | CPU runs on the host that holds the file |
@@ -515,7 +562,8 @@ during playback). Revisit only if measurements show re-opened long files are a r
 | 3 (built) | Background keyframe pass, coarse to fine, pausing while busy or hidden | **yes** (decision 1) | host: pass order, pauses while `busy()`, stops when hidden; layer 3: full bar without hover (if approved), no work while hidden; `inspect` "no service before first hover" changes with the decision |
 | 4 (built) | Between pass for short or light files | **yes** (decision 2) | as phase 3, plus a budget test with a fake cost |
 | 5 (built) | Fill for every file: floor of 20, then every slot; no gate, remote like local; native sweeps on the GPU; faster while resting on the bar | **yes** (decisions of 2026-11-28) | host: floor order, no gate, pace, remote, GPU args and fallback; layer 3 between; layer 4 time to floor / full bar, GPU vs software |
-| 6 (next) | A second WebCodecs hardware `VideoDecoder` for H.264 previews; disk cache only if decided | maybe | measure first |
+| 6 (built) | The fill of WebCodecs-played files (H.264, VP8) on a hardware `VideoDecoder` of the thumbnail worker's own; keyframe asks back at half the time | no | host: routing, fallback, pause while playing; worker with a stand-in decoder; layer 3 webcodecs/between; layer 4 `seek-pass-webcodecs` |
+| next | Disk cache only if decided | maybe | measure first |
 
 ### Bench and measurements to add
 
