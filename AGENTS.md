@@ -62,13 +62,12 @@ npm test                                # layers 1-3 (before a release, not befo
 ```
 
 **Choose your layer-3 scenarios yourself** (maintainer, 2026-11-21): before a merge run layers 1-2 as CI does
-(`CI=true node test/run.js unit engine`) plus **1–3 targeted layer-3 scenarios** (or specific
-`--grep "^scenario/case$"`) covering the exact behavior you changed — aim for **~5 minutes** on small fixes
+(`CI=true node test/run.js unit engine`) plus **1–3 targeted layer-3 scenarios** covering the exact behavior you changed — aim for **~5 minutes** on small fixes
 and **10 minutes at most** on larger changes (use the "Known dependencies" table in `docs/TESTING.md` as a
 guide, not a mandatory floor). List each chosen scenario with a one-line reason in your report or PR. Do not
 run the whole layer just to be safe: only a release has to have everything working, and the full run before a
-release catches what a merge missed. When a single layer-3 case fails, re-run **only that case**
-(`--grep "^scenario/case$"`), not the whole scenario, and do not run layer 3 while parallel delegates are
+release catches what a merge missed. When a single layer-3 case fails, re-run only its scenario with
+`--grep "^scenario$" --sub "<case>"` (today `--grep` selects whole scenarios and every step still runs; `--sub <re>` only filters results — a real per-check rerun is step S0 of docs/notes/playback-core-plan.md), not the whole layer, and do not run layer 3 while parallel delegates are
 pegging CPU.
 
 Layer 4 (performance) runs only through `node test/run.js perf` (it holds the lock) and only

@@ -37,8 +37,8 @@ node test/run.js perf                            # layer 4 only: holds the lock,
 
 ## 3. Workflow
 
-1. Run the one failing test until it passes. For layer 3, pick **1–3 targeted scenarios** (or specific `--grep "^scenario/case$"`) covering the exact behavior you changed (~5 min for small fixes, 10 min max) — do **not** run the whole layer 3 before a merge.
-2. When a single layer-3 case fails, re-run **only that case** (`--grep "^scenario/case$"`), not the whole scenario. Avoid running layer 3 while parallel delegates are pegging CPU.
+1. Run the one failing test until it passes. For layer 3, pick **1–3 targeted scenarios** covering the exact behavior you changed (~5 min for small fixes, 10 min max) — do **not** run the whole layer 3 before a merge.
+2. When a single layer-3 case fails, re-run only its scenario with `--grep "^scenario$" --sub "<case>"` (today `--grep` selects whole scenarios and every step still runs; `--sub <re>` only filters results — a real per-check rerun is step S0 of docs/notes/playback-core-plan.md), not the whole layer. Avoid running layer 3 while parallel delegates are pegging CPU.
 3. Layer 3 is Windows only and runs on a hidden desktop. Never start VS Code or a browser visibly.
    Where there is no GPU or desktop (CI, Linux), do not run it: say so in the PR instead.
 4. Test videos are Git LFS: if a test fails on a tiny "pointer" file, run `git lfs pull`.
